@@ -108,14 +108,12 @@ final class HologramArea {
                 if (sample != null && sample.hasTagCompound())
                     cell.itemNbt = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
                 if (tile != null) {
-                    NBTTagCompound data = new NBTTagCompound();
-                    tile.writeToNBT(data);
+                    NBTTagCompound data = HologramNativeCapture.capture(tile);
                     cell.tileNbt = HologramBlueprintNbt.encodeCaptured(data);
                 }
                 if (tile instanceof IGregTechTileEntity) {
                     IGregTechTileEntity gt = (IGregTechTileEntity) tile;
-                    cell.facing = gt.getFrontFacing()
-                        .ordinal();
+                    cell.facing = HologramBlockIdentity.front(gt);
                     if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
                         && gt.getMetaTileEntity() instanceof IConstructable) {
                         cell.controller = true;
@@ -188,6 +186,14 @@ final class HologramArea {
         if (tile instanceof IGregTechTileEntity)
             return new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) tile).getMetaTileID());
         if (block instanceof BlockFrameBox) return ((BlockFrameBox) block).getStackForm(1, metadata);
+        if (HologramNativePlacement.supported(block)) {
+            try {
+                return HologramNativePlacement.sample(block, metadata, tile);
+            } catch (IOException unsupported) {
+                // Preserve its real block and complete tile NBT as an unsupported draft cell.
+                return null;
+            }
+        }
         Item item = Item.getItemFromBlock(block);
         return item == null ? null : new ItemStack(item, 1, block.damageDropped(metadata));
     }

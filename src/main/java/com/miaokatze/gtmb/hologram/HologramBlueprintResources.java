@@ -85,6 +85,50 @@ public final class HologramBlueprintResources {
             return this;
         }
 
+        public Plan addNativeItems(List<ItemStack> additions) throws IOException {
+            if (additions != null) for (ItemStack stack : additions) {
+                addItem(stack);
+                if (stack != null && stack.stackSize > 0)
+                    addEntry(new Entry("native.components", stack, null, BigInteger.valueOf(stack.stackSize)));
+            }
+            return this;
+        }
+
+        /** Native CableBus getDrops already contains its real inventory and upgrades. */
+        public Plan removeItemsIncludedByNativeDrops(List<ItemStack> nativeDrops) {
+            List<ItemStack> paid = new ArrayList<>();
+            for (ItemStack stack : nativeDrops) paid.add(stack.copy());
+            java.util.Iterator<ItemStack> iterator = items.iterator();
+            while (iterator.hasNext()) {
+                ItemStack inventory = iterator.next();
+                for (ItemStack nativeStack : paid) {
+                    if (!inventory.isItemEqual(nativeStack) || !ItemStack.areItemStackTagsEqual(inventory, nativeStack))
+                        continue;
+                    int overlap = Math.min(inventory.stackSize, nativeStack.stackSize);
+                    inventory.stackSize -= overlap;
+                    nativeStack.stackSize -= overlap;
+                }
+                if (inventory.stackSize == 0) iterator.remove();
+            }
+            paid.clear();
+            for (ItemStack stack : nativeDrops) paid.add(stack.copy());
+            java.util.Iterator<Entry> rows = entries.iterator();
+            while (rows.hasNext()) {
+                Entry entry = rows.next();
+                if (entry.item == null) continue;
+                for (ItemStack nativeStack : paid) {
+                    if (!entry.item.isItemEqual(nativeStack)
+                        || !ItemStack.areItemStackTagsEqual(entry.item, nativeStack)) continue;
+                    int overlap = entry.amount.min(BigInteger.valueOf(nativeStack.stackSize))
+                        .intValue();
+                    entry.amount = entry.amount.subtract(BigInteger.valueOf(overlap));
+                    nativeStack.stackSize -= overlap;
+                }
+                if (entry.amount.signum() == 0) rows.remove();
+            }
+            return this;
+        }
+
         private void addItem(ItemStack stack) throws IOException {
             if (stack == null || stack.getItem() == null || stack.stackSize <= 0) return;
             for (ItemStack existing : items) {
@@ -196,6 +240,7 @@ public final class HologramBlueprintResources {
     public static Plan plan(NBTTagCompound selectedPayload) throws IOException {
         Plan result = new Plan();
         if (selectedPayload == null) return result;
+        HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         for (Object raw : selectedPayload.func_150296_c()) {
             String key = (String) raw;
             inspect(selectedPayload.getTag(key), key, key, result, 0, false, false);
@@ -237,6 +282,7 @@ public final class HologramBlueprintResources {
                 || lower.equals("stacks");
         if (value instanceof NBTTagCompound) {
             NBTTagCompound compound = (NBTTagCompound) value;
+            HologramNativeResources.inspect(compound, name, rootKey);
             if (compound.hasKey("Count") && compound.hasKey("id") && compound.hasKey("Damage")) {
                 if (storage && !knownContainer(lower)) throw unsupported(rootKey, "未知库存存储格式");
                 // Detached recipe/whitelist samples are configuration rather than real inventory slots.

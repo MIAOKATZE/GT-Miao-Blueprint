@@ -63,6 +63,20 @@ public final class HologramCapture {
         this.trigger = trigger;
     }
 
+    /** Test/diagnostic declaration capture on a detached native controller; no structure/world traversal. */
+    static HologramCapture declarationPieces(IConstructable machine, ItemStack trigger) {
+        HologramCapture capture = new HologramCapture(machine, trigger.copy());
+        HologramCapture previous = ACTIVE.get();
+        ACTIVE.set(capture);
+        try {
+            machine.construct(capture.trigger.copy(), true);
+        } finally {
+            if (previous == null) ACTIVE.remove();
+            else ACTIVE.set(previous);
+        }
+        return capture;
+    }
+
     public static boolean piece(Object controller, String name, ItemStack trigger, boolean hints, int a, int b, int c) {
         HologramCapture capture = ACTIVE.get();
         if (capture == null || capture.context != controller || !hints) return false;
@@ -290,7 +304,7 @@ public final class HologramCapture {
         IStructureElement backing = HologramDeclarationWrappers.backing(element);
         if (backing != null)
             return spawnHint(backing, world, x, y, z, HologramDeclarationWrappers.trigger(element, signal), depth + 1);
-        if (HologramDeclarationWrappers.isLazy(element)) return false;
+        if (HologramDeclarationWrappers.requiresAdapter(element)) return false;
         if (element instanceof com.gtnewhorizon.structurelib.structure.IStructureElementChain) {
             IStructureElement[] fallbacks = ((com.gtnewhorizon.structurelib.structure.IStructureElementChain) element)
                 .fallbacks();

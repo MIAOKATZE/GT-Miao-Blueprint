@@ -53,8 +53,7 @@ public final class HologramRecovery {
         }
         ItemStack stack = frame ? ((BlockFrameBox) block).getStackForm(1, meta)
             : new ItemStack(GregTechAPI.sBlockMachines, 1, id);
-        NBTTagCompound saved = new NBTTagCompound();
-        tile.writeToNBT(saved);
+        NBTTagCompound saved = captureStrict(tile);
         // GT's writer catches saveNBTData exceptions internally. Repeat the pure persistence hook without
         // that catch so a broken tank/controller serializer aborts recovery before any block is removed.
         ((IGregTechTileEntity) tile).getMetaTileEntity()
@@ -189,8 +188,7 @@ public final class HologramRecovery {
             || world.getBlockMetadata(x, y, z) != meta) return false;
         TileEntity tile = world.getTileEntity(x, y, z);
         if (!supported(tile) || ((IGregTechTileEntity) tile).getMetaTileID() != id) return false;
-        NBTTagCompound before = new NBTTagCompound();
-        tile.writeToNBT(before);
+        NBTTagCompound before = captureStrict(tile);
         if (!before.getString("id")
             .equals(
                 seal.getCompoundTag("tile")
@@ -226,8 +224,7 @@ public final class HologramRecovery {
         NBTTagCompound seal = stack.getTagCompound()
             .getCompoundTag(TAG);
         if (world.getBlockMetadata(x, y, z) != seal.getInteger("meta")) return false;
-        NBTTagCompound actual = new NBTTagCompound();
-        tile.writeToNBT(actual);
+        NBTTagCompound actual = captureStrict(tile);
         ((IGregTechTileEntity) tile).getMetaTileEntity()
             .saveNBTData(actual);
         return actual.equals(relocateNBT(seal, x, y, z, facing));
@@ -257,9 +254,10 @@ public final class HologramRecovery {
             copy.setInteger("x", x);
             copy.setInteger("y", y);
             copy.setInteger("z", z);
-            TileEntity tile = TileEntity.createAndLoadEntity(copy);
+            TileEntity tile = HologramNativePlacement.rollbackTile(world, block, meta, copy);
             if (tile == null) throw new IllegalStateException("Recovery rollback tile failed");
             world.setTileEntity(x, y, z, tile);
+            HologramNativePlacement.finishJoin(world, block, tile);
             tile.markDirty();
         }
         world.markBlockForUpdate(x, y, z);
@@ -290,6 +288,14 @@ public final class HologramRecovery {
         }
     }
 
+    private static NBTTagCompound captureStrict(TileEntity tile) {
+        try {
+            return HologramNativeCapture.capture(tile);
+        } catch (java.io.IOException unsafe) {
+            throw new IllegalStateException("Cannot safely capture recovery state", unsafe);
+        }
+    }
+
     private static final class Placement {
 
         final World world;
@@ -307,8 +313,7 @@ public final class HologramRecovery {
             block = world.getBlock(x, y, z);
             meta = world.getBlockMetadata(x, y, z);
             TileEntity previous = world.getTileEntity(x, y, z);
-            tile = previous == null ? null : new NBTTagCompound();
-            if (previous != null) previous.writeToNBT(tile);
+            tile = previous == null ? null : captureStrict(previous);
         }
     }
 }

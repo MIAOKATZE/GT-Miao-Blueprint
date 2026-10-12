@@ -335,12 +335,18 @@ final class HologramServiceEditRegression {
         SimpleAssert.eq(true, get(session, "open"), "selection cannot close the editor");
         SimpleAssert.eq(false, get(session, "virtualPlacement"), "selection cannot authorize placement");
         set(session, "virtualLocked", true);
+        Object jobBefore = get(session, "job");
         Method build = HologramService.class.getDeclaredMethod("directBuild", session.getClass());
         build.setAccessible(true);
         build.invoke(null, session);
         SimpleAssert.that(
-            ((String) get(session, "status")).contains("锁定"),
+            ((String) get(session, "status")).contains("放置") && ((String) get(session, "status")).contains("确定位置"),
             "pure editing refuses direct build even with a stale lock");
+        SimpleAssert.eq(jobBefore, get(session, "job"), "pure editing direct build never starts or changes a job");
+        SimpleAssert.that(get(session, "capture") == capture, "refused build preserves exact editing capture");
+        SimpleAssert.eq(before, map(session, "pins"), "refused build preserves all target overrides");
+        SimpleAssert.eq(false, get(session, "virtualPlacement"), "stale lock cannot authorize placement");
+        SimpleAssert.eq(true, get(session, "virtualLocked"), "refusal does not reinterpret a stale lock as placement");
         Method allowed = HologramService.class.getDeclaredMethod("constructionAllowed", session.getClass());
         allowed.setAccessible(true);
         SimpleAssert.eq(false, allowed.invoke(null, session), "all construction paths require placement authority");
@@ -357,13 +363,15 @@ final class HologramServiceEditRegression {
         EntityPlayerMP player = (EntityPlayerMP) get(session, "player");
         player.posY = 64;
         SimpleAssert
-            .eq(false, begin.invoke(null, session, 4, 300, 0, 2), "an invalid Alt anchor cannot authorize placement");
+            .eq(false, begin.invoke(null, session, 4, 300, 0, 2), "an invalid anchor cannot authorize placement");
         SimpleAssert.eq(false, get(session, "virtualPlacement"), "failed positioning keeps the editor pure");
-        SimpleAssert
-            .eq(true, begin.invoke(null, session, 4, 68, 0, 2), "explicit Alt can place the current unsaved draft");
-        SimpleAssert.that(get(session, "virtualPreset") == preset, "Alt preserves draft identity");
-        SimpleAssert.eq(false, get(session, "open"), "only Alt transitions from editing to a world preview");
-        SimpleAssert.eq(false, get(session, "virtualLocked"), "Alt starts moving before any lock");
+        SimpleAssert.eq(
+            true,
+            begin.invoke(null, session, 4, 68, 0, 2),
+            "explicit placement can preview the current unsaved draft");
+        SimpleAssert.that(get(session, "virtualPreset") == preset, "explicit placement preserves draft identity");
+        SimpleAssert.eq(false, get(session, "open"), "explicit placement transitions from editing to a world preview");
+        SimpleAssert.eq(false, get(session, "virtualLocked"), "placement starts moving before position confirmation");
         SimpleAssert.eq(true, moving.invoke(null, session), "authorized draft emits moving state");
         SimpleAssert.eq(before.size(), map(session, "pins").size(), "moving the draft retains its material overrides");
         set(session, "virtualPreset", null);

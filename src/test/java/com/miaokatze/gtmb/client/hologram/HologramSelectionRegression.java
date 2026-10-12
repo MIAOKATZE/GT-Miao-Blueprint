@@ -21,18 +21,18 @@ public final class HologramSelectionRegression {
         HologramState state = volume();
         selection.previewClick(state, 0, "", false, false);
         SimpleAssert.eq(1, selection.size(), "ordinary interior click selects one cell even inside a structure");
+        SimpleAssert.that(!selection.movable(state), "single structure member cannot expose a movement handle");
         selection.previewClick(state, 0, "", true, false);
-        SimpleAssert.eq(8, selection.size(), "held T expands a member click to its complete structure");
+        SimpleAssert.eq(4, selection.size(), "held T selects exact block and metadata within the structure");
+        SimpleAssert.that(!selection.contains(4), "T never merges another metadata variant of the same block");
+        SimpleAssert.that(!selection.movable(state), "same-type partial structure selection cannot move");
         selection.previewClick(state, 8, "", true, false);
-        SimpleAssert
-            .eq(9, selection.size(), "held T on ungrouped cell selects the complete blueprint including distant cells");
-        SimpleAssert.eq(8, selection.first(), "whole-blueprint selection retains the clicked ungrouped primary cell");
-        SimpleAssert.eq(
-            "",
-            selection.structureId(state, "machine-a", selection.first()),
-            "whole-blueprint intent cannot be mislabeled as its first machine or the previously active structure");
+        SimpleAssert.eq(1, selection.size(), "held T on a loose cell never selects unrelated structures");
+        SimpleAssert.eq(8, selection.first(), "exact-type selection retains the clicked primary cell");
+        SimpleAssert.that(selection.movable(state), "loose blueprint cell may move independently");
         selection.previewClick(state, 0, "machine-a", false, false);
         SimpleAssert.eq(8, selection.size(), "outline click remains the explicit whole-structure selection path");
+        SimpleAssert.that(selection.movable(state), "complete structure selection may move");
         selection.previewClick(state, 8, "", false, true);
         SimpleAssert.eq(9, selection.size(), "Ctrl click after outline selection adds only the clicked ungrouped cell");
         selection.load(new int[] { 0, 7, -1, 99, 7 }, 8, state.cells.size());
@@ -63,6 +63,9 @@ public final class HologramSelectionRegression {
         sharedWallRegression();
         placementConfirmationRegression();
         annotationRegression();
+        replacementFamilyRegression();
+        metaTileIdentityRegression();
+        HologramAnnotationMarkersRegression.run();
         HologramGizmo gizmo = new HologramGizmo();
         gizmo.project(100, 100, Math.PI / 4, Math.PI / 6);
         for (int axis = 0; axis < 3; axis++) {
@@ -123,11 +126,14 @@ public final class HologramSelectionRegression {
             cell.setInteger("dx", x);
             cell.setInteger("dy", y);
             cell.setInteger("dz", z);
+            cell.setString("wantId", "minecraft:stone");
+            cell.setInteger("wantMeta", x);
             cell.setString("structureId", "machine-a");
             cells.appendTag(cell);
         }
         NBTTagCompound outside = new NBTTagCompound();
         outside.setInteger("dx", 2);
+        outside.setString("wantId", "minecraft:stone");
         outside.setBoolean("sourceMissing", true);
         outside.setString("sourceWarning", "source unavailable");
         outside.setString("sourceClass", "missing.Controller");
@@ -183,6 +189,47 @@ public final class HologramSelectionRegression {
             "",
             HologramAnnotations.input(state, new int[] { 0 }, 2),
             "different hint volume starts a fresh area prompt instead of silently copying a containing area");
+    }
+
+    private static void replacementFamilyRegression() {
+        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagList cells = data.getTagList("cells", 10);
+        cells.getCompoundTagAt(0)
+            .setString("family", "coil");
+        cells.getCompoundTagAt(4)
+            .setString("family", "coil");
+        cells.getCompoundTagAt(8)
+            .setString("family", "coil");
+        HologramState state = new HologramState(data);
+        HologramSelection selection = new HologramSelection();
+        selection.previewClick(state, 0, "", false, false);
+        SimpleAssert.that(
+            selection.size() == 2 && selection.contains(0) && selection.contains(4),
+            "declared coil family selects its structure members automatically across grades");
+        SimpleAssert.that(
+            !selection.contains(8) && !selection.contains(1),
+            "family expansion never reaches another scope or unrelated casing");
+        selection.previewClick(state, 0, "", true, false);
+        SimpleAssert.that(
+            selection.size() == 4 && selection.contains(1) && !selection.contains(4),
+            "T uses exact identity rather than replacement family");
+    }
+
+    private static void metaTileIdentityRegression() {
+        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagList cells = data.getTagList("cells", 10);
+        for (int i = 0; i < 8; i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            cell.setString("wantId", "gregtech:gt.blockmachines");
+            cell.setInteger("wantMeta", 0);
+            cell.setString("exactIdentity", "gregtech:gt.blockmachines@" + (i < 2 ? 31 : 32));
+        }
+        HologramState state = new HologramState(data);
+        HologramSelection selection = new HologramSelection();
+        selection.previewClick(state, 0, "", true, false);
+        SimpleAssert.that(
+            selection.size() == 2 && selection.contains(1) && !selection.contains(2),
+            "T distinguishes GT meta-tile item IDs even when world block metadata is always zero");
     }
 
     private static void placementConfirmationRegression() {
@@ -269,6 +316,7 @@ public final class HologramSelectionRegression {
         SimpleAssert.that(
             selection.size() == 2 && selection.contains(0) && selection.contains(1) && !selection.contains(2),
             "first structure selects shared wall plus its own exclusive cell");
+        SimpleAssert.that(selection.movable(state), "complete first structure may move despite a shared wall");
         selection.structure(state, "machine-b", false);
         SimpleAssert.that(
             selection.size() == 2 && !selection.contains(0) && selection.contains(1) && selection.contains(2),

@@ -33,11 +33,19 @@ public final class HologramInteractionSmoke {
     private boolean sawBuilt, sawUpgraded;
     private int receiptPublishRetries;
     private int mufflerId = -1, lastMufflerWorld, lastMufflerStock;
+    private final java.util.Map<String, int[]> blueprintTargets = new java.util.LinkedHashMap<>();
+    private boolean sufficientBlueprintJobStarted;
+    private boolean sawOneToOneCraftPreview;
+    private int craftingEvents;
 
     public static void registerIfEnabled() {
-        if (Boolean.getBoolean("gtmb.hologram.interactionServer")) FMLCommonHandler.instance()
-            .bus()
-            .register(new HologramInteractionSmoke());
+        if (Boolean.getBoolean("gtmb.hologram.interactionServer")) {
+            HologramInteractionSmoke fixture = new HologramInteractionSmoke();
+            FMLCommonHandler.instance()
+                .bus()
+                .register(fixture);
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(fixture);
+        }
     }
 
     @SubscribeEvent
@@ -71,12 +79,15 @@ public final class HologramInteractionSmoke {
                 player.playerNetServerHandler.setPlayerLocation(48.5, 80, 46.5, 0, 0);
                 for (int i = 0; i < player.inventory.mainInventory.length; i++)
                     player.inventory.mainInventory[i] = null;
-                Item item = (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector");
-                player.inventory.mainInventory[0] = new ItemStack(item);
+                player.inventory.mainInventory[0] = new ItemStack(
+                    com.gtnewhorizon.structurelib.StructureLibAPI.getDefaultHologramItem());
                 player.inventory.mainInventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 64, 11);
                 for (int tier = 0; tier < 8; tier++)
                     player.inventory.mainInventory[tier + 2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, tier);
                 player.inventory.currentItem = 0;
+                world.setBlock(50, 80, 44, net.minecraft.init.Blocks.stone, 0, 3);
+                world.setBlock(51, 80, 44, net.minecraft.init.Blocks.stone, 0, 3);
+                player.inventory.mainInventory[10] = new ItemStack(net.minecraft.init.Blocks.stone, 2);
                 player.inventoryContainer.detectAndSendChanges();
                 // Deliberately do not collect here: the client's first C08 must exercise the cold capture path.
                 receipt(world, "fixture");
@@ -151,6 +162,25 @@ public final class HologramInteractionSmoke {
         n.setInteger("stock", stock);
         n.setInteger("mufflerWorld", mufflerWorld);
         n.setInteger("mufflerStock", mufflerStock);
+        observeCrafting(n);
+        observeBlueprintSession(n);
+        int blueprintPlaced = 0, blueprintStock = 0;
+        for (int x = 50; x <= 51; x++) {
+            if (world.getBlock(x, 80, 44) != net.minecraft.init.Blocks.stone)
+                throw new AssertionError("area blueprint capture changed its real source block");
+        }
+        for (int[] target : blueprintTargets.values())
+            if (world.getBlock(target[0], target[1], target[2]) == net.minecraft.init.Blocks.stone) blueprintPlaced++;
+        for (ItemStack stack : player.inventory.mainInventory)
+            if (stack != null && stack.getItem() == Item.getItemFromBlock(net.minecraft.init.Blocks.stone))
+                blueprintStock += stack.stackSize;
+        if (blueprintPlaced + blueprintStock != 2) throw new AssertionError(
+            "blueprint material conservation placed=" + blueprintPlaced + " stock=" + blueprintStock);
+        if ("final".equals(stage) && (blueprintPlaced != 2 || !sufficientBlueprintJobStarted)) throw new AssertionError(
+            "final receipt requires single-confirm sufficient and explicitly confirmed partial blueprint construction");
+        n.setInteger("blueprintPlaced", blueprintPlaced);
+        n.setInteger("blueprintStock", blueprintStock);
+        n.setBoolean("sufficientBlueprintJobStarted", sufficientBlueprintJobStarted);
         n.setLong("tick", world.getTotalWorldTime());
         n.setInteger(
             "facing",
@@ -191,6 +221,109 @@ public final class HologramInteractionSmoke {
                 + " mufflerStock="
                 + mufflerStock);
         return true;
+    }
+
+    /** Derived crafting output is not an owned item until the real C0E pickup consumes its input. */
+    private void observeCrafting(NBTTagCompound receipt) {
+        Item official = com.gtnewhorizon.structurelib.StructureLibAPI.getDefaultHologramItem();
+        Item projector = (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector");
+        int officialCount = 0, projectorCount = 0, officialInput = 0;
+        for (ItemStack stack : player.inventory.mainInventory) {
+            officialCount += countItem(stack, official);
+            projectorCount += countItem(stack, projector);
+        }
+        ItemStack cursor = player.inventory.getItemStack();
+        officialCount += countItem(cursor, official);
+        projectorCount += countItem(cursor, projector);
+        for (int slot = 1; slot <= 4; slot++) {
+            ItemStack input = player.inventoryContainer.getSlot(slot)
+                .getStack();
+            if (input != null && input.getItem() != official)
+                throw new AssertionError("projector crafting requires only its one official source item");
+            officialInput += countItem(input, official);
+        }
+        officialCount += officialInput;
+        ItemStack output = player.inventoryContainer.getSlot(0)
+            .getStack();
+        boolean outputReady = output != null && output.getItem() == projector && output.stackSize == 1;
+        if (officialInput == 1 && outputReady) sawOneToOneCraftPreview = true;
+        if (officialCount + projectorCount != 1)
+            throw new AssertionError("projector conservation source=" + officialCount + " crafted=" + projectorCount);
+        if (craftingEvents == 0 && projectorCount != 0)
+            throw new AssertionError("GTMB projector appeared without actual server ItemCraftedEvent");
+        if (craftingEvents == 1 && (officialCount != 0 || projectorCount != 1 || officialInput != 0))
+            throw new AssertionError("one-to-one server crafting must consume source and keep exactly one projector");
+        receipt.setInteger("craftingEvents", craftingEvents);
+        receipt.setBoolean("oneToOneCraftPreview", sawOneToOneCraftPreview);
+        receipt.setBoolean("craftOutputReady", outputReady);
+        receipt.setInteger("officialCraftInput", officialInput);
+        receipt.setInteger("officialRemaining", officialCount);
+        receipt.setInteger("craftedProjectors", projectorCount);
+        if ("final".equals(receipt.getString("stage")) && (!sawOneToOneCraftPreview || craftingEvents != 1))
+            throw new AssertionError("final socket receipt requires actual one-to-one 2x2 crafting");
+    }
+
+    @SubscribeEvent
+    public void crafted(cpw.mods.fml.common.gameevent.PlayerEvent.ItemCraftedEvent event) {
+        if (event.player != player) return;
+        Item projector = (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector");
+        if (event.crafting == null || event.crafting.getItem() != projector || event.crafting.stackSize != 1)
+            throw new AssertionError("socket player must craft exactly one registered GTMB projector");
+        if (!sawOneToOneCraftPreview || ++craftingEvents != 1) throw new AssertionError(
+            "actual crafting event requires the observed one-source/one-output recipe exactly once");
+        System.out.println(
+            "[GTMB-HOLOGRAM-INTERACTION-SERVER] PASS actual ItemCraftedEvent official source 1 -> GTMB projector 1");
+    }
+
+    private static int countItem(ItemStack stack, Item item) {
+        return stack != null && stack.getItem() == item ? stack.stackSize : 0;
+    }
+
+    /** Observe authoritative locked capture coordinates; client claims never choose the receipt's world cells. */
+    private void observeBlueprintSession(NBTTagCompound receipt) throws Exception {
+        java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        sessions.setAccessible(true);
+        Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
+        if (session == null || !((Boolean) sessionField(session, "virtualPlacement"))
+            || !((Boolean) sessionField(session, "virtualLocked"))) return;
+        receipt.setIntArray(
+            "blueprintAnchor",
+            new int[] { (Integer) sessionField(session, "x"), (Integer) sessionField(session, "y"),
+                (Integer) sessionField(session, "z") });
+        HologramCapture capture = (HologramCapture) sessionField(session, "capture");
+        if (capture == null) throw new AssertionError("locked blueprint session lacks complete capture");
+        for (HologramCapture.Cell cell : capture.cells) {
+            if (cell.block != net.minecraft.init.Blocks.stone) continue;
+            if ((cell.x == 50 || cell.x == 51) && cell.y == 80 && cell.z == 44)
+                throw new AssertionError("air placement target overlaps its captured source");
+            blueprintTargets.put(cell.x + "," + cell.y + "," + cell.z, new int[] { cell.x, cell.y, cell.z });
+        }
+        receipt.setInteger("blueprintObservedTargetCount", blueprintTargets.size());
+    }
+
+    @SubscribeEvent(priority = cpw.mods.fml.common.eventhandler.EventPriority.LOWEST)
+    public void blueprintPlaced(net.minecraftforge.event.world.BlockEvent.PlaceEvent event) throws Exception {
+        if (player == null || event.player != player
+            || event.world.getBlock(event.x, event.y, event.z) != net.minecraft.init.Blocks.stone) return;
+        java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        sessions.setAccessible(true);
+        Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
+        if (session == null || !((Boolean) sessionField(session, "virtualPlacement"))
+            || !((Boolean) sessionField(session, "virtualLocked")))
+            throw new AssertionError("real socket blueprint placement lacks authoritative locked session");
+        HologramCapture capture = (HologramCapture) sessionField(session, "capture");
+        if (capture != null && capture.cells.size() == 1) {
+            if ((Integer) sessionField(session, "job") != 1)
+                throw new AssertionError("single material-confirm click did not start the server blueprint job");
+            sufficientBlueprintJobStarted = true;
+        }
+    }
+
+    private static Object sessionField(Object session, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = session.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(session);
     }
 
     private static int installMuffler(WorldServer world, EntityPlayerMP player, BaseMetaTileEntity controller, int x,

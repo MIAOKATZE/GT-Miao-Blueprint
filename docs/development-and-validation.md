@@ -15,6 +15,10 @@
 
 准备脚本只从显式指定目录选取支持 jar，不复制世界、配置或整个模组目录。所需额外支持包括 IC2、AE2FluidCraft 等既有 GTNH 测试环境组件；NEI、CodeChickenCore、Waila 与 GT5U/ModularUI 所需的 Baubles 从精确版本的本机 Gradle 缓存读取。GT5U、AE、StructureLib、ModularUI 等由 Gradle运行类路径提供。
 
+扩展兼容冒烟使用准备脚本的 `--extended-compatibility` 和 Gradle 的 `-PhologramExtendedCompatibility`，并同时指定原有冒烟或交互属性。该模式由 Gradle 唯一提供 CodeChickenCore 1.4.22、CoFHLib 2388748 与 Postea 1.2.7；准备脚本不复制这些库的物理 jar，服务端 `environment.json` 的 `runtime_managed_support` 记录确切版本，客户端沿用同一服务端回执及支持 jar 列表。Postea 1.2.7 对齐原 Prism RC-2 实例，避免旧 1.2.5 缺少 ArchitectureCraft 1.12.18 所调用的替换接口。现有 fixture 若还留有旧支持 jar，准备脚本会要求使用干净目录，不删除任何 jar；原 Prism 实例不作修改。首次解析这些依赖须省略 `--offline`。
+
+每次准备新的 smoke 或 interaction 世界时，脚本将该独立服务端已有的 `config/gtmb/hologram-presets.json` 移至同一 fixture 的 `library-archive`，回执 `previous_library_archive` 保存原路径、归档路径与 SHA-256；测试库数据完整保留，产品预设数量限制不变。
+
 ```powershell
 python tools/hologram/prepare_smoke.py --mods-source <支持jar目录>
 .\gradlew.bat runServer -PhologramSmoke --offline

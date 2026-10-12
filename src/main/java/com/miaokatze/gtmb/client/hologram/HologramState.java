@@ -57,7 +57,7 @@ final class HologramState {
     static final class Cell {
 
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
-        final String id, wantId, status, pinScope, role, family, renderKind, operation;
+        final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
         final String prompt, structureId, sourceMod, sourceVersion, sourceClass, sourceWarning;
         final List<String> structureIds;
         final boolean anchor, iconOnly, excluded, missingBlock, sourceMissing;
@@ -92,6 +92,7 @@ final class HologramState {
             pinScope = n.getString("pinScope");
             role = n.getString("role");
             family = n.getString("family");
+            exactIdentity = n.getString("exactIdentity");
             renderKind = n.getString("renderKind");
             operation = n.getString("operation");
             prompt = n.getString("prompt");

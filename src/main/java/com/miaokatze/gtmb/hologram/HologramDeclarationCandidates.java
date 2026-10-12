@@ -111,10 +111,22 @@ final class HologramDeclarationCandidates {
                 return;
             }
             boolean fixed = factory.getDeclaringClass() == StructureUtility.class && "ofBlock".equals(name);
+            boolean flat = factory.getDeclaringClass() == StructureUtility.class && "ofBlocksFlat".equals(name);
+            if (factory.getDeclaringClass() == StructureUtility.class && "ofBlockAnyMeta".equals(name)) {
+                Object accepted = captured(element, "val$block");
+                if (!(accepted instanceof Block)) {
+                    complete = false;
+                    return;
+                }
+                HologramReplacementFamily.Family family = HologramReplacementFamily.wildcard(element);
+                if (family != null) for (ItemStack stack : family.targets()) add(stack);
+                complete = false; // Inventory metadata mappings need not represent every accepted world metadata.
+                return;
+            }
             boolean frame = factory.getDeclaringClass() == GTStructureUtility.class && "ofFrame".equals(name)
                 && HologramFrameSupport.target(element) != null;
             boolean coil = factory.getDeclaringClass() == GTStructureUtility.class && "ofCoil".equals(name);
-            if (!fixed && !frame && !coil) {
+            if (!fixed && !flat && !frame && !coil) {
                 complete = false;
                 return;
             }
@@ -133,6 +145,17 @@ final class HologramDeclarationCandidates {
                 add(stack);
             }
             if (coil) complete = false; // Trigger selects one coil grade; full coil alternatives are not enumerated.
+            if (coil) {
+                for (ItemStack target : new ArrayList<>(stacks)) {
+                    Block block = Block.getBlockFromItem(target.getItem());
+                    HologramReplacementFamily.Family family = HologramReplacementFamily.resolve(
+                        element,
+                        block,
+                        target.getItem()
+                            .getMetadata(target.getItemDamage()));
+                    if (family != null) for (ItemStack alternativeStack : family.targets()) add(alternativeStack);
+                }
+            }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             complete = false;
         }

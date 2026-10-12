@@ -23,6 +23,8 @@ import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 import gregtech.api.GregTechAPI;
+import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
+import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import io.netty.channel.Channel;
@@ -60,6 +62,13 @@ public final class HologramCompatibilitySmoke {
                 160,
                 new String[0],
                 new int[0]);
+            fixture.machine(
+                world,
+                player,
+                "gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace",
+                192,
+                new String[] { "coil" },
+                new int[] { 3 });
             System.out.println("[GTMB-HOLOGRAM-ELECTROLYZER-SMOKE] FINAL PASS assertions=" + fixture.assertions);
         } finally {
             transport.finish();
@@ -229,9 +238,11 @@ public final class HologramCompatibilitySmoke {
             require(changedChannel, type + "_single_channel_changes_declared_component_" + channels[i]);
         }
         int changed = 0;
+        java.util.Map<String, ItemStack> mandatoryHatches = new java.util.LinkedHashMap<>();
         for (HologramCapture.Cell cell : selected.cells) {
             if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
-            require(!cell.unknown && cell.block != null, type + "_known_declared_target");
+            if (cell.unknown) mandatoryHatches.put(position(cell), requiredHatch(machine, world, cell, signal, type));
+            else require(cell.block != null, type + "_known_declared_target");
             HologramCapture.Cell old = first.positions.get(cell.x + "," + cell.y + "," + cell.z);
             if (old != null && (cell.block != old.block || cell.meta != old.meta)) changed++;
         }
@@ -265,15 +276,47 @@ public final class HologramCompatibilitySmoke {
                 .ordinal());
         HologramService.handle(player, configure);
         settleCapture(world, session);
+        for (Map.Entry<String, ItemStack> entry : mandatoryHatches.entrySet()) {
+            HologramCapture current = (HologramCapture) get(session, "capture");
+            HologramCapture.Cell cell = current.positions.get(entry.getKey());
+            require(
+                cell != null && cell.unknown && "hatch".equals(cell.role),
+                type + "_required_hatch_retains_hint_identity");
+            player.inventory.mainInventory[35] = entry.getValue()
+                .copy();
+            NBTTagCompound pin = action(session, "customPin");
+            pin.setInteger("selected", current.cells.indexOf(cell));
+            pin.setInteger("inventorySlot", 35);
+            HologramService.handle(player, pin);
+            player.inventory.mainInventory[35] = null;
+            ItemStack target = ((java.util.List<ItemStack>) get(session, "planTargets"))
+                .get(current.cells.indexOf(cell));
+            require(
+                target != null && target.isItemEqual(entry.getValue()),
+                type + "_required_hatch_server_pin_accepted");
+        }
+        repeatedMaterialGrades(world, player, session, type, configure);
         HologramCapture planned = (HologramCapture) get(session, "capture");
         require(!planned.incomplete && !planned.pending, type + "_service_complete_capture");
         int slot = 1, targets = 0;
         java.util.LinkedHashMap<String, ItemStack> materials = new java.util.LinkedHashMap<>();
-        for (HologramCapture.Cell cell : planned.cells) {
+        java.util.Map<String, ItemStack> plannedSamples = new java.util.LinkedHashMap<>();
+        for (int index = 0; index < planned.cells.size(); index++) {
+            HologramCapture.Cell cell = planned.cells.get(index);
             if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
-            require(!cell.unknown && cell.block != null, type + "_service_known_shell");
-            ItemStack stack = new ItemStack(cell.block, 1, cell.meta);
+            ItemStack stack;
+            if (mandatoryHatches.containsKey(position(cell))) {
+                stack = ((java.util.List<ItemStack>) get(session, "planTargets")).get(index)
+                    .copy();
+                require(
+                    stack.isItemEqual(mandatoryHatches.get(position(cell))),
+                    type + "_required_hatch_plan_preserved");
+            } else {
+                require(!cell.unknown && cell.block != null, type + "_service_known_shell");
+                stack = new ItemStack(cell.block, 1, cell.meta);
+            }
             require(stack.getItem() != null, type + "_registered_shell_item");
+            plannedSamples.put(position(cell), stack.copy());
             if (electrolyzer && HologramFrameSupport.inertFrameBlock(cell.block, cell.meta)) {
                 require(
                     cell.block.hasTileEntity(cell.meta) && world.getTileEntity(cell.x, cell.y, cell.z) == null,
@@ -308,8 +351,7 @@ public final class HologramCompatibilitySmoke {
         HologramCapture completed = (HologramCapture) get(session, "capture");
         for (HologramCapture.Cell cell : planned.cells) {
             if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
-            if (world.getBlock(cell.x, cell.y, cell.z) == cell.block
-                && world.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta) continue;
+            if (plannedMatch(world, cell, plannedSamples.get(position(cell)))) continue;
             HologramCapture.Cell result = completed.positions.get(cell.x + "," + cell.y + "," + cell.z);
             System.err.println(
                 PREFIX + "UNPLACED pos="
@@ -342,8 +384,7 @@ public final class HologramCompatibilitySmoke {
         for (HologramCapture.Cell cell : planned.cells) {
             if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
             require(
-                world.getBlock(cell.x, cell.y, cell.z) == cell.block
-                    && world.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta,
+                plannedMatch(world, cell, plannedSamples.get(position(cell))),
                 type + "_survival_shell_placed_"
                     + cell.x
                     + "_"
@@ -410,6 +451,127 @@ public final class HologramCompatibilitySmoke {
                 + changed);
     }
 
+    private static String position(HologramCapture.Cell cell) {
+        return cell.x + "," + cell.y + "," + cell.z;
+    }
+
+    private ItemStack requiredHatch(MTEEnhancedMultiBlockBase<?> machine, WorldServer world, HologramCapture.Cell cell,
+        ItemStack trigger, String type) {
+        require("hatch".equals(cell.role), type + "_unknown_position_is_required_hatch_declaration");
+        HologramDeclarationCandidates declaration = new HologramDeclarationCandidates();
+        ItemStack enabled = trigger.copy();
+        ChannelDataAccessor.setChannelData(enabled, "gt_hatch", 1);
+        declaration.collect(cell.element, machine, world, cell.x, cell.y, cell.z, enabled, null, 0);
+        require(declaration.complete && !declaration.stacks.isEmpty(), type + "_required_hatch_declaration_complete");
+        ItemStack result = null;
+        int tier = Integer.MAX_VALUE;
+        for (ItemStack stack : declaration.stacks) {
+            IMetaTileEntity prototype = gregtech.common.blocks.ItemMachines.getMetaTileEntity(stack);
+            require(
+                prototype instanceof gregtech.api.metatileentity.implementations.MTEHatch,
+                type + "_required_hatch_candidate_is_registered_hatch");
+            int candidateTier = ((gregtech.api.metatileentity.implementations.MTEHatch) prototype).mTier;
+            if (candidateTier < tier) {
+                result = stack.copy();
+                tier = candidateTier;
+            }
+        }
+        require(result != null, type + "_required_hatch_has_safe_native_material");
+        return result;
+    }
+
+    private static boolean plannedMatch(WorldServer world, HologramCapture.Cell cell, ItemStack sample) {
+        if (sample != null && sample.getItem() instanceof gregtech.common.blocks.ItemMachines) {
+            net.minecraft.tileentity.TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
+            return tile instanceof IGregTechTileEntity
+                && ((IGregTechTileEntity) tile).getMetaTileID() == sample.getItemDamage();
+        }
+        return world.getBlock(cell.x, cell.y, cell.z) == cell.block
+            && world.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta;
+    }
+
+    private void repeatedMaterialGrades(WorldServer world, FakePlayer player, Object session, String type,
+        NBTTagCompound initial) throws Exception {
+        HologramCapture capture = (HologramCapture) get(session, "capture");
+        int selected = -1;
+        for (int index = 0; index < capture.cells.size(); index++) if (!capture.cells.get(index).family.isEmpty()) {
+            selected = index;
+            break;
+        }
+        if (selected < 0) return;
+        HologramCapture.Cell source = capture.cells.get(selected);
+        HologramCapabilities.Result capabilities = (HologramCapabilities.Result) get(session, "capabilities");
+        net.minecraft.nbt.NBTTagList rows = capabilities.toNBT();
+        NBTTagCompound row = null;
+        java.util.List<NBTTagCompound> options = new java.util.ArrayList<>();
+        for (int index = 0; index < rows.tagCount(); index++) {
+            NBTTagCompound candidate = rows.getCompoundTagAt(index);
+            if (candidate.getString("id")
+                .equals("main")) continue;
+            java.util.List<NBTTagCompound> matches = new java.util.ArrayList<>();
+            net.minecraft.nbt.NBTTagList values = candidate.getTagList("options", 10);
+            for (int value = 0; value < values.tagCount(); value++) {
+                NBTTagCompound option = values.getCompoundTagAt(value);
+                ItemStack stack = ItemStack.loadItemStackFromNBT(option.getCompoundTag("item"));
+                if (option.getBoolean("present") && stack != null
+                    && source.candidates.stream()
+                        .anyMatch(allowed -> allowed.isItemEqual(stack)))
+                    matches.add(option);
+            }
+            if (matches.size() >= 3) {
+                row = candidate;
+                options = matches;
+                break;
+            }
+        }
+        if (row == null) return;
+        String position = source.x + "," + source.y + "," + source.z;
+        int[] steps = { 0, 1, 2, 1, 0, 1, 2 };
+        boolean firstStep = true;
+        for (int step : steps) {
+            // Real GUI gestures arrive on later ticks; retain the production eight-action flood boundary.
+            world.getWorldInfo()
+                .incrementTotalWorldTime(world.getTotalWorldTime() + 1);
+            NBTTagCompound request = (NBTTagCompound) initial.copy();
+            request.getCompoundTag("channels")
+                .setInteger(
+                    row.getString("id"),
+                    options.get(step)
+                        .getInteger("value"));
+            request.setInteger("selected", firstStep ? selected : (Integer) get(session, "selected"));
+            firstStep = false;
+            request.setIntArray("selectedIndices", new int[] { request.getInteger("selected") });
+            HologramService.handle(player, request);
+            require(
+                ((NBTTagCompound) get(session, "channels")).getInteger(row.getString("id")) == options.get(step)
+                    .getInteger("value"),
+                type + "_grade_request_accepted_by_server");
+            settleCapture(world, session);
+            capture = (HologramCapture) get(session, "capture");
+            HologramCapture.Cell changed = capture.cells.get((Integer) get(session, "selected"));
+            require(position.equals(changed.x + "," + changed.y + "," + changed.z), type + "_grade_keeps_selection");
+            require(source.family.equals(changed.family), type + "_grade_keeps_declaration_family");
+            ItemStack expected = ItemStack.loadItemStackFromNBT(
+                options.get(step)
+                    .getCompoundTag("item"));
+            require(
+                changed.block == net.minecraft.block.Block.getBlockFromItem(expected.getItem())
+                    && changed.meta == expected.getItem()
+                        .getMetadata(expected.getItemDamage()),
+                type + "_grade_repeated_plus_minus_reaches_native_capture");
+            require(world.isAirBlock(changed.x, changed.y, changed.z), type + "_grade_edit_never_writes_world");
+            require(
+                ((java.util.Set<?>) get(session, "selectedIndices")).contains(get(session, "selected")),
+                type + "_grade_keeps_batch_selection");
+        }
+        NBTTagCompound restore = (NBTTagCompound) initial.copy();
+        restore.setIntArray("selectedIndices", new int[0]);
+        world.getWorldInfo()
+            .incrementTotalWorldTime(world.getTotalWorldTime() + 1);
+        HologramService.handle(player, restore);
+        settleCapture(world, session);
+    }
+
     private HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack signal) {
         HologramCapture capture = null;
         for (int i = 0; i < 128; i++) {
@@ -446,6 +608,7 @@ public final class HologramCompatibilitySmoke {
         NBTTagCompound action = new NBTTagCompound();
         action.setString("session", (String) get(session, "id"));
         action.setString("op", op);
+        action.setLong("planRevision", (Long) get(session, "planRevision"));
         return action;
     }
 

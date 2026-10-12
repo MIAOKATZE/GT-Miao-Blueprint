@@ -4,8 +4,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import net.minecraft.block.Block;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 
@@ -38,12 +40,72 @@ final class HologramReplacementFamily {
             } else
                 if (method.getDeclaringClass() == StructureUtility.class && "ofBlocksTiered".equals(method.getName())) {
                     candidate = tiered(part);
-                }
+                } else
+                    if (method.getDeclaringClass() == StructureUtility.class && "ofBlocksFlat".equals(method.getName()))
+                        candidate = flat(part);
+                    else if (method.getDeclaringClass() == StructureUtility.class
+                        && "ofBlockAnyMeta".equals(method.getName())) candidate = wildcard(part);
             if (candidate == null || !candidate.contains(target, targetMeta)) continue;
             if (found != null && !found.id.equals(candidate.id)) return null;
             found = candidate;
         }
         return found;
+    }
+
+    private static Family flat(IStructureElement<?> part) {
+        try {
+            Object raw = HologramDeclarationWrappers.captured(part, "val$blocsMap");
+            if (!(raw instanceof Map) || ((Map<?, ?>) raw).isEmpty() || ((Map<?, ?>) raw).size() > 128) return null;
+            List<Pair<Block, Integer>> states = new ArrayList<>();
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) raw).entrySet()) {
+                if (!(entry.getKey() instanceof Block) || !(entry.getValue() instanceof Integer)) return null;
+                states.add(Pair.of((Block) entry.getKey(), (Integer) entry.getValue()));
+            }
+            return registeredFamily("declared:", states);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return null;
+        }
+    }
+
+    static Family wildcard(IStructureElement<?> part) {
+        try {
+            Object raw = HologramDeclarationWrappers.captured(part, "val$block");
+            if (!(raw instanceof Block)) return null;
+            Block block = (Block) raw;
+            Item item = Item.getItemFromBlock(block);
+            if (!(item instanceof ItemBlock)) return null;
+            List<Pair<Block, Integer>> states = new ArrayList<>();
+            List<ItemStack> targets = new ArrayList<>();
+            // The declaration accepts every world metadata nibble. Only the server placement
+            // metadata mapping grants an inventory variant; creative enumeration is client-only.
+            for (int damage = 0; damage < 16; damage++) {
+                int meta = item.getMetadata(damage);
+                if (meta != damage || block.hasTileEntity(meta)) continue;
+                Pair<Block, Integer> state = Pair.of(block, meta);
+                if (!states.contains(state)) states.add(state);
+                targets.add(new ItemStack(item, 1, damage));
+            }
+            Family family = registeredFamily("wildcard:", states);
+            if (family != null) family.registeredTargets = targets;
+            return family;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return null;
+        }
+    }
+
+    private static Family registeredFamily(String prefix, List<Pair<Block, Integer>> states) {
+        if (states.isEmpty()) return null;
+        List<String> keys = new ArrayList<>();
+        for (Pair<Block, Integer> state : states) {
+            Block block = state.getLeft();
+            int meta = state.getRight();
+            if (meta < 0 || meta > 15 || block.hasTileEntity(meta)) return null;
+            String identity = HologramBlockIdentity.key(block, meta);
+            if (identity.isEmpty()) return null;
+            keys.add(identity);
+        }
+        java.util.Collections.sort(keys);
+        return new Family(prefix + String.join(";", keys) + ";", states, false);
     }
 
     private static Family tiered(IStructureElement<?> part) {
@@ -87,6 +149,7 @@ final class HologramReplacementFamily {
         final String id;
         private final List<Pair<Block, Integer>> states;
         private final boolean coil;
+        private List<ItemStack> registeredTargets;
 
         Family(String id, List<Pair<Block, Integer>> states, boolean coil) {
             this.id = id;
@@ -107,6 +170,36 @@ final class HologramReplacementFamily {
             if (stack == null || !(stack.getItem() instanceof ItemBlock)) return false;
             ItemBlock item = (ItemBlock) stack.getItem();
             return contains(Block.getBlockFromItem(item), item.getMetadata(stack.getItemDamage()));
+        }
+
+        /** Registered coil blocks expose their legal world states through the server IHeatingCoil contract. */
+        List<ItemStack> targets() {
+            List<ItemStack> result = new ArrayList<>();
+            if (registeredTargets != null) {
+                for (ItemStack stack : registeredTargets) result.add(stack.copy());
+                return result;
+            }
+            if (!coil) {
+                for (Pair<Block, Integer> state : states) {
+                    ItemStack stack = new ItemStack(state.getLeft(), 1, state.getRight());
+                    if (stack.getItem() != null) result.add(stack);
+                }
+                return result;
+            }
+            for (Object registered : Block.blockRegistry) {
+                if (!(registered instanceof IHeatingCoil) || !(registered instanceof Block)) continue;
+                Block block = (Block) registered;
+                Item item = Item.getItemFromBlock(block);
+                if (!(item instanceof ItemBlock)) continue;
+                for (int meta = 0; meta < 16; meta++) {
+                    ItemStack clean = new ItemStack(item, 1, meta);
+                    if (item.getMetadata(meta) != meta || !canTarget(clean)) continue;
+                    boolean duplicate = false;
+                    for (ItemStack old : result) if (old.isItemEqual(clean)) duplicate = true;
+                    if (!duplicate && result.size() < 512) result.add(clean);
+                }
+            }
+            return result;
         }
     }
 }

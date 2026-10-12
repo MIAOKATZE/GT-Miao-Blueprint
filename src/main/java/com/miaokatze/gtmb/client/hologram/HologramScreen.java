@@ -32,6 +32,7 @@ public final class HologramScreen extends GuiScreen {
 
     private static final int DESIGN_W = HologramScreenLayout.WIDTH, DESIGN_H = HologramScreenLayout.HEIGHT;
     private final List<Control> controls = new ArrayList<>();
+    private static final java.util.Map<String, UiMemory> UI_MEMORY = new java.util.LinkedHashMap<>();
     private final RenderItem itemRenderer = new RenderItem();
     private HologramState state;
     private GuiTextField mainField, channelNameField, channelValueField, optionValueField;
@@ -71,17 +72,26 @@ public final class HologramScreen extends GuiScreen {
     private long sequence, pendingSequence = -1, confirmedRevision = -1, renderGeneration;
     private long queuedDispatchSequence = -1;
     private long presetSaveSequence = -1;
+    private long seenPlacementReviewNonce;
     private String libraryResult = "", deletePresetId = "", deletePresetName = "";
     private HologramState annotationState, promptSummaryState;
-    private final List<HologramState.Cell> annotatedCells = new ArrayList<>();
+    private List<HologramAnnotationMarkers.Marker> annotationMarkers = new ArrayList<>();
+    private final List<HologramAnnotationMarkers.Marker> visibleMarkers = new ArrayList<>();
+    private String pinnedAnnotation = "";
+    private int pinnedAnnotationOffset;
+    private boolean gizmoCopy, boxAdditive;
+    private boolean smokeCtrlSelection, smokeAltSelection;
+    private int[] emptyVoxelPreview;
     private int summaryScope = -1;
     private String promptScopeSummary = "", promptSavedSummary = "";
-    private boolean smokeWholeSelection;
+    private boolean smokeSameTypeSelection;
     private long pendingSelectionSequence = -1;
     private boolean pendingBuildReview, captureRenderSmokeAction;
     private long pendingBuildReviewRevision = -1;
     private NBTTagCompound capturedRenderSmokeAction;
     private List<String> tooltip;
+    private String lastConfirmationTitle = "", lastConfirmationAction = "";
+    private String lastFooterScope = "", lastReviewedScope = "";
 
     HologramScreen(HologramState state) {
         this.state = state;
@@ -90,11 +100,20 @@ public final class HologramScreen extends GuiScreen {
         libraryDrawer = state.data.getBoolean("presetBrowseForPlacement") || state.data.getBoolean("blueprintPreview");
         selected = state.data.hasKey("selected") ? state.data.getInteger("selected") : -1;
         selection.load(state.data.getIntArray("selectedIndices"), selected, state.cells.size());
+        UiMemory memory = UI_MEMORY.get(state.session);
+        if (memory != null) {
+            libraryDrawer = memory.blueprints;
+            libraryOffset = memory.offset;
+            seenPlacementReviewNonce = memory.reviewNonce;
+            int[] restored = rememberedSelection(memory);
+            if (restored != null) selection.load(restored, -1, state.cells.size());
+        }
         selected = selection.first();
         layer = state.maxY;
         sequence = state.data.getLong("uiSequence");
         resetCamera();
         syncTargetSelectors();
+        applyOpeningPurpose();
     }
 
     void updateState(HologramState next) {
@@ -104,6 +123,11 @@ public final class HologramScreen extends GuiScreen {
         boolean presetSaveAcknowledged = presetSaveSequence >= 0
             && next.data.getLong("uiSequence") >= presetSaveSequence;
         if (!state.session.equals(next.session)) {
+            UiMemory nextMemory = UI_MEMORY.get(next.session);
+            libraryDrawer = nextMemory == null ? next.data.getBoolean("blueprintPreview") : nextMemory.blueprints;
+            seenPlacementReviewNonce = nextMemory == null ? 0 : nextMemory.reviewNonce;
+            pinnedAnnotation = "";
+            gizmo.cancel();
             selection.load(
                 next.data.getIntArray("selectedIndices"),
                 next.data.hasKey("selected") ? next.data.getInteger("selected") : -1,
@@ -118,6 +142,7 @@ public final class HologramScreen extends GuiScreen {
             cancelQueuedEdits("会话已变化，已取消等待中的编辑");
         }
         state = next;
+        applyOpeningPurpose();
         selection.retain(next.cells.size());
         if (pendingSelectionSequence >= 0 && next.data.getLong("uiSequence") >= pendingSelectionSequence) {
             selection
@@ -143,14 +168,12 @@ public final class HologramScreen extends GuiScreen {
             pendingBuildReview = false;
             if (HologramPlacementConfirmation.forceReview(next.data, pendingBuildReviewRevision)) {
                 confirmedRevision = pendingBuildReviewRevision;
-                libraryDrawer = false;
                 materialOffset = 0;
                 confirmation = true;
             }
         }
         if (next.data.getBoolean("blueprintAwaitingConfirmation")
             && !next.data.getBoolean("presetBrowseForPlacement")) {
-            libraryDrawer = false;
             confirmedRevision = revision();
             materialOffset = 0;
             confirmation = true;
@@ -214,16 +237,17 @@ public final class HologramScreen extends GuiScreen {
         positionXField = positionField(166);
         positionYField = positionField(246);
         positionZField = positionField(326);
-        presetNameField = new GuiTextField(fontRendererObj, 457, 78, 130, 16);
+        presetNameField = new GuiTextField(fontRendererObj, 457, 78, HologramScreenLayout.COMPACT_PANEL_WIDTH - 10, 16);
         presetNameField.setMaxStringLength(48);
         if (state.data.getBoolean("virtual")) presetNameField.setText(state.data.getString("virtualPresetName"));
+        UiMemory memory = UI_MEMORY.get(state.session);
+        if (memory != null && memory.revision == revision()) presetNameField.setText(memory.name);
         promptField = new GuiTextField(fontRendererObj, 62, 129, 354, 18);
         promptField.setMaxStringLength(1024);
         promptField.setText(state.data.getString("blueprintPrompt"));
         if (state.data.getBoolean("blueprintAwaitingConfirmation")
             && !state.data.getBoolean("presetBrowseForPlacement")) {
             confirmation = true;
-            libraryDrawer = false;
             confirmedRevision = revision();
         }
     }
@@ -242,10 +266,91 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     public void onGuiClosed() {
+        rememberUi();
         if (state.data.getBoolean("presetBrowseForPlacement")) send("dismissPresetBrowse", null, false);
         editQueue.clear();
         queuedDispatchSequence = -1;
         Keyboard.enableRepeatEvents(false);
+    }
+
+    private void rememberUi() {
+        if (state.session.isEmpty()) return;
+        UI_MEMORY.put(
+            state.session,
+            new UiMemory(
+                libraryDrawer,
+                revision(),
+                selection.indices(),
+                libraryOffset,
+                presetNameField == null ? state.data.getString("virtualPresetName") : presetNameField.getText(),
+                seenPlacementReviewNonce,
+                selectedPositions()));
+        while (UI_MEMORY.size() > 32) UI_MEMORY.remove(
+            UI_MEMORY.keySet()
+                .iterator()
+                .next());
+    }
+
+    private void closeRoot() {
+        rememberUi();
+        mc.displayGuiScreen(null);
+    }
+
+    private int[] selectedPositions() {
+        int[] positions = new int[selection.size() * 3];
+        int at = 0;
+        for (int index : selection.indices()) {
+            HologramState.Cell cell = state.cells.get(index);
+            positions[at++] = cell.x;
+            positions[at++] = cell.y;
+            positions[at++] = cell.z;
+        }
+        return positions;
+    }
+
+    private int[] rememberedSelection(UiMemory memory) {
+        if (memory.revision == revision()) return memory.indices;
+        java.util.Map<String, Integer> coordinates = new java.util.HashMap<>();
+        for (HologramState.Cell cell : state.cells) coordinates.put(cell.x + "," + cell.y + "," + cell.z, cell.index);
+        int[] indices = new int[memory.positions.length / 3];
+        for (int i = 0; i < indices.length; i++) {
+            Integer index = coordinates
+                .get(memory.positions[i * 3] + "," + memory.positions[i * 3 + 1] + "," + memory.positions[i * 3 + 2]);
+            if (index == null) return null;
+            indices[i] = index;
+        }
+        return indices;
+    }
+
+    private void applyOpeningPurpose() {
+        if (!"placementReview".equals(state.data.getString("openPurpose"))) return;
+        long nonce = state.data.getLong("placementReviewNonce");
+        if (nonce <= seenPlacementReviewNonce) return;
+        seenPlacementReviewNonce = nonce;
+        libraryDrawer = false;
+        rememberUi();
+    }
+
+    private static final class UiMemory {
+
+        final boolean blueprints;
+        final long revision;
+        final int[] indices;
+        final int offset;
+        final String name;
+        final long reviewNonce;
+        final int[] positions;
+
+        UiMemory(boolean blueprints, long revision, int[] indices, int offset, String name, long reviewNonce,
+            int[] positions) {
+            this.blueprints = blueprints;
+            this.revision = revision;
+            this.indices = indices;
+            this.offset = offset;
+            this.name = name;
+            this.reviewNonce = reviewNonce;
+            this.positions = positions;
+        }
     }
 
     @Override
@@ -279,11 +384,12 @@ public final class HologramScreen extends GuiScreen {
             drawRect(6, 29, DESIGN_W - 6, DESIGN_H - 8, 0xed142a32);
             skin("panel", 6, 6, DESIGN_W - 12, 22);
             text(
-                "猫猫全息投影仪 · " + (state.data.getBoolean("virtual") ? "蓝图：" + state.data.getString("virtualPresetName")
-                    : state.data.getString("title")),
+                placementReviewActive() ? "蓝图放置预检 · " + state.data.getString("virtualPresetName")
+                    : state.data.getBoolean("virtual") ? "蓝图结构调整 · " + state.data.getString("virtualPresetName")
+                        : state.data.getString("title"),
+                142,
                 13,
-                13,
-                334,
+                197,
                 0xf5e4b9);
             button(
                 60,
@@ -316,12 +422,12 @@ public final class HologramScreen extends GuiScreen {
                 HologramState.Cell activeCell = selectedCell();
                 String activeStructureId = selectedStructureId();
                 if (activeCell != null && !activeStructureId.isEmpty()) {
-                    button(163, 452, 281, 67, 17, activeCell.sourceMissing ? "来源缺失" : "结构编辑", editable(), mx, my);
+                    button(163, 452, 281, 107, 17, activeCell.sourceMissing ? "来源缺失" : "结构编辑", editable(), mx, my);
                     button(
                         164,
-                        523,
+                        563,
                         281,
-                        69,
+                        109,
                         17,
                         structureEnabled(activeStructureId) ? "施工 ✓" : "施工 ×",
                         editable(),
@@ -329,7 +435,7 @@ public final class HologramScreen extends GuiScreen {
                         my);
                 }
                 if (!state.data.getString("activeStructure")
-                    .isEmpty()) button(165, 452, 300, 140, 13, "返回区域总览", editable(), mx, my);
+                    .isEmpty()) button(165, 452, 300, 220, 13, "返回区域总览", editable(), mx, my);
             }
             button(108, 12, 34, 40, 17, "撤销", editable() && state.data.getBoolean("editCanUndo"), mx, my);
             button(109, 54, 34, 40, 17, "重做", editable() && state.data.getBoolean("editCanRedo"), mx, my);
@@ -337,7 +443,7 @@ public final class HologramScreen extends GuiScreen {
             button(26, 158, 34, 76, 17, "材料与改动", editable() && state.data.getBoolean("supported"), mx, my);
             button(130, 236, 34, 104, 17, "保存蓝图", true, mx, my);
             button(146, 342, 34, 44, 17, "提示词", editable(), mx, my);
-            button(147, 388, 34, 54, 17, moveHandles ? "移动 ✓" : "移动轴", selected >= 0 && editable(), mx, my);
+            button(178, 478, 9, 92, 17, "框选区域", editable(), mx, my);
             if (drawer || inventory || positionDrawer || sourceDrawer || !optionChannel.isEmpty()) {
                 controls.removeIf(control -> control.x >= 157);
                 tooltip = null;
@@ -410,17 +516,38 @@ public final class HologramScreen extends GuiScreen {
                 drawNbtEditor(mx, my);
             }
             if (!confirmation) {
-                String status = pendingSequence >= 0 ? "等待服务端校验…" : state.data.getString("status");
+                String status = pendingSequence >= 0 ? "等待服务端校验…" : completionSummary();
+                int statusX = libraryDrawer ? 12 : 35;
+                int statusWidth = libraryDrawer ? DESIGN_W - 24 : viewportWidth - 12;
+                drawRect(statusX - 3, 318, statusX + statusWidth + 3, 333, 0xff142a32);
                 text(
                     notice.isEmpty() ? status : notice,
-                    12,
-                    DESIGN_H - 9,
-                    DESIGN_W - 24,
+                    statusX,
+                    321,
+                    statusWidth,
                     notice.isEmpty() ? 0xffbd91 : 0xff9292);
-                if (mx >= 12 && mx < DESIGN_W - 12 && my >= DESIGN_H - 9 && my < DESIGN_H) tooltip = fontRendererObj
-                    .listFormattedStringToWidth(notice.isEmpty() ? status : notice, DESIGN_W - 32);
+                if (mx >= statusX && mx < statusX + statusWidth && my >= 318 && my < 333) {
+                    tooltip = new ArrayList<>(
+                        fontRendererObj.listFormattedStringToWidth(notice.isEmpty() ? status : notice, 390));
+                    if (!status.equals(state.data.getString("status")))
+                        tooltip.addAll(fontRendererObj.listFormattedStringToWidth(state.data.getString("status"), 390));
+                    tooltip.add(
+                        "材料缺口 " + state.data.getInteger("missing") + " · 保护 " + state.data.getInteger("protected"));
+                }
             }
-            text(HologramGuidance.next(state, selected, libraryDrawer, pendingSequence >= 0), 35, 309, 553, 0x8bdddf);
+            drawEmptyVoxelPreview(mx, my);
+            if (annotationInteractive()) drawAnnotations(mx, my);
+            String guidance = HologramGuidance.next(state, selected, libraryDrawer, pendingSequence >= 0);
+            lastFooterScope = constructionScopeLabel(false);
+            String footerGuide = !libraryDrawer && !confirmation && !state.cells.isEmpty() ? lastFooterScope + " · "
+                + (state.data.getInteger("job") == 1 || state.data.getInteger("job") == 2 ? guidance
+                    : constructionScopeHint())
+                : guidance;
+            text(footerGuide, 35, 306, viewportWidth - 4, 0x8bdddf);
+            if (mx >= 35 && mx < viewportX + viewportWidth && my >= 304 && my < 317) {
+                tooltip = new ArrayList<>(fontRendererObj.listFormattedStringToWidth(footerGuide, 390));
+                tooltip.addAll(fontRendererObj.listFormattedStringToWidth(guidance, 390));
+            }
             if (tooltip != null) drawHoveringText(tooltip, mx, my, fontRendererObj);
         } finally {
             GL11.glPopMatrix();
@@ -431,7 +558,7 @@ public final class HologramScreen extends GuiScreen {
 
     private void drawPreview(int mx, int my) {
         HologramRenderer.selection = selection;
-        HologramRenderer.showEmptyCells = inventory || positionDrawer;
+        HologramRenderer.showEmptyCells = inventory || positionDrawer || airSelectionHeld();
         HologramRenderer.projectionLayer = allLayers ? Integer.MAX_VALUE : layer;
         HologramRenderer.selectedStructureId = selectedStructureId();
         drawRect(viewportX, viewportY, viewportX + viewportWidth, viewportY + viewportHeight, 0xff0c1e28);
@@ -468,7 +595,6 @@ public final class HologramScreen extends GuiScreen {
         button(12, 136, 55, 20, 17, "−", layer > state.minY, mx, my);
         button(13, 158, 55, 22, 17, "+", layer < state.maxY, mx, my);
         if (selection.size() > 0) text("选中 " + selection.size() + " 格", 186, 61, 100, 0xffe59b);
-        drawAnnotations();
         if (!libraryDrawer) {
             button(14, 38, 282, 66, 17, "复位视角", true, mx, my);
             button(15, 106, 282, 74, 17, HologramClient.worldPreview ? "世界投影 ✓" : "世界投影 ×", true, mx, my);
@@ -483,21 +609,17 @@ public final class HologramScreen extends GuiScreen {
             editable() && previewInteractive() && state.data.getBoolean("target") && state.data.getBoolean("supported"),
             mx,
             my);
-        if (moveHandles && selected >= 0 && !libraryDrawer && previewInteractive()) drawGizmo(mx, my);
+        if (moveHandles && canMoveSelection() && !libraryDrawer && previewInteractive()) drawGizmo(mx, my);
         if (hovered >= 0 && hovered < state.cells.size()) {
             HologramState.Cell cell = state.cells.get(hovered);
-            if (!cell.prompt.isEmpty() || !state.data.getString("blueprintPrompt")
-                .isEmpty() || cell.missingBlock || cell.excluded || cell.sourceMissing) {
+            if (cell.missingBlock || cell.excluded || cell.sourceMissing) {
                 tooltip = new ArrayList<>();
-                if (!state.data.getString("blueprintPrompt")
-                    .isEmpty()) tooltip.add("蓝图提示：" + state.data.getString("blueprintPrompt"));
                 if (cell.missingBlock) tooltip.add("缺失方块：" + cell.wantId + "（点击查看来源版本）");
                 if (cell.sourceMissing) {
                     tooltip.addAll(fontRendererObj.listFormattedStringToWidth("来源结构缺失：" + cell.sourceWarning, 260));
                     if (!cell.sourceClass.isEmpty())
                         tooltip.addAll(fontRendererObj.listFormattedStringToWidth(cell.sourceClass, 260));
                 }
-                if (!cell.prompt.isEmpty()) tooltip.add(cell.prompt);
                 if (cell.excluded) tooltip.add("已排除施工");
             }
         }
@@ -522,6 +644,116 @@ public final class HologramScreen extends GuiScreen {
                 break;
             }
         }
+    }
+
+    private boolean annotationInteractive() {
+        return !inventory && (previewInteractive() || libraryDrawer && !confirmation
+            && !resetReview
+            && deletePresetId.isEmpty()
+            && !nbtDrawer
+            && !promptDrawer
+            && !versionsDrawer
+            && !shortcutsDrawer);
+    }
+
+    private boolean canMoveSelection() {
+        return state.data.getBoolean("geometryEditable") && state.data.getBoolean("virtual")
+            && state.data.getBoolean("supported")
+            && editable()
+            && selection.movable(state);
+    }
+
+    private int[] emptyVoxelAt(int mx, int my) {
+        if (!inViewport(mx, my) || previewBlockedAt(mx, my)) return null;
+        for (Control control : controls) if (control.contains(mx, my)) return null;
+        HologramState.Cell cell = selectedCell();
+        int planeY = !allLayers ? state.data.getInteger("y") + layer
+            : cell == null ? state.data.getInteger("y") + (state.minY + state.maxY) / 2 : cell.y;
+        int[] voxel = HologramRenderer.pickEmptyVoxel(state, mx, my, planeY);
+        if (voxel == null) return null;
+        String structure = selectedStructureId();
+        if (!structure.isEmpty()) {
+            int[] bounds = null;
+            for (HologramState.Cell member : state.cells) if (member.belongsToStructure(structure)) {
+                if (bounds == null) bounds = new int[] { member.x, member.y, member.z, member.x, member.y, member.z };
+                else {
+                    bounds[0] = Math.min(bounds[0], member.x);
+                    bounds[1] = Math.min(bounds[1], member.y);
+                    bounds[2] = Math.min(bounds[2], member.z);
+                    bounds[3] = Math.max(bounds[3], member.x);
+                    bounds[4] = Math.max(bounds[4], member.y);
+                    bounds[5] = Math.max(bounds[5], member.z);
+                }
+            }
+            if (bounds != null && !HologramSelection.inside(
+                voxel[0],
+                voxel[1],
+                voxel[2],
+                bounds[0] - 1,
+                bounds[1] - 1,
+                bounds[2] - 1,
+                bounds[3] + 1,
+                bounds[4] + 1,
+                bounds[5] + 1)) return null;
+        }
+        return voxel;
+    }
+
+    private void drawEmptyVoxelPreview(int mx, int my) {
+        emptyVoxelPreview = airSelectionHeld() && previewInteractive() && !inventory ? emptyVoxelAt(mx, my) : null;
+        if (emptyVoxelPreview == null) return;
+        int[] p = emptyVoxelPreview;
+        int dx = p[0] - state.data.getInteger("x"), dy = p[1] - state.data.getInteger("y"),
+            dz = p[2] - state.data.getInteger("z");
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glLineWidth(2);
+        net.minecraft.client.renderer.Tessellator t = net.minecraft.client.renderer.Tessellator.instance;
+        t.startDrawing(GL11.GL_LINES);
+        t.setColorOpaque_I(0x9eedc1);
+        for (int axis = 0; axis < 3; axis++) for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) {
+            double[] from = { dx + a - .5, dy + b - .5, dz - .5 };
+            if (axis == 0) from = new double[] { dx - .5, dy + a - .5, dz + b - .5 };
+            if (axis == 1) from = new double[] { dx + a - .5, dy - .5, dz + b - .5 };
+            double[] to = from.clone();
+            to[axis] += 1;
+            double[] start = HologramRenderer.project(from[0], from[1], from[2]);
+            double[] end = HologramRenderer.project(to[0], to[1], to[2]);
+            t.addVertex(start[0], start[1], 8);
+            t.addVertex(end[0], end[1], 8);
+        }
+        t.draw();
+        GL11.glPopAttrib();
+        text(
+            "空气 " + p[0] + "," + p[1] + "," + p[2] + " · 偏移 " + dx + "," + dy + "," + dz + " · Alt+点击选中",
+            viewportX + 8,
+            pinnedAnnotation.isEmpty() ? 263 : 80,
+            viewportWidth - 16,
+            0x9eedc1);
+    }
+
+    private boolean selectEmptyVoxel(int mx, int my) {
+        int[] voxel = emptyVoxelAt(mx, my);
+        if (voxel == null) {
+            notice = "此光标位置没有可编辑空气；调整视角或选择工作层";
+            return true;
+        }
+        for (HologramState.Cell cell : state.cells)
+            if (cell.x == voxel[0] && cell.y == voxel[1] && cell.z == voxel[2]) {
+                selection.click(cell.index, controlSelectionHeld());
+                selected = selection.first();
+                syncTargetSelectors();
+                return true;
+            }
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("dx", voxel[0] - state.data.getInteger("x"));
+        request.setInteger("dy", voxel[1] - state.data.getInteger("y"));
+        request.setInteger("dz", voxel[2] - state.data.getInteger("z"));
+        request.setBoolean("airOnly", true);
+        request.setString("structureId", selectedStructureId());
+        send("addPosition", request, true);
+        return true;
     }
 
     private void drawGizmo(int mx, int my) {
@@ -568,14 +800,14 @@ public final class HologramScreen extends GuiScreen {
         }
         GL11.glPopAttrib();
         if (gizmo.axis() >= 0) text(
-            "移动 " + new String[] { "X", "Y", "Z" }[gizmo.axis()] + " " + gizmo.delta() + " 格",
+            (gizmoCopy ? "复制移动 " : "移动 ") + new String[] { "X", "Y", "Z" }[gizmo.axis()] + " " + gizmo.delta() + " 格",
             38,
             263,
             180,
             0xffffaa);
         // Preview hint and structure overlays may append to the axis tooltip in this same frame.
         else if (gizmo.pick(mx, my) >= 0)
-            tooltip = new ArrayList<>(Collections.singletonList("拖动轴沿单一方向移动；方块坐标吸附；松开提交规划"));
+            tooltip = new ArrayList<>(Collections.singletonList("拖动轴移动；按住 Ctrl 开始拖动即复制；松开提交规划"));
     }
 
     private void drawConfig(int mx, int my) {
@@ -598,17 +830,12 @@ public final class HologramScreen extends GuiScreen {
             editable(),
             mx,
             my);
-        String[] scopes = { "全结构", "当前层", "选中格", "同类" };
-        for (int i = 0; i < 4; i++) button(
-            90 + i,
-            284 + i * 43,
-            100,
-            41,
-            17,
-            (state.data.getInteger("scope") == i ? "›" : "") + scopes[i],
-            editable() && (i < 2 || selectedCell() != null && (i != 3 || !selectedCell().family.isEmpty())),
-            mx,
-            my);
+        text(
+            selection.size() == 0 ? "点击预览选择编辑范围" : "编辑所选 " + selection.size() + " 格 · T 同种 / Ctrl 多选",
+            286,
+            104,
+            170,
+            0x94afb4);
         HologramState.Cell cell = selectedCell();
         text(
             cell == null ? "在预览中点击选择位置"
@@ -617,52 +844,58 @@ public final class HologramScreen extends GuiScreen {
             122,
             168,
             cell != null && cell.sourceMissing ? 0xff7272 : 0xb9d5d4);
-        List<String> roles = hatchRoles();
-        hatchRole = Math.floorMod(hatchRole, roles.size());
-        button(97, 284, 135, 224, 17, "类型：" + roleLabel(roles.get(hatchRole)) + " ▾", cell != null, mx, my);
-        drawTierSelector(284, 155, 224, mx, my);
-        if (mx >= 284 && mx < 508 && my >= 135 && my < 173) tooltip = Collections.singletonList(
-            "目标类型：" + roleLabel(roles.get(hatchRole))
-                + "；目标等级："
-                + (hatchFilterTier < 0 ? "未指定" : tierName(hatchFilterTier))
-                + "；筛选候选后点击具体目标。"
-                + candidateNote());
-        List<Integer> indices = filteredHatches();
-        hatchOffset = Math.max(0, Math.min(hatchOffset, Math.max(0, indices.size() - 2)));
-        int[] available = cellTag().getIntArray("candidateAvailable");
-        for (int row = 0; row < 2 && row + hatchOffset < indices.size(); row++) {
-            int index = indices.get(row + hatchOffset);
-            ItemStack stack = cell.candidates.get(index);
-            drawItem(stack, 284, 177 + row * 20);
-            String count = state.data.getBoolean("creativeMaterials") ? "∞"
-                : index < available.length ? Integer.toString(available[index]) : "?";
-            button(
-                10000 + index,
-                304,
-                177 + row * 20,
-                204,
-                18,
-                (cell.chosenChoice == index ? "✓ " : "") + stack.getDisplayName() + " ×" + count,
-                editable() && canInventoryPin(),
-                mx,
-                my);
-            if (mx >= 284 && mx < 508 && my >= 177 + row * 20 && my < 195 + row * 20)
-                tooltip = fontRendererObj.listFormattedStringToWidth(
-                    stack.getDisplayName() + " · 已启用来源可用 " + count + "；仅更新规划目标。" + candidateNote(),
-                    230);
-        }
-        if (indices.isEmpty()) {
-            NBTTagCompound primary = primaryCapability();
-            if (primary != null && !"_hatch_candidate".equals(primary.getString("id"))) {
-                button(80, 284, 177, 20, 18, "−", editable() && canStep(primary, -1), mx, my);
-                button(81, 307, 177, 178, 18, optionLabel(primary), editable(), mx, my);
-                button(82, 488, 177, 20, 18, "+", editable() && canStep(primary, 1), mx, my);
-            } else text(
-                cell != null && !cell.candidateComplete ? "未完整识别 / 无此筛选候选" : "无此类型 / 等级候选",
-                286,
-                181,
-                220,
-                0x94afb4);
+        NBTTagCompound grade = stableGradeCapability();
+        if (grade != null) {
+            text(grade.getString("label"), 286, 140, 220, 0xf5e4b9);
+            text("＋ / − 连续调整等级，保留当前选区", 286, 160, 220, 0x94afb4);
+            drawGradeSelector(grade, mx, my);
+            if (cell != null) button(95, 284, 200, 224, 17, "查看可替换方块", editable(), mx, my);
+        } else {
+            List<String> roles = hatchRoles();
+            hatchRole = Math.floorMod(hatchRole, roles.size());
+            button(97, 284, 135, 224, 17, "类型：" + roleLabel(roles.get(hatchRole)) + " ▾", cell != null, mx, my);
+            drawTierSelector(284, 155, 224, mx, my);
+            if (mx >= 284 && mx < 508 && my >= 135 && my < 173) tooltip = Collections.singletonList(
+                "目标类型：" + roleLabel(roles.get(hatchRole))
+                    + "；目标等级："
+                    + (hatchFilterTier < 0 ? "未指定" : tierName(hatchFilterTier))
+                    + "；筛选候选后点击具体目标。"
+                    + candidateNote());
+            List<Integer> indices = filteredHatches();
+            hatchOffset = Math.max(0, Math.min(hatchOffset, Math.max(0, indices.size() - 2)));
+            int[] available = cellTag().getIntArray("candidateAvailable");
+            for (int row = 0; row < 2 && row + hatchOffset < indices.size(); row++) {
+                int index = indices.get(row + hatchOffset);
+                ItemStack stack = cell.candidates.get(index);
+                drawItem(stack, 284, 177 + row * 20);
+                String count = state.data.getBoolean("creativeMaterials") ? "∞"
+                    : index < available.length ? Integer.toString(available[index]) : "?";
+                button(
+                    10000 + index,
+                    304,
+                    177 + row * 20,
+                    204,
+                    18,
+                    (cell.chosenChoice == index ? "✓ " : "") + stack.getDisplayName() + " ×" + count,
+                    editable() && canInventoryPin(),
+                    mx,
+                    my);
+                if (mx >= 284 && mx < 508 && my >= 177 + row * 20 && my < 195 + row * 20)
+                    tooltip = fontRendererObj.listFormattedStringToWidth(
+                        stack.getDisplayName() + " · 已启用来源可用 " + count + "；仅更新规划目标。" + candidateNote(),
+                        230);
+            }
+            if (indices.isEmpty()) {
+                NBTTagCompound primary = primaryCapability();
+                if (primary != null && !"_hatch_candidate".equals(primary.getString("id"))) {
+                    drawGradeSelector(primary, mx, my);
+                } else text(
+                    cell != null && !cell.candidateComplete ? "未完整识别 / 无此筛选候选" : "无此类型 / 等级候选",
+                    286,
+                    181,
+                    220,
+                    0x94afb4);
+            }
         }
         text(cell == null ? "仅编辑规划，不立即施工" : "目标：" + cellName(cell, false), 286, 218, 220, 0x94afb4);
         if (cell != null && mx >= 284 && mx < 456 && my >= 120 && my < 134
@@ -678,11 +911,30 @@ public final class HologramScreen extends GuiScreen {
         button(112, 284, 231, 40, 17, "复制", editable() && cell != null, mx, my);
         button(66, 327, 231, 75, 17, "恢复默认壳", editable() && cell != null && !cell.anchor, mx, my);
         button(113, 405, 231, 103, 17, "六面转向", editable() && cell != null, mx, my);
-        button(69, 284, 251, 58, 15, "取消选择", editable() && cell != null, mx, my);
-        button(94, 345, 251, 55, 15, "仓室预设", editable() && state.data.getInteger("mode") != 2, mx, my);
-        button(75, 403, 251, 50, 15, "添加位置", editable(), mx, my);
-        button(78, 456, 251, 52, 15, "材料来源", editable(), mx, my);
+        button(94, 284, 251, 107, 15, "仓室预设", editable() && state.data.getInteger("mode") != 2, mx, my);
+        button(78, 395, 251, 113, 15, "材料来源", editable(), mx, my);
         button(61, 458, 100, 50, 17, "背包选材", editable() && state.data.getInteger("mode") != 2, mx, my);
+    }
+
+    private void drawGradeSelector(NBTTagCompound grade, int mx, int my) {
+        button(80, 284, 177, 20, 18, "−", editable() && canStep(grade, -1), mx, my);
+        button(81, 307, 177, 178, 18, optionLabel(grade), editable(), mx, my);
+        button(82, 488, 177, 20, 18, "+", editable() && canStep(grade, 1), mx, my);
+    }
+
+    private NBTTagCompound stableGradeCapability() {
+        NBTTagCompound grade = primaryCapability();
+        if (grade == null || !grade.getBoolean("editable") || "_hatch_candidate".equals(grade.getString("id")))
+            return null;
+        HologramState.Cell cell = selectedCell();
+        if (cell == null) return grade;
+        if (cell.family.equals("coil") && grade.getString("id")
+            .equals("coil")) return grade;
+        if (cell.family.startsWith("glass:") && grade.getString("id")
+            .equals("glass")) return grade;
+        if (cell.family.startsWith("tiered:") && grade.getString("kind")
+            .equals("material")) return grade;
+        return null;
     }
 
     private void drawShortcuts(int mx, int my) {
@@ -703,19 +955,21 @@ public final class HologramScreen extends GuiScreen {
         }
         button(115, 80, 220, 80, 17, "恢复默认", true, mx, my);
         text("撤销 / 重做只改变规划，不回滚世界", 80, 241, 256, 0xe4b85a);
+        drawRect(70, 252, 442, 296, 0xff172f36);
+        text("选择：T 同种 · Ctrl 多选 · Shift 框选 · Ctrl+A 全选", 80, 259, 352, 0xb9d5d4);
+        text("编辑：Alt 选空气 · G 移动轴 · Ctrl+拖轴复制 · Esc/E 关闭", 80, 277, 352, 0xb9d5d4);
     }
 
     private void drawTabs(int mx, int my) {
-        button(148, 7, 58, 23, 42, "", true, mx, my);
-        button(149, 7, 103, 23, 42, "", true, mx, my);
-        int structureColor = libraryDrawer ? 0xf0ddb3 : 0x81dce9;
-        int blueprintColor = libraryDrawer ? 0x81dce9 : 0xf0ddb3;
-        drawCenteredString(fontRendererObj, "结", 18, 68, structureColor);
-        drawCenteredString(fontRendererObj, "构", 18, 81, structureColor);
-        drawCenteredString(fontRendererObj, "蓝", 18, 113, blueprintColor);
-        drawCenteredString(fontRendererObj, "图", 18, 126, blueprintColor);
-        int activeY = libraryDrawer ? 105 : 60;
-        drawRect(8, activeY, 10, activeY + 38, 0xff81dce9);
+        for (int i = 0; i < 2; i++) {
+            int x = 12 + i * 62;
+            Control tab = new Control(148 + i, x, 9, 58, 17, true);
+            controls.add(tab);
+            boolean active = libraryDrawer == (i == 1);
+            drawRect(x, 9, x + 58, 26, active ? 0xff274c56 : tab.contains(mx, my) ? 0xff213d46 : 0xff17333c);
+            if (active) drawRect(x, 24, x + 58, 26, 0xff81dce9);
+            drawCenteredString(fontRendererObj, i == 0 ? "结构" : "蓝图", x + 29, 13, active ? 0x81dce9 : 0xc1d2d0);
+        }
     }
 
     private boolean structureEnabled(String id) {
@@ -738,49 +992,101 @@ public final class HologramScreen extends GuiScreen {
 
     private void drawLibrary(int mx, int my) {
         int x = HologramScreenLayout.COMPACT_PANEL_X, w = HologramScreenLayout.COMPACT_PANEL_WIDTH;
+        NBTTagList presets = state.data.getTagList("presets", 10);
         drawRect(x, 57, x + w, 314, 0xef172f36);
-        text(
-            "蓝图 · " + state.data.getTagList("presets", 10)
-                .tagCount(),
-            x + 5,
-            62,
-            w - 10,
-            0xf5e4b9);
+        text("蓝图库 · " + presets.tagCount() + " 项", x + 5, 62, w - 10, 0xf5e4b9);
         presetNameField.drawTextBox();
         if (presetNameField.getText()
-            .isEmpty() && !presetNameField.isFocused()) text("输入蓝图名称", x + 8, 83, w - 16, 0x647c7f);
+            .isEmpty() && !presetNameField.isFocused()) text("当前草稿名称", x + 8, 83, w - 16, 0x647c7f);
         boolean canSave = editable() && !state.data.getBoolean("settingsOnly") && !state.cells.isEmpty();
-        button(140, x + 5, 99, 63, 16, "保存", canSave, mx, my);
-        button(132, x + 72, 99, 63, 16, "另存为", canSave, mx, my);
-        button(142, x + 5, 118, 63, 16, "NBT " + (retainNbt ? "✓" : "×"), true, mx, my);
-        button(143, x + 72, 118, 63, 16, "覆盖板 " + (retainCovers ? "✓" : "×"), true, mx, my);
-        NBTTagList presets = state.data.getTagList("presets", 10);
-        libraryOffset = Math.max(0, Math.min(libraryOffset, Math.max(0, presets.tagCount() - 5)));
-        for (int i = libraryOffset; i < presets.tagCount() && i < libraryOffset + 5; i++) {
+        drawRect(x + 3, 97, x + w - 3, 117, 0xff24444d);
+        button(140, x + 5, 99, 103, 16, "保存草稿", canSave, mx, my);
+        button(141, x + 112, 99, 103, 16, "放置所选蓝图", editable() && selectedPresetExists(), mx, my);
+        libraryOffset = Math.max(0, Math.min(libraryOffset, Math.max(0, presets.tagCount() - 4)));
+        NBTTagCompound selectedRow = null;
+        for (int i = 0; i < presets.tagCount(); i++) {
             NBTTagCompound row = presets.getCompoundTagAt(i);
-            String mark = row.getString("id")
-                .equals(state.data.getString("selectedPresetId")) ? "✓ " : "";
-            int y = 139 + (i - libraryOffset) * 19;
-            button(14000 + i, x + 5, y, w - 10, 17, mark + row.getString("name"), editable(), mx, my);
-            if (mx >= x + 5 && mx < x + w - 5 && my >= y && my < y + 17)
-                tooltip = Collections.singletonList(row.getString("name") + " · 点击预览");
+            if (row.getString("id")
+                .equals(state.data.getString("selectedPresetId"))) selectedRow = row;
+            if (i < libraryOffset || i >= libraryOffset + 4) continue;
+            int y = 123 + (i - libraryOffset) * 28;
+            boolean active = row.getString("id")
+                .equals(state.data.getString("selectedPresetId"));
+            Control entry = new Control(14000 + i, x + 5, y, w - 10, 28, editable());
+            controls.add(entry);
+            if (active || entry.contains(mx, my))
+                drawRect(x + 5, y, x + w - 5, y + 28, active ? 0xff244b57 : 0xff203b43);
+            if (active) drawRect(x + 5, y + 2, x + 8, y + 26, 0xff81dce9);
+            drawRect(x + 8, y + 27, x + w - 8, y + 28, 0xff2b444c);
+            drawRect(x + 12, y + 5, x + 23, y + 16, active ? 0xff7fbdc8 : 0xff637e89);
+            drawRect(x + 14, y + 7, x + 21, y + 9, 0xff19313a);
+            drawRect(x + 14, y + 11, x + 21, y + 13, 0xff19313a);
+            text(row.getString("name"), x + 29, y + 4, w - 42, active ? 0xf5e4b9 : 0xd0dada);
+            text(row.getInteger("cells") + " 格 · " + blueprintSource(row), x + 29, y + 17, w - 42, 0x8ba7ad);
+            if (entry.contains(mx, my)) {
+                tooltip = new ArrayList<>();
+                tooltip.add(row.getString("name"));
+                tooltip.add(
+                    row.getInteger("cells") + " 格 · "
+                        + row.getInteger("structures")
+                        + " 结构 · 来源："
+                        + blueprintSource(row));
+                tooltip.add("点击选择并预览；上方“放置”开始世界定位");
+            }
         }
-        if (presets.tagCount() == 0) text("框选区域后另存蓝图", x + 5, 143, w - 10, 0x94afb4);
-        button(139, x + 5, 236, 63, 17, "编辑", editable() && selectedPresetExists(), mx, my);
-        button(141, x + 72, 236, 63, 17, "放置", editable() && selectedPresetExists(), mx, my);
-        button(150, x + 5, 256, 63, 17, state.data.getBoolean("sourceMissing") ? "来源缺失" : "版本信息", true, mx, my);
-        button(146, x + 72, 256, 63, 17, "提示词", editable(), mx, my);
-        button(159, x + 5, 276, 63, 17, "导出", editable() && selectedPresetExists(), mx, my);
-        button(161, x + 72, 276, 63, 17, "导入", editable(), mx, my);
-        button(166, x + 5, 296, 83, 16, "NBT 条目", editable(), mx, my);
-        button(175, x + 92, 296, 43, 16, "删除", editable() && selectedPresetExists(), mx, my);
-        String error = state.data.getString("presetConfigError");
-        String result = error.isEmpty() ? libraryResult : "读取失败：" + error;
-        if (result.isEmpty()) result = "选择列表蓝图 → 点击放置 → 核对材料";
+        if (presets.tagCount() == 0) {
+            text("尚无保存蓝图", x + 12, 139, w - 24, 0xb9d5d4);
+            text("框选区域后保存为蓝图", x + 12, 157, w - 24, 0x8ba7ad);
+        }
+        if (presets.tagCount() > 4) {
+            drawRect(x + w - 3, 123, x + w - 1, 235, 0xff243a40);
+            int thumbHeight = Math.max(12, 112 * 4 / presets.tagCount());
+            int thumbY = 123 + (112 - thumbHeight) * libraryOffset / (presets.tagCount() - 4);
+            drawRect(x + w - 3, thumbY, x + w - 1, thumbY + thumbHeight, 0xff6aabb8);
+        }
+        button(139, x + 5, 241, 103, 17, "编辑所选", editable() && selectedPresetExists(), mx, my);
+        button(132, x + 112, 241, 103, 17, "草稿另存为", canSave, mx, my);
+        button(142, x + 5, 261, 103, 17, "保留 NBT " + (retainNbt ? "✓" : "×"), true, mx, my);
+        button(143, x + 112, 261, 103, 17, "覆盖板 " + (retainCovers ? "✓" : "×"), true, mx, my);
+        button(159, x + 5, 281, 67, 17, "导出", editable() && selectedPresetExists(), mx, my);
+        button(161, x + 77, 281, 66, 17, "导入", editable(), mx, my);
+        button(175, x + 148, 281, 67, 17, "删除", editable() && selectedPresetExists(), mx, my);
+        button(166, x + 5, 301, 67, 13, "NBT 条目", editable(), mx, my);
+        button(150, x + 77, 301, 66, 13, "来源版本", true, mx, my);
+        button(146, x + 148, 301, 67, 13, "提示词", editable(), mx, my);
         drawRect(35, 239, 442, 279, 0xe8172f36);
-        List<String> lines = fontRendererObj.listFormattedStringToWidth(result, 395);
-        for (int i = 0; i < Math.min(3, lines.size()); i++) text(lines.get(i), 41, 245 + i * 11, 395, 0xffbd91);
-        if (mx >= 35 && mx < 442 && my >= 239 && my < 279) tooltip = lines;
+        if (selectedRow == null) {
+            text("选择列表中的蓝图，查看预览与资料", 41, 247, 395, 0xb9d5d4);
+            text("保存当前草稿与放置所选蓝图互相独立", 41, 263, 395, 0x8ba7ad);
+        } else {
+            text(selectedRow.getString("name"), 41, 244, 395, 0xf5e4b9);
+            text("来源：" + blueprintSource(selectedRow), 41, 256, 395, 0x8ba7ad);
+            text(
+                selectedRow.getInteger("cells") + " 格 · " + selectedRow.getInteger("structures") + " 结构 · 选择后点击上方放置",
+                41,
+                267,
+                395,
+                0xb9d5d4);
+        }
+        if (mx >= 35 && mx < 442 && my >= 239 && my < 279) {
+            tooltip = new ArrayList<>();
+            if (selectedRow != null) {
+                tooltip.add(selectedRow.getString("name"));
+                tooltip.add("来源：" + blueprintSource(selectedRow));
+                if (!selectedRow.getString("sourceClass")
+                    .isEmpty()) tooltip.add(selectedRow.getString("sourceClass"));
+            }
+            String error = state.data.getString("presetConfigError");
+            String result = error.isEmpty() ? libraryResult : "读取失败：" + error;
+            if (!result.isEmpty()) tooltip.addAll(fontRendererObj.listFormattedStringToWidth(result, 350));
+        }
+    }
+
+    private String blueprintSource(NBTTagCompound row) {
+        String source = row.getString("sourceMod");
+        if (source.isEmpty() && row.getString("id")
+            .equals(state.data.getString("selectedPresetId"))) source = state.data.getString("sourceMod");
+        return source.isEmpty() ? row.getInteger("schema") >= 2 ? "自定义蓝图" : "结构模板" : source;
     }
 
     private void drawDeleteReview(int mx, int my) {
@@ -824,48 +1130,80 @@ public final class HologramScreen extends GuiScreen {
         button(158, 245, 240, 171, 17, "应用此范围提示", editable() && (promptScope == 0 || selection.size() > 0), mx, my);
     }
 
-    private void drawAnnotations() {
+    private void drawAnnotations(int mx, int my) {
         if (annotationState != state) {
             annotationState = state;
-            annotatedCells.clear();
-            for (HologramState.Cell cell : state.cells) if (!cell.prompt.isEmpty()) annotatedCells.add(cell);
+            annotationMarkers = HologramAnnotationMarkers.collect(state);
         }
-        int marked = 0, inspected = 0;
-        for (HologramState.Cell cell : annotatedCells) {
-            if (++inspected > 1024) break;
-            if (!allLayers && cell.dy != layer) continue;
-            double[] p = HologramRenderer.project(cell.dx, cell.dy, cell.dz);
-            int px = (int) p[0], py = (int) p[1];
-            if (px < viewportX + 5 || px >= viewportX + viewportWidth - 12 || py < 80 || py >= 229) continue;
-            drawRect(px - 3, py - 4, px + 10, py + 8, 0xd0332820);
-            text("P", px, py - 2, 9, 0xffe59b);
-            if (++marked >= 64) break;
+        visibleMarkers.clear();
+        for (HologramAnnotationMarkers.Marker marker : annotationMarkers) {
+            if (marker.bounds == null) {
+                marker.x = viewportX + viewportWidth - 18;
+                marker.y = 64;
+            } else {
+                int[] b = marker.bounds;
+                if (!allLayers && (layer < b[1] || layer > b[4])) continue;
+                double[] p = HologramRenderer.project((b[0] + b[3]) / 2D, (b[1] + b[4]) / 2D, (b[2] + b[5]) / 2D);
+                marker.x = (int) p[0];
+                marker.y = (int) p[1];
+                if (marker.x < viewportX + 8 || marker.x >= viewportX + viewportWidth - 8
+                    || marker.y < 80
+                    || marker.y >= 261) continue;
+                // Keep nearby markers independently clickable without covering the annotated voxel.
+                for (HologramAnnotationMarkers.Marker shown : visibleMarkers)
+                    if (Math.abs(marker.x - shown.x) < 14 && Math.abs(marker.y - shown.y) < 14) marker.y += 15;
+                if (marker.y >= 261) continue;
+            }
+            visibleMarkers.add(marker);
+            int x = marker.x, y = marker.y;
+            int color = marker.key.equals(pinnedAnnotation) ? 0xff7ce1ec : 0xffe6c980;
+            drawRect(x - 6, y - 5, x + 5, y + 6, 0xff514634);
+            drawRect(x - 4, y - 7, x + 7, y + 4, color);
+            drawRect(x + 5, y - 5, x + 8, y + 6, 0xff9e8353);
+            text("?", x - 1, y - 5, 8, 0xff172f36);
+            if (marker.contains(mx, my)) {
+                if (tooltip == null) tooltip = new ArrayList<>();
+                else tooltip = new ArrayList<>(tooltip);
+                tooltip.add(marker.title + " · 点击固定 / 再次点击收起");
+                tooltip.addAll(fontRendererObj.listFormattedStringToWidth(marker.prompt, 250));
+            }
+            if (visibleMarkers.size() >= 64) break;
         }
-        String global = state.data.getString("blueprintPrompt");
-        int areas = state.data.getTagList("hintAreas", 10)
-            .tagCount();
-        HologramState.Cell cell = selectedCell();
-        if (global.isEmpty() && areas == 0 && annotatedCells.isEmpty()) return;
-        drawRect(35, 228, 442, 279, 0xe8172f36);
-        text(
-            "提示 · 全局 " + (global.isEmpty() ? "未设置" : global) + " · 区 " + areas + " · P " + annotatedCells.size() + " 格",
-            41,
-            233,
-            395,
-            0xffe59b);
-        HologramState.Cell shown = cell == null && !annotatedCells.isEmpty() ? annotatedCells.get(0) : cell;
-        String detail = shown == null ? ""
-            : (cell == null ? "提示格 " : "选中 ") + shown.dx
-                + ","
-                + shown.dy
-                + ","
-                + shown.dz
-                + "："
-                + (shown.prompt.isEmpty() ? "未设方块提示" : shown.prompt);
-        if (areas > 0)
-            detail += " · " + HologramAnnotations.saved(state, cell == null ? new int[0] : new int[] { cell.index }, 2);
-        List<String> lines = fontRendererObj.listFormattedStringToWidth(detail, 395);
-        for (int i = 0; i < Math.min(3, lines.size()); i++) text(lines.get(i), 41, 247 + i * 10, 395, 0xb9d5d4);
+        if (!pinnedAnnotation.isEmpty()) {
+            HologramAnnotationMarkers.Marker pinned = null;
+            for (HologramAnnotationMarkers.Marker marker : annotationMarkers)
+                if (marker.key.equals(pinnedAnnotation)) pinned = marker;
+            if (pinned == null) {
+                pinnedAnnotation = "";
+                return;
+            }
+            List<String> lines = fontRendererObj.listFormattedStringToWidth(pinned.prompt, viewportWidth - 20);
+            pinnedAnnotationOffset = Math.max(0, Math.min(pinnedAnnotationOffset, Math.max(0, lines.size() - 4)));
+            drawRect(viewportX + 1, 219, viewportX + viewportWidth - 1, 279, 0xf0172f36);
+            text(pinned.title + " · 滚轮查看 · Esc 收起", viewportX + 8, 224, viewportWidth - 32, 0xffe59b);
+            drawRect(viewportX + viewportWidth - 20, 221, viewportX + viewportWidth - 5, 234, 0xff344d51);
+            text("×", viewportX + viewportWidth - 16, 224, 9, 0xffe59b);
+            for (int i = 0; i < 4 && i + pinnedAnnotationOffset < lines.size(); i++)
+                text(lines.get(i + pinnedAnnotationOffset), viewportX + 8, 237 + i * 10, viewportWidth - 16, 0xb9d5d4);
+        }
+    }
+
+    private boolean toggleAnnotationAt(int mx, int my) {
+        if (!pinnedAnnotation.isEmpty() && mx >= viewportX + viewportWidth - 20
+            && mx < viewportX + viewportWidth - 5
+            && my >= 221
+            && my < 234) {
+            pinnedAnnotation = "";
+            return true;
+        }
+        for (int i = visibleMarkers.size() - 1; i >= 0; i--) {
+            HologramAnnotationMarkers.Marker marker = visibleMarkers.get(i);
+            if (!marker.contains(mx, my)) continue;
+            pinnedAnnotation = marker.key.equals(pinnedAnnotation) ? "" : marker.key;
+            pinnedAnnotationOffset = 0;
+            return true;
+        }
+        return false;
     }
 
     private void drawVersions(int mx, int my) {
@@ -1004,42 +1342,29 @@ public final class HologramScreen extends GuiScreen {
 
     private void drawFooter(int mx, int my) {
         int job = state.data.getInteger("job");
-        text(
-            "材料缺口 " + state.data.getInteger("missing")
-                + " · 保护 "
-                + state.data.getInteger("protected")
-                + " · "
-                + state.data.getInteger("completed")
-                + "/"
-                + state.data.getInteger("workTotal"),
-            35,
-            323,
-            233,
-            0xcce5d8);
         button(
             50,
             452,
             315,
-            72,
+            138,
             17,
-            state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement") ? "Alt 启动放置"
-                : state.data.getBoolean("virtual") && !state.data.getBoolean("virtualLocked") ? "先锁定模板"
-                    : new String[] { "确认构建", "确认替换", "确认拆除" }[Math.floorMod(state.data.getInteger("mode"), 3)],
+            placementReviewActive() ? "继续放置预检"
+                : state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement") ? "从蓝图库放置"
+                    : state.data.getBoolean("virtual") && !state.data.getBoolean("virtualLocked") ? "世界右键确定位置"
+                        : new String[] { "确认构建", "确认替换", "确认拆除" }[Math.floorMod(state.data.getInteger("mode"), 3)],
             editable()
                 && (!state.data.getBoolean("virtual")
                     || state.data.getBoolean("virtualPlacement") && state.data.getBoolean("virtualLocked"))
                 && state.data.getBoolean("target")
-                && (state.data.getInteger("scope") < 2 || selectedCell() != null)
-                && (state.data.getInteger("scope") != 3 || selectedCell() != null && !selectedCell().family.isEmpty())
                 && (state.data.getBoolean("supported") || state.data.getInteger("mode") == 0),
             mx,
             my);
-        button(51, 528, 315, 30, 17, job == 2 ? "继续" : "暂停", pendingSequence < 0 && (job == 1 || job == 2), mx, my);
+        button(51, 594, 315, 37, 17, job == 2 ? "继续" : "暂停", pendingSequence < 0 && (job == 1 || job == 2), mx, my);
         button(
             52,
-            562,
+            635,
             315,
-            30,
+            37,
             17,
             "取消",
             pendingSequence < 0 && (job == 1 || job == 2 || state.data.getBoolean("capturePending")),
@@ -1535,12 +1860,11 @@ public final class HologramScreen extends GuiScreen {
 
     private void drawConfirmation(int mx, int my) {
         drawRect(40, 58, 376, 254, 0xff172f36);
-        text(
-            HologramPlacementConfirmation.forceReview(state.data, confirmedRevision) ? "缺料 · 再次确认仅放已有" : "材料与改动",
-            50,
-            68,
-            315,
-            0xf5e4b9);
+        boolean placement = placementReviewActive();
+        lastConfirmationTitle = HologramPlacementConfirmation.forceReview(state.data, confirmedRevision)
+            ? "缺料 · 再次确认仅放已有"
+            : placement ? "蓝图放置预检 · " + state.data.getString("virtualPresetName") : "材料与改动";
+        text(lastConfirmationTitle, 50, 68, 315, 0xf5e4b9);
         int operations = 0, recovery = 0;
         NBTTagList rows = state.data.getTagList("cells", 10);
         for (int i = 0; i < rows.tagCount(); i++) {
@@ -1558,22 +1882,19 @@ public final class HologramScreen extends GuiScreen {
         for (int i = 0; i < recovered.tagCount(); i++) recovery += recovered.getCompoundTagAt(i)
             .getInteger("expected");
         if (state.data.hasKey("recoveryTotal")) recovery = state.data.getInteger("recoveryTotal");
-        text(
-            "范围 " + new String[] { "全部", "图层", "单格", "同族" }[Math.floorMod(state.data.getInteger("scope"), 4)]
-                + " · 差分 "
-                + operations
-                + " 格 · 保护 "
-                + state.data.getInteger("protected"),
-            50,
-            86,
-            315,
-            0xcce5d8);
+        lastReviewedScope = constructionScopeLabel(true);
+        text(lastReviewedScope + " · 差分 " + operations + " 格", 50, 86, 315, 0xcce5d8);
+        if (mx >= 50 && mx < 365 && my >= 84 && my < 96) {
+            tooltip = new ArrayList<>(Collections.singletonList(lastReviewedScope));
+            if (!placement) tooltip.add("返回预览可用 Ctrl+A 全选，右键预览清选后恢复全部结构");
+        }
         HologramState.Cell selected = selectedCell();
         if (HologramPlacementConfirmation.forceReview(state.data, confirmedRevision)) {
             text(state.data.getString("status"), 50, 100, 315, 0xff9292);
             if (mx >= 50 && mx < 365 && my >= 98 && my < 111)
                 tooltip = fontRendererObj.listFormattedStringToWidth(state.data.getString("status"), 300);
-        } else if (state.data.getBoolean("creativeMaterials")) text("创造：普通材料无限；封存设备仍消耗真实物品", 50, 100, 315, 0xe4d3a9);
+        } else if (placement) text("位置固定：" + placementPosition(), 50, 100, 315, 0xe4d3a9);
+        else if (state.data.getBoolean("creativeMaterials")) text("创造：普通材料无限；封存设备仍消耗真实物品", 50, 100, 315, 0xe4d3a9);
         else if (selected != null)
             text(cellName(selected, true) + " → " + cellName(selected, false), 50, 100, 315, 0xe4d3a9);
         NBTTagList materialRows = state.data.getTagList("materials", 10);
@@ -1644,15 +1965,16 @@ public final class HologramScreen extends GuiScreen {
             my);
         button(168, 203, 215, 78, 14, "本次 NBT", editable() && state.data.getBoolean("virtual"), mx, my);
         button(169, 286, 215, 79, 14, resourceReview ? "方块材料" : "设备资源", true, mx, my);
-        button(54, 50, 232, 146, 17, "返回", true, mx, my);
+        button(54, 50, 232, 146, 17, placement ? "取消放置" : "返回", true, mx, my);
+        lastConfirmationAction = HologramPlacementConfirmation.forceReview(state.data, confirmedRevision) ? "再次确认仅放已有"
+            : placement ? "确认放置" : "确认执行施工";
         button(
             55,
             203,
             232,
             162,
             17,
-            state.data.getBoolean("blueprintAwaitingConfirmation") ? "确认材料 · 进入预览"
-                : HologramPlacementConfirmation.forceReview(state.data, confirmedRevision) ? "再次确认仅放已有" : "确认执行",
+            lastConfirmationAction,
             editable() && (state.data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
                 && confirmedRevision == revision()
                 && (state.data.getBoolean("blueprintAwaitingConfirmation")
@@ -1661,6 +1983,60 @@ public final class HologramScreen extends GuiScreen {
                     || state.data.getBoolean("virtualPlacement") && state.data.getBoolean("virtualLocked")),
             mx,
             my);
+        if (placement) {
+            int x = HologramScreenLayout.COMPACT_PANEL_X;
+            drawRect(x, 60, x + HologramScreenLayout.COMPACT_PANEL_WIDTH, 314, 0xff172f36);
+            text("蓝图放置预检", x + 8, 70, 204, 0x81dce9);
+            text(state.data.getString("virtualPresetName"), x + 8, 92, 204, 0xf5e4b9);
+            text("位置已固定", x + 8, 117, 204, 0x9eedc1);
+            text(placementPosition(), x + 8, 132, 204, 0xb9d5d4);
+            text("本次 NBT 与设备资源", x + 8, 160, 204, 0xf5e4b9);
+            text("点击左侧“本次 NBT”调整", x + 8, 177, 204, 0x94afb4);
+            text("取消 NBT 编辑保留位置和草稿", x + 8, 193, 204, 0x94afb4);
+            text("材料核对后点击“确认放置”", x + 8, 232, 204, 0x9eedc1);
+            text("确认后直接开始施工", x + 8, 249, 204, 0x94afb4);
+            text("缺料时会要求再次明确确认", x + 8, 281, 204, 0xe4b85a);
+        }
+    }
+
+    private boolean placementReviewActive() {
+        return state.data.getBoolean("virtualPlacement") && state.data.getBoolean("virtualLocked")
+            && state.data.getBoolean("blueprintAwaitingConfirmation");
+    }
+
+    private String placementPosition() {
+        return state.data.getInteger("x") + ", " + state.data.getInteger("y") + ", " + state.data.getInteger("z");
+    }
+
+    private String constructionScopeLabel(boolean reviewed) {
+        if (state.data.getBoolean("wholeBlueprintPlacement") || state.data.getBoolean("virtualPlacement"))
+            return "施工范围：整份蓝图（" + state.cells.size() + " 格）";
+        int count = selection.size();
+        if (reviewed) {
+            int scope = state.data.getInteger("scope");
+            count = scope < 2 ? 0 : state.data.getIntArray("selectedIndices").length;
+            if (scope >= 2 && count == 0 && state.data.getInteger("selected") >= 0) count = 1;
+        }
+        if (count > 0) return "施工范围：已选 " + count + " 格";
+        return state.data.getBoolean("virtual") ? "施工范围：整份蓝图" : "施工范围：全部结构";
+    }
+
+    private String constructionScopeHint() {
+        if (state.data.getBoolean("wholeBlueprintPlacement") || state.data.getBoolean("virtualPlacement"))
+            return "确认放置默认全蓝图";
+        return selection.size() > 0 ? "只施工所选 · Ctrl+A 全选 · 右键预览清选" : "选择方块可限定范围";
+    }
+
+    private String completionSummary() {
+        if (state.data.getBoolean("jobPartialPlacement") && state.data.getInteger("job") >= 3)
+            return "部分完成：放置 " + state.data.getInteger("completed")
+                + " · 缺料 "
+                + state.data.getInteger("jobMissingCells")
+                + " · 保护 "
+                + state.data.getInteger("jobProtectedCells")
+                + " · 不支持 "
+                + state.data.getInteger("jobUnsupportedCells");
+        return state.data.getString("status");
     }
 
     private boolean editable() {
@@ -2058,6 +2434,8 @@ public final class HologramScreen extends GuiScreen {
 
     private String controlHelp(int id) {
         switch (id) {
+            case 178:
+                return "开始世界框选：左键第一角、右键第二角，Alt 使用玩家位置，Enter 完成，Esc 取消。";
             case 163:
                 return selectedCell() != null && selectedCell().sourceMissing
                     ? "来源结构缺失：" + selectedCell().sourceWarning + " · " + selectedCell().sourceClass
@@ -2100,7 +2478,7 @@ public final class HologramScreen extends GuiScreen {
             case 10:
                 return "切换目标结构、真实现场和施工差分。";
             case 11:
-                return "切换所有图层与当前单层预览；施工范围由右侧范围按钮决定。";
+                return "切换所有图层与当前单层预览；点击方块、T 同种、Ctrl 多选或 Shift 框选编辑范围。";
             case 12:
             case 13:
                 return "查看相邻图层。";
@@ -2157,7 +2535,7 @@ public final class HologramScreen extends GuiScreen {
             case 94:
                 return "按结构声明的仓室种类和数量生成空位目标，可选等级及缺料降级策略。保留手动目标和已有仓室。";
             case 95:
-                return "选择本格所有服务端认可的仓室候选，按类型、等级筛选并查看可用数量；也可调整仓室朝向。";
+                return "主动查看本格可替换的方块或仓室；等级按钮始终保留当前部件和选区。";
             case 97:
                 return "打开类型选框，含全部类型；选择后筛选候选，点击具体候选才指定目标。";
             case 98:
@@ -2248,16 +2626,6 @@ public final class HologramScreen extends GuiScreen {
             }
             return;
         }
-        if (!confirmation && button == 0 && mx >= 7 && mx < 30) {
-            if (my >= 58 && my < 100) {
-                activate(148);
-                return;
-            }
-            if (my >= 103 && my < 145) {
-                activate(149);
-                return;
-            }
-        }
         if (roleDropdown) {
             if (button == 0) for (int i = controls.size() - 1; i >= 0; i--) {
                 Control control = controls.get(i);
@@ -2270,6 +2638,7 @@ public final class HologramScreen extends GuiScreen {
             return;
         }
         if (libraryDrawer && !resetReview) presetNameField.mouseClicked(mx, my, button);
+        if (button == 0 && annotationInteractive() && toggleAnnotationAt(mx, my)) return;
         if (libraryDrawer || resetReview || shortcutsDrawer || hatchDrawer || presetDrawer) {
             if (button == 0) for (int i = controls.size() - 1; i >= 0; i--) {
                 Control control = controls.get(i);
@@ -2301,8 +2670,11 @@ public final class HologramScreen extends GuiScreen {
         }
         if (button == 0) {
             if (previewInteractive() && inViewport(mx, my) && !previewBlockedAt(mx, my) && editable()) {
-                int axis = !wholeSelectionHeld() && moveHandles && selected >= 0 ? gizmo.pick(mx, my) : -1;
+                int axis = !sameTypeSelectionHeld() && !airSelectionHeld() && moveHandles && canMoveSelection()
+                    ? gizmo.pick(mx, my)
+                    : -1;
                 if (axis >= 0) {
+                    gizmoCopy = controlSelectionHeld();
                     gizmo.begin(axis, mx, my);
                     return;
                 }
@@ -2350,9 +2722,14 @@ public final class HologramScreen extends GuiScreen {
             }
             if (previewBlockedAt(mx, my)) return;
             if (previewInteractive() && inViewport(mx, my)) {
-                if (isShiftKeyDown() && !wholeSelectionHeld()) {
+                if (!inventory && airSelectionHeld() && editable()) {
+                    selectEmptyVoxel(mx, my);
+                    return;
+                }
+                if (isShiftKeyDown() && !sameTypeSelectionHeld()) {
                     int target = HologramRenderer.pick(mx, my);
-                    boxStart = selection.corner() >= 0 ? selection.corner() : target;
+                    boxStart = target;
+                    boxAdditive = controlSelectionHeld();
                     boxSelecting = boxStart >= 0;
                     return;
                 }
@@ -2373,7 +2750,7 @@ public final class HologramScreen extends GuiScreen {
             return;
         }
         if (boxSelecting) {
-            selection.box(state, boxStart, HologramRenderer.pick(localX(x), localY(y)), isCtrlKeyDown());
+            selection.box(state, boxStart, HologramRenderer.pick(localX(x), localY(y)), boxAdditive);
             return;
         }
         if (!dragging) return;
@@ -2390,18 +2767,18 @@ public final class HologramScreen extends GuiScreen {
         if (button == 0 && gizmo.axis() >= 0) {
             int axis = gizmo.axis(), delta = gizmo.update(localX(x), localY(y));
             gizmo.cancel();
-            if (delta != 0 && editable()) {
+            if (delta != 0 && editable() && canMoveSelection()) {
                 NBTTagCompound move = new NBTTagCompound();
                 move.setIntArray("indices", selection.indices());
                 move.setInteger(axis == 0 ? "dx" : axis == 1 ? "dy" : "dz", delta);
-                move.setBoolean("copy", false);
+                move.setBoolean("copy", gizmoCopy);
                 send("editMove", move, true);
             }
             return;
         }
         if (button == 0 && boxSelecting) {
             boxSelecting = false;
-            selection.box(state, boxStart, HologramRenderer.pick(localX(x), localY(y)), isCtrlKeyDown());
+            selection.box(state, boxStart, HologramRenderer.pick(localX(x), localY(y)), boxAdditive);
             selected = selection.first();
             syncTargetSelectors();
             return;
@@ -2418,14 +2795,13 @@ public final class HologramScreen extends GuiScreen {
             int target = HologramRenderer.pick(localX(x), localY(y));
             if (!moved && inViewport(localX(x), localY(y)) && !previewBlockedAt(localX(x), localY(y)) && editable()) {
                 String structure = HologramRenderer.pickStructure(localX(x), localY(y));
-                boolean whole = wholeSelectionHeld();
-                if (structure.isEmpty() && !whole
-                    && (target < 0 || target == selected && !inventory && !isCtrlKeyDown())) {
+                boolean whole = sameTypeSelectionHeld();
+                if (structure.isEmpty() && !whole && target < 0) {
                     clearSelection();
                     dragging = false;
                     return;
                 }
-                selection.previewClick(state, target, structure, whole, isCtrlKeyDown());
+                selection.previewClick(state, target, structure, whole, controlSelectionHeld());
                 selected = selection.first();
                 syncTargetSelectors();
                 if (target >= 0 && (state.cells.get(target).missingBlock || state.cells.get(target).sourceMissing))
@@ -2466,6 +2842,10 @@ public final class HologramScreen extends GuiScreen {
         if (resetReview) return;
         int mx = localX(Mouse.getEventX() * width / mc.displayWidth),
             my = localY(height - Mouse.getEventY() * height / mc.displayHeight - 1);
+        if (!pinnedAnnotation.isEmpty() && inViewport(mx, my) && my >= 219 && my < 279) {
+            pinnedAnnotationOffset = Math.max(0, pinnedAnnotationOffset + (wheel > 0 ? -1 : 1));
+            return;
+        }
         if (roleDropdown) {
             roleOffset = Math.max(0, Math.min(Math.max(0, hatchRoles().size() - 7), roleOffset + (wheel > 0 ? -1 : 1)));
             return;
@@ -2526,6 +2906,7 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void keyTyped(char c, int key) {
+        if (key == Keyboard.KEY_E && !textFieldFocused()) key = Keyboard.KEY_ESCAPE;
         if (!deletePresetId.isEmpty()) {
             if (key == Keyboard.KEY_ESCAPE) activate(177);
             return;
@@ -2545,7 +2926,7 @@ public final class HologramScreen extends GuiScreen {
             }
             return;
         }
-        if (key == Keyboard.KEY_G && !textFieldFocused() && selected >= 0 && previewInteractive()) {
+        if (key == Keyboard.KEY_G && !textFieldFocused() && canMoveSelection() && previewInteractive()) {
             moveHandles = !moveHandles;
             return;
         }
@@ -2561,18 +2942,16 @@ public final class HologramScreen extends GuiScreen {
         }
         if (key == Keyboard.KEY_ESCAPE) {
             cancelQueuedEdits("已取消等待中的编辑");
+            if (gizmo.axis() >= 0) {
+                gizmo.cancel();
+                return;
+            }
             if (roleDropdown) {
                 roleDropdown = false;
                 return;
             }
             if (resetReview) {
                 resetReview = false;
-                return;
-            }
-            if (libraryDrawer) {
-                libraryDrawer = false;
-                if (state.data.getBoolean("presetBrowseForPlacement")) send("dismissPresetBrowse", null, false);
-                presetNameField.setFocused(false);
                 return;
             }
             if (shortcutsDrawer) {
@@ -2590,8 +2969,7 @@ public final class HologramScreen extends GuiScreen {
             else if (sourceDrawer) sourceDrawer = false;
             else if (!optionChannel.isEmpty()) optionChannel = "";
             else if (drawer) drawer = false;
-            else if (selected >= 0) clearSelection();
-            else mc.displayGuiScreen(null);
+            else closeRoot();
             return;
         }
         if (resetReview) return;
@@ -2682,13 +3060,15 @@ public final class HologramScreen extends GuiScreen {
             NBTTagCompound modeConfig = configuration();
             modeConfig.setInteger("mode", id - 70);
             if (id == 72) {
-                modeConfig.setInteger("scope", 0);
                 modeConfig.setBoolean("keepController", true);
             }
             send("configure", modeConfig, true);
             return;
         }
         switch (id) {
+            case 178:
+                if (editable()) HologramClient.beginAreaSelection();
+                break;
             case 162:
                 if (editable() && state.data.getBoolean("materialOrderingAvailable")
                     && confirmedRevision == revision()) {
@@ -2771,10 +3151,12 @@ public final class HologramScreen extends GuiScreen {
             case 148:
                 libraryDrawer = false;
                 presetNameField.setFocused(false);
+                rememberUi();
                 break;
             case 149:
                 libraryDrawer = true;
                 revealSelectedPreset();
+                rememberUi();
                 break;
             case 150:
                 versionsDrawer = true;
@@ -3134,7 +3516,11 @@ public final class HologramScreen extends GuiScreen {
             case 50:
                 if (editable() && (!state.data.getBoolean("virtual")
                     || state.data.getBoolean("virtualPlacement") && state.data.getBoolean("virtualLocked"))) {
-                    if (HologramPlacementConfirmation.forceReview(state.data, confirmedRevision)) confirmation = true;
+                    if (placementReviewActive()) {
+                        confirmedRevision = revision();
+                        confirmation = true;
+                    } else if (HologramPlacementConfirmation.forceReview(state.data, confirmedRevision))
+                        confirmation = true;
                     else {
                         awaitingScan = true;
                         send("scan", configuration(), true);
@@ -3161,6 +3547,9 @@ public final class HologramScreen extends GuiScreen {
                         || HologramPlacementConfirmation.canBuild(state.data, confirmedRevision))) {
                     NBTTagCompound n = new NBTTagCompound();
                     n.setLong("planRevision", confirmedRevision);
+                    n.setBoolean(
+                        "forceExplicit",
+                        HologramPlacementConfirmation.forceReview(state.data, confirmedRevision));
                     if (!state.data.getBoolean("blueprintAwaitingConfirmation")) {
                         pendingBuildReview = true;
                         pendingBuildReviewRevision = confirmedRevision;
@@ -3229,6 +3618,12 @@ public final class HologramScreen extends GuiScreen {
 
     private boolean handleEditorShortcut(int key, int modifiers) {
         if (!previewInteractive() || inventory || textFieldFocused() || captureBinding >= 0) return false;
+        if (key == Keyboard.KEY_A && modifiers == 1) {
+            selection.all(state);
+            selected = selection.first();
+            syncTargetSelectors();
+            return true;
+        }
         int binding = keyBindings.match(key, modifiers);
         if (binding >= 0) {
             editAction(HologramKeyBindings.ACTIONS[binding]);
@@ -3279,6 +3674,7 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private boolean previewBlockedAt(int x, int y) {
+        if (!pinnedAnnotation.isEmpty() && inViewport(x, y) && y >= 219 && y < 279) return true;
         if (inventory) return x >= 157 && x < 405 && y >= 59 && y < 257;
         return inPanel(x, y);
     }
@@ -3437,6 +3833,10 @@ public final class HologramScreen extends GuiScreen {
         NBTTagCompound n = new NBTTagCompound();
         for (String key : new String[] { "main", "facing", "mode", "scope" })
             n.setInteger(key, state.data.getInteger(key));
+        n.setInteger(
+            "scope",
+            !state.data.getBoolean("wholeBlueprintPlacement") && !state.data.getBoolean("virtualPlacement")
+                && selection.size() > 0 ? 2 : 0);
         n.setInteger("layer", layer);
         n.setInteger("selected", selected);
         n.setIntArray("selectedIndices", selection.indices());
@@ -3489,8 +3889,17 @@ public final class HologramScreen extends GuiScreen {
             send("configure", configuration(), true);
     }
 
-    private boolean wholeSelectionHeld() {
-        return smokeWholeSelection && captureRenderSmokeAction || Keyboard.isKeyDown(Keyboard.KEY_T);
+    private boolean sameTypeSelectionHeld() {
+        return smokeSameTypeSelection && captureRenderSmokeAction || Keyboard.isKeyDown(Keyboard.KEY_T);
+    }
+
+    private boolean airSelectionHeld() {
+        return smokeAltSelection && captureRenderSmokeAction || Keyboard.isKeyDown(Keyboard.KEY_LMENU)
+            || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+    }
+
+    private boolean controlSelectionHeld() {
+        return smokeCtrlSelection && captureRenderSmokeAction || isCtrlKeyDown();
     }
 
     /** Smoke hooks use real mouse hit testing, including modal gates and disabled controls. */
@@ -3532,6 +3941,36 @@ public final class HologramScreen extends GuiScreen {
     NBTTagCompound smokeSnapshot() {
         requireInteractionSmoke();
         return (NBTTagCompound) state.data.copy();
+    }
+
+    int[] smokeSelectedIndices() {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")
+            && !Boolean.getBoolean("gtmb.hologram.realInteractionSmoke"))
+            throw new IllegalStateException("Selection smoke is disabled");
+        return selection.indices();
+    }
+
+    int[] smokeCapturePreviewSelection(int logicalX, int logicalY, boolean sameType, boolean additive) {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
+        boolean previousCapture = captureRenderSmokeAction;
+        capturedRenderSmokeAction = null;
+        captureRenderSmokeAction = true;
+        smokeSameTypeSelection = sameType;
+        smokeCtrlSelection = additive;
+        boolean previousHandles = moveHandles;
+        moveHandles = false;
+        try {
+            int[] point = smokePreviewPoint(logicalX, logicalY);
+            mouseClicked(point[0], point[1], 0);
+            mouseMovedOrUp(point[0], point[1], 0);
+            if (capturedRenderSmokeAction != null)
+                throw new IllegalStateException("Local preview selection emitted a network operation");
+            return selection.indices();
+        } finally {
+            captureRenderSmokeAction = previousCapture;
+            moveHandles = previousHandles;
+            smokeSameTypeSelection = smokeCtrlSelection = false;
+        }
     }
 
     boolean smokeHasControl(int id) {
@@ -3602,6 +4041,10 @@ public final class HologramScreen extends GuiScreen {
             || "missing".equals(scenario)) {
             selected = state.cells.isEmpty() ? -1 : 0;
             selection.click(selected, false);
+            if (("gizmo".equals(scenario) || scenario.startsWith("gizmo-hover-")) && selected >= 0) {
+                String id = state.cells.get(selected).structureId;
+                if (!id.isEmpty()) selection.structure(state, id, false);
+            }
             moveHandles = true;
             if (scenario.startsWith("gizmo-hover-")) {
                 yaw = Math.PI / 4;
@@ -3643,19 +4086,22 @@ public final class HologramScreen extends GuiScreen {
                     if (selection.size() != 1 || !selection.contains(target)) continue;
                     if (capturedRenderSmokeAction != null)
                         throw new IllegalStateException("Plain preview click emitted a server operation");
-                    smokeWholeSelection = true;
+                    smokeSameTypeSelection = true;
                     selection.clear();
                     selected = -1;
                     mouseClicked(mouseX, mouseY, 0);
                     mouseMovedOrUp(mouseX, mouseY, 0);
-                    String group = state.cells.get(target).structureId;
+                    HologramState.Cell clicked = state.cells.get(target);
+                    String active = state.data.getString("activeStructure");
+                    String group = clicked.belongsToStructure(active) ? active : clicked.structureId;
                     int expected = 0;
                     for (HologramState.Cell cell : state.cells)
-                        if (group.isEmpty() || cell.belongsToStructure(group)) expected++;
+                        if ((group.isEmpty() ? cell.structureIds.isEmpty() : cell.belongsToStructure(group))
+                            && HologramSelection.sameType(clicked, cell)) expected++;
                     if (selection.size() != expected || capturedRenderSmokeAction != null)
                         throw new IllegalStateException(
-                            "Held T did not select its complete structure / blueprint locally");
-                    smokeWholeSelection = false;
+                            "Held T did not select exact block variants in its editing scope");
+                    smokeSameTypeSelection = false;
                     String outlineChecked = "none";
                     outlineSearch: for (int ey = viewportY + 50; ey < viewportY + viewportHeight - 80; ey++) {
                         for (int ex = viewportX + 10; ex < viewportX + viewportWidth - 10; ex++) {
@@ -3695,21 +4141,338 @@ public final class HologramScreen extends GuiScreen {
             }
             throw new IllegalStateException("No plain face hit region for local selection smoke");
         } finally {
-            smokeWholeSelection = false;
+            smokeSameTypeSelection = false;
             captureRenderSmokeAction = false;
         }
+    }
+
+    /** Exercise the actual preview mouse path; packets are captured before the network boundary. */
+    String smokeCaptureV004Editor() {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
+        NBTTagCompound fixture = (NBTTagCompound) state.data.copy();
+        fixture.setBoolean("blueprintPreview", false);
+        fixture.setBoolean("presetBrowseForPlacement", false);
+        fixture.setBoolean("blueprintAwaitingConfirmation", false);
+        fixture.setBoolean("capturePending", false);
+        fixture.setInteger("job", 0);
+        fixture.setString("blueprintPrompt", "V004 icon hover and pin");
+        HologramScreen probe = new HologramScreen(new HologramState(fixture));
+        probe.setWorldAndResolution(mc, width, height);
+        probe.captureRenderSmokeAction = true;
+        try {
+            probe.drawScreen(0, 0, 0);
+            HologramAnnotationMarkers.Marker global = probe.visibleMarkers.get(0);
+            int[] markerPoint = probe.smokePreviewPoint(global.x, global.y);
+            probe.drawScreen(markerPoint[0], markerPoint[1], 0);
+            if (probe.tooltip == null || !probe.tooltip.toString()
+                .contains("V004 icon hover and pin"))
+                throw new IllegalStateException("Annotation icon hover did not expand the persisted prompt");
+            probe.mouseClicked(markerPoint[0], markerPoint[1], 0);
+            probe.mouseMovedOrUp(markerPoint[0], markerPoint[1], 0);
+            if (!"blueprint".equals(probe.pinnedAnnotation) || probe.capturedRenderSmokeAction != null)
+                throw new IllegalStateException("Annotation pin was not a local mouse interaction");
+            probe.drawScreen(0, 0, 0);
+            if (!"blueprint".equals(probe.pinnedAnnotation))
+                throw new IllegalStateException("Pinned prompt disappeared when the mouse left the icon");
+            probe.mouseClicked(markerPoint[0], markerPoint[1], 0);
+            probe.mouseMovedOrUp(markerPoint[0], markerPoint[1], 0);
+            if (!probe.pinnedAnnotation.isEmpty()) throw new IllegalStateException("Second icon click did not unpin");
+
+            int member = -1;
+            for (HologramState.Cell cell : probe.state.cells) if (!cell.structureId.isEmpty()) {
+                int members = 0;
+                for (HologramState.Cell other : probe.state.cells)
+                    if (other.belongsToStructure(cell.structureId)) members++;
+                if (members < 2) continue;
+                member = cell.index;
+                break;
+            }
+            if (member < 0) throw new IllegalStateException(
+                "V004 editor smoke requires a structure with at least two real members");
+            probe.selection.click(member, false);
+            probe.selected = member;
+            if (probe.selection.movable(probe.state))
+                throw new IllegalStateException("One member of the smoke structure incorrectly became movable");
+            probe.selection.structure(probe.state, probe.state.cells.get(member).structureId, false);
+            for (HologramState.Cell cell : probe.state.cells) if (probe.selection.contains(cell.index)
+                != cell.belongsToStructure(probe.state.cells.get(member).structureId))
+                throw new IllegalStateException(
+                    "Whole-structure movement selection included an outside cell or missed a member");
+            probe.selected = probe.selection.first();
+            probe.moveHandles = true;
+            probe.drawScreen(0, 0, 0);
+            if (!probe.selection.movable(probe.state))
+                throw new IllegalStateException("Complete structure selection did not expose legal movement");
+            NBTTagCompound copy = probe.smokeCaptureAxisDrag(true, false);
+            if (!copy.getBoolean("copy"))
+                throw new IllegalStateException("Ctrl released during drag lost the copy intent locked at mouse-down");
+            probe.pendingSequence = probe.pendingSelectionSequence = -1;
+            probe.capturedRenderSmokeAction = null;
+            NBTTagCompound move = probe.smokeCaptureAxisDrag(false, true);
+            if (move.getBoolean("copy"))
+                throw new IllegalStateException("Ctrl pressed after drag began changed move into copy");
+            probe.pendingSequence = probe.pendingSelectionSequence = -1;
+            probe.capturedRenderSmokeAction = null;
+            probe.smokeCtrlSelection = false;
+            probe.smokeAltSelection = true;
+            probe.moveHandles = false;
+            probe.selection.clear();
+            probe.selected = -1;
+            probe.drawScreen(0, 0, 0);
+            int[] air = null;
+            airSearch: for (int y = viewportY + 50; y < viewportY + viewportHeight - 45; y += 2)
+                for (int x = viewportX + 10; x < viewportX + viewportWidth - 10; x += 2) {
+                    int[] point = probe.smokePreviewPoint(x, y);
+                    int[] voxel = probe.emptyVoxelAt(probe.localX(point[0]), probe.localY(point[1]));
+                    if (voxel == null) continue;
+                    boolean exists = false;
+                    for (HologramState.Cell cell : probe.state.cells)
+                        if (cell.x == voxel[0] && cell.y == voxel[1] && cell.z == voxel[2]) exists = true;
+                    if (exists) continue;
+                    probe.drawScreen(point[0], point[1], 0);
+                    if (!java.util.Arrays.equals(voxel, probe.emptyVoxelPreview)) throw new IllegalStateException(
+                        "Alt air coordinates disagree with the projected voxel preview");
+                    probe.mouseClicked(point[0], point[1], 0);
+                    probe.mouseMovedOrUp(point[0], point[1], 0);
+                    NBTTagCompound request = probe.capturedRenderSmokeAction;
+                    if (request == null || !"addPosition".equals(request.getString("op"))
+                        || request.getInteger("dx") + fixture.getInteger("x") != voxel[0]
+                        || request.getInteger("dy") + fixture.getInteger("y") != voxel[1]
+                        || request.getInteger("dz") + fixture.getInteger("z") != voxel[2])
+                        throw new IllegalStateException("Alt mouse pick did not submit its previewed air voxel");
+                    air = voxel;
+                    break airSearch;
+                }
+            if (air == null) throw new IllegalStateException("No bounded projected air voxel exercised by mouse smoke");
+            return "icon=hover,pin,unpin member-gizmo=hidden complete-gizmo=visible copy-down=true move-down=false air="
+                + java.util.Arrays.toString(air);
+        } finally {
+            probe.captureRenderSmokeAction = probe.smokeCtrlSelection = probe.smokeAltSelection = false;
+        }
+    }
+
+    String smokeCaptureV004Tabs() {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
+        NBTTagCompound fixture = (NBTTagCompound) state.data.copy();
+        String fixtureSession = java.util.UUID
+            .nameUUIDFromBytes(("gtmb-tabs:" + state.session).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            .toString();
+        fixture.setString("session", fixtureSession);
+        fixture.setBoolean("blueprintPreview", false);
+        fixture.setBoolean("presetBrowseForPlacement", false);
+        fixture.setBoolean("blueprintAwaitingConfirmation", false);
+        fixture.setBoolean("virtualPlacement", false);
+        fixture.setString("openPurpose", "");
+        fixture.setLong("placementReviewNonce", 0);
+        fixture.setInteger("job", 0);
+        UiMemory previousMemory = UI_MEMORY.remove(fixtureSession);
+        GuiScreen caller = mc.currentScreen;
+        boolean previousCapture = captureRenderSmokeAction;
+        captureRenderSmokeAction = true;
+        try {
+            HologramScreen probe = new HologramScreen(new HologramState(fixture));
+            probe.captureRenderSmokeAction = true;
+            mc.displayGuiScreen(probe);
+            probe.drawScreen(0, 0, 0);
+            int[] structureTab = probe.smokeControlPoint(148), blueprintTab = probe.smokeControlPoint(149);
+            if (structureTab[1] != blueprintTab[1] || structureTab[0] >= blueprintTab[0])
+                throw new IllegalStateException("Structure and blueprint tabs are not horizontal peers");
+            boolean clicked = false;
+            for (int y = viewportY + 50; y < viewportY + viewportHeight - 80 && !clicked; y += 2)
+                for (int x = viewportX + 10; x < viewportX + viewportWidth - 10; x += 2) {
+                    int hit = HologramRenderer.pick(x, y);
+                    if (hit < 0 || !HologramRenderer.pickStructure(x, y)
+                        .isEmpty()) continue;
+                    HologramState.Cell cell = probe.state.cells.get(hit);
+                    if (cell.missingBlock || cell.sourceMissing) continue;
+                    probe.smokeCapturePreviewSelection(x, y, false, false);
+                    if (probe.selection.size() > 0) {
+                        clicked = true;
+                        break;
+                    }
+                }
+            if (!clicked) throw new IllegalStateException("Tab persistence smoke never selected a real preview face");
+            int[] selected = probe.selection.indices();
+            probe.drawScreen(0, 0, 0);
+            probe.smokeClickDrawnControl(149);
+            if (!probe.libraryDrawer) throw new IllegalStateException("Peer blueprint tab did not open the library");
+            probe.drawScreen(0, 0, 0);
+            NBTTagList rows = fixture.getTagList("presets", 10);
+            if (rows.tagCount() == 0)
+                throw new IllegalStateException("Library row smoke requires a real saved blueprint");
+            int[] rowPoint = probe.smokeControlPoint(14000);
+            probe.drawScreen(rowPoint[0], rowPoint[1], 0);
+            if (probe.tooltip == null || !probe.tooltip.toString()
+                .contains(
+                    rows.getCompoundTagAt(0)
+                        .getString("name")))
+                throw new IllegalStateException("Flat library row hover lost its blueprint name");
+            for (Control control : probe.controls) if (control.id == 14000 && control.h != 28)
+                throw new IllegalStateException("Library entries reverted to action-button geometry");
+            probe.smokeClickDrawnControl(14000);
+            if (probe.capturedRenderSmokeAction == null
+                || !"previewPreset".equals(probe.capturedRenderSmokeAction.getString("op")))
+                throw new IllegalStateException("Flat list mouse selection did not request its blueprint preview");
+            fixture.setString(
+                "selectedPresetId",
+                rows.getCompoundTagAt(0)
+                    .getString("id"));
+            fixture.setLong("uiSequence", probe.sequence);
+            probe.updateState(new HologramState(fixture));
+            int[] namePoint = probe.smokePreviewPoint(HologramScreenLayout.COMPACT_PANEL_X + 18, 84);
+            probe.mouseClicked(namePoint[0], namePoint[1], 0);
+            String before = probe.presetNameField.getText();
+            probe.keyTyped('e', Keyboard.KEY_E);
+            if (mc.currentScreen != probe || probe.presetNameField.getText()
+                .equals(before))
+                throw new IllegalStateException("Focused E closed the library instead of entering its name field");
+            probe.presetNameField.setFocused(false);
+            probe.keyTyped('\0', Keyboard.KEY_ESCAPE);
+            smokeAssertRootClosed();
+            HologramScreen reopened = new HologramScreen(new HologramState(fixture));
+            reopened.captureRenderSmokeAction = true;
+            mc.displayGuiScreen(reopened);
+            if (!reopened.libraryDrawer || !java.util.Arrays.equals(selected, reopened.selection.indices()))
+                throw new IllegalStateException("Esc library exit lost the focused tab or local face selection");
+            reopened.keyTyped('e', Keyboard.KEY_E);
+            smokeAssertRootClosed();
+            HologramScreen again = new HologramScreen(new HologramState(fixture));
+            again.captureRenderSmokeAction = true;
+            mc.displayGuiScreen(again);
+            fixture.setBoolean("blueprintPreview", false);
+            again.updateState(new HologramState(fixture));
+            if (!again.libraryDrawer || !java.util.Arrays.equals(selected, again.selection.indices()))
+                throw new IllegalStateException("E exit or an ordinary snapshot changed the remembered library tab");
+            fixture.setBoolean("virtualPlacement", true);
+            fixture.setBoolean("virtualLocked", true);
+            fixture.setBoolean("blueprintAwaitingConfirmation", true);
+            fixture.setString("openPurpose", "placementReview");
+            fixture.setLong("placementReviewNonce", 1);
+            again.updateState(new HologramState(fixture));
+            again.drawScreen(0, 0, 0);
+            if (again.libraryDrawer || !again.confirmation)
+                throw new IllegalStateException("A new placement-review opening did not focus the structure precheck");
+            again.keyTyped('\0', Keyboard.KEY_ESCAPE);
+            again.drawScreen(0, 0, 0);
+            again.smokeClickDrawnControl(149);
+            again.updateState(new HologramState(fixture));
+            if (!again.libraryDrawer)
+                throw new IllegalStateException("The same review nonce forced a user-selected tab back to structure");
+            return "peer-tabs=horizontal flat-row=hover,select focused-E=typed Esc/E=root-close tab+selection=preserved review=once";
+        } finally {
+            mc.displayGuiScreen(caller);
+            captureRenderSmokeAction = previousCapture;
+            if (previousMemory == null) UI_MEMORY.remove(fixtureSession);
+            else UI_MEMORY.put(fixtureSession, previousMemory);
+        }
+    }
+
+    private void smokeAssertRootClosed() {
+        if (mc.currentScreen instanceof HologramScreen || mc.theWorld != null && mc.currentScreen != null)
+            throw new IllegalStateException("Esc/E did not close the root hologram UI");
+    }
+
+    String smokePlacementReviewContext() {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")
+            && !Boolean.getBoolean("gtmb.hologram.realInteractionSmoke"))
+            throw new IllegalStateException("UI smoke disabled");
+        if (!placementReviewActive() || !confirmation || libraryDrawer)
+            throw new IllegalStateException("Position lock did not open the structure placement precheck");
+        drawScreen(0, 0, 0);
+        smokeControlPoint(55);
+        smokeControlPoint(168);
+        smokeControlPoint(169);
+        boolean force = HologramPlacementConfirmation.forceReview(state.data, confirmedRevision);
+        if (!force && (!lastConfirmationTitle.contains("蓝图放置预检") || !"确认放置".equals(lastConfirmationAction)))
+            throw new IllegalStateException("Placement review lost its distinct title or direct confirmation action");
+        long previousSequence = sequence;
+        smokeClickDrawnControl(168);
+        drawScreen(0, 0, 0);
+        smokeClickDrawnControl(172);
+        if (nbtDrawer || !confirmation || !placementReviewActive() || sequence != previousSequence)
+            throw new IllegalStateException(
+                "Cancelling NBT adjustment changed the placement authority or fixed position");
+        drawScreen(0, 0, 0);
+        return "purpose=" + state.data.getString("openPurpose")
+            + " tab=structure title="
+            + lastConfirmationTitle
+            + " fixed="
+            + placementPosition()
+            + " primary="
+            + lastConfirmationAction
+            + " NBT/materials=direct NBT-cancel=locked";
+    }
+
+    String smokeConstructionScopeContext() {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")
+            && !Boolean.getBoolean("gtmb.hologram.realInteractionSmoke"))
+            throw new IllegalStateException("UI smoke disabled");
+        drawScreen(0, 0, 0);
+        boolean wholePlacement = state.data.getBoolean("wholeBlueprintPlacement")
+            || state.data.getBoolean("virtualPlacement");
+        int expected = !wholePlacement && selection.size() > 0 ? 2 : 0;
+        if (configuration().getInteger("scope") != expected)
+            throw new IllegalStateException("Construction scope differs from the visible selection guidance");
+        if (wholePlacement && !lastFooterScope.contains("整份蓝图"))
+            throw new IllegalStateException("Placement precheck presented a hidden partial blueprint scope");
+        if (!wholePlacement && selection.size() > 0
+            && (!lastFooterScope.contains("已选 " + selection.size() + " 格")
+                || !constructionScopeHint().contains("Ctrl+A")))
+            throw new IllegalStateException(
+                "Selected construction scope did not disclose its count or whole-selection shortcut");
+        if (306 + fontRendererObj.FONT_HEIGHT >= 318 || 321 + fontRendererObj.FONT_HEIGHT + 1 > DESIGN_H - 7)
+            throw new IllegalStateException("Footer text overlaps another row or the window border");
+        return "preview=" + lastFooterScope
+            + " reviewed="
+            + lastReviewedScope
+            + " scope="
+            + expected
+            + " footer=306/321 contained status="
+            + completionSummary();
+    }
+
+    private int[] smokePreviewPoint(int x, int y) {
+        return new int[] { originX + Math.round(x * scale), originY + Math.round(y * scale) };
+    }
+
+    private NBTTagCompound smokeCaptureAxisDrag(boolean ctrlAtStart, boolean ctrlAtRelease) {
+        smokeCtrlSelection = ctrlAtStart;
+        drawScreen(0, 0, 0);
+        for (int axis = 0; axis < 3; axis++) {
+            double[] center = gizmo.start(), end = gizmo.end(axis);
+            int sx = (int) Math.round(center[0] + (end[0] - center[0]) * .65);
+            int sy = (int) Math.round(center[1] + (end[1] - center[1]) * .65);
+            int[] start = smokePreviewPoint(sx, sy);
+            if (!inViewport(localX(start[0]), localY(start[1])) || previewBlockedAt(localX(start[0]), localY(start[1]))
+                || gizmo.pick(localX(start[0]), localY(start[1])) != axis) continue;
+            mouseClicked(start[0], start[1], 0);
+            if (gizmo.axis() != axis) continue;
+            int[] finish = smokePreviewPoint(
+                (int) Math.round(sx + (end[0] - center[0]) * .7),
+                (int) Math.round(sy + (end[1] - center[1]) * .7));
+            smokeCtrlSelection = ctrlAtRelease;
+            mouseClickMove(finish[0], finish[1], 0, 100);
+            mouseMovedOrUp(finish[0], finish[1], 0);
+            if (capturedRenderSmokeAction == null || !"editMove".equals(capturedRenderSmokeAction.getString("op")))
+                throw new IllegalStateException("Actual RGB axis drag did not submit an editMove packet");
+            return (NBTTagCompound) capturedRenderSmokeAction.copy();
+        }
+        throw new IllegalStateException("No legal actual RGB axis hit region exercised by v004 mouse smoke");
     }
 
     /** Exercise the library controls with intercepted packets and explicit server success/failure replies. */
     String smokeCaptureLibraryWorkflow() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
         NBTTagCompound fixture = (NBTTagCompound) state.data.copy();
+        fixture.setString("session", "smoke-library:" + state.session);
+        fixture.setString("openPurpose", "");
+        fixture.setLong("placementReviewNonce", 0);
         fixture.setBoolean("virtual", true);
         fixture.setBoolean("settingsOnly", false);
         fixture.setBoolean("supported", true);
         fixture.setBoolean("blueprintPreview", true);
         fixture.setBoolean("presetBrowseForPlacement", true);
-        fixture.setBoolean("blueprintAwaitingConfirmation", true);
+        fixture.setBoolean("blueprintAwaitingConfirmation", false);
         fixture.setString("virtualPresetId", "smoke-ui-entry");
         fixture.setString("virtualPresetName", "Smoke UI Blueprint");
         fixture.setString("selectedPresetId", "smoke-ui-entry");
@@ -3722,7 +4485,7 @@ public final class HologramScreen extends GuiScreen {
         HologramScreen browse = new HologramScreen(new HologramState(fixture));
         browse.setWorldAndResolution(mc, width, height);
         if (!browse.libraryDrawer || browse.confirmation)
-            throw new IllegalStateException("Alt placement browse skipped the library and opened confirmation");
+            throw new IllegalStateException("UI library entry incorrectly opened materials before choosing placement");
         browse.captureRenderSmokeAction = true;
         try {
             browse.drawScreen(0, 0, 0);
@@ -3766,7 +4529,26 @@ public final class HologramScreen extends GuiScreen {
             if (!browse.libraryDrawer || !browse.libraryResult.contains("Smoke delete failure"))
                 throw new IllegalStateException("Delete failure disappeared from the library");
             browse.drawScreen(0, 0, 0);
-            return "Alt browse=library Save=original SaveAs=new Delete=reviewed-ID cancel=no-packet failures=visible";
+            browse.capturedRenderSmokeAction = null;
+            browse.smokeClickDrawnControl(141);
+            if (browse.capturedRenderSmokeAction == null
+                || !"choosePlacementPreset".equals(browse.capturedRenderSmokeAction.getString("op")))
+                throw new IllegalStateException("Library Place did not choose the reviewed blueprint");
+            fixture.setBoolean("blueprintPreview", false);
+            fixture.setBoolean("presetBrowseForPlacement", false);
+            fixture.setBoolean("virtualPlacement", true);
+            fixture.setBoolean("virtualLocked", false);
+            HologramScreen ghost = new HologramScreen(new HologramState(fixture));
+            ghost.setWorldAndResolution(mc, width, height);
+            if (ghost.libraryDrawer || ghost.confirmation)
+                throw new IllegalStateException("Moving placement opened materials before its position was locked");
+            fixture.setBoolean("virtualLocked", true);
+            fixture.setBoolean("blueprintAwaitingConfirmation", true);
+            HologramScreen locked = new HologramScreen(new HologramState(fixture));
+            locked.setWorldAndResolution(mc, width, height);
+            if (!locked.confirmation || locked.libraryDrawer)
+                throw new IllegalStateException("Locked placement did not open the materials confirmation directly");
+            return "UI library Place=ghost locked=materials Save=original SaveAs=new Delete=reviewed-ID cancel=no-packet failures=visible";
         } finally {
             browse.captureRenderSmokeAction = false;
         }
@@ -3793,7 +4575,7 @@ public final class HologramScreen extends GuiScreen {
                 if (structure != !pickedStructure.isEmpty() || hint != !pickedHint.isEmpty()) continue;
                 drawScreen(mouseX, mouseY, 0);
                 List<String> expected = new ArrayList<>();
-                expected.add("拖动轴沿单一方向移动；方块坐标吸附；松开提交规划");
+                expected.add("拖动轴移动；按住 Ctrl 开始拖动即复制；松开提交规划");
                 if (hint) expected.addAll(fontRendererObj.listFormattedStringToWidth("提示区 " + pickedHint, 260));
                 if (structure) expected.add("移动轴重叠结构 · 点击边缘整选");
                 if (!expected.equals(tooltip)) throw new IllegalStateException(

@@ -68,7 +68,8 @@ final class HologramPresets {
 
         Block block() {
             Object found = block == null ? null : Block.blockRegistry.getObject(block);
-            return found instanceof Block && found != Blocks.air ? (Block) found : null;
+            return found instanceof Block && (found != Blocks.air || "minecraft:air".equals(block)) ? (Block) found
+                : null;
         }
 
         boolean missing() {
@@ -164,7 +165,7 @@ final class HologramPresets {
         cell.x = x;
         cell.y = y;
         cell.z = z;
-        cell.facing = facing;
+        cell.facing = HologramBlockIdentity.front(facing);
         cell.controller = controller;
         return cell;
     }
@@ -400,6 +401,9 @@ final class HologramPresets {
             NBTTagCompound row = new NBTTagCompound();
             row.setString("id", preset.id);
             row.setString("name", preset.name);
+            row.setString("sourceMod", preset.sourceMod == null ? "" : preset.sourceMod);
+            row.setString("sourceClass", preset.sourceClass == null ? "" : preset.sourceClass);
+            row.setInteger("structures", preset.structures.size());
             row.setInteger("cells", preset.cells.size());
             row.setInteger("schema", preset.schema);
             result.appendTag(row);

@@ -19,6 +19,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
+import com.gtnewhorizon.structurelib.structure.IStructureElementDeferred;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 
 import gregtech.api.GregTechAPI;
@@ -36,6 +37,8 @@ final class HologramDeclarationWrappers {
     private HologramDeclarationWrappers() {}
 
     static IStructureElement<?> backing(IStructureElement<?> element) throws ReflectiveOperationException {
+        HologramDeclarationAdapters.Declaration registered = HologramDeclarationAdapters.declaration(element);
+        if (registered != null) return registered.backing();
         if (isLazy(element)) return lazyBacking(element);
         Method factory = element.getClass()
             .getEnclosingMethod();
@@ -43,9 +46,14 @@ final class HologramDeclarationWrappers {
         String name = factory.getName();
         String field;
         if (factory.getDeclaringClass() == StructureUtility.class && "withChannel".equals(name)) field = "val$backing";
-        else if (factory.getDeclaringClass() == StructureUtility.class && "onElementPass".equals(name)
+        else if (factory.getDeclaringClass() == StructureUtility.class
+            && ("onElementPass".equals(name) || "onElementFail".equals(name) || "withDescription".equals(name))
             || factory.getDeclaringClass() == GTStructureUtility.class && "activeCoils".equals(name))
             field = "val$element";
+        else if (factory.getDeclaringClass() == GTStructureUtility.class
+            && ("chainAllGlassesImpl".equals(name) || "noSurvivalAutoplace".equals(name))
+            && element instanceof GTStructureUtility.ProxyStructureElement)
+            return ((GTStructureUtility.ProxyStructureElement<?, ?>) element).proxiedElement;
         else return null;
         return (IStructureElement<?>) captured(element, field);
     }
@@ -54,6 +62,19 @@ final class HologramDeclarationWrappers {
         return element != null && element.getClass()
             .getName()
             .equals("com.gtnewhorizon.structurelib.structure.LazyStructureElement");
+    }
+
+    /** These standard wrappers execute an arbitrary factory/predicate/context callback even while hinting. */
+    static boolean requiresAdapter(IStructureElement<?> element) {
+        if (element instanceof IStructureElementDeferred || HologramDeclarationAdapters.declaration(element) != null)
+            return true;
+        Method factory = element.getClass()
+            .getEnclosingMethod();
+        if (factory == null) return false;
+        return factory.getDeclaringClass() == StructureUtility.class
+            && ("onlyIf".equals(factory.getName()) || "withContext".equals(factory.getName()))
+            || factory.getDeclaringClass() == GTStructureUtility.class
+                && "triggerItemTransform".equals(factory.getName());
     }
 
     /**
@@ -150,6 +171,8 @@ final class HologramDeclarationWrappers {
     }
 
     static ItemStack trigger(IStructureElement<?> element, ItemStack trigger) throws ReflectiveOperationException {
+        HologramDeclarationAdapters.Declaration registered = HologramDeclarationAdapters.declaration(element);
+        if (registered != null) return registered.trigger(trigger);
         String channel = channel(element);
         return channel == null || trigger == null ? trigger : ChannelDataAccessor.withChannel(trigger, channel);
     }

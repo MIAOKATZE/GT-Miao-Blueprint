@@ -1,0 +1,84 @@
+{
+  "modules": [
+    {
+      "directory": "GT-Not-Leisure-0.2.7-rc2",
+      "tag": "0.2.7-rc2",
+      "commit": "a5d7b59ab12f9556d6ed49018e5971b377ac963e",
+      "samples": [
+        {
+          "path": "src/main/java/com/science/gtnl/common/machine/multiblock/steam/LargeSteamMixer.java",
+          "sha256": "5292b10587f347eee6af1eedd8d6ec713565755196c65235eb81293b72ecda6e",
+          "class": "com.science.gtnl.common.machine.multiblock.steam.LargeSteamMixer",
+          "schema": "Steam base; nested hatch chains; tiered casing/pipe/firebox; lazy standard glass",
+          "declarationFactories": [
+            "ofChain",
+            "ofBlocksTiered",
+            "chainAllGlasses",
+            "onElementPass"
+          ]
+        },
+        {
+          "path": "src/main/java/com/science/gtnl/common/machine/multiblock/structuralReconstructionPlan/PrecisionAssembler.java",
+          "sha256": "055add92010af5afb764c853ebaf3e8b81366279c365e0bc3b7ce9fe91e0950d",
+          "class": "com.science.gtnl.common.machine.multiblock.structuralReconstructionPlan.PrecisionAssembler",
+          "schema": "Extended-power base; machine/unit independent channels; standard lazy glass; GT frame",
+          "declarationFactories": [
+            "ofBlocksTiered",
+            "chainAllGlasses",
+            "ofFrame",
+            "onElementPass"
+          ]
+        },
+        {
+          "path": "src/main/java/com/science/gtnl/common/machine/multiblock/BloodSoulSacrificialArray.java",
+          "sha256": "69ba7881f1f6c65088217e48a6bd9b7a973848a980ccb34bcdd85a33dad20f3b",
+          "class": "com.science.gtnl.common.machine.multiblock.BloodSoulSacrificialArray",
+          "schema": "GTM base; wildcard factory plus custom CommonElements interface (partial)",
+          "declarationFactories": [
+            "ofBlockAnyMeta",
+            "ofBlock"
+          ]
+        }
+      ]
+    },
+    {
+      "directory": "Twist-Space-Technology-Mod-0.8.0-RC2.3",
+      "tag": "0.8.0-RC2.3",
+      "commit": "75aea0b34b8ff49b3a646f6b199012d0c409e00e",
+      "samples": [
+        {
+          "path": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/TST_LargeSteamForgeHammer.java",
+          "sha256": "56478d9295b3f3d7521ed77a61454e76b83bdea30409ccf98c112bd8421c7d29",
+          "class": "com.Nxer.TwistSpaceTechnology.common.machine.TST_LargeSteamForgeHammer",
+          "schema": "Steam base; dynamic mName piece; hatch chain and two registered tier hints",
+          "declarationFactories": [
+            "ofBlocksTiered"
+          ]
+        },
+        {
+          "path": "src/main/java/com/Nxer/TwistSpaceTechnology/system/Disassembler/TST_Disassembler.java",
+          "sha256": "fe569f5971f28beb0a4c92b8344c72424e6ae41be21f2bee3e16ea91cc2cb759",
+          "class": "com.Nxer.TwistSpaceTechnology.system.Disassembler.TST_Disassembler",
+          "schema": "GTCM base; component-casing channel and fixed GT blocks",
+          "declarationFactories": [
+            "withChannel",
+            "ofBlocksTiered",
+            "ofBlock"
+          ]
+        },
+        {
+          "path": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/GT_TileEntity_SpaceScaler.java",
+          "sha256": "50e7fd4af1a60aa28d290615cadc83ca5ad39b85a420463d67da1e0689efd14e",
+          "class": "com.Nxer.TwistSpaceTechnology.common.machine.GT_TileEntity_SpaceScaler",
+          "schema": "GTCM base; field-generator channel, quantum glass and hatch chain",
+          "declarationFactories": [
+            "withChannel",
+            "ofBlocksTiered",
+            "ofBlock"
+          ]
+        }
+      ]
+    }
+  ],
+  "runtimeClaim": false
+}

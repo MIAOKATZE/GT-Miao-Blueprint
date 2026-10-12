@@ -20,6 +20,7 @@ import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.IIcon;
 
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL14;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
@@ -44,6 +45,7 @@ final class HologramRenderer {
     private static String previewKey = "";
     private static List<Face> cachedFaces = new ArrayList<>();
     private static List<Face> cachedOutlines = new ArrayList<>();
+    private static final List<HologramState.Cell> nativePreviewCells = new ArrayList<>();
     private static HologramState visibleState;
     private static int visibleLayer, visibleView, visibleMode;
     private static final List<HologramState.Cell> visibleCells = new ArrayList<>();
@@ -77,6 +79,8 @@ final class HologramRenderer {
         worldState = previewState = null;
         boundsState = null;
         HologramTextures.clear();
+        HologramBlockRender.clear();
+        nativePreviewCells.clear();
         cachedFaces.clear();
         cachedMarkers.clear();
         cachedOutlines.clear();
@@ -93,6 +97,7 @@ final class HologramRenderer {
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
         int layer, int view, int selected, int mouseX, int mouseY, double rehearsal) {
         HologramTextures.begin(state);
+        HologramBlockRender.begin(state);
         projectedX = x;
         projectedY = y;
         projectedWidth = width;
@@ -121,6 +126,7 @@ final class HologramRenderer {
             List<Face> faces = new ArrayList<>();
             List<RoleMarker> markers = new ArrayList<>();
             List<Face> outlines = new ArrayList<>();
+            nativePreviewCells.clear();
             double sinYaw = Math.sin(yaw), cosYaw = Math.cos(yaw);
             double sinPitch = Math.sin(pitch), cosPitch = Math.cos(pitch);
             int mode = state.data.getInteger("mode");
@@ -155,11 +161,14 @@ final class HologramRenderer {
                     }
                     boolean empty = !c.anchor && !c.iconOnly && (currentView ? c.id : c.wantId).equals("minecraft:air");
                     String role = roleLabel(c);
-                    if (!empty && HologramTextures.material(c, currentView).partial) exposed = 63;
+                    boolean nativeModel = !empty && HologramBlockRender.ready(c, currentView);
+                    if (nativeModel || !empty && HologramTextures.material(c, currentView).partial) exposed = 63;
                     if (c.missingBlock) role = "缺失方块";
                     else if (c.sourceMissing && c.anchor) role = "来源结构缺失";
-                    if (!empty && role.isEmpty() && HologramTextures.material(c, currentView).fallback)
+                    if (!nativeModel && !empty && role.isEmpty() && HologramTextures.material(c, currentView).fallback)
                         role = "\u6750\u8d28\u7f3a\u5931";
+                    if (!nativeModel && !empty && HologramNativeTiles.supported(c.block(currentView || c.anchor)))
+                        role = "\u6a21\u578b\u7f3a\u5931";
                     if (!empty && role.isEmpty() && c.iconOnly) role = "\u5360\u4f4d";
                     if (!c.prompt.isEmpty()) role = role.isEmpty() ? "提示" : role + " · 提示";
                     if (exposed != 0 || !role.isEmpty()) previewCells.add(new PreviewCell(c, exposed, role));
@@ -213,6 +222,14 @@ final class HologramRenderer {
                 if (!role.isEmpty() && (c.anchor || markers.size() < 64))
                     markers.add(new RoleMarker(c, projected, role));
                 outlines.add(new Face(c, projected, 0, currentView));
+                if (HologramBlockRender.ready(c, currentView)) {
+                    nativePreviewCells.add(c);
+                    // Cell picking keeps the established voxel contract while the drawing uses
+                    // the mod's actual triangles, materials, covers and part geometry.
+                    for (int side = 0; side < 6; side++)
+                        if ((exposed & 1 << side) != 0) faces.add(new Face(c, projected, side, currentView));
+                    continue;
+                }
                 HologramTextures.Material material = HologramTextures.material(c, currentView);
                 for (HologramGeometry.Surface surface : material.geometry) {
                     if ((exposed & (1 << surface.side)) == 0) continue;
@@ -281,7 +298,7 @@ final class HologramRenderer {
                     && mouseY >= y
                     && mouseY < y + height;
                 if (inside) hovered = face.cell.index;
-                if (face.empty) continue;
+                if (face.empty || face.nativeModel) continue;
                 float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
                 int sampleIndex = 0;
                 for (HologramTextures.Sample sample : face.samples()) {
@@ -301,6 +318,16 @@ final class HologramRenderer {
                 }
             }
             t.draw();
+            for (HologramState.Cell cell : nativePreviewCells) {
+                GL11.glPushMatrix();
+                GL11.glTranslated(x + width / 2.0, y + height / 2.0, 0);
+                GL11.glScaled(projectedScale, -projectedScale, depthScale);
+                GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
+                GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
+                GL11.glTranslated(cell.dx - boundsX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - .5);
+                HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
+                GL11.glPopMatrix();
+            }
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             // Read face depth without writing line depth. The small z bias avoids coplanar
             // flicker while keeping back edges hidden; all cells retain clear wireframes.
@@ -350,7 +377,6 @@ final class HologramRenderer {
             t.draw();
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glColor4f(1, 1, 1, 1);
-            drawHintLabels(mc, x, y, width, height);
             for (RoleMarker marker : markers) {
                 if (!marker.cell.anchor
                     && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
@@ -427,6 +453,39 @@ final class HologramRenderer {
         double ry = py * Math.cos(projectedPitch) - rz * Math.sin(projectedPitch);
         return new double[] { projectedX + projectedWidth / 2.0 + rx * projectedScale,
             projectedY + projectedHeight / 2.0 - ry * projectedScale };
+    }
+
+    /** Intersect the orthographic view ray with a horizontal plane at an absolute world Y. */
+    static int[] pickEmptyVoxel(HologramState state, int mx, int my, int planeY) {
+        if (state == null || state.cells.isEmpty()
+            || projectedScale <= 0
+            || mx < projectedX
+            || mx >= projectedX + projectedWidth
+            || my < projectedY
+            || my >= projectedY + projectedHeight
+            || Math.abs(Math.sin(projectedPitch)) < .05) return null;
+        double rx = (mx - projectedX - projectedWidth / 2.0) / projectedScale;
+        double ry = -(my - projectedY - projectedHeight / 2.0) / projectedScale;
+        double py = planeY - state.data.getInteger("y") - boundsY;
+        double rz = (py * Math.cos(projectedPitch) - ry) / Math.sin(projectedPitch);
+        int x = state.data.getInteger("x")
+            + (int) Math.floor(rx * Math.cos(projectedYaw) + rz * Math.sin(projectedYaw) + boundsX + .5);
+        int z = state.data.getInteger("z")
+            + (int) Math.floor(-rx * Math.sin(projectedYaw) + rz * Math.cos(projectedYaw) + boundsZ + .5);
+        int minX = Integer.MAX_VALUE, minY = minX, minZ = minX;
+        int maxX = Integer.MIN_VALUE, maxY = maxX, maxZ = maxX;
+        for (HologramState.Cell cell : state.cells) {
+            minX = Math.min(minX, cell.x);
+            maxX = Math.max(maxX, cell.x);
+            minY = Math.min(minY, cell.y);
+            maxY = Math.max(maxY, cell.y);
+            minZ = Math.min(minZ, cell.z);
+            maxZ = Math.max(maxZ, cell.z);
+            if (cell.x == x && cell.y == planeY && cell.z == z && !cell.wantId.equals("minecraft:air")) return null;
+        }
+        return x < minX - 1 || x > maxX + 1 || z < minZ - 1 || z > maxZ + 1 || planeY < minY - 1 || planeY > maxY + 1
+            ? null
+            : new int[] { x, planeY, z };
     }
 
     private static void buildStructureBoxes(HologramState state) {
@@ -625,6 +684,7 @@ final class HologramRenderer {
 
     static void world(HologramState state, float partialTicks) {
         HologramTextures.begin(state);
+        HologramBlockRender.begin(state);
         Minecraft mc = Minecraft.getMinecraft();
         Entity camera = mc.renderViewEntity;
         if (camera == null) return;
@@ -697,6 +757,14 @@ final class HologramRenderer {
         worldIndex = 0;
     }
 
+    /** Group lists refer to native lists, so discard them before releasing their native snapshot. */
+    static void nativeSnapshotChanged() {
+        clearWorldGroups();
+        worldState = null;
+        previewState = null;
+        visibleState = null;
+    }
+
     private static void indexWorld(HologramState state, long deadline) {
         boolean removal = state.data.getInteger("mode") == 2;
         boolean virtual = state.data.getBoolean("virtual");
@@ -727,16 +795,23 @@ final class HologramRenderer {
         if (list == 0) return false;
         int end = Math.min(group.built + WORLD_MESH_BATCH, group.cells.size());
         List<HologramState.Cell> cells = group.cells.subList(group.built, end);
+        // Native lists must be built before opening the group's list and its tessellator.
+        for (HologramState.Cell c : cells)
+            if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) HologramBlockRender.ready(c, false);
         GL11.glNewList(list, GL11.GL_COMPILE);
         Tessellator t = Tessellator.instance;
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         t.startDrawingQuads();
         for (HologramState.Cell c : cells) {
             if (!worldGhosts.contains(coordinate(c.x, c.y, c.z))) continue;
+            if (HologramBlockRender.ready(c, false)) {
+                lastWorldGhosts++;
+                continue;
+            }
             HologramTextures.Material material = HologramTextures.material(c, false);
             lastWorldGhosts++;
             if (material.gregTech) lastWorldGTGeometry++;
-            if (material.fallback) lastWorldFallback++;
+            if (material.fallback || HologramNativeTiles.supported(c.block(false))) lastWorldFallback++;
             for (HologramGeometry.Surface surface : material.geometry) {
                 int side = surface.side;
                 int[] normal = NORMALS[side];
@@ -760,6 +835,18 @@ final class HologramRenderer {
             }
         }
         t.draw();
+        GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_ENABLE_BIT);
+        GL14.glBlendColor(1, 1, 1, .38f);
+        GL11.glBlendFunc(0x8003, 0x8004); // GL_CONSTANT_ALPHA / GL_ONE_MINUS_CONSTANT_ALPHA
+        GL11.glEnable(GL11.GL_BLEND);
+        for (HologramState.Cell c : cells)
+            if (worldGhosts.contains(coordinate(c.x, c.y, c.z)) && HologramBlockRender.ready(c, false)) {
+                GL11.glPushMatrix();
+                GL11.glTranslated(c.x, c.y, c.z);
+                HologramBlockRender.draw(c, false);
+                GL11.glPopMatrix();
+            }
+        GL11.glPopAttrib();
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         t.startDrawing(GL11.GL_LINES);
         for (HologramState.Cell c : cells) {
@@ -824,7 +911,7 @@ final class HologramRenderer {
         final int side;
         final double depth;
         final HologramTextures.Material material;
-        final boolean empty;
+        final boolean empty, nativeModel;
         final HologramGeometry.Surface surface;
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current) {
@@ -837,6 +924,7 @@ final class HologramRenderer {
             this.side = side;
             this.surface = surface;
             empty = !cell.anchor && !cell.iconOnly && (current ? cell.id : cell.wantId).equals("minecraft:air");
+            nativeModel = !empty && HologramBlockRender.ready(cell, current);
             material = empty ? null : HologramTextures.material(cell, current);
             double d = 0;
             for (int index : FACES[side]) d += points[index][2];

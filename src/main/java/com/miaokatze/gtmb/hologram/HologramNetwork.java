@@ -325,65 +325,36 @@ public final class HologramNetwork {
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         String action = tag.getString("action");
-        if ("areaPoint".equals(action) || "toggleAreaSelection".equals(action)) {
+        if ("beginAreaSelection".equals(action) || "finishAreaSelection".equals(action)
+            || "cancelAreaSelection".equals(action)
+            || "areaPoint".equals(action)
+            || "confirmVirtualPosition".equals(action)
+            || "cancelVirtualPlacement".equals(action)) {
             if (!com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem()))
                 return;
-            if ("toggleAreaSelection".equals(action)) HologramService.toggleAreaSelection(player);
-            else HologramService.areaPoint(
-                player,
-                tag.getInteger("point"),
-                tag.getInteger("x"),
-                tag.getInteger("y"),
-                tag.getInteger("z"),
-                tag.getBoolean("atPlayer"));
+            if ("beginAreaSelection".equals(action)) HologramService.beginAreaSelection(player);
+            else if ("finishAreaSelection".equals(action))
+                HologramService.finishAreaSelection(player, tag.getString("session"));
+            else if ("cancelAreaSelection".equals(action))
+                HologramService.cancelAreaSelection(player, tag.getString("session"));
+            else if ("confirmVirtualPosition".equals(action)) {
+                HologramService.confirmWorldPosition(player, tag);
+            } else if ("cancelVirtualPlacement".equals(action)) HologramService.cancelWorldPlacement(player, tag);
+            else HologramService.worldAreaPoint(player, tag);
             return;
         }
         if ("useBlock".equals(action) || "useAir".equals(action)) {
             if (!com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem()))
                 return;
-            boolean air = "useAir".equals(action);
-            if (tag.getBoolean("shift") && tag.getBoolean("alt")) {
-                HologramService.toggleAreaSelection(player);
-                return;
+            if ("useAir".equals(action)) HologramService.openAir(player);
+            else {
+                int x = tag.getInteger("x"), y = tag.getInteger("y"), z = tag.getInteger("z");
+                int side = tag.getInteger("side");
+                if (side < 0 || side > 5
+                    || !player.worldObj.blockExists(x, y, z)
+                    || player.getDistanceSq(x + .5, y + .5, z + .5) > 64) return;
+                HologramService.openWorld(player, x, y, z, side);
             }
-            if (tag.getBoolean("shift")) {
-                HologramService.openAir(player);
-                return;
-            }
-            if (player.getHeldItem()
-                .hasTagCompound()
-                && player.getHeldItem()
-                    .getTagCompound()
-                    .getBoolean("gtitHologramAreaSelecting")) {
-                HologramService.areaPoint(
-                    player,
-                    2,
-                    tag.getInteger("x"),
-                    tag.getInteger("y"),
-                    tag.getInteger("z"),
-                    air || tag.getBoolean("alt"));
-                return;
-            }
-            if (air && !tag.getBoolean("alt")) {
-                if (tag.getBoolean("shift")) HologramService.openSettings(player);
-                else HologramService.openAir(player);
-                return;
-            }
-            int x = tag.getInteger("x"), y = tag.getInteger("y"), z = tag.getInteger("z");
-            int side = tag.getInteger("side");
-            if (side < 0 || side > 5
-                || !player.worldObj.blockExists(x, y, z)
-                || player.getDistanceSq(x + .5, y + .5, z + .5) > 64) return;
-            if (tag.getBoolean("alt")) {
-                net.minecraftforge.common.util.ForgeDirection face = net.minecraftforge.common.util.ForgeDirection
-                    .getOrientation(side);
-                int offsetX = air ? 0 : face.offsetX, offsetY = air ? 0 : face.offsetY,
-                    offsetZ = air ? 0 : face.offsetZ;
-                if ("lock".equals(tag.getString("virtualIntent"))) HologramService.lockVirtual(player, x, y, z, side);
-                else if ("cancel".equals(tag.getString("virtualIntent"))) HologramService.cancel(player);
-                else HologramService.openVirtual(player, x + offsetX, y + offsetY, z + offsetZ, side, "");
-            } else if (tag.getBoolean("shift") && tag.getBoolean("virtualEdit")) HologramService.openAir(player);
-            else HologramService.open(player, x, y, z, side);
             return;
         }
         if ("openSettings".equals(action)) {

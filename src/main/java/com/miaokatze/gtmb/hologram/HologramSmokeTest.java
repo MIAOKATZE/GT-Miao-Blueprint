@@ -50,7 +50,8 @@ public final class HologramSmokeTest {
         MinecraftServer server = MinecraftServer.getServer();
         int failedSuites = 0;
         boolean coexistence = Boolean.getBoolean("gtmb.hologram.coexistSmoke");
-        int suites = coexistence ? 7 : 6;
+        boolean extended = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
+        int suites = (coexistence ? 8 : 7) + (extended ? 2 : 0);
         try {
             try {
                 run(server.worldServerForDimension(0));
@@ -92,6 +93,37 @@ public final class HologramSmokeTest {
             } catch (Throwable failure) {
                 failedSuites++;
                 suiteFailure("NATIVE-DISPLAY", failure);
+            }
+            try {
+                HologramCommunityDeclarationSmoke.runStandardFactories();
+                System.out
+                    .println("[GTMB-HOLOGRAM-COMMUNITY-DECLARATION-SMOKE] FINAL PASS real factory RETURN provenance");
+            } catch (Throwable failure) {
+                failedSuites++;
+                suiteFailure("COMMUNITY-DECLARATION", failure);
+            }
+            if (extended) {
+                try {
+                    java.lang.reflect.Method nativeTransforms = Class
+                        .forName("com.miaokatze.gtmb.hologram.HologramBlockTransformNativeSmoke")
+                        .getDeclaredMethod("run");
+                    nativeTransforms.setAccessible(true);
+                    java.util.List<?> checked = (java.util.List<?>) nativeTransforms.invoke(null);
+                    if (checked.size() != 5) throw new IllegalStateException(
+                        "Extended native rotation requires all five architectural/EnderIO mods; checked=" + checked);
+                    System.out.println("[GTMB-HOLOGRAM-NATIVE-ROTATION-SMOKE] FINAL PASS " + checked);
+                } catch (Throwable failure) {
+                    failedSuites++;
+                    suiteFailure("NATIVE-ROTATION", failure);
+                }
+                try {
+                    Class.forName("com.miaokatze.gtmb.hologram.HologramNativePlacementSmoke")
+                        .getMethod("run", WorldServer.class)
+                        .invoke(null, server.worldServerForDimension(0));
+                } catch (Throwable failure) {
+                    failedSuites++;
+                    suiteFailure("NATIVE-PLACEMENT", failure);
+                }
             }
             if (coexistence) {
                 try {

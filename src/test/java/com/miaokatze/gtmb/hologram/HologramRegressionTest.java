@@ -96,6 +96,9 @@ public final class HologramRegressionTest {
         cases.put("blueprint_annotations_and_save_failures_remain_visible", HologramBlueprintAnnotationRegression::run);
         cases.put("reviewed_lazy_declarations_recover_fixed_casing_and_frames", HologramLazyDeclarationRegression::run);
         cases.put(
+            "standard_factory_provenance_and_read_only_declaration_spi",
+            HologramDeclarationAdaptersRegression::run);
+        cases.put(
             "native_pipe_hatch_and_cover_display_preserves_prototypes",
             com.miaokatze.gtmb.client.hologram.HologramNativeDisplayRegression::run);
         cases.put(
@@ -108,6 +111,21 @@ public final class HologramRegressionTest {
         cases.put(
             "official_projector_upgrades_one_to_one_with_no_extra_inputs",
             ProjectorRegistrationRegression::recipe);
+        cases.put(
+            "native_block_rotation_transforms_preserve_payload_and_geometry",
+            HologramBlockTransformRegression::run);
+        cases.put("world_gestures_require_explicit_material_confirmation", HologramWorldFlowRegression::run);
+        cases.put(
+            "world_service_locks_current_revision_and_retains_cancelled_draft",
+            HologramWorldServiceRegression::run);
+        cases.put(
+            "editor_selection_preserves_gt_identity_and_structure_membership",
+            com.miaokatze.gtmb.client.hologram.HologramSelectionRegression::run);
+        cases.put(
+            "native_preview_tiles_are_isolated_and_never_write_live_worlds",
+            com.miaokatze.gtmb.client.hologram.HologramNativePreviewIsolationRegression::run);
+        cases
+            .put("registered_declared_families_never_mix_unaccepted_metadata", HologramRegisteredFamilyRegression::run);
         TestRunner.run(HologramRegressionTest.class, cases);
     }
 

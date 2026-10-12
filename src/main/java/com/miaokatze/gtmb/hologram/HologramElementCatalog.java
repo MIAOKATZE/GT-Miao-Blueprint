@@ -1,8 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -62,25 +60,12 @@ final class HologramElementCatalog {
         result.add(element);
         try {
             visit(HologramDeclarationWrappers.backing(element), depth + 1, seen, result);
+            visit(HologramDeclarationWrappers.alternativesBacking(element), depth + 1, seen, result);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         if (element instanceof IStructureElementChain) {
             IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
             if (children != null && children.length <= 64)
                 for (IStructureElement<?> child : children) visit(child, depth + 1, seen, result);
-        }
-        String name = element.getClass()
-            .getName();
-        if (!name.startsWith("com.gtnewhorizon.structurelib.structure.") && !name.startsWith("gregtech.api.util."))
-            return;
-        for (Class<?> type = element.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
-            for (Field field : type.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers())
-                    || !IStructureElement.class.isAssignableFrom(field.getType())) continue;
-                try {
-                    field.setAccessible(true);
-                    visit((IStructureElement<?>) field.get(element), depth + 1, seen, result);
-                } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
-            }
         }
     }
 }

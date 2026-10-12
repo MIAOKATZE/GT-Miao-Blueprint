@@ -61,6 +61,7 @@ public final class HologramBlueprintSmoke {
         HologramBlueprintSmoke smoke = new HologramBlueprintSmoke();
         try {
             smoke.exercise(world);
+            HologramPartialPlacementSmoke.run(world);
             System.out.println(PREFIX + "FINAL PASS assertions=" + smoke.assertions);
         } catch (Throwable failure) {
             System.err.println(PREFIX + "FINAL FAIL " + failure);
@@ -300,14 +301,23 @@ public final class HologramBlueprintSmoke {
         supply(saved, true);
         beginPlacement(208, blueprintId);
         require(
-            capture.state.getBoolean("blueprintAwaitingConfirmation") && !capture.state.getBoolean("virtualPlacement")
-                && !capture.state.getBoolean("moving"),
-            "choosing_blueprint_waits_for_explicit_confirmation_before_projection");
+            !capture.state.getBoolean("blueprintAwaitingConfirmation") && capture.state.getBoolean("virtualPlacement")
+                && capture.state.getBoolean("moving"),
+            "choosing_blueprint_starts_only_moving_preview_before_material_confirmation");
         require(
             capture.state.getInteger("missing") > 0 && stock(Item.getItemFromBlock(Blocks.chest)) == 1,
             "material_preview_reports_real_missing_stock_without_deduction");
         require(stock(Items.diamond) == 7, "preview_keeps_real_inventory_contents_material_untouched");
         snapshotReceipt();
+        HologramService.lockVirtual(player, 176, 80, 208, 1);
+        HologramSmokeTest.flushTransport();
+        require(
+            capture.state.getBoolean("virtualPlacement") && capture.state.getBoolean("virtualLocked")
+                && capture.state.getBoolean("blueprintAwaitingConfirmation")
+                && !capture.state.getBoolean("moving")
+                && stock(Item.getItemFromBlock(Blocks.chest)) == 1
+                && world.isAirBlock(178, 80, 208),
+            "world_position_confirmation_opens_material_review_without_world_or_inventory_mutation");
         NBTTagCompound stale = new NBTTagCompound();
         stale.setLong("planRevision", capture.state.getLong("planRevision") - 1);
         stale.setString("session", capture.state.getString("session"));
@@ -316,21 +326,13 @@ public final class HologramBlueprintSmoke {
         HologramService.handle(player, stale);
         HologramSmokeTest.flushTransport();
         require(capture.state.getBoolean("blueprintAwaitingConfirmation"), "stale_material_confirmation_is_rejected");
-        action("confirmBlueprintPlacement");
-        require(
-            capture.state.getBoolean("virtualPlacement") && capture.state.getBoolean("moving")
-                && stock(Item.getItemFromBlock(Blocks.chest)) == 1
-                && world.isAirBlock(178, 80, 208),
-            "valid_confirmation_starts_preview_without_world_or_inventory_mutation");
-        HologramService.lockVirtual(player, 176, 80, 208, 1);
-        HologramSmokeTest.flushTransport();
-        action("build");
+        submitConstruction();
         require(
             capture.state.getBoolean("forcePlacementReady") && capture.state.getInteger("job") != 1
                 && stock(Item.getItemFromBlock(Blocks.chest)) == 1
                 && world.isAirBlock(178, 80, 208),
             "first_missing_material_build_requires_second_confirmation_and_changes_nothing");
-        action("build");
+        submitConstruction();
         require(capture.state.getInteger("job") == 1, "second_missing_material_build_starts_existing_stock_job");
         settle();
         require(
@@ -349,15 +351,14 @@ public final class HologramBlueprintSmoke {
         supply(saved, false);
         beginPlacement(240, blueprintId);
         require(
-            capture.state.getBoolean("blueprintAwaitingConfirmation") && !capture.state.getBoolean("virtualPlacement"),
-            "already_selected_blueprint_still_requires_confirmation_on_every_placement");
-        action("confirmBlueprintPlacement");
+            !capture.state.getBoolean("blueprintAwaitingConfirmation") && capture.state.getBoolean("moving"),
+            "already_selected_blueprint_still_requires_world_position_on_every_placement");
         HologramService.lockVirtual(player, 176, 80, 240, 1);
         HologramSmokeTest.flushTransport();
         PlaceVeto veto = new PlaceVeto(178, 80, 240);
         MinecraftForge.EVENT_BUS.register(veto);
         try {
-            action("build");
+            submitConstruction();
             settle();
             require(veto.hits > 0, "real_forge_place_permission_veto_was_observed");
             require(veto.restoredTileObserved, "permission_event_observes_actual_restored_tile_before_veto");
@@ -370,7 +371,7 @@ public final class HologramBlueprintSmoke {
         } finally {
             MinecraftForge.EVENT_BUS.unregister(veto);
         }
-        action("build");
+        submitConstruction();
         settle();
         require(
             world.getBlock(178, 80, 240) == Blocks.chest && stock(Item.getItemFromBlock(Blocks.chest)) == 0,
@@ -396,12 +397,11 @@ public final class HologramBlueprintSmoke {
         }
         beginPlacement(336, blueprintId);
         require(capture.state.getInteger("missing") > 0, "real_missing_cover_is_in_material_preview");
-        action("confirmBlueprintPlacement");
         HologramService.lockVirtual(player, 176, 80, 336, 1);
         HologramSmokeTest.flushTransport();
-        action("build");
+        submitConstruction();
         require(capture.state.getBoolean("forcePlacementReady"), "cover_shortage_requires_second_build_confirmation");
-        action("build");
+        submitConstruction();
         settle();
         require(
             world.isAirBlock(176, 80, 336) && stock(
@@ -413,7 +413,7 @@ public final class HologramBlueprintSmoke {
                 == 1,
             "missing_cover_cannot_create_controller_or_consume_its_block_material");
         player.inventory.mainInventory[35] = coverMaterial.copy();
-        action("build");
+        submitConstruction();
         settle();
         verifyController(336, true);
         require(stock(coverMaterial) == 0, "supplying_real_cover_allows_retry_and_deducts_cover_once");
@@ -432,10 +432,9 @@ public final class HologramBlueprintSmoke {
             "saving_no_covers_variant_preserves_original_cover_payload");
         supply(HologramPresets.get(noCovers), false);
         beginPlacement(272, noCovers);
-        action("confirmBlueprintPlacement");
         HologramService.lockVirtual(player, 176, 80, 272, 1);
         HologramSmokeTest.flushTransport();
-        action("build");
+        submitConstruction();
         settle();
         verifyChest(272, true);
         verifyController(272, false);
@@ -473,10 +472,9 @@ public final class HologramBlueprintSmoke {
             "covers_only_variant_stores_real_cover_payload_from_original_blueprint");
         supply(coversOnly, false);
         beginPlacement(304, noNbt);
-        action("confirmBlueprintPlacement");
         HologramService.lockVirtual(player, 176, 80, 304, 1);
         HologramSmokeTest.flushTransport();
-        action("build");
+        submitConstruction();
         settle();
         verifyChest(304, false);
         verifyController(304, true);
@@ -487,14 +485,13 @@ public final class HologramBlueprintSmoke {
         require(
             capture.state.getInteger("missing") > 0,
             "unpaid_captured_inventory_is_reported_as_real_material_shortage");
-        action("confirmBlueprintPlacement");
         HologramService.lockVirtual(player, 176, 80, 368, 1);
         HologramSmokeTest.flushTransport();
-        action("build");
+        submitConstruction();
         require(
             capture.state.getBoolean("forcePlacementReady") && world.isAirBlock(178, 80, 368),
             "unpaid_inventory_first_build_requests_second_confirmation_without_world_change");
-        action("build");
+        submitConstruction();
         settle();
         require(
             world.isAirBlock(178, 80, 368) && stock(Item.getItemFromBlock(Blocks.chest)) == 1
@@ -519,10 +516,9 @@ public final class HologramBlueprintSmoke {
         require(
             capture.state.getInteger("missing") == 0,
             "explicit_inventory_entry_cancellation_removes_contents_cost_for_this_placement");
-        action("confirmBlueprintPlacement");
         HologramService.lockVirtual(player, 176, 80, 400, 1);
         HologramSmokeTest.flushTransport();
-        action("build");
+        submitConstruction();
         settle();
         verifyChest(400, true, false);
         verifyController(400, true);
@@ -550,7 +546,7 @@ public final class HologramBlueprintSmoke {
         HologramSmokeTest.flushTransport();
         require(
             capture.state.getBoolean("presetBrowseForPlacement") && !capture.state.getBoolean("moving"),
-            "Alt_open_always_shows_blueprint_chooser_before_preview_" + z);
+            "workspace_shows_blueprint_chooser_before_preview_" + z);
         NBTTagCompound choose = new NBTTagCompound();
         choose.setString("presetId", id);
         action("choosePlacementPreset", choose);
@@ -604,13 +600,12 @@ public final class HologramBlueprintSmoke {
                 capture.state.getInteger("missing") == 0 && WirelessNetworkManager.getUserEU(USER)
                     .equals(BigInteger.valueOf(100000)),
                 "real_wireless_balance_satisfies_preview_without_energy_deduction");
-            action("confirmBlueprintPlacement");
             HologramService.lockVirtual(player, 176, 80, 464, 1);
             HologramSmokeTest.flushTransport();
             PlaceVeto veto = new PlaceVeto(176, 80, 464);
             MinecraftForge.EVENT_BUS.register(veto);
             try {
-                action("build");
+                submitConstruction();
                 settle();
                 require(
                     veto.hits > 0 && veto.restoredEnergyObserved,
@@ -626,7 +621,7 @@ public final class HologramBlueprintSmoke {
             } finally {
                 MinecraftForge.EVENT_BUS.unregister(veto);
             }
-            action("build");
+            submitConstruction();
             settle();
             require(
                 world.getTileEntity(176, 80, 464) instanceof BaseMetaTileEntity
@@ -642,12 +637,11 @@ public final class HologramBlueprintSmoke {
             supply(energy, false);
             beginPlacement(496, energyId);
             require(capture.state.getInteger("missing") > 0, "empty_real_wireless_account_is_reported_as_shortage");
-            action("confirmBlueprintPlacement");
             HologramService.lockVirtual(player, 176, 80, 496, 1);
             HologramSmokeTest.flushTransport();
-            action("build");
+            submitConstruction();
             require(capture.state.getBoolean("forcePlacementReady"), "wireless_shortage_requires_second_confirmation");
-            action("build");
+            submitConstruction();
             settle();
             require(
                 world.isAirBlock(176, 80, 496) && stock(
@@ -658,7 +652,7 @@ public final class HologramBlueprintSmoke {
                         .signum() == 0,
                 "forced_partial_build_cannot_generate_unpaid_stored_energy");
             WirelessNetworkManager.setUserEU(USER, BigInteger.valueOf(5000));
-            action("build");
+            submitConstruction();
             settle();
             require(
                 world.getTileEntity(176, 80, 496) instanceof BaseMetaTileEntity
@@ -741,6 +735,15 @@ public final class HologramBlueprintSmoke {
             base.getCoverAtSide(ForgeDirection.UP)
                 .isValid() == covers,
             "actual_GT_cover_retention_" + covers + "_" + z);
+    }
+
+    private void submitConstruction() {
+        if (!capture.state.getBoolean("blueprintAwaitingConfirmation")) action("scan");
+        NBTTagCompound review = new NBTTagCompound();
+        review.setBoolean("forceExplicit", capture.state.getBoolean("forcePlacementReady"));
+        action(
+            capture.state.getBoolean("blueprintAwaitingConfirmation") ? "confirmBlueprintPlacement" : "build",
+            review);
     }
 
     private void action(String op) {

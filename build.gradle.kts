@@ -10,7 +10,7 @@ tasks.test {
 val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
     configurations.detachedConfiguration(
         dependencies.create("com.github.GTNewHorizons:NotEnoughItems:2.8.155-GTNH:dev"),
-        dependencies.create("com.github.GTNewHorizons:CodeChickenCore:1.4.21:dev"),
+        dependencies.create("com.github.GTNewHorizons:CodeChickenCore:1.4.22:dev"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"),
         dependencies.create("it.unimi.dsi:fastutil:8.5.18"),
@@ -34,6 +34,18 @@ tasks.register<JavaExec>("runHologramTest") {
 tasks.named("check") { dependsOn("runHologramTest") }
 
 val hologramCoexistence = providers.gradleProperty("hologramCoexistence").isPresent
+val hologramExtendedCompatibility = providers.gradleProperty("hologramExtendedCompatibility").isPresent
+if (hologramExtendedCompatibility) {
+    require(listOf(
+        "hologramSmoke", "hologramCompatibilitySmoke", "hologramCoexistence", "hologramClientSmoke",
+        "hologramInteractionServer", "hologramInteractionClient"
+    ).any { providers.gradleProperty(it).isPresent }) {
+        "-PhologramExtendedCompatibility requires a hologram smoke/interaction run property."
+    }
+    extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
+        extraRunJvmArguments.add("-Dgtmb.hologram.extendedCompatibilitySmoke=true")
+    }
+}
 val smokeRoot = layout.buildDirectory.dir(if (hologramCoexistence) "hologram-coexistence/smoke" else "hologram-smoke")
 val interactionRoot = layout.buildDirectory.dir(if (hologramCoexistence) "hologram-coexistence/interaction" else "hologram-interaction")
 

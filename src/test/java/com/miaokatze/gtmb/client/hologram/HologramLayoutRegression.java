@@ -8,7 +8,8 @@ public final class HologramLayoutRegression {
     private HologramLayoutRegression() {}
 
     public static void run() {
-        int[][] displays = { { 800, 600 }, { 1280, 720 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };
+        int[][] displays = { { 800, 600 }, { 1100, 800 }, { 1280, 720 }, { 1920, 1080 }, { 2560, 1440 },
+            { 3840, 2160 } };
         for (int[] display : displays) {
             for (int guiScale : new int[] { 1, 2, 3, 4, 8 }) {
                 int width = (display[0] + guiScale - 1) / guiScale;
@@ -37,8 +38,8 @@ public final class HologramLayoutRegression {
             "blueprint workbench preserves a large preview independently of property controls");
         SimpleAssert.that(HologramScreenLayout.VIEWPORT_X >= 32, "left tabs do not overlay selectable cells");
         SimpleAssert.that(
-            HologramScreenLayout.CONTROL_WIDTH_SCALE <= .61F,
-            "compact property controls use the requested approximate forty percent reduction");
+            HologramScreenLayout.CONTROL_WIDTH_SCALE >= .90F && HologramScreenLayout.COMPACT_PANEL_WIDTH >= 210,
+            "property labels retain sufficient width without a sixty-percent squeeze");
         SimpleAssert.that(
             HologramScreenLayout.PANEL_Y + HologramScreenLayout.PANEL_HEIGHT < 285,
             "expanded properties end before execution footer");

@@ -4,13 +4,14 @@ import argparse
 import json
 import shutil
 
-from prepare_smoke import cached_jar
+from prepare_smoke import cached_jar, validate_support_jars
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', choices=['smoke', 'interaction'], default='smoke')
     parser.add_argument('--coexistence', action='store_true')
+    parser.add_argument('--extended-compatibility', action='store_true')
     parser.add_argument('--gtit-jar', type=Path, help='Optional check of the explicit jar used by the prepared server')
     parser.add_argument('--gtit-support-classpath', type=Path,
                         help='Optional check of the support classpath used by the prepared server')
@@ -30,6 +31,8 @@ def main():
     receipt = json.loads(environment.read_text(encoding='utf-8'))
     if bool(receipt.get('coexistence')) != args.coexistence or receipt.get('mode') != args.mode:
         parser.error('Client mode must match its prepared server fixture')
+    if bool(receipt.get('extended_compatibility')) != args.extended_compatibility:
+        parser.error('Extended compatibility mode must match its prepared server fixture')
     for option, key in [(args.gtit_jar, 'gtit_jar'), (args.gtit_support_classpath, 'gtit_support_classpath')]:
         if option and (not args.coexistence or str(option.resolve()) != receipt.get(key)):
             parser.error('Explicit GTIT inputs must match the prepared coexistence server')
@@ -52,6 +55,7 @@ def main():
     unexpected = [p.name for p in mods.glob('*.jar') if p.name not in {j.name for j in jars}]
     if unexpected:
         raise SystemExit('Use a fresh fixture directory; unexpected client mods: ' + ', '.join(unexpected))
+    validate_support_jars(jars)
     for jar in jars:
         shutil.copy2(jar, mods / jar.name)
     (mods.parent / 'options.txt').write_text(

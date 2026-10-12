@@ -33,10 +33,13 @@ public final class HologramCapabilities {
         for (int value = 1; value <= 64; value++) main.option(value, Integer.toString(value), null);
         if (report != null && report.context == context) {
             for (HologramChannelTrace.Observation observed : report.observations.values()) {
-                Row row = result.add(observed.id, observed.id + "（原始整数）", "observed");
+                List<ItemStack> materials = report.materials.get(observed.id);
+                Row row = result.add(
+                    observed.id,
+                    observed.id + "（原始整数）",
+                    materials == null || materials.isEmpty() ? "observed" : "material");
                 row.operations = observed.operations;
                 row.current = observed.effective;
-                List<ItemStack> materials = report.materials.get(observed.id);
                 if (materials != null)
                     for (int i = 0; i < materials.size(); i++) row.option(i + 1, null, materials.get(i));
             }
@@ -171,6 +174,10 @@ public final class HologramCapabilities {
                     }
                 }
             }
+            for (Row row : rows.values()) if (!"main".equals(row.id)) {
+                row.explicit = previous.hasKey(row.id, 3);
+                if (row.explicit) row.current = previous.getInteger(row.id);
+            }
             return this;
         }
 
@@ -190,7 +197,7 @@ public final class HologramCapabilities {
 
         private final String id, label, kind;
         private int current;
-        private final boolean explicit;
+        private boolean explicit;
         private final List<NBTTagCompound> options = new ArrayList<>();
         private boolean editable = true;
         private int operations;

@@ -127,6 +127,7 @@ final class HologramNativeDisplaySmoke {
             require(gt.getMetaTileEntity() != prototype, "registered_prototype_remains_detached");
         }
         state.setTag("cells", cells);
+        HologramPipeBlueprintSmoke.run(world, (BaseMetaPipeEntity) world.getTileEntity(208, 80, 48), coverItem);
         try (FileOutputStream stream = new FileOutputStream("hologram-native-display-client-state.nbt")) {
             CompressedStreamTools.writeCompressed(state, stream);
         }
