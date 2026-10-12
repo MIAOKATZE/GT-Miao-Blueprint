@@ -9,6 +9,7 @@ import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.ScreenShotHelper;
 
 import org.lwjgl.opengl.GL11;
@@ -28,9 +29,9 @@ public final class HologramClientSmoke {
     private File snapshotFile;
     private NBTTagCompound blueprintSnapshot;
     private int scenario = -1;
-    private static final String[] SCENARIOS = { "blueprint", "prompts", "gizmo", "missing", "missing-source",
-        "versions", "materials", "nbt-storage", "nbt-placement", "resources", "missing-confirm", "force-ready",
-        "blueprint" };
+    private static final String[] SCENARIOS = { "blueprint", "prompts", "gizmo", "gizmo-hover-structure",
+        "gizmo-hover-hint", "gizmo-hover-combined", "missing", "missing-source", "versions", "materials", "nbt-storage",
+        "nbt-placement", "resources", "missing-confirm", "force-ready", "blueprint" };
 
     static void install() {
         if (Boolean.getBoolean("gtmb.hologram.clientSmoke")) FMLCommonHandler.instance()
@@ -72,6 +73,10 @@ public final class HologramClientSmoke {
                 throw new IllegalStateException("Hologram screen was replaced");
             HologramScreen screen = (HologramScreen) mc.currentScreen;
             String layout = screen.smokeLayout();
+            if (scenario >= 0 && SCENARIOS[scenario].startsWith("gizmo-hover-")) System.out.println(
+                "[GTMB-HOLOGRAM-CLIENT] PASS " + SCENARIOS[scenario]
+                    + " "
+                    + screen.smokeRenderGizmoHover(SCENARIOS[scenario]));
             int glError = GL11.glGetError();
             if (glError != GL11.GL_NO_ERROR) throw new IllegalStateException("OpenGL error " + glError);
             String name = scenario < 0 ? "hologram-scale-" + scale
@@ -140,6 +145,7 @@ public final class HologramClientSmoke {
             System.out.println("[GTMB-HOLOGRAM-CLIENT] real blueprint snapshot " + source.getAbsolutePath());
         }
         NBTTagCompound scene = (NBTTagCompound) blueprintSnapshot.copy();
+        if (SCENARIOS[scenario].startsWith("gizmo-hover-")) scene = gizmoHoverFixture(SCENARIOS[scenario]);
         if ("missing-confirm".equals(SCENARIOS[scenario]) || "force-ready".equals(SCENARIOS[scenario])) {
             scene.setBoolean("virtualPlacement", true);
             scene.setBoolean("virtualLocked", true);
@@ -179,6 +185,47 @@ public final class HologramClientSmoke {
         mc.displayGuiScreen(screen);
         screen.smokeRenderScenario(SCENARIOS[scenario]);
         stageAt = System.nanoTime();
+    }
+
+    /** Keep a real captured block, with local-only overlays arranged to overlap its movement axes. */
+    private NBTTagCompound gizmoHoverFixture(String scenario) {
+        NBTTagCompound scene = (NBTTagCompound) snapshot.copy();
+        NBTTagCompound cell = (NBTTagCompound) scene.getTagList("cells", 10)
+            .getCompoundTagAt(0)
+            .copy();
+        cell.setString("prompt", "");
+        cell.setString("role", "");
+        cell.setBoolean("anchor", false);
+        cell.removeTag("structureIds");
+        cell.setString("structureId", "gizmo-hover-hint".equals(scenario) ? "" : "smoke-overlap");
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(cell);
+        scene.setTag("cells", cells);
+        scene.setString("blueprintPrompt", "");
+        scene.setString("activeStructure", "");
+        scene.setBoolean("blueprintAwaitingConfirmation", false);
+        scene.setBoolean("blueprintPreview", false);
+        scene.setBoolean("presetBrowseForPlacement", false);
+        NBTTagList structures = new NBTTagList();
+        if (!"gizmo-hover-hint".equals(scenario)) {
+            NBTTagCompound structure = new NBTTagCompound();
+            structure.setString("id", "smoke-overlap");
+            structure.setString("name", "移动轴重叠结构");
+            structures.appendTag(structure);
+        }
+        scene.setTag("structures", structures);
+        NBTTagList hints = new NBTTagList();
+        if (!"gizmo-hover-structure".equals(scenario)) {
+            NBTTagCompound hint = new NBTTagCompound();
+            hint.setString("prompt", "移动轴重叠提示");
+            hint.setIntArray(
+                "bounds",
+                new int[] { cell.getInteger("dx"), cell.getInteger("dy"), cell.getInteger("dz"), cell.getInteger("dx"),
+                    cell.getInteger("dy"), cell.getInteger("dz") });
+            hints.appendTag(hint);
+        }
+        scene.setTag("hintAreas", hints);
+        return scene;
     }
 
     private void finish(Minecraft mc, boolean passed, String reason) {

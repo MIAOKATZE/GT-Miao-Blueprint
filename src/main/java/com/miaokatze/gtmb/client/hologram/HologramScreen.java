@@ -547,7 +547,9 @@ public final class HologramScreen extends GuiScreen {
             263,
             180,
             0xffffaa);
-        else if (gizmo.pick(mx, my) >= 0) tooltip = Collections.singletonList("拖动轴沿单一方向移动；方块坐标吸附；松开提交规划");
+        // Preview hint and structure overlays may append to the axis tooltip in this same frame.
+        else if (gizmo.pick(mx, my) >= 0)
+            tooltip = new ArrayList<>(Collections.singletonList("拖动轴沿单一方向移动；方块坐标吸附；松开提交规划"));
     }
 
     private void drawConfig(int mx, int my) {
@@ -3450,10 +3452,17 @@ public final class HologramScreen extends GuiScreen {
             confirmedRevision = revision();
             resourceReview = "resources".equals(scenario);
         }
-        if ("prompts".equals(scenario) || "gizmo".equals(scenario) || "missing".equals(scenario)) {
+        if ("prompts".equals(scenario) || "gizmo".equals(scenario)
+            || scenario.startsWith("gizmo-hover-")
+            || "missing".equals(scenario)) {
             selected = state.cells.isEmpty() ? -1 : 0;
             selection.click(selected, false);
             moveHandles = true;
+            if (scenario.startsWith("gizmo-hover-")) {
+                yaw = Math.PI / 4;
+                pitch = Math.PI / 6;
+                zoom = .45;
+            }
             if ("prompts".equals(scenario)) {
                 promptDrawer = true;
                 promptScope = 0;
@@ -3463,6 +3472,32 @@ public final class HologramScreen extends GuiScreen {
         if ("versions".equals(scenario) || "missing-source".equals(scenario)) versionsDrawer = true;
         if ("nbt-storage".equals(scenario)) openNbtEditor(false);
         if ("nbt-placement".equals(scenario)) openNbtEditor(true);
+    }
+
+    /** Find actual overlapping projected hit regions, then exercise the complete GUI tooltip render. */
+    String smokeRenderGizmoHover(String scenario) {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
+        boolean structure = !"gizmo-hover-hint".equals(scenario);
+        boolean hint = !"gizmo-hover-structure".equals(scenario);
+        for (int y = viewportY + 20; y < viewportY + viewportHeight - 20; y++) {
+            for (int x = viewportX + 20; x < viewportX + viewportWidth - 20; x++) {
+                int mouseX = originX + Math.round(x * scale), mouseY = originY + Math.round(y * scale);
+                int mx = localX(mouseX), my = localY(mouseY);
+                if (gizmo.pick(mx, my) < 0) continue;
+                String pickedStructure = HologramRenderer.pickStructure(mx, my);
+                String pickedHint = HologramRenderer.hintAt(mx, my);
+                if (structure != !pickedStructure.isEmpty() || hint != !pickedHint.isEmpty()) continue;
+                drawScreen(mouseX, mouseY, 0);
+                List<String> expected = new ArrayList<>();
+                expected.add("拖动轴沿单一方向移动；方块坐标吸附；松开提交规划");
+                if (hint) expected.addAll(fontRendererObj.listFormattedStringToWidth("提示区 " + pickedHint, 260));
+                if (structure) expected.add("移动轴重叠结构 · 点击边缘整选");
+                if (!expected.equals(tooltip)) throw new IllegalStateException(
+                    "Overlapping gizmo tooltip mismatch: " + tooltip + " expected " + expected);
+                return "mouse=" + mx + "," + my + " tooltip=" + tooltip;
+            }
+        }
+        throw new IllegalStateException("No projected gizmo/overlay overlap for " + scenario);
     }
 
     String smokeLayout() {
