@@ -102,7 +102,8 @@ final class HologramKeyBindings {
     }
 
     private static boolean reserved(int key, int modifiers) {
-        return modifiers == 0 && (key == Keyboard.KEY_1 || key == Keyboard.KEY_2 || key == Keyboard.KEY_3);
+        return key == Keyboard.KEY_T
+            || modifiers == 0 && (key == Keyboard.KEY_1 || key == Keyboard.KEY_2 || key == Keyboard.KEY_3);
     }
 
     static boolean isModifier(int key) {

@@ -26,6 +26,7 @@ public final class HologramSnapshotCodecRegression {
             NBTTagCompound source = new NBTTagCompound();
             source.setString("session", "mega");
             source.setString("generation", "mega");
+            source.setString("utf", "ASCII\u0000\u732b\ud83d\ude3a");
             source.setLong("batchSeq", 37);
             source.setByteArray("payload", payload);
             byte[] compressed = HologramSnapshotCodec.compress(source);
@@ -61,8 +62,10 @@ public final class HologramSnapshotCodecRegression {
             NBTTagCompound decoded = HologramSnapshotCodec.decode(joined);
             SimpleAssert.that(Arrays.equals(payload, decoded.getByteArray("payload")), "large decoded NBT is complete");
             SimpleAssert.eq("mega", decoded.getString("generation"), "generation retained");
+            SimpleAssert.eq(source.getString("utf"), decoded.getString("utf"), "valid modified UTF retained");
             SimpleAssert.eq(37, (int) decoded.getLong("batchSeq"), "ACK batch retained");
             hostileArray();
+            malformedUtf();
             badFragment();
         } catch (IOException e) {
             throw new AssertionError(e);
@@ -105,5 +108,25 @@ public final class HologramSnapshotCodecRegression {
         } finally {
             buffer.release();
         }
+    }
+
+    private static void malformedUtf() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(new GZIPOutputStream(bytes))) {
+            output.writeByte(10);
+            output.writeUTF("");
+            output.writeByte(8);
+            output.writeUTF("name");
+            output.writeShort(1);
+            output.writeByte(0xc0); // Two-byte modified UTF sequence with its continuation missing.
+            output.writeByte(0);
+        }
+        boolean rejected = false;
+        try {
+            HologramSnapshotCodec.decode(bytes.toByteArray());
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "malformed UTF rejected without invoking vanilla CrashReport hooks");
     }
 }

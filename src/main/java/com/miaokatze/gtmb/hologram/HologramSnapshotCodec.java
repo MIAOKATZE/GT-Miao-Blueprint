@@ -83,6 +83,7 @@ public final class HologramSnapshotCodec {
         private final DataInputStream input;
         private final int limit;
         private int consumed;
+        private final byte[] utfBytes = new byte[65535];
 
         Validator(DataInputStream input, int limit) {
             this.input = input;
@@ -103,7 +104,17 @@ public final class HologramSnapshotCodec {
 
         void string() throws IOException {
             reserve(2);
-            skip(input.readUnsignedShort());
+            int length = input.readUnsignedShort();
+            reserve(length);
+            input.readFully(utfBytes, 0, length);
+            // Validate modified UTF before vanilla parsing can construct a CrashReport and call mod hooks.
+            for (int i = 0; i < length;) {
+                int first = utfBytes[i++] & 255;
+                if (first < 128) continue;
+                int tails = (first & 224) == 192 ? 1 : (first & 240) == 224 ? 2 : -1;
+                if (tails < 0 || tails > length - i) throw new IOException("snapshot NBT UTF");
+                while (tails-- > 0) if ((utfBytes[i++] & 192) != 128) throw new IOException("snapshot NBT UTF");
+            }
         }
 
         void skip(long bytes) throws IOException {

@@ -13,11 +13,20 @@ import gregtech.api.enums.OrePrefixes;
 import gregtech.api.util.GTOreDictUnificator;
 import gregtech.api.util.GTStructureUtility;
 import gregtech.common.blocks.BlockFrameBox;
+import gtPlusPlus.core.block.base.BasicBlock;
+import gtPlusPlus.core.block.base.BlockBaseModular;
 
 /** Only the reviewed GT material frame factory grants authority; tinted hints do not encode metadata. */
 final class HologramFrameSupport {
 
     private HologramFrameSupport() {}
+
+    /** GT++ frames inherit BlockContainer, but this exact implementation never creates a tile entity. */
+    static boolean inertFrameBlock(Block block, int meta) {
+        return block != null && block.getClass() == BlockBaseModular.class
+            && meta == 0
+            && ((BlockBaseModular) block).blockType == BasicBlock.BlockTypes.FRAME;
+    }
 
     static Materials material(IStructureElement<?> element) {
         for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {

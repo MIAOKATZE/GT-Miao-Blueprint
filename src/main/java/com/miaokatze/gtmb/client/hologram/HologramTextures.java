@@ -14,21 +14,27 @@ import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.client.resources.IReloadableResourceManager;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.IIcon;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import gregtech.api.GregTechAPI;
+import gregtech.api.covers.CoverRegistry;
+import gregtech.api.interfaces.IBlockContainer;
 import gregtech.api.interfaces.IBlockWithTextures;
 import gregtech.api.interfaces.IColorModulationContainer;
 import gregtech.api.interfaces.ITexture;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
+import gregtech.api.metatileentity.MetaPipeEntity;
 import gregtech.common.blocks.ItemMachines;
+import gregtech.common.covers.Cover;
 import gregtech.common.render.GTMultiTextureRender;
 import gregtech.common.render.GTRenderedTexture;
 import gregtech.common.render.GTSidedTextureRender;
 import gregtech.common.render.IIconTexture;
 
-/** Read-only atlas samples, resolved once per snapshot; never creates tile entities or invokes model renderers. */
+/** Native GT texture callbacks and static geometry, resolved once per snapshot without live tiles. */
 final class HologramTextures {
 
     static final class Sample {
@@ -45,12 +51,23 @@ final class HologramTextures {
     static final class Material {
 
         final List<Sample>[] sides;
-        final boolean gregTech, fallback;
+        final List<Sample>[] covers;
+        final List<HologramGeometry.Surface> geometry;
+        final boolean gregTech, fallback, pipe, partial;
 
-        Material(List<Sample>[] sides, boolean gregTech, boolean fallback) {
+        Material(List<Sample>[] sides, List<Sample>[] covers, List<HologramGeometry.Surface> geometry, boolean gregTech,
+            boolean fallback, boolean pipe, boolean partial) {
             this.sides = sides;
+            this.covers = covers;
+            this.geometry = geometry;
             this.gregTech = gregTech;
             this.fallback = fallback;
+            this.pipe = pipe;
+            this.partial = partial;
+        }
+
+        List<Sample> samples(HologramGeometry.Surface face) {
+            return face.coverSide >= 0 ? covers[face.coverSide] : sides[face.side];
         }
     }
 
@@ -110,6 +127,7 @@ final class HologramTextures {
             + ":"
             + Arrays.toString(cell.hintTint);
         key += ":" + (current ? cell.actualFacing : cell.targetFacing);
+        key += ":" + (current ? cell.actualDisplay : cell.targetDisplay);
         Material material = CACHE.get(key);
         if (material == null) {
             material = resolve(cell, current);
@@ -122,14 +140,20 @@ final class HologramTextures {
     @SuppressWarnings("unchecked")
     private static Material resolve(HologramState.Cell cell, boolean current) {
         List<Sample>[] sides = (List<Sample>[]) new List<?>[6];
+        List<Sample>[] covers = (List<Sample>[]) new List<?>[6];
         for (int side = 0; side < 6; side++) sides[side] = new ArrayList<>();
+        for (int side = 0; side < 6; side++) covers[side] = new ArrayList<>();
         current = current || cell.anchor || (cell.status.equals("protected") && cell.actualStack != null);
         Block block = cell.block(current);
         int meta = current || cell.anchor ? cell.meta : cell.wantMeta;
         ItemStack stack = current || cell.anchor ? cell.actualStack : cell.targetStack;
         boolean gt = stack != null && stack.getItem() instanceof ItemMachines;
+        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        boolean pipe = false;
+        float thickness = 1;
         ITexture[][] textures = null;
         int front = current ? cell.actualFacing : cell.targetFacing;
+        if (front < 0 && display.hasKey("facing")) front = display.getInteger("facing");
         int[] textureSides = { 0, 1, 2, 3, 4, 5 };
         try {
             if (gt) {
@@ -138,7 +162,9 @@ final class HologramTextures {
                     ? GregTechAPI.METATILEENTITIES[id]
                     : null;
                 if (machine != null) {
-                    textures = HologramMachineTextures.resolve(machine, front, textureSides);
+                    pipe = machine instanceof MetaPipeEntity;
+                    if (pipe) thickness = ((MetaPipeEntity) machine).getCollisionThickness();
+                    textures = HologramMachineTextures.resolve(machine, front, textureSides, display);
                 }
             } else if (block instanceof IBlockWithTextures) {
                 textures = ((IBlockWithTextures) block).getInventoryTextures(meta);
@@ -169,8 +195,43 @@ final class HologramTextures {
                 sides[side].add(new Sample(atlas.getAtlasSprite("missingno"), 0xffffff));
             }
         }
+        int coverMask = 0;
+        NBTTagList rows = display.getTagList("gt.covers", 10);
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            int side = row.getByte("s");
+            if (side < 0 || side >= 6) continue;
+            try {
+                ITexture cover = coverTexture(row, side, pipe);
+                append(covers[side], cover, side, 0);
+            } catch (RuntimeException requiresTile) {}
+            if (covers[side].isEmpty()) {
+                fallback = true;
+                covers[side].add(new Sample(atlas.getAtlasSprite("missingno"), 0xffffff));
+            }
+            coverMask |= 1 << side;
+            if (!pipe || thickness >= 1) sides[side].addAll(covers[side]);
+        }
+        List<HologramGeometry.Surface> geometry = pipe
+            ? HologramGeometry.pipe(thickness, display.getInteger("connections"), coverMask)
+            : HologramGeometry.cube();
         // GT coil blocks also supply layered GT textures; the diagnostic flag includes them.
-        return new Material(sides, gt || block instanceof IBlockWithTextures, fallback);
+        return new Material(
+            sides,
+            covers,
+            geometry,
+            gt || block instanceof IBlockWithTextures,
+            fallback,
+            pipe,
+            pipe && thickness < 1);
+    }
+
+    static ITexture coverTexture(NBTTagCompound row, int side, boolean pipe) {
+        Cover cover = CoverRegistry
+            .buildCoverFromNbt((NBTTagCompound) row.copy(), ForgeDirection.getOrientation(side), null);
+        if (cover == null || !cover.isValid()) return null;
+        ITexture texture = pipe ? cover.getSpecialFaceTexture() : cover.getOverlayTexture();
+        return texture != null ? texture : CoverRegistry.getCoverTexture(cover.asItemStack());
     }
 
     static int inventorySide(int front, int side) {
@@ -206,6 +267,23 @@ final class HologramTextures {
             if (texture instanceof GTRenderedTexture) {
                 IIcon overlay = ((GTRenderedTexture) texture).getIcon(ForgeDirection.getOrientation(side), true, null);
                 if (overlay != null) samples.add(new Sample(overlay, 0xffffff));
+            }
+        } else if (texture instanceof IBlockContainer) {
+            // Native facade/CTM textures still identify their copied block and metadata.
+            // Sample that block in isolation; a connected-texture world is intentionally not fabricated.
+            IBlockContainer copied = (IBlockContainer) texture;
+            Block block = copied.getBlock();
+            if (block != null) {
+                int copiedSide = side;
+                try {
+                    Field direction = texture.getClass()
+                        .getDeclaredField("mSide");
+                    direction.setAccessible(true);
+                    int configured = ((Number) direction.get(texture)).intValue();
+                    if (configured >= 0 && configured < 6) copiedSide = configured;
+                } catch (ReflectiveOperationException | SecurityException ignored) {}
+                IIcon icon = block.getIcon(copiedSide, copied.getMeta());
+                if (icon != null) samples.add(new Sample(icon, block.getRenderColor(copied.getMeta())));
             }
         }
     }

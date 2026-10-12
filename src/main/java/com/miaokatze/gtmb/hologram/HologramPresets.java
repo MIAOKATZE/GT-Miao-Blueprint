@@ -36,8 +36,9 @@ import gregtech.common.blocks.ItemMachines;
 final class HologramPresets {
 
     private static final Path FILE = Paths.get("config", "gtmb", "hologram-presets.json");
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting()
-        .create();
+    // The whole library has a separate budget; one large entry must not consume every other slot.
+    static final int MAX_LIBRARY_BYTES = 64 * 1024 * 1024;
+    private static final Gson GSON = new GsonBuilder().create();
     private static List<Preset> cached;
 
     private HologramPresets() {}
@@ -48,6 +49,7 @@ final class HologramPresets {
         String defaultItem;
         String block, tileNbt, itemNbt, prompt, structureId;
         List<String> structureIds;
+        List<Target> allowedTargets;
         int metadata;
         boolean excluded;
         int defaultDamage;
@@ -95,12 +97,32 @@ final class HologramPresets {
         String prompt;
     }
 
+    /** Per-position declared item identities, never the union of a region's palette. */
+    static final class Target {
+
+        String item;
+        int damage;
+
+        Target(ItemStack stack) {
+            item = String.valueOf(Item.itemRegistry.getNameForObject(stack.getItem()));
+            damage = stack.getItemDamage();
+        }
+
+        ItemStack stack() {
+            Object found = item == null ? null : Item.itemRegistry.getObject(item);
+            return found instanceof Item ? new ItemStack((Item) found, 1, damage) : null;
+        }
+    }
+
     /** Captured provenance and relative outline anchor; live formation is always recomputed by the server. */
     static final class Structure {
 
         String id, name, sourceMod, sourceClass;
         int x, y, z, controllerId = -1;
         boolean enabled = true;
+        int main = 1;
+        boolean mainExplicit, noHatches;
+        Map<String, Integer> channels = new LinkedHashMap<>();
     }
 
     static final class Preset {
@@ -156,9 +178,10 @@ final class HologramPresets {
     private static List<Preset> readLibrary(Path file) throws IOException {
         List<Preset> result = new ArrayList<>();
         if (Files.exists(file)) {
-            if (Files.size(file) > 8 * 1024 * 1024) throw new IOException("模板配置超过8MiB上限");
+            if (Files.size(file) > MAX_LIBRARY_BYTES) throw new IOException("蓝图库超过64MiB上限");
             try {
-                FileData data = decode(new String(HologramBlueprintSharing.readBytes(file), StandardCharsets.UTF_8));
+                FileData data = decode(
+                    new String(HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8));
                 if (data == null || (data.schema != 1 && data.schema != 2)
                     || data.presets == null
                     || data.presets.size() > 32) throw new IOException("模板配置格式或数量无效");
@@ -166,6 +189,7 @@ final class HologramPresets {
                 for (Preset preset : data.presets) {
                     Preset loaded = preset != null && preset.schema == 1 ? upgradeLegacy(preset) : preset;
                     validate(loaded);
+                    HologramBlueprintSharing.encodeBounded(GSON, loaded, HologramBlueprintSharing.MAX_BYTES);
                     if (!ids.add(loaded.id)) throw new IOException("模板ID重复");
                     result.add(loaded);
                 }
@@ -196,9 +220,24 @@ final class HologramPresets {
         write(FILE, list);
     }
 
+    static synchronized void delete(String id) throws IOException {
+        List<Preset> list = all();
+        remove(list, id);
+        write(FILE, list);
+    }
+
+    private static void remove(List<Preset> list, String id) throws IOException {
+        int index = indexOf(list, id);
+        if (index < 0) throw new IOException("要删除的蓝图不存在");
+        list.remove(index);
+    }
+
     private static Preset put(List<Preset> list, Preset preset, boolean update) throws IOException {
         if (preset == null) throw new IOException("模板无效");
-        Preset result = copy(preset);
+        // A selected NBT subset can shrink a captured draft before the per-entry write budget is applied.
+        Preset result = GSON.fromJson(
+            new String(HologramBlueprintSharing.encodeBounded(GSON, preset, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8),
+            Preset.class);
         if (update) {
             int index = indexOf(list, result.id);
             if (index < 0) throw new IOException("要更新的模板不存在");
@@ -339,9 +378,9 @@ final class HologramPresets {
     private static void write(Path file, List<Preset> list) throws IOException {
         FileData data = new FileData();
         data.presets = list;
-        byte[] bytes = GSON.toJson(data)
-            .getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > 8 * 1024 * 1024) throw new IOException("模板配置超过8MiB上限");
+        for (Preset preset : list)
+            HologramBlueprintSharing.encodeBounded(GSON, preset, HologramBlueprintSharing.MAX_BYTES);
+        byte[] bytes = HologramBlueprintSharing.encodeBounded(GSON, data, MAX_LIBRARY_BYTES);
         Files.createDirectories(file.getParent());
         Path temp = Files.createTempFile(file.getParent(), "hologram-presets-", ".tmp");
         try {
@@ -369,7 +408,7 @@ final class HologramPresets {
     }
 
     private static FileData decode(String json) throws IOException {
-        HologramBlueprintSharing.boundedJson(json);
+        HologramBlueprintSharing.boundedJson(json, MAX_LIBRARY_BYTES);
         JsonElement root = new JsonParser().parse(json);
         if (!root.isJsonObject() || !root.getAsJsonObject()
             .has("schema")
@@ -496,6 +535,7 @@ final class HologramPresets {
             }
         }
         text(preset.prompt, 4096);
+        payloadBudget(preset);
         text(preset.controllerType, 256);
         text(preset.sourceMod, 256);
         text(preset.sourceClass, 512);
@@ -516,6 +556,13 @@ final class HologramPresets {
             text(structure.name, 256);
             text(structure.sourceMod, 256);
             text(structure.sourceClass, 512);
+            if (structure.main < 1 || structure.channels == null || structure.channels.size() > 64)
+                throw new IOException("蓝图结构通道或规模设置无效");
+            for (Map.Entry<String, Integer> channel : structure.channels.entrySet()) {
+                if (channel.getKey() == null || !channel.getKey()
+                    .matches("[a-z0-9_.-]{1,48}") || channel.getValue() == null || channel.getValue() < 1)
+                    throw new IOException("蓝图结构通道值无效");
+            }
             coordinates(structure.x, structure.y, structure.z);
         }
         for (Cell cell : preset.cells) {
@@ -550,6 +597,24 @@ final class HologramPresets {
         }
     }
 
+    private static void payloadBudget(Preset preset) throws IOException {
+        Map<String, Integer> expanded = new java.util.HashMap<>();
+        long total = 0;
+        for (List<Cell> cells : java.util.Arrays.asList(preset.cells, preset.palette)) for (Cell cell : cells) {
+            if (cell == null) throw new IOException("蓝图方块无效");
+            for (String value : new String[] { cell.tileNbt, cell.itemNbt }) {
+                if (value == null || value.isEmpty()) continue;
+                Integer size = expanded.get(value);
+                if (size == null) {
+                    size = HologramBlueprintNbt.expandedBytes(value);
+                    expanded.put(value, size);
+                }
+                total += size;
+                if (total > 64L * 1024 * 1024) throw new IOException("蓝图设备NBT展开总量超过64MiB上限；请减少保存的NBT条目或拆分蓝图");
+            }
+        }
+    }
+
     private static void filterSelectedPayload(Preset preset, Cell cell) throws IOException {
         List<String> keys = preset.retainNbt ? preset.retainedNbtKeys : java.util.Collections.emptyList();
         cell.tileNbt = HologramBlueprintNbt.filterCaptured(cell.tileNbt, keys, preset.retainCovers);
@@ -569,6 +634,15 @@ final class HologramPresets {
         registryText(cell.defaultItem, true);
         coordinates(cell.x, cell.y, cell.z);
         text(cell.prompt, 4096);
+        if (cell.allowedTargets != null) {
+            if (cell.allowedTargets.size() > 4096) throw new IOException("蓝图格候选数量超出上限");
+            Set<String> unique = new HashSet<>();
+            for (Target target : cell.allowedTargets) {
+                if (target == null || target.damage < 0) throw new IOException("蓝图格候选无效");
+                registryText(target.item, false);
+                if (!unique.add(target.item + ":" + target.damage)) throw new IOException("蓝图格候选重复");
+            }
+        }
         // filterSelectedPayload validates binary NBT budgets and strips unselected entries before storage.
     }
 

@@ -1,6 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.io.IOException;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -46,6 +45,11 @@ public final class HologramClient {
     private static final long SNAPSHOT_TTL_NS = 300000000000L;
     private static HologramSnapshotAssembly assembly = new HologramSnapshotAssembly();
     private static net.minecraft.world.World assemblyWorld;
+    private static final HologramSnapshotInbox<NBTTagCompound> snapshotInbox = new HologramSnapshotInbox<>(
+        2,
+        HologramSnapshotAssembly.MAX_BYTES,
+        HologramSnapshotCodec::decode);
+    private static long lastDecodeNotice;
 
     private HologramClient() {}
 
@@ -164,6 +168,8 @@ public final class HologramClient {
     @SubscribeEvent
     public void clientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
+        syncSnapshotWorld();
+        installDecoded(snapshotInbox.poll());
         boolean down = Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R);
         boolean pressed = down && !rotationDown;
         rotationDown = down;
@@ -211,6 +217,8 @@ public final class HologramClient {
     }
 
     private static void receive(NBTTagCompound nbt) {
+        syncSnapshotWorld();
+        if (Minecraft.getMinecraft().theWorld == null) return;
         if (nbt.getBoolean("transportError")) {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc.thePlayer != null) mc.thePlayer.addChatMessage(
@@ -220,13 +228,8 @@ public final class HologramClient {
                         "Hologram snapshot exceeds the transfer budget; the previous preview was retained.")));
             return;
         }
+        installDecoded(snapshotInbox.poll());
         if (nbt.getBoolean("transportFragment")) {
-            net.minecraft.world.World world = Minecraft.getMinecraft().theWorld;
-            if (world == null) return;
-            if (world != assemblyWorld) {
-                assembly = new HologramSnapshotAssembly();
-                assemblyWorld = world;
-            }
             byte[] complete = assembly.accept(
                 nbt.getLong("transportSequence"),
                 nbt.getInteger("transportTotal"),
@@ -234,31 +237,69 @@ public final class HologramClient {
                 nbt.getByteArray("transportBytes"),
                 System.nanoTime());
             if (complete == null) return;
-            try {
-                nbt = HologramSnapshotCodec.decode(complete);
-            } catch (IOException | RuntimeException e) {
-                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot decoding failed", e);
-                return;
+            while (!snapshotInbox.offer(complete)) {
+                decodeNotice(
+                    "decodeBusy",
+                    "Hologram snapshots are arriving faster than they can be decoded; waiting to preserve update order.");
+                installDecoded(snapshotInbox.awaitNext());
             }
+            return;
         }
+        while (!snapshotInbox.offerValue(nbt)) {
+            decodeNotice(
+                "decodeBusy",
+                "Hologram snapshots are arriving faster than they can be decoded; waiting to preserve update order.");
+            installDecoded(snapshotInbox.awaitNext());
+        }
+        installDecoded(snapshotInbox.poll());
+    }
+
+    private static void syncSnapshotWorld() {
+        net.minecraft.world.World world = Minecraft.getMinecraft().theWorld;
+        if (world == assemblyWorld) return;
+        assembly = new HologramSnapshotAssembly();
+        assemblyWorld = world;
+        snapshotInbox.clear();
+        if (state != null && snapshotWorld != world) clearProjection();
+    }
+
+    private static void decodeNotice(String key, String fallback) {
+        long now = System.nanoTime();
+        if (lastDecodeNotice != 0 && now - lastDecodeNotice < 5_000_000_000L) return;
+        lastDecodeNotice = now;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null)
+            mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(text(key, fallback)));
+    }
+
+    private static void installDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result) {
+        if (result == null) return;
+        if (result.failure != null) {
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot decoding failed", result.failure);
+            decodeNotice("decodeError", "Hologram snapshot decoding failed; the previous preview was retained.");
+            return;
+        }
+        installSnapshot(result.value);
+    }
+
+    /** Registry lookups, world access, GUI and rendering resources remain on the client thread. */
+    private static void installSnapshot(NBTTagCompound nbt) {
         if (nbt.getBoolean("cancelled")) {
-            if (state != null && state.session.equals(nbt.getString("session"))) clearProjection();
+            if (state != null && state.session.equals(nbt.getString("session"))) clearProjection(false);
             return;
         }
         // Collection progress is not a complete editable structure; retain the last complete snapshot.
         if (nbt.getBoolean("capturePending")) return;
-        HologramState next = new HologramState(nbt);
-        String generation = next.data.getString("generation");
-        if ((!generation.isEmpty() && !generation.equals(next.session)) || retiredSessions.contains(next.session))
-            return;
-        boolean same = state != null && state.session.equals(next.session);
-        if (same && next.data.getLong("planRevision") < state.data.getLong("planRevision")) return;
-        if (same && next.data.getLong("planRevision") != state.data.getLong("planRevision")) {
-            HologramRenderer.release();
-        }
-        long batch = next.data.getLong("batchSeq");
+        String session = nbt.getString("session");
+        String generation = nbt.getString("generation");
+        if ((!generation.isEmpty() && !generation.equals(session)) || retiredSessions.contains(session)) return;
+        boolean same = state != null && state.session.equals(session);
+        if (same && nbt.getLong("planRevision") < state.data.getLong("planRevision")) return;
+        long batch = nbt.getLong("batchSeq");
         if (same && (batch < acceptedBatch || (batch == acceptedBatch && "ACK".equals(state.data.getString("phase"))
-            && "PREPARE".equals(next.data.getString("phase"))))) return;
+            && "PREPARE".equals(nbt.getString("phase"))))) return;
+        // Reject stale packets before copying a large NBT tree or resolving thousands of block/item entries.
+        HologramState next = new HologramState(nbt);
         if (!same) {
             if (state != null) retire(state.session);
             HologramRenderer.release();
@@ -331,7 +372,15 @@ public final class HologramClient {
     }
 
     static void clearProjection() {
-        assembly.clear();
+        clearProjection(true);
+    }
+
+    private static void clearProjection(boolean invalidatePending) {
+        if (invalidatePending) {
+            assembly.clear();
+            snapshotInbox.clear();
+        }
+        // A decoded server cancellation can precede an already arriving new-session snapshot.
         if (state != null) retire(state.session);
         HologramRenderer.release();
         state = null;
@@ -348,10 +397,7 @@ public final class HologramClient {
     public void renderWorld(RenderWorldLastEvent event) {
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
-        if (mc.theWorld != assemblyWorld) {
-            assembly = new HologramSnapshotAssembly();
-            assemblyWorld = mc.theWorld;
-        }
+        syncSnapshotWorld();
         if (state == null) return;
         if (mc.theWorld == null || mc.theWorld != snapshotWorld
             || mc.thePlayer == null

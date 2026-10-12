@@ -3,11 +3,16 @@ package com.miaokatze.gtmb.client.hologram;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
+import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.common.util.ForgeDirection;
 
+import gregtech.api.enums.Textures;
 import gregtech.api.interfaces.ITexture;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
+import gregtech.api.interfaces.metatileentity.IMetaTileEntityPipe;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
+import gregtech.api.metatileentity.MetaPipeEntity;
+import gregtech.api.metatileentity.implementations.MTEHatch;
 
 /** Read-only GT texture access across the inventory-model API introduced after beta2. */
 final class HologramMachineTextures {
@@ -51,6 +56,75 @@ final class HologramMachineTextures {
             }
         }
         return textures;
+    }
+
+    static ITexture[][] resolve(IMetaTileEntity machine, int front, int[] textureSides, NBTTagCompound display) {
+        int color = display.hasKey("color") ? Math.max(-1, Math.min(15, display.getInteger("color"))) : -1;
+        boolean active = display.getBoolean("active");
+        int redstone = display.getInteger("redstoneMask");
+        if (machine instanceof MetaPipeEntity || machine instanceof IMetaTileEntityPipe) {
+            ITexture[][] textures = new ITexture[6][];
+            int connections = textureConnections(display.getInteger("connections"));
+            for (int side = 0; side < 6; side++) {
+                ForgeDirection direction = ForgeDirection.getOrientation(side);
+                boolean connected = connections == 0 || (connections & (1 << side)) != 0;
+                boolean powered = (redstone & (1 << side)) != 0;
+                // Current GT native pipes extend MetaPipeEntity but do not implement the legacy pipe interface.
+                textures[side] = machine instanceof MetaPipeEntity
+                    ? ((MetaPipeEntity) machine).getTexture(null, direction, connections, color, connected, powered)
+                    : ((IMetaTileEntityPipe) machine)
+                        .getTexture(null, direction, connections, color, connected, powered);
+            }
+            return textures;
+        }
+        if (machine instanceof MTEHatch && display.hasKey("texturePage") && display.hasKey("textureIndex")) {
+            int page = display.getInteger("texturePage"), index = display.getInteger("textureIndex");
+            ITexture[][] pages = Textures.BlockIcons.casingTexturePages;
+            if ((page > 0 || index > 0) && page >= 0
+                && page < pages.length
+                && pages[page] != null
+                && index >= 0
+                && index < pages[page].length
+                && pages[page][index] != null) {
+                ITexture background = pages[page][index];
+                MTEHatch hatch = (MTEHatch) machine;
+                ITexture[][] textures = new ITexture[6][];
+                for (int side = 0; side < 6; side++) {
+                    textures[side] = side == front
+                        ? active ? hatch.getTexturesActive(background) : hatch.getTexturesInactive(background)
+                        : new ITexture[] { background };
+                }
+                return textures;
+            }
+        }
+        if (display.hasKey("color") || display.hasKey("active") || display.hasKey("redstoneMask")) {
+            ITexture[][] textures = resolve(machine, front, textureSides);
+            if (front >= 0 && front < 6) for (int side = 0; side < 6; side++) {
+                try {
+                    ITexture[] world = machine.getTexture(
+                        null,
+                        ForgeDirection.getOrientation(side),
+                        ForgeDirection.getOrientation(front),
+                        color,
+                        active,
+                        (redstone & (1 << side)) != 0);
+                    if (!empty(world)) {
+                        textures[side] = world;
+                        textureSides[side] = side;
+                    }
+                } catch (RuntimeException requiresWorldTile) {}
+            }
+            return textures;
+        }
+        return resolve(machine, front, textureSides);
+    }
+
+    /** GT's single-ended pipes use the opposite end's texture but retain their original geometry mask. */
+    static int textureConnections(int connections) {
+        connections &= 63;
+        if (Integer.bitCount(connections) != 1) return connections;
+        int side = Integer.numberOfTrailingZeros(connections);
+        return connections | 1 << (side ^ 1);
     }
 
     private static ITexture[][] inventory(IMetaTileEntity machine) {

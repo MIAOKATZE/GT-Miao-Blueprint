@@ -41,11 +41,13 @@ Craft **one StructureLib Hologram Projector into one Neko Projector** with a sha
 | Shift + right-click / 右键 | Open the Structure / Blueprint workspace. 打开「结构 / 蓝图」工作台。 |
 | Shift + Alt + right-click / 右键 | Start or finish world region selection. 开始或结束世界区域框选。 |
 | Left / right-click in selection mode / 框选时左键、右键 | Set the two corners; hold Alt to use your position. 设置两个角点；按住 Alt 使用自身坐标。 |
-| Alt + right-click / 右键 | Select a blueprint and check materials, then enter placement preview. 选择蓝图并核对材料，再进入放置预览。 |
+| Alt + right-click / 右键 | Open the blueprint library first. Choose a blueprint and check materials before placement preview. 先打开蓝图库；选定蓝图并核对材料后进入放置预览。 |
+| Hold T and click / 按住 T 点击 | Select every cell in the clicked structure; clicking a non-structure cell selects the whole blueprint. 选择点击位置所属结构的全部格；点击非结构格时选择整张蓝图。 |
+| Hints and save / 提示与保存 | Choose hint scope; saved hints keep their summary, P mark and position text. Update keeps the current ID; Save As creates a new ID, and Delete asks for confirmation. 选择提示范围；保存后保留摘要、P 标记和位置文本。更新沿用当前 ID，另存生成新 ID，删除前需确认。 |
 
-See the [projector guide](docs/neko-hologram-projector.md) for detailed controls. Blueprints and shared JSON files are stored under the server's `config/gtmb/` directory.
+See the [projector guide](docs/neko-hologram-projector.md) for detailed controls. The saved blueprint library is on the server at `config/gtmb/hologram-presets.json` (64 MiB library limit, 8 MiB per blueprint). Imported and exported share files are under `config/gtmb/hologram-blueprints/`.
 
-详细操作见[投影仪说明](docs/neko-hologram-projector.md)。蓝图与分享 JSON 保存在服务端 `config/gtmb/` 目录。
+详细操作见[投影仪说明](docs/neko-hologram-projector.md)。蓝图库保存在服务端 `config/gtmb/hologram-presets.json`（全库上限 64 MiB，单份蓝图上限 8 MiB）；导入、导出的分享文件位于 `config/gtmb/hologram-blueprints/`。
 
 ## License & Origins / 许可与来源
 

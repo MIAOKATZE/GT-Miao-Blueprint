@@ -222,9 +222,9 @@ public final class HologramCapture {
                         if (element == StructureUtility.isAir()) {
                             cell.block = Blocks.air;
                             cell.meta = 0;
-                        } else element.spawnHint(capture.context, w, xx, yy, zz, piece.trigger);
+                        } else capture.spawnHint(element, w, xx, yy, zz, piece.trigger, 0);
                         if (observeDeclaration) HologramDeclarationWrappers.observeMaterials(element);
-                        if (cell.block == StructureLibAPI.getBlockHint()) {
+                        if (cell.block == null || cell.block == StructureLibAPI.getBlockHint()) {
                             HologramCasingFallback.Target casing = capture.casing(element, piece.trigger);
                             if (casing == null) cell.unknown = true;
                             else {
@@ -252,7 +252,7 @@ public final class HologramCapture {
                             if (cell.iconOnly) cell.role = "interface";
                         }
                         if (cell.unknown && "block".equals(cell.role)) cell.role = "interface";
-                    } catch (RuntimeException | LinkageError e) {
+                    } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
                         cell.unknown = true;
                         capture.failure = e.getClass()
                             .getSimpleName();
@@ -282,6 +282,26 @@ public final class HologramCapture {
         else if ("TIME_LIMIT".equals(reason) && !failure.startsWith("TIME_LIMIT")) failure = reason + ": " + failure;
     }
 
+    /** Delegate hints through reviewed wrappers without evaluating a deferred controller factory. */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private boolean spawnHint(IStructureElement element, World world, int x, int y, int z, ItemStack signal, int depth)
+        throws ReflectiveOperationException {
+        if (element == null || depth > 12) return false;
+        IStructureElement backing = HologramDeclarationWrappers.backing(element);
+        if (backing != null)
+            return spawnHint(backing, world, x, y, z, HologramDeclarationWrappers.trigger(element, signal), depth + 1);
+        if (HologramDeclarationWrappers.isLazy(element)) return false;
+        if (element instanceof com.gtnewhorizon.structurelib.structure.IStructureElementChain) {
+            IStructureElement[] fallbacks = ((com.gtnewhorizon.structurelib.structure.IStructureElementChain) element)
+                .fallbacks();
+            if (fallbacks == null || fallbacks.length > 64) return false;
+            for (IStructureElement fallback : fallbacks)
+                if (spawnHint(fallback, world, x, y, z, signal, depth + 1)) return true;
+            return false;
+        }
+        return element.spawnHint(context, world, x, y, z, signal);
+    }
+
     private static final class CaptureYieldException extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
@@ -295,6 +315,7 @@ public final class HologramCapture {
     private void describeActual(Cell cell, World world) {
         TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
         if (tile == null) return;
+        cell.actualDisplay = HologramDisplaySnapshot.capture(tile);
         cell.renderKind = "item";
         if (tile instanceof IGregTechTileEntity) {
             IGregTechTileEntity gt = (IGregTechTileEntity) tile;
@@ -321,6 +342,7 @@ public final class HologramCapture {
         anchor.block = world.getBlock(x, y, z);
         anchor.meta = world.getBlockMetadata(x, y, z);
         anchor.actualStack = machine.getStackForm(1);
+        anchor.actualDisplay = HologramDisplaySnapshot.capture((TileEntity) machine.getBaseMetaTileEntity());
         anchor.actualFacing = machine.getBaseMetaTileEntity()
             .getFrontFacing()
             .ordinal();
@@ -371,6 +393,7 @@ public final class HologramCapture {
         List<String> structureIds;
         String status = "pending";
         List<ItemStack> candidates;
+        List<ItemStack> structureTargets;
         boolean candidateComplete;
         String candidateBoundary = "尚未解析结构声明";
         final ItemStack elementTrigger;
@@ -381,6 +404,8 @@ public final class HologramCapture {
         String family = "";
         String renderKind = "block";
         ItemStack actualStack;
+        net.minecraft.nbt.NBTTagCompound actualDisplay = new net.minecraft.nbt.NBTTagCompound();
+        net.minecraft.nbt.NBTTagCompound targetDisplay = new net.minecraft.nbt.NBTTagCompound();
         int actualFacing = -1;
         String[] hintIcons;
         short[] hintTint;

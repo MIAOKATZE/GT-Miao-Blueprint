@@ -2,11 +2,14 @@ package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import net.minecraft.block.Block;
 import net.minecraft.item.ItemStack;
@@ -19,16 +22,21 @@ import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 
 import gregtech.api.GregTechAPI;
+import gregtech.api.casing.Casings;
 import gregtech.api.enums.HeatingCoilLevel;
 import gregtech.api.util.GTStructureUtility;
 import gregtech.common.blocks.BlockCasings5;
+import gtPlusPlus.core.material.Material;
 
 /** Exact reviewed wrappers; reading declarations never invokes controller callbacks. */
 final class HologramDeclarationWrappers {
 
+    private static final Map<IStructureElement<?>, IStructureElement<?>> FIXED_LAZY = new WeakHashMap<>();
+
     private HologramDeclarationWrappers() {}
 
     static IStructureElement<?> backing(IStructureElement<?> element) throws ReflectiveOperationException {
+        if (isLazy(element)) return lazyBacking(element);
         Method factory = element.getClass()
             .getEnclosingMethod();
         if (factory == null) return null;
@@ -40,6 +48,74 @@ final class HologramDeclarationWrappers {
             field = "val$element";
         else return null;
         return (IStructureElement<?>) captured(element, field);
+    }
+
+    static boolean isLazy(IStructureElement<?> element) {
+        return element != null && element.getClass()
+            .getName()
+            .equals("com.gtnewhorizon.structurelib.structure.LazyStructureElement");
+    }
+
+    /**
+     * Read initialized declarations, or reconstruct the two reviewed fixed-material factories.
+     * Never execute the deferred Function/Supplier: it may mutate its controller.
+     */
+    private static IStructureElement<?> lazyBacking(IStructureElement<?> element) throws ReflectiveOperationException {
+        Field initialized = element.getClass()
+            .getDeclaredField("elem");
+        if (initialized.getType() != IStructureElement.class) return null;
+        initialized.setAccessible(true);
+        IStructureElement<?> leaf = (IStructureElement<?>) initialized.get(element);
+        if (leaf != null) return leaf;
+        synchronized (FIXED_LAZY) {
+            leaf = FIXED_LAZY.get(element);
+            if (leaf != null) return leaf;
+            Field deferred = element.getClass()
+                .getDeclaredField("to");
+            deferred.setAccessible(true);
+            Object factory = deferred.get(element);
+            Object source = lambdaCapture(factory, GTStructureUtility.class.getName());
+            if (source != null) {
+                Object material = lambdaCapture(source, GTStructureUtility.class.getName());
+                if (material instanceof Material) {
+                    ItemStack frame = ((Material) material).getFrameBox(1);
+                    if (frame != null && frame.getItem() != null) {
+                        Block block = Block.getBlockFromItem(frame.getItem());
+                        if (block != null) leaf = StructureUtility.ofBlock(block, frame.getItemDamage());
+                    }
+                }
+            } else {
+                Object supplier = lambdaCapture(factory, StructureUtility.class.getName());
+                Object casing = lambdaCapture(supplier, "gregtech.api.casing.ICasing");
+                if (casing instanceof Casings) {
+                    Casings fixed = (Casings) casing;
+                    Block block = fixed.getBlock();
+                    if (block != null) leaf = StructureUtility.ofBlock(block, fixed.getBlockMeta());
+                }
+            }
+            if (leaf != null) FIXED_LAZY.put(element, leaf);
+            return leaf;
+        }
+    }
+
+    /** A lambda's captured constant is data; invoking its implementation is deliberately avoided. */
+    private static Object lambdaCapture(Object lambda, String owner) throws ReflectiveOperationException {
+        if (lambda == null || !lambda.getClass()
+            .isSynthetic()
+            || !lambda.getClass()
+                .getName()
+                .startsWith(owner + "$$Lambda$"))
+            return null;
+        Field captured = null;
+        for (Field field : lambda.getClass()
+            .getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) continue;
+            if (captured != null) return null;
+            captured = field;
+        }
+        if (captured == null) return null;
+        captured.setAccessible(true);
+        return captured.get(lambda);
     }
 
     static IStructureElement<?> alternativesBacking(IStructureElement<?> element) throws ReflectiveOperationException {

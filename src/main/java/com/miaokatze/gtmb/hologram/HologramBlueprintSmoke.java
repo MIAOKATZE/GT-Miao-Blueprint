@@ -177,9 +177,11 @@ public final class HologramBlueprintSmoke {
         hint.setIntArray("indices", new int[] { indexAt(178, 80, 176), indexAt(180, 80, 176) });
         hint.setString("prompt", "胸箱与接口提示区域");
         action("editHintArea", hint);
+        NBTTagCompound overallPrompt = new NBTTagCompound();
+        overallPrompt.setString("prompt", "真实多结构蓝图与NBT往返");
+        action("editBlueprintPrompt", overallPrompt);
         NBTTagCompound save = new NBTTagCompound();
         save.setString("name", "Runtime blueprint receipt");
-        save.setString("prompt", "真实多结构蓝图与NBT往返");
         action("saveBlueprint", save);
         blueprintId = capture.state.getString("virtualPresetId");
         HologramPresets.Preset saved = HologramPresets.get(blueprintId);
@@ -219,6 +221,31 @@ public final class HologramBlueprintSmoke {
             "owner_sanitization_does_not_mutate_source_machine");
         require(cell(saved, 4, 0, 0).excluded && saved.hintAreas.size() == 1, "exclude_and_hint_area_are_saved");
 
+        NBTTagCompound chooseStructure = new NBTTagCompound();
+        chooseStructure.setString(
+            "structureId",
+            structures.getCompoundTagAt(0)
+                .getString("id"));
+        action("selectStructure", chooseStructure);
+        settle();
+        require(!capture.state.getBoolean("virtual"), "saving_imported_area_keeps_live_structure_editor_ownership");
+        action("selectStructure", new NBTTagCompound());
+        require(
+            capture.state.getBoolean("virtual") && blueprintId.equals(capture.state.getString("virtualPresetId")),
+            "returning_from_live_structure_restores_the_saved_area_overview");
+        action("saveBlueprint", save);
+        require(
+            blueprintId.equals(capture.state.getString("virtualPresetId")),
+            "saving_cached_area_updates_its_original_id");
+        action("selectStructure", chooseStructure);
+        settle();
+        require(!capture.state.getBoolean("virtual"), "saving_cached_overview_keeps_live_structure_editor_ownership");
+        action("selectStructure", new NBTTagCompound());
+        require(
+            "保留这格金块作为手工接口".equals(rowAt(180, 80, 176).getString("prompt"))
+                && rowAt(180, 80, 176).getBoolean("excluded"),
+            "saved_area_switching_preserves_cell_annotations_and_exclusion");
+
         String fileId = "runtime_smoke_" + UUID.randomUUID()
             .toString()
             .replace("-", "");
@@ -233,8 +260,9 @@ public final class HologramBlueprintSmoke {
             require(
                 imported.schema == 2 && imported.cells.size() == 5
                     && cell(imported, 4, 0, 0).excluded
-                    && "胸箱与接口提示区域".equals(cell(imported, 4, 0, 0).prompt)
+                    && "保留这格金块作为手工接口".equals(cell(imported, 4, 0, 0).prompt)
                     && imported.hintAreas.size() == 1
+                    && "胸箱与接口提示区域".equals(imported.hintAreas.get(0).prompt)
                     && "真实多结构蓝图与NBT往返".equals(imported.prompt),
                 "share_roundtrip_retains_exclusion_cell_prompt_region_prompt_and_blueprint_prompt");
             require(
@@ -394,8 +422,14 @@ public final class HologramBlueprintSmoke {
         retention.setString("name", "Runtime no covers receipt");
         retention.setBoolean("retainNbt", true);
         retention.setBoolean("retainCovers", false);
-        action("saveBlueprint", retention);
+        action("saveBlueprintAs", retention);
         String noCovers = capture.state.getString("virtualPresetId");
+        require(!blueprintId.equals(noCovers), "no_covers_variant_is_saved_as_an_independent_blueprint");
+        require(
+            HologramBlueprintNbt.decode(cell(HologramPresets.get(blueprintId), 0, 0, 0).tileNbt)
+                .getTagList("gt.covers", 10)
+                .tagCount() == 1,
+            "saving_no_covers_variant_preserves_original_cover_payload");
         supply(HologramPresets.get(noCovers), false);
         beginPlacement(272, noCovers);
         action("confirmBlueprintPlacement");
@@ -415,8 +449,21 @@ public final class HologramBlueprintSmoke {
         retention.setString("name", "Runtime no NBT receipt");
         retention.setBoolean("retainNbt", false);
         retention.setBoolean("retainCovers", true);
-        action("saveBlueprint", retention);
+        action("saveBlueprintAs", retention);
         String noNbt = capture.state.getString("virtualPresetId");
+        require(
+            !blueprintId.equals(noNbt) && !noCovers.equals(noNbt),
+            "covers_only_variant_is_saved_as_a_second_independent_blueprint");
+        HologramPresets.Preset originalComplete = HologramPresets.get(blueprintId);
+        require(
+            originalComplete.retainNbt && originalComplete.retainCovers
+                && HologramBlueprintNbt.decode(cell(originalComplete, 2, 0, 0).tileNbt)
+                    .getTagList("Items", 10)
+                    .tagCount() == 1
+                && HologramBlueprintNbt.decode(cell(originalComplete, 0, 0, 0).tileNbt)
+                    .getTagList("gt.covers", 10)
+                    .tagCount() == 1,
+            "saving_retention_variants_preserves_original_device_NBT_and_cover_configuration");
         HologramPresets.Preset coversOnly = HologramPresets.get(noNbt);
         require(
             !coversOnly.retainNbt && coversOnly.retainCovers

@@ -28,6 +28,8 @@ public final class HologramKeyBindingsRegression {
             SimpleAssert.that(!bindings.bind(0, Keyboard.KEY_C, 1), "duplicate shortcut rejected");
             SimpleAssert.that(!bindings.bind(0, Keyboard.KEY_ESCAPE, 0), "Esc stays available to close dialogs");
             SimpleAssert.that(!bindings.bind(0, Keyboard.KEY_1, 0), "mode key stays reserved");
+            SimpleAssert.that(!bindings.bind(0, Keyboard.KEY_T, 0), "held T whole-selection key stays reserved");
+            SimpleAssert.that(!bindings.bind(0, Keyboard.KEY_T, 1), "Ctrl T cannot overlap additive whole-selection");
             SimpleAssert.that(!bindings.bind(0, Keyboard.KEY_R, 8), "unknown modifier bit rejected");
             SimpleAssert.that(bindings.bind(0, Keyboard.KEY_K, 3), "Ctrl Shift K can replace cut shortcut");
             SimpleAssert.that(bindings.save(), "user bindings persisted");

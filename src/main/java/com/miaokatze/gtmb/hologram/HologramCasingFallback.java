@@ -31,7 +31,9 @@ final class HologramCasingFallback {
         if (search.ambiguous || target == null
             || target.meta < 0
             || target.meta > 15
-            || target.block.hasTileEntity(target.meta)) return null;
+            || (target.block.hasTileEntity(target.meta)
+                && !HologramFrameSupport.inertFrameBlock(target.block, target.meta)))
+            return null;
         return target;
     }
 

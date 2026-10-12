@@ -24,7 +24,7 @@ import org.lwjgl.opengl.GL11;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
 
-/** Cached schematic cubes; rendering never calls machine models or reads live world cells. */
+/** Cached static schematic geometry; rendering never ticks machines or reads live world cells. */
 final class HologramRenderer {
 
     private static final int[][] FACES = { { 0, 1, 5, 4 }, { 3, 7, 6, 2 }, { 0, 3, 2, 1 }, { 4, 5, 6, 7 },
@@ -62,11 +62,14 @@ final class HologramRenderer {
     static int projectionLayer = Integer.MAX_VALUE;
     static boolean showEmptyCells;
     static HologramSelection selection;
+    static String selectedStructureId = "";
     private static int projectedX, projectedY, projectedWidth, projectedHeight;
     private static double projectedYaw, projectedPitch, projectedScale;
     private static final Map<String, double[][]> structureBoxes = new LinkedHashMap<>();
     private static final Set<String> missingStructures = new HashSet<>();
     private static final Map<String, double[][]> hintBoxes = new LinkedHashMap<>();
+    private static HologramState structureBoundsState;
+    private static Map<String, int[]> cachedStructureBounds = new LinkedHashMap<>();
     private static boolean visibleEmptyCells;
 
     static void release() {
@@ -83,6 +86,8 @@ final class HologramRenderer {
         occupied.clear();
         structureBoxes.clear();
         hintBoxes.clear();
+        structureBoundsState = null;
+        cachedStructureBounds.clear();
     }
 
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
@@ -150,11 +155,13 @@ final class HologramRenderer {
                     }
                     boolean empty = !c.anchor && !c.iconOnly && (currentView ? c.id : c.wantId).equals("minecraft:air");
                     String role = roleLabel(c);
+                    if (!empty && HologramTextures.material(c, currentView).partial) exposed = 63;
                     if (c.missingBlock) role = "缺失方块";
                     else if (c.sourceMissing && c.anchor) role = "来源结构缺失";
                     if (!empty && role.isEmpty() && HologramTextures.material(c, currentView).fallback)
                         role = "\u6750\u8d28\u7f3a\u5931";
                     if (!empty && role.isEmpty() && c.iconOnly) role = "\u5360\u4f4d";
+                    if (!c.prompt.isEmpty()) role = role.isEmpty() ? "提示" : role + " · 提示";
                     if (exposed != 0 || !role.isEmpty()) previewCells.add(new PreviewCell(c, exposed, role));
                 }
             }
@@ -206,8 +213,21 @@ final class HologramRenderer {
                 if (!role.isEmpty() && (c.anchor || markers.size() < 64))
                     markers.add(new RoleMarker(c, projected, role));
                 outlines.add(new Face(c, projected, 0, currentView));
-                for (int side = 0; side < 6; side++) {
-                    if ((exposed & (1 << side)) != 0) faces.add(new Face(c, projected, side, currentView));
+                HologramTextures.Material material = HologramTextures.material(c, currentView);
+                for (HologramGeometry.Surface surface : material.geometry) {
+                    if ((exposed & (1 << surface.side)) == 0) continue;
+                    double[][] points = projected;
+                    if (material.partial) {
+                        points = new double[8][3];
+                        for (int vertex = 0; vertex < 8; vertex++) {
+                            double[] local = surface.vertices[vertex];
+                            for (int axis = 0; axis < 3; axis++) points[vertex][axis] = projected[0][axis]
+                                + (local[0] + .5) * (projected[1][axis] - projected[0][axis])
+                                + (local[1] + .5) * (projected[3][axis] - projected[0][axis])
+                                + (local[2] + .5) * (projected[4][axis] - projected[0][axis]);
+                        }
+                    }
+                    faces.add(new Face(c, points, surface.side, currentView, surface));
                 }
             }
             faces.sort(Comparator.comparingDouble(f -> f.depth));
@@ -264,7 +284,7 @@ final class HologramRenderer {
                 if (face.empty) continue;
                 float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
                 int sampleIndex = 0;
-                for (HologramTextures.Sample sample : face.material.sides[face.side]) {
+                for (HologramTextures.Sample sample : face.samples()) {
                     setSampleColor(t, sample, shade, .96f);
                     if (face.cell.sourceMissing && !face.cell.missingBlock) t.setColorRGBA_F(.55f, .55f, .55f, .78f);
                     for (int i = 0; i < 4; i++) {
@@ -274,8 +294,8 @@ final class HologramRenderer {
                             point[0],
                             point[1],
                             point[2] * depthScale + sampleIndex * .015,
-                            textureU(sample.icon, face.side, vertex),
-                            textureV(sample.icon, face.side, vertex));
+                            textureU(sample.icon, face.side, face.local(vertex)),
+                            textureV(sample.icon, face.side, face.local(vertex)));
                     }
                     sampleIndex++;
                 }
@@ -302,17 +322,25 @@ final class HologramRenderer {
             }
             t.draw();
             GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glLineWidth(2.5f);
             t.startDrawing(GL11.GL_LINES);
-            t.setColorRGBA_F(.65f, .87f, .95f, .32f);
+            String hoveredStructure = pickStructure(mouseX, mouseY);
             for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
-                if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .48f);
-                else t.setColorRGBA_F(.65f, .87f, .95f, .32f);
+                if (entry.getKey()
+                    .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
+                else if (entry.getKey()
+                    .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
+                else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
+                else t.setColorRGBA_F(.45f, .85f, 1, .72f);
                 for (int[] edge : EDGES) {
                     double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
                     t.addVertex(a[0], a[1], 1);
                     t.addVertex(b[0], b[1], 1);
                 }
             }
+            t.draw();
+            GL11.glLineWidth(1.5f);
+            t.startDrawing(GL11.GL_LINES);
             t.setColorRGBA_F(.95f, .77f, .39f, .48f);
             for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
                 double[] a = box[edge[0]], b = box[edge[1]];
@@ -322,6 +350,7 @@ final class HologramRenderer {
             t.draw();
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glColor4f(1, 1, 1, 1);
+            drawHintLabels(mc, x, y, width, height);
             for (RoleMarker marker : markers) {
                 if (!marker.cell.anchor
                     && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
@@ -367,6 +396,30 @@ final class HologramRenderer {
         return hovered;
     }
 
+    private static void drawHintLabels(Minecraft mc, int x, int y, int width, int height) {
+        int shown = 0;
+        for (Map.Entry<String, double[][]> entry : hintBoxes.entrySet()) {
+            double minX = Double.MAX_VALUE, minY = minX, maxX = -minX, maxY = -minX;
+            for (double[] point : entry.getValue()) {
+                minX = Math.min(minX, point[0]);
+                minY = Math.min(minY, point[1]);
+                maxX = Math.max(maxX, point[0]);
+                maxY = Math.max(maxY, point[1]);
+            }
+            if (maxX < x || minX >= x + width || maxY < y || minY >= y + height) continue;
+            String label = mc.fontRenderer.trimStringToWidth(
+                "提示区 " + entry.getKey()
+                    .replace('\n', ' '),
+                Math.min(160, width - 12));
+            int labelWidth = mc.fontRenderer.getStringWidth(label);
+            int lx = Math.max(x + 4, Math.min(x + width - labelWidth - 4, (int) minX));
+            int ly = Math.max(y + 18, Math.min(y + height - 13, (int) minY - 12));
+            net.minecraft.client.gui.Gui.drawRect(lx - 2, ly - 2, lx + labelWidth + 2, ly + 10, 0xd9362c1a);
+            mc.fontRenderer.drawStringWithShadow(label, lx, ly, 0xffdc81);
+            if (++shown == 8) break;
+        }
+    }
+
     static double[] project(double dx, double dy, double dz) {
         double px = dx - boundsX, py = dy - boundsY, pz = dz - boundsZ;
         double rx = px * Math.cos(projectedYaw) - pz * Math.sin(projectedYaw);
@@ -378,10 +431,15 @@ final class HologramRenderer {
 
     private static void buildStructureBoxes(HologramState state) {
         structureBoxes.clear();
-        missingStructures.clear();
-        for (HologramState.Cell cell : state.cells) if (cell.sourceMissing) missingStructures.addAll(cell.structureIds);
-        Map<String, int[]> bounds = structureBounds(state);
-        for (Map.Entry<String, int[]> entry : bounds.entrySet()) {
+        // Snapshot geometry is immutable; rotating the camera only projects its cached bounds.
+        if (structureBoundsState != state) {
+            structureBoundsState = state;
+            cachedStructureBounds = structureBounds(state);
+            missingStructures.clear();
+            for (HologramState.Cell cell : state.cells)
+                if (cell.sourceMissing) missingStructures.addAll(cell.structureIds);
+        }
+        for (Map.Entry<String, int[]> entry : cachedStructureBounds.entrySet()) {
             int[] b = entry.getValue();
             double[][] box = new double[8][];
             for (int i = 0; i < 8; i++) box[i] = project(
@@ -434,7 +492,7 @@ final class HologramRenderer {
 
     static String pickStructure(int mx, int my) {
         String result = "";
-        double best = 3.5;
+        double best = 5;
         for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) for (int[] edge : EDGES) {
             double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
             double distance = HologramGizmo.distance(mx, my, a[0], a[1], b[0], b[1]);
@@ -679,21 +737,23 @@ final class HologramRenderer {
             lastWorldGhosts++;
             if (material.gregTech) lastWorldGTGeometry++;
             if (material.fallback) lastWorldFallback++;
-            for (int side = 0; side < 6; side++) {
+            for (HologramGeometry.Surface surface : material.geometry) {
+                int side = surface.side;
                 int[] normal = NORMALS[side];
-                if (worldGhosts.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2]))) continue;
+                if (!material.partial
+                    && worldGhosts.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2]))) continue;
                 int sampleIndex = 0;
-                for (HologramTextures.Sample sample : material.sides[side]) {
+                for (HologramTextures.Sample sample : material.samples(surface)) {
                     setSampleColor(t, sample, side == 1 ? 1 : side == 0 ? .65f : .85f, .38f);
                     for (int vertex : FACES[side]) {
-                        double[] point = VERTICES[vertex];
+                        double[] point = surface.vertices[vertex];
                         double offset = .002 + sampleIndex * .0005;
                         t.addVertexWithUV(
                             c.x + .5 + point[0] + normal[0] * offset,
                             c.y + .5 + point[1] + normal[1] * offset,
                             c.z + .5 + point[2] + normal[2] * offset,
-                            textureU(sample.icon, side, vertex),
-                            textureV(sample.icon, side, vertex));
+                            textureU(sample.icon, side, point),
+                            textureV(sample.icon, side, point));
                     }
                     sampleIndex++;
                 }
@@ -747,14 +807,12 @@ final class HologramRenderer {
             alpha);
     }
 
-    private static double textureU(IIcon icon, int side, int vertex) {
-        double[] point = VERTICES[vertex];
+    private static double textureU(IIcon icon, int side, double[] point) {
         double u = side == 4 ? point[2] + .5 : side == 5 ? .5 - point[2] : side == 2 ? .5 - point[0] : point[0] + .5;
         return icon.getMinU() + (icon.getMaxU() - icon.getMinU()) * u;
     }
 
-    private static double textureV(IIcon icon, int side, int vertex) {
-        double[] point = VERTICES[vertex];
+    private static double textureV(IIcon icon, int side, double[] point) {
         double v = side == 0 ? point[2] + .5 : side == 1 ? .5 - point[2] : .5 - point[1];
         return icon.getMinV() + (icon.getMaxV() - icon.getMinV()) * v;
     }
@@ -767,16 +825,30 @@ final class HologramRenderer {
         final double depth;
         final HologramTextures.Material material;
         final boolean empty;
+        final HologramGeometry.Surface surface;
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current) {
+            this(cell, points, side, current, null);
+        }
+
+        Face(HologramState.Cell cell, double[][] points, int side, boolean current, HologramGeometry.Surface surface) {
             this.cell = cell;
             this.points = points;
             this.side = side;
+            this.surface = surface;
             empty = !cell.anchor && !cell.iconOnly && (current ? cell.id : cell.wantId).equals("minecraft:air");
             material = empty ? null : HologramTextures.material(cell, current);
             double d = 0;
             for (int index : FACES[side]) d += points[index][2];
             depth = d / 4;
+        }
+
+        List<HologramTextures.Sample> samples() {
+            return surface == null ? material.sides[side] : material.samples(surface);
+        }
+
+        double[] local(int vertex) {
+            return surface == null ? VERTICES[vertex] : surface.vertices[vertex];
         }
 
         boolean contains(double x, double y) {

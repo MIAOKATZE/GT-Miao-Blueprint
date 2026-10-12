@@ -78,6 +78,9 @@ public final class HologramRegressionTest {
         cases.put("blueprint_cover_costs_preserve_data_and_reject_invalid_ids", HologramBlueprintCoverRegression::run);
         cases.put("blueprint_batch_geometry_and_flags_are_atomic", HologramBlueprintServiceRegression::run);
         cases.put(
+            "multiblock_candidates_and_configuration_are_structure_scoped",
+            HologramStructureIsolationRegression::run);
+        cases.put(
             "blueprint_inventory_fluid_and_wireless_resource_transactions",
             HologramBlueprintResourcesRegression::run);
         cases.put(
@@ -89,6 +92,15 @@ public final class HologramRegressionTest {
         cases.put("large_snapshots_are_atomic_ordered_and_bounded", HologramSnapshotAssemblyRegression::run);
         cases.put("incremental_capture_and_large_drafts_keep_editor_state", HologramLargeStructureRegression::run);
         cases.put("large_snapshot_codec_rejects_hostile_lengths", HologramSnapshotCodecRegression::run);
+        cases.put("large_blueprint_library_transactions_and_byte_budgets", HologramBlueprintStorageV003Regression::run);
+        cases.put("blueprint_annotations_and_save_failures_remain_visible", HologramBlueprintAnnotationRegression::run);
+        cases.put("reviewed_lazy_declarations_recover_fixed_casing_and_frames", HologramLazyDeclarationRegression::run);
+        cases.put(
+            "native_pipe_hatch_and_cover_display_preserves_prototypes",
+            com.miaokatze.gtmb.client.hologram.HologramNativeDisplayRegression::run);
+        cases.put(
+            "client_snapshot_decoder_preserves_fifo_budget_and_world_epoch",
+            com.miaokatze.gtmb.client.hologram.HologramSnapshotInboxRegression::run);
         cases.put(
             "large_client_snapshots_keep_remote_structure_cells",
             com.miaokatze.gtmb.client.hologram.HologramLargeStateRegression::run);

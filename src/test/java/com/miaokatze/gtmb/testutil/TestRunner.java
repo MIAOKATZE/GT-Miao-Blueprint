@@ -20,6 +20,7 @@ public final class TestRunner {
                     .run();
             } catch (Throwable t) {
                 failed.add(entry.getKey() + " -> " + t);
+                t.printStackTrace(System.err);
             }
         }
         System.out.println("[" + suite.getName() + "] " + (cases.size() - failed.size()) + "/" + cases.size() + " 通过");

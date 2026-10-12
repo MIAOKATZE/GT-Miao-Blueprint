@@ -33,6 +33,7 @@ final class HologramArea {
     final Map<String, Structure> structures = new LinkedHashMap<>();
     final Map<String, java.util.LinkedHashSet<String>> members = new java.util.HashMap<>();
     final java.util.Set<String> paletteKeys = new java.util.HashSet<>();
+    final java.util.Set<String> edited = new java.util.HashSet<>();
     final List<Structure> discovery = new ArrayList<>();
     int discoveryIndex;
     String active = "";
@@ -81,6 +82,7 @@ final class HologramArea {
         members.clear();
         discovery.clear();
         paletteKeys.clear();
+        edited.clear();
         discoveryIndex = 0;
         importing = true;
         imported = false;
@@ -144,8 +146,24 @@ final class HologramArea {
             Structure structure = discovery.get(discoveryIndex);
             if (world.getTileEntity(structure.x, structure.y, structure.z) != structure.machine.getBaseMetaTileEntity())
                 throw new IOException("控制器在导入期间变化，请重新选择区域");
+            // Tool configuration belongs to the previously selected machine, never every controller in a region.
+            ItemStack structureTrigger = trigger.copy();
+            structureTrigger.stackSize = 1;
+            if (structure.machine instanceof tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods)
+                structureTrigger.stackSize = Math.max(
+                    1,
+                    Math.min(
+                        3,
+                        ((tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods) structure.machine).getData()
+                            .getRingAmount()));
+            List<String> channels = new ArrayList<>();
+            com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                .iterateChannelData(structureTrigger)
+                .forEach(entry -> channels.add(entry.getKey()));
+            for (String channel : channels) com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                .unsetChannelData(structureTrigger, channel);
             structure.capture = HologramCapture
-                .collect(structure.machine, trigger, structure.machine.getExtendedFacing(), structure.capture);
+                .collect(structure.machine, structureTrigger, structure.machine.getExtendedFacing(), structure.capture);
             if (!structure.capture.pending) {
                 if (!structure.capture.incomplete)
                     for (Map.Entry<String, HologramCapture.Cell> entry : structure.capture.positions.entrySet()) {

@@ -49,7 +49,8 @@ public final class HologramSmokeTest {
         finished = true;
         MinecraftServer server = MinecraftServer.getServer();
         int failedSuites = 0;
-        int suites = Boolean.getBoolean("gtmb.hologram.coexistSmoke") ? 5 : 4;
+        boolean coexistence = Boolean.getBoolean("gtmb.hologram.coexistSmoke");
+        int suites = coexistence ? 7 : 6;
         try {
             try {
                 run(server.worldServerForDimension(0));
@@ -80,7 +81,19 @@ public final class HologramSmokeTest {
                 failedSuites++;
                 suiteFailure("OWNERSHIP", failure);
             }
-            if (suites == 5) {
+            try {
+                HologramCompatibilitySmoke.runIndustrialElectrolyzer(server.worldServerForDimension(0));
+            } catch (Throwable failure) {
+                failedSuites++;
+                suiteFailure("INDUSTRIAL-ELECTROLYZER", failure);
+            }
+            try {
+                HologramNativeDisplaySmoke.run(server.worldServerForDimension(0));
+            } catch (Throwable failure) {
+                failedSuites++;
+                suiteFailure("NATIVE-DISPLAY", failure);
+            }
+            if (coexistence) {
                 try {
                     Class.forName("com.miaokatze.gtmb.hologram.HologramCoexistenceRegression")
                         .getMethod("run")

@@ -19,6 +19,30 @@ public final class HologramSelectionRegression {
         selection.click(1, true);
         SimpleAssert.that(!selection.contains(1) && selection.contains(2), "control click toggles only its cell");
         HologramState state = volume();
+        selection.previewClick(state, 0, "", false, false);
+        SimpleAssert.eq(1, selection.size(), "ordinary interior click selects one cell even inside a structure");
+        selection.previewClick(state, 0, "", true, false);
+        SimpleAssert.eq(8, selection.size(), "held T expands a member click to its complete structure");
+        selection.previewClick(state, 8, "", true, false);
+        SimpleAssert
+            .eq(9, selection.size(), "held T on ungrouped cell selects the complete blueprint including distant cells");
+        SimpleAssert.eq(8, selection.first(), "whole-blueprint selection retains the clicked ungrouped primary cell");
+        SimpleAssert.eq(
+            "",
+            selection.structureId(state, "machine-a", selection.first()),
+            "whole-blueprint intent cannot be mislabeled as its first machine or the previously active structure");
+        selection.previewClick(state, 0, "machine-a", false, false);
+        SimpleAssert.eq(8, selection.size(), "outline click remains the explicit whole-structure selection path");
+        selection.previewClick(state, 8, "", false, true);
+        SimpleAssert.eq(9, selection.size(), "Ctrl click after outline selection adds only the clicked ungrouped cell");
+        selection.load(new int[] { 0, 7, -1, 99, 7 }, 8, state.cells.size());
+        SimpleAssert.that(
+            selection.size() == 2 && selection.contains(0) && selection.contains(7),
+            "authoritative edit result restores validated batch selection without duplicate or out-of-range cells");
+        selection.load(new int[0], 8, state.cells.size());
+        SimpleAssert.that(
+            selection.size() == 1 && selection.contains(8),
+            "new session restores a legacy single-cell selection when batch selection is absent");
         SimpleAssert.that(
             state.cells.get(8).sourceMissing && !state.cells.get(8).missingBlock
                 && state.cells.get(8).sourceWarning.equals("source unavailable"),
@@ -38,6 +62,7 @@ public final class HologramSelectionRegression {
         SimpleAssert.eq(4, selection.size(), "snapshot shrink never leaves invalid indices");
         sharedWallRegression();
         placementConfirmationRegression();
+        annotationRegression();
         HologramGizmo gizmo = new HologramGizmo();
         gizmo.project(100, 100, Math.PI / 4, Math.PI / 6);
         for (int axis = 0; axis < 3; axis++) {
@@ -109,6 +134,55 @@ public final class HologramSelectionRegression {
         cells.appendTag(outside);
         data.setTag("cells", cells);
         return new HologramState(data);
+    }
+
+    private static void annotationRegression() {
+        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        data.setString("blueprintPrompt", "Build foundation first");
+        NBTTagList cells = data.getTagList("cells", 10);
+        cells.getCompoundTagAt(0)
+            .setString("prompt", "Energy hatch here");
+        cells.getCompoundTagAt(1)
+            .setString("prompt", "Output here");
+        NBTTagCompound area = new NBTTagCompound();
+        area.setIntArray("bounds", new int[] { 0, 0, 0, 1, 1, 1 });
+        area.setString("prompt", "Keep this volume clear");
+        NBTTagList areas = new NBTTagList();
+        areas.appendTag(area);
+        data.setTag("hintAreas", areas);
+        HologramState state = new HologramState(data);
+        SimpleAssert.that(
+            HologramAnnotations.scope(state, new int[] { 0, 7 }, 2)
+                .contains("(0,0,0) → (1,1,1)"),
+            "prompt scope shows concrete inclusive selected volume coordinates");
+        SimpleAssert.eq(
+            "Build foundation first",
+            HologramAnnotations.input(state, new int[0], 0),
+            "global editor reads the persisted blueprint prompt");
+        SimpleAssert.eq(
+            "Energy hatch here",
+            HologramAnnotations.input(state, new int[] { 0 }, 1),
+            "cell editor reads its own persisted prompt");
+        SimpleAssert.eq(
+            "",
+            HologramAnnotations.input(state, new int[] { 0, 1 }, 1),
+            "mixed cell prompts do not imply that one cell value applies to the whole selection");
+        SimpleAssert.that(
+            HologramAnnotations.saved(state, new int[] { 0, 1 }, 1)
+                .contains("不同"),
+            "mixed saved cell annotations remain visibly identified");
+        SimpleAssert.eq(
+            "Keep this volume clear",
+            HologramAnnotations.input(state, new int[] { 0, 7 }, 2),
+            "exact saved hint volume repopulates the area editor");
+        SimpleAssert.that(
+            HologramAnnotations.saved(state, new int[] { 0 }, 2)
+                .contains("Keep this volume clear"),
+            "selected cell summary identifies a persisted containing hint area without hover");
+        SimpleAssert.eq(
+            "",
+            HologramAnnotations.input(state, new int[] { 0 }, 2),
+            "different hint volume starts a fresh area prompt instead of silently copying a containing area");
     }
 
     private static void placementConfirmationRegression() {

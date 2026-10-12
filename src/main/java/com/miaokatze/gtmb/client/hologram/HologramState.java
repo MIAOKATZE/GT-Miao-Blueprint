@@ -64,6 +64,7 @@ final class HologramState {
         final boolean candidateComplete;
         final String candidateBoundary;
         final ItemStack actualStack, targetStack;
+        final NBTTagCompound actualDisplay, targetDisplay;
         final String[] hintIcons = new String[6];
         final int hintIndex;
         final int[] hintTint;
@@ -115,6 +116,10 @@ final class HologramState {
             iconOnly = n.getBoolean("iconOnly");
             actualStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("actualStack"));
             targetStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("targetStack"));
+            actualDisplay = (NBTTagCompound) n.getCompoundTag("actualDisplay")
+                .copy();
+            targetDisplay = (NBTTagCompound) n.getCompoundTag("targetDisplay")
+                .copy();
             hintIndex = n.hasKey("hintIndex") ? n.getInteger("hintIndex") : -1;
             hintTint = n.getIntArray("hintTint");
             NBTTagList icons = n.getTagList("hintIcons", 8);

@@ -35,6 +35,40 @@ public final class HologramCompatibilitySmoke {
     private int ticks, assertions;
     private boolean finished;
 
+    /** Main isolated smoke also exercises the current official GT5U machine without optional external mods. */
+    static void runIndustrialElectrolyzer(WorldServer world) throws Exception {
+        if (!world.getWorldInfo()
+            .getWorldName()
+            .contains("hologram-smoke"))
+            throw new AssertionError("industrial electrolyzer fixture requires isolated smoke world");
+        HologramCompatibilitySmoke fixture = new HologramCompatibilitySmoke();
+        FakePlayer player = FakePlayerFactory.get(
+            world,
+            new GameProfile(UUID.fromString("87e2020f-3fe4-4fc5-8539-a09fe34c80e7"), "GTMBElectrolyzerSmoke"));
+        EmbeddedChannel transport = new EmbeddedChannel(new io.netty.channel.ChannelInboundHandlerAdapter());
+        NetworkManager manager = new NetworkManager(false);
+        for (Field field : NetworkManager.class.getDeclaredFields()) if (field.getType() == Channel.class) {
+            field.setAccessible(true);
+            field.set(manager, transport);
+        }
+        player.playerNetServerHandler = new NetHandlerPlayServer(MinecraftServer.getServer(), manager, player);
+        try {
+            fixture.machine(
+                world,
+                player,
+                "gregtech.common.tileentities.machines.multi.MTEIndustrialElectrolyzer",
+                160,
+                new String[0],
+                new int[0]);
+            System.out.println("[GTMB-HOLOGRAM-ELECTROLYZER-SMOKE] FINAL PASS assertions=" + fixture.assertions);
+        } finally {
+            transport.finish();
+            Object pending;
+            while ((pending = transport.readOutbound()) != null) io.netty.util.ReferenceCountUtil.release(pending);
+            HologramService.clear();
+        }
+    }
+
     static void registerIfEnabled() {
         if (Boolean.getBoolean("gtmb.hologram.compatibilitySmoke")) FMLCommonHandler.instance()
             .bus()
@@ -149,6 +183,34 @@ public final class HologramCompatibilitySmoke {
         ItemStack signal = inherited.copy();
         for (int i = 0; i < channels.length; i++) ChannelDataAccessor.setChannelData(signal, channels[i], values[i]);
         HologramCapture selected = collect(machine, signal);
+        boolean electrolyzer = type.equals("gregtech.common.tileentities.machines.multi.MTEIndustrialElectrolyzer");
+        if (electrolyzer) {
+            require((Integer) get(machine, "casingAmount") == 0, "electrolyzer_capture_does_not_count_casings");
+            int casings = 0, brass = 0, tin = 0, frames = 0;
+            ItemStack frame = gtPlusPlus.core.material.MaterialsAlloy.POTIN.getFrameBox(1);
+            for (HologramCapture.Cell cell : selected.cells) {
+                if (cell.anchor) continue;
+                if (cell.block == gregtech.api.casing.Casings.ElectrolyzerCasing.getBlock()
+                    && cell.meta == gregtech.api.casing.Casings.ElectrolyzerCasing.getBlockMeta()) casings++;
+                if (cell.block == gregtech.api.casing.Casings.BrassItemPipeCasing.getBlock()
+                    && cell.meta == gregtech.api.casing.Casings.BrassItemPipeCasing.getBlockMeta()) brass++;
+                if (cell.block == gregtech.api.casing.Casings.TinItemPipeCasing.getBlock()
+                    && cell.meta == gregtech.api.casing.Casings.TinItemPipeCasing.getBlockMeta()) tin++;
+                if (cell.block == net.minecraft.block.Block.getBlockFromItem(frame.getItem())
+                    && cell.meta == frame.getItemDamage()) frames++;
+                HologramDeclarationCandidates declared = new HologramDeclarationCandidates();
+                declared.collect(cell.element, machine, world, cell.x, cell.y, cell.z, signal, null, 0);
+                require(
+                    declared.stacks.stream()
+                        .anyMatch(
+                            stack -> stack.getItem() == new ItemStack(cell.block).getItem()
+                                && stack.getItemDamage() == cell.meta),
+                    "electrolyzer_declared_material_includes_every_shell_cell");
+            }
+            require(
+                casings == 48 && brass == 4 && tin == 4 && frames == 12,
+                "electrolyzer_full_real_declaration_48_casings_8_pipes_12_frames");
+        }
         for (int i = 0; i < channels.length; i++) {
             ItemStack one = inherited.copy();
             ChannelDataAccessor.setChannelData(one, channels[i], values[i]);
@@ -212,6 +274,17 @@ public final class HologramCompatibilitySmoke {
             require(!cell.unknown && cell.block != null, type + "_service_known_shell");
             ItemStack stack = new ItemStack(cell.block, 1, cell.meta);
             require(stack.getItem() != null, type + "_registered_shell_item");
+            if (electrolyzer && HologramFrameSupport.inertFrameBlock(cell.block, cell.meta)) {
+                require(
+                    cell.block.hasTileEntity(cell.meta) && world.getTileEntity(cell.x, cell.y, cell.z) == null,
+                    "electrolyzer_real_GTPP_frame_is_nominal_container_without_tile");
+                require(
+                    cell.candidates != null && cell.candidates.stream()
+                        .anyMatch(
+                            candidate -> candidate.getItem() == stack.getItem()
+                                && candidate.getItemDamage() == stack.getItemDamage()),
+                    "electrolyzer_no_hatches_candidates_keep_real_GTPP_frames");
+            }
             String key = Item.itemRegistry.getNameForObject(stack.getItem()) + ":" + stack.getItemDamage();
             if (materials.containsKey(key)) materials.get(key).stackSize++;
             else materials.put(key, stack);
@@ -232,6 +305,39 @@ public final class HologramCompatibilitySmoke {
             HologramService.tick();
         }
         require((Integer) get(session, "job") != 1, type + "_build_completes");
+        HologramCapture completed = (HologramCapture) get(session, "capture");
+        for (HologramCapture.Cell cell : planned.cells) {
+            if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
+            if (world.getBlock(cell.x, cell.y, cell.z) == cell.block
+                && world.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta) continue;
+            HologramCapture.Cell result = completed.positions.get(cell.x + "," + cell.y + "," + cell.z);
+            System.err.println(
+                PREFIX + "UNPLACED pos="
+                    + cell.x
+                    + ","
+                    + cell.y
+                    + ","
+                    + cell.z
+                    + " want="
+                    + net.minecraft.block.Block.blockRegistry.getNameForObject(cell.block)
+                    + ":"
+                    + cell.meta
+                    + " actual="
+                    + net.minecraft.block.Block.blockRegistry.getNameForObject(world.getBlock(cell.x, cell.y, cell.z))
+                    + ":"
+                    + world.getBlockMetadata(cell.x, cell.y, cell.z)
+                    + " status="
+                    + (result == null ? "missingCell" : result.status)
+                    + " role="
+                    + cell.role
+                    + " nominalTile="
+                    + cell.block.hasTileEntity(cell.meta)
+                    + " declaration="
+                    + cell.element.getClass()
+                        .getName()
+                    + " candidates="
+                    + cell.candidates);
+        }
         int placed = 0;
         for (HologramCapture.Cell cell : planned.cells) {
             if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
@@ -253,6 +359,44 @@ public final class HologramCompatibilitySmoke {
         for (int i = 1; i < 36; i++)
             if (player.inventory.mainInventory[i] != null) remaining += player.inventory.mainInventory[i].stackSize;
         require(remaining == 0 && placed == targets, type + "_materials_consumed_once");
+        if (electrolyzer) {
+            require((Integer) get(machine, "casingAmount") == 0, "electrolyzer_service_capture_does_not_run_counter");
+            NBTTagCompound remove = (NBTTagCompound) configure.copy();
+            remove.setInteger("mode", 2);
+            remove.setInteger("scope", 0);
+            remove.setInteger(
+                "facing",
+                machine.getExtendedFacing()
+                    .ordinal());
+            HologramService.handle(player, remove);
+            settleCapture(world, session);
+            NBTTagCompound start = action(session, "start");
+            start.setLong("planRevision", (Long) get(session, "planRevision"));
+            HologramService.handle(player, start);
+            for (int attempt = 0; attempt < 128 && (Integer) get(session, "job") == 1; attempt++) {
+                world.getWorldInfo()
+                    .incrementTotalWorldTime(world.getTotalWorldTime() + 20);
+                HologramService.tick();
+            }
+            require((Integer) get(session, "job") != 1, "electrolyzer_dismantle_completes");
+            java.util.Map<String, Integer> expected = new java.util.LinkedHashMap<>();
+            for (HologramCapture.Cell cell : planned.cells) {
+                if (cell.anchor || cell.block == net.minecraft.init.Blocks.air) continue;
+                require(world.isAirBlock(cell.x, cell.y, cell.z), "electrolyzer_dismantles_casing_frame_and_pipe");
+                ItemStack material = new ItemStack(cell.block, 1, cell.meta);
+                String key = Item.itemRegistry.getNameForObject(material.getItem()) + ":" + material.getItemDamage();
+                expected.merge(key, 1, Integer::sum);
+            }
+            java.util.Map<String, Integer> recovered = new java.util.LinkedHashMap<>();
+            for (int i = 1; i < 36; i++) {
+                ItemStack material = player.inventory.mainInventory[i];
+                if (material == null) continue;
+                String key = Item.itemRegistry.getNameForObject(material.getItem()) + ":" + material.getItemDamage();
+                recovered.merge(key, material.stackSize, Integer::sum);
+            }
+            require(expected.equals(recovered), "electrolyzer_dismantle_recovers_each_declared_material_exactly_once");
+            require(world.getTileEntity(x, 80, 48) == base, "electrolyzer_dismantle_preserves_controller");
+        }
         System.out.println(
             PREFIX + "MACHINE PASS id="
                 + id

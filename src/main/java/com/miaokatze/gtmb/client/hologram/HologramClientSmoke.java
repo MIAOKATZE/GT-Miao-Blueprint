@@ -28,10 +28,12 @@ public final class HologramClientSmoke {
     private boolean finished;
     private File snapshotFile;
     private NBTTagCompound blueprintSnapshot;
+    private NBTTagCompound nativeDisplaySnapshot;
     private int scenario = -1;
     private static final String[] SCENARIOS = { "blueprint", "prompts", "gizmo", "gizmo-hover-structure",
         "gizmo-hover-hint", "gizmo-hover-combined", "missing", "missing-source", "versions", "materials", "nbt-storage",
-        "nbt-placement", "resources", "missing-confirm", "force-ready", "blueprint" };
+        "nbt-placement", "resources", "missing-confirm", "force-ready", "editor-selection", "editor-library",
+        "prompt-preview", "native-display-target", "native-display-current", "blueprint" };
 
     static void install() {
         if (Boolean.getBoolean("gtmb.hologram.clientSmoke")) FMLCommonHandler.instance()
@@ -65,6 +67,14 @@ public final class HologramClientSmoke {
                         + " cells="
                         + snapshot.getTagList("cells", 10)
                             .tagCount());
+                File nativeSource = new File(
+                    System.getProperty(
+                        "gtmb.hologram.nativeDisplayClientState",
+                        new File(snapshotFile.getParentFile(), "hologram-native-display-client-state.nbt").getPath()));
+                try (InputStream input = new FileInputStream(nativeSource)) {
+                    nativeDisplaySnapshot = CompressedStreamTools.readCompressed(input);
+                }
+                validateNativeDisplay(nativeDisplaySnapshot);
                 nextScale(mc);
                 return;
             }
@@ -77,6 +87,10 @@ public final class HologramClientSmoke {
                 "[GTMB-HOLOGRAM-CLIENT] PASS " + SCENARIOS[scenario]
                     + " "
                     + screen.smokeRenderGizmoHover(SCENARIOS[scenario]));
+            if (scenario >= 0 && "editor-selection".equals(SCENARIOS[scenario])) System.out
+                .println("[GTMB-HOLOGRAM-CLIENT] PASS editor-selection " + screen.smokeCaptureLocalSelection());
+            if (scenario >= 0 && "editor-library".equals(SCENARIOS[scenario])) System.out
+                .println("[GTMB-HOLOGRAM-CLIENT] PASS editor-library " + screen.smokeCaptureLibraryWorkflow());
             int glError = GL11.glGetError();
             if (glError != GL11.GL_NO_ERROR) throw new IllegalStateException("OpenGL error " + glError);
             String name = scenario < 0 ? "hologram-scale-" + scale
@@ -145,6 +159,25 @@ public final class HologramClientSmoke {
             System.out.println("[GTMB-HOLOGRAM-CLIENT] real blueprint snapshot " + source.getAbsolutePath());
         }
         NBTTagCompound scene = (NBTTagCompound) blueprintSnapshot.copy();
+        if (SCENARIOS[scenario].startsWith("native-display-")) {
+            scene = (NBTTagCompound) nativeDisplaySnapshot.copy();
+        }
+        if ("editor-selection".equals(SCENARIOS[scenario])) scene = (NBTTagCompound) snapshot.copy();
+        if ("prompt-preview".equals(SCENARIOS[scenario])) {
+            scene.setString("blueprintPrompt", "Native preview annotation smoke");
+            NBTTagCompound cell = scene.getTagList("cells", 10)
+                .getCompoundTagAt(0);
+            cell.setString("prompt", "Recorded cell instruction visible in preview");
+            NBTTagCompound hint = new NBTTagCompound();
+            hint.setString("prompt", "Recorded area instruction visible in preview");
+            hint.setIntArray(
+                "bounds",
+                new int[] { cell.getInteger("dx"), cell.getInteger("dy"), cell.getInteger("dz"),
+                    cell.getInteger("dx") + 1, cell.getInteger("dy") + 1, cell.getInteger("dz") + 1 });
+            NBTTagList hints = new NBTTagList();
+            hints.appendTag(hint);
+            scene.setTag("hintAreas", hints);
+        }
         if (SCENARIOS[scenario].startsWith("gizmo-hover-")) scene = gizmoHoverFixture(SCENARIOS[scenario]);
         if ("missing-confirm".equals(SCENARIOS[scenario]) || "force-ready".equals(SCENARIOS[scenario])) {
             scene.setBoolean("virtualPlacement", true);
@@ -185,6 +218,114 @@ public final class HologramClientSmoke {
         mc.displayGuiScreen(screen);
         screen.smokeRenderScenario(SCENARIOS[scenario]);
         stageAt = System.nanoTime();
+    }
+
+    /** This fixture is written from real GT pipe/hatch/cover objects by the isolated server smoke. */
+    private static void validateNativeDisplay(NBTTagCompound scene) {
+        HologramState state = new HologramState(scene);
+        HologramTextures.begin(state);
+        int pipes = 0, hatches = 0, covers = 0;
+        for (HologramState.Cell cell : state.cells) {
+            for (boolean current : new boolean[] { false, true }) {
+                HologramTextures.Material material = HologramTextures.material(cell, current);
+                if (!material.gregTech || material.fallback)
+                    throw new IllegalStateException("Native fixture has unresolved GT material at cell " + cell.index);
+                for (int side = 0; side < 6; side++) for (int layer = 0; layer < material.sides[side].size(); layer++) {
+                    HologramTextures.Sample sample = material.sides[side].get(layer);
+                    if (sample.icon.getIconName()
+                        .toLowerCase(java.util.Locale.ROOT)
+                        .contains("error_rendering")
+                        || sample.icon.getIconName()
+                            .toLowerCase(java.util.Locale.ROOT)
+                            .contains("rendering_error")
+                        || sample.icon.getIconName()
+                            .contains("missingno"))
+                        throw new IllegalStateException(
+                            "Native fixture uses error texture at cell " + cell.index
+                                + " current="
+                                + current
+                                + " side="
+                                + side
+                                + " layer="
+                                + layer
+                                + " icon="
+                                + sample.icon.getIconName()
+                                + " "
+                                + nativeTextureDiagnostic(cell, current, side));
+                }
+            }
+            if (HologramTextures.material(cell, false).pipe) pipes++;
+            if (cell.targetDisplay.hasKey("texturePage") && cell.targetDisplay.hasKey("textureIndex")) hatches++;
+            covers += cell.targetDisplay.getTagList("gt.covers", 10)
+                .tagCount();
+        }
+        if (pipes == 0 || hatches == 0 || covers == 0)
+            throw new IllegalStateException("Native display smoke requires real pipe, cased hatch and cover snapshots");
+        System.out.println(
+            "[GTMB-HOLOGRAM-CLIENT] PASS real native GT display callbacks pipes=" + pipes
+                + " cased-hatches="
+                + hatches
+                + " covers="
+                + covers
+                + " both target/current resolved without missing textures");
+    }
+
+    private static String nativeTextureDiagnostic(HologramState.Cell cell, boolean current, int side) {
+        net.minecraft.item.ItemStack stack = current ? cell.actualStack : cell.targetStack;
+        int id = stack == null ? -1 : stack.getItemDamage();
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity machine = id >= 0
+            && id < gregtech.api.GregTechAPI.METATILEENTITIES.length ? gregtech.api.GregTechAPI.METATILEENTITIES[id]
+                : null;
+        StringBuilder info = new StringBuilder("stack=").append(stack)
+            .append(" machineId=")
+            .append(id)
+            .append(" machine=")
+            .append(
+                machine == null ? "null"
+                    : machine.getClass()
+                        .getName());
+        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        info.append(" display=")
+            .append(display);
+        if (machine instanceof gregtech.api.metatileentity.implementations.MTEFluidPipe) {
+            gregtech.api.metatileentity.implementations.MTEFluidPipe pipe = (gregtech.api.metatileentity.implementations.MTEFluidPipe) machine;
+            info.append(" material=")
+                .append(pipe.mMaterial)
+                .append(" set=")
+                .append(pipe.mMaterial.mIconSet.mSetName)
+                .append(" thickness=")
+                .append(pipe.mThickNess)
+                .append(" pipeAmount=")
+                .append(pipe.mPipeAmount);
+        }
+        if (machine != null) {
+            gregtech.api.interfaces.ITexture[][] nativeFaces = HologramMachineTextures.resolve(
+                machine,
+                current ? cell.actualFacing : cell.targetFacing,
+                new int[] { 0, 1, 2, 3, 4, 5 },
+                display);
+            if (nativeFaces != null && nativeFaces[side] != null)
+                for (gregtech.api.interfaces.ITexture texture : nativeFaces[side]) {
+                    info.append(" nativeLayer=")
+                        .append(
+                            texture == null ? "null"
+                                : texture.getClass()
+                                    .getName());
+                    if (texture instanceof gregtech.common.render.IIconTexture) {
+                        net.minecraft.util.IIcon base = ((gregtech.common.render.IIconTexture) texture)
+                            .getIcon(side, null);
+                        info.append(" base=")
+                            .append(base == null ? "null" : base.getIconName());
+                    }
+                    if (texture instanceof gregtech.common.render.GTRenderedTexture) {
+                        net.minecraft.util.IIcon overlay = ((gregtech.common.render.GTRenderedTexture) texture)
+                            .getIcon(net.minecraftforge.common.util.ForgeDirection.getOrientation(side), true, null);
+                        info.append(" overlay=")
+                            .append(overlay == null ? "null" : overlay.getIconName());
+                    }
+                }
+        }
+        return info.toString();
     }
 
     /** Keep a real captured block, with local-only overlays arranged to overlap its movement axes. */

@@ -1,5 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FilterOutputStream;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 import net.minecraft.item.Item;
@@ -62,6 +64,28 @@ final class HologramBlueprintNbt {
             stableItems(tag, false);
             return tag;
         } catch (RuntimeException invalid) {
+            throw new IOException("蓝图NBT编码无效", invalid);
+        }
+    }
+
+    /** Counts expanded bytes without constructing tags, for the blueprint-wide device payload budget. */
+    static int expandedBytes(String value) throws IOException {
+        if (value == null || value.isEmpty()) return 0;
+        if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");
+        try {
+            byte[] compressed = Base64.getDecoder()
+                .decode(value);
+            if (compressed.length > MAX_COMPRESSED) throw new IOException("蓝图压缩NBT超出上限");
+            try (GZIPInputStream input = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+                byte[] buffer = new byte[8192];
+                int total = 0, count;
+                while ((count = input.read(buffer)) != -1) {
+                    if (count > MAX_EXPANDED - total) throw new IOException("蓝图展开NBT超出上限");
+                    total += count;
+                }
+                return total;
+            }
+        } catch (IllegalArgumentException invalid) {
             throw new IOException("蓝图NBT编码无效", invalid);
         }
     }

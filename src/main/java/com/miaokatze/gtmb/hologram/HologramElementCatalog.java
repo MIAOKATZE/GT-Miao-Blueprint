@@ -60,6 +60,9 @@ final class HologramElementCatalog {
         List<IStructureElement<?>> result) {
         if (element == null || depth > 12 || seen.size() >= 128 || seen.put(element, Boolean.TRUE) != null) return;
         result.add(element);
+        try {
+            visit(HologramDeclarationWrappers.backing(element), depth + 1, seen, result);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         if (element instanceof IStructureElementChain) {
             IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
             if (children != null && children.length <= 64)

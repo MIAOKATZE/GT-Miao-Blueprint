@@ -13,11 +13,11 @@ final class HologramGuidance {
             return "缺料：再次确认仅放已有；编辑规划或更换材料来源后重新确认";
         if (state.data.getInteger("job") == 1) return "正在施工；可暂停或取消";
         if (state.data.getInteger("job") == 2) return "施工已暂停；确认继续或取消";
-        if (blueprints) return "选择蓝图查看预览；编辑返回结构；放置先确认材料";
+        if (blueprints) return "先选择蓝图，再点击放置核对材料；关闭界面不会施工";
         if (state.cells.isEmpty()) return "右键控制器选择结构，或 Shift+Alt+右键框选任意区域";
-        if (selected >= 0) return "Ctrl 多选 · Shift 两点立体框选 · G 移动轴 · Ctrl+C / V 复制粘贴";
+        if (selected >= 0) return "点击单格 · T+点击整选结构 / 蓝图 · Ctrl 多选 · Shift 框选 · G 移动轴";
         if (state.data.getBoolean("virtualPlacement")) return "Alt+右键锁定位置；R 旋转；确认施工";
-        return "点击方块编辑；点击结构淡框边缘选择整个结构";
+        return "点击方块选择单格；点击结构轮廓整选；按住 T 点击整选结构 / 蓝图";
     }
 
     static int recommended(HologramState state, int selected, boolean blueprints, boolean confirmation) {

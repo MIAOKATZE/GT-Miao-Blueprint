@@ -46,21 +46,6 @@ final class HologramDeclarationCandidates {
                     collect(child, context, world, x, y, z, trigger, environment, depth + 1);
                 return;
             }
-            IStructureElement<?> alternative = HologramDeclarationWrappers.alternativesBacking(element);
-            if (alternative != null && HologramDeclarationWrappers.backing(element) == null) {
-                // Alternatives can be read through an initialized lazy element or transform;
-                // its arbitrary transform/supplier is never executed and completeness is not asserted.
-                complete = false;
-                collect(alternative, context, world, x, y, z, trigger, environment, depth + 1);
-                return;
-            }
-            Method factory = element.getClass()
-                .getEnclosingMethod();
-            if (factory == null) {
-                if (element != StructureUtility.isAir()) complete = false;
-                return;
-            }
-            String name = factory.getName();
             IStructureElement<?> backing = HologramDeclarationWrappers.backing(element);
             if (backing != null) {
                 collect(
@@ -75,6 +60,21 @@ final class HologramDeclarationCandidates {
                     depth + 1);
                 return;
             }
+            IStructureElement<?> alternative = HologramDeclarationWrappers.alternativesBacking(element);
+            if (alternative != null) {
+                // Alternatives can be read through an initialized lazy element or transform;
+                // its arbitrary transform/supplier is never executed and completeness is not asserted.
+                complete = false;
+                collect(alternative, context, world, x, y, z, trigger, environment, depth + 1);
+                return;
+            }
+            Method factory = element.getClass()
+                .getEnclosingMethod();
+            if (factory == null) {
+                if (element != StructureUtility.isAir()) complete = false;
+                return;
+            }
+            String name = factory.getName();
             if (factory.getDeclaringClass() == HatchElementBuilder.class && "build".equals(name)) {
                 Predicate<ItemStack> declared = HologramHatchPolicy.predicate(element, context, trigger);
                 if (declared == null) {
