@@ -1,9 +1,8 @@
-"""Verify and copy artifacts built from an exact local tag and clean Git checkout."""
+"""Verify artifacts in build/libs and write a receipt without copying jars."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import zipfile
 
@@ -13,7 +12,8 @@ def main():
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--modid', default='gtmb')
     parser.add_argument('--version', required=True)
-    parser.add_argument('--destination', type=Path, required=True)
+    parser.add_argument('--receipt', type=Path, required=True,
+                        help='JSON verification record only; jars remain in the checkout build/libs')
     args = parser.parse_args()
     root = args.root.resolve()
     def git(*arguments):
@@ -24,7 +24,7 @@ def main():
     version_property = (root / 'gradle.properties').read_text(encoding='utf-8')
     assert any(line.replace(' ', '') == 'RELEASE_VERSION=' + args.version.removeprefix('v')
                for line in version_property.splitlines()), 'RELEASE_VERSION must match Tag'
-    args.destination.mkdir(parents=True, exist_ok=True)
+    args.receipt.parent.mkdir(parents=True, exist_ok=True)
     artifacts = []
     for suffix in ('', '-dev', '-sources'):
         source = root / 'build/libs' / (args.modid + '-' + args.version + suffix + '.jar')
@@ -48,15 +48,12 @@ def main():
                            'com/miaokatze/gtit/mixin/hologram/', 'com/miaokatze/gtit/common/items/hologram/',
                            'mixins.gtit.hologram.json')
                 assert not any(name.startswith(removed) for name in names), 'Legacy engine remains'
-        target = args.destination / source.name
-        shutil.copy2(source, target)
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        assert hashlib.sha256(target.read_bytes()).hexdigest() == digest
-        artifacts.append({'file': target.name, 'bytes': target.stat().st_size, 'sha256': digest})
+        artifacts.append({'file': str(source), 'bytes': source.stat().st_size, 'sha256': digest})
     receipt = {'version': args.version, 'modid': args.modid, 'commit': commit,
                'clean_worktree': True, 'checks': ['Tag=HEAD', 'RELEASE_VERSION', 'ZIP CRC',
                'mcmod.info', 'Tags.VERSION', 'no dirty/master+', 'engine boundary'], 'artifacts': artifacts}
-    (args.destination / 'artifact.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')
+    args.receipt.write_text(json.dumps(receipt, indent=2), encoding='utf-8')
     print(json.dumps(receipt, indent=2))
 
 
