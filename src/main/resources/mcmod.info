@@ -1,0 +1,30 @@
+{
+  "modListVersion": 2,
+  "modList": [
+    {
+      "modid": "${modId}",
+      "name": "${modName}",
+      "description": "Independent structure planning, blueprint editing and survival construction for GTNH.",
+      "version": "${modVersion}",
+      "mcversion": "${minecraftVersion}",
+      "url": "https://github.com/MIAOKATZE/GT-Miao-Blueprint",
+      "authorList": [
+        "miaokatze"
+      ],
+      "credits": "",
+      "logoFile": "",
+      "screenshots": [],
+      "requiredMods": [
+        "gregtech",
+        "structurelib",
+        "appliedenergistics2"
+      ],
+      "dependencies": [
+        "gregtech",
+        "structurelib",
+        "appliedenergistics2"
+      ],
+      "useDependencyInformation": false
+    }
+  ]
+}
