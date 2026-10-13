@@ -30,6 +30,25 @@ public final class HologramRegressionTest {
         cases.put("frame_factory_material_and_te_boundary", HologramRegressionTest::frames);
         cases.put("sealed_gt_inventory_fluid_and_position_roundtrip", HologramRegressionTest::sealedRecovery);
         cases.put("material_source_settings_persist_and_default", HologramRegressionTest::materialSettings);
+        cases.put(
+            "client_blueprint_library_is_local_atomic_and_preserves_authorship",
+            com.miaokatze.gtmb.client.hologram.HologramClientLibraryRegression::run);
+        cases.put("dedicated_public_library_enforces_quota_owner_op4_and_transfer_budgets", () -> {
+            try {
+                HologramLibraryRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
+        cases.put("device_buffers_require_paid_energy_and_keep_native_capacity", HologramEnergyPayloadRegression::run);
+        cases.put("network_groups_drop_external_identity_and_charge_physical_templates", () -> {
+            try {
+                HologramNetworkBindingsRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put("container_simulation_and_committed_consumption", HologramRegressionTest::materialSimulation);
         cases
             .put("container_rollback_returns_once_without_restoring_old_bag", HologramRegressionTest::materialRollback);
@@ -65,6 +84,9 @@ public final class HologramRegressionTest {
         cases.put(
             "native_direct_vertex_layouts_keep_geometry_material_and_source_buffer_state",
             com.miaokatze.gtmb.client.hologram.HologramVertexDataRegression::run);
+        cases.put(
+            "partial_native_models_keep_neighboring_floor_and_wall_faces",
+            com.miaokatze.gtmb.client.hologram.HologramOcclusionRegression::run);
         cases.put(
             "declared_alternatives_include_all_chain_and_tier_branches",
             HologramRegressionTest::declaredAlternatives);
@@ -118,6 +140,9 @@ public final class HologramRegressionTest {
             "native_block_rotation_transforms_preserve_payload_and_geometry",
             HologramBlockTransformRegression::run);
         cases.put("world_gestures_require_explicit_material_confirmation", HologramWorldFlowRegression::run);
+        cases.put(
+            "library_stage_is_owner_session_revision_bound_and_preserves_creator",
+            HologramLibraryServiceRegression::run);
         cases.put("world_use_requires_physical_release_between_stages", HologramUsePressFenceRegression::run);
         cases.put("locked_world_arrows_quantize_camera_direction_and_throttle_repeat", HologramNudgeRegression::run);
         cases

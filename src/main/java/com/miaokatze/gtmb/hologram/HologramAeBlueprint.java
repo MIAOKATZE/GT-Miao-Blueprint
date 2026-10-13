@@ -92,7 +92,10 @@ public final class HologramAeBlueprint {
             "appeng.items.storage.ItemBasicStorageCell",
             "appeng.items.storage.ItemExtremeStorageCell",
             "appeng.items.storage.ItemAdvancedStorageCell",
-            "appeng.items.storage.ItemVoidStorageCell"));
+            "appeng.items.storage.ItemVoidStorageCell",
+            "com.miaokatze.gtit.common.items.infinitycell.ItemInfinityStorageCell",
+            "com.miaokatze.gtit.common.items.infinitycell.ItemInfinityStorageFluidCell",
+            "com.miaokatze.gtit.common.items.infinitycell.ItemNekoInfinityStorageUnit"));
     private static final Set<String> CELL_CONFIG_KEYS = new HashSet<>(
         Arrays.asList(
             "list",
@@ -254,7 +257,14 @@ public final class HologramAeBlueprint {
 
         Work(NBTTagCompound source) throws IOException {
             data = source == null ? new NBTTagCompound() : (NBTTagCompound) source.copy();
-            issues.addAll(readUnresolved(data));
+            for (Issue old : readUnresolved(data)) issues.add(
+                new Issue(
+                    old.code,
+                    automaticallyOmitted(old.code) ? "warning" : old.severity,
+                    old.path,
+                    automaticallyOmitted(old.code)
+                        ? "Unavailable component was omitted; replace its marker to restore it."
+                        : old.message));
             data.removeTag(UNRESOLVED);
             roots.add(UNRESOLVED);
         }
@@ -263,6 +273,11 @@ public final class HologramAeBlueprint {
             for (Issue issue : issues) if (issue.code.equals(code) && issue.path.equals(path)) return;
             issues.add(new Issue(code, severity, path, message));
         }
+    }
+
+    static boolean automaticallyOmitted(String code) {
+        return "unsupported_cell".equals(code) || "unsupported_part".equals(code)
+            || "unsupported_part_item".equals(code);
     }
 
     private static final class Inventory {
@@ -303,7 +318,7 @@ public final class HologramAeBlueprint {
 
     /** Recognition is broader than restoration. Unknown AE hosts receive a safe shell and an explicit blocker. */
     public static boolean supports(Block block) {
-        return block != null && block.getClass()
+        return HologramNetworkBindings.node(block) || block != null && block.getClass()
             .getName()
             .startsWith("appeng.block.");
     }
@@ -328,6 +343,7 @@ public final class HologramAeBlueprint {
 
     /** Ordinary reviewed machines can install their filtered empty shell; multipart structure still requires NBT. */
     public static boolean supportsEmptyNativeShell(Block block) {
+        if (HologramNetworkBindings.node(block)) return true;
         return block instanceof AEBaseTileBlock && !block.getClass()
             .getName()
             .equals("appeng.block.networking.BlockCableBus")
@@ -341,6 +357,7 @@ public final class HologramAeBlueprint {
         @Override
         public boolean supports(Block block) {
             if (!HologramAeBlueprint.supports(block)) return false;
+            if (HologramNetworkBindings.node(block)) return true;
             if (block.getClass()
                 .getName()
                 .equals("appeng.block.networking.BlockCableBus")) return true;
@@ -451,6 +468,7 @@ public final class HologramAeBlueprint {
         else {
             ItemStack sample = blockSample(block, metadata);
             if (sample != null) result.add(sample);
+            if (HologramNetworkBindings.node(block)) shellMaterials(data.getCompoundTag("partContainer"), result);
         }
         return result;
     }
@@ -519,9 +537,16 @@ public final class HologramAeBlueprint {
             Analysis left = analyze(block, metadata, actualTag), right = analyze(block, metadata, expected);
             if (left.blocking || right.blocking || !left.supported || !right.supported) return false;
             // Portable item identities are transport metadata; compare the complete native configuration on both sides.
-            NBTTagCompound canonicalActual = HologramBlueprintNbt.nativePayload(left.payload());
-            NBTTagCompound canonicalExpected = HologramBlueprintNbt.nativePayload(right.payload());
+            NBTTagCompound canonicalActual = HologramEnergyPayload
+                .withoutBuffers(HologramBlueprintNbt.nativePayload(left.payload()));
+            NBTTagCompound canonicalExpected = HologramEnergyPayload
+                .withoutBuffers(HologramBlueprintNbt.nativePayload(right.payload()));
             for (String key : Arrays.asList("x", "y", "z")) {
+                canonicalActual.removeTag(key);
+                canonicalExpected.removeTag(key);
+            }
+            for (String key : Arrays
+                .asList(HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE, HologramNetworkBindings.HINT)) {
                 canonicalActual.removeTag(key);
                 canonicalExpected.removeTag(key);
             }
@@ -547,6 +572,59 @@ public final class HologramAeBlueprint {
         }
     }
 
+    private static void quantumNode(Work work, Block block, int metadata) throws IOException {
+        NBTTagCompound data = work.data;
+        TileEntity host = block.createTileEntity(null, metadata);
+        if (host == null || !HologramNetworkBindings.NODE_TILE.equals(
+            host.getClass()
+                .getName()))
+            throw new IOException("GTSWN quantum node factory/schema changed");
+        cleanHost(work, data, host, new String[0]);
+        for (String key : Arrays.asList("anchorDim", "anchorX", "anchorY", "anchorZ", "linked"))
+            HologramAeBlueprintSchemas.remove(
+                work,
+                data,
+                key,
+                new String[0],
+                "quantum_rebind",
+                "Original quantum coordinates are removed; bind the local group before placement");
+        if (data.hasKey(HologramNetworkBindings.GROUP)) HologramNetworkBindings.group(data);
+        if (data.hasKey("color")
+            && (!data.hasKey("color", 3) || data.getInteger("color") < 0 || data.getInteger("color") > 15))
+            throw new IOException("Invalid GTSWN quantum color");
+        // This palette belongs to the selected network; setAnchor rebuilds it from the new controller.
+        data.removeTag("color");
+        work.roots.add("color");
+        if (data.hasKey("partContainer")) {
+            if (!data.hasKey("partContainer", 10)) throw new IOException("Malformed GTSWN part container");
+            cable(work, data.getCompoundTag("partContainer"), new String[] { "partContainer" });
+        }
+        Set<String> known = new HashSet<>(
+            Arrays.asList(
+                "id",
+                "x",
+                "y",
+                "z",
+                "color",
+                "partContainer",
+                HologramNetworkBindings.GROUP,
+                HologramNetworkBindings.ROLE,
+                HologramNetworkBindings.HINT,
+                UNRESOLVED));
+        for (Object raw : new HashSet<Object>(data.func_150296_c())) {
+            String key = (String) raw;
+            work.roots.add(key);
+            if (!known.contains(key)) {
+                work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    key,
+                    "GTSWN node field is outside its registered persistence schema and is omitted");
+                data.removeTag(key);
+            }
+        }
+    }
+
     public static Analysis analyze(Block block, int metadata, NBTTagCompound payload) throws IOException {
         Work work = new Work(payload);
         if (block == null) throw new IOException("Missing AE block identity");
@@ -563,6 +641,10 @@ public final class HologramAeBlueprint {
             return new Analysis(work);
         }
         HologramAeBlueprintSchemas.previewFields(work, work.data, new String[0], false);
+        if (HologramNetworkBindings.node(block)) {
+            quantumNode(work, block, metadata);
+            return new Analysis(work);
+        }
         if (block.getClass()
             .getName()
             .equals("appeng.block.networking.BlockCableBus")) {
@@ -713,7 +795,8 @@ public final class HologramAeBlueprint {
     private static TileEntity loadDetached(Block block, int metadata, NBTTagCompound tag, World detached,
         boolean resetIdentity) throws IOException {
         TileEntity tile = block.createTileEntity(detached, metadata);
-        if (!(tile instanceof AEBaseTile)) throw new IOException("AE native tile factory is unavailable");
+        if (!(tile instanceof AEBaseTile) && !HologramNetworkBindings.node(block))
+            throw new IOException("AE native tile factory is unavailable");
         tile.setWorldObj(detached);
         tile.xCoord = tag.getInteger("x");
         tile.yCoord = tag.getInteger("y");
@@ -764,7 +847,9 @@ public final class HologramAeBlueprint {
     public static void prepareActor(TileEntity tile, EntityPlayerMP actor) throws IOException {
         if (tile instanceof IGridProxyable) resetProxy(((IGridProxyable) tile).getProxy(), actor);
         // BlockCableBus.setupTile also produces official interface-layer subclasses (TESR inherits this base).
-        if (tile instanceof appeng.tile.networking.TileCableBus) {
+        if (tile instanceof appeng.tile.networking.TileCableBus || HologramNetworkBindings.NODE_TILE.equals(
+            tile.getClass()
+                .getName())) {
             for (ForgeDirection side : ForgeDirection.values()) {
                 try {
                     Object part = tile.getClass()
@@ -1146,6 +1231,10 @@ public final class HologramAeBlueprint {
                     "orientation_up",
                     "paintedColor",
                     "proxy",
+                    HologramNetworkBindings.GROUP,
+                    HologramNetworkBindings.ROLE,
+                    HologramNetworkBindings.HINT,
+                    HologramNetworkBindings.CAPTURE_ANCHOR,
                     "internalCurrentPower"));
             for (Settings setting : Settings.values()) known.add(setting.name());
             for (Inventory inventory : schema.inventories) known.add(inventory.root);
@@ -1248,11 +1337,17 @@ public final class HologramAeBlueprint {
         static void cleanHost(Work work, NBTTagCompound data, Object host, String[] prefix) throws IOException {
             String type = host.getClass()
                 .getName();
+            if (prefix.length == 0) data.removeTag("GTSWN_IncorporationIdentity");
             if (host instanceof IGridProxyable) {
+                // GTSWN's exact persistence adapter writes "proxy". Its lazy getProxy() requires
+                // a live world, so schema inspection must remove that key without constructing
+                // a proxy or making this disposable factory tile ready on any network.
+                String proxyKey = HologramNetworkBindings.NODE_TILE.equals(type) ? "proxy"
+                    : HologramBlueprintOwnership.nodeKey(((IGridProxyable) host).getProxy());
                 remove(
                     work,
                     data,
-                    HologramBlueprintOwnership.nodeKey(((IGridProxyable) host).getProxy()),
+                    proxyKey,
                     prefix,
                     "network_identity",
                     "AE owner/security/grid identity is reset for the placing player");
@@ -1266,7 +1361,12 @@ public final class HologramAeBlueprint {
                 data.setInteger("z", 0);
                 work.roots.addAll(Arrays.asList("x", "y", "z"));
             }
-            zero(work, data, "internalCurrentPower", prefix, "energy_reset", "Stored AE power is omitted");
+            if (data.hasKey("internalCurrentPower")) {
+                double power = data.getDouble("internalCurrentPower");
+                if (!data.hasKey("internalCurrentPower", 6) || !Double.isFinite(power) || power < 0)
+                    throw new IOException("Invalid native AE power cache");
+                root(work, prefix, "internalCurrentPower");
+            }
             if (type.equals(TILE + "misc.TileCondenser"))
                 zero(work, data, "storedPower", prefix, "energy_reset", "Condenser stored power is omitted");
             if (type.equals(TILE + "misc.TileVibrationChamber")) {
@@ -1523,9 +1623,11 @@ public final class HologramAeBlueprint {
                         else {
                             stack = readStack(raw);
                             if (stack == null) {
+                                boolean unavailable = raw.hasKey(HologramBlueprintNbt.ITEM_REGISTRY, 8)
+                                    && HologramBlueprintNbt.stableItem(raw) == null;
                                 work.issue(
                                     "missing_physical_item",
-                                    "blocker",
+                                    unavailable ? "warning" : "blocker",
                                     displayPath(itemPath),
                                     "Physical item is unavailable or invalid; it is not silently retained for free");
                                 stored.removeTag(key);
@@ -1533,8 +1635,11 @@ public final class HologramAeBlueprint {
                                 kind = "emptyCell";
                                 stack = emptyCell(work, stack, itemPath);
                                 NBTTagCompound clean = new NBTTagCompound();
-                                stack.writeToNBT(clean);
-                                stored.setTag(key, clean);
+                                if (stack == null) stored.removeTag(key);
+                                else {
+                                    stack.writeToNBT(clean);
+                                    stored.setTag(key, clean);
+                                }
                             } else {
                                 try {
                                     work.materials.add(nativeStack(stack));
@@ -1546,7 +1651,7 @@ public final class HologramAeBlueprint {
                                 } catch (IOException unresolved) {
                                     work.issue(
                                         "missing_physical_item",
-                                        "blocker",
+                                        HologramBlueprintNbt.hasMissingItems(raw) ? "warning" : "blocker",
                                         displayPath(itemPath),
                                         "Physical marker contains unavailable item data and is omitted; clear or replace this slot explicitly");
                                     stored.removeTag(key);
@@ -1663,24 +1768,28 @@ public final class HologramAeBlueprint {
                     .getClass()
                     .getName()
                     .equals("appeng.items.parts.ItemMultiPart")) {
+                    data.removeTag(definition);
                     data.removeTag(extraKey);
+                    work.slots.remove(work.slots.size() - 1);
                     work.issue(
                         "unsupported_part_item",
-                        "blocker",
+                        "warning",
                         displayPath(path(prefix, extraKey)),
-                        "Addon part item has no reviewed factory/schema; its contents and network references are omitted");
+                        "Unreviewed addon part is omitted, including its contents and network references; replace it to restore this component");
                     continue;
                 }
                 IPart part = ((IPartItem) definitionStack.getItem()).createPartFromItemStack(cleanDefinition);
                 if (part == null || !part.getClass()
                     .getName()
                     .startsWith("appeng.parts.")) {
+                    data.removeTag(definition);
                     data.removeTag(extraKey);
+                    work.slots.remove(work.slots.size() - 1);
                     work.issue(
                         "unsupported_part",
-                        "blocker",
+                        "warning",
                         displayPath(path(prefix, extraKey)),
-                        "Addon part persistence is unreviewed; only its physical definition is retained");
+                        "Unreviewed addon part is omitted; remaining registered components retain their material costs");
                     continue;
                 }
                 NBTTagCompound extra = data.getCompoundTag(extraKey);
@@ -1892,7 +2001,8 @@ public final class HologramAeBlueprint {
                     if (stack == null) {
                         work.issue(
                             "missing_physical_item",
-                            "blocker",
+                            raw.hasKey(HologramBlueprintNbt.ITEM_REGISTRY, 8)
+                                && HologramBlueprintNbt.stableItem(raw) == null ? "warning" : "blocker",
                             displayPath(location),
                             "Physical buffered item is invalid and omitted");
                         data.removeTag(key);
@@ -1900,8 +2010,11 @@ public final class HologramAeBlueprint {
                         if (isCell(stack)) {
                             stack = emptyCell(work, stack, location);
                             NBTTagCompound clean = new NBTTagCompound();
-                            stack.writeToNBT(clean);
-                            data.setTag(key, clean);
+                            if (stack == null) data.removeTag(key);
+                            else {
+                                stack.writeToNBT(clean);
+                                data.setTag(key, clean);
+                            }
                         } else work.materials.add(nativeStack(stack));
                     }
                 }
@@ -1969,7 +2082,7 @@ public final class HologramAeBlueprint {
             } catch (RuntimeException | IOException invalid) {
                 work.issue(
                     "unsupported_ghost",
-                    "blocker",
+                    HologramBlueprintNbt.hasMissingItems(raw) ? "warning" : "blocker",
                     displayPath(location),
                     "Ghost stack type is unavailable; resolve this sample");
                 // Keep only a blocker; not an unrecognized typed record that could acquire meaning later.
@@ -1984,7 +2097,7 @@ public final class HologramAeBlueprint {
                 .getClass()
                 .getName();
             String cellPath = displayPath(location);
-            if (CELL_TYPES.contains(type) && source.getItem() instanceof ICellWorkbenchItem) {
+            if (CELL_TYPES.contains(type)) {
                 NBTTagCompound original = source.hasTagCompound() ? source.getTagCompound() : new NBTTagCompound();
                 NBTTagCompound kept = new NBTTagCompound();
                 boolean hadContents = false;
@@ -1994,7 +2107,18 @@ public final class HologramAeBlueprint {
                         key,
                         original.getTag(key)
                             .copy());
-                    else if (key.matches("[#@][0-9]+") || Arrays.asList("it", "ic", "ft", "fc")
+                    else if (key.matches("[#@][0-9]+") || Arrays
+                        .asList(
+                            "it",
+                            "ic",
+                            "ft",
+                            "fc",
+                            "diskuuid",
+                            "diskdata",
+                            "disklist",
+                            "fluid_disklist",
+                            "disklist_v2",
+                            "linked")
                         .contains(key)) hadContents = true;
                     else work.issue(
                         "cell_unknown_data",
@@ -2044,7 +2168,8 @@ public final class HologramAeBlueprint {
                     } catch (IOException unresolved) {
                         work.issue(
                             "missing_physical_item",
-                            "blocker",
+                            HologramBlueprintNbt.hasMissingItems(persistedCards.getCompoundTag(key)) ? "warning"
+                                : "blocker",
                             cellPath + "/tag/upgrades/" + key,
                             "Embedded physical card is unavailable and omitted; clear or replace this marker explicitly");
                         persistedCards.removeTag(key);
@@ -2052,7 +2177,7 @@ public final class HologramAeBlueprint {
                 }
                 if (!kept.hasNoTags()) empty.setTagCompound(kept);
                 // Native AEBaseCell supplies standalone, stack-backed config/upgrades; source is never touched.
-                IInventory cards = ((ICellWorkbenchItem) empty.getItem()).getUpgradesInventory(empty);
+                IInventory cards = cellUpgrades(empty);
                 Map<Upgrades, Integer> counts = new HashMap<>();
                 for (int i = 0; i < cards.getSizeInventory(); i++) {
                     ItemStack card = cards.getStackInSlot(i);
@@ -2084,15 +2209,37 @@ public final class HologramAeBlueprint {
             } else {
                 work.issue(
                     "unsupported_cell",
-                    "blocker",
+                    "warning",
                     cellPath,
-                    "Unreviewed cell keeps only its type sample; bare item defaults may access external storage. Replace with a reviewed empty cell or clear this slot");
-                // Type sample is retained for explicit replacement, never authorized for native installation.
+                    "Unreviewed cell is omitted so its default factory cannot access external storage; replace this marker with a reviewed empty cell");
+                return null;
             }
             work.materials.add(new ItemStack(source.getItem(), 1, source.getItemDamage()));
             if (source.stackSize != 1)
                 work.issue("cell_stack_count", "blocker", cellPath, "Cell marker must have count 1");
             return nativeStack(empty);
+        }
+
+        /** GTIT's fluid cell uses these exact native stack-backed inventories without ICellWorkbenchItem. */
+        private static IInventory cellUpgrades(ItemStack empty) throws IOException {
+            if (empty.getItem() instanceof ICellWorkbenchItem)
+                return ((ICellWorkbenchItem) empty.getItem()).getUpgradesInventory(empty);
+            if (!empty.getItem()
+                .getClass()
+                .getName()
+                .equals("com.miaokatze.gtit.common.items.infinitycell.ItemInfinityStorageFluidCell"))
+                throw new IOException("Reviewed cell workbench schema changed");
+            try {
+                Object cards = empty.getItem()
+                    .getClass()
+                    .getMethod("getUpgradesInventory", ItemStack.class)
+                    .invoke(empty.getItem(), empty);
+                if (!(cards instanceof appeng.items.contents.CellUpgrades))
+                    throw new IOException("GTIT fluid cell inventory is outside its reviewed schema");
+                return (IInventory) cards;
+            } catch (ReflectiveOperationException failure) {
+                throw new IOException("GTIT fluid cell workbench API changed", failure);
+            }
         }
 
         private static boolean isCell(ItemStack stack) {

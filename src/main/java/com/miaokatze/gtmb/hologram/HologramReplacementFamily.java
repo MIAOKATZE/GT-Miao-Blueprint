@@ -30,6 +30,8 @@ final class HologramReplacementFamily {
         if (element == null || target == null || target.hasTileEntity(targetMeta)) return null;
         Family found = null;
         for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
+            if (HologramIndustrialConstraints.lcrCoil(part) && target instanceof IHeatingCoil)
+                return new Family("coil", null, true);
             Method method = part.getClass()
                 .getEnclosingMethod();
             if (method == null) continue;

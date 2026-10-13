@@ -97,7 +97,8 @@ public final class HologramNativePlacement {
         }
         if (payload == null || payload.hasNoTags()) throw unsupported("native tile payload was not retained");
         try {
-            NBTTagCompound tag = HologramBlueprintNbt.nativePayload(payload);
+            NBTTagCompound tag = HologramEnergyPayload
+                .prepare(block, metadata, HologramBlueprintNbt.nativePayload(payload), null).tileEmpty;
             HologramAeNativeResources.validateSelectedFinalPayload(tag);
             HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
             tag.setInteger("x", 0);
@@ -156,13 +157,19 @@ public final class HologramNativePlacement {
             return HologramAeBlueprint.matchesPlaced(block, metadata, actual, payload);
         try {
             HologramResourceWorld detached = HologramResourceWorld.create(block, metadata);
-            TileEntity expected = adapter(block)
-                .create(block, metadata, HologramBlueprintNbt.nativePayload(payload), detached);
+            TileEntity expected = adapter(block).create(
+                block,
+                metadata,
+                HologramEnergyPayload.withoutBuffers(HologramBlueprintNbt.nativePayload(payload)),
+                detached);
             if (expected == null || !actual.getClass()
                 .equals(expected.getClass())) return false;
             NBTTagCompound actualTag = HologramNativeCapture.capture(actual), expectedTag = new NBTTagCompound();
             expected.writeToNBT(expectedTag);
-            for (String key : new String[] { "x", "y", "z" }) {
+            actualTag = HologramEnergyPayload.withoutBuffers(actualTag);
+            expectedTag = HologramEnergyPayload.withoutBuffers(expectedTag);
+            for (String key : new String[] { "x", "y", "z", HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE,
+                HologramNetworkBindings.HINT, HologramNetworkBindings.CAPTURE_ANCHOR, "GTSWN_IncorporationIdentity" }) {
                 actualTag.removeTag(key);
                 expectedTag.removeTag(key);
             }
@@ -180,6 +187,11 @@ public final class HologramNativePlacement {
 
     public static TileEntity install(World world, int x, int y, int z, Block block, int metadata,
         NBTTagCompound payload, net.minecraft.entity.player.EntityPlayerMP actor) throws IOException {
+        return install(world, x, y, z, block, metadata, payload, actor, null);
+    }
+
+    static TileEntity install(World world, int x, int y, int z, Block block, int metadata, NBTTagCompound payload,
+        net.minecraft.entity.player.EntityPlayerMP actor, HologramNetworkBindings.State bindings) throws IOException {
         Adapter adapter = adapter(block);
         if (adapter == null) throw unsupported("unregistered native placement provider");
         try {
@@ -201,6 +213,12 @@ public final class HologramNativePlacement {
                 throw unsupported("native factory did not create a detached tile");
             if (HologramAeBlueprint.supports(block, tag)) {
                 HologramAeBlueprint.prepareActor(tile, actor);
+                if (actor != null && HologramNetworkBindings.node(block) && !tag.hasKey(HologramNetworkBindings.GROUP))
+                    throw unsupported("Quantum blueprint node requires a server-owned local group descriptor");
+                if (tag.hasKey(HologramNetworkBindings.GROUP) && HologramNetworkBindings.node(block)) {
+                    if (actor == null || bindings == null) throw unsupported("Quantum network binding is required");
+                    HologramNetworkBindings.bindNode(tile, tag, actor, bindings);
+                }
             } else if (actor != null) {
                 int playerId = appeng.core.worlddata.WorldData.instance()
                     .playerData()

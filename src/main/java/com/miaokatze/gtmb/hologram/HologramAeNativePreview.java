@@ -235,7 +235,10 @@ public final class HologramAeNativePreview {
         return type.equals("appeng.items.storage.ItemBasicStorageCell")
             || type.equals("appeng.items.storage.ItemExtremeStorageCell")
             || type.equals("appeng.items.storage.ItemAdvancedStorageCell")
-            || type.equals("appeng.items.storage.ItemVoidStorageCell");
+            || type.equals("appeng.items.storage.ItemVoidStorageCell")
+            || type.equals("com.miaokatze.gtit.common.items.infinitycell.ItemInfinityStorageCell")
+            || type.equals("com.miaokatze.gtit.common.items.infinitycell.ItemInfinityStorageFluidCell")
+            || type.equals("com.miaokatze.gtit.common.items.infinitycell.ItemNekoInfinityStorageUnit");
     }
 
     private static void putOrientation(NBTTagCompound frame, ForgeDirection forward, ForgeDirection up, boolean drive) {

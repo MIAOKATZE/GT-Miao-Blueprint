@@ -157,9 +157,9 @@ final class HologramBlueprintNbt {
 
     static NBTTagCompound forPlacement(String value, UUID ownerUuid, String ownerName, int x, int y, int z,
         boolean retainNbt, boolean retainCovers, List<String> keys) throws IOException {
-        if (!retainNbt && !retainCovers) return null;
         NBTTagCompound result = decode(value);
         if (result == null) return null;
+        if (!retainNbt && !retainCovers && !result.hasKey(HologramNetworkBindings.GROUP)) return null;
         result = filter(result, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
         rewrite(result, ownerUuid, ownerName == null ? "" : ownerName, !retainCovers, false);
         bindTarget(result, x, y, z);
@@ -222,9 +222,9 @@ final class HologramBlueprintNbt {
             String key = (String) raw;
             String normalized = key.toLowerCase(Locale.ROOT);
             boolean cover = coverKey(normalized);
-            if ((cover && retainCovers)
-                || (!cover && (selected == null || selected.contains(key) || essentialKey(normalized))))
-                result.setTag(
+            if ((cover && retainCovers) || (!cover && (selected == null || selected.contains(key)
+                || essentialKey(normalized)
+                || HologramNetworkBindings.descriptorKey(key)))) result.setTag(
                     key,
                     source.getTag(key)
                         .copy());
@@ -235,6 +235,8 @@ final class HologramBlueprintNbt {
     private static boolean essentialKey(String key) {
         return key.equals("gtmbaeunresolved") || key.equals("id")
             || key.equals("mid")
+            || key.equals("texturepage")
+            || key.equals("textureindex")
             || key.equals("x")
             || key.equals("y")
             || key.equals("z")

@@ -240,6 +240,7 @@ public final class HologramBlueprintResources {
     public static Plan plan(NBTTagCompound selectedPayload) throws IOException {
         Plan result = new Plan();
         if (selectedPayload == null) return result;
+        selectedPayload = HologramEnergyPayload.withoutBuffers(selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         for (Object raw : selectedPayload.func_150296_c()) {
             String key = (String) raw;
@@ -356,7 +357,10 @@ public final class HologramBlueprintResources {
     }
 
     private static boolean inventoryContainer(String name) {
-        return name.equals("inventory") || name.equals("items") || name.matches("moutputitem[0-9]+");
+        return name.equals("inventory") || name.equals("items")
+            || name.equals("pattern")
+            || name.equals("patterns")
+            || name.matches("moutputitem[0-9]+");
     }
 
     private static boolean fluidContainer(String name) {
@@ -369,14 +373,13 @@ public final class HologramBlueprintResources {
     }
 
     private static boolean configurationName(String name) {
+        if (name.contains("inventory") || name.contains("itemhandler") || name.contains("itemstorage")) return false;
         return name.contains("recipe") || name.contains("filter")
             || name.contains("whitelist")
             || name.contains("blacklist")
             || name.startsWith("ghost")
             || name.equals("trade")
-            || name.equals("trades")
-            || name.equals("pattern")
-            || name.equals("patterns");
+            || name.equals("trades");
     }
 
     private static boolean storageName(String name) {

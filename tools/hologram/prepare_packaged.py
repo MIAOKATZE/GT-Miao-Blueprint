@@ -14,10 +14,12 @@ from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[2]
+V008_BASELINE_SHA = '45c37b3f6a0fa83bbe11ddffddf3f2fb5ca8c8ef855dc9814dac7f559527d66f'
 PRIVATE = re.compile(r'account|credential|password|token|secret|authlib|session', re.I)
 PRIVATE_VALUE = re.compile(
-    r'(?im)["\w.:-]*(?:access_?token|refresh_?token|client_?secret|password|api_?key)'
-    r'["\w.:-]*\s*[:=]\s*([^\r\n]+)')
+    r'(?im)(?:^|[,{])[ \t]*["\']?[\w.:-]{0,64}'
+    r'(?:access_?token|refresh_?token|client_?secret|password|api_?key)'
+    r'[\w.:-]{0,32}["\']?[ \t]*[:=][ \t]*([^\r\n]+)')
 
 
 def digest(path):
@@ -80,16 +82,19 @@ def clone_files(source, destination, suffixes=None):
             continue
         if suffixes is not None and item.suffix.lower() not in suffixes:
             continue
-        if item.suffix.lower() in ('.cfg', '.conf', '.ini', '.json', '.toml', '.yaml', '.yml', '.zs'):
-            contents = item.read_text(encoding='utf-8', errors='replace')
-            if any(match.group(1).strip().strip('"\' ,;') not in
-                   ('', 'false', 'true', '0', 'null', 'none', 'changeme')
-                   for match in PRIVATE_VALUE.finditer(contents)):
-                continue
         target = destination / relative
         if target.is_file() and target.stat().st_size == item.stat().st_size and (
                 target.stat().st_mtime_ns == item.stat().st_mtime_ns):
-            continue
+            continue  # A previously checked copy in an incomplete fixture needs no second scan/copy.
+        if item.suffix.lower() in ('.cfg', '.conf', '.ini', '.json', '.toml', '.yaml', '.yml', '.zs'):
+            contents = item.read_text(encoding='utf-8', errors='replace')
+            lowered = contents.lower()
+            potential = any(word in lowered for word in ('access_token', 'accesstoken', 'refresh_token',
+                'refreshtoken', 'client_secret', 'clientsecret', 'password', 'api_key', 'apikey'))
+            if potential and any(match.group(1).strip().strip('"\' ,;') not in
+                   ('', 'false', 'true', '0', 'null', 'none', 'changeme')
+                   for match in PRIVATE_VALUE.finditer(contents)):
+                continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
 
@@ -129,6 +134,7 @@ def main():
     parser.add_argument('--java', type=Path, required=True)
     parser.add_argument('--jvm-arg', action='append', default=[])
     parser.add_argument('--probe-addon', type=Path)
+    parser.add_argument('--profile', choices=['native-v008', 'adjacent-v009', 'adjacent-v008-baseline'], default='native-v008')
     parser.add_argument('--width', type=int, default=1280)
     parser.add_argument('--height', type=int, default=800)
     parser.add_argument('--finish-incomplete', action='store_true',
@@ -144,6 +150,8 @@ def main():
         parser.error('Java executable is missing')
     if not normal.is_file() or re.search(r'-(dev|sources)\.jar$', normal.name, re.I):
         parser.error('An existing normal reobfuscated jar is required')
+    if args.profile == 'adjacent-v008-baseline' and digest(normal) != V008_BASELINE_SHA:
+        parser.error('Adjacent v008 baseline requires the unchanged official normal jar SHA256')
     with zipfile.ZipFile(normal) as archive:
         normal_classes = {name for name in archive.namelist() if name.endswith('.class')}
         if 'com/miaokatze/gtmb/GTMB.class' not in archive.namelist() and not any(
@@ -200,8 +208,15 @@ def main():
         shutil.copy2(args.probe_addon, client / 'mods' / args.probe_addon.name)
     (client / 'options.txt').write_text(
         options_text(width, height), encoding='utf-8')
-    launch = ['-Xms1G', '-Xmx6G'] + jvm + args.jvm_arg + [
-        '-Dgtmb.hologram.packagedPreviewProbe=true', '-Dgtmb.hologram.productionPreviewSmoke=true',
+    baseline_profile = args.profile == 'adjacent-v008-baseline'
+    profile_args = [] if args.profile == 'native-v008' else [
+        '-Dgtmb.hologram.productionAdjacentPreview=true', '-Dgtmb.hologram.extendedCompatibilitySmoke=true']
+    if baseline_profile:
+        profile_args.append('-Dgtmb.hologram.productionAdjacentBaselineWitness=true')
+        profile_args.append('-Dgtmb.hologram.energyNetworkSmoke=false')
+    launch = ['-Xms1G', '-Xmx6G'] + jvm + args.jvm_arg + profile_args + [
+        '-Dgtmb.hologram.packagedPreviewProbe=true',
+        '-Dgtmb.hologram.productionPreviewSmoke=' + ('false' if baseline_profile else 'true'),
         '-Dgtmb.hologram.packagedProbeDir=' + str(fixture),
         '-Djava.library.path=' + str(client / 'natives'), '-cp',
         ';'.join(str(path) for path in libraries), main_class,
@@ -217,11 +232,16 @@ def main():
                'normal_jar': normal.name, 'normal_sha256': digest(normal), 'main_class': main_class,
                'library_count': len(libraries), 'mod_count': len(list((client / 'mods').rglob('*.jar'))),
                'window_size': [width, height], 'windows_working_area': working_area, 'gui_scale': 2,
+               'profile': args.profile, 'expected_source_cells': 7 if args.profile == 'native-v008' else 57,
+               'baseline_witness_addon_required': baseline_profile,
                'user_worlds_copied': False, 'launcher_accounts_read': False,
                'user_gtmb_presets_copied': False,
                'scripts': 'Only .zs files; credential paths and nonempty credential values excluded',
                'source_instance_modified': False}
     (fixture / 'environment.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')
+    incomplete_marker = fixture / 'INCOMPLETE-DO-NOT-LAUNCH.txt'
+    if incomplete_marker.is_file():
+        incomplete_marker.unlink()
     print(json.dumps(receipt, indent=2))
 
 

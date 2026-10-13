@@ -90,17 +90,24 @@ public final class HologramBlueprintResourcesRegression {
                 .getTagCompound()
                 .getString("fixtureIdentity"),
             "inventory payment preserves exact item tags");
+        HologramEnergy.Demand cacheDemand = HologramEnergyPayload.prepare(payload, null).demand;
         SimpleAssert.that(
             BigInteger.valueOf(Long.MAX_VALUE)
-                .equals(plan.energy),
-            "stored EU is exact");
+                .equals(cacheDemand.eu),
+            "retained cache EU has an exact separate demand");
+        SimpleAssert.that(
+            plan.energy.signum() == 0,
+            "optional device caches are excluded from required construction resources");
         plan.merge(HologramBlueprintResources.plan(payload));
         SimpleAssert.eq(10000, plan.items.get(0).stackSize, "merged cells sum inventory requirements");
+        cacheDemand.merge(HologramEnergyPayload.prepare(payload, null).demand);
         SimpleAssert.that(
             BigInteger.valueOf(Long.MAX_VALUE)
                 .multiply(BigInteger.valueOf(2))
-                .equals(plan.energy),
-            "aggregate energy exceeds long without overflow");
+                .equals(cacheDemand.eu),
+            "separate aggregate cache demand exceeds long without overflow");
+        SimpleAssert
+            .that(plan.energy.signum() == 0, "merging physical resource plans cannot silently restore cache billing");
         SimpleAssert.that(payload.equals(original), "cost inspection leaves placement state untouched");
         plan.items.get(0)
             .getTagCompound()
@@ -153,14 +160,92 @@ public final class HologramBlueprintResourcesRegression {
             Arrays.asList("mStoredEnergy"));
         HologramBlueprintResources.Plan downgraded = HologramBlueprintResources.plan(selected);
         SimpleAssert.eq(0, downgraded.fluids.size(), "cancelled fluid keys neither restore nor charge contents");
+        HologramEnergyPayload.Prepared selectedCache = HologramEnergyPayload.prepare(selected, null);
         SimpleAssert.that(
             BigInteger.valueOf(5000)
-                .equals(downgraded.energy),
-            "selected energy remains paid");
+                .equals(selectedCache.demand.eu),
+            "selected energy has an exact independent cache demand");
+        SimpleAssert.that(
+            downgraded.energy.signum() == 0 && selectedCache.tilePaid.getLong("mStoredEnergy") == 5000
+                && selectedCache.tileEmpty.getLong("mStoredEnergy") == 0,
+            "selected cache is excluded from required resources and has explicit paid/empty projections");
+        BigInteger[] balance = { BigInteger.valueOf(4999) };
+        HologramEnergy.Bank bank = euFixtureBank(balance);
+        SimpleAssert.that(
+            HologramEnergy.quote(selectedCache.demand, bank)
+                .consume() == null && balance[0].equals(BigInteger.valueOf(4999)),
+            "selected underfunded cache cannot restore or deduct a partial EU balance");
+        balance[0] = BigInteger.valueOf(5000);
+        HologramEnergy.Receipt paid = HologramEnergy.quote(selectedCache.demand, bank)
+            .consume();
+        SimpleAssert.that(
+            paid != null && balance[0].signum() == 0,
+            "selected cache must consume its full independent EU demand before paid restoration");
+        paid.refund();
+        SimpleAssert.that(
+            balance[0].equals(BigInteger.valueOf(5000)),
+            "selected cache placement cancellation refunds its independent receipt");
+        HologramEnergy.quote(selectedCache.demand, bank)
+            .consume()
+            .commit();
+        SimpleAssert.that(balance[0].signum() == 0, "committed selected cache retains exact independent payment");
+        NBTTagCompound fluidOnly = HologramBlueprintNbt
+            .forPlacement(encoded, UUID.randomUUID(), "player", 10, 20, 30, true, false, Arrays.asList("mFluid"));
+        HologramEnergyPayload.Prepared omittedCache = HologramEnergyPayload.prepare(fluidOnly, null);
+        HologramBlueprintResources.Plan fluidOnlyPlan = HologramBlueprintResources.plan(fluidOnly);
+        SimpleAssert.that(
+            omittedCache.demand.empty() && !omittedCache.tilePaid.hasKey("mStoredEnergy")
+                && fluidOnlyPlan.fluids.size() == 1
+                && fluidOnlyPlan.fluids.get(0).amount == 1250,
+            "deselecting the energy NBT root removes restoration/payment while selected fluid keeps its exact physical cost");
+        HologramEnergy.quote(omittedCache.demand, bank)
+            .consume()
+            .commit();
+        SimpleAssert.that(balance[0].signum() == 0, "deselected cache needs no EU even after the account is depleted");
         SimpleAssert.that(
             HologramBlueprintNbt.decode(encoded)
                 .hasKey("mFluid"),
             "temporary downgrade preserves captured blueprint");
+    }
+
+    /** Explicit unit-test bank. Actual UUID/network Context payment is checked by EnergyNetworkSmoke. */
+    private static HologramEnergy.Bank euFixtureBank(BigInteger[] balance) {
+        return new HologramEnergy.Bank() {
+
+            public BigInteger euAvailable() {
+                return balance[0];
+            }
+
+            public boolean takeEu(BigInteger amount) {
+                if (balance[0].compareTo(amount) < 0) return false;
+                balance[0] = balance[0].subtract(amount);
+                return true;
+            }
+
+            public void refundEu(BigInteger amount) {
+                balance[0] = balance[0].add(amount);
+            }
+
+            public boolean aeAvailable() {
+                return false;
+            }
+
+            public double takeAe(double amount, boolean simulate) {
+                throw new AssertionError("EU-only fixture cannot withdraw AE");
+            }
+
+            public void refundAe(double amount) {
+                throw new AssertionError("EU-only fixture cannot refund AE");
+            }
+
+            public double rfToEuPerHundred() {
+                return 100;
+            }
+
+            public double aeToEu() {
+                return 0.5;
+            }
+        };
     }
 
     private static void taggedFluidRejection() throws Exception {
@@ -208,7 +293,14 @@ public final class HologramBlueprintResourcesRegression {
     private static void rejectionBeforePayment() throws Exception {
         NBTTagCompound negative = new NBTTagCompound();
         negative.setLong("mStoredEnergy", -1);
-        reject(negative, "mStoredEnergy");
+        HologramEnergyPayload.Prepared invalidCache = HologramEnergyPayload.prepare(negative, null);
+        SimpleAssert.that(
+            invalidCache.demand.empty() && invalidCache.tilePaid.getLong("mStoredEnergy") == 0
+                && !invalidCache.warnings.isEmpty(),
+            "invalid cache cannot create an energy demand or restore unpaid negative data");
+        SimpleAssert.that(
+            HologramBlueprintResources.plan(negative).energy.signum() == 0,
+            "invalid optional cache is omitted independently of required physical resources");
         NBTTagCompound unknown = new NBTTagCompound();
         NBTTagCompound tank = new NBTTagCompound();
         tank.setLong("capacityUsed", 500);

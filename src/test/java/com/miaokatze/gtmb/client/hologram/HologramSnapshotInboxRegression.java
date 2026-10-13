@@ -129,6 +129,16 @@ public final class HologramSnapshotInboxRegression {
             "later actual right-click can reopen at the same server UI sequence");
         SimpleAssert
             .that(!fence.suppress("session", 9, true, false), "later higher-sequence open remains normal after ACK");
+        fence.close("ghost", 4);
+        SimpleAssert.that(
+            fence.suppress("ghost", 4, true, false),
+            "world Escape rejects a queued material review at the current UI sequence");
+        SimpleAssert.that(
+            fence.suppress("ghost", 4, false, false),
+            "world cancellation ACK stays closed without requiring a synthetic UI edit sequence");
+        SimpleAssert.that(
+            !fence.suppress("ghost", 4, true, false),
+            "ordinary air right-click can reopen the retained draft after world cancellation ACK");
         fence.close("session", 10);
         fence.close("session", 12);
         SimpleAssert

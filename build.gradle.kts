@@ -33,6 +33,18 @@ tasks.register<JavaExec>("runHologramTest") {
 
 tasks.named("check") { dependsOn("runHologramTest") }
 
+tasks.register<JavaExec>("runIndustrialConstraintsTest") {
+    group = "verification"
+    description = "Checks native LCR coil declarations and hatch casing constraints in an isolated JVM."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramIndustrialConstraintsRegression"
+    classpath = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8")) + hologramTestClasspath
+    val scratchDir = layout.buildDirectory.dir("hologram-industrial-constraints")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+tasks.named("check") { dependsOn("runIndustrialConstraintsTest") }
+
 val hologramCoexistence = providers.gradleProperty("hologramCoexistence").isPresent
 val hologramExtendedCompatibility = providers.gradleProperty("hologramExtendedCompatibility").isPresent
 val hologramAeDeepCompatibility = providers.gradleProperty("hologramAeDeepCompatibility").isPresent
@@ -61,6 +73,16 @@ if (hologramExtendedCompatibility) {
 }
 val smokeRoot = layout.buildDirectory.dir(if (hologramCoexistence) "hologram-coexistence/smoke" else "hologram-smoke")
 val interactionRoot = layout.buildDirectory.dir(if (hologramCoexistence) "hologram-coexistence/interaction" else "hologram-interaction")
+if (providers.gradleProperty("hologramLibrarySocketSmoke").isPresent) {
+    require(providers.gradleProperty("hologramInteractionServer").isPresent ||
+        providers.gradleProperty("hologramInteractionClient").isPresent) {
+        "-PhologramLibrarySocketSmoke requires an interaction server or client run."
+    }
+    extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
+        extraRunJvmArguments.add("-Dgtmb.hologram.librarySocketSmoke=true")
+        extraRunJvmArguments.add("-Dgtmb.hologram.libraryReceiptDir=" + interactionRoot.get().dir("receipts").asFile.absolutePath)
+    }
+}
 val hologramReferenceServer = providers.gradleProperty("hologramReferenceServer").isPresent
 val hologramReferenceClient = providers.gradleProperty("hologramReferenceClient").isPresent
 val referenceRoot = layout.buildDirectory.dir("hologram-reference")
@@ -147,6 +169,6 @@ if (providers.gradleProperty("hologramInteractionClient").isPresent) {
     }
     tasks.named<JavaExec>("runClient") {
         workingDir(interactionRoot.map { it.dir("client") })
-        args("--width", "1100", "--height", "800")
+        args("--width", "1280", "--height", "800")
     }
 }

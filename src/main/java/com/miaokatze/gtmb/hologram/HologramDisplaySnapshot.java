@@ -88,11 +88,7 @@ final class HologramDisplaySnapshot {
         NBTTagCompound display = new NBTTagCompound();
         display.setInteger("color", -1);
         if (facing >= 0 && facing < 6) display.setInteger("facing", facing);
-        int casing = casingIndex(element);
-        if (casing >= 0) {
-            display.setInteger("texturePage", casing >> 7);
-            display.setInteger("textureIndex", casing & 127);
-        }
+        applyCasing(element, display);
         NBTTagCompound saved = null;
         if (HologramRecovery.hasSeal(stack)) saved = stack.getTagCompound()
             .getCompoundTag(HologramRecovery.TAG)
@@ -128,7 +124,33 @@ final class HologramDisplaySnapshot {
                 saved.getTag("gt.covers")
                     .copy());
         }
+        // The planned hatch belongs to this declaration even if an unformed source saved its default 0:0 skin.
+        applyCasing(element, display);
         return display;
+    }
+
+    static void applyCasing(IStructureElement<?> element, NBTTagCompound display) {
+        int casing = casingIndex(element);
+        if (casing >= 0) {
+            display.setInteger("texturePage", casing >> 7);
+            display.setInteger("textureIndex", casing & 127);
+        }
+    }
+
+    /** Material indices are native hatch persistence, so an unbuilt target retains its casing in a saved blueprint. */
+    static String retainCasing(ItemStack stack, IStructureElement<?> element, String tileNbt)
+        throws java.io.IOException {
+        if (!(gregtech.common.blocks.ItemMachines
+            .getMetaTileEntity(stack) instanceof gregtech.api.metatileentity.implementations.MTEHatch)
+            || casingIndex(element) < 0) return tileNbt;
+        NBTTagCompound saved = HologramBlueprintNbt.decode(tileNbt);
+        if (saved == null) {
+            saved = new NBTTagCompound();
+            // BaseMetaTileEntity reads mID when restoring any native GT payload, including a newly planned hatch.
+            saved.setShort("mID", (short) stack.getItemDamage());
+        }
+        applyCasing(element, saved);
+        return HologramBlueprintNbt.encodeCaptured(saved);
     }
 
     private static boolean registeredCableBus(net.minecraft.block.Block block) {

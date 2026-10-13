@@ -66,6 +66,7 @@ public final class HologramClient {
     public static void install() {
         if (installed) return;
         installed = true;
+        HologramLibraryClient.INSTANCE.install();
         HologramNetwork.setClientReceiver(
             nbt -> Minecraft.getMinecraft()
                 .func_152344_a(() -> receive(nbt)));
@@ -82,15 +83,18 @@ public final class HologramClient {
     private static net.minecraft.world.World lastUseWorld;
     private static final HologramWorldFlow.PreviewDistance previewDistance = new HologramWorldFlow.PreviewDistance();
     private static final HologramWorldFlow.UsePressFence usePressFence = new HologramWorldFlow.UsePressFence();
-    private static Object previewHeldTool;
 
     private static void syncPreviewDistance() {
         Minecraft mc = Minecraft.getMinecraft();
-        Object tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
-        if (previewHeldTool != tool) {
-            previewDistance.sync(false, null, "");
-            previewHeldTool = tool;
-        }
+        ItemStack tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
+        previewDistance.syncHeldTool(
+            tool == null ? null : tool.getItem(),
+            tool == null ? 0 : tool.getItemDamage(),
+            mc.thePlayer == null ? -1 : mc.thePlayer.inventory.currentItem,
+            tool == null || !tool.hasTagCompound() ? ""
+                : tool.getTagCompound()
+                    .getString("gtitHologramToolId"),
+            tool);
         previewDistance.sync(
             projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
             mc.theWorld,
@@ -147,6 +151,7 @@ public final class HologramClient {
                 input.setInteger("y", anchor[1]);
                 input.setInteger("z", anchor[2]);
                 if (air) input.setInteger("side", ForgeDirection.UP.ordinal());
+                if (HologramLibraryClient.INSTANCE.quickPlaceLast(input)) return;
             } else if (intent == HologramWorldFlow.Intent.CONFIRM_POSITION) {
                 int[] anchor = movingAnchor(state);
                 input.setString("action", "confirmVirtualPosition");
@@ -224,6 +229,11 @@ public final class HologramClient {
     @SubscribeEvent
     public void areaGuide(RenderGameOverlayEvent.Text event) {
         if (!projectorWorld()) return;
+        if (HologramLibraryClient.INSTANCE.quickInProgress()) event.left.add(
+            HologramLibraryClient.INSTANCE.status() + " · "
+                + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.progressBytes())
+                + " / "
+                + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.totalBytes()));
         HologramWorldFlow.Stage stage = worldStage();
         String key = state != null && state.data.getBoolean("areaImporting") ? "worldGuideAreaImport"
             : stage == HologramWorldFlow.Stage.AREA ? "worldGuideArea"
@@ -259,6 +269,7 @@ public final class HologramClient {
     @SubscribeEvent
     public void clientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
+        HologramLibraryClient.INSTANCE.tick();
         syncSnapshotWorld();
         installDecoded(snapshotInbox.poll());
         Minecraft mc = Minecraft.getMinecraft();
@@ -348,11 +359,23 @@ public final class HologramClient {
     public void worldEscape(GuiOpenEvent event) {
         inputScreenChanged = true;
         previewDistance.sync(false, null, "");
+        if (event.gui instanceof GuiIngameMenu && projectorWorld()
+            && HologramLibraryClient.INSTANCE.cancelQuickPlacement()) {
+            HologramWorldFlow.Intent pendingIntent = HologramWorldFlow
+                .intent(worldStage(), HologramWorldFlow.Gesture.ESCAPE);
+            if (state == null || pendingIntent != HologramWorldFlow.Intent.CANCEL_AREA
+                && pendingIntent != HologramWorldFlow.Intent.CANCEL_PLACEMENT) {
+                event.setCanceled(true);
+                return;
+            }
+        }
         if (!(event.gui instanceof GuiIngameMenu) || !projectorWorld() || state == null) return;
         HologramWorldFlow.Intent intent = HologramWorldFlow.intent(worldStage(), HologramWorldFlow.Gesture.ESCAPE);
         if (intent != HologramWorldFlow.Intent.CANCEL_AREA && intent != HologramWorldFlow.Intent.CANCEL_PLACEMENT)
             return;
         event.setCanceled(true);
+        if (intent == HologramWorldFlow.Intent.CANCEL_PLACEMENT)
+            dismissRootView(state.session, state.data.getLong("uiSequence"));
         worldAction(intent == HologramWorldFlow.Intent.CANCEL_AREA ? "cancelAreaSelection" : "cancelVirtualPlacement");
     }
 
@@ -495,6 +518,7 @@ public final class HologramClient {
         receivedAt = now;
         HologramRenderer.release();
         state = next;
+        if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
         if (rootCloseFence

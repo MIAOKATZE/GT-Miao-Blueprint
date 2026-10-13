@@ -41,6 +41,8 @@ final class HologramRenderer {
 
     static int lastWorldGeometry, lastWorldGTGeometry, lastWorldFallback, lastWorldMatched, lastWorldGhosts;
     static int lastWorldPlacementOutlineColor;
+    private static WorldRenderWitness worldRenderWitness;
+    private static long worldRenderGeneration;
     static int lastPreviewRoleMarkers, lastPreviewAnchorMarkers;
     private static HologramState previewState, worldState;
     private static String previewKey = "";
@@ -51,7 +53,7 @@ final class HologramRenderer {
     private static int visibleLayer, visibleView, visibleMode;
     private static final List<HologramState.Cell> visibleCells = new ArrayList<>();
     private static final List<PreviewCell> previewCells = new ArrayList<>();
-    private static final Set<Coordinate> occupied = new HashSet<>();
+    private static final Set<Coordinate> occluders = new HashSet<>();
     private static List<RoleMarker> cachedMarkers = new ArrayList<>();
     private static double cachedExtent = 1;
     private static int worldLayer = Integer.MAX_VALUE;
@@ -59,6 +61,7 @@ final class HologramRenderer {
     private static final int WORLD_INDEX_BATCH = 2048, WORLD_MESH_BATCH = 256;
     private static final Map<Coordinate, WorldGroup> worldGroups = new LinkedHashMap<>();
     private static final Set<Coordinate> worldGhosts = new HashSet<>();
+    private static final Set<Coordinate> worldOccluders = new HashSet<>();
     private static int worldIndex;
     private static HologramState boundsState;
     private static double boundsX, boundsY, boundsZ, boundsExtent;
@@ -76,6 +79,7 @@ final class HologramRenderer {
     private static boolean visibleEmptyCells;
 
     static void release() {
+        worldRenderWitness = null;
         clearWorldGroups();
         worldState = previewState = null;
         boundsState = null;
@@ -88,7 +92,7 @@ final class HologramRenderer {
         visibleState = null;
         visibleCells.clear();
         previewCells.clear();
-        occupied.clear();
+        occluders.clear();
         structureBoxes.clear();
         hintBoxes.clear();
         structureBoundsState = null;
@@ -142,7 +146,7 @@ final class HologramRenderer {
                 visibleMode = mode;
                 visibleEmptyCells = showEmptyCells;
                 visibleCells.clear();
-                occupied.clear();
+                occluders.clear();
                 for (HologramState.Cell c : state.cells) {
                     if (c.status.equals("removed") || (view == 2 && (c.completed() || c.status.equals("satisfied"))))
                         continue;
@@ -150,14 +154,14 @@ final class HologramRenderer {
                     if (empty && !showEmptyCells) continue;
                     if (!c.anchor && c.dy != layer && layer != Integer.MAX_VALUE) continue;
                     visibleCells.add(c);
-                    if (!empty) occupied.add(coordinate(c.x, c.y, c.z));
+                    if (!empty && occludes(c, currentView)) occluders.add(coordinate(c.x, c.y, c.z));
                 }
                 previewCells.clear();
                 for (HologramState.Cell c : visibleCells) {
                     int exposed = 0;
                     for (int side = 0; side < 6; side++) {
                         int[] normal = NORMALS[side];
-                        if (!occupied.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2])))
+                        if (!occluders.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2])))
                             exposed |= 1 << side;
                     }
                     boolean empty = !c.anchor && !c.iconOnly && (currentView ? c.id : c.wantId).equals("minecraft:air");
@@ -291,6 +295,7 @@ final class HologramRenderer {
             GL11.glEnable(GL11.GL_ALPHA_TEST);
             GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
             double depthScale = 128 / extent;
+            HologramSourcePreviewReference.captureCamera(depthScale);
             Tessellator t = Tessellator.instance;
             t.startDrawingQuads();
             for (Face face : faces) {
@@ -693,6 +698,8 @@ final class HologramRenderer {
     }
 
     static void world(HologramState state, float partialTicks) {
+        boolean witness = Boolean.getBoolean("gtmb.hologram.realInteractionSmoke");
+        if (witness) worldRenderWitness = null;
         HologramTextures.begin(state);
         HologramBlockRender.begin(state);
         Minecraft mc = Minecraft.getMinecraft();
@@ -722,6 +729,7 @@ final class HologramRenderer {
         double range = Math.max(16, mc.gameSettings.renderDistanceChunks * 16);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         GL11.glPushMatrix();
+        int drawnLists = 0;
         try {
             GL11.glTranslated(-px, -py, -pz);
             GL11.glTranslated(offsetX, offsetY, offsetZ);
@@ -752,11 +760,60 @@ final class HologramRenderer {
                         if (!compileWorldGroup(group, state.data.getInteger("mode") == 2)) break;
                     }
                 }
-                for (int list : group.lists) GL11.glCallList(list);
+                for (int list : group.lists) {
+                    GL11.glCallList(list);
+                    if (witness) drawnLists++;
+                }
             }
+            if (witness && drawnLists > 0) worldRenderWitness = new WorldRenderWitness(
+                state,
+                anchor,
+                offsetX,
+                offsetY,
+                offsetZ,
+                ++worldRenderGeneration,
+                drawnLists);
         } finally {
             GL11.glPopMatrix();
             GL11.glPopAttrib();
+        }
+    }
+
+    /** Opt-in observation of the state and translation actually consumed by a submitted world list. */
+    static WorldRenderWitness lastWorldRenderWitness() {
+        return worldRenderWitness;
+    }
+
+    static final class WorldRenderWitness {
+
+        final HologramState state;
+        final String session;
+        final long revision, generation;
+        final int anchorX, anchorY, anchorZ, lists, geometry, ghosts, outlineColor;
+        final double offsetX, offsetY, offsetZ;
+        final boolean moving;
+
+        WorldRenderWitness(HologramState state, int[] anchor, double offsetX, double offsetY, double offsetZ,
+            long generation, int lists) {
+            this.state = state;
+            session = state.session;
+            revision = state.data.getLong("planRevision");
+            this.generation = generation;
+            this.lists = lists;
+            moving = anchor != null;
+            anchorX = moving ? anchor[0] : state.data.getInteger("x");
+            anchorY = moving ? anchor[1] : state.data.getInteger("y");
+            anchorZ = moving ? anchor[2] : state.data.getInteger("z");
+            this.offsetX = offsetX;
+            this.offsetY = offsetY;
+            this.offsetZ = offsetZ;
+            geometry = lastWorldGeometry;
+            ghosts = lastWorldGhosts;
+            outlineColor = lastWorldPlacementOutlineColor;
+        }
+
+        int[] anchor() {
+            return moving ? new int[] { anchorX, anchorY, anchorZ } : null;
         }
     }
 
@@ -765,6 +822,7 @@ final class HologramRenderer {
         for (WorldGroup group : worldGroups.values()) for (int list : group.lists) GL11.glDeleteLists(list, 1);
         worldGroups.clear();
         worldGhosts.clear();
+        worldOccluders.clear();
         worldIndex = 0;
     }
 
@@ -796,8 +854,11 @@ final class HologramRenderer {
             group.cells.add(c);
             if ((!c.anchor || virtual) && !removal
                 && (virtual || !c.status.equals("satisfied") && !worldMatched(c))
-                && !c.wantId.equals("minecraft:air")) worldGhosts.add(coordinate(c.x, c.y, c.z));
-            else if (!c.anchor && !removal) lastWorldMatched++;
+                && !c.wantId.equals("minecraft:air")) {
+                Coordinate position = coordinate(c.x, c.y, c.z);
+                worldGhosts.add(position);
+                if (occludes(c, false)) worldOccluders.add(position);
+            } else if (!c.anchor && !removal) lastWorldMatched++;
         }
     }
 
@@ -827,7 +888,7 @@ final class HologramRenderer {
                 int side = surface.side;
                 int[] normal = NORMALS[side];
                 if (!material.partial
-                    && worldGhosts.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2]))) continue;
+                    && worldOccluders.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2]))) continue;
                 int sampleIndex = 0;
                 for (HologramTextures.Sample sample : material.samples(surface)) {
                     setSampleColor(t, sample, side == 1 ? 1 : side == 0 ? .65f : .85f, .38f);
@@ -907,6 +968,16 @@ final class HologramRenderer {
             ((color >> 8) & 255) / 255f * shade,
             (color & 255) / 255f * shade,
             alpha);
+    }
+
+    private static boolean occludes(HologramState.Cell cell, boolean current) {
+        current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+        Block block = cell.block(current);
+        return HologramOcclusion.fullCube(
+            block,
+            HologramTextures.material(cell, current).partial,
+            HologramNativeTiles.supported(block),
+            cell.iconOnly);
     }
 
     private static double textureU(IIcon icon, int side, double[] point) {

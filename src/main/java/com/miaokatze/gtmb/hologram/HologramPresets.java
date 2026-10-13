@@ -129,6 +129,9 @@ final class HologramPresets {
     static final class Preset {
 
         String id, name, controllerType;
+        // Creator attribution is descriptive; public-library ownership is verified separately by the server.
+        String authorName, authorUuid;
+        long createdAt;
         int schema = 1;
         int aePolicyVersion;
         List<HologramAePolicy.Issue> aeIssues = new ArrayList<>();
@@ -250,6 +253,10 @@ final class HologramPresets {
         if (update) {
             int index = indexOf(list, result.id);
             if (index < 0) throw new IOException("要更新的模板不存在");
+            Preset original = list.get(index);
+            result.authorName = original.authorName;
+            result.authorUuid = original.authorUuid;
+            result.createdAt = original.createdAt;
             list.set(index, result);
         } else {
             if (list.size() >= 32) throw new IOException("最多保存32个模板");
@@ -409,6 +416,9 @@ final class HologramPresets {
             NBTTagCompound row = new NBTTagCompound();
             row.setString("id", preset.id);
             row.setString("name", preset.name);
+            row.setString("authorName", preset.authorName == null ? "" : preset.authorName);
+            row.setString("authorUuid", preset.authorUuid == null ? "" : preset.authorUuid);
+            row.setLong("createdAt", preset.createdAt);
             row.setString("sourceMod", preset.sourceMod == null ? "" : preset.sourceMod);
             row.setString("sourceClass", preset.sourceClass == null ? "" : preset.sourceClass);
             row.setInteger("structures", preset.structures.size());

@@ -21,7 +21,21 @@ final class HologramAnnotationMarkers {
         if (!global.isEmpty()) result.add(new Marker("blueprint", "蓝图提示", global, null));
         Map<String, Set<String>> structurePrompts = new LinkedHashMap<>();
         Map<String, List<Integer>> structureCells = new LinkedHashMap<>();
+        Map<String, Set<String>> networkPrompts = new LinkedHashMap<>();
+        Map<String, List<Integer>> networkCells = new LinkedHashMap<>();
+        String activeStructure = state.data.getString("activeStructure");
         for (HologramState.Cell cell : state.cells) {
+            if (state.data.getBoolean("virtual") && cell.quantumNetworkHint()) {
+                // Bounds follow this snapshot's transformed cells, restricted to the current editing structure.
+                if (!activeStructure.isEmpty() && !cell.belongsToStructure(activeStructure)) continue;
+                Set<String> prompts = networkPrompts.computeIfAbsent(cell.networkGroup, key -> new LinkedHashSet<>());
+                String hint = cell.specialHint.getString("hint");
+                if (!hint.isEmpty() && !hint.equals("量子网络组 " + cell.networkGroup.substring(1))) prompts.add(hint);
+                if (!cell.prompt.isEmpty()) prompts.add(cell.prompt);
+                networkCells.computeIfAbsent(cell.networkGroup, key -> new ArrayList<>())
+                    .add(cell.index);
+                continue;
+            }
             if (cell.prompt.isEmpty()) continue;
             if (cell.structureId.isEmpty()) {
                 result.add(
@@ -36,6 +50,20 @@ final class HologramAnnotationMarkers {
                 structureCells.computeIfAbsent(cell.structureId, key -> new ArrayList<>())
                     .add(cell.index);
             }
+        }
+        for (Map.Entry<String, List<Integer>> group : networkCells.entrySet()) {
+            int[] indices = group.getValue()
+                .stream()
+                .mapToInt(Integer::intValue)
+                .toArray();
+            String prompt = String.join("\n", networkPrompts.get(group.getKey()));
+            result.add(
+                new Marker(
+                    "quantum:" + group.getKey(),
+                    "量子网络组 " + group.getKey()
+                        .substring(1),
+                    prompt.isEmpty() ? "同组设备共享本次蓝图放置的网络绑定。" : prompt,
+                    HologramAnnotations.bounds(state, indices)));
         }
         NBTTagList structures = state.data.getTagList("structures", 10);
         for (Map.Entry<String, Set<String>> row : structurePrompts.entrySet()) {

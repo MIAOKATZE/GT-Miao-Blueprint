@@ -182,6 +182,42 @@ public final class HologramWorldFlowRegression {
         distance.scroll(120);
         distance.sync(true, firstWorld, "second-preview");
         SimpleAssert.eq(6, distance.distance(), "cancel and out-of-mode wheel never stick to the next preview");
+        Object projector = new Object(), initialStack = new Object();
+        distance.syncHeldTool(projector, 0, 2, "tool-a", initialStack);
+        distance.sync(true, firstWorld, "network-copy-preview");
+        distance.scroll(240);
+        distance.syncHeldTool(projector, 0, 2, "tool-a", new Object());
+        distance.sync(true, firstWorld, "network-copy-preview");
+        SimpleAssert.eq(
+            8,
+            distance.distance(),
+            "same logical tool survives a vanilla synchronized stack copy without losing wheel input");
+        distance.syncHeldTool(projector, 0, 2, "tool-b", new Object());
+        distance.sync(true, firstWorld, "network-copy-preview");
+        SimpleAssert.eq(6, distance.distance(), "a different projector UUID resets wheel distance");
+        distance.scroll(240);
+        distance.syncHeldTool(projector, 0, 3, "tool-b", new Object());
+        distance.sync(true, firstWorld, "network-copy-preview");
+        SimpleAssert.eq(6, distance.distance(), "changing actual held slot resets even a copied logical UUID");
+        distance.scroll(240);
+        distance.syncHeldTool(projector, 1, 3, "tool-b", new Object());
+        distance.sync(true, firstWorld, "network-copy-preview");
+        SimpleAssert.eq(6, distance.distance(), "changing tool metadata resets preview distance");
+        distance.scroll(240);
+        distance.syncHeldTool(new Object(), 1, 3, "tool-b", new Object());
+        distance.sync(true, firstWorld, "network-copy-preview");
+        SimpleAssert
+            .eq(6, distance.distance(), "a different actual item cannot inherit a copied tool UUID's preview distance");
+        Object unidentified = new Object();
+        distance.syncHeldTool(projector, 1, 3, "", unidentified);
+        distance.sync(true, firstWorld, "unidentified-preview");
+        distance.scroll(240);
+        distance.syncHeldTool(projector, 1, 3, "", unidentified);
+        distance.sync(true, firstWorld, "unidentified-preview");
+        SimpleAssert.eq(8, distance.distance(), "unidentified tool retains distance only for the same actual stack");
+        distance.syncHeldTool(projector, 1, 3, "", new Object());
+        distance.sync(true, firstWorld, "unidentified-preview");
+        SimpleAssert.eq(6, distance.distance(), "unidentified replacement cannot inherit wheel input");
     }
 
     private static void anchor(int[] expected, int[] actual, String label) {

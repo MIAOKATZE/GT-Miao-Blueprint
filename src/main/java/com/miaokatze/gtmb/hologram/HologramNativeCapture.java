@@ -76,7 +76,12 @@ public final class HologramNativeCapture {
     public static NBTTagCompound capture(TileEntity tile) throws IOException {
         if (tile == null) return new NBTTagCompound();
         try {
-            for (Adapter adapter : ADAPTERS) if (adapter.supports(tile)) return checked(adapter.capture(tile));
+            for (Adapter adapter : ADAPTERS) if (adapter.supports(tile)) {
+                NBTTagCompound adapted = checked(adapter.capture(tile));
+                HologramDisplaySnapshot.enrichNativeTile(tile, adapted);
+                HologramNetworkBindings.capture(tile, adapted);
+                return checked(adapted);
+            }
             NBTTagCompound tag;
             if (isA(tile, EIO + "TileConduitBundle")) {
                 if (!tile.getClass()
@@ -93,6 +98,7 @@ public final class HologramNativeCapture {
                 tile.writeToNBT(tag);
             }
             HologramDisplaySnapshot.enrichNativeTile(tile, tag);
+            HologramNetworkBindings.capture(tile, tag);
             return checked(tag);
         } catch (IOException unsupported) {
             throw unsupported;

@@ -17,9 +17,57 @@ public final class HologramUiTabMemoryRegression {
     public static void run() {
         try {
             exercisePersistence();
+            draftNameSurvivesChildRevision();
         } catch (Exception failure) {
             throw new IllegalStateException("Workspace tab persistence regression failed", failure);
         }
+    }
+
+    private static void draftNameSurvivesChildRevision() throws Exception {
+        net.minecraft.nbt.NBTTagCompound before = new net.minecraft.nbt.NBTTagCompound();
+        before.setString("session", "actual-editor-session");
+        before.setBoolean("virtual", true);
+        before.setString("virtualPresetId", "private-source");
+        before.setString("libraryLocalId", "local-source");
+        before.setString("virtualPresetName", "施工蓝图");
+        before.setLong("planRevision", 4);
+        HologramDraftNameMemory remembered = new HologramDraftNameMemory(before, "SocketAEV005");
+        net.minecraft.nbt.NBTTagCompound child = com.miaokatze.gtmb.hologram.HologramSnapshotCodec
+            .decode(com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(before));
+        child.setLong("planRevision", 19);
+        SimpleAssert.eq(
+            "SocketAEV005",
+            remembered.restore(child),
+            "AE child revisions and actual snapshot round trip retain the user's name for the same loaded source");
+        child.setString("libraryLocalId", "different-local-source");
+        SimpleAssert.eq(
+            "施工蓝图",
+            remembered.restore(child),
+            "another imported client blueprint cannot inherit the previous draft name");
+        child.setString("libraryLocalId", "local-source");
+        child.setString("session", "different-editor-session");
+        SimpleAssert.eq(
+            "施工蓝图",
+            remembered.restore(child),
+            "another server session does not inherit text even when its loaded source id matches");
+        child.setString("session", "actual-editor-session");
+        child.setString("virtualPresetName", "SocketAEV005 saved canonical");
+        SimpleAssert.eq(
+            "SocketAEV005 saved canonical",
+            remembered.restore(child),
+            "a confirmed canonical server name wins over an older cached textbox value");
+        child.removeTag("libraryLocalId");
+        before.removeTag("libraryLocalId");
+        remembered = new HologramDraftNameMemory(before, "Unsaved user text");
+        child.setString("virtualPresetName", "施工蓝图");
+        child.setString("virtualPresetId", "public-different-source");
+        SimpleAssert.eq(
+            "施工蓝图",
+            remembered.restore(child),
+            "a different public preset cannot inherit text when no client local id exists");
+        SimpleAssert.that(
+            !HologramDraftNameMemory.sameSource(before, child),
+            "the live editor detects loaded-source replacement independently of plan revision");
     }
 
     private static void exercisePersistence() throws Exception {

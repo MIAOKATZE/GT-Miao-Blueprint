@@ -612,6 +612,7 @@ public final class HologramInteractionSmoke {
             player.getUniqueID()
                 .toString());
         observed.setString("status", String.valueOf(sessionField(session, "status")));
+        observed.setString("libraryLocalId", String.valueOf(sessionField(session, "libraryLocalId")));
         HologramPresets.Preset observedPreset = (HologramPresets.Preset) sessionField(session, "virtualPreset");
         if (observedPreset != null && observedPreset.id != null && !observedPreset.id.isEmpty())
             observed.setString("presetId", observedPreset.id);

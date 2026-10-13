@@ -49,6 +49,8 @@ public final class HologramSmokeTest {
             }
         }
         HologramCompatibilitySmoke.registerIfEnabled();
+        if (Boolean.getBoolean("energyNetworkSmoke") || Boolean.getBoolean("gtmb.hologram.energyNetworkSmoke"))
+            HologramEnergyNetworkSmoke.registerIfEnabled();
         if (Boolean.getBoolean("gtmb.hologram.smoketest")) FMLCommonHandler.instance()
             .bus()
             .register(new HologramSmokeTest());
@@ -140,6 +142,14 @@ public final class HologramSmokeTest {
                 } catch (Throwable failure) {
                     failedSuites++;
                     suiteFailure("NATIVE-PLACEMENT", failure);
+                }
+            }
+            if (Boolean.getBoolean("gtmb.hologram.networkBindingSmoke")) {
+                try {
+                    HologramNetworkBindingSmoke.run(server.worldServerForDimension(0));
+                } catch (Throwable failure) {
+                    failedSuites++;
+                    suiteFailure("NETWORK-BINDING", failure);
                 }
             }
             if (coexistence) {

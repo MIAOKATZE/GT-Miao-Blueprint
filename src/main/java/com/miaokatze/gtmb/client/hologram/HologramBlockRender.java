@@ -171,9 +171,28 @@ final class HologramBlockRender {
         }
     }
 
+    /** Opt-in source reference uses native world face selection, including vanilla RenderBlocks. */
+    static List<double[]> drawSourceReference(HologramState.Cell cell, boolean current, IBlockAccess world) {
+        if (!Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
+            throw new IllegalStateException("source render reference requires extended compatibility smoke");
+        Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null, true);
+        try {
+            if (control.list != 0) GL11.glCallList(control.list);
+            return control.attributes;
+        } finally {
+            if (control.list != 0) GL11.glDeleteLists(control.list, 1);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Model compile(HologramState.Cell cell, boolean current, IBlockAccess access, TileEntity tile,
         HologramNativeRenderRegistry.Adapter adapter) {
+        return compile(cell, current, access, tile, adapter, false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Model compile(HologramState.Cell cell, boolean current, IBlockAccess access, TileEntity tile,
+        HologramNativeRenderRegistry.Adapter adapter, boolean sourceReference) {
         Block block = cell.block(current);
         Tessellator tess = Tessellator.instance;
         Tessellator callerTess = tess;
@@ -207,21 +226,23 @@ final class HologramBlockRender {
             if (DRAWING.getBoolean(tess)) return failed(cell, current, "caller tessellator is active");
             ISimpleBlockRenderingHandler handler = ((Map<Integer, ISimpleBlockRenderingHandler>) HANDLERS
                 .get(RenderingRegistry.instance())).get(block.getRenderType());
-            if (handler == null) return failed(cell, current, "native ISBRH unavailable");
+            if (handler == null && !sourceReference) return failed(cell, current, "native ISBRH unavailable");
             if (adapter != null) handler = adapter.renderer(block, handler);
-            if (handler == null) return failed(cell, current, "adapter renderer unavailable");
+            if (handler == null && !sourceReference) return failed(cell, current, "adapter renderer unavailable");
             aeCableContext = HologramAeNativeRender.cableContext(block, tile);
             // Carpenter's registered renderer stores the current TE in mutable fields.
             // Use a fresh handler so a detached preview never replaces its live-world context.
-            if (adapter == null && handler.getClass()
-                .getName()
-                .startsWith("com.carpentersblocks.renderer."))
+            if (adapter == null && handler != null
+                && handler.getClass()
+                    .getName()
+                    .startsWith("com.carpentersblocks.renderer."))
                 handler = (ISimpleBlockRenderingHandler) handler.getClass()
                     .getConstructor()
                     .newInstance();
-            if (adapter == null && handler.getClass()
-                .getName()
-                .startsWith("com.carpentersblocks.renderer.")
+            if (adapter == null && handler != null
+                && handler.getClass()
+                    .getName()
+                    .startsWith("com.carpentersblocks.renderer.")
                 && tile != null
                 && tile.getWorldObj() instanceof HologramRenderWorld) {
                 HologramRenderWorld world = (HologramRenderWorld) tile.getWorldObj();
@@ -231,7 +252,7 @@ final class HologramBlockRender {
             list = GL11.glGenLists(1);
             if (list == 0) return failed(cell, current, "display list allocation failed");
             RenderBlocks renderer = new RenderBlocks(access);
-            renderer.renderAllFaces = true;
+            renderer.renderAllFaces = !sourceReference;
             renderer.enableAO = false;
             GL11.glNewList(list, GL11.GL_COMPILE);
             opened = true;
@@ -241,6 +262,7 @@ final class HologramBlockRender {
             for (int pass = 0; pass <= 1; pass++) {
                 WORLD_PASS.setInt(null, pass);
                 ForgeHooksClient.setRenderPass(pass);
+                if (sourceReference && !block.canRenderInPass(pass)) continue;
                 if (aeCableContext != null && block.getClass() == appeng.block.networking.BlockCableBus.class
                     && !block.canRenderInPass(pass)) continue;
                 tess.startDrawingQuads();
@@ -248,7 +270,8 @@ final class HologramBlockRender {
                 tess.setBrightness(0xf000f0);
                 tess.setColorOpaque_F(1, 1, 1);
                 invokedNative = true;
-                handler.renderWorldBlock(access, cell.x, cell.y, cell.z, block, block.getRenderType(), renderer);
+                if (handler == null) renderer.renderBlockByRenderType(block, cell.x, cell.y, cell.z);
+                else handler.renderWorldBlock(access, cell.x, cell.y, cell.z, block, block.getRenderType(), renderer);
                 int emitted = VERTEX_COUNT.getInt(tess);
                 count += emitted;
                 if (emitted > 0) {
@@ -300,10 +323,13 @@ final class HologramBlockRender {
             // That sentinel alone is not a usable native preview model.
             if (count == 0 || positions.size() < 3) {
                 GL11.glDeleteLists(list, 1);
+                if (sourceReference) return new Model(0, 0, 0, points, textureCenters, missing, attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
-            compiled++;
-            vertices += count;
+            if (!sourceReference) {
+                compiled++;
+                vertices += count;
+            }
             return new Model(list, count, positions.size(), points, textureCenters, missing, attributes);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
             if (list != 0) {

@@ -43,6 +43,8 @@ final class HologramAeInteractionClientSmoke {
     private int[] expectedAnchor;
     private int originalScale;
     private String originalSavedId;
+    private java.util.Map<String, String> beforeLocalFiles;
+    private String confirmedLocalId;
     private String lastAreaDiagnostic = "";
     private boolean busyPass = true;
     private boolean drivePreviewRecorded;
@@ -53,6 +55,8 @@ final class HologramAeInteractionClientSmoke {
     private boolean placementLibraryTab;
     private final HologramActualUsePress usePress = new HologramActualUsePress();
     private long nativePreviewTabRender = -1;
+    private long returnParentRender = -1;
+    private int selectionDiagnosticStage = -1;
 
     HologramAeInteractionClientSmoke(File receipts) {
         this.receipts = receipts;
@@ -94,7 +98,7 @@ final class HologramAeInteractionClientSmoke {
             case 0:
                 require(mc.currentScreen instanceof HologramScreen, "busy test must continue the real previous draft");
                 parent = (HologramScreen) mc.currentScreen;
-                if (libraryTab(parent) || rootClick(130)) next(59);
+                if (libraryDrawerVisible(parent) || rootClick(130)) next(59);
                 break;
             case 59:
                 oldSavePoint = parent.smokeControlPoint(132);
@@ -169,6 +173,7 @@ final class HologramAeInteractionClientSmoke {
                         busy.getInteger("areaImportProgress") >= 0 && busy.getInteger("areaImportProgress") < 100,
                         "actual busy scan has no incomplete progress");
                     guard = new HologramAeInteractionGuard(mc);
+                    if (HologramLibraryClient.dedicated()) beforeLocalFiles = localFiles();
                     busyBlockedTraffic = guard.customPackets();
                     signal("ae-busy-visible.txt");
                     parent.smokeClickAt(oldSavePoint[0], oldSavePoint[1], 0);
@@ -220,6 +225,7 @@ final class HologramAeInteractionClientSmoke {
                         "real completed AE import omitted native coordinate " + sourceX + ": " + areaDiagnostic);
                 }
                 originalSavedId = imported.getString("selectedPresetId");
+                if (HologramLibraryClient.dedicated()) beforeLocalFiles = localFiles();
                 signal("ae-virtual-begin.txt");
                 guard = new HologramAeInteractionGuard(mc);
                 next(58);
@@ -256,6 +262,9 @@ final class HologramAeInteractionClientSmoke {
                 require(mc.currentScreen == null, "late completion reopened a cancelled real import");
                 if (!receipt().getBoolean("aeBusyCancelledVerified")) return false;
                 guard.assertStable("natural busy E cancellation and delayed no-reopen");
+                if (HologramLibraryClient.dedicated()) require(
+                    beforeLocalFiles.equals(localFiles()),
+                    "natural busy E cancellation wrote no private client file");
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(
                     new File(receipts, "ae-client-busy.nbt"))) {
                     CompressedStreamTools.writeCompressed(guard.receipt(), out);
@@ -274,7 +283,7 @@ final class HologramAeInteractionClientSmoke {
                 break;
             case 58:
                 if (!receipt().getBoolean("aeVirtualEpoch")) return false;
-                if (libraryTab(parent)) {
+                if (libraryDrawerVisible(parent)) {
                     if (rootClick(148)) nativePreviewTabRender = parent.smokeRenderGeneration();
                     return false;
                 }
@@ -299,18 +308,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(130)) next(7);
                 break;
             case 7:
-                java.lang.reflect.Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
-                nameField.setAccessible(true);
-                GuiTextField name = (GuiTextField) nameField.get(parent);
-                name.setFocused(true);
-                key(Keyboard.KEY_LCONTROL, true);
-                parent.keyTyped((char) 1, Keyboard.KEY_A);
-                key(Keyboard.KEY_LCONTROL, false);
-                for (char c : "SocketAEV005".toCharArray()) parent.keyTyped(c, 0);
-                require(
-                    "SocketAEV005".equals(name.getText()),
-                    "actual Ctrl+A name editing did not replace the previous name");
-                name.setFocused(false);
+                enterDraftName();
                 next(8);
                 break;
             case 8:
@@ -430,6 +428,8 @@ final class HologramAeInteractionClientSmoke {
                 break;
             case 20:
                 if (!receipt().getBoolean("aeCancelledVerified")) return false;
+                if (HologramLibraryClient.dedicated())
+                    require(beforeLocalFiles.equals(localFiles()), "cancelled AE save wrote no private client file");
                 if (rootClick(148)) next(21);
                 break;
             case 21:
@@ -560,10 +560,12 @@ final class HologramAeInteractionClientSmoke {
                 child().setWorldAndResolution(mc, restored.getScaledWidth(), restored.getScaledHeight());
                 unfocusSearchByMouse();
                 child().keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                returnParentRender = parent.smokeRenderGeneration();
                 next(37);
                 break;
             case 37:
                 if (mc.currentScreen != parent || parent.smokePending()) return false;
+                if (parent.smokeRenderGeneration() <= returnParentRender) return false;
                 require(parent.smokeSelectedIndices().length == 1, "child E lost the parent local cell selection");
                 if (!selectSource(0)) return false;
                 next(38);
@@ -653,6 +655,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(130)) next(47);
                 break;
             case 47:
+                assertPreservedDraftName();
                 if (rootClick(132)) next(48);
                 break;
             case 48:
@@ -679,11 +682,30 @@ final class HologramAeInteractionClientSmoke {
                 String saved = parent.smokeSnapshot()
                     .getString("selectedPresetId");
                 if (saved.isEmpty() || saved.equals(originalSavedId)) return false;
+                if (HologramLibraryClient.dedicated()) {
+                    HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+                    if (library.busy()) return false;
+                    confirmedLocalId = library.selected(false);
+                    if (confirmedLocalId.isEmpty()) return false;
+                    int rowIndex = localRow(library.rows(false), confirmedLocalId);
+                    if (rowIndex < 0) return false;
+                    require(
+                        !beforeLocalFiles.equals(localFiles()) && localFiles().containsKey(confirmedLocalId + ".json"),
+                        "confirmed AE save completed the actual private file before placement");
+                    observeLocalSave();
+                }
                 signal("ae-check-confirm.txt");
                 next(51);
                 break;
             case 51:
                 if (!receipt().getBoolean("aeConfirmedVerified")) return false;
+                if (!libraryDrawerVisible(parent)) {
+                    rootClick(149);
+                    return false;
+                }
+                if (HologramLibraryClient.dedicated()) require(
+                    confirmedLocalId.equals(HologramLibraryClient.INSTANCE.selected(false)),
+                    "paid AE place selects the confirmed private file rather than a previous blueprint");
                 guard.assertStable("all AE marks/save actions actual inventory conservation");
                 placementLibraryTab = libraryTab(parent);
                 if (!rootClick(141)) return false;
@@ -789,10 +811,44 @@ final class HologramAeInteractionClientSmoke {
         return false;
     }
 
+    private void enterDraftName() throws Exception {
+        java.lang.reflect.Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
+        nameField.setAccessible(true);
+        GuiTextField name = (GuiTextField) nameField.get(parent);
+        name.setFocused(true);
+        key(Keyboard.KEY_LCONTROL, true);
+        parent.keyTyped((char) 1, Keyboard.KEY_A);
+        key(Keyboard.KEY_LCONTROL, false);
+        for (char c : "SocketAEV005".toCharArray()) parent.keyTyped(c, 0);
+        require("SocketAEV005".equals(name.getText()), "actual Ctrl+A name editing did not replace the previous name");
+        name.setFocused(false);
+    }
+
+    private void assertPreservedDraftName() throws Exception {
+        java.lang.reflect.Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
+        nameField.setAccessible(true);
+        String name = ((GuiTextField) nameField.get(parent)).getText();
+        NBTTagCompound observed = parent.smokeLibraryUiState();
+        observed.setString("draftName", name);
+        observed.setString("expectedDraftName", "SocketAEV005");
+        observed.setBoolean("typedOnlyAtInitialSave", true);
+        try (java.io.OutputStream output = Files
+            .newOutputStream(new File(receipts, "ae-draft-name-preserved.nbt").toPath())) {
+            CompressedStreamTools.writeCompressed(observed, output);
+        }
+        require("SocketAEV005".equals(name), "AE child edits or returns lost the initially typed draft name");
+    }
+
     private boolean selectSource(int index) throws Exception {
         if (parent.smokePending()) return false;
+        java.lang.reflect.Field editorState = HologramScreen.class.getDeclaredField("state");
+        java.lang.reflect.Field previewState = HologramRenderer.class.getDeclaredField("previewState");
+        editorState.setAccessible(true);
+        previewState.setAccessible(true);
+        if (editorState.get(parent) != previewState.get(null)) return false;
         HologramState state = new HologramState(parent.smokeSnapshot());
         int[] bounds = parent.smokeViewportBounds();
+        NBTTagList skipped = new NBTTagList();
         for (int y = bounds[1] + 10; y < bounds[1] + bounds[3] - 10; y += 2)
             for (int x = bounds[0] + 10; x < bounds[0] + bounds[2] - 10; x += 2) {
                 int picked = HologramRenderer.pick(x, y);
@@ -800,15 +856,174 @@ final class HologramAeInteractionClientSmoke {
                 HologramState.Cell cell = state.cells.get(picked);
                 if (cell.x != fixture.getIntArray("aeSourceX")[index] || cell.y != 88 || cell.z != 192) continue;
                 int[] actual = previewScreenPoint(x, y);
+                NBTTagCompound route = previewClickRoute(actual[0], actual[1]);
+                route.setIntArray("scanPoint", new int[] { x, y });
+                route.setInteger("scanPicked", picked);
+                if (!"selection".equals(route.getString("route")) || route.getInteger("picked") != picked) {
+                    if (skipped.tagCount() < 32) skipped.appendTag(route);
+                    continue;
+                }
+                route.setTag("skippedCandidates", skipped);
+                route.setInteger("sourceIndex", index);
+                route.setTag("beforeUi", parent.smokeLibraryUiState());
                 parent.mouseClicked(actual[0], actual[1], 0);
                 parent.mouseMovedOrUp(actual[0], actual[1], 0);
+                route.setIntArray("actualSelectedIndices", parent.smokeSelectedIndices());
+                route.setTag("afterUi", parent.smokeLibraryUiState());
+                writeSelectionObservation(route);
+                if (parent.smokeSelectedIndices().length != 1 || parent.smokeSelectedIndices()[0] != picked)
+                    screenshot("ae-selection-failure-stage-" + stage);
                 require(
                     parent.smokeSelectedIndices().length == 1 && parent.smokeSelectedIndices()[0] == picked,
                     "actual preview face click failed to select its native AE cell");
                 lastActionFrame = frame;
                 return true;
             }
+        if (skipped.tagCount() > 0 && selectionDiagnosticStage != stage) {
+            NBTTagCompound observed = parent.smokeLibraryUiState();
+            observed.setInteger("sourceIndex", index);
+            observed.setTag("skippedCandidates", skipped);
+            observed.setBoolean("noEligibleFace", true);
+            writeSelectionObservation(observed);
+            screenshot("ae-selection-obstructed-stage-" + stage);
+            selectionDiagnosticStage = stage;
+        }
         return false;
+    }
+
+    private void writeSelectionObservation(NBTTagCompound observation) throws Exception {
+        try (java.io.OutputStream output = Files
+            .newOutputStream(new File(receipts, "ae-selection-stage-" + stage + ".nbt").toPath())) {
+            CompressedStreamTools.writeCompressed(observation, output);
+        }
+    }
+
+    /** Observe the existing mouse routing at the transformed point, without changing editor selection or overlays. */
+    private NBTTagCompound previewClickRoute(int screenX, int screenY) throws Exception {
+        int x = (Integer) screenPointCall("localX", screenX), y = (Integer) screenPointCall("localY", screenY);
+        NBTTagCompound observed = new NBTTagCompound();
+        observed.setIntArray("screenPoint", new int[] { screenX, screenY });
+        observed.setIntArray("logicalPoint", new int[] { x, y });
+        observed.setInteger("picked", HologramRenderer.pick(x, y));
+        observed.setString("structure", HologramRenderer.pickStructure(x, y));
+        observed.setLong("renderGeneration", parent.smokeRenderGeneration());
+        observed.setIntArray("selectedIndices", parent.smokeSelectedIndices());
+        boolean sameType = screenFlag("sameTypeSelectionHeld"), air = screenFlag("airSelectionHeld");
+        observed.setBoolean("sameTypeHeld", sameType);
+        observed.setBoolean("additiveHeld", screenFlag("controlSelectionHeld"));
+        String route = "selection";
+        if (!screenFlag("previewInteractive")) route = "modal";
+        else if (!screenFlag("editable")) route = "readonly";
+        else if (!(Boolean) screenPointCall("inViewport", x, y) || (Boolean) screenPointCall("previewBlockedAt", x, y))
+            route = "surface";
+        else {
+            if (screenFlag("annotationInteractive")) {
+                java.lang.reflect.Field markers = HologramScreen.class.getDeclaredField("visibleMarkers");
+                markers.setAccessible(true);
+                for (Object entry : (java.util.List<?>) markers.get(parent))
+                    if (((HologramAnnotationMarkers.Marker) entry).contains(x, y)) route = "annotation";
+            }
+            if ("selection".equals(route)) {
+                NBTTagList controls = parent.smokeLibraryUiState()
+                    .getTagList("drawnControls", 10);
+                for (int i = 0; i < controls.tagCount(); i++) {
+                    NBTTagCompound control = controls.getCompoundTagAt(i);
+                    if (x >= control.getInteger("x") && x < control.getInteger("x") + control.getInteger("w")
+                        && y >= control.getInteger("y")
+                        && y < control.getInteger("y") + control.getInteger("h")) {
+                        route = "control";
+                        observed.setInteger("control", control.getInteger("id"));
+                        break;
+                    }
+                }
+            }
+            java.lang.reflect.Field handles = HologramScreen.class.getDeclaredField("moveHandles");
+            handles.setAccessible(true);
+            if ("selection".equals(route) && !sameType
+                && !air
+                && handles.getBoolean(parent)
+                && screenFlag("canMoveSelection")) {
+                java.lang.reflect.Field handle = HologramScreen.class.getDeclaredField("gizmo");
+                handle.setAccessible(true);
+                int axis = ((HologramGizmo) handle.get(parent)).pick(x, y);
+                if (axis >= 0) {
+                    route = "gizmo";
+                    observed.setInteger("axis", axis);
+                }
+            }
+            if ("selection".equals(route) && air) route = "air-selection";
+            if ("selection".equals(route) && net.minecraft.client.gui.GuiScreen.isShiftKeyDown() && !sameType)
+                route = "box-selection";
+        }
+        observed.setString("route", route);
+        return observed;
+    }
+
+    private boolean screenFlag(String name) throws Exception {
+        java.lang.reflect.Method method = HologramScreen.class.getDeclaredMethod(name);
+        method.setAccessible(true);
+        return (Boolean) method.invoke(parent);
+    }
+
+    private Object screenPointCall(String name, int... point) throws Exception {
+        Class<?>[] parameters = new Class<?>[point.length];
+        Object[] arguments = new Object[point.length];
+        for (int i = 0; i < point.length; i++) {
+            parameters[i] = int.class;
+            arguments[i] = point[i];
+        }
+        java.lang.reflect.Method method = HologramScreen.class.getDeclaredMethod(name, parameters);
+        method.setAccessible(true);
+        return method.invoke(parent, arguments);
+    }
+
+    private java.util.Map<String, String> localFiles() throws Exception {
+        java.util.Map<String, String> files = new java.util.TreeMap<>();
+        java.nio.file.Path directory = Minecraft.getMinecraft().mcDataDir.toPath()
+            .resolve("config/gtmb/client-blueprints");
+        if (!Files.exists(directory)) return files;
+        try (
+            java.nio.file.DirectoryStream<java.nio.file.Path> entries = Files.newDirectoryStream(directory, "*.json")) {
+            for (java.nio.file.Path entry : entries) {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(Files.readAllBytes(entry));
+                StringBuilder hex = new StringBuilder();
+                for (byte value : digest) hex.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+                files.put(
+                    entry.getFileName()
+                        .toString(),
+                    hex.toString());
+            }
+        }
+        return files;
+    }
+
+    private void observeLocalSave() throws Exception {
+        NBTTagCompound witness = new NBTTagCompound();
+        witness.setString("localId", confirmedLocalId);
+        witness.setBoolean("realClientFileExists", true);
+        witness.setString("sha256", localFiles().get(confirmedLocalId + ".json"));
+        witness.setBoolean("downloadComplete", !HologramLibraryClient.INSTANCE.busy());
+        NBTTagList baseline = new NBTTagList();
+        for (java.util.Map.Entry<String, String> entry : beforeLocalFiles.entrySet()) {
+            NBTTagCompound file = new NBTTagCompound();
+            file.setString("file", entry.getKey());
+            file.setString("sha256", entry.getValue());
+            baseline.appendTag(file);
+        }
+        witness.setTag("beforeClientLocalFiles", baseline);
+        try (java.io.OutputStream output = Files
+            .newOutputStream(new File(receipts, "ae-client-local-save.nbt").toPath())) {
+            CompressedStreamTools.writeCompressed(witness, output);
+        }
+    }
+
+    private static int localRow(NBTTagList rows, String id) {
+        for (int i = 0; i < rows.tagCount(); i++) if (id.equals(
+            rows.getCompoundTagAt(i)
+                .getString("id")))
+            return i;
+        return -1;
     }
 
     private String areaDiagnostic(NBTTagCompound snapshot) {
@@ -1077,9 +1292,15 @@ final class HologramAeInteractionClientSmoke {
     }
 
     private static boolean libraryTab(HologramScreen screen) throws ReflectiveOperationException {
-        java.lang.reflect.Field tab = HologramScreen.class.getDeclaredField("libraryDrawer");
+        java.lang.reflect.Field tab = HologramScreen.class.getDeclaredField("blueprintTab");
         tab.setAccessible(true);
         return tab.getBoolean(screen);
+    }
+
+    private static boolean libraryDrawerVisible(HologramScreen screen) throws ReflectiveOperationException {
+        java.lang.reflect.Field drawer = HologramScreen.class.getDeclaredField("libraryDrawer");
+        drawer.setAccessible(true);
+        return drawer.getBoolean(screen);
     }
 
     private boolean rootClick(int id) {

@@ -90,22 +90,81 @@ final class HologramAePolicy {
     /** Does not mutate the source draft, library cache, source stacks or any world. */
     static Draft sanitize(HologramPresets.Preset source) throws IOException {
         HologramPresets.Preset result = HologramPresets.copy(source);
+        List<Issue> networkChanges = HologramNetworkBindings.sanitize(result);
         Map<String, Issue> issues = new LinkedHashMap<>();
+        for (Issue issue : networkChanges) add(issues, issue);
         Set<String> positions = new HashSet<>();
         for (HologramPresets.Cell cell : result.cells) positions.add(cell.x + "," + cell.y + "," + cell.z);
         // An omitted invalid field cannot be rediscovered. Only a validated explicit edit may retire its blocker.
         if (result.aeIssues != null) for (Issue issue : result.aeIssues) {
             // An explicitly removed whole cell has no artifact left to restore at that coordinate.
             boolean present = positions.contains(issue.x + "," + issue.y + "," + issue.z);
-            if (!"blocker".equals(issue.severity) || present) add(issues, issue);
+            if (!"blocker".equals(issue.severity) || present) {
+                if (HologramAeBlueprint.automaticallyOmitted(issue.code)) add(
+                    issues,
+                    new Issue(
+                        issue.code,
+                        "warning",
+                        issue.path,
+                        "Unavailable component was omitted; replace its marker to restore it.",
+                        issue.x,
+                        issue.y,
+                        issue.z));
+                else add(issues, issue);
+            }
         }
         boolean ae = false;
         for (HologramPresets.Cell cell : result.cells) {
             Block block = cell.block();
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) add(
+                issues,
+                new Issue(
+                    "network.quantum_group",
+                    "info",
+                    "specialHint",
+                    "Quantum network group " + HologramNetworkBindings.group(payload)
+                        + " requires a real coordinate-bearing node or terminal before placement.",
+                    cell.x,
+                    cell.y,
+                    cell.z));
             if (!HologramAeBlueprint.supports(block, payload)) continue;
             ae = true;
             HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, cell.metadata, payload);
+            boolean omittedHost = !analysis.supported && analysis.issues.stream()
+                .anyMatch(issue -> "unsupported_host".equals(issue.code));
+            if (omittedHost) cell.excluded = true;
+            boolean omittedPart = analysis.issues.stream()
+                .anyMatch(issue -> "unsupported_part".equals(issue.code) || "unsupported_part_item".equals(issue.code));
+            if (omittedPart && !analysis.blocking) {
+                ItemStack shell = HologramAeBlueprint.sampleIdentity(block, cell.metadata, analysis.payload());
+                if (shell == null && block.getClass()
+                    .getName()
+                    .equals("codechicken.multipart.BlockMultipart")) {
+                    NBTTagCompound remainder = HologramAeBlueprint.withoutAeMultipart(analysis.payload());
+                    if (remainder.getTagList("parts", 10)
+                        .tagCount() > 0) {
+                        List<ItemStack> components = HologramNativePlacement.materials(block, cell.metadata, remainder);
+                        if (!components.isEmpty()) shell = components.get(0);
+                    }
+                }
+                if (shell == null) {
+                    cell.excluded = true;
+                    add(
+                        issues,
+                        new Issue(
+                            "ae.empty_host_downgraded",
+                            "warning",
+                            "tileNbt",
+                            "All unreviewed parts were omitted; this empty native host is excluded from construction.",
+                            cell.x,
+                            cell.y,
+                            cell.z));
+                } else {
+                    cell.item = String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(shell.getItem()));
+                    cell.damage = shell.getItemDamage();
+                }
+            }
             cell.tileNbt = HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
             // AE shell tags are not a second copy of the host inventory/configuration. Canonical tile is authoritative.
             if (cell.itemNbt != null && !cell.itemNbt.isEmpty()) {
@@ -125,14 +184,15 @@ final class HologramAePolicy {
                 issues,
                 new Issue(
                     issue.code,
-                    severity(issue.severity),
+                    omittedHost ? "warning" : severity(issue.severity),
                     issue.path,
                     fallback(issue.message),
                     cell.x,
                     cell.y,
                     cell.z));
-            if (analysis.blocking && analysis.issues.stream()
-                .noneMatch(issue -> "blocker".equals(severity(issue.severity))))
+            if (!omittedHost && analysis.blocking
+                && analysis.issues.stream()
+                    .noneMatch(issue -> "blocker".equals(severity(issue.severity))))
                 add(
                     issues,
                     new Issue(

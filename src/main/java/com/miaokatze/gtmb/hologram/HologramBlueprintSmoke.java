@@ -676,31 +676,60 @@ public final class HologramBlueprintSmoke {
             WirelessNetworkManager.setUserEU(USER, BigInteger.ZERO);
             supply(energy, false);
             beginPlacement(496, energyId);
-            require(capture.state.getInteger("missing") > 0, "empty_real_wireless_account_is_reported_as_shortage");
+            require(
+                capture.state.getInteger("missing") == 0,
+                "cache_shortage_does_not_block_available_physical_materials");
+            boolean cacheFallback = false;
+            NBTTagList cacheRows = capture.state.getTagList("blueprintResources", 10);
+            for (int row = 0; row < cacheRows.tagCount(); row++) cacheFallback |= cacheRows.getCompoundTagAt(row)
+                .getBoolean("optionalCache")
+                && cacheRows.getCompoundTagAt(row)
+                    .getBoolean("emptyFallback");
+            require(cacheFallback, "actual_empty_wireless_balance_is_visible_as_optional_cache_fallback");
             HologramService.lockVirtual(player, 176, 80, 496, 1);
             HologramService.openAir(player);
             HologramSmokeTest.flushTransport();
             submitConstruction();
-            require(capture.state.getBoolean("forcePlacementReady"), "wireless_shortage_requires_second_confirmation");
-            submitConstruction();
             settle();
             require(
-                world.isAirBlock(176, 80, 496) && stock(
-                    energy.cells.get(0)
-                        .stack())
-                    == 1
+                world.getTileEntity(176, 80, 496) instanceof BaseMetaTileEntity
+                    && ((BaseMetaTileEntity) world.getTileEntity(176, 80, 496)).getStoredEU() == 0
+                    && stock(
+                        energy.cells.get(0)
+                            .stack())
+                        == 0
                     && WirelessNetworkManager.getUserEU(USER)
                         .signum() == 0,
-                "forced_partial_build_cannot_generate_unpaid_stored_energy");
+                "insufficient_real_balance_places_empty_cache_and_consumes_only_real_machine_material");
+            require(
+                !capture.state.getString("blueprintEnergyNotice")
+                    .isEmpty(),
+                "empty_cache_placement_reports_visible_warning");
             WirelessNetworkManager.setUserEU(USER, BigInteger.valueOf(5000));
             submitConstruction();
             settle();
             require(
-                world.getTileEntity(176, 80, 496) instanceof BaseMetaTileEntity
-                    && ((BaseMetaTileEntity) world.getTileEntity(176, 80, 496)).getStoredEU() == 5000
+                ((BaseMetaTileEntity) world.getTileEntity(176, 80, 496)).getStoredEU() == 0
+                    && WirelessNetworkManager.getUserEU(USER)
+                        .equals(BigInteger.valueOf(5000))
+                    && stock(
+                        energy.cells.get(0)
+                            .stack())
+                        == 0,
+                "refresh_and_repeat_keep_empty_cache_placement_complete_without_second_charge_or_material");
+            supply(energy, false);
+            beginPlacement(528, energyId);
+            HologramService.lockVirtual(player, 176, 80, 528, 1);
+            HologramService.openAir(player);
+            HologramSmokeTest.flushTransport();
+            submitConstruction();
+            settle();
+            require(
+                world.getTileEntity(176, 80, 528) instanceof BaseMetaTileEntity
+                    && ((BaseMetaTileEntity) world.getTileEntity(176, 80, 528)).getStoredEU() == 5000
                     && WirelessNetworkManager.getUserEU(USER)
                         .signum() == 0,
-                "supplying_wireless_EU_allows_retry_with_exact_net_payment");
+                "next_paid_placement_costs_exact_balance_after_empty_cache_placement");
             require(
                 source.getStoredEU() == 5000 && SOURCE_OWNER.equals(source.getOwnerUuid()),
                 "energy_import_and_placement_leave_source_energy_and_owner_unchanged");

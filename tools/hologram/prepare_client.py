@@ -63,7 +63,7 @@ def main():
         if invalidation:
             cache_invalidations.append(invalidation)
     (mods.parent / 'options.txt').write_text(
-        'lang:zh_CN\nfullscreen:false\nguiScale:1\nsoundCategory_master:0.0\nsoundCategory_music:0.0\nsoundCategory_record:0.0\n', encoding='utf-8')
+        'lang:zh_CN\nfullscreen:false\nguiScale:2\nsoundCategory_master:0.0\nsoundCategory_music:0.0\nsoundCategory_record:0.0\n', encoding='utf-8')
     (fixture / 'client-environment.json').write_text(json.dumps({
         'working_directory': str(mods.parent), 'world': receipt['world'], 'mode': args.mode,
         'extended_compatibility': args.extended_compatibility, 'mods': [jar.name for jar in jars],

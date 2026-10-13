@@ -173,6 +173,23 @@ public final class HologramWorldFlow {
         private String session;
         private boolean active;
         private int distance = DEFAULT_DISTANCE;
+        private Object heldItem, heldStack;
+        private String heldUuid = "";
+        private int heldDamage, heldSlot = -1;
+
+        /** Vanilla slot synchronization replaces stacks without changing the held logical projector. */
+        public void syncHeldTool(Object item, int damage, int slot, String uuid, Object stack) {
+            String identity = uuid == null ? "" : uuid;
+            boolean same = heldItem == item && heldDamage == damage
+                && heldSlot == slot
+                && (identity.isEmpty() ? heldUuid.isEmpty() && heldStack == stack : identity.equals(heldUuid));
+            if (!same) sync(false, null, "");
+            heldItem = item;
+            heldDamage = damage;
+            heldSlot = slot;
+            heldUuid = identity;
+            heldStack = stack;
+        }
 
         public void sync(boolean enabled, Object currentWorld, String currentSession) {
             if (!enabled || !active || world != currentWorld || !java.util.Objects.equals(session, currentSession))

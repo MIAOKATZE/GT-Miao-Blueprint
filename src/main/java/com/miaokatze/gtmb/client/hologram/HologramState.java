@@ -59,6 +59,8 @@ final class HologramState {
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
         final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
         final String prompt, structureId, sourceMod, sourceVersion, sourceClass, sourceWarning;
+        final String networkGroup;
+        final NBTTagCompound specialHint;
         final List<String> structureIds;
         final boolean anchor, iconOnly, excluded, missingBlock, sourceMissing;
         final boolean candidateComplete;
@@ -96,6 +98,9 @@ final class HologramState {
             renderKind = n.getString("renderKind");
             operation = n.getString("operation");
             prompt = n.getString("prompt");
+            networkGroup = n.getString("networkGroup");
+            specialHint = (NBTTagCompound) n.getCompoundTag("specialHint")
+                .copy();
             structureId = n.getString("structureId");
             List<String> memberships = new ArrayList<>();
             NBTTagList membershipTags = n.getTagList("structureIds", 8);
@@ -138,6 +143,11 @@ final class HologramState {
 
         boolean belongsToStructure(String id) {
             return !id.isEmpty() && structureIds.contains(id);
+        }
+
+        boolean quantumNetworkHint() {
+            return "quantumNetwork".equals(specialHint.getString("type")) && networkGroup.matches("q[1-9][0-9]*")
+                && networkGroup.equals(specialHint.getString("group"));
         }
 
         boolean completed() {

@@ -18,6 +18,7 @@ import gregtech.api.enums.HeatingCoilLevel;
 import gregtech.common.blocks.BlockCasings5;
 import gregtech.common.tileentities.machines.multi.MTEElectricImplosionCompressor;
 import gregtech.common.tileentities.machines.multi.MTEIndustrialCokeOven;
+import gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor;
 import gtPlusPlus.core.block.ModBlocks;
 
 /** Local, source-reviewed machine options. Global indicator registration is not a support directory. */
@@ -51,7 +52,7 @@ public final class HologramCapabilities {
         boolean extractor = type.equals(MACHINES + "MTEIndustrialExtractor");
         boolean eic = type.equals(MACHINES + "MTEElectricImplosionCompressor");
         boolean coke = type.equals(MACHINES + "MTEIndustrialCokeOven");
-        if (ebf || coke) coil(result);
+        if (ebf || coke || context instanceof MTELargeChemicalReactor) coil(result);
         if (ebf) {
             Row hatch = result.add("gt_hatch", "自动取用仓室（独立于无仓室施工）", "presence");
             hatch.option(1, "启用", null);

@@ -74,6 +74,7 @@ public final class HologramWorldServiceRegression {
             unavailableQuickSelectionKeepsDraft(session, player);
             completedJobQuickPlacementGuards(session, player);
             cancelLockedPlacementKeepsDraft(session, player);
+            controllerOpeningPurpose(session, player, world);
             replacementActorCannotReuseSession(unsafe, player, world, ctor);
             Method action = HologramService.class
                 .getDeclaredMethod("blueprintAction", type, NBTTagCompound.class, String.class);
@@ -119,6 +120,65 @@ public final class HologramWorldServiceRegression {
             Throwable cause = failure;
             while (cause.getCause() != null) cause = cause.getCause();
             throw new AssertionError("production world confirmation regression", cause);
+        }
+    }
+
+    /** Exercise the actual block/air server entry points, retaining the intent during pending collection. */
+    private static void controllerOpeningPurpose(Object session, EntityPlayerMP player,
+        HologramServiceEditRegression.ReadOnlyWorld world) throws ReflectiveOperationException {
+        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
+        Object previous = sessions.put(player.getUniqueID(), session);
+        String[] fields = { "virtual", "target", "context", "capturePending", "open", "openPurpose", "job",
+            "blueprintAwaitingConfirmation", "placementReviewIssued", "presetBrowseForPlacement", "settingsOnly" };
+        Object[] original = new Object[fields.length];
+        for (int i = 0; i < fields.length; i++) original[i] = get(session, fields[i]);
+        net.minecraft.tileentity.TileEntity originalTile = world.occupant;
+        int originalX = world.occupiedX;
+        try {
+            ControllerTile controller = new ControllerTile();
+            world.occupiedX = 0;
+            world.occupant = controller;
+            set(session, "virtual", false);
+            set(session, "target", controller);
+            set(session, "context", controller);
+            set(session, "capturePending", true);
+            set(session, "job", 0);
+            set(session, "openPurpose", "");
+            HologramService.openWorld(player, 0, 64, 0, 1);
+            SimpleAssert.eq(
+                "controllerStructure",
+                get(session, "openPurpose"),
+                "actual controller block entry carries structure-tab intent even before capture completes");
+            SimpleAssert.eq(true, get(session, "open"), "controller entry requests the real workspace");
+            HologramService.openAir(player);
+            SimpleAssert
+                .eq("", get(session, "openPurpose"), "ordinary air entry leaves remembered tab choice to the client");
+            SimpleAssert.that(
+                sessions.get(player.getUniqueID()) == session,
+                "cached controller opening and ordinary air reopening retain the valid session");
+        } finally {
+            world.occupant = originalTile;
+            world.occupiedX = originalX;
+            for (int i = 0; i < fields.length; i++) set(session, fields[i], original[i]);
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
+        }
+    }
+
+    private static final class ControllerTile extends net.minecraft.tileentity.TileEntity
+        implements com.gtnewhorizon.structurelib.alignment.constructable.IConstructable {
+
+        @Override
+        public void construct(ItemStack trigger, boolean hintsOnly) {
+            throw new AssertionError("cached controller opening must not construct or rescan the fixture");
+        }
+
+        @Override
+        public String[] getStructureDescription(ItemStack trigger) {
+            return new String[] { "controller opening fixture" };
         }
     }
 
@@ -190,6 +250,7 @@ public final class HologramWorldServiceRegression {
                 SimpleAssert.that(ae.review == null, "Escape invalidates pending AE review authority");
                 SimpleAssert
                     .eq(true, get(session, "blueprintPreview"), "Escape returns to editing the same blueprint draft");
+                SimpleAssert.eq(false, get(session, "open"), "green and cyan Escape exit without opening the UI");
                 SimpleAssert.that(
                     sessions.get(player.getUniqueID()) == session && get(session, "virtualPreset") == draft
                         && get(session, "capture") == capture,

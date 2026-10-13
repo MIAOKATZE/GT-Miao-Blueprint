@@ -30,6 +30,12 @@ public final class HologramAeInteractionServerProbe {
     private final java.util.List<ItemStack> initialCosts = new java.util.ArrayList<>();
     private final java.util.List<NBTTagCompound> paidReview = new java.util.ArrayList<>();
     private final Path library;
+    private final Path clientLibrary;
+    private java.util.Map<String, String> localStamp;
+    private java.util.Map<String, String> localBaseline;
+    private boolean cancelledLocalVerified;
+    private String confirmedLocalId = "", confirmedLocalDigest = "";
+    private int confirmedNativeCells;
     private LibraryStamp stamp;
     private boolean watchingItems;
     private int spawnedItems;
@@ -49,6 +55,14 @@ public final class HologramAeInteractionServerProbe {
             .resolve("hologram-presets.json")
             .normalize();
         require(library.startsWith(root), "library escaped the isolated fixture root");
+        clientLibrary = root.getParent()
+            .resolve("client/config/gtmb/client-blueprints")
+            .normalize();
+        require(
+            !HologramLibraryFacade.enabled() || clientLibrary.startsWith(root.getParent()) && root.getFileName()
+                .toString()
+                .equals("server"),
+            "known sibling client directory required for private file witness");
         Path ancestor = library;
         while (!Files.exists(ancestor)) ancestor = ancestor.getParent();
         require(
@@ -75,6 +89,10 @@ public final class HologramAeInteractionServerProbe {
         fullSourceCell = fixtures.sourceCell()
             .writeToNBT(new NBTTagCompound());
         stamp = LibraryStamp.read(library);
+        if (HologramLibraryFacade.enabled()) {
+            localStamp = localFiles();
+            localBaseline = new java.util.TreeMap<>(localStamp);
+        }
         sourcePrepared = true;
     }
 
@@ -92,6 +110,11 @@ public final class HologramAeInteractionServerProbe {
     public void beginVirtualEpoch() throws IOException {
         assertSourceUnchanged("virtual epoch start");
         stamp = LibraryStamp.read(library);
+        if (HologramLibraryFacade.enabled()) {
+            localStamp = localFiles();
+            localBaseline = new java.util.TreeMap<>(localStamp);
+            cancelledLocalVerified = false;
+        }
         heldSlot = actor.inventory.currentItem;
         actorInventory = actorInventory();
         realContainer = actor.openContainer;
@@ -115,11 +138,20 @@ public final class HologramAeInteractionServerProbe {
     public void assertCancelledSave(String stage) throws IOException {
         assertVirtualEpoch(stage);
         require(stamp.equals(LibraryStamp.read(library)), stage + ": cancelled/blocked save changed the library");
+        if (HologramLibraryFacade.enabled()) {
+            require(localStamp.equals(localFiles()), stage + ": cancelled/blocked save changed private client files");
+            cancelledLocalVerified = true;
+        }
     }
 
     public void assertConfirmedSaveChangedLibrary(String stage) throws IOException {
         assertVirtualEpoch(stage);
         LibraryStamp after = LibraryStamp.read(library);
+        if (HologramLibraryFacade.enabled()) {
+            require(stamp.equals(after), stage + ": private save unexpectedly changed the shared server library");
+            assertConfirmedPrivateFile(stage);
+            return;
+        }
         require(
             after.exists && !after.digest.equals(stamp.digest),
             stage + ": real confirmed save wrote no new blueprint");
@@ -158,10 +190,101 @@ public final class HologramAeInteractionServerProbe {
             actorInventory != null && actorInventory.equals(actorInventory()));
         out.setBoolean("libraryExists", Files.exists(library));
         out.setString("librarySha256", LibraryStamp.read(library).digest);
+        out.setBoolean("clientPrivateLibrary", HologramLibraryFacade.enabled());
+        out.setString("confirmedLocalId", confirmedLocalId);
+        out.setString("confirmedLocalSha256", confirmedLocalDigest);
+        out.setInteger("confirmedNativeCells", confirmedNativeCells);
+        out.setBoolean("confirmedClientCanonicalFile", !confirmedLocalId.isEmpty());
+        out.setBoolean("cancelledClientLocalFilesUnchanged", cancelledLocalVerified);
+        NBTTagList baseline = new NBTTagList();
+        if (localBaseline != null) for (java.util.Map.Entry<String, String> entry : localBaseline.entrySet()) {
+            NBTTagCompound file = new NBTTagCompound();
+            file.setString("file", entry.getKey());
+            file.setString("sha256", entry.getValue());
+            baseline.appendTag(file);
+        }
+        out.setTag("beforeClientLocalFiles", baseline);
         out.setIntArray("sourceX", fixtures.sourceX.clone());
         out.setInteger("sourceY", fixtures.y);
         out.setInteger("sourceZ", fixtures.z);
         return out;
+    }
+
+    private java.util.Map<String, String> localFiles() throws IOException {
+        java.util.Map<String, String> result = new java.util.TreeMap<>();
+        if (!Files.exists(clientLibrary)) return result;
+        require(
+            clientLibrary.toRealPath()
+                .startsWith(
+                    clientLibrary.getParent()
+                        .getParent()
+                        .getParent()
+                        .getParent()
+                        .toRealPath()),
+            "private library escaped isolated sibling client");
+        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(clientLibrary, "*.json")) {
+            for (Path file : files) result.put(
+                file.getFileName()
+                    .toString(),
+                sha(HologramBlueprintSharing.readBytes(file)));
+        }
+        return result;
+    }
+
+    private void assertConfirmedPrivateFile(String stage) throws IOException {
+        try {
+            java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+            sessions.setAccessible(true);
+            Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(actor.getUniqueID());
+            require(session != null, stage + ": missing actual server session");
+            java.lang.reflect.Field localId = session.getClass()
+                .getDeclaredField("libraryLocalId");
+            localId.setAccessible(true);
+            String id = HologramLibraryService.localId((String) localId.get(session), false);
+            java.util.Map<String, String> after = localFiles();
+            String digest = after.get(id + ".json");
+            require(
+                digest != null && !digest.equals(localStamp.get(id + ".json")),
+                stage + ": confirmed save wrote no new private file");
+            HologramPresets.Preset actual = HologramBlueprintSharing.decode(
+                new String(
+                    HologramBlueprintSharing.readBytes(clientLibrary.resolve(id + ".json")),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            require(id.equals(actual.id), stage + ": private file identity mismatch");
+            require("SocketAEV005".equals(actual.name), stage + ": private file name mismatch: " + actual.name);
+            require(
+                actor.getUniqueID()
+                    .toString()
+                    .equals(actual.authorUuid)
+                    && actor.getCommandSenderName()
+                        .equals(actual.authorName),
+                stage + ": private file creator mismatch");
+            java.lang.reflect.Field presetField = session.getClass()
+                .getDeclaredField("libraryPrivatePreset");
+            presetField.setAccessible(true);
+            HologramPresets.Preset expected = (HologramPresets.Preset) presetField.get(session);
+            require(expected != null, stage + ": missing reviewed canonical draft");
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            com.google.gson.JsonObject actualJson = gson.toJsonTree(actual)
+                .getAsJsonObject(),
+                expectedJson = gson.toJsonTree(expected)
+                    .getAsJsonObject();
+            actualJson.remove("id");
+            expectedJson.remove("id");
+            require(
+                actualJson.equals(expectedJson),
+                stage + ": native private file differs from the exact approved canonical draft");
+            int nativeCells = 0;
+            for (HologramPresets.Cell cell : actual.cells)
+                if (HologramAePolicy.handles(cell.block(), cell.tileNbt)) nativeCells++;
+            require(nativeCells == fixtures.sourceCount, stage + ": private file omitted native source devices");
+            confirmedLocalId = id;
+            confirmedLocalDigest = digest;
+            confirmedNativeCells = nativeCells;
+            localStamp = after;
+        } catch (ReflectiveOperationException failure) {
+            throw new IOException("Actual private save witness failed", failure);
+        }
     }
 
     /** Freeze the real paid draft before its world position changes; never derives a substitute configuration. */

@@ -68,6 +68,16 @@ final class HologramDeclarationCandidates {
                 collect(alternative, context, world, x, y, z, trigger, environment, depth + 1);
                 return;
             }
+            if (context instanceof gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor
+                && HologramIndustrialConstraints.lcrCoil(element)) {
+                // The reviewed enum's getBlocksToPlace is a pure trigger-to-coil mapping; its check mutates counters.
+                for (int raw = 1; raw <= gregtech.api.enums.HeatingCoilLevel.getMaxTier() + 1; raw++) {
+                    ItemStack signal = trigger.copy();
+                    signal.stackSize = raw;
+                    add(HologramIndustrialConstraints.coil(signal));
+                }
+                return;
+            }
             Method factory = element.getClass()
                 .getEnclosingMethod();
             if (factory == null) {

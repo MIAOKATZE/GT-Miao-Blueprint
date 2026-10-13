@@ -1,0 +1,288 @@
+package com.miaokatze.gtmb.hologram;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.UUID;
+
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.entity.player.PlayerCapabilities;
+import net.minecraft.init.Blocks;
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.network.NetHandlerPlayServer;
+import net.minecraft.network.NetworkManager;
+
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.mojang.authlib.GameProfile;
+
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.embedded.EmbeddedChannel;
+
+/** Production admission and private draft lookup, using the existing world fixture that forbids writes. */
+final class HologramLibraryServiceRegression {
+
+    @SuppressWarnings("unchecked")
+    static void run() {
+        Map<UUID, Object> sessions = null;
+        UUID ownerId = UUID.fromString("2fa98e10-25fd-4eb6-b33f-23595ace9479");
+        Object previous = null;
+        EntityPlayerMP owner = null, other = null, reconnect = null;
+        try {
+            Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            owner = player(unsafe, world, ownerId, "LibraryFixture");
+            other = player(unsafe, world, UUID.randomUUID(), "OtherFixture");
+            reconnect = player(unsafe, world, ownerId, "LibraryFixture");
+            Method authenticated = HologramLibraryService.class
+                .getDeclaredMethod("connectedProjector", EntityPlayerMP.class);
+            authenticated.setAccessible(true);
+            SimpleAssert
+                .that((Boolean) authenticated.invoke(null, owner), "connected server projector fixture authenticated");
+            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Constructor<?> ctor = type.getDeclaredConstructor(
+                EntityPlayerMP.class,
+                int.class,
+                int.class,
+                int.class,
+                boolean.class,
+                int.class);
+            ctor.setAccessible(true);
+            Object session = ctor.newInstance(owner, 0, 64, 0, false, 2);
+            set(session, "open", true);
+            set(session, "planRevision", 42L);
+            Field map = HologramService.class.getDeclaredField("SESSIONS");
+            map.setAccessible(true);
+            sessions = (Map<UUID, Object>) map.get(null);
+            previous = sessions.put(ownerId, session);
+            NBTTagCompound request = new NBTTagCompound();
+            request.setString("session", (String) get(session, "id"));
+            request.setLong("planRevision", 42L);
+            Method send = HologramService.class.getDeclaredMethod("send", type);
+            send.setAccessible(true);
+            send.invoke(null, session);
+            SimpleAssert.that(!(Boolean) get(session, "open"), "real snapshot consumes one-shot UI open intent");
+            SimpleAssert
+                .that((Boolean) get(session, "libraryUiActive"), "snapshot retains independent active UI capability");
+            SimpleAssert.that(HologramService.librarySessionCurrent(owner, request), "current request admitted");
+            owner.inventory.currentItem = 1;
+            SimpleAssert
+                .that(!HologramService.librarySessionCurrent(owner, request), "switched held tool rejects transfer");
+            SimpleAssert
+                .that(!(Boolean) authenticated.invoke(null, owner), "held stone cannot authenticate projector upload");
+            owner.inventory.currentItem = 0;
+            SimpleAssert.that(!HologramService.librarySessionCurrent(other, request), "other UUID cannot activate");
+            SimpleAssert.that(
+                !HologramService.librarySessionCurrent(reconnect, request),
+                "reconnected player object cannot reuse old transfer");
+            request.setLong("planRevision", 41L);
+            SimpleAssert.that(!HologramService.librarySessionCurrent(owner, request), "old plan cannot activate");
+            request.setLong("planRevision", 42L);
+            NBTTagCompound close = (NBTTagCompound) request.copy();
+            close.setString("op", "close");
+            HologramService.handle(owner, close);
+            SimpleAssert.that(!HologramService.librarySessionCurrent(owner, request), "closed UI cannot reopen");
+            set(session, "open", true);
+            send.invoke(null, session);
+            SimpleAssert.that(
+                HologramService.librarySessionCurrent(owner, request),
+                "explicit reopen grants fresh UI capability");
+            set(session, "capturePending", true);
+            SimpleAssert
+                .that(!HologramService.librarySessionCurrent(owner, request), "unfinished capture blocks transfer");
+            set(session, "capturePending", false);
+            set(session, "job", 1);
+            SimpleAssert.that(!HologramService.librarySessionCurrent(owner, request), "construction blocks activation");
+            set(session, "job", 0);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.id = "private_" + UUID.randomUUID();
+            preset.name = "Owner's stage";
+            preset.authorName = "Imported creator";
+            preset.authorUuid = UUID.randomUUID()
+                .toString();
+            preset.createdAt = 123;
+            preset.controllerType = "area";
+            preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
+            set(session, "libraryPrivatePreset", preset);
+            SimpleAssert
+                .that(HologramService.libraryPrivatePreset(owner, preset.id) != null, "owner reads private stage");
+            SimpleAssert.that(
+                HologramService.libraryPrivatePreset(other, preset.id) == null,
+                "private stage cross-owner rejected");
+            SimpleAssert.that(
+                HologramService.libraryPrivatePreset(reconnect, preset.id) == null,
+                "private stage exact player bound");
+            owner.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            SimpleAssert.that(
+                HologramService.libraryPrivatePreset(owner, preset.id) == null,
+                "same dimension reloaded world cannot read old private stage");
+            owner.worldObj = world;
+            HologramPresets.Preset copy = HologramService.libraryPrivatePreset(owner, preset.id);
+            copy.name = "Changed copy";
+            SimpleAssert.eq("Owner's stage", preset.name, "lookup isolates temporary server draft");
+            HologramService.handle(owner, close);
+            SimpleAssert.that(
+                HologramService.libraryPrivatePreset(owner, preset.id) == null,
+                "explicit close revokes private stage lookup after the one-shot open intent was consumed");
+            set(session, "open", true);
+            send.invoke(null, session);
+            String originalAuthor = preset.authorUuid;
+            HologramLibraryService.stampAuthor(preset, owner, false);
+            SimpleAssert.eq(originalAuthor, preset.authorUuid, "update preserves imported creator UUID");
+            SimpleAssert.eq(123L, preset.createdAt, "update preserves creation timestamp");
+            HologramLibraryService.stampAuthor(preset, owner, true);
+            SimpleAssert.eq(ownerId.toString(), preset.authorUuid, "save as stamps actual server actor UUID");
+            SimpleAssert.eq("LibraryFixture", preset.authorName, "save as stamps actual profile name");
+            SimpleAssert.that(preset.createdAt > 123, "save as establishes new creation time");
+            Object replaced = ctor.newInstance(owner, 0, 64, 0, false, 2);
+            set(replaced, "open", true);
+            set(replaced, "planRevision", 42L);
+            sessions.put(ownerId, replaced);
+            SimpleAssert
+                .that(!HologramService.librarySessionCurrent(owner, request), "new session invalidates old transfer");
+            SimpleAssert
+                .that(HologramService.libraryPrivatePreset(owner, preset.id) == null, "replacement drops old stage");
+            NBTTagCompound bootstrap = new NBTTagCompound();
+            bootstrap.setString(
+                "quickToken",
+                UUID.randomUUID()
+                    .toString());
+            bootstrap.setInteger("x", 0);
+            bootstrap.setInteger("y", 0);
+            bootstrap.setInteger("z", 0);
+            bootstrap.setInteger("side", 1);
+            NBTTagCompound ticket = HologramService.libraryQuickBootstrap(owner, bootstrap);
+            Object quickSession = sessions.get(ownerId);
+            SimpleAssert.that(!(Boolean) get(quickSession, "open"), "quick bootstrap creates no open UI");
+            SimpleAssert
+                .that(get(quickSession, "libraryPrivatePreset") == null, "bootstrap never reuses a private stage");
+            ticket.setBoolean("quickPlace", true);
+            ticket.setString("action", "place");
+            SimpleAssert.that(
+                HologramService.librarySessionCurrent(owner, ticket),
+                "closed bootstrap accepts exact place token");
+            ticket.setString("action", "edit");
+            SimpleAssert
+                .that(!HologramService.librarySessionCurrent(owner, ticket), "quick capability cannot open editor");
+            ticket.setString("action", "place");
+            String quickToken = ticket.getString("quickToken");
+            ticket.setString(
+                "quickToken",
+                UUID.randomUUID()
+                    .toString());
+            SimpleAssert.that(!HologramService.librarySessionCurrent(owner, ticket), "wrong quick token rejected");
+            ticket.setString("quickToken", quickToken);
+            owner.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            SimpleAssert.that(
+                !HologramService.librarySessionCurrent(owner, ticket),
+                "same dimension different world rejects late transfer");
+            owner.worldObj = world;
+            HologramService.libraryQuickCancel(other, quickToken);
+            SimpleAssert.that(
+                HologramService.librarySessionCurrent(owner, ticket),
+                "another player cannot cancel owner's quick token");
+            HologramService.libraryQuickCancel(owner, quickToken);
+            SimpleAssert
+                .that(!HologramService.librarySessionCurrent(owner, ticket), "Escape revokes pending quick activation");
+            SimpleAssert.that(!HologramLibraryFacade.enabled(), "headless/integrated path has no dedicated library");
+            SimpleAssert.that(
+                !HologramLibraryService.sessionCurrent(owner, request),
+                "disabled transfer bridge rejects requests");
+            owner.playerNetServerHandler.netManager.channel()
+                .close();
+            SimpleAssert.that(
+                !(Boolean) authenticated.invoke(null, owner),
+                "closed actual network channel rejects transfer auth");
+            boolean invalid = false;
+            try {
+                HologramLibraryService.localId("../another-player", false);
+            } catch (java.io.IOException expected) {
+                invalid = true;
+            }
+            SimpleAssert.that(invalid, "client private filename cannot traverse directories");
+            String publicId = "public_" + UUID.randomUUID();
+            SimpleAssert.eq(
+                publicId,
+                HologramLibraryService.publicId(publicId),
+                "public last selection accepts exact opaque public UUID");
+            for (String wrongScope : new String[] { preset.id, "local_" + UUID.randomUUID(), "public_../other",
+                "public_missing" }) {
+                invalid = false;
+                try {
+                    HologramLibraryService.publicId(wrongScope);
+                } catch (java.io.IOException expected) {
+                    invalid = true;
+                }
+                SimpleAssert
+                    .that(invalid, "public shortcut cannot read private/local or malformed identifier " + wrongScope);
+            }
+        } catch (ReflectiveOperationException | java.io.IOException failure) {
+            throw new AssertionError("Library service regression", failure);
+        } finally {
+            close(owner);
+            close(other);
+            close(reconnect);
+            if (sessions != null) {
+                if (previous == null) sessions.remove(ownerId);
+                else sessions.put(ownerId, previous);
+            }
+        }
+    }
+
+    private static EntityPlayerMP player(sun.misc.Unsafe unsafe, HologramServiceEditRegression.ReadOnlyWorld world,
+        UUID id, String name) throws ReflectiveOperationException {
+        EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
+        for (Field profile : EntityPlayer.class.getDeclaredFields()) if (profile.getType() == GameProfile.class) {
+            profile.setAccessible(true);
+            profile.set(player, new GameProfile(id, name));
+        }
+        // Unsafe skips Entity's UUID initializer; a profile alone does not initialize getUniqueID().
+        for (Field identity : Entity.class.getDeclaredFields()) if (identity.getType() == UUID.class) {
+            identity.setAccessible(true);
+            identity.set(player, id);
+        }
+        player.worldObj = world;
+        player.inventory = new InventoryPlayer(player);
+        player.inventory.mainInventory[0] = new ItemStack(new ItemNekoHologramProjector());
+        player.inventory.mainInventory[1] = new ItemStack(Blocks.stone);
+        player.capabilities = new PlayerCapabilities();
+        NetworkManager connection = new NetworkManager(false);
+        for (Field channel : NetworkManager.class.getDeclaredFields())
+            if (channel.getType() == io.netty.channel.Channel.class) {
+                channel.setAccessible(true);
+                channel.set(connection, new EmbeddedChannel(new ChannelInboundHandlerAdapter()));
+            }
+        new NetHandlerPlayServer(null, connection, player);
+        return player;
+    }
+
+    private static void close(EntityPlayerMP player) {
+        if (player != null && player.playerNetServerHandler != null) player.playerNetServerHandler.netManager.channel()
+            .close();
+    }
+
+    private static void set(Object session, String name, Object value) throws ReflectiveOperationException {
+        Field field = session.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(session, value);
+    }
+
+    private static Object get(Object session, String name) throws ReflectiveOperationException {
+        Field field = session.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(session);
+    }
+}

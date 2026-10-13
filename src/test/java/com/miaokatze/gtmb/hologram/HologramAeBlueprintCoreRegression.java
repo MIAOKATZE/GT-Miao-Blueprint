@@ -92,17 +92,33 @@ public final class HologramAeBlueprintCoreRegression {
         unknown.setTagCompound(external);
         NBTTagCompound raw = cellPayload(unknown), original = (NBTTagCompound) raw.copy();
         HologramAeBlueprint.Analysis first = HologramAeBlueprint.analyze(drive, 0, raw);
-        check(first.blocking && issue(first, "unsupported_cell", "inv/item0"), "unknown cell blocks installation");
+        check(
+            !first.blocking && issue(first, "unsupported_cell", "inv/item0"),
+            "unknown cell is visibly downgraded without blocking the remaining host");
         ItemStack sample = slot(first, "inv/item0").stack();
-        check(sample.isItemEqual(unknown) && !sample.hasTagCompound(), "unknown cell retains blank type only");
+        check(
+            sample == null && !first.payload()
+                .getCompoundTag("inv")
+                .hasKey("item0") && first.materials.isEmpty(),
+            "unknown cell is omitted entirely; no unsafe bare factory or unpaid restoration");
+        check(
+            !first.payload()
+                .toString()
+                .contains("original-external-pointer")
+                && !first.payload()
+                    .toString()
+                    .contains("StorageDim")
+                && !first.payload()
+                    .hasKey(HologramAeBlueprint.UNRESOLVED),
+            "unknown-cell downgrade preserves no external storage dimension, UUID or approval tombstone");
         check(raw.equals(original), "source cell/external pointer snapshot is unchanged");
         HologramAeBlueprint.Analysis second = HologramAeBlueprint.analyze(drive, 0, first.payload());
         check(
-            second.blocking && issue(second, "unsupported_cell", "inv/item0"),
-            "bare unreviewed cell stays blocked after reanalysis");
+            !second.blocking && slot(second, "inv/item0").stack() == null,
+            "reanalysis cannot resurrect an omitted unreviewed cell");
         check(
-            HologramAeBlueprint.updateSlot(drive, 0, second.payload(), "inv/item1", null).blocking,
-            "unrelated empty slot edit cannot retire unknown cell blocker");
+            !HologramAeBlueprint.updateSlot(drive, 0, second.payload(), "inv/item1", null).blocking,
+            "other editable slots remain usable after the unavailable cell is omitted");
         for (HologramAeBlueprint.Slot candidate : second.slots)
             check(!candidate.issueCode.equals("unsupported_cell"), "unknown cell has no discard-only bypass");
         expectDenied(

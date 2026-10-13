@@ -60,14 +60,35 @@ public final class HologramAeBlueprintMarkerRegression {
             "resolved metadata path matches descriptor");
         NBTTagCompound permanent = marker("unsupported_cell", "inv/item0");
         HologramAeBlueprint.Analysis denied = HologramAeBlueprint.analyze(inert, 0, permanent);
-        require(denied.blocking && denied.slots.isEmpty(), "unknown cell cannot receive an approval tombstone");
+        require(
+            !denied.blocking && denied.slots.isEmpty()
+                && denied.materials.isEmpty()
+                && denied.issues.size() == 1
+                && "warning".equals(denied.issues.get(0).severity)
+                && "unsupported_cell".equals(denied.issues.get(0).code),
+            "already omitted unknown cell becomes a visible warning without a physical restoration descriptor");
+        require(
+            !denied.payload()
+                .hasKey(HologramAeBlueprint.UNRESOLVED) && denied.payload()
+                    .hasNoTags()
+                && !HologramAeBlueprint.analyze(inert, 0, denied.payload()).blocking,
+            "resolved unknown-cell loss contains no original storage, UUID, inventory or unresolved approval marker");
         boolean refused = false;
         try {
             HologramAeBlueprint.resolveDiscardedIssue(permanent, "unsupported_cell", "inv/item0");
         } catch (IOException expected) {
             refused = true;
         }
-        require(refused, "unknown cell cannot be acknowledged for installation");
+        require(refused, "an omitted unknown cell cannot be restored by approving its old tombstone");
+        NBTTagCompound malformed = marker("unknown_inventory_slot", "inv/item99");
+        HologramAeBlueprint.Analysis malformedAnalysis = HologramAeBlueprint.analyze(inert, 0, malformed);
+        require(
+            malformedAnalysis.blocking && malformedAnalysis.issues.size() == 1
+                && "blocker".equals(malformedAnalysis.issues.get(0).severity)
+                && malformedAnalysis.payload()
+                    .hasKey(HologramAeBlueprint.UNRESOLVED)
+                && HologramAeBlueprint.analyze(inert, 0, malformedAnalysis.payload()).blocking,
+            "malformed unknown inventory stays blocked across repeated analysis while unknown-cell omission can downgrade");
         NBTTagCompound two = marker("missing_physical_item", "inv/item0");
         two.getTagList(HologramAeBlueprint.UNRESOLVED, 10)
             .appendTag(entry("waiting_stack_invalid", "waitingToSend/#0"));
@@ -181,8 +202,11 @@ public final class HologramAeBlueprintMarkerRegression {
                 .newInstance("def:2", "physical", 1, "any", null, new String[] { "def:2" }, 2, null);
             clear.invoke(null, unrelated, ordinary);
             require(
-                HologramAeBlueprint.analyze(inert, 0, unrelated).blocking,
-                "an ordinary slot cannot invoke definition-specific marker retirement");
+                HologramAeBlueprint.analyze(inert, 0, unrelated).issues.stream()
+                    .anyMatch(
+                        issue -> issue.code.equals("unsupported_part") && issue.path.equals("extra:2")
+                            && issue.severity.equals("warning")),
+                "an ordinary slot cannot erase the warning for an omitted definition from another schema");
         } catch (ReflectiveOperationException invalid) {
             throw new IOException("Native slot marker fixture contract changed", invalid);
         }
@@ -243,11 +267,34 @@ public final class HologramAeBlueprintMarkerRegression {
             !HologramAeBlueprint.supportsEmptyNativeShell(recognized)
                 && !HologramAeBlueprint.supportsEmptyNativeShell(new InertBlock()),
             "namespace recognition or ordinary static blocks cannot opt into a native empty-shell installation");
-        raw.setTag(
+        NBTTagCompound alreadyOmitted = new NBTTagCompound();
+        alreadyOmitted.setTag(
             HologramAeBlueprint.UNRESOLVED,
             marker("unsupported_cell", "inv/item0").getTag(HologramAeBlueprint.UNRESOLVED)
                 .copy());
         boolean refused = false;
+        try {
+            HologramBlueprintNbt.forPlacement(
+                recognized,
+                0,
+                HologramBlueprintNbt.encodeCanonical(recognized, alreadyOmitted),
+                java.util.UUID.randomUUID(),
+                "builder",
+                13,
+                64,
+                -8,
+                false,
+                false,
+                null);
+        } catch (IOException expected) {
+            refused = true;
+        }
+        require(!refused, "an already omitted unavailable-cell marker can safely downgrade to an empty shell");
+        raw.setTag(
+            HologramAeBlueprint.UNRESOLVED,
+            marker("unknown_inventory_slot", "inv/item99").getTag(HologramAeBlueprint.UNRESOLVED)
+                .copy());
+        refused = false;
         try {
             HologramBlueprintNbt.forPlacement(
                 recognized,
@@ -264,7 +311,7 @@ public final class HologramAeBlueprintMarkerRegression {
         } catch (IOException expected) {
             refused = true;
         }
-        require(refused, "disabling NBT/covers cannot acknowledge a persistent schema/slot blocker");
+        require(refused, "disabling NBT/covers cannot acknowledge malformed physical inventory schema");
     }
 
     private static NBTTagCompound marker(String code, String path) {

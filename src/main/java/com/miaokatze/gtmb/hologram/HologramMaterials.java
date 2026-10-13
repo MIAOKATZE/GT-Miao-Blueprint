@@ -1,5 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,6 +33,7 @@ import appeng.api.AEApi;
 import appeng.api.config.Actionable;
 import appeng.api.config.PowerMultiplier;
 import appeng.api.features.IWirelessTermHandler;
+import appeng.api.networking.energy.IEnergySource;
 import appeng.api.networking.security.PlayerSource;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.data.IAEFluidStack;
@@ -171,11 +173,16 @@ public final class HologramMaterials {
             return WirelessNetworkManager.getUserEU(player.getUniqueID());
         }
 
-        public long fluidCount(FluidStack stack, long limit) {
-            return simulateFluid(fluidAccess(), stack, limit);
+        /** Device-buffer preview is server authoritative and never queries carried item charge. */
+        public HologramEnergy.Quote cachedEnergyQuote(HologramEnergy.Demand demand) {
+            return HologramEnergy.quote(demand, new HologramEnergyNetwork(player));
         }
 
-        private FluidAccess fluidAccess() {
+        public long fluidCount(FluidStack stack, long limit) {
+            return simulateFluid(fluidAccess(null), stack, limit);
+        }
+
+        private FluidAccess fluidAccess(Transaction transaction) {
             return new FluidAccess() {
 
                 @Override
@@ -186,10 +193,11 @@ public final class HologramMaterials {
                 @Override
                 public long poweredCount(IAEFluidStack stack) {
                     if (!available()) return 0;
-                    double power = terminal.extractAEPower(
+                    double power = networkPower(
                         Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
                         Actionable.SIMULATE,
-                        PowerMultiplier.CONFIG);
+                        PowerMultiplier.CONFIG,
+                        transaction);
                     return Math.min(stack.getStackSize(), (long) (power * stack.getAmountPerUnit() + 0.9));
                 }
 
@@ -209,14 +217,14 @@ public final class HologramMaterials {
 
                 @Override
                 public void charge(long amount, int unit) {
-                    Context.this.charge(amount, unit);
+                    Context.this.charge(amount, unit, transaction);
                 }
             };
         }
 
         private boolean takeFluid(FluidStack stack, long amount, Transaction transaction) {
             try {
-                return reserveFluid(fluidAccess(), stack, amount, transaction.meFluids::add);
+                return reserveFluid(fluidAccess(transaction), stack, amount, transaction.meFluids::add);
             } finally {
                 if (terminalSlot >= 0) {
                     transaction.terminalSlot = terminalSlot;
@@ -226,7 +234,7 @@ public final class HologramMaterials {
         }
 
         private void returnFluid(IAEFluidStack stack) {
-            refundFluid(fluidAccess(), stack);
+            refundFluid(fluidAccess(null), stack);
         }
 
         private void recoverFluid(IAEFluidStack stack) {
@@ -250,6 +258,7 @@ public final class HologramMaterials {
         }
 
         private void flushResourceRecovery() {
+            HologramEnergyNetwork.flushPending(player);
             NBTTagCompound owner = recoveryOwner();
             if (owner.hasKey(RECOVERY_ENERGY, 8)) {
                 try {
@@ -338,7 +347,7 @@ public final class HologramMaterials {
                         IAEItemStack request = entry.copy();
                         request.setStackSize(1);
                         if (terminalAvailable() && Platform.poweredExtraction(
-                            terminal,
+                            energySource(null),
                             monitor,
                             request,
                             new PlayerSource(player, terminal),
@@ -475,8 +484,8 @@ public final class HologramMaterials {
                 request.setStackSize(count);
                 IAEItemStack extracted;
                 try {
-                    if (simulate)
-                        extracted = Platform.poweredExtraction(terminal, monitor, request, action, Actionable.SIMULATE);
+                    if (simulate) extracted = Platform
+                        .poweredExtraction(energySource(transaction), monitor, request, action, Actionable.SIMULATE);
                     else {
                         int offered = poweredCount(request);
                         if (offered <= 0) continue;
@@ -485,7 +494,7 @@ public final class HologramMaterials {
                         // Record the actual extraction before energy charging, which may throw in an adapter.
                         if (extracted != null && extracted.getStackSize() > 0) {
                             if (transaction != null) transaction.meItems.add(extracted.copy());
-                            charge(extracted.getStackSize(), extracted.getAmountPerUnit());
+                            charge(extracted.getStackSize(), extracted.getAmountPerUnit(), transaction);
                             Stats.ItemsExtracted.addToPlayer(player, (int) extracted.getStackSize());
                         }
                     }
@@ -503,16 +512,54 @@ public final class HologramMaterials {
         }
 
         private int poweredCount(IAEItemStack stack) {
-            double available = terminal.extractAEPower(
+            double available = networkPower(
                 Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
                 Actionable.SIMULATE,
-                PowerMultiplier.CONFIG);
+                PowerMultiplier.CONFIG,
+                null);
             return (int) Math.min(stack.getStackSize(), (long) (available * stack.getAmountPerUnit() + 0.9));
         }
 
-        private void charge(long items, int amountPerUnit) {
-            terminal
-                .extractAEPower(Platform.ceilDiv(items, amountPerUnit), Actionable.MODULATE, PowerMultiplier.CONFIG);
+        private void charge(long items, int amountPerUnit, Transaction transaction) {
+            networkPower(
+                Platform.ceilDiv(items, amountPerUnit),
+                Actionable.MODULATE,
+                PowerMultiplier.CONFIG,
+                transaction);
+        }
+
+        private IEnergySource energySource(Transaction transaction) {
+            return (amount, mode, multiplier) -> networkPower(amount, mode, multiplier, transaction);
+        }
+
+        /**
+         * Material transfer fees and cache restoration share real banks; the carried terminal supplies identity only.
+         */
+        private double networkPower(double amount, Actionable mode, PowerMultiplier multiplier,
+            Transaction transaction) {
+            if (!Double.isFinite(amount) || amount <= 0) return 0;
+            double physical = multiplier.multiply(amount);
+            if (!Double.isFinite(physical) || physical <= 0) return 0;
+            HologramEnergyNetwork bank = new HologramEnergyNetwork(player, terminalKey);
+            if (mode == Actionable.SIMULATE) {
+                if (bank.aeAvailable()) return multiplier.divide(bank.takeAe(physical, true));
+                double factor = bank.aeToEu();
+                if (!Double.isFinite(factor) || factor <= 0) return 0;
+                return multiplier.divide(
+                    Math.min(
+                        physical,
+                        bank.euAvailable()
+                            .doubleValue() / factor));
+            }
+            HologramEnergy.Demand demand = new HologramEnergy.Demand();
+            demand.ae = BigDecimal.valueOf(physical);
+            HologramEnergy.Receipt receipt = HologramEnergy.quote(demand, bank)
+                .consume();
+            if (receipt == null)
+                throw new IllegalStateException("Authenticated network energy is insufficient for material transfer");
+            if (transaction == null) receipt.commit();
+            else transaction.cachedEnergyReceipts.add(receipt);
+            return amount;
         }
 
         /** Update the known remainder before charging so later failures cannot refund already inserted items. */
@@ -529,7 +576,7 @@ public final class HologramMaterials {
             stack.stackSize = recoveryRemainder(previous, count, left == null ? 0 : left.getStackSize());
             int inserted = previous - stack.stackSize;
             if (inserted > 0) {
-                charge(inserted, offered.getAmountPerUnit());
+                charge(inserted, offered.getAmountPerUnit(), null);
                 Stats.ItemsInserted.addToPlayer(player, inserted);
             }
         }
@@ -632,6 +679,7 @@ public final class HologramMaterials {
         private final List<IAEItemStack> meItems = new ArrayList<>();
         private final List<IAEFluidStack> meFluids = new ArrayList<>();
         private BigInteger energyTaken = BigInteger.ZERO;
+        private final List<HologramEnergy.Receipt> cachedEnergyReceipts = new ArrayList<>();
         private final Map<Integer, ItemStack> containerStates = new LinkedHashMap<>();
         private int terminalSlot = -1;
         private ItemStack terminalState;
@@ -673,7 +721,19 @@ public final class HologramMaterials {
             return true;
         }
 
+        /** Optional retained device buffers are paid separately from the existing construction EU budget. */
+        public boolean takeCachedEnergy(HologramEnergy.Demand demand) {
+            if (closed || demand == null) return false;
+            HologramEnergy.Receipt receipt = context.cachedEnergyQuote(demand)
+                .consume();
+            if (receipt == null) return false;
+            cachedEnergyReceipts.add(receipt);
+            return true;
+        }
+
         public void commit() {
+            for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) receipt.commit();
+            cachedEnergyReceipts.clear();
             closed = true;
             containerItems.clear();
             containerStates.clear();
@@ -687,6 +747,8 @@ public final class HologramMaterials {
         public void rollbackExternal() {
             if (closed) return;
             closed = true;
+            for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) receipt.refund();
+            cachedEnergyReceipts.clear();
             context.retainedContainers.putAll(containerStates);
             if (energyTaken.signum() > 0) {
                 try {
