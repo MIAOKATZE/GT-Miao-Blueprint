@@ -16,6 +16,7 @@ public final class HologramSnapshotInboxRegression {
         fifoAndBackpressure();
         epochCancellation();
         failedDecodeRetainsOrder();
+        explicitRootCloseFence();
     }
 
     private static void fifoAndBackpressure() {
@@ -105,6 +106,78 @@ public final class HologramSnapshotInboxRegression {
             Thread.currentThread()
                 .interrupt();
             throw new IllegalStateException(e);
+        }
+    }
+
+    private static void explicitRootCloseFence() {
+        HologramRootCloseFence fence = new HologramRootCloseFence();
+        SimpleAssert
+            .that(!fence.suppress("session", 7, true, false), "child return and resize have no explicit close fence");
+        fence.close("session", 8);
+        SimpleAssert
+            .that(fence.suppress("session", 7, true, false), "ordinary queued open cannot undo explicit root exit");
+        SimpleAssert
+            .that(fence.suppress("session", 7, false, false), "older closed snapshot cannot acknowledge a newer exit");
+        SimpleAssert.that(fence.suppress("session", 8, true, false), "same-sequence queued open is still suppressed");
+        SimpleAssert.that(
+            fence.suppress("session", 9, false, true),
+            "import progress cannot acknowledge close while still busy");
+        SimpleAssert
+            .that(fence.suppress("session", 8, false, false), "exact close ACK retires fence without routing GUI");
+        SimpleAssert.that(
+            !fence.suppress("session", 8, true, false),
+            "later actual right-click can reopen at the same server UI sequence");
+        SimpleAssert
+            .that(!fence.suppress("session", 9, true, false), "later higher-sequence open remains normal after ACK");
+        fence.close("session", 10);
+        fence.close("session", 12);
+        SimpleAssert
+            .that(fence.suppress("session", 10, false, false), "first close ACK cannot retire a later explicit exit");
+        SimpleAssert.that(fence.suppress("session", 12, true, false), "later exit still blocks queued open");
+        SimpleAssert
+            .that(!fence.suppress("new-session-uuid", 0, true, false), "a new server UUID is never permanently hidden");
+        fence.close("new-session-uuid", 1);
+        fence.clear();
+        SimpleAssert.that(
+            !fence.suppress("new-session-uuid", 1, true, false),
+            "disconnect/clear projection releases old fence");
+
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        try (HologramSnapshotInbox<Opening> inbox = new HologramSnapshotInbox<>(2, 4, bytes -> {
+            entered.countDown();
+            waitFor(release);
+            return new Opening(7, true);
+        })) {
+            fence.close("session", 8);
+            inbox.offer(new byte[] { 1 });
+            waitFor(entered);
+            inbox.offerValue(new Opening(8, false));
+            SimpleAssert.that(inbox.poll() == null, "close ACK cannot overtake a queued compressed old opening");
+            release.countDown();
+            Opening old = inbox.awaitNext().value;
+            SimpleAssert.that(
+                fence.suppress("session", old.sequence, old.open, false),
+                "actual FIFO-decoded old open is suppressed");
+            Opening ack = inbox.poll().value;
+            SimpleAssert.that(fence.suppress("session", ack.sequence, ack.open, false), "FIFO close ACK retires fence");
+            inbox.offerValue(new Opening(8, true));
+            Opening deliberate = inbox.poll().value;
+            SimpleAssert.that(
+                !fence.suppress("session", deliberate.sequence, deliberate.open, false),
+                "actual later right-click snapshot follows the retained ACK despite unchanged sequence");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    private static final class Opening {
+
+        final long sequence;
+        final boolean open;
+
+        Opening(long sequence, boolean open) {
+            this.sequence = sequence;
+            this.open = open;
         }
     }
 }

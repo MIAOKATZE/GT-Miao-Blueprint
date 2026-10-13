@@ -128,6 +128,13 @@ final class HologramBlockRender {
             : pair[current ? 1 : 0].points;
     }
 
+    /** Opt-in AE GL evidence: detached geometry, UVs and emitted packed vertex colors. */
+    static List<double[]> attributes(HologramState.Cell cell, boolean current) {
+        Model[] pair = MODELS.get(cell);
+        return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
+            : pair[current ? 1 : 0].attributes;
+    }
+
     /** Smoke evidence that a nondegenerate native face used a particular atlas material. */
     static boolean usesIcon(HologramState.Cell cell, boolean current, IIcon icon) {
         Model[] pair = MODELS.get(cell);
@@ -152,9 +159,11 @@ final class HologramBlockRender {
         int list = 0, count = 0;
         boolean opened = false;
         boolean invokedNative = false;
+        HologramAeNativeRender.CableContext aeCableContext = null;
         Set<String> positions = new HashSet<>();
         List<double[]> points = new ArrayList<>();
         List<double[]> textureCenters = new ArrayList<>();
+        List<double[]> attributes = new ArrayList<>();
         boolean missing = false;
         int previousPass = MinecraftForgeClient.getRenderPass();
         int previousWorldPass = ForgeHooksClient.getWorldRenderPass();
@@ -179,6 +188,7 @@ final class HologramBlockRender {
             if (handler == null) return failed(cell, current, "native ISBRH unavailable");
             if (adapter != null) handler = adapter.renderer(block, handler);
             if (handler == null) return failed(cell, current, "adapter renderer unavailable");
+            aeCableContext = HologramAeNativeRender.cableContext(block, tile);
             // Carpenter's registered renderer stores the current TE in mutable fields.
             // Use a fresh handler so a detached preview never replaces its live-world context.
             if (adapter == null && handler.getClass()
@@ -197,6 +207,8 @@ final class HologramBlockRender {
             for (int pass = 0; pass <= 1; pass++) {
                 WORLD_PASS.setInt(null, pass);
                 ForgeHooksClient.setRenderPass(pass);
+                if (aeCableContext != null && block.getClass() == appeng.block.networking.BlockCableBus.class
+                    && !block.canRenderInPass(pass)) continue;
                 tess.startDrawingQuads();
                 tess.setTranslation(-cell.x, -cell.y, -cell.z);
                 tess.setBrightness(0xf000f0);
@@ -234,6 +246,16 @@ final class HologramBlockRender {
                             && w > absent.getMinV() + 1e-6
                             && w < absent.getMaxV() - 1e-6) missing = true;
                     }
+                    if (stride >= 6 && Boolean.getBoolean("gtmb.hologram.aeClientSmoke"))
+                        for (int v = 0; v < emitted; v++) {
+                            int quad = v / 4 * 4;
+                            if (quad + 3 >= emitted || !usableQuad(raw, stride, quad)) continue;
+                            int offset = v * stride;
+                            attributes.add(
+                                new double[] { Float.intBitsToFloat(raw[offset]), Float.intBitsToFloat(raw[offset + 1]),
+                                    Float.intBitsToFloat(raw[offset + 2]), Float.intBitsToFloat(raw[offset + 3]),
+                                    Float.intBitsToFloat(raw[offset + 4]), raw[offset + 5] });
+                        }
                 }
                 tess.draw();
             }
@@ -247,7 +269,7 @@ final class HologramBlockRender {
             }
             compiled++;
             vertices += count;
-            return new Model(list, count, positions.size(), points, textureCenters, missing);
+            return new Model(list, count, positions.size(), points, textureCenters, missing, attributes);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
             if (list != 0) {
                 if (opened) {
@@ -268,6 +290,7 @@ final class HologramBlockRender {
         } finally {
             if (opened) GL11.glEndList();
             if (invokedNative && adapter == null) releaseNativeContext(block);
+            if (aeCableContext != null) aeCableContext.close();
             tess.setTranslation(ox, oy, oz);
             if (capturedTessState) for (int i = 0; i < TESS_STATE.length; i++) {
                 try {
@@ -371,15 +394,22 @@ final class HologramBlockRender {
 
         final int list, vertices, positions;
         final List<double[]> points, textureCenters;
+        final List<double[]> attributes;
         final boolean missingTexture;
 
         Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
             boolean missingTexture) {
+            this(list, vertices, positions, points, textureCenters, missingTexture, java.util.Collections.emptyList());
+        }
+
+        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
+            boolean missingTexture, List<double[]> attributes) {
             this.list = list;
             this.vertices = vertices;
             this.positions = positions;
             this.points = points;
             this.textureCenters = textureCenters;
+            this.attributes = attributes;
             this.missingTexture = missingTexture;
         }
     }

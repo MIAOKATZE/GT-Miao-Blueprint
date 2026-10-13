@@ -17,6 +17,7 @@ import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
+import net.minecraft.block.Block;
 import net.minecraft.item.Item;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTBase;
@@ -40,9 +41,64 @@ final class HologramBlueprintNbt {
     private HologramBlueprintNbt() {}
 
     static String encodeCaptured(NBTTagCompound tag) throws IOException {
+        return encode(tag, true);
+    }
+
+    /** AE schemas already handled identities; never recursively rewrite encoded pattern recipe data. */
+    static String encodeCanonical(NBTTagCompound tag) throws IOException {
+        return encode(tag, false);
+    }
+
+    /** Mixed FMP keeps AE recipes exact while non-AE parts retain the established ownership policy. */
+    static String encodeCanonical(Block block, NBTTagCompound tag) throws IOException {
+        if (tag == null) return null;
+        return encodeCanonical(canonicalActorPayload(block, tag, null, "", false));
+    }
+
+    /** Pure detached transport projection; root target coordinates are bound after schema analysis. */
+    static NBTTagCompound canonicalActorPayload(Block block, NBTTagCompound source, UUID owner, String ownerName,
+        boolean stripCovers) throws IOException {
+        if (source == null) return null;
+        if (block == null || !block.getClass()
+            .getName()
+            .equals("codechicken.multipart.BlockMultipart")) return (NBTTagCompound) source.copy();
+        return canonicalMultipartPayload(source, owner, ownerName, stripCovers);
+    }
+
+    /** Shared pure implementation; only top-level AE parts are exempt from the legacy recursive rule. */
+    static NBTTagCompound canonicalMultipartPayload(NBTTagCompound source, UUID owner, String ownerName,
+        boolean stripCovers) throws IOException {
+        NBTTagCompound copy = (NBTTagCompound) source.copy();
+        NBTBase originalParts = copy.getTag("parts");
+        if (originalParts != null && !(originalParts instanceof NBTTagList))
+            throw new IOException("Invalid FMP part list");
+        NBTTagList parts = originalParts == null ? new NBTTagList() : (NBTTagList) originalParts;
+        if (parts.tagCount() > 0 && parts.func_150303_d() != 10) throw new IOException("Invalid FMP part type");
+        NBTTagList legacy = new NBTTagList();
+        for (int index = 0; index < parts.tagCount(); index++) {
+            NBTTagCompound part = parts.getCompoundTagAt(index);
+            // These shared references belong only to the deep copy; source parts are never mutated.
+            legacy.appendTag(HologramAeBlueprint.isAeMultipartPart(part) ? new NBTTagCompound() : part);
+        }
+        copy.setTag("parts", legacy);
+        NBTBase report = copy.getTag(HologramAeBlueprint.UNRESOLVED);
+        copy.removeTag(HologramAeBlueprint.UNRESOLVED);
+        rewrite(copy, owner, ownerName == null ? "" : ownerName, stripCovers, false);
+        copy.setTag("parts", parts);
+        if (report != null) copy.setTag(HologramAeBlueprint.UNRESOLVED, report);
+        return copy;
+    }
+
+    static void bindTarget(NBTTagCompound tag, int x, int y, int z) {
+        tag.setInteger("x", x);
+        tag.setInteger("y", y);
+        tag.setInteger("z", z);
+    }
+
+    private static String encode(NBTTagCompound tag, boolean rewriteOwnership) throws IOException {
         if (tag == null) return null;
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
-        rewrite(copy, null, "", false, false);
+        if (rewriteOwnership) rewrite(copy, null, "", false, false);
         stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(
@@ -106,9 +162,7 @@ final class HologramBlueprintNbt {
         if (result == null) return null;
         result = filter(result, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
         rewrite(result, ownerUuid, ownerName == null ? "" : ownerName, !retainCovers, false);
-        result.setInteger("x", x);
-        result.setInteger("y", y);
-        result.setInteger("z", z);
+        bindTarget(result, x, y, z);
         return result;
     }
 
@@ -136,6 +190,30 @@ final class HologramBlueprintNbt {
         return encodeCaptured(filtered);
     }
 
+    static String filterCanonical(Block block, String value, List<String> keys, boolean retainCovers)
+        throws IOException {
+        NBTTagCompound source = decode(value);
+        return source == null ? null : encodeCanonical(block, filter(source, keys, retainCovers));
+    }
+
+    /**
+     * Last canonical assertion before costing/installation; target coordinates are the only actor-independent binding.
+     */
+    static NBTTagCompound forPlacement(Block block, int metadata, String value, UUID ownerUuid, String ownerName, int x,
+        int y, int z, boolean retainNbt, boolean retainCovers, List<String> keys) throws IOException {
+        NBTTagCompound source = decode(value);
+        if (!HologramAeBlueprint.supports(block, source))
+            return forPlacement(value, ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
+        if (source == null) return null;
+        NBTTagCompound selected = filter(source, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
+        selected = canonicalActorPayload(block, selected, ownerUuid, ownerName, !retainCovers);
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, metadata, selected);
+        if (analysis.blocking) throw new IOException("AE blueprint has unresolved schema/slot issues");
+        NBTTagCompound canonical = nativePayload(analysis.payload());
+        bindTarget(canonical, x, y, z);
+        return canonical;
+    }
+
     private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers) {
         if (keys == null && retainCovers) return source;
         Set<String> selected = keys == null ? null : new HashSet<>(keys);
@@ -155,8 +233,13 @@ final class HologramBlueprintNbt {
     }
 
     private static boolean essentialKey(String key) {
-        return key.equals("id") || key
-            .equals("mid") || key.equals("x") || key.equals("y") || key.equals("z") || uuidKey(key) || nameKey(key);
+        return key.equals("gtmbaeunresolved") || key.equals("id")
+            || key.equals("mid")
+            || key.equals("x")
+            || key.equals("y")
+            || key.equals("z")
+            || uuidKey(key)
+            || nameKey(key);
     }
 
     /** ItemStack.writeToNBT in local MCP writes numeric id, Count and Damage; tile/cover ids do not have this shape. */

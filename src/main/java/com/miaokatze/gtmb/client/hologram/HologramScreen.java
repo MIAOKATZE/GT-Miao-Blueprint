@@ -54,6 +54,7 @@ public final class HologramScreen extends GuiScreen {
     private final HologramEditQueue editQueue = new HologramEditQueue();
     private final HologramSelection selection = new HologramSelection();
     private final HologramGizmo gizmo = new HologramGizmo();
+    private boolean aePreviewTransition, awaitingAePreview;
     private boolean compactControls, boxSelecting, moveHandles = true, promptDrawer, versionsDrawer;
     private int boxStart = -1, promptScope, versionsOffset;
     private boolean retainNbt = true, retainCovers = true;
@@ -77,6 +78,10 @@ public final class HologramScreen extends GuiScreen {
     private HologramState annotationState, promptSummaryState;
     private List<HologramAnnotationMarkers.Marker> annotationMarkers = new ArrayList<>();
     private final List<HologramAnnotationMarkers.Marker> visibleMarkers = new ArrayList<>();
+    private static final HologramAeReviewModel.Gate AE_REVIEW_GATE = new HologramAeReviewModel.Gate();
+    private HologramAeReviewModel aeReview;
+    private HologramAeReviewNavigation aeReviewNavigation;
+    private int aeReviewTab, aeReviewOffset, aeReviewGroup = -1, aeReviewSelected = -1, aeDetailOffset;
     private String pinnedAnnotation = "";
     private int pinnedAnnotationOffset;
     private boolean gizmoCopy, boxAdditive;
@@ -114,6 +119,7 @@ public final class HologramScreen extends GuiScreen {
         resetCamera();
         syncTargetSelectors();
         applyOpeningPurpose();
+        receiveAeReview();
     }
 
     void updateState(HologramState next) {
@@ -142,6 +148,14 @@ public final class HologramScreen extends GuiScreen {
             cancelQueuedEdits("会话已变化，已取消等待中的编辑");
         }
         state = next;
+        if (areaImporting()) {
+            editQueue.clear();
+            queuedDispatchSequence = -1;
+            dragging = boxSelecting = inventoryDragging = false;
+            awaitingAePreview = awaitingScan = pendingBuildReview = false;
+            confirmation = false;
+            gizmo.cancel();
+        }
         applyOpeningPurpose();
         selection.retain(next.cells.size());
         if (pendingSelectionSequence >= 0 && next.data.getLong("uiSequence") >= pendingSelectionSequence) {
@@ -204,7 +218,18 @@ public final class HologramScreen extends GuiScreen {
                 confirmation = true;
             }
         }
+        receiveAeReview();
+        completeAeReviewNavigation();
         drainQueuedEdits();
+        if (awaitingAePreview && pendingSequence < 0) {
+            awaitingAePreview = false;
+            NBTTagCompound preview = next.data.getCompoundTag("aePreview");
+            if (!preview.getString("token")
+                .isEmpty() && next.session.equals(preview.getString("session"))) {
+                aePreviewTransition = true;
+                mc.displayGuiScreen(new HologramAeContainerScreen(this, preview));
+            } else notice = next.data.getString("status");
+        }
     }
 
     private static boolean sameTarget(HologramState.Cell before, HologramState.Cell after) {
@@ -267,6 +292,12 @@ public final class HologramScreen extends GuiScreen {
     @Override
     public void onGuiClosed() {
         rememberUi();
+        if (aeReview != null && aeReview.review) activateAeReview(182);
+        if (aePreviewTransition) {
+            aePreviewTransition = false;
+            Keyboard.enableRepeatEvents(false);
+            return;
+        }
         if (state.data.getBoolean("presetBrowseForPlacement")) send("dismissPresetBrowse", null, false);
         editQueue.clear();
         queuedDispatchSequence = -1;
@@ -293,7 +324,30 @@ public final class HologramScreen extends GuiScreen {
 
     private void closeRoot() {
         rememberUi();
+        cancelAeReviewNavigation();
+        if (!captureRenderSmokeAction) HologramClient.dismissRootView(state.session, sequence + 1);
+        send("close", null, false);
         mc.displayGuiScreen(null);
+    }
+
+    private boolean areaImporting() {
+        return state.data.getBoolean("areaImporting");
+    }
+
+    private void drawImportBusy(int mx, int my) {
+        text("正在导入框选区域", 142, 13, 360, 0xf5e4b9);
+        drawRect(30, 62, 650, 282, 0xff172f36);
+        text("正在导入区域 · 请稍候", 50, 78, 580, 0xffe59b);
+        String stage = "declarations".equals(state.data.getString("areaImportStage")) ? "正在解析结构与配置…" : "正在读取方块与配置…";
+        text(stage, 50, 105, 580, 0x8bdddf);
+        text("导入完成前，暂不能编辑、保存或放置蓝图。", 50, 123, 580, 0xe5c28d);
+        text("取消后保留导入前的蓝图草稿。", 50, 141, 580, 0xa9d6cf);
+        int progress = Math.max(0, Math.min(100, state.data.getInteger("areaImportProgress")));
+        drawRect(50, 165, 630, 178, 0xff0c1e28);
+        drawRect(50, 165, 50 + progress * 580 / 100, 178, 0xff608c91);
+        text(progress + "%", 50, 187, 580, 0xf2dca5);
+        text(state.data.getString("status"), 50, 204, 580, 0xe5c28d);
+        button(193, 218, 239, 244, 20, "取消导入并返回世界 · Esc / E", true, mx, my);
     }
 
     private int[] selectedPositions() {
@@ -383,6 +437,11 @@ public final class HologramScreen extends GuiScreen {
             skin("cloth", 0, 0, DESIGN_W, DESIGN_H);
             drawRect(6, 29, DESIGN_W - 6, DESIGN_H - 8, 0xed142a32);
             skin("panel", 6, 6, DESIGN_W - 12, 22);
+            if (areaImporting()) {
+                drawImportBusy(mx, my);
+                renderGeneration++;
+                return;
+            }
             text(
                 placementReviewActive() ? "蓝图放置预检 · " + state.data.getString("virtualPresetName")
                     : state.data.getBoolean("virtual") ? "蓝图结构调整 · " + state.data.getString("virtualPresetName")
@@ -444,6 +503,7 @@ public final class HologramScreen extends GuiScreen {
             button(130, 236, 34, 104, 17, "保存蓝图", true, mx, my);
             button(146, 342, 34, 44, 17, "提示词", editable(), mx, my);
             button(178, 478, 9, 92, 17, "框选区域", editable(), mx, my);
+            button(179, 578, 9, 94, 17, "AE 容器标记", canOpenAePreview(), mx, my);
             if (drawer || inventory || positionDrawer || sourceDrawer || !optionChannel.isEmpty()) {
                 controls.removeIf(control -> control.x >= 157);
                 tooltip = null;
@@ -548,6 +608,8 @@ public final class HologramScreen extends GuiScreen {
                 tooltip = new ArrayList<>(fontRendererObj.listFormattedStringToWidth(footerGuide, 390));
                 tooltip.addAll(fontRendererObj.listFormattedStringToWidth(guidance, 390));
             }
+            if (aeReview != null) drawAeReview(mx, my);
+            if (aeReviewNavigation != null) drawAeReviewNavigation(mx, my);
             if (tooltip != null) drawHoveringText(tooltip, mx, my, fontRendererObj);
         } finally {
             GL11.glPopMatrix();
@@ -647,13 +709,15 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private boolean annotationInteractive() {
-        return !inventory && (previewInteractive() || libraryDrawer && !confirmation
-            && !resetReview
-            && deletePresetId.isEmpty()
-            && !nbtDrawer
-            && !promptDrawer
-            && !versionsDrawer
-            && !shortcutsDrawer);
+        return aeReviewNavigation == null && aeReview == null
+            && !inventory
+            && (previewInteractive() || libraryDrawer && !confirmation
+                && !resetReview
+                && deletePresetId.isEmpty()
+                && !nbtDrawer
+                && !promptDrawer
+                && !versionsDrawer
+                && !shortcutsDrawer);
     }
 
     private boolean canMoveSelection() {
@@ -1136,10 +1200,11 @@ public final class HologramScreen extends GuiScreen {
             annotationMarkers = HologramAnnotationMarkers.collect(state);
         }
         visibleMarkers.clear();
+        int globalMarkerSlot = 0;
         for (HologramAnnotationMarkers.Marker marker : annotationMarkers) {
             if (marker.bounds == null) {
                 marker.x = viewportX + viewportWidth - 18;
-                marker.y = 64;
+                marker.y = 64 + 15 * globalMarkerSlot++;
             } else {
                 int[] b = marker.bounds;
                 if (!allLayers && (layer < b[1] || layer > b[4])) continue;
@@ -1156,11 +1221,12 @@ public final class HologramScreen extends GuiScreen {
             }
             visibleMarkers.add(marker);
             int x = marker.x, y = marker.y;
-            int color = marker.key.equals(pinnedAnnotation) ? 0xff7ce1ec : 0xffe6c980;
+            int color = marker.key.equals(pinnedAnnotation) ? 0xff7ce1ec
+                : marker.key.startsWith("ae:") ? 0xffffb65e : 0xffe6c980;
             drawRect(x - 6, y - 5, x + 5, y + 6, 0xff514634);
             drawRect(x - 4, y - 7, x + 7, y + 4, color);
             drawRect(x + 5, y - 5, x + 8, y + 6, 0xff9e8353);
-            text("?", x - 1, y - 5, 8, 0xff172f36);
+            text(marker.key.startsWith("ae:") ? "!" : "?", x - 1, y - 5, 8, 0xff172f36);
             if (marker.contains(mx, my)) {
                 if (tooltip == null) tooltip = new ArrayList<>();
                 else tooltip = new ArrayList<>(tooltip);
@@ -1180,7 +1246,14 @@ public final class HologramScreen extends GuiScreen {
             List<String> lines = fontRendererObj.listFormattedStringToWidth(pinned.prompt, viewportWidth - 20);
             pinnedAnnotationOffset = Math.max(0, Math.min(pinnedAnnotationOffset, Math.max(0, lines.size() - 4)));
             drawRect(viewportX + 1, 219, viewportX + viewportWidth - 1, 279, 0xf0172f36);
-            text(pinned.title + " · 滚轮查看 · Esc 收起", viewportX + 8, 224, viewportWidth - 32, 0xffe59b);
+            text(
+                pinned.title + " · 滚轮查看 · Esc 收起",
+                viewportX + 8,
+                224,
+                viewportWidth - (pinned.key.startsWith("ae:") ? 108 : 32),
+                0xffe59b);
+            if (pinned.key.startsWith("ae:"))
+                button(184, viewportX + viewportWidth - 104, 221, 78, 15, "AE 全部详情", true, mx, my);
             drawRect(viewportX + viewportWidth - 20, 221, viewportX + viewportWidth - 5, 234, 0xff344d51);
             text("×", viewportX + viewportWidth - 16, 224, 9, 0xffe59b);
             for (int i = 0; i < 4 && i + pinnedAnnotationOffset < lines.size(); i++)
@@ -1189,6 +1262,10 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private boolean toggleAnnotationAt(int mx, int my) {
+        for (Control control : controls) if (control.id == 184 && control.contains(mx, my)) {
+            activate(184);
+            return true;
+        }
         if (!pinnedAnnotation.isEmpty() && mx >= viewportX + viewportWidth - 20
             && mx < viewportX + viewportWidth - 5
             && my >= 221
@@ -1204,6 +1281,541 @@ public final class HologramScreen extends GuiScreen {
             return true;
         }
         return false;
+    }
+
+    private void receiveAeReview() {
+        if (areaImporting() || aeReviewNavigation != null) {
+            aeReview = null;
+            return;
+        }
+        if (aeReview != null && !aeReview.review) {
+            aeReview = HologramAeReviewModel.inspection(state);
+            return;
+        }
+        NBTTagCompound dto = state.data.getCompoundTag("aeSaveReview");
+        if (aeReview != null && (!aeReview.matches(state.session, revision())
+            || !aeReview.transactionId.equals(dto.getString("transactionId")))) aeReview = null;
+        if (dto.getString("transactionId")
+            .isEmpty() || !state.session.equals(dto.getString("session"))
+            || dto.getLong("planRevision") != revision()) return;
+        HologramAeReviewModel next = new HologramAeReviewModel(dto, true);
+        if (AE_REVIEW_GATE.first(next)) {
+            aeReview = next;
+            aeReviewTab = aeReviewOffset = aeDetailOffset = 0;
+            aeReviewGroup = aeReviewSelected = -1;
+            dragging = boxSelecting = inventoryDragging = false;
+            gizmo.cancel();
+        }
+    }
+
+    private List<HologramAeReviewModel.Issue> aeIssueRows() {
+        if (aeReviewGroup >= 0 && aeReviewGroup < aeReview.groups.size())
+            return aeReview.groups.get(aeReviewGroup).rows;
+        return aeReview.issues;
+    }
+
+    private int aeRowCount() {
+        return aeReviewTab == 0 ? aeReview.groups.size()
+            : aeReviewTab == 1 ? aeIssueRows().size() : aeReview.materials.size();
+    }
+
+    private void aePage(int delta) {
+        aeReviewOffset = Math.max(0, Math.min(Math.max(0, aeRowCount() - 5), aeReviewOffset + delta));
+    }
+
+    private void drawAeReview(int mx, int my) {
+        controls.clear();
+        tooltip = null;
+        GL11.glDepthMask(true);
+        GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        drawRect(30, 42, 650, 302, 0xfc172f36);
+        text(aeReview.review ? "AE 保存综合告知 · " + aeReview.name : "AE 预览综合提示", 42, 49, 598, 0xffe59b);
+        text("支持的存储元件仅保留同类型空元件；其中物品 / 流体 / 外置内容不保存。", 42, 63, 598, 0xe5c28d);
+        text("旧网络身份、owner 和原坐标不继承；源世界、源元件和源库存不改变。", 42, 75, 598, 0xe5c28d);
+        text("编码配方、升级卡、空元件需要施工物料；ghost 配置免费；缺料仍可保存。", 42, 87, 598, 0xa9d6cf);
+        text(
+            "完整报告 " + aeReview.issues.size()
+                + " 项 · 注意 "
+                + aeReview.warningCount
+                + " · 阻塞 "
+                + aeReview.blockerCount
+                + " · 物料 "
+                + aeReview.materials.size()
+                + " 行",
+            42,
+            100,
+            598,
+            0xf2dca5);
+        button(185, 42, 114, 120, 17, "同类汇总", true, mx, my);
+        button(186, 168, 114, 120, 17, "全部问题", true, mx, my);
+        button(187, 294, 114, 120, 17, "施工物料", true, mx, my);
+        button(188, 528, 114, 49, 17, "上一页", aeReviewOffset > 0, mx, my);
+        button(189, 583, 114, 55, 17, "下一页", aeReviewOffset + 5 < aeRowCount(), mx, my);
+        aePage(0);
+        text(
+            (aeReviewTab == 0 ? "按类别查看，再点击展开所有位置"
+                : aeReviewTab == 1 ? (aeReviewGroup >= 0 ? "该类全部问题 · 点击「全部问题」解除筛选" : "全部问题 · 点击条目查看完整路径与说明")
+                    : "服务端精确物料 · 尚缺材料仅作提醒")
+                + " · "
+                + Math.min(aeReviewOffset + 1, aeRowCount())
+                + "—"
+                + Math.min(aeReviewOffset + 5, aeRowCount())
+                + "/"
+                + aeRowCount(),
+            42,
+            136,
+            596,
+            0x8bdddf);
+        for (int i = 0; i < 5 && aeReviewOffset + i < aeRowCount(); i++) {
+            int row = aeReviewOffset + i, y = 151 + i * 17;
+            if (aeReviewTab == 0) {
+                HologramAeReviewModel.Group group = aeReview.groups.get(row);
+                button(
+                    40000 + row,
+                    42,
+                    y,
+                    596,
+                    16,
+                    ("blocker".equals(group.severity) ? "阻塞 · " : "注意 / 说明 · ") + group
+                        .title() + " × " + group.count + " · " + group.rows.size() + " 个位置（展开）",
+                    true,
+                    mx,
+                    my);
+            } else if (aeReviewTab == 1) {
+                HologramAeReviewModel.Issue issue = aeIssueRows().get(row);
+                button(
+                    50000 + row,
+                    42,
+                    y,
+                    596,
+                    16,
+                    (row == aeReviewSelected ? "▶ " : "") + issue.title()
+                        + " × "
+                        + issue.count
+                        + " · "
+                        + issue.x
+                        + ","
+                        + issue.y
+                        + ","
+                        + issue.z
+                        + " · "
+                        + issue.path,
+                    true,
+                    mx,
+                    my);
+            } else {
+                HologramAeReviewModel.Material material = aeReview.materials.get(row);
+                text(material.line(), 46, y + 3, 588, "0".equals(material.missing) ? 0xa9d6cf : 0xffcf88);
+                if (mx >= 42 && mx < 638 && my >= y && my < y + 16) {
+                    tooltip = new ArrayList<>(fontRendererObj.listFormattedStringToWidth(material.line(), 400));
+                    tooltip.add("类型 " + material.type + " · " + material.key);
+                }
+            }
+        }
+        List<String> detail = new ArrayList<>();
+        HologramAeReviewModel.Issue selectedIssue = null;
+        if (aeReviewTab == 1 && aeReviewSelected >= 0 && aeReviewSelected < aeIssueRows().size()) {
+            selectedIssue = aeIssueRows().get(aeReviewSelected);
+            detail.addAll(
+                fontRendererObj.listFormattedStringToWidth(
+                    "[" + selectedIssue.severity
+                        + "] "
+                        + selectedIssue.code
+                        + " · "
+                        + selectedIssue.x
+                        + ","
+                        + selectedIssue.y
+                        + ","
+                        + selectedIssue.z
+                        + " · 数量 "
+                        + selectedIssue.count,
+                    488));
+            detail.addAll(
+                fontRendererObj
+                    .listFormattedStringToWidth("路径 " + selectedIssue.path + " · 槽 " + selectedIssue.slotId, 488));
+            detail.addAll(fontRendererObj.listFormattedStringToWidth(selectedIssue.message, 488));
+            detail.addAll(fontRendererObj.listFormattedStringToWidth(selectedIssue.guidance(), 488));
+        } else detail.add(
+            aeReview.valid
+                ? aeReview.blockerCount > 0 ? "存在阻塞：展开问题并打开相关容器修正 / 清除，然后重新保存。" : "请查看汇总、完整问题和物料后确认；取消不会写入蓝图库。"
+                : "完整报告不符合协议，继续保存已禁用；取消并重新请求保存。");
+        aeDetailOffset = Math.max(0, Math.min(Math.max(0, detail.size() - 3), aeDetailOffset));
+        for (int i = 0; i < 3 && i + aeDetailOffset < detail.size(); i++)
+            text(detail.get(i + aeDetailOffset), 42, 241 + i * 10, 488, 0xe5c28d);
+        button(190, 536, 238, 44, 15, "上文", aeDetailOffset > 0, mx, my);
+        button(191, 586, 238, 52, 15, "下文", aeDetailOffset + 3 < detail.size(), mx, my);
+        button(
+            192,
+            536,
+            258,
+            102,
+            15,
+            selectedIssue != null && "replaceCell".equals(selectedIssue.resolution) ? "返回替换 / 删除" : "打开相关容器",
+            selectedIssue != null && selectedIssue.location && editable() && pendingSequence < 0,
+            mx,
+            my);
+        button(182, 42, 279, 170, 17, aeReview.review ? "取消保存" : "关闭详情", true, mx, my);
+        if (aeReview.review) button(
+            181,
+            224,
+            279,
+            304,
+            17,
+            aeReview.blockerCount > 0 ? "请先解除阻塞 · 无法继续保存" : "已了解净化变化 · 继续保存",
+            aeReview.canConfirm && aeReview.matches(state.session, revision()) && pendingSequence < 0,
+            mx,
+            my);
+    }
+
+    private void activateAeReview(int id) {
+        if (aeReview == null) return;
+        if (id == 181) {
+            if (!aeReview.canConfirm || !aeReview.matches(state.session, revision()) || pendingSequence >= 0) return;
+            NBTTagCompound exact = aeReview.action();
+            aeReview = null;
+            presetSaveSequence = sequence + 1;
+            send("confirmAeSave", exact, true);
+        } else if (id == 182) {
+            HologramAeReviewModel closed = aeReview;
+            aeReview = null;
+            if (closed.review) send("cancelAeSave", closed.action(), false);
+        } else if (id >= 185 && id <= 187) {
+            aeReviewTab = id - 185;
+            aeReviewGroup = aeReviewSelected = -1;
+            aeReviewOffset = aeDetailOffset = 0;
+        } else if (id == 188 || id == 189) aePage(id == 188 ? -5 : 5);
+        else if (id == 190 || id == 191) aeDetailOffset = Math.max(0, aeDetailOffset + (id == 190 ? -3 : 3));
+        else if (id == 192 && aeReviewTab == 1 && aeReviewSelected >= 0 && aeReviewSelected < aeIssueRows().size()) {
+            HologramAeReviewModel.Issue issue = aeIssueRows().get(aeReviewSelected);
+            if (!issue.location || !editable() || pendingSequence >= 0) return;
+            if (!aeReview.matches(state.session, revision())) {
+                notice = "报告已更新，请重新查看当前问题后定位。";
+                return;
+            }
+            activateAeReview(182);
+            beginAeReviewNavigation(issue);
+        } else if (id >= 40000 && id < 48192 && aeReviewTab == 0) {
+            int row = id - 40000;
+            if (row >= aeReview.groups.size()) return;
+            aeReviewGroup = row;
+            aeReviewTab = 1;
+            aeReviewOffset = aeDetailOffset = 0;
+            aeReviewSelected = -1;
+        } else if (id >= 50000 && id < 58192 && aeReviewTab == 1) {
+            int row = id - 50000;
+            if (row >= aeIssueRows().size()) return;
+            aeReviewSelected = row;
+            aeDetailOffset = 0;
+        }
+    }
+
+    private void beginAeReviewNavigation(HologramAeReviewModel.Issue issue) {
+        boolean replace = "replaceCell".equals(issue.resolution);
+        if (!HologramAeReviewNavigation.needsSelection(state.data.getString("activeStructure"), issue.structureId)) {
+            finishAeReviewNavigation(issue.x, issue.y, issue.z, issue.structureId, replace);
+            return;
+        }
+        cancelQueuedEdits("正在定位相关结构，已取消等待中的编辑");
+        aeReviewNavigation = new HologramAeReviewNavigation(
+            state.session,
+            sequence + 1,
+            revision(),
+            issue.structureId,
+            issue.x,
+            issue.y,
+            issue.z,
+            replace);
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("structureId", issue.structureId);
+        request.setLong("planRevision", revision());
+        request.setBoolean("virtualOnly", true);
+        send("selectStructure", request, true);
+        notice = "正在切换到相关结构，请稍候…";
+    }
+
+    boolean hasPendingAeReviewNavigation() {
+        return aeReviewNavigation != null;
+    }
+
+    private void completeAeReviewNavigation() {
+        if (aeReviewNavigation == null) return;
+        HologramAeReviewNavigation pending = aeReviewNavigation;
+        HologramAeReviewNavigation.Result result = pending.observe(
+            state.session,
+            state.data.getLong("uiSequence"),
+            revision(),
+            state.data.getString("activeStructure"),
+            areaImporting(),
+            editable() && state.data.getBoolean("virtual"));
+        if (result == HologramAeReviewNavigation.Result.WAITING) return;
+        aeReviewNavigation = null;
+        if (result == HologramAeReviewNavigation.Result.READY)
+            finishAeReviewNavigation(pending.x, pending.y, pending.z, pending.structureId, pending.replaceCell);
+        else notice = pending.failure() + " " + state.data.getString("status");
+    }
+
+    private void finishAeReviewNavigation(int x, int y, int z, String structureId, boolean replace) {
+        HologramState.Cell target = null;
+        for (HologramState.Cell cell : state.cells) if (cell.x == x && cell.y == y
+            && cell.z == z
+            && (structureId.isEmpty() || cell.structureIds.isEmpty() || cell.belongsToStructure(structureId))) {
+                target = cell;
+                break;
+            }
+        if (target == null || !state.data.getString("activeStructure")
+            .equals(structureId) || !editable()) {
+            notice = "相关方块或结构已变化，请重新查看当前报告后定位。";
+            return;
+        }
+        selection.load(new int[] { target.index }, target.index, state.cells.size());
+        selected = target.index;
+        syncTargetSelectors();
+        if (replace) notice = "请替换或删除 " + x + "," + y + "," + z + " 的蓝图方块，再重新保存。";
+        else openAePreview(x, y, z, structureId);
+    }
+
+    private void cancelAeReviewNavigation() {
+        if (aeReviewNavigation == null) return;
+        aeReviewNavigation.cancel();
+        aeReviewNavigation = null;
+        notice = "已取消定位。";
+    }
+
+    private void drawAeReviewNavigation(int mx, int my) {
+        controls.clear();
+        tooltip = null;
+        drawRect(90, 96, 590, 248, 0xfc172f36);
+        text("正在定位相关蓝图结构…", 110, 114, 460, 0xffe59b);
+        text("结构：" + aeReviewNavigation.structureId, 110, 139, 460, 0x8bdddf);
+        text("切换完成后，将自动定位到对应方块。", 110, 161, 460, 0xa9d6cf);
+        button(194, 220, 205, 240, 20, "取消定位 · Esc / E", true, mx, my);
+    }
+
+    /** Read-only observations for the real socket driver. Clicking uses existing smokeClickControl(). */
+    NBTTagCompound smokeAeUiState() {
+        requireInteractionSmoke();
+        if (captureRenderSmokeAction)
+            throw new IllegalStateException("AE live observations require actual network dispatch");
+        NBTTagCompound result = new NBTTagCompound();
+        result.setBoolean("modal", aeReview != null);
+        result.setBoolean("awaitingPreview", awaitingAePreview);
+        result.setBoolean("awaitingNavigation", aeReviewNavigation != null);
+        if (aeReviewNavigation != null) {
+            result.setString("navigationStructure", aeReviewNavigation.structureId);
+            result.setLong("navigationSequence", aeReviewNavigation.selectionSequence);
+        }
+        result.setString("pinnedWarning", pinnedAnnotation.startsWith("ae:") ? pinnedAnnotation : "");
+        result.setBoolean("rootBlueprintTab", libraryDrawer);
+        result.setLong("pendingSequence", pendingSequence);
+        result.setInteger("tab", aeReviewTab);
+        result.setInteger("offset", aeReviewOffset);
+        result.setInteger("group", aeReviewGroup);
+        result.setInteger("selectedIssue", aeReviewSelected);
+        result.setInteger("detailOffset", aeDetailOffset);
+        if (aeReview == null) return result;
+        result.setBoolean("saveReview", aeReview.review);
+        result.setBoolean("valid", aeReview.valid);
+        result.setBoolean(
+            "canConfirm",
+            aeReview.canConfirm && aeReview.matches(state.session, revision()) && pendingSequence < 0);
+        result.setString("transactionId", aeReview.transactionId);
+        result.setString("session", aeReview.session);
+        result.setLong("planRevision", aeReview.revision);
+        result.setInteger("issueCount", aeReview.issues.size());
+        result.setInteger("groupCount", aeReview.groups.size());
+        result.setInteger("warningCount", aeReview.warningCount);
+        result.setInteger("blockerCount", aeReview.blockerCount);
+        result.setInteger("materialCount", aeReview.materials.size());
+        result.setInteger("filteredRowCount", aeRowCount());
+        net.minecraft.nbt.NBTTagList visible = new net.minecraft.nbt.NBTTagList();
+        for (int i = 0; i < 5 && aeReviewOffset + i < aeRowCount(); i++) {
+            int index = aeReviewOffset + i;
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("index", index);
+            if (aeReviewTab == 0) {
+                HologramAeReviewModel.Group group = aeReview.groups.get(index);
+                row.setInteger("controlId", 40000 + index);
+                row.setString("code", group.code);
+                row.setString("severity", group.severity);
+                row.setLong("count", group.count);
+                row.setInteger("issueCount", group.rows.size());
+            } else if (aeReviewTab == 1) {
+                HologramAeReviewModel.Issue issue = aeIssueRows().get(index);
+                row.setInteger("controlId", 50000 + index);
+                row.setString("code", issue.code);
+                row.setString("severity", issue.severity);
+                row.setString("path", issue.path);
+                row.setString("slotId", issue.slotId);
+                row.setString("structureId", issue.structureId);
+                row.setString("resolution", issue.resolution);
+                row.setInteger("x", issue.x);
+                row.setInteger("y", issue.y);
+                row.setInteger("z", issue.z);
+                row.setLong("count", issue.count);
+            } else {
+                HologramAeReviewModel.Material material = aeReview.materials.get(index);
+                row.setString("name", material.name);
+                row.setString("key", material.key);
+                row.setString("required", material.required);
+                row.setString("available", material.available);
+                row.setString("missing", material.missing);
+            }
+            visible.appendTag(row);
+        }
+        result.setTag("visibleRows", visible);
+        return result;
+    }
+
+    net.minecraft.nbt.NBTTagList smokeAeWarningMarkers() {
+        requireInteractionSmoke();
+        if (captureRenderSmokeAction)
+            throw new IllegalStateException("AE live observations require actual network dispatch");
+        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList();
+        for (HologramAnnotationMarkers.Marker marker : visibleMarkers) {
+            if (!marker.key.startsWith("ae:")) continue;
+            NBTTagCompound row = new NBTTagCompound();
+            row.setString("key", marker.key);
+            row.setString("title", marker.title);
+            row.setIntArray("screenPoint", smokePreviewPoint(marker.x, marker.y));
+            row.setBoolean("pinned", marker.key.equals(pinnedAnnotation));
+            if (marker.bounds != null) row.setIntArray("bounds", marker.bounds.clone());
+            rows.appendTag(row);
+        }
+        return rows;
+    }
+
+    /** Real GuiScreen mouse/key routing; no server/FML completion is inferred from this hook. */
+    String smokeAeReviewGui() {
+        if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("UI smoke disabled");
+        NBTTagCompound fixture = (NBTTagCompound) state.data.copy();
+        fixture.setString("session", state.session + ":ae-review-fixture:" + System.nanoTime());
+        fixture.setLong("planRevision", 77);
+        fixture.setBoolean("blueprintAwaitingConfirmation", false);
+        fixture.setBoolean("blueprintPreview", false);
+        fixture.setBoolean("presetBrowseForPlacement", false);
+        fixture.setBoolean("capturePending", false);
+        fixture.setInteger("job", 0);
+        NBTTagCompound dto = new NBTTagCompound();
+        dto.setString("session", fixture.getString("session"));
+        dto.setString("transactionId", "gui-review-one");
+        dto.setString("name", "AE GUI review fixture");
+        dto.setLong("planRevision", 77);
+        dto.setBoolean("canConfirm", true);
+        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList();
+        for (int i = 0; i < 7; i++) {
+            NBTTagCompound issue = new NBTTagCompound();
+            issue.setString("code", "ae.cell_contents_cleared");
+            issue.setString("severity", "warning");
+            issue.setString("path", "inv/item" + i);
+            issue.setString("message", "Cell contents are omitted; original source unchanged.");
+            issue.setLong("count", 1);
+            issue.setInteger("x", i);
+            issue.setInteger("y", 0);
+            issue.setInteger("z", 0);
+            rows.appendTag(issue);
+        }
+        dto.setTag("issues", rows);
+        dto.setInteger("issueCount", 7);
+        dto.setInteger("warningCount", 7);
+        dto.setInteger("blockerCount", 0);
+        fixture.setTag("aeSaveReview", dto);
+        HologramScreen probe = new HologramScreen(new HologramState(fixture));
+        probe.setWorldAndResolution(mc, width, height);
+        probe.captureRenderSmokeAction = true;
+        GuiScreen originalGui = mc.currentScreen;
+        try {
+            probe.drawScreen(0, 0, 0);
+            probe.smokeClickDrawnControl(186);
+            probe.drawScreen(0, 0, 0);
+            probe.smokeClickDrawnControl(189);
+            if (probe.aeReviewOffset != 2 || probe.aeIssueRows()
+                .size() != 7) throw new IllegalStateException("AE issue paging lost rows");
+            probe.drawScreen(0, 0, 0);
+            probe.smokeClickDrawnControl(181);
+            if (probe.capturedRenderSmokeAction == null
+                || !"confirmAeSave".equals(probe.capturedRenderSmokeAction.getString("op"))
+                || !"gui-review-one".equals(probe.capturedRenderSmokeAction.getString("transactionId"))
+                || probe.capturedRenderSmokeAction.getLong("planRevision") != 77)
+                throw new IllegalStateException("AE save confirmation did not bind exact review");
+            probe.updateState(new HologramState(fixture));
+            if (probe.aeReview != null) throw new IllegalStateException("Same AE review nonce opened twice");
+            dto.setString("transactionId", "gui-review-blocked");
+            rows.getCompoundTagAt(6)
+                .setString("severity", "blocker");
+            dto.setInteger("warningCount", 6);
+            dto.setInteger("blockerCount", 1);
+            fixture.setTag("aeSaveReview", dto);
+            fixture.setLong("uiSequence", probe.sequence);
+            probe.updateState(new HologramState(fixture));
+            probe.drawScreen(0, 0, 0);
+            probe.capturedRenderSmokeAction = null;
+            probe.smokeClickDrawnControl(181);
+            if (probe.capturedRenderSmokeAction != null || probe.aeReview == null)
+                throw new IllegalStateException("Blocked AE save emitted confirmation");
+            probe.keyTyped('\0', Keyboard.KEY_ESCAPE);
+            if (probe.aeReview != null || !"cancelAeSave".equals(probe.capturedRenderSmokeAction.getString("op")))
+                throw new IllegalStateException("AE modal Esc failed to cancel without closing root");
+            probe.drawScreen(0, 0, 0);
+            probe.smokeControlPoint(148);
+            probe.smokeControlPoint(149);
+            if (mc.currentScreen != originalGui) throw new IllegalStateException("AE modal Esc replaced the root GUI");
+            probe.updateState(new HologramState(fixture));
+            if (probe.aeReview != null) throw new IllegalStateException("Cancelled AE review reopened");
+            fixture.removeTag("aeSaveReview");
+            if (fixture.getTagList("cells", 10)
+                .tagCount() > 0) {
+                NBTTagCompound member = fixture.getTagList("cells", 10)
+                    .getCompoundTagAt(0);
+                member.setString("structureId", "gui-ae-structure");
+                for (int i = 0; i < rows.tagCount(); i++) {
+                    NBTTagCompound issue = rows.getCompoundTagAt(i);
+                    issue.setInteger("x", member.getInteger("x"));
+                    issue.setInteger("y", member.getInteger("y"));
+                    issue.setInteger("z", member.getInteger("z"));
+                    issue.setString("structureId", "gui-ae-structure");
+                }
+            }
+            fixture.setTag("aeIssues", rows);
+            probe.updateState(new HologramState(fixture));
+            probe.capturedRenderSmokeAction = null;
+            probe.drawScreen(0, 0, 0);
+            HologramAnnotationMarkers.Marker reportMarker = null;
+            int structureMarkers = 0;
+            for (HologramAnnotationMarkers.Marker marker : probe.annotationMarkers)
+                if ("ae:structure:gui-ae-structure".equals(marker.key)) structureMarkers++;
+            for (HologramAnnotationMarkers.Marker marker : probe.visibleMarkers)
+                if ("ae:report".equals(marker.key)) reportMarker = marker;
+            if (reportMarker == null || fixture.getTagList("cells", 10)
+                .tagCount() > 0 && structureMarkers != 1)
+                throw new IllegalStateException("AE warnings lack a complete report or one structural aggregate");
+            int[] point = probe.smokePreviewPoint(reportMarker.x, reportMarker.y);
+            probe.drawScreen(point[0], point[1], 0);
+            if (probe.tooltip == null || !probe.tooltip.toString()
+                .contains("存储元件内容清空"))
+                throw new IllegalStateException("AE warning icon hover did not expand the summary");
+            probe.mouseClicked(point[0], point[1], 0);
+            probe.mouseMovedOrUp(point[0], point[1], 0);
+            probe.drawScreen(0, 0, 0);
+            if (!"ae:report".equals(probe.pinnedAnnotation) || probe.capturedRenderSmokeAction != null)
+                throw new IllegalStateException("AE warning pin did not persist as a local interaction");
+            probe.smokeClickDrawnControl(184);
+            if (probe.aeReview == null || probe.aeReview.review || probe.aeReview.issues.size() != 7)
+                throw new IllegalStateException("AE warning details failed to retain every report row");
+            probe.keyTyped('\0', Keyboard.KEY_ESCAPE);
+            if (probe.aeReview != null || probe.capturedRenderSmokeAction != null)
+                throw new IllegalStateException("AE preview details Esc sent a save or closed the root");
+            probe.libraryDrawer = true;
+            probe.presetNameField.setText("A");
+            probe.presetNameField.setFocused(true);
+            probe.keyTyped('e', Keyboard.KEY_E);
+            if (!"Ae".equals(probe.presetNameField.getText()) || !probe.libraryDrawer
+                || mc.currentScreen != originalGui)
+                throw new IllegalStateException("Focused blueprint name swallowed E after AE modal cancellation");
+            return "paged=7 nonce/revision=bound blocker=disabled Esc=cancel/root-tabs E=typing nonce=once warning=hover/pin/one-structure";
+        } finally {
+            probe.captureRenderSmokeAction = false;
+        }
     }
 
     private void drawVersions(int mx, int my) {
@@ -1842,7 +2454,10 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private boolean previewInteractive() {
-        return !drawer && !positionDrawer
+        return !areaImporting() && aeReviewNavigation == null
+            && aeReview == null
+            && !drawer
+            && !positionDrawer
             && !sourceDrawer
             && !hatchDrawer
             && !presetDrawer
@@ -2041,7 +2656,8 @@ public final class HologramScreen extends GuiScreen {
 
     private boolean editable() {
         int job = state.data.getInteger("job");
-        return !state.data.getBoolean("targetClosed") && job != 1
+        return !areaImporting() && !state.data.getBoolean("targetClosed")
+            && job != 1
             && job != 2
             && pendingSequence < 0
             && !state.data.getBoolean("capturePending");
@@ -2340,12 +2956,13 @@ public final class HologramScreen extends GuiScreen {
                 enabled));
         else controls.add(c);
         skin(enabled && c.contains(mx, my) ? "btn_pressed" : "btn", x, y, w, h);
-        int accent = !deletePresetId.isEmpty() ? HologramGuidance.modalAccent(id, 176, 177)
-            : nbtDrawer ? HologramGuidance.modalAccent(id, 173, 172)
-                : promptDrawer ? HologramGuidance.modalAccent(id, 158, 151)
-                    : versionsDrawer ? HologramGuidance.modalAccent(id, 160, 151)
-                        : resetReview ? HologramGuidance.modalAccent(id, 137, 136)
-                            : HologramGuidance.accent(id, state, selected, libraryDrawer, confirmation);
+        int accent = aeReview != null ? HologramGuidance.modalAccent(id, 181, 182)
+            : !deletePresetId.isEmpty() ? HologramGuidance.modalAccent(id, 176, 177)
+                : nbtDrawer ? HologramGuidance.modalAccent(id, 173, 172)
+                    : promptDrawer ? HologramGuidance.modalAccent(id, 158, 151)
+                        : versionsDrawer ? HologramGuidance.modalAccent(id, 160, 151)
+                            : resetReview ? HologramGuidance.modalAccent(id, 137, 136)
+                                : HologramGuidance.accent(id, state, selected, libraryDrawer, confirmation);
         if (id == 150 && state.data.getBoolean("sourceMissing")
             || id == 163 && selectedCell() != null && selectedCell().sourceMissing) accent = 0xff7272;
         if (enabled && accent != 0) {
@@ -2399,6 +3016,7 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private String disabledReason(int id) {
+        if (id == 179) return "请单选一个已支持的 AE 方块，并等待当前编辑回执。";
         if (!editable() && id != 51 && id != 52) return editingReason();
         if (id == 162) return "当前未注册 AE 下单适配器。";
         if (id == 65 && selectedCell() != null) {
@@ -2434,6 +3052,8 @@ public final class HologramScreen extends GuiScreen {
 
     private String controlHelp(int id) {
         switch (id) {
+            case 179:
+                return "打开自有 AE 标记容器；NEI 拖入、背包样本仅修改蓝图标记。";
             case 178:
                 return "开始世界框选：左键第一角、右键第二角，Alt 使用玩家位置，Enter 完成，Esc 取消。";
             case 163:
@@ -2604,6 +3224,23 @@ public final class HologramScreen extends GuiScreen {
     @Override
     protected void mouseClicked(int x, int y, int button) {
         int mx = localX(x), my = localY(y);
+        if (areaImporting()) {
+            if (button == 0) for (Control control : controls)
+                if (control.id == 193 && control.enabled && control.contains(mx, my)) closeRoot();
+            return;
+        }
+        if (aeReviewNavigation != null) {
+            if (button == 0) for (Control control : controls)
+                if (control.id == 194 && control.enabled && control.contains(mx, my)) cancelAeReviewNavigation();
+            return;
+        }
+        if (aeReview != null) {
+            if (button == 0) for (Control control : controls) if (control.contains(mx, my)) {
+                if (control.enabled) activateAeReview(control.id);
+                return;
+            }
+            return;
+        }
         if (!deletePresetId.isEmpty()) {
             if (button == 0) for (Control control : controls) if (control.contains(mx, my)) {
                 if (control.enabled) activate(control.id);
@@ -2745,6 +3382,7 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (areaImporting() || aeReviewNavigation != null) return;
         if (gizmo.axis() >= 0) {
             gizmo.update(localX(x), localY(y));
             return;
@@ -2764,6 +3402,8 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void mouseMovedOrUp(int x, int y, int button) {
+        if (areaImporting() || aeReviewNavigation != null) return;
+        if (aeReview != null) return;
         if (button == 0 && gizmo.axis() >= 0) {
             int axis = gizmo.axis(), delta = gizmo.update(localX(x), localY(y));
             gizmo.cancel();
@@ -2814,8 +3454,15 @@ public final class HologramScreen extends GuiScreen {
     @Override
     public void handleMouseInput() {
         super.handleMouseInput();
+        if (areaImporting() || aeReviewNavigation != null) return;
         int wheel = Mouse.getEventDWheel();
         if (wheel == 0) return;
+        if (aeReview != null) {
+            int modalY = localY(height - Mouse.getEventY() * height / mc.displayHeight - 1);
+            if (modalY >= 238) aeDetailOffset = Math.max(0, aeDetailOffset + (wheel > 0 ? -1 : 1));
+            else aePage(wheel > 0 ? -1 : 1);
+            return;
+        }
         if (nbtDrawer) {
             nbtOffset = Math.max(
                 0,
@@ -2906,6 +3553,18 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void keyTyped(char c, int key) {
+        if (areaImporting()) {
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) closeRoot();
+            return;
+        }
+        if (aeReviewNavigation != null) {
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) cancelAeReviewNavigation();
+            return;
+        }
+        if (aeReview != null) {
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) activateAeReview(182);
+            return;
+        }
         if (key == Keyboard.KEY_E && !textFieldFocused()) key = Keyboard.KEY_ESCAPE;
         if (!deletePresetId.isEmpty()) {
             if (key == Keyboard.KEY_ESCAPE) activate(177);
@@ -2941,6 +3600,10 @@ public final class HologramScreen extends GuiScreen {
             return;
         }
         if (key == Keyboard.KEY_ESCAPE) {
+            if (!pinnedAnnotation.isEmpty() && annotationInteractive()) {
+                pinnedAnnotation = "";
+                return;
+            }
             cancelQueuedEdits("已取消等待中的编辑");
             if (gizmo.axis() >= 0) {
                 gizmo.cancel();
@@ -3001,8 +3664,64 @@ public final class HologramScreen extends GuiScreen {
         }
     }
 
+    private boolean canOpenAePreview() {
+        HologramState.Cell cell = selectedCell();
+        return editable() && pendingSequence < 0
+            && selection.indices().length == 1
+            && cell != null
+            && com.miaokatze.gtmb.hologram.HologramAeBlueprint.supports(cell.block(false), aePreviewPayload(cell));
+    }
+
+    private NBTTagCompound aePreviewPayload(HologramState.Cell cell) {
+        // Read only the existing server-issued display snapshot. Recognition must not run native analysis.
+        if (cell.targetDisplay.hasKey("nativeTile", 10)) return cell.targetDisplay.getCompoundTag("nativeTile");
+        if (cell.wantId.equals(cell.id) && cell.wantMeta == cell.meta)
+            return cell.actualDisplay.getCompoundTag("nativeTile");
+        return new NBTTagCompound();
+    }
+
+    private void openAePreview() {
+        if (!canOpenAePreview()) return;
+        HologramState.Cell cell = selectedCell();
+        openAePreview(cell.x, cell.y, cell.z, selectedStructureId());
+    }
+
+    private void openAePreview(int x, int y, int z, String structureId) {
+        if (!editable() || pendingSequence >= 0) return;
+        NBTTagCompound request = new NBTTagCompound();
+        request.setLong("planRevision", revision());
+        request.setInteger("x", x);
+        request.setInteger("y", y);
+        request.setInteger("z", z);
+        request.setString("structureId", structureId);
+        awaitingAePreview = true;
+        send("aePreviewOpen", request, true);
+    }
+
     private void activate(int id) {
+        if (areaImporting()) {
+            if (id == 193) closeRoot();
+            return;
+        }
+        if (aeReviewNavigation != null) {
+            if (id == 194) cancelAeReviewNavigation();
+            return;
+        }
+        if (aeReview != null) {
+            activateAeReview(id);
+            return;
+        }
+        if (id == 184) {
+            aeReview = HologramAeReviewModel.inspection(state);
+            aeReviewTab = aeReviewOffset = aeDetailOffset = 0;
+            aeReviewGroup = aeReviewSelected = -1;
+            return;
+        }
         notice = "";
+        if (id == 179) {
+            openAePreview();
+            return;
+        }
         if (nbtDrawer && id >= 17000) {
             String key = state.data.getTagList("nbtEntries", 10)
                 .getCompoundTagAt(id - 17000)
@@ -3861,6 +4580,12 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private void send(String op, NBTTagCompound n, boolean pending) {
+        if (areaImporting() && !"close".equals(op) && !"cancelAeSave".equals(op) && !"aePreviewClose".equals(op))
+            return;
+        if (aeReviewNavigation != null && !"selectStructure".equals(op)
+            && !"close".equals(op)
+            && !"cancelAeSave".equals(op)
+            && !"aePreviewClose".equals(op)) return;
         if (!"build".equals(op)) pendingBuildReview = false;
         if ("scan".equals(op)) cancelQueuedEdits("重新采集结构，已取消等待中的编辑");
         if (n == null) n = new NBTTagCompound();
@@ -3914,6 +4639,32 @@ public final class HologramScreen extends GuiScreen {
         int[] p = smokeControlPoint(id);
         mouseClicked(p[0], p[1], 0);
         mouseMovedOrUp(p[0], p[1], 0);
+    }
+
+    /** Real input at a previously observed point, including controls hidden by the import overlay. */
+    void smokeClickAt(int x, int y, int button) {
+        requireInteractionSmoke();
+        if (captureRenderSmokeAction) throw new IllegalStateException("Live clicks require actual network dispatch");
+        mouseClicked(x, y, button);
+        mouseMovedOrUp(x, y, button);
+    }
+
+    NBTTagCompound smokeAreaImportUiState() {
+        requireInteractionSmoke();
+        if (captureRenderSmokeAction)
+            throw new IllegalStateException("Live import observations require actual network dispatch");
+        NBTTagCompound result = new NBTTagCompound();
+        result.setBoolean("areaImporting", areaImporting());
+        result.setInteger("areaImportProgress", state.data.getInteger("areaImportProgress"));
+        result.setString("areaImportStage", state.data.getString("areaImportStage"));
+        result.setBoolean("editable", editable());
+        result.setLong("renderGeneration", renderGeneration);
+        result.setIntArray(
+            "visibleControlIds",
+            controls.stream()
+                .mapToInt(control -> control.id)
+                .toArray());
+        return result;
     }
 
     /** Logical coordinates of the fixed left preview and right property surface. */

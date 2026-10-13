@@ -63,6 +63,19 @@ public final class HologramNativePlacementSmoke {
             world.getChunkFromBlockCoords(destinationX, z);
             require(world.isAirBlock(sourceX, y, z) && world.isAirBlock(destinationX, y, z), "fresh_fixture_" + kind);
             NBTTagCompound seed = canonicalSeed(block, sourceX, y, z);
+            if (HologramAeBlueprint.supports(block, seed)) {
+                HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, 0, seed);
+                StringBuilder issues = new StringBuilder();
+                for (HologramAeBlueprint.Issue issue : analysis.issues) {
+                    String description = issue.code + ":" + issue.severity + ":" + issue.path + ":" + issue.message;
+                    System.out.println(PREFIX + "AE SOURCE ISSUE " + description);
+                    if (issues.length() < 2048) issues.append(description)
+                        .append("; ");
+                }
+                require(
+                    analysis.supported && !analysis.blocking,
+                    "official_ae_source_schema_supported_" + kind + " issues=" + issues);
+            }
             require(world.setBlock(sourceX, y, z, block, 0, 3), "source_block_" + kind);
             HologramNativePlacement.install(world, sourceX, y, z, block, 0, seed);
             NBTTagCompound captured = snapshot(world.getTileEntity(sourceX, y, z));
@@ -411,7 +424,21 @@ public final class HologramNativePlacementSmoke {
             .getMethod("getPart", net.minecraftforge.common.util.ForgeDirection.class)
             .invoke(bus, net.minecraftforge.common.util.ForgeDirection.UNKNOWN);
         appeng.api.networking.IGridNode node = cable.getGridNode();
-        require(node != null && node.getPlayerID() == owner, name);
+        String diagnostic = " tile=" + tile.getClass()
+            .getName()
+            + " outerPart="
+            + parts.get(0)
+                .getClass()
+                .getName()
+            + " cable="
+            + cable.getClass()
+                .getName()
+            + " expectedOwner="
+            + owner
+            + " actualOwner="
+            + (node == null ? "nullNode" : node.getPlayerID());
+        System.out.println(PREFIX + "FMP AE LIFECYCLE" + diagnostic);
+        require(node != null && node.getPlayerID() == owner, name + diagnostic);
     }
 
     private static boolean rfRejected(NBTTagCompound payload) {

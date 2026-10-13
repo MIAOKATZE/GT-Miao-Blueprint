@@ -126,6 +126,14 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramNativePreviewIsolationRegression::run);
         cases
             .put("registered_declared_families_never_mix_unaccepted_metadata", HologramRegisteredFamilyRegression::run);
+        cases.put("ae_edit_review_tokens_and_canonical_persistence", HologramAeProtocolRegression::run);
+        cases.put("ae_unresolved_loss_markers_require_explicit_resolution", HologramAeBlueprintMarkerRegression::run);
+        cases.put(
+            "ae_virtual_container_isolates_marks_from_real_inventory",
+            com.miaokatze.gtmb.client.hologram.HologramAeContainerRegression::run);
+        cases.put(
+            "ae_save_guidance_preserves_complete_bounded_issue_reports",
+            com.miaokatze.gtmb.client.hologram.HologramAeGuidanceRegression::run);
         TestRunner.run(HologramRegressionTest.class, cases);
     }
 

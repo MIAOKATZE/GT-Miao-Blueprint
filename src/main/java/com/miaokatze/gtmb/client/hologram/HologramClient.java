@@ -54,6 +54,12 @@ public final class HologramClient {
         HologramSnapshotAssembly.MAX_BYTES,
         HologramSnapshotCodec::decode);
     private static long lastDecodeNotice;
+    private static final HologramRootCloseFence rootCloseFence = new HologramRootCloseFence();
+
+    /** Explicit root exit only: an already queued opening snapshot must not reopen the editor. */
+    static void dismissRootView(String session, long sequence) {
+        rootCloseFence.close(session, sequence);
+    }
 
     private HologramClient() {}
 
@@ -389,6 +395,7 @@ public final class HologramClient {
         // Reject stale packets before copying a large NBT tree or resolving thousands of block/item entries.
         HologramState next = new HologramState(nbt);
         if (!same) {
+            rootCloseFence.clear();
             if (state != null) retire(state.session);
             HologramRenderer.release();
             acceptedBatch = -1;
@@ -400,6 +407,21 @@ public final class HologramClient {
         state = next;
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
+        if (rootCloseFence
+            .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
+            return;
+        if (!same && mc.currentScreen instanceof HologramScreen
+            && ((HologramScreen) mc.currentScreen).hasPendingAeReviewNavigation()) {
+            ((HologramScreen) mc.currentScreen).updateState(next);
+            return;
+        }
+        if (nbt.getBoolean("areaImporting")
+            && (mc.currentScreen == null || mc.currentScreen instanceof HologramScreen)) {
+            if (mc.currentScreen instanceof HologramScreen && same)
+                ((HologramScreen) mc.currentScreen).updateState(next);
+            else mc.displayGuiScreen(new HologramScreen(next));
+            return;
+        }
         if (nbt.getBoolean("areaSelecting") && !nbt.getBoolean("open")) {
             if (mc.currentScreen instanceof HologramScreen || mc.currentScreen instanceof HologramSettingsScreen)
                 mc.displayGuiScreen(null);
@@ -412,6 +434,8 @@ public final class HologramClient {
             else mc.displayGuiScreen(new HologramSettingsScreen(next));
         } else if (nbt.getBoolean("virtual") && nbt.getBoolean("moving") && !nbt.getBoolean("open")) {
             if (mc.currentScreen instanceof HologramScreen) mc.displayGuiScreen(null);
+        } else if (mc.currentScreen instanceof HologramAeContainerScreen && same) {
+            ((HologramAeContainerScreen) mc.currentScreen).updateState(next);
         } else if (mc.currentScreen instanceof HologramScreen && same) {
             ((HologramScreen) mc.currentScreen).updateState(next);
         } else if (!same || nbt.getBoolean("open")) {
@@ -464,6 +488,7 @@ public final class HologramClient {
     }
 
     private static void clearProjection(boolean invalidatePending) {
+        rootCloseFence.clear();
         if (invalidatePending) {
             assembly.clear();
             snapshotInbox.clear();

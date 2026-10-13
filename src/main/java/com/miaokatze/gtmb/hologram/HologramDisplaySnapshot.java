@@ -35,7 +35,9 @@ final class HologramDisplaySnapshot {
 
     private static NBTTagCompound captureChecked(TileEntity tile) {
         NBTTagCompound display = new NBTTagCompound();
-        if (nativeTile(tile)) {
+        if (HologramAeNativePreview.supports(tile)) {
+            display.setTag("nativeTile", HologramAeNativePreview.capture(tile));
+        } else if (nativeTile(tile)) {
             NBTTagCompound saved;
             try {
                 saved = HologramNativeCapture.capture(tile);
@@ -77,6 +79,12 @@ final class HologramDisplaySnapshot {
 
     static NBTTagCompound target(ItemStack stack, int facing, IStructureElement<?> element, String tileNbt,
         boolean retainCovers) {
+        return target(null, stack, facing, element, tileNbt, retainCovers);
+    }
+
+    /** The primary AE part material does not identify its CBC host; only the server's confirmed target may do so. */
+    static NBTTagCompound target(net.minecraft.block.Block declaredHost, ItemStack stack, int facing,
+        IStructureElement<?> element, String tileNbt, boolean retainCovers) {
         NBTTagCompound display = new NBTTagCompound();
         display.setInteger("color", -1);
         if (facing >= 0 && facing < 6) display.setInteger("facing", facing);
@@ -94,10 +102,16 @@ final class HologramDisplaySnapshot {
                 saved = HologramBlueprintNbt.decode(tileNbt);
             } catch (java.io.IOException ignored) {}
         }
+        net.minecraft.block.Block nativeBlock = stack == null ? null
+            : net.minecraft.block.Block.getBlockFromItem(stack.getItem());
+        if (saved == null && HologramAeNativePreview.supports(nativeBlock)) saved = new NBTTagCompound();
         if (saved != null) {
             // The planned tile has already passed the blueprint transform. Keep its native
             // geometry/material data together, rather than interpreting part NBT as a cube.
-            if ((saved.getBoolean("gtmb.nativePreview") || saved.hasKey("parts", 9)
+            if (HologramAeNativePreview.supports(nativeBlock))
+                display.setTag("nativeTile", HologramAeNativePreview.target(nativeBlock, saved));
+            else if ((registeredCableBus(declaredHost) || saved.getBoolean("gtmb.nativePreview")
+                || saved.hasKey("parts", 9)
                 || saved.hasKey("tilesCount")
                 || saved.hasKey("Shape")
                 || saved.hasKey("shape")
@@ -115,6 +129,15 @@ final class HologramDisplaySnapshot {
                     .copy());
         }
         return display;
+    }
+
+    private static boolean registeredCableBus(net.minecraft.block.Block block) {
+        if (block == null || block.getClass() != appeng.block.networking.BlockCableBus.class) return false;
+        String name = net.minecraft.block.Block.blockRegistry.getNameForObject(block);
+        Class<?> factory = ((appeng.block.AEBaseTileBlock) block).getTileEntityClass();
+        return name != null && net.minecraft.block.Block.getBlockFromName(name) == block
+            && factory != null
+            && appeng.tile.networking.TileCableBus.class.isAssignableFrom(factory);
     }
 
     private static boolean nativeItem(ItemStack stack) {

@@ -36,6 +36,7 @@ public final class HologramNativePlacement {
 
     static {
         register("gtmb:native", new Builtin());
+        register("gtmb:ae", new HologramAeBlueprint.NativeAdapter());
     }
 
     private HologramNativePlacement() {}
@@ -60,6 +61,11 @@ public final class HologramNativePlacement {
     }
 
     public static ItemStack sample(Block block, int metadata, TileEntity tile) throws IOException {
+        if (tile instanceof appeng.tile.AEBaseTile && HologramAeBlueprint.supports(block)
+            && !block.getClass()
+                .getName()
+                .equals("appeng.block.networking.BlockCableBus"))
+            return HologramAeBlueprint.blockSample(block, metadata);
         if (tile == null || !supported(block)) return null;
         NBTTagCompound tag = HologramNativeCapture.capture(tile);
         List<ItemStack> costs = materials(block, metadata, tag);
@@ -72,6 +78,23 @@ public final class HologramNativePlacement {
     public static List<ItemStack> materials(Block block, int metadata, NBTTagCompound payload) throws IOException {
         Adapter adapter = adapter(block);
         if (adapter == null) return new ArrayList<>();
+        if (HologramAeBlueprint.supports(block, payload)) {
+            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, metadata, payload);
+            if (analysis.blocking) throw unsupported("AE resource policy has unresolved issues");
+            HologramAeNativeResources
+                .validateSelectedFinalPayload(HologramBlueprintNbt.nativePayload(analysis.payload()));
+            List<ItemStack> costs = HologramAeBlueprint.nativeShellMaterials(block, metadata, analysis.payload());
+            if (block.getClass()
+                .getName()
+                .equals("codechicken.multipart.BlockMultipart")) {
+                NBTTagCompound nonAe = HologramAeBlueprint.withoutAeMultipart(analysis.payload());
+                if (nonAe.getTagList("parts", 10)
+                    .tagCount() > 0)
+                    for (ItemStack component : materials(block, metadata, nonAe)) costs.add(component.copy());
+            }
+            for (ItemStack component : analysis.materials) costs.add(component.copy());
+            return costs;
+        }
         if (payload == null || payload.hasNoTags()) throw unsupported("native tile payload was not retained");
         try {
             NBTTagCompound tag = HologramBlueprintNbt.nativePayload(payload);
@@ -129,6 +152,8 @@ public final class HologramNativePlacement {
 
     public static boolean matchesPlaced(Block block, int metadata, TileEntity actual, NBTTagCompound payload) {
         if (actual == null || payload == null) return false;
+        if (HologramAeBlueprint.supports(block, payload))
+            return HologramAeBlueprint.matchesPlaced(block, metadata, actual, payload);
         try {
             HologramResourceWorld detached = HologramResourceWorld.create(block, metadata);
             TileEntity expected = adapter(block)
@@ -158,7 +183,13 @@ public final class HologramNativePlacement {
         Adapter adapter = adapter(block);
         if (adapter == null) throw unsupported("unregistered native placement provider");
         try {
-            NBTTagCompound tag = HologramBlueprintNbt.nativePayload(payload);
+            NBTTagCompound selected = payload;
+            if (HologramAeBlueprint.supports(block, payload)) {
+                HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, metadata, payload);
+                if (analysis.blocking || !analysis.supported) throw unsupported("AE blueprint has unresolved issues");
+                selected = analysis.payload();
+            }
+            NBTTagCompound tag = HologramBlueprintNbt.nativePayload(selected);
             if (tag == null) throw unsupported("native tile payload was not retained");
             tag.setInteger("x", x);
             tag.setInteger("y", y);
@@ -168,7 +199,9 @@ public final class HologramNativePlacement {
             TileEntity tile = adapter.create(block, metadata, tag, detached);
             if (tile == null || tile.getWorldObj() != null && tile.getWorldObj() != detached)
                 throw unsupported("native factory did not create a detached tile");
-            if (actor != null) {
+            if (HologramAeBlueprint.supports(block, tag)) {
+                HologramAeBlueprint.prepareActor(tile, actor);
+            } else if (actor != null) {
                 int playerId = appeng.core.worlddata.WorldData.instance()
                     .playerData()
                     .getPlayerID(actor.getGameProfile());
@@ -228,6 +261,8 @@ public final class HologramNativePlacement {
     static TileEntity rollbackTile(World world, Block block, int metadata, NBTTagCompound tag) {
         if (!supported(block)) return TileEntity.createAndLoadEntity(tag);
         try {
+            if (adapter(block) instanceof HologramAeBlueprint.NativeAdapter) return HologramAeBlueprint
+                .createRollbackNative(block, metadata, tag, HologramResourceWorld.create(block, metadata));
             return adapter(block).create(block, metadata, tag, HologramResourceWorld.create(block, metadata));
         } catch (Exception | LinkageError failure) {
             throw new IllegalStateException("Native recovery tile failed", failure);

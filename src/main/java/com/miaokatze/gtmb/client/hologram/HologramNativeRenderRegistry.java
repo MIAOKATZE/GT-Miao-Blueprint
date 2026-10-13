@@ -30,6 +30,11 @@ public final class HologramNativeRenderRegistry {
             return block.createTileEntity(isolatedWorld, metadata);
         }
 
+        /** Decode only reviewed visual state. Override to avoid native inventory/event readers. */
+        default void loadTile(TileEntity tile, NBTTagCompound payload) {
+            tile.readFromNBT(payload);
+        }
+
         /** Return a fresh instance here when the registered handler retains mutable world/tile context. */
         default ISimpleBlockRenderingHandler renderer(Block block, ISimpleBlockRenderingHandler registered) {
             return registered;
@@ -77,6 +82,7 @@ public final class HologramNativeRenderRegistry {
     }
 
     static Adapter adapter(Block block) {
+        if (HologramAeNativeRender.INSTANCE.supports(block)) return HologramAeNativeRender.INSTANCE;
         for (Adapter adapter : ADAPTERS) if (adapter.supports(block)) return adapter;
         return null;
     }

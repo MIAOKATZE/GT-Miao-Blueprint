@@ -73,6 +73,10 @@ public final class HologramService {
 
     public static void open(EntityPlayerMP player, int x, int y, int z, int side) {
         Session previous = SESSIONS.get(player.getUniqueID());
+        if (previous != null && previous.player == player && blockedByAreaImport(previous)) {
+            send(previous);
+            return;
+        }
         if (previous != null && previous.player == player
             && !previous.virtual
             && !previous.cancelled
@@ -307,12 +311,91 @@ public final class HologramService {
     }
 
     private static void startAreaImport(Session s, HologramArea area) {
+        if (blockedByAreaImport(s) || s.job == 1 || s.job == 2) {
+            s.status = "请先取消区域导入或当前施工任务，再重新导入";
+            return;
+        }
         try {
             area.begin(s.player.worldObj);
+            cancelCaptureRetry(s);
+            clearPending(s);
+            s.ae.invalidate();
+            s.planRevision++;
+            s.blueprintAwaitingConfirmation = false;
+            s.forcePlacementReady = false;
+            s.placementReviewNonce++;
+            s.virtualPlacement = false;
+            s.virtualLocked = false;
             s.status = "正在分段导入区域与声明结构，请稍候";
         } catch (java.io.IOException failure) {
             s.status = "区域导入失败：" + failure.getMessage();
         }
+    }
+
+    private static boolean blockedByAreaImport(Session s) {
+        HologramArea area = AREAS.get(s.player.getUniqueID());
+        if (area == null || !area.importing) return false;
+        s.status = "正在导入区域，请等待完成；关闭界面可取消导入并保留原草稿";
+        return true;
+    }
+
+    /** Closing cancels only the unfinished import; the previous draft, targets and world remain intact. */
+    private static void cancelAreaImport(Session s) {
+        HologramArea area = AREAS.get(s.player.getUniqueID());
+        if (area != null) {
+            area.importing = false;
+            area.selecting = false;
+        }
+        s.ae.invalidate();
+        s.open = false;
+        s.settingsOnly = false;
+        s.status = "区域导入已取消，原草稿保留";
+    }
+
+    /** Warning navigation remains in the server-owned virtual draft, even when live area controllers exist. */
+    private static boolean selectVirtualStructure(Session s, NBTTagCompound action) {
+        if (!s.virtual || s.virtualPreset == null
+            || s.virtualPreset.schema < 2
+            || s.capture == null
+            || s.capture.incomplete
+            || s.capture.pending
+            || s.capturePending
+            || s.job == 1
+            || s.job == 2
+            || s.job == 4
+            || !action.hasKey("virtualOnly", 1)
+            || !action.getBoolean("virtualOnly")
+            || !action.hasKey("planRevision", 4)
+            || action.getLong("planRevision") != s.planRevision
+            || !action.hasKey("structureId", 8)
+            || blockedByAreaImport(s)) {
+            s.status = "虚拟结构导航已过期或当前草稿不可编辑，请重新核对报告";
+            return false;
+        }
+        String id = action.getString("structureId");
+        HologramPresets.Structure selected = id.isEmpty() ? null : blueprintSource(s.virtualPreset, id);
+        boolean savedMember = s.virtualPreset.cells.stream()
+            .anyMatch(cell -> id.isEmpty() || cell.belongsTo(id));
+        boolean capturedMember = s.capture.cells.stream()
+            .anyMatch(cell -> id.isEmpty() || cell.belongsTo(id));
+        if ((!id.isEmpty() && (selected == null || !selected.enabled)) || !savedMember || !capturedMember) {
+            s.status = "该结构不属于当前蓝图、已停用或没有草稿格，导航未修改";
+            return false;
+        }
+        saveStructureConfiguration(s);
+        loadStructureConfiguration(s, id);
+        s.selectedIndices.clear();
+        for (int index = 0; index < s.capture.cells.size(); index++) if (id.isEmpty() || s.capture.cells.get(index)
+            .belongsTo(id)) s.selectedIndices.add(index);
+        s.scope = id.isEmpty() ? 0 : 2;
+        s.selected = s.selectedIndices.isEmpty() ? -1
+            : s.selectedIndices.iterator()
+                .next();
+        s.blueprintActiveStructure = id;
+        refreshPlan(s);
+        s.open = true;
+        s.status = id.isEmpty() ? "已返回整份虚拟蓝图，请继续处理报告中的问题" : "已切换虚拟蓝图结构，请继续处理报告中的问题";
+        return true;
     }
 
     private static Session selectAreaStructure(Session previous, String id) {
@@ -563,6 +646,10 @@ public final class HologramService {
 
     public static void openVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
         Session previous = SESSIONS.get(player.getUniqueID());
+        if (previous != null && previous.player == player && blockedByAreaImport(previous)) {
+            send(previous);
+            return;
+        }
         if (previous != null && previous.player == player && (previous.job == 1 || previous.job == 2)) {
             previous.status = "请先取消当前施工任务";
             send(previous);
@@ -591,6 +678,10 @@ public final class HologramService {
 
     private static void lockVirtual(EntityPlayerMP player, int x, int y, int z, int side, boolean placementReview) {
         Session s = SESSIONS.get(player.getUniqueID());
+        if (s != null && s.player == player && blockedByAreaImport(s)) {
+            send(s);
+            return;
+        }
         if (s == null || s.player != player
             || s.cancelled
             || !s.virtual
@@ -628,6 +719,10 @@ public final class HologramService {
     public static void confirmWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
         Session s = SESSIONS.get(player.getUniqueID());
         if (s == null || s.player != player || !s.id.equals(request.getString("session"))) return;
+        if (blockedByAreaImport(s)) {
+            send(s);
+            return;
+        }
         if (s.cancelled || !s.virtual
             || !s.virtualPlacement
             || s.virtualLocked
@@ -709,6 +804,7 @@ public final class HologramService {
 
     /** Rebase the in-memory draft without publishing a temporary lock or discarding edits. */
     private static boolean moveVirtual(Session s, int x, int y, int z, int side) {
+        if (blockedByAreaImport(s)) return false;
         EntityPlayerMP player = s.player;
         if (s.capture == null || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
             || !previewReach(player, x, y, z)
@@ -726,6 +822,7 @@ public final class HologramService {
 
     /** A complete, unlocked placement may rotate; never writes world or preset storage. */
     private static boolean rotateVirtual(Session s, boolean vertical) {
+        if (blockedByAreaImport(s)) return false;
         if (s.cancelled || !s.virtual
             || !s.virtualPlacement
             || s.virtualLocked
@@ -808,6 +905,14 @@ public final class HologramService {
                 if (saved.stack() != null && !saved.missing() && !virtualFrontAllowed(saved.stack(), saved.facing))
                     return false;
             }
+        }
+        if (rotate) for (HologramAePolicy.Issue issue : preset.aeIssues) {
+            if ("policy".equals(issue.path)) continue;
+            int[] location = HologramVirtualTransform.turn(issue.x, issue.y, issue.z, vertical);
+            issue.x = location[0];
+            issue.y = location[1];
+            issue.z = location[2];
+            issue.path = HologramAeBlueprint.rotateIssuePath(issue.path, vertical);
         }
         if (rotate) for (HologramPresets.Structure saved : preset.structures) {
             int[] coordinate = HologramVirtualTransform.turn(saved.x, saved.y, saved.z, vertical);
@@ -955,6 +1060,10 @@ public final class HologramService {
 
     public static void immediateVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
         Session s = SESSIONS.get(player.getUniqueID());
+        if (s != null && s.player == player && blockedByAreaImport(s)) {
+            send(s);
+            return;
+        }
         if (s != null && s.player == player && (s.job == 1 || s.job == 2)) {
             s.status = "请先取消或完成当前施工任务";
             send(s);
@@ -980,6 +1089,11 @@ public final class HologramService {
     public static void cancel(EntityPlayerMP player) {
         Session s = SESSIONS.get(player.getUniqueID());
         if (s == null || s.player != player || !valid(s)) return;
+        if (blockedByAreaImport(s)) {
+            cancelAreaImport(s);
+            send(s);
+            return;
+        }
         HologramArea area = AREAS.get(player.getUniqueID());
         if (area != null) area.importing = false;
         s.job = 4;
@@ -1012,9 +1126,28 @@ public final class HologramService {
             send(s);
             return;
         }
+        String op = action.getString("op");
+        if (blockedByAreaImport(s)) {
+            if ("close".equals(op) || "cancel".equals(op) || "areaCancel".equals(op)) cancelAreaImport(s);
+            else if ("cancelAeSave".equals(op)) s.ae.review = null;
+            else if ("aePreviewClose".equals(op)) s.ae.preview = null;
+            else if ("aePreviewEdit".equals(op))
+                s.ae.result(action.getLong("editSeq"), false, "ae.import.busy", s.planRevision);
+            // Publish the read-only old draft without AE edits, recovery flush, disk writes or construction.
+            send(s);
+            return;
+        }
+        if (!("confirmAeSave".equals(op) || "cancelAeSave".equals(op)
+            || "aePreviewOpen".equals(op)
+            || "aePreviewEdit".equals(op)
+            || "aePreviewClose".equals(op)
+            || "close".equals(op))) s.ae.invalidateReviews();
+        if (aeAction(s, action, op)) {
+            send(s);
+            return;
+        }
         s.materialContext = new HologramMaterials.Context(player, s.materialSettings);
         s.materialContext.flushRecovery();
-        String op = action.getString("op");
         boolean construction = "build".equals(op) || "start".equals(op)
             || "native".equals(op)
             || "confirmBlueprintPlacement".equals(op);
@@ -1083,7 +1216,9 @@ public final class HologramService {
                 s.virtualEdited.add(position(s.capture.cells.get(selected)));
         }
         if (s.job != 1 && s.job != 2 && "selectStructure".equals(op)) {
-            s = selectAreaStructure(s, action.getString("structureId"));
+            if (action.hasKey("virtualOnly") && (!action.hasKey("virtualOnly", 1) || action.getBoolean("virtualOnly")))
+                selectVirtualStructure(s, action);
+            else s = selectAreaStructure(s, action.getString("structureId"));
             send(s);
             return;
         }
@@ -1743,6 +1878,9 @@ public final class HologramService {
                         s.context = null;
                         s.virtual = true;
                         s.virtualPlacement = false;
+                        // A fresh area draft must not inherit the previous machine's dismantling mode or scope.
+                        s.mode = 0;
+                        s.scope = 0;
                         s.virtualPreset = area.blueprint;
                         s.areaOverviewOwner = area;
                         for (HologramArea.Structure structure : area.structures.values()) {
@@ -1788,6 +1926,9 @@ public final class HologramService {
                         refreshPlan(s);
                         s.status = "区域已导入；识别 " + area.structures.size() + " 个声明控制器，可分别编辑与保存蓝图";
                         s.open = true;
+                        send(s);
+                    } else if (s.player.worldObj.getTotalWorldTime() % 10 == 0) {
+                        // Progress snapshots keep the existing editor read-only and never request reopening.
                         send(s);
                     }
                 } catch (java.io.IOException | RuntimeException | LinkageError failure) {
@@ -1901,6 +2042,7 @@ public final class HologramService {
     }
 
     private static void nativeBuild(Session s) {
+        if (blockedByAreaImport(s)) return;
         if (s.mode != 0) {
             s.status = "原版搭建只用于补建模式";
             return;
@@ -2059,6 +2201,8 @@ public final class HologramService {
     }
 
     private static void directBuild(Session s, boolean rescan) {
+        if (blockedByAreaImport(s)) return;
+        if (!aeReady(s)) return;
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
             s.status = s.mode == 2 ? "虚拟预设不支持拆除" : !s.virtualPlacement ? "请在蓝图库点击放置，再右击确定位置并核对材料" : "请先右击确定位置，再在界面确认施工";
             return;
@@ -2387,6 +2531,8 @@ public final class HologramService {
                     c.meta,
                     s.player.worldObj.getTileEntity(c.x, c.y, c.z),
                     HologramBlueprintNbt.forPlacement(
+                        c.block,
+                        c.meta,
                         c.tileNbt,
                         s.player.getUniqueID(),
                         s.player.getCommandSenderName(),
@@ -2448,9 +2594,17 @@ public final class HologramService {
         World w = s.player.worldObj;
         if (c.y < 0 || c.y >= w.getHeight() || !w.blockExists(c.x, c.y, c.z)) return "unsupported";
         if (c.anchor) return "protected";
-        if ((s.virtual || !s.areaStructureId.isEmpty()) && s.mode != 2
-            && targetFor(s, c, index) != null
-            && !acceptableSample(s, c, targetFor(s, c, index))) return "unsupported";
+        boolean approvedNativePrimary = false;
+        if ((s.virtual || !s.areaStructureId.isEmpty()) && s.mode != 2 && targetFor(s, c, index) != null) {
+            ItemStack proposed = targetFor(s, c, index);
+            if (!acceptableSample(s, c, proposed)) return "unsupported";
+            // placeableSample already validated this exact primary against its registered native material provider.
+            approvedNativePrimary = s.virtual && s.virtualPreset != null
+                && s.virtualPreset.schema >= 2
+                && !(proposed.getItem() instanceof ItemMachines)
+                && !c.tileNbt.isEmpty()
+                && HologramNativePlacement.adapter(c.block) != null;
+        }
         if (c.unknown && targetFor(s, c, index) == null) return "unsupported";
         if (!c.sourceWarning.isEmpty() && "templateController".equals(c.role)) return "unsupported";
         if (!coverCostsValid(s, c) || !resourcePlanValid(s, c)) return "unsupported";
@@ -2479,7 +2633,8 @@ public final class HologramService {
         if (s.facingPins.containsKey(position(c)) && targetMatches(s, c, index, old, meta))
             return s.mode == 1 ? "pending" : "satisfied";
         ItemStack target = targetFor(s, c, index);
-        if (target == null || Block.getBlockFromItem(target.getItem()) == Blocks.air) return "unsupported";
+        if (target == null || Block.getBlockFromItem(target.getItem()) == Blocks.air && !approvedNativePrimary)
+            return "unsupported";
         if (explicitTarget(s, c, index)) {
             if (!acceptableSample(s, c, target)) return "unsupported";
         }
@@ -2510,6 +2665,7 @@ public final class HologramService {
     }
 
     private static void refreshPlan(Session s) {
+        s.ae.invalidate();
         s.replacementAuthorized = false;
         s.replacementReady = replacementStructureBuilt(s);
         s.job = 0;
@@ -2578,6 +2734,8 @@ public final class HologramService {
             cell.resourcePlan = null;
             try {
                 NBTTagCompound tile = HologramBlueprintNbt.forPlacement(
+                    cell.block,
+                    cell.meta,
                     cell.tileNbt,
                     s.player.getUniqueID(),
                     s.player.getCommandSenderName(),
@@ -2594,18 +2752,26 @@ public final class HologramService {
                     s.virtualPreset.retainNbt,
                     placementRetainCovers(s),
                     placementKeys(s));
-                cell.resourcePlan = HologramBlueprintResources.plan(tile)
-                    .merge(HologramBlueprintResources.plan(item));
-                if (HologramNativePlacement.supported(cell.block)) {
-                    if (!s.virtualPreset.retainNbt)
-                        throw new java.io.IOException("Native composite tile requires retained NBT");
-                    if (HologramNativePlacement.adapter(cell.block)
-                        .includesInventoryDrops(cell.block))
-                        cell.resourcePlan.removeItemsIncludedByNativeDrops(
-                            HologramNativePlacement.materials(cell.block, cell.meta, tile));
-                    cell.resourcePlan.addNativeItems(
-                        HologramNativePlacement
-                            .additionalMaterials(cell.block, cell.meta, tile, targetFor(s, cell, cellIndex(s, cell))));
+                if (HologramAeBlueprint.supports(cell.block, tile)) {
+                    cell.resourcePlan = HologramAeBlueprint
+                        .resourcePlan(cell.block, cell.meta, tile, targetFor(s, cell, cellIndex(s, cell)));
+                } else {
+                    cell.resourcePlan = HologramBlueprintResources.plan(tile)
+                        .merge(HologramBlueprintResources.plan(item));
+                    if (HologramNativePlacement.supported(cell.block)) {
+                        if (!s.virtualPreset.retainNbt)
+                            throw new java.io.IOException("Native composite tile requires retained NBT");
+                        if (HologramNativePlacement.adapter(cell.block)
+                            .includesInventoryDrops(cell.block))
+                            cell.resourcePlan.removeItemsIncludedByNativeDrops(
+                                HologramNativePlacement.materials(cell.block, cell.meta, tile));
+                        cell.resourcePlan.addNativeItems(
+                            HologramNativePlacement.additionalMaterials(
+                                cell.block,
+                                cell.meta,
+                                tile,
+                                targetFor(s, cell, cellIndex(s, cell))));
+                    }
                 }
             } catch (java.io.IOException invalid) {
                 cell.resourceError = invalid.getMessage();
@@ -2898,6 +3064,7 @@ public final class HologramService {
                 if (MinecraftForge.EVENT_BUS.post(event)) {
                     rollbackMaterials(s, transaction, inventory);
                     c.status = "protected";
+                    s.status = "领地/模组保护取消拆除，原方块保留，预留材料已归还";
                     return true;
                 }
                 if (!sameWorldCell(w, c, old, oldMeta, originalTile)) {
@@ -3079,12 +3246,15 @@ public final class HologramService {
                 }
                 if (s.virtual && s.virtualPreset.schema < 2 && "templateController".equals(c.role))
                     applyVirtualControllerAlignment(s, placedTile);
+                boolean emptyAeNativeShell = nativePlacement && HologramAeBlueprint.supportsEmptyNativeShell(c.block);
                 if (s.virtual && s.virtualPreset.schema >= 2
                     && !c.tileNbt.isEmpty()
-                    && (s.virtualPreset.retainNbt || placementRetainCovers(s))) {
+                    && (s.virtualPreset.retainNbt || placementRetainCovers(s) || emptyAeNativeShell)) {
                     if (placedTile == null && !nativePlacement)
                         throw new IllegalStateException("blueprint tile missing");
                     NBTTagCompound data = HologramBlueprintNbt.forPlacement(
+                        c.block,
+                        c.meta,
                         c.tileNbt,
                         s.player.getUniqueID(),
                         s.player.getCommandSenderName(),
@@ -3095,7 +3265,7 @@ public final class HologramService {
                         placementRetainCovers(s),
                         placementKeys(s));
                     if (data != null) {
-                        if (!s.virtualPreset.retainNbt) {
+                        if (!s.virtualPreset.retainNbt && !emptyAeNativeShell) {
                             NBTTagCompound defaults = HologramNativeCapture.capture(placedTile);
                             for (Object key : data.func_150296_c()) defaults.setTag(
                                 (String) key,
@@ -3150,6 +3320,7 @@ public final class HologramService {
                     HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
                     rollbackMaterials(s, transaction, inventory);
                     c.status = "protected";
+                    s.status = "领地/模组保护取消放置，该格已恢复，预留材料已归还";
                     return true;
                 }
             }
@@ -3628,6 +3799,7 @@ public final class HologramService {
     }
 
     private static boolean constructionAllowed(Session s) {
+        if (blockedByAreaImport(s)) return false;
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
             s.status = "请先放置蓝图，右击确定位置并核对材料后施工";
             return false;
@@ -4163,9 +4335,419 @@ public final class HologramService {
         refreshPlan(s);
     }
 
+    /** Dedicated mark-only actions are dispatched before material flush/recovery and ordinary cell selection. */
+    private static boolean aeAction(Session s, NBTTagCompound action, String op) {
+        if (!("aePreviewOpen".equals(op) || "aePreviewEdit".equals(op) || "aePreviewClose".equals(op))) return false;
+        long seq = action.getLong("editSeq");
+        EditState rollback = null;
+        long originalRevision = s.planRevision;
+        HologramAeProtocol.Preview originalPreview = s.ae.preview;
+        HologramAeProtocol.Review originalReview = s.ae.review;
+        try {
+            if ("aePreviewClose".equals(op)) {
+                if (s.ae.preview != null && s.ae.preview.token.equals(action.getString("token"))) s.ae.preview = null;
+                return true;
+            }
+            if (!s.virtual || s.virtualPreset == null
+                || s.capture == null
+                || s.capture.incomplete
+                || s.capturePending
+                || s.capture.pending
+                || s.job == 1
+                || s.job == 2
+                || s.job == 4) throw new java.io.IOException("AE preview requires a complete editable blueprint");
+            if (!action.hasKey("x", 3) || !action.hasKey("y", 3)
+                || !action.hasKey("z", 3)
+                || !action.hasKey("structureId", 8)) throw new java.io.IOException("AE preview coordinate is missing");
+            String active = s.blueprintActiveStructure;
+            if (!active.equals(action.getString("structureId")))
+                throw new java.io.IOException("AE preview structure changed");
+            HologramCapture.Cell cell = s.capture.positions
+                .get(action.getInteger("x") + "," + action.getInteger("y") + "," + action.getInteger("z"));
+            if (cell == null || !editableStructureCell(s, cell)
+                || !membershipEnabled(s, cell)
+                || cell.excluded
+                || !HologramAePolicy.handles(cell.block, cell.tileNbt))
+                throw new java.io.IOException("AE preview cell is not editable");
+            int index = cellIndex(s, cell);
+            ItemStack target = targetFor(s, cell, index);
+            // The server draft's independent shell identity authorizes editing, even while its contents block
+            // placement.
+            if (target == null
+                ? cell.blueprintBlock.isEmpty()
+                    || !cell.blueprintBlock.equals(String.valueOf(Block.blockRegistry.getNameForObject(cell.block)))
+                : (!cell.blueprintItem.isEmpty()
+                    ? !cell.blueprintItem.equals(String.valueOf(Item.itemRegistry.getNameForObject(target.getItem())))
+                        || cell.blueprintDamage != target.getItemDamage()
+                    : Block.getBlockFromItem(target.getItem()) != cell.block))
+                throw new java.io.IOException("AE target block family changed");
+            HologramAeProtocol.Preview preview = s.ae.preview;
+            if ("aePreviewEdit".equals(op) && preview != null
+                && preview.current(
+                    s.id,
+                    s.toolId,
+                    active,
+                    s.planRevision,
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    cell.block,
+                    cell.meta,
+                    cell.tileNbt)
+                && preview.replay(action)) {
+                s.ae.ack = (NBTTagCompound) preview.lastAck.copy();
+                return true;
+            }
+            if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)
+                throw new java.io.IOException("AE preview revision changed");
+            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint
+                .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
+            if ("aePreviewOpen".equals(op)) {
+                s.ae.preview = new HologramAeProtocol.Preview(
+                    s.id,
+                    s.toolId,
+                    active,
+                    s.planRevision,
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    cell.block,
+                    cell.meta,
+                    cell.tileNbt);
+                s.ae.ack = null;
+                return true;
+            }
+            HologramAeProtocol.validateEdit(action, s.ae, s.player.worldObj.getTotalWorldTime());
+            if (preview == null || !preview.token.equals(action.getString("token"))
+                || !preview.current(
+                    s.id,
+                    s.toolId,
+                    active,
+                    s.planRevision,
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    cell.block,
+                    cell.meta,
+                    cell.tileNbt)
+                || seq <= preview.lastSeq) throw new java.io.IOException("AE preview token/sequence changed");
+            HologramAeBlueprint.Slot slot = null;
+            for (HologramAeBlueprint.Slot candidate : analysis.slots)
+                if (candidate.id.equals(action.getString("slotId"))) slot = candidate;
+            if (slot == null || ("SET".equals(action.getString("mutation")) && !slot.enabled))
+                throw new java.io.IOException("AE slot is invalid or disabled");
+            ItemStack marked = HologramAeProtocol.candidate(action, slot);
+            HologramAeBlueprint.Analysis updated = HologramAeBlueprint
+                .updateSlot(cell.block, cell.meta, analysis.payload(), slot.id, marked);
+            boolean rebindShell = marked == null && "readonly".equals(slot.kind)
+                && (slot.id.startsWith("def:") || slot.id.matches("@part=\\d+/def:.*"));
+            ItemStack remainingShell = rebindShell
+                ? HologramAeBlueprint.sampleIdentity(cell.block, cell.meta, updated.payload())
+                : null;
+            if (rebindShell && remainingShell == null
+                && cell.block.getClass()
+                    .getName()
+                    .equals("codechicken.multipart.BlockMultipart")
+                && HologramAeBlueprint.withoutAeMultipart(updated.payload())
+                    .getTagList("parts", 10)
+                    .tagCount() > 0)
+                throw new java.io.IOException(
+                    "Remaining non-AE multipart identity cannot be rebound safely; replace this draft cell explicitly");
+            List<HologramAePolicy.Issue> nextIssues = HologramAePolicy.resolveAfterMutation(
+                s.virtualPreset.aeIssues,
+                cell.x - s.x,
+                cell.y - s.y,
+                cell.z - s.z,
+                slot.id,
+                analysis,
+                updated);
+            String payload = HologramBlueprintNbt.encodeCanonical(cell.block, updated.payload());
+            // Serialize/validate everything before replacing the single server-owned draft payload.
+            HologramAeProtocol.bytes(updated.payload(), HologramAeProtocol.MAX_STACK_AGGREGATE);
+            preview.snapshot(updated);
+            EditState before = new EditState(s);
+            rollback = before;
+            cell.tileNbt = payload == null ? "" : payload;
+            cell.itemNbt = "";
+            cell.resourceFingerprint = "";
+            if (rebindShell) rebindAeShell(s, cell, index, remainingShell);
+            s.virtualPreset.aeIssues = nextIssues;
+            s.virtualEdited.add(position(cell));
+            refreshPlan(s);
+            s.ae.preview = rebindShell && remainingShell == null ? null : preview;
+            s.ae.result(seq, true, "ae.edit.accepted", s.planRevision);
+            preview.remember(action, s.ae.ack, s.planRevision, cell.tileNbt);
+            remember(s.undoEdits, before);
+            s.redoEdits.clear();
+            rollback = null;
+            s.forcePlacementReady = false;
+            s.placementReviewNonce++;
+            s.status = "AE 蓝图标记已更新；未移动真实物品，材料仅在施工时扣除。请重新核对材料与保存报告。";
+        } catch (java.io.IOException | RuntimeException invalid) {
+            if (rollback != null) {
+                rollback.apply(s);
+                try {
+                    refreshPlan(s);
+                } catch (RuntimeException failedRollbackPlanning) {
+                    // Original draft is restored; incomplete planning stays blocked until an explicit rescan.
+                    s.capture.incomplete = true;
+                }
+                s.planRevision = originalRevision;
+                s.ae.preview = originalPreview;
+                s.ae.review = originalReview;
+            }
+            if ("aePreviewEdit".equals(op)) s.ae.result(seq, false, "ae.edit.rejected", s.planRevision);
+            s.status = "AE 蓝图操作被拒绝：" + HologramAePolicy.fallback(invalid.getMessage()) + "；原标记保留";
+        }
+        return true;
+    }
+
+    /** Rebind only a server-derived surviving native shell; never reinterpret a part item as a block. */
+    private static void rebindAeShell(Session s, HologramCapture.Cell cell, int index, ItemStack sample) {
+        String key = position(cell);
+        s.allocationsFrozen = true;
+        cell.candidates = null;
+        cell.candidateComplete = false;
+        cell.resourceFingerprint = "";
+        cell.resourcePlan = null;
+        cell.targetDisplay = new NBTTagCompound();
+        if (sample == null) {
+            // Native hosts without a part are air. Preserve group membership and never clear the live world.
+            cell.block = Blocks.air;
+            cell.meta = 0;
+            cell.blueprintBlock = "minecraft:air";
+            cell.blueprintItem = "";
+            cell.blueprintDamage = 0;
+            cell.unknown = false;
+            cell.excluded = true;
+            cell.userPosition = true;
+            cell.tileNbt = "";
+            cell.itemNbt = "";
+            cell.structureTargets = new ArrayList<>();
+            s.pins.remove(index);
+            s.coordinatePins.remove(key);
+            s.autoTargets.remove(index);
+            s.frozenAutoTargets.remove(key);
+            s.facingPins.remove(key);
+            s.suppressedAuto.add(key);
+            if (index < s.planTargets.size()) s.planTargets.set(index, null);
+            return;
+        }
+        cell.blueprintBlock = String.valueOf(Block.blockRegistry.getNameForObject(cell.block));
+        cell.blueprintItem = String.valueOf(Item.itemRegistry.getNameForObject(sample.getItem()));
+        cell.blueprintDamage = sample.getItemDamage();
+        cell.unknown = false;
+        // A native host's declaration is its stored shell identity. Do not add unrelated client choices.
+        if (cell.structureTargets != null)
+            cell.structureTargets = new ArrayList<>(Collections.singletonList(sample.copy()));
+        s.pins.put(index, sample.copy());
+        s.coordinatePins.put(key, sample.copy());
+        if (s.autoTargets.containsKey(index)) s.autoTargets.put(index, sample.copy());
+        if (s.frozenAutoTargets.containsKey(key)) s.frozenAutoTargets.put(key, sample.copy());
+        if (index < s.planTargets.size()) s.planTargets.set(index, sample.copy());
+    }
+
+    private static void beginAeSaveReview(Session s, HologramPresets.Preset source, String operation, boolean update)
+        throws java.io.IOException {
+        if (source.id == null || source.id.isEmpty()) source.id = java.util.UUID.randomUUID()
+            .toString();
+        HologramAePolicy.Draft draft = HologramAePolicy.sanitize(source);
+        HologramPresets.validate(draft.preset);
+        boolean containsAe = false;
+        for (HologramPresets.Cell cell : draft.preset.cells)
+            containsAe |= HologramAePolicy.handles(cell.block(), cell.tileNbt);
+        if (!containsAe && !draft.blocking) {
+            HologramBlueprintMetadata.captureVersions(draft.preset);
+            saveReviewedDraft(s, draft.preset, operation, update, false);
+            return;
+        }
+        // One report covers all cells, including disabled/hidden slots; costs never reserve/extract here.
+        HologramBlueprintResources.Plan materials = HologramAePolicy.materials(draft.preset);
+        HologramBlueprintMetadata.captureVersions(draft.preset);
+        s.ae.review = new HologramAeProtocol.Review(
+            s.id,
+            s.toolId,
+            s.planRevision,
+            operation,
+            update,
+            draft,
+            materials.entries(materialSource(s)));
+        s.blueprintOperation = operation;
+        s.blueprintOperationSuccess = false;
+        s.status = "保存前请核对完整报告：将清空存储元件内容、重建 AE 网络与安全身份；样板、升级卡及空元件在施工时需要材料。明确继续后才保存净化草稿。";
+    }
+
+    private static void confirmAeSave(Session s, NBTTagCompound action) throws java.io.IOException {
+        HologramAeProtocol.Review review = s.ae.review;
+        if (review == null) throw new java.io.IOException("请先核对当前保存报告");
+        HologramPresets.Preset preset = review.approve(action, s.id, s.toolId, s.planRevision);
+        saveReviewedDraft(s, preset, review.operation, review.update, true);
+    }
+
+    private static void saveReviewedDraft(Session s, HologramPresets.Preset preset, String operation, boolean update,
+        boolean ae) throws java.io.IOException {
+        if (update) HologramPresets.update(preset);
+        else HologramPresets.save(preset);
+        currentTool(s).getTagCompound()
+            .setString(SELECTED_PRESET, preset.id);
+        if (s.virtual && !"importBlueprint".equals(operation)) publishSavedBlueprint(s, preset);
+        else s.blueprintSavedId = preset.id;
+        s.ae.review = null;
+        s.blueprintOperation = operation;
+        s.blueprintOperationSuccess = true;
+        s.status = update ? "蓝图修改已保存回原蓝图" : "蓝图已保存为新条目";
+        if (ae) s.status += "；存储元件内容未保存，源物品未改变；AE 身份在施工时重建，样板、卡及空元件需付料。";
+    }
+
+    private static void aeSnapshot(Session s, NBTTagCompound state) {
+        try {
+            if (s.virtualPreset != null) state.setTag("aeIssues", aeCurrentIssues(s));
+            if (s.ae.ack != null) state.setTag("aeEditAck", s.ae.ack.copy());
+            if (s.ae.review != null) {
+                if (s.ae.review.revision != s.planRevision) s.ae.review = null;
+                else state.setTag("aeSaveReview", s.ae.review.snapshot(s.x, s.y, s.z, s.blueprintActiveStructure));
+            }
+            HologramAeProtocol.Preview preview = s.ae.preview;
+            if (preview != null && s.capture != null) {
+                HologramCapture.Cell cell = s.capture.positions.get(preview.x + "," + preview.y + "," + preview.z);
+                if (cell == null || !preview.current(
+                    s.id,
+                    s.toolId,
+                    s.blueprintActiveStructure,
+                    s.planRevision,
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    cell.block,
+                    cell.meta,
+                    cell.tileNbt)) s.ae.preview = null;
+                else {
+                    HologramAeBlueprint.Analysis analysis = HologramAeBlueprint
+                        .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
+                    NBTTagCompound dto = preview.snapshot(analysis);
+                    NBTTagList issues = dto.getTagList("issues", 10);
+                    for (HologramAePolicy.Issue historical : s.virtualPreset.aeIssues) {
+                        if (!(historical.x == cell.x - s.x && historical.y == cell.y - s.y
+                            && historical.z == cell.z - s.z) && !"policy".equals(historical.path)) continue;
+                        boolean present = false;
+                        for (int issueIndex = 0; issueIndex < issues.tagCount(); issueIndex++) {
+                            NBTTagCompound now = issues.getCompoundTagAt(issueIndex);
+                            present |= historical.code.equals(now.getString("code"))
+                                && historical.path.equals(now.getString("path"));
+                        }
+                        if (!present) issues.appendTag(historical.dto(s.x, s.y, s.z));
+                        if (issues.tagCount() > HologramAePolicy.MAX_ISSUES)
+                            throw new java.io.IOException("AE preview report budget");
+                    }
+                    for (int index = 0; index < analysis.materials.size(); index++) {
+                        ItemStack material = analysis.materials.get(index);
+                        if (materialSource(s).count(material, material.stackSize) >= material.stackSize) continue;
+                        issues.appendTag(
+                            new HologramAePolicy.Issue(
+                                "ae.mark.missing_material",
+                                "warning",
+                                "materials." + index,
+                                HologramAePolicy.fallback("标记允许保留；施工时缺少材料：" + material.getDisplayName()),
+                                cell.x,
+                                cell.y,
+                                cell.z).dto(0, 0, 0));
+                        if (issues.tagCount() > HologramAePolicy.MAX_ISSUES)
+                            throw new java.io.IOException("AE preview report budget");
+                    }
+                    for (int index = 0; index < issues.tagCount(); index++)
+                        HologramAePolicy.projectResolution(issues.getCompoundTagAt(index), analysis, preview.structure);
+                    dto.setTag("issues", issues);
+                    state.setTag("aePreview", dto);
+                }
+            }
+        } catch (java.io.IOException | RuntimeException invalid) {
+            state.setString("aeReportError", "ae.report.rejected");
+            state.setBoolean("aeReportBlocking", true);
+            // Never publish an incomplete/truncated report as a successful review.
+            state.removeTag("aeSaveReview");
+            s.ae.review = null;
+        }
+    }
+
+    /** Original losses and unresolved blockers persist; explicit validated mutations retire exact resolved problems. */
+    private static NBTTagList aeCurrentIssues(Session s) throws java.io.IOException {
+        Map<String, HologramAePolicy.Issue> issues = new LinkedHashMap<>();
+        Map<String, HologramAeBlueprint.Analysis> analyses = new LinkedHashMap<>();
+        if (s.virtualPreset.aeIssues != null) for (HologramAePolicy.Issue issue : s.virtualPreset.aeIssues) {
+            issue.validate();
+            issues.put(issue.x + "," + issue.y + "," + issue.z + ":" + issue.path + ":" + issue.code, issue);
+        }
+        if (s.capture != null) for (HologramCapture.Cell cell : s.capture.cells) {
+            if (!HologramAePolicy.handles(cell.block, cell.tileNbt)) continue;
+            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint
+                .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
+            analyses.put(position(cell), analysis);
+            for (HologramAeBlueprint.Issue source : analysis.issues) {
+                HologramAePolicy.Issue issue = new HologramAePolicy.Issue(
+                    source.code,
+                    HologramAePolicy.severity(source.severity),
+                    source.path,
+                    HologramAePolicy.fallback(source.message),
+                    cell.x - s.x,
+                    cell.y - s.y,
+                    cell.z - s.z);
+                issues.put(issue.x + "," + issue.y + "," + issue.z + ":" + issue.path + ":" + issue.code, issue);
+            }
+            if (issues.size() > HologramAePolicy.MAX_ISSUES) throw new java.io.IOException("AE complete report budget");
+        }
+        NBTTagList rows = HologramAePolicy.issues(new ArrayList<>(issues.values()), s.x, s.y, s.z);
+        for (int index = 0; index < rows.tagCount(); index++) {
+            NBTTagCompound row = rows.getCompoundTagAt(index);
+            String key = row.getInteger("x") + "," + row.getInteger("y") + "," + row.getInteger("z");
+            HologramAeBlueprint.Analysis analysis = analyses.get(key);
+            HologramCapture.Cell cell = s.capture == null ? null : s.capture.positions.get(key);
+            if (analysis == null || cell == null) continue;
+            String structure = cell.belongsTo(s.blueprintActiveStructure) ? s.blueprintActiveStructure
+                : cell.memberships()
+                    .isEmpty() ? ""
+                        : cell.memberships()
+                            .get(0);
+            HologramAePolicy.projectResolution(row, analysis, structure);
+        }
+        return rows;
+    }
+
+    private static boolean aeReady(Session s) {
+        if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2 || s.capture == null) return true;
+        try {
+            for (HologramAePolicy.Issue issue : s.virtualPreset.aeIssues) {
+                if (!"blocker".equals(issue.severity)) continue;
+                HologramCapture.Cell cell = s.capture.positions
+                    .get((s.x + issue.x) + "," + (s.y + issue.y) + "," + (s.z + issue.z));
+                if (cell != null && !cell.excluded && membershipEnabled(s, cell)) {
+                    s.status = "AE 蓝图仍有未明确处理的净化问题；请在预览中清除对应标记，再核对施工计划";
+                    return false;
+                }
+            }
+            for (HologramCapture.Cell cell : s.capture.cells) {
+                if (!HologramAePolicy.handles(cell.block, cell.tileNbt) || cell.excluded || !membershipEnabled(s, cell))
+                    continue;
+                if (HologramAeBlueprint
+                    .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt)).blocking) {
+                    s.status = "AE 蓝图仍有阻止施工的问题，请打开相关方块预览并删除或替换不安全标记";
+                    return false;
+                }
+            }
+            return true;
+        } catch (java.io.IOException | RuntimeException invalid) {
+            s.status = "AE 蓝图净化报告无效，保持草稿；请重新审查后施工";
+            return false;
+        }
+    }
+
     private static boolean blueprintAction(Session s, NBTTagCompound action, String op) {
         try {
-            if ("cancelBlueprintPlacement".equals(op)) {
+            if ("confirmAeSave".equals(op)) {
+                confirmAeSave(s, action);
+            } else if ("cancelAeSave".equals(op)) {
+                s.ae.review = null;
+                s.status = "保存已取消，草稿与原蓝图文件保留";
+            } else if ("cancelBlueprintPlacement".equals(op)) {
                 s.blueprintAwaitingConfirmation = false;
                 s.virtualPlacement = false;
                 s.presetBrowseForPlacement = false;
@@ -4248,17 +4830,7 @@ public final class HologramService {
                 if ("updatePreset".equals(op) && !update) throw new java.io.IOException("请先保存蓝图，或使用另存为");
                 if (preset.id == null || preset.id.isEmpty()) preset.id = java.util.UUID.randomUUID()
                     .toString();
-                // Reject aggregate NBT expansion before the dependency scan constructs device payloads.
-                HologramPresets.validate(preset);
-                HologramBlueprintMetadata.captureVersions(preset);
-                if (update) HologramPresets.update(preset);
-                else HologramPresets.save(preset);
-                currentTool(s).getTagCompound()
-                    .setString(SELECTED_PRESET, preset.id);
-                if (s.virtual) publishSavedBlueprint(s, preset);
-                else s.blueprintSavedId = preset.id;
-                s.blueprintOperationSuccess = true;
-                s.status = update ? "蓝图修改已保存回原蓝图" : "蓝图已保存为新条目";
+                beginAeSaveReview(s, preset, op, update);
             } else if ("deletePreset".equals(op)) {
                 s.blueprintOperation = op;
                 s.blueprintOperationSuccess = false;
@@ -4346,8 +4918,7 @@ public final class HologramService {
                 s.status = "蓝图已导出到服务器分享目录";
             } else if ("importBlueprint".equals(op)) {
                 HologramPresets.Preset preset = HologramPresets.importBlueprint(action.getString("fileId"));
-                HologramPresets.save(preset);
-                s.status = "蓝图已导入，缺失方块保留待补充模组";
+                beginAeSaveReview(s, preset, op, false);
             } else if ("calibrateBlueprintVersions".equals(op)) {
                 if (s.virtualPreset == null) throw new java.io.IOException("请先打开蓝图编辑");
                 HologramBlueprintMetadata.captureVersions(s.virtualPreset);
@@ -4410,6 +4981,17 @@ public final class HologramService {
     private static List<String> placementKeys(Session s) {
         return s.placementNbtCustomized ? s.placementNbtKeys
             : s.virtualPreset == null ? s.retainedNbtKeys : s.virtualPreset.retainedNbtKeys;
+    }
+
+    /** Select the planned display payload without installation assertions that would hide repairable blockers. */
+    private static String targetPreviewTile(Session s, HologramCapture.Cell cell) throws java.io.IOException {
+        if (!s.virtual) return "";
+        if (s.virtualPreset == null || s.virtualPreset.schema < 2) return cell.tileNbt;
+        return HologramBlueprintNbt.filterCanonical(
+            cell.block,
+            cell.tileNbt,
+            s.virtualPreset.retainNbt ? placementKeys(s) : Collections.emptyList(),
+            placementRetainCovers(s));
     }
 
     private static NBTTagList nbtKeys(List<String> keys) {
@@ -4491,6 +5073,7 @@ public final class HologramService {
                     s.facingPins.getOrDefault(position(cell), s.planFacings.getOrDefault(i, cell.actualFacing)),
                     cell.anchor || "templateController".equals(cell.role));
                 Block block = Block.getBlockFromItem(target.getItem());
+                if (HologramAePolicy.handles(cell.block, cell.tileNbt)) block = cell.block;
                 saved.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
                 saved.metadata = s.virtual && cell.block == block ? cell.meta
                     : target.getItem()
@@ -4510,7 +5093,9 @@ public final class HologramService {
                     s.player.worldObj.getBlock(cell.x, cell.y, cell.z),
                     s.player.worldObj.getBlockMetadata(cell.x, cell.y, cell.z)))) {
                     NBTTagCompound data = HologramNativeCapture.capture(actual);
-                    saved.tileNbt = HologramBlueprintNbt.encodeCaptured(data);
+                    saved.tileNbt = HologramAeBlueprint.supports(cell.block, data)
+                        ? HologramBlueprintNbt.encodeCanonical(cell.block, data)
+                        : HologramBlueprintNbt.encodeCaptured(data);
                 }
             }
             saved.structureId = cell.structureId.isEmpty() ? null : cell.structureId;
@@ -4565,6 +5150,8 @@ public final class HologramService {
         HologramArea area = AREAS.get(s.player.getUniqueID());
         state.setBoolean("areaSelecting", area != null && area.selecting);
         state.setBoolean("areaImporting", area != null && area.importing);
+        state.setInteger("areaImportProgress", area != null && area.importing ? area.importProgress() : 0);
+        state.setString("areaImportStage", area != null && area.importing ? area.importStage() : "");
         state.setBoolean("areaImported", area != null && area.imported);
         state.setIntArray("areaPoints", area == null ? new int[0] : area.points());
         NBTTagList structureLabels = area == null ? new NBTTagList() : area.labels();
@@ -4914,15 +5501,8 @@ public final class HologramService {
                 s,
                 update && (name == null || name.trim()
                     .isEmpty()) ? s.virtualPreset.name : name);
-            if (update) {
-                preset.id = s.virtualPreset.id;
-                HologramPresets.update(preset);
-            } else HologramPresets.save(preset);
-            s.virtualPreset = preset;
-            currentTool(s).getTagCompound()
-                .setString(SELECTED_PRESET, preset.id);
-            s.status = update ? "自定义预设修改已保存回原预设" : "编辑后的自定义预设已另存为新预设";
-            presetGuidance(s, s.status + (s.virtualPlacement ? "；当前投影仍可继续编辑，施工须先确定位置并确认材料。" : "；点击放置预览位置，再右击确定并核对材料。"));
+            if (update) preset.id = s.virtualPreset.id;
+            beginAeSaveReview(s, preset, update ? "updatePreset" : "saveBlueprintAs", update);
         } catch (java.io.IOException invalid) {
             s.status = "预设保存失败：" + invalid.getMessage();
         }
@@ -5098,7 +5678,8 @@ public final class HologramService {
             cell.itemNbt = saved.itemNbt == null ? "" : saved.itemNbt;
             cell.userPosition = true;
             cell.role = saved.controller ? "templateController" : "prefab";
-            if (target != null && !placeableSample(s, cell, target)) {
+            if (target != null && !(s.virtualPreset.schema >= 2 && editableAeSample(cell, target)
+                || placeableSample(s, cell, target))) {
                 s.capture.incomplete = true;
                 s.capture.failure = "INVALID_PREFAB_ITEM";
                 break;
@@ -5117,6 +5698,18 @@ public final class HologramService {
                 if (saved.facing == legal) s.facingPins.put(position(cell), saved.facing);
         }
         refreshPlan(s);
+    }
+
+    /** Import admission checks the stored AE shell only; unresolved contents remain visible for explicit repair. */
+    private static boolean editableAeSample(HologramCapture.Cell cell, ItemStack target) {
+        if (target == null || target.getItem() == null || target.stackSize < 1) return false;
+        try {
+            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            return HologramAeBlueprint.supports(cell.block, payload)
+                && sameMaterial(target, HologramAeBlueprint.sampleIdentity(cell.block, cell.meta, payload));
+        } catch (java.io.IOException invalid) {
+            return false;
+        }
     }
 
     /** A legacy template controller identifies one whole footprint; absence of tags never makes its shell loose. */
@@ -5980,6 +6573,7 @@ public final class HologramService {
         state.setInteger("captureAttempts", s.captureAttempts);
         state.setLong("captureRetryDue", s.captureRetryDue);
         state.setLong("planRevision", s.planRevision);
+        aeSnapshot(s, state);
         state.setLong("uiSequence", s.uiSequence);
         state.setString("phase", s.phase);
         state.setIntArray("pending", new int[0]);
@@ -6179,23 +6773,7 @@ public final class HologramService {
             row.setString(
                 "exactIdentity",
                 pinned == null ? HologramBlockIdentity.key(c.block, c.meta) : HologramBlockIdentity.key(pinned));
-            int displayFacing = c.anchor ? c.actualFacing : s.planFacings.getOrDefault(index, -1);
-            c.targetDisplay = HologramDisplaySnapshot.target(
-                pinned,
-                displayFacing,
-                c.element,
-                s.virtual ? c.tileNbt : "",
-                !s.virtual || placementRetainCovers(s));
-            if (!s.virtual && pinned != null
-                && actualTile instanceof IGregTechTileEntity
-                && ((IGregTechTileEntity) actualTile).getMetaTileID() == pinned.getItemDamage()) {
-                c.targetDisplay = (NBTTagCompound) c.actualDisplay.copy();
-                if (displayFacing >= 0) c.targetDisplay.setInteger("facing", displayFacing);
-            }
-            row.setTag("targetDisplay", c.targetDisplay.copy());
-            if (pinned != null) row.setTag("targetStack", pinned.writeToNBT(new NBTTagCompound()));
-            if (pinned != null && pinned.getItem() instanceof ItemMachines && loaded && trivial(world, c.x, c.y, c.z))
-                row.setString("renderKind", "item");
+            // Resolve the exact same wanted block used by this DTO before selecting its detached native display.
             if (pinned != null) {
                 Block pinnedBlock = Block.getBlockFromItem(pinned.getItem());
                 if (pinnedBlock != Blocks.air) {
@@ -6207,12 +6785,39 @@ public final class HologramService {
                                 .getMetadata(pinned.getItemDamage()));
                 }
             }
+            Block wantedBlock = Block.getBlockFromName(row.getString("wantId"));
+            int displayFacing = c.anchor ? c.actualFacing : s.planFacings.getOrDefault(index, -1);
+            String previewTile = "", previewError = "";
+            try {
+                previewTile = targetPreviewTile(s, c);
+            } catch (java.io.IOException invalid) {
+                previewError = "蓝图目标预览NBT无效：" + HologramAePolicy.fallback(invalid.getMessage());
+                row.setBoolean("previewInvalid", true);
+                row.setString("previewError", previewError);
+            }
+            c.targetDisplay = HologramDisplaySnapshot.target(
+                wantedBlock,
+                pinned,
+                displayFacing,
+                c.element,
+                previewTile,
+                !s.virtual || placementRetainCovers(s));
+            if (!s.virtual && pinned != null
+                && actualTile instanceof IGregTechTileEntity
+                && ((IGregTechTileEntity) actualTile).getMetaTileID() == pinned.getItemDamage()) {
+                c.targetDisplay = (NBTTagCompound) c.actualDisplay.copy();
+                if (displayFacing >= 0) c.targetDisplay.setInteger("facing", displayFacing);
+            }
+            row.setTag("targetDisplay", c.targetDisplay.copy());
+            if (pinned != null) row.setTag("targetStack", pinned.writeToNBT(new NBTTagCompound()));
+            if (pinned != null && pinned.getItem() instanceof ItemMachines && loaded && trivial(world, c.x, c.y, c.z))
+                row.setString("renderKind", "item");
             if (s.mode == 2 && loaded && (removable(s, c) || "removed".equals(c.status))) {
                 row.setString("wantId", "minecraft:air");
                 row.setInteger("wantMeta", 0);
             }
             row.setString("status", c.status);
-            row.setString("reason", reason(s, c, index));
+            row.setString("reason", previewError.isEmpty() ? reason(s, c, index) : previewError);
             row.setString(
                 "operation",
                 !inScope(s, c, index) ? "OUTSIDE"
@@ -6374,6 +6979,7 @@ public final class HologramService {
 
         final List<HologramCapture.Cell> geometry = new ArrayList<>();
         final List<HologramPresets.Structure> structures = new ArrayList<>();
+        final List<HologramAePolicy.Issue> aeIssues;
         final Map<String, ItemStack> targets = new HashMap<>();
         final Map<String, ItemStack> automatic = new HashMap<>();
         final java.util.Set<String> selectedPositions = new java.util.LinkedHashSet<>();
@@ -6387,6 +6993,7 @@ public final class HologramService {
         final int hatchTier;
 
         EditState(Session s) {
+            aeIssues = HologramAePolicy.copyIssues(s.virtualPreset == null ? null : s.virtualPreset.aeIssues);
             if (s.virtualPreset != null) for (HologramPresets.Structure original : s.virtualPreset.structures)
                 structures.add(copyStructure(original));
             if (s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && s.capture != null)
@@ -6462,6 +7069,7 @@ public final class HologramService {
 
         void apply(Session s) {
             if (s.virtualPreset != null) {
+                s.virtualPreset.aeIssues = HologramAePolicy.copyIssues(aeIssues);
                 s.virtualPreset.structures.clear();
                 for (HologramPresets.Structure original : structures)
                     s.virtualPreset.structures.add(copyStructure(original));
@@ -6617,6 +7225,7 @@ public final class HologramService {
         int deferAttempts, deferredIndex = -1;
         boolean open;
         long planRevision, uiSequence, batchSeq;
+        final HologramAeProtocol.State ae = new HologramAeProtocol.State();
         int ackIndex = -1, planMissing;
         String phase = "IDLE";
         boolean planRecoveryFits = true, ackSuccess;

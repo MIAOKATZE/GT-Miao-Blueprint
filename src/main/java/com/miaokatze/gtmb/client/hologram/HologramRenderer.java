@@ -318,7 +318,14 @@ final class HologramRenderer {
                 }
             }
             t.draw();
+            HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
+                .begin(state, view == 1 || state.data.getInteger("mode") == 2);
             for (HologramState.Cell cell : nativePreviewCells) {
+                HologramNativeRasterSmoke.Slice pixels = null;
+                if (raster != null) for (Face outline : cachedOutlines) if (outline.cell == cell) {
+                    pixels = raster.before(outline.points, depthScale);
+                    break;
+                }
                 GL11.glPushMatrix();
                 GL11.glTranslated(x + width / 2.0, y + height / 2.0, 0);
                 GL11.glScaled(projectedScale, -projectedScale, depthScale);
@@ -327,7 +334,9 @@ final class HologramRenderer {
                 GL11.glTranslated(cell.dx - boundsX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - .5);
                 HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
                 GL11.glPopMatrix();
+                if (pixels != null) raster.after(cell, pixels);
             }
+            HologramNativeRasterSmoke.finish(raster);
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             // Read face depth without writing line depth. The small z bias avoids coplanar
             // flicker while keeping back edges hidden; all cells retain clear wireframes.

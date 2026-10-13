@@ -53,7 +53,8 @@ final class HologramNativeTiles {
         tile.xCoord = x;
         tile.yCoord = y;
         tile.zCoord = z;
-        tile.readFromNBT(tag);
+        if (adapter == null) tile.readFromNBT(tag);
+        else adapter.loadTile(tile, tag);
         if (conduitBundle) tile.setWorldObj(world);
         if (block.getClass()
             .getName()
@@ -128,7 +129,13 @@ final class HologramNativeTiles {
                     // require an explicit adapter; no synthetic packet is supplied.
                     String name = detachedPart.getClass()
                         .getName();
-                    if (!name.startsWith("codechicken.multipart.minecraft.") && !name.equals("appeng.fmp.CableBusPart")
+                    boolean officialAeCableBus = type.equals("ae2_cablebus") && Class.forName("appeng.fmp.CableBusPart")
+                        .isInstance(detachedPart)
+                        && type.equals(
+                            detachedPart.getClass()
+                                .getMethod("getType")
+                                .invoke(detachedPart));
+                    if (!name.startsWith("codechicken.multipart.minecraft.") && !officialAeCableBus
                         && !name.equals("appeng.fmp.QuartzTorchPart"))
                         throw new IllegalArgumentException("Native multipart client adapter required for " + type);
                     part = detachedPart;

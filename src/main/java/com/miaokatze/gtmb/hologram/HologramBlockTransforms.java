@@ -125,11 +125,17 @@ final class HologramBlockTransforms {
         original.y = y;
         original.z = z;
         Data data = turn(original, vertical);
+        if (HologramAeBlueprint.supports(block, data.tile)) HologramAeBlueprint.rotateUnresolved(data.tile, vertical);
         // Preserve unchanged payload byte-for-byte, including every inventory/configuration tag.
         return new Result(
             data.metadata,
-            same(tileData, data.tile) ? tile : HologramBlueprintNbt.encodeCaptured(data.tile),
-            same(itemData, data.item) ? item : HologramBlueprintNbt.encodeCaptured(data.item));
+            same(tileData, data.tile) ? tile
+                : HologramAeBlueprint.supports(block, data.tile)
+                    ? HologramBlueprintNbt.encodeCanonical(block, data.tile)
+                    : HologramBlueprintNbt.encodeCaptured(data.tile),
+            same(itemData, data.item) ? item
+                : HologramAeBlueprint.supports(block) ? HologramBlueprintNbt.encodeCanonical(data.item)
+                    : HologramBlueprintNbt.encodeCaptured(data.item));
     }
 
     static void turn(HologramPresets.Cell cell, boolean vertical) throws IOException {
@@ -249,7 +255,9 @@ final class HologramBlockTransforms {
         if (sample == null) return;
         cell.item = String.valueOf(Item.itemRegistry.getNameForObject(sample.getItem()));
         cell.damage = sample.getItemDamage();
-        cell.itemNbt = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
+        cell.itemNbt = HologramAeBlueprint.supports(cell.block())
+            ? HologramBlueprintNbt.encodeCanonical(sample.getTagCompound())
+            : HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
     }
 
     static ItemStack nativeSample(HologramCapture.Cell cell, ItemStack previous) throws IOException {
@@ -257,7 +265,9 @@ final class HologramBlockTransforms {
         if (sample == null) return null;
         cell.blueprintItem = String.valueOf(Item.itemRegistry.getNameForObject(sample.getItem()));
         cell.blueprintDamage = sample.getItemDamage();
-        String encoded = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
+        String encoded = HologramAeBlueprint.supports(cell.block)
+            ? HologramBlueprintNbt.encodeCanonical(sample.getTagCompound())
+            : HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
         cell.itemNbt = encoded == null ? "" : encoded;
         cell.resourceFingerprint = "";
         cell.resourceError = "";

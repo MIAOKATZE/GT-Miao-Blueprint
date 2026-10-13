@@ -4,8 +4,11 @@ import argparse
 import hashlib
 import json
 import shutil
+import tempfile
 import zipfile
 from datetime import datetime
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +53,7 @@ def validate_support_jars(jars):
     """Reject duplicate FML identities and incompatible copies of the CoFH API before launch."""
     identities, cofh_api = {}, {}
     for jar in jars:
+        validate_support_archive(jar)
         with zipfile.ZipFile(jar) as archive:
             if 'mcmod.info' in archive.namelist():
                 try:
@@ -74,6 +78,103 @@ def validate_support_jars(jars):
     chicken = [jar.name for jar in jars if jar.name.lower().startswith('codechickencore-')]
     if len(chicken) > 1:
         raise SystemExit('Duplicate CodeChickenCore runtime support: ' + ', '.join(chicken))
+
+
+def validate_support_archive(jar):
+    """Reject invalid or corrupt support archives before preparing any copied mod."""
+    try:
+        with zipfile.ZipFile(jar) as archive:
+            corrupt = archive.testzip()
+            if corrupt:
+                raise SystemExit(f'Corrupt support jar {jar}: CRC failure in {corrupt}')
+    except (OSError, zipfile.BadZipFile) as failure:
+        raise SystemExit(f'Invalid support jar {jar}: {failure}') from failure
+
+
+def copy_support_jar(source, destination):
+    """Publish a verified same-directory temporary copy only inside an isolated fixture."""
+    source, destination = Path(source), Path(destination)
+    resolved = destination.resolve()
+    build = (ROOT / 'build').resolve()
+    if not resolved.is_relative_to(build):
+        raise SystemExit('Support destination must remain inside the isolated build fixture')
+    relative = resolved.relative_to(build)
+    if (len(relative.parts) < 4 or not relative.parts[0].startswith('hologram-')
+            or relative.parts[-3] not in ('server', 'client') or relative.parts[-2] != 'mods'):
+        raise SystemExit('Support destination must be an isolated server/client mods file')
+    if source.resolve() == resolved or (destination.exists() and source.samefile(destination)):
+        raise SystemExit('Support source and destination must differ')
+    validate_support_archive(source)
+    with zipfile.ZipFile(source) as archive:
+        dependency_metadata = any(
+            name.startswith('META-INF/') and name.endswith('.json')
+            and b'falsepatternlib_dependencies' in archive.read(name)
+            for name in archive.namelist())
+    source_size = source.stat().st_size
+    source_hash = hashlib.sha256(source.read_bytes()).digest()
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=destination.name + '.',
+                                         suffix='.copy.tmp', delete=False) as handle:
+            temporary = Path(handle.name)
+        shutil.copy2(source, temporary)
+        if (temporary.stat().st_size != source_size
+                or hashlib.sha256(temporary.read_bytes()).digest() != source_hash):
+            raise SystemExit('Support copy differs from its validated source: ' + str(source))
+        validate_support_archive(temporary)
+        temporary.replace(destination)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    return invalidate_dependency_scan_cache(destination) if dependency_metadata else None
+
+
+def invalidate_dependency_scan_cache(destination):
+    """Remove only this restored jar's exact URI from FPL's persistent negative scan cache."""
+    destination = destination.resolve()
+    isolated = destination.parent.parent.resolve()
+    cache = isolated / 'logs' / 'falsepattern_tmp' / '.depscan_cache'
+    if not cache.is_file():
+        return None
+    if not cache.resolve().is_relative_to(isolated):
+        raise SystemExit('Dependency scan cache must remain inside the isolated server/client fixture')
+    original = cache.read_bytes()
+    retained, removed = [], []
+    for line in original.splitlines(keepends=True):
+        try:
+            uri = line.rstrip(b'\r\n').decode('utf-8')
+            parsed = urlsplit(uri)
+            matches = (parsed.scheme == 'file' and not parsed.netloc and not parsed.query and not parsed.fragment
+                       and Path(url2pathname(parsed.path)).resolve() == destination)
+        except (UnicodeDecodeError, ValueError, OSError):
+            matches = False
+        if matches:
+            removed.append(uri)
+        else:
+            retained.append(line)
+    if not removed:
+        return None
+    digest = hashlib.sha256(original).hexdigest()
+    backup_directory = isolated / 'logs' / 'falsepattern_tmp' / 'cache-archive'
+    if not backup_directory.resolve().is_relative_to(isolated):
+        raise SystemExit('Dependency scan cache archive must remain inside the isolated fixture')
+    backup_directory.mkdir(parents=True, exist_ok=True)
+    backup = backup_directory / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + digest + '.depscan_cache')
+    with backup.open('xb') as archive:
+        archive.write(original)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=cache.parent, prefix='.depscan_cache.', suffix='.tmp',
+                                         delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(b''.join(retained))
+        temporary.replace(cache)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    return {'cache': str(cache), 'backup': str(backup), 'original_sha256': digest,
+            'updated_sha256': hashlib.sha256(b''.join(retained)).hexdigest(),
+            'destination_jar': str(destination), 'removed_exact_uris': removed, 'removed_count': len(removed)}
 
 
 def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=None,
@@ -107,8 +208,11 @@ def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=No
     unexpected = [p.name for p in mods.glob('*.jar') if p.name not in {j.name for j in selected}]
     if unexpected:
         raise SystemExit('Use a fresh fixture directory; unexpected mods: ' + ', '.join(unexpected))
+    cache_invalidations = []
     for jar in selected:
-        shutil.copy2(jar, mods / jar.name)
+        invalidation = copy_support_jar(jar, mods / jar.name)
+        if invalidation:
+            cache_invalidations.append(invalidation)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     library_archive = None
     library = server / 'config' / 'gtmb' / 'hologram-presets.json'
@@ -164,6 +268,7 @@ def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=No
                'receipt_directory': str(receipt_directory) if receipt_directory else None,
                'previous_receipt_archive': str(receipt_archive) if receipt_archive else None,
                'previous_library_archive': library_archive,
+               'negative_dependency_scan_cache_invalidations': cache_invalidations,
                'binding': f'127.0.0.1:{port}'}
     (server.parent / 'environment.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')
     return receipt

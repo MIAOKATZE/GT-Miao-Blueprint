@@ -2,9 +2,8 @@
 from pathlib import Path
 import argparse
 import json
-import shutil
 
-from prepare_smoke import cached_jar, validate_support_jars
+from prepare_smoke import cached_jar, copy_support_jar, validate_support_jars
 
 
 def main():
@@ -56,10 +55,19 @@ def main():
     if unexpected:
         raise SystemExit('Use a fresh fixture directory; unexpected client mods: ' + ', '.join(unexpected))
     validate_support_jars(jars)
+    cache_invalidations = []
     for jar in jars:
-        shutil.copy2(jar, mods / jar.name)
+        invalidation = copy_support_jar(jar, mods / jar.name)
+        if invalidation:
+            cache_invalidations.append(invalidation)
     (mods.parent / 'options.txt').write_text(
         'lang:zh_CN\nfullscreen:false\nguiScale:1\nsound:0.0\nmusic:0.0\n', encoding='utf-8')
+    (fixture / 'client-environment.json').write_text(json.dumps({
+        'working_directory': str(mods.parent), 'world': receipt['world'], 'mode': args.mode,
+        'extended_compatibility': args.extended_compatibility, 'mods': [jar.name for jar in jars],
+        'server_environment': str(environment), 'shared_world_used': False,
+        'negative_dependency_scan_cache_invalidations': cache_invalidations,
+    }, indent=2), encoding='utf-8')
     print(mods.parent)
 
 

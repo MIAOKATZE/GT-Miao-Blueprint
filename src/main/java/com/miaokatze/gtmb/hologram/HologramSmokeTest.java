@@ -35,6 +35,8 @@ public final class HologramSmokeTest {
 
     private boolean finished;
     private int ticks, assertions;
+    private boolean awaitingAe;
+    private int deferredSuites, deferredFailures, deferredTicks;
 
     public static void registerIfEnabled() {
         HologramCompatibilitySmoke.registerIfEnabled();
@@ -45,13 +47,19 @@ public final class HologramSmokeTest {
 
     @SubscribeEvent
     public void tick(TickEvent.ServerTickEvent event) {
-        if (finished || event.phase != TickEvent.Phase.END || ++ticks < 40) return;
+        if (event.phase != TickEvent.Phase.END) return;
+        if (awaitingAe) {
+            finishAeTick();
+            return;
+        }
+        if (finished || ++ticks < 40) return;
         finished = true;
         MinecraftServer server = MinecraftServer.getServer();
         int failedSuites = 0;
         boolean coexistence = Boolean.getBoolean("gtmb.hologram.coexistSmoke");
         boolean extended = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
-        int suites = (coexistence ? 8 : 7) + (extended ? 2 : 0);
+        boolean aeExternal = Boolean.getBoolean("gtmb.hologram.aeExternalCellSmoke");
+        int suites = (coexistence ? 8 : 7) + 1 + (extended ? 3 : 0) + (aeExternal ? 1 : 0);
         try {
             try {
                 run(server.worldServerForDimension(0));
@@ -135,12 +143,76 @@ public final class HologramSmokeTest {
                     suiteFailure("COEXIST", failure);
                 }
             }
-            if (failedSuites == 0)
-                System.out.println("[GTMB-HOLOGRAM-SMOKE] FINAL PASS suites=" + suites + " assertions=" + assertions);
-            else System.err.println("[GTMB-HOLOGRAM-SMOKE] FINAL FAIL failedSuites=" + failedSuites + "/" + suites);
+            if (aeExternal) {
+                try {
+                    if (!coexistence) throw new IllegalStateException(
+                        "AE external cell fixture requires the explicit coexistence profile");
+                    WorldServer aeWorld = server.worldServerForDimension(0);
+                    net.minecraft.entity.player.EntityPlayerMP aeActor = FakePlayerFactory.get(
+                        aeWorld,
+                        new GameProfile(UUID.fromString("720a585f-0201-4e58-814d-639c7f8b92a1"), "GTMBAeBlueprint"));
+                    HologramAeExternalCellSmoke.run(aeWorld, aeActor);
+                } catch (Throwable failure) {
+                    failedSuites++;
+                    suiteFailure("AE-EXTERNAL-CELL", failure);
+                }
+            }
+            // Start AE last: other suites may clear Service or modify fixture actors/inventories.
+            try {
+                HologramAeBlueprintSmoke.run(server.worldServerForDimension(0));
+            } catch (Throwable failure) {
+                failedSuites++;
+                suiteFailure("AE-BLUEPRINT", failure);
+            }
+            if (extended) {
+                try {
+                    HologramAeBlueprintSmoke.runExtended(server.worldServerForDimension(0));
+                } catch (Throwable failure) {
+                    failedSuites++;
+                    suiteFailure("AE-BLUEPRINT-FMP", failure);
+                }
+            }
+            deferredSuites = suites;
+            deferredFailures = failedSuites;
+            deferredTicks = 0;
+            awaitingAe = true;
         } finally {
-            HologramService.clear();
-            server.initiateShutdown();
+            if (!awaitingAe) {
+                HologramService.clear();
+                server.initiateShutdown();
+            }
+        }
+    }
+
+    private void finishAeTick() {
+        MinecraftServer server = MinecraftServer.getServer();
+        try {
+            HologramAeBlueprintSmoke.PendingStatus status = HologramAeBlueprintSmoke.advancePending();
+            if (!status.complete) {
+                if (++deferredTicks <= 40) return;
+                throw new IllegalStateException(
+                    "AE lifecycle verification did not finish within 40 real server END ticks");
+            }
+            for (HologramAeBlueprintSmoke.Failure failure : status.failures) {
+                deferredFailures++;
+                suiteFailure(failure.suite, failure.cause);
+            }
+            awaitingAe = false;
+            if (deferredFailures == 0) System.out
+                .println("[GTMB-HOLOGRAM-SMOKE] FINAL PASS suites=" + deferredSuites + " assertions=" + assertions);
+            else System.err
+                .println("[GTMB-HOLOGRAM-SMOKE] FINAL FAIL failedSuites=" + deferredFailures + "/" + deferredSuites);
+        } catch (Throwable failure) {
+            awaitingAe = false;
+            deferredFailures++;
+            suiteFailure("AE-LIFECYCLE", failure);
+            System.err
+                .println("[GTMB-HOLOGRAM-SMOKE] FINAL FAIL failedSuites=" + deferredFailures + "/" + deferredSuites);
+        } finally {
+            if (!awaitingAe) {
+                HologramService.clear();
+                server.initiateShutdown();
+            }
         }
     }
 

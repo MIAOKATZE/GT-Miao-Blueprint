@@ -32,6 +32,7 @@ Craft **one StructureLib Hologram Projector into one Neko Projector** with a sha
 - **Structures / 结构** — Preview and adjust machine structures; plan construction, replacement or dismantling. 预览和调整机器结构，规划补建、替换或拆除。
 - **Blueprints / 蓝图** — Capture regions, select and move blocks, edit hints, exclude blocks, and import or export JSON. 框选区域、多选与移动方块、编辑提示词、排除放置，并导入或导出 JSON。
 - **Machine data / 设备数据** — Choose NBT and cover entries to save; check materials and resources before placement. 按需保存 NBT 与覆盖板数据，放置前核对材料和资源。
+- **AE blueprint data / AE 蓝图数据** — Safely mark supported AE2 slots, review sanitized cell contents and installation materials, then preview and place with the selected retention rules. 安全标记已适配的 AE2 槽位，查看元件清理与施工材料，并按保留选项预览和放置。
 - **Compatibility / 兼容信息** — View missing blocks and source mod version differences. 查看缺失方块及来源模组的版本差异。
 
 ## Quick Start / 快速使用

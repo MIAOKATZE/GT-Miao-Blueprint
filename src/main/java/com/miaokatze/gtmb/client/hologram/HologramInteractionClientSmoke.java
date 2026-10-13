@@ -33,7 +33,9 @@ public final class HologramInteractionClientSmoke {
     private HologramScreen realScreen;
     private long lastClickedRender = -1;
     private long renderedWorldFrames, closedAtWorldFrame;
-    private int receiptReadRetries;
+    private long closedAtServerTick;
+    private HologramInteractionReceiptSmoke receiptReader;
+    private NBTTagCompound tickReceipt;
     private boolean connectionDiagnosticSaved;
     private int timedStage = -1;
     private long stageEnteredAt;
@@ -48,6 +50,11 @@ public final class HologramInteractionClientSmoke {
     private boolean sufficientBlueprintPass = true;
     private long operationStartedAt;
     private final java.util.Set<String> preservedGradeCoordinates = new java.util.LinkedHashSet<>();
+    private HologramAeInteractionClientSmoke aeDriver;
+    private long aeRenderedFrames;
+    private long disconnectedFrame = -1, disconnectedAt;
+    private String disconnectedReason;
+    private String lastStoneAreaObservation = "";
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")) {
@@ -65,13 +72,53 @@ public final class HologramInteractionClientSmoke {
     }
 
     @SubscribeEvent
+    public void aeRendered(TickEvent.RenderTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) aeRenderedFrames++;
+    }
+
+    @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (done) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
+            if (mc.currentScreen instanceof net.minecraft.client.gui.GuiDisconnected) {
+                if (event.phase == TickEvent.Phase.START) return;
+                if (disconnectedReason == null) {
+                    disconnectedReason = disconnectReason((net.minecraft.client.gui.GuiDisconnected) mc.currentScreen);
+                    disconnectedFrame = aeRenderedFrames;
+                    disconnectedAt = System.nanoTime();
+                    System.err.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] DISCONNECTED " + disconnectedReason);
+                    if (receipts != null) Files.write(
+                        new File(receipts, "client-disconnect.txt").toPath(),
+                        disconnectedReason.getBytes(StandardCharsets.UTF_8));
+                }
+                // Capture its next genuine rendered frame, then fail; never reconnect or wait for the overall timeout.
+                if (aeRenderedFrames <= disconnectedFrame && System.nanoTime() - disconnectedAt < 2000000000L) return;
+                screenshot(mc, "network-disconnected-exact-reason");
+                throw new IllegalStateException("actual socket disconnected: " + disconnectedReason);
+            }
+            if (aeDriver != null) {
+                if (aeDriver.tick(event, aeRenderedFrames)) {
+                    Files.write(
+                        new File(receipts, "client-complete.txt").toPath(),
+                        "v004 whole real flow and v005 actual AE container/NEI/review/paid placement PASS\n"
+                            .getBytes(StandardCharsets.UTF_8));
+                    done = true;
+                    System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] FINAL PASS stage=100 AE full real flow");
+                    mc.shutdown();
+                }
+                return;
+            }
             if (event.phase == TickEvent.Phase.START) {
                 if (stage == 46) keyboard(Keyboard.KEY_RETURN, true);
                 return;
+            }
+            // Validate this tick's real file before any input; publication retries never repeat a sent action.
+            tickReceipt = null;
+            if (stage >= 2 && receipts != null) {
+                if (receiptReader == null) receiptReader = new HologramInteractionReceiptSmoke(receipts);
+                tickReceipt = receiptReader.read();
+                if (tickReceipt == null) return;
             }
             if (timedStage != stage) {
                 timedStage = stage;
@@ -165,7 +212,11 @@ public final class HologramInteractionClientSmoke {
             }
             if (stage == 61 || stage == 63) {
                 require(mc.currentScreen == null, "root_exit_key_returns_to_real_world_stage_" + stage);
-                if (renderedWorldFrames <= closedAtWorldFrame) return;
+                if (System.nanoTime() - stageEnteredAt >= 10000000000L)
+                    throw new IllegalStateException("normal root close observation timed out stage=" + stage);
+                if (renderedWorldFrames <= closedAtWorldFrame || receipt().getLong("tick") - closedAtServerTick < 10)
+                    return;
+                require(mc.currentScreen == null, "normal_root_close_stays_closed_for_ten_server_ticks_" + stage);
                 reopenWithRightClick(mc);
                 stage = stage == 61 ? 62 : 64;
                 return;
@@ -242,6 +293,7 @@ public final class HologramInteractionClientSmoke {
                         java.util.Arrays.equals(preservedGuiSelection, screen.smokeSelectedIndices()),
                         "peer_tab_preserves_preview_selection");
                     closedAtWorldFrame = renderedWorldFrames;
+                    closedAtServerTick = receipt().getLong("tick");
                     screen.keyTyped('\0', Keyboard.KEY_ESCAPE);
                     require(mc.currentScreen == null, "Escape_from_blueprints_exits_whole_GUI");
                     stage = 61;
@@ -252,6 +304,7 @@ public final class HologramInteractionClientSmoke {
                         java.util.Arrays.equals(preservedGuiSelection, screen.smokeSelectedIndices()),
                         "reopen_after_Escape_preserves_actual_mouse_selection");
                     closedAtWorldFrame = renderedWorldFrames;
+                    closedAtServerTick = receipt().getLong("tick");
                     screen.keyTyped('e', Keyboard.KEY_E);
                     require(mc.currentScreen == null, "E_from_blueprints_exits_whole_GUI");
                     stage = 63;
@@ -443,10 +496,37 @@ public final class HologramInteractionClientSmoke {
                     mc.displayGuiScreen(null);
                     break;
                 case 47:
+                    if (!awaitStoneArea(state)) return;
+                    require(
+                        state.getInteger("mode") == 0 && state.getInteger("scope") == 0,
+                        "fresh_area_resets_previous_dismantling_mode_and_scope");
                     require(
                         state.getBoolean("virtual") && state.getTagList("cells", 10)
                             .tagCount() == (sufficientBlueprintPass ? 1 : 2),
                         "shift_mouse_enter_imports_actual_world_blocks_sufficient_" + sufficientBlueprintPass);
+                    net.minecraft.nbt.NBTTagList importedStoneCells = state.getTagList("cells", 10);
+                    java.util.Set<Integer> importedStoneX = new java.util.HashSet<>();
+                    for (int i = 0; i < importedStoneCells.tagCount(); i++) {
+                        NBTTagCompound cell = importedStoneCells.getCompoundTagAt(i);
+                        int stoneX = cell.getInteger("x");
+                        net.minecraft.item.ItemStack capturedTarget = net.minecraft.item.ItemStack
+                            .loadItemStackFromNBT(cell.getCompoundTag("targetStack"));
+                        require(
+                            (stoneX == 50 || !sufficientBlueprintPass && stoneX == 51) && importedStoneX.add(stoneX)
+                                && cell.getInteger("y") == 80
+                                && cell.getInteger("z") == 44
+                                && "minecraft:stone".equals(cell.getString("id"))
+                                && cell.getInteger("meta") == 0
+                                && "minecraft:stone".equals(cell.getString("wantId"))
+                                && cell.getInteger("wantMeta") == 0
+                                && "minecraft:stone".equals(cell.getString("wantId"))
+                                && capturedTarget != null
+                                && capturedTarget.stackSize == 1
+                                && capturedTarget.getItem()
+                                    == net.minecraft.item.Item.getItemFromBlock(net.minecraft.init.Blocks.stone)
+                                && capturedTarget.getItemDamage() == 0,
+                            "real_completed_area_contains_exact_source_stone_coordinate_" + i);
+                    }
                     click(screen, 130);
                     stage = 48;
                     break;
@@ -541,6 +621,11 @@ public final class HologramInteractionClientSmoke {
                         "second_explicit_missing_review_builds_one_real_block_and_consumes_exactly_one_item");
                     logConstructionScope(screen, "whole-blueprint-real-partial-placement-complete");
                     screenshot(mc, "v004-area-ghost-material-review");
+                    if (Boolean.getBoolean("gtmb.hologram.aeRealInteractionSmoke")) {
+                        aeDriver = new HologramAeInteractionClientSmoke(receipts);
+                        stage = 100;
+                        break;
+                    }
                     Files.write(
                         new File(receipts, "client-complete.txt").toPath(),
                         "real socket normal/air C08 + GUI mouse + peer tabs/Esc/E + direct-build/upgrade/full-dismantle + Shift area/Enter/Esc + camera/wheel Place ghost + one-confirm sufficient placement/material cancel/explicit missing confirmation PASS\n"
@@ -585,6 +670,22 @@ public final class HologramInteractionClientSmoke {
             failure.printStackTrace();
             mc.shutdown();
         }
+    }
+
+    private static String disconnectReason(net.minecraft.client.gui.GuiDisconnected screen) throws Exception {
+        String title = "";
+        net.minecraft.util.IChatComponent reason = null;
+        for (java.lang.reflect.Field field : net.minecraft.client.gui.GuiDisconnected.class.getDeclaredFields()) {
+            if (net.minecraft.util.IChatComponent.class.isAssignableFrom(field.getType())) {
+                field.setAccessible(true);
+                reason = (net.minecraft.util.IChatComponent) field.get(screen);
+            } else if ("field_146306_a".equals(field.getName())) {
+                field.setAccessible(true);
+                title = String.valueOf(field.get(screen));
+            }
+        }
+        if (reason == null) throw new IllegalStateException("GuiDisconnected reason component missing");
+        return "title=" + title + " reason=" + reason.getUnformattedText() + " component=" + reason;
     }
 
     private void crafting(Minecraft mc) throws Exception {
@@ -873,21 +974,23 @@ public final class HologramInteractionClientSmoke {
             return true;
         }
         if (stage == 44) {
-            if (state == null || state.getIntArray("areaPoints").length < 3 || ++waitTicks < 4) return true;
+            int[] first = state == null ? new int[0] : state.getIntArray("areaPoints");
+            if (first.length < 3 || first[0] != 50 || first[1] != 80 || first[2] != 44 || ++waitTicks < 4) return true;
             mouseCorner(mc, 1, sufficientBlueprintPass ? 50 : 51);
             stage = 45;
             waitTicks = 0;
             return true;
         }
         if (stage == 45) {
-            if (state == null || state.getIntArray("areaPoints").length < 6 || ++waitTicks < 4) return true;
+            int[] expected = { 50, 80, 44, sufficientBlueprintPass ? 50 : 51, 80, 44 };
+            if (state == null || !java.util.Arrays.equals(state.getIntArray("areaPoints"), expected) || ++waitTicks < 4)
+                return true;
             keyboard(Keyboard.KEY_RETURN, true);
             stage = 46;
             return true;
         }
         if (stage == 46) {
-            if (!(mc.currentScreen instanceof HologramScreen) || state == null || state.getBoolean("areaSelecting"))
-                return true;
+            if (!(mc.currentScreen instanceof HologramScreen) || state == null || !awaitStoneArea(state)) return true;
             keyboard(Keyboard.KEY_RETURN, false);
             lastClickedRender = -1;
             stage = 47;
@@ -967,6 +1070,52 @@ public final class HologramInteractionClientSmoke {
             return true;
         }
         return false;
+    }
+
+    private boolean awaitStoneArea(NBTTagCompound state) throws Exception {
+        String observation = "stage=" + stage
+            + " session="
+            + state.getString("session")
+            + " revision="
+            + state.getLong("planRevision")
+            + " areaSelecting="
+            + state.getBoolean("areaSelecting")
+            + " areaImporting="
+            + state.getBoolean("areaImporting")
+            + " areaImported="
+            + state.getBoolean("areaImported")
+            + " capturePending="
+            + state.getBoolean("capturePending")
+            + " virtual="
+            + state.getBoolean("virtual")
+            + " cells="
+            + state.getTagList("cells", 10)
+                .tagCount()
+            + " points="
+            + java.util.Arrays.toString(state.getIntArray("areaPoints"))
+            + " status="
+            + state.getString("status");
+        if (!observation.equals(lastStoneAreaObservation)) {
+            lastStoneAreaObservation = observation;
+            System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] AREA " + observation);
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(
+                new File(receipts, "stone-area-observed-state.nbt"))) {
+                CompressedStreamTools.writeCompressed(state, out);
+            }
+        }
+        if (state.getString("status")
+            .contains("区域导入失败")) throw new IllegalStateException("actual stone area import failed: " + observation);
+        int[] expected = { 50, 80, 44, sufficientBlueprintPass ? 50 : 51, 80, 44 };
+        boolean finished = !state.getBoolean("areaSelecting") && !state.getBoolean("areaImporting")
+            && state.getBoolean("areaImported")
+            && !state.getBoolean("capturePending")
+            && java.util.Arrays.equals(expected, state.getIntArray("areaPoints"))
+            && state.getInteger("x") == 50
+            && state.getInteger("y") == 80
+            && state.getInteger("z") == 44;
+        if (!finished && System.nanoTime() - stageEnteredAt > 10000000000L)
+            throw new IllegalStateException("10 second actual stone area completion wait: " + observation);
+        return finished;
     }
 
     private static void keyboard(int key, boolean down) throws Exception {
@@ -1203,25 +1352,8 @@ public final class HologramInteractionClientSmoke {
     }
 
     private NBTTagCompound receipt() throws Exception {
-        byte[] encoded;
-        try {
-            // Close the filesystem handle before decompression to minimize Windows replace conflicts.
-            encoded = Files.readAllBytes(new File(receipts, "world-receipt.nbt").toPath());
-            receiptReadRetries = 0;
-        } catch (java.nio.file.FileSystemException unavailable) {
-            String reason = String.valueOf(unavailable.getReason())
-                .toLowerCase(java.util.Locale.ROOT);
-            boolean transientPublication = unavailable instanceof java.nio.file.NoSuchFileException
-                || reason.contains("另一个程序")
-                || reason.contains("another process")
-                || reason.contains("being used")
-                || reason.contains("sharing violation");
-            if (!transientPublication || ++receiptReadRetries > 20) throw unavailable;
-            throw new AwaitReceipt();
-        }
-        try (java.io.ByteArrayInputStream input = new java.io.ByteArrayInputStream(encoded)) {
-            return CompressedStreamTools.readCompressed(input);
-        }
+        if (tickReceipt == null) throw new AwaitReceipt();
+        return tickReceipt;
     }
 
     private void require(boolean ok, String label) {

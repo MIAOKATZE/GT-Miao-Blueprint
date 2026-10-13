@@ -97,7 +97,8 @@ final class HologramArea {
             int meta = world.getBlockMetadata(x, y, z);
             TileEntity tile = world.getTileEntity(x, y, z);
             if (block != Blocks.air) {
-                ItemStack sample = serverSample(block, meta, tile);
+                NBTTagCompound data = tile == null ? null : HologramNativeCapture.capture(tile);
+                ItemStack sample = serverSample(block, meta, tile, data);
                 HologramPresets.Cell cell = sample == null ? new HologramPresets.Cell()
                     : HologramPresets.cell(sample, x - minX, y - minY, z - minZ, -1, false);
                 cell.x = x - minX;
@@ -108,8 +109,9 @@ final class HologramArea {
                 if (sample != null && sample.hasTagCompound())
                     cell.itemNbt = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
                 if (tile != null) {
-                    NBTTagCompound data = HologramNativeCapture.capture(tile);
-                    cell.tileNbt = HologramBlueprintNbt.encodeCaptured(data);
+                    cell.tileNbt = HologramAeBlueprint.supports(block, data)
+                        ? HologramBlueprintNbt.encodeCanonical(block, data)
+                        : HologramBlueprintNbt.encodeCaptured(data);
                 }
                 if (tile instanceof IGregTechTileEntity) {
                     IGregTechTileEntity gt = (IGregTechTileEntity) tile;
@@ -176,16 +178,54 @@ final class HologramArea {
             }
             return false;
         }
+        // Publish only a canonical detached draft, keeping the source world's cells and identities untouched.
+        blueprint = HologramAePolicy.sanitize(blueprint).preset;
         importing = false;
         imported = true;
         return true;
     }
 
+    /** Current import phase; no source-world reads are needed for the progress display. */
+    String importStage() {
+        return y <= maxY ? "blocks" : "declarations";
+    }
+
+    /** Progress belongs to the current phase and reads only the detached scan cursor. */
+    int importProgress() {
+        if (y > maxY) return discovery.isEmpty() ? 100 : (int) (100D * discoveryIndex / discovery.size());
+        long width = (long) maxX - minX + 1, depth = (long) maxZ - minZ + 1;
+        long total = width * depth * ((long) maxY - minY + 1);
+        long visited = (((long) y - minY) * depth + z - minZ) * width + x - minX;
+        return total <= 0 ? 0 : Math.max(0, Math.min(100, (int) (100D * visited / total)));
+    }
+
     /** Inventory identity is read without client-only pick hooks or harvesting callbacks. */
     static ItemStack serverSample(Block block, int metadata, TileEntity tile) {
+        boolean ae = HologramAeBlueprint.supports(block) || (block != null && block.getClass()
+            .getName()
+            .equals("codechicken.multipart.BlockMultipart"));
+        try {
+            return serverSample(
+                block,
+                metadata,
+                tile,
+                !ae || tile == null ? null : HologramNativeCapture.capture(tile));
+        } catch (IOException unsupported) {
+            return null;
+        }
+    }
+
+    private static ItemStack serverSample(Block block, int metadata, TileEntity tile, NBTTagCompound data) {
         if (tile instanceof IGregTechTileEntity)
             return new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) tile).getMetaTileID());
         if (block instanceof BlockFrameBox) return ((BlockFrameBox) block).getStackForm(1, metadata);
+        if (HologramAeBlueprint.supports(block, data)) {
+            try {
+                return HologramAeBlueprint.sampleIdentity(block, metadata, data);
+            } catch (IOException unsupported) {
+                return null;
+            }
+        }
         if (HologramNativePlacement.supported(block)) {
             try {
                 return HologramNativePlacement.sample(block, metadata, tile);

@@ -63,6 +63,7 @@ final class HologramAnnotationMarkers {
             if (bounds.length == 6 && !area.getString("prompt")
                 .isEmpty()) result.add(new Marker("area:" + i, "提示区 " + (i + 1), area.getString("prompt"), bounds));
         }
+        result.addAll(0, HologramAeWarningMarkers.collect(state));
         return result;
     }
 

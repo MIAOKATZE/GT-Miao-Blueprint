@@ -130,6 +130,8 @@ final class HologramPresets {
 
         String id, name, controllerType;
         int schema = 1;
+        int aePolicyVersion;
+        List<HologramAePolicy.Issue> aeIssues = new ArrayList<>();
         boolean retainNbt = true, retainCovers = true;
         String prompt, sourceMod, sourceClass;
         Map<String, String> modVersions = new LinkedHashMap<>();
@@ -202,7 +204,7 @@ final class HologramPresets {
     }
 
     static Preset get(String id) throws IOException {
-        for (Preset preset : all()) if (preset.id.equals(id)) return copy(preset);
+        for (Preset preset : all()) if (preset.id.equals(id)) return HologramAePolicy.sanitize(copy(preset)).preset;
         return null;
     }
 
@@ -239,6 +241,12 @@ final class HologramPresets {
         Preset result = GSON.fromJson(
             new String(HologramBlueprintSharing.encodeBounded(GSON, preset, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8),
             Preset.class);
+        // Defensive canonical boundary for non-UI callers; the interactive service has already reviewed this result.
+        HologramAePolicy.Draft canonical = HologramAePolicy.sanitize(result);
+        if (canonical.blocking)
+            throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
+        result = canonical.preset;
+        validate(result);
         if (update) {
             int index = indexOf(list, result.id);
             if (index < 0) throw new IOException("要更新的模板不存在");
@@ -452,6 +460,11 @@ final class HologramPresets {
     }
 
     static void validate(Preset preset) throws IOException {
+        if (preset != null) {
+            if (preset.aePolicyVersion < 0 || preset.aePolicyVersion > HologramAePolicy.VERSION)
+                throw new IOException("Unsupported AE policy version");
+            HologramAePolicy.validateIssues(preset.aeIssues);
+        }
         if (preset != null && preset.schema == 2) {
             validateBlueprint(preset);
             return;
@@ -621,7 +634,9 @@ final class HologramPresets {
 
     private static void filterSelectedPayload(Preset preset, Cell cell) throws IOException {
         List<String> keys = preset.retainNbt ? preset.retainedNbtKeys : java.util.Collections.emptyList();
-        cell.tileNbt = HologramBlueprintNbt.filterCaptured(cell.tileNbt, keys, preset.retainCovers);
+        cell.tileNbt = HologramAePolicy.handles(cell.block(), cell.tileNbt)
+            ? HologramBlueprintNbt.filterCanonical(cell.block(), cell.tileNbt, keys, preset.retainCovers)
+            : HologramBlueprintNbt.filterCaptured(cell.tileNbt, keys, preset.retainCovers);
         cell.itemNbt = HologramBlueprintNbt.filterCaptured(cell.itemNbt, keys, preset.retainCovers);
     }
 

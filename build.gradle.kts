@@ -35,6 +35,19 @@ tasks.named("check") { dependsOn("runHologramTest") }
 
 val hologramCoexistence = providers.gradleProperty("hologramCoexistence").isPresent
 val hologramExtendedCompatibility = providers.gradleProperty("hologramExtendedCompatibility").isPresent
+val hologramAeDeepCompatibility = providers.gradleProperty("hologramAeDeepCompatibility").isPresent
+if (hologramAeDeepCompatibility) {
+    require(listOf("hologramSmoke", "hologramCoexistence", "hologramClientSmoke", "hologramInteractionServer", "hologramInteractionClient")
+        .any { providers.gradleProperty(it).isPresent }) {
+        "-PhologramAeDeepCompatibility requires a hologram smoke/interaction run property."
+    }
+    extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
+        if (providers.gradleProperty("hologramClientSmoke").isPresent)
+            extraRunJvmArguments.add("-Dgtmb.hologram.aeClientSmoke=true")
+        if (providers.gradleProperty("hologramInteractionServer").isPresent || providers.gradleProperty("hologramInteractionClient").isPresent)
+            extraRunJvmArguments.add("-Dgtmb.hologram.aeRealInteractionSmoke=true")
+    }
+}
 if (hologramExtendedCompatibility) {
     require(listOf(
         "hologramSmoke", "hologramCompatibilitySmoke", "hologramCoexistence", "hologramClientSmoke",
@@ -84,6 +97,10 @@ if (providers.gradleProperty("hologramClientSmoke").isPresent) {
         extraRunJvmArguments.add("-Dgtmb.hologram.clientState=" + smokeRoot.get().file("server/hologram-client-state.nbt").asFile.absolutePath)
     }
     tasks.named<JavaExec>("runClient") {
+        if (hologramAeDeepCompatibility) {
+            dependsOn("compileTestJava")
+            classpath += sourceSets["test"].output
+        }
         workingDir(smokeRoot.map { it.dir("client") })
         args("--width", "1100", "--height", "800")
     }

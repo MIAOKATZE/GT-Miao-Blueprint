@@ -21,6 +21,7 @@ final class HologramPresetPersistenceRegression {
         Path directory = null;
         Object previousCache = null;
         Field cache = null;
+        AssertionError regressionFailure = null;
         try {
             cache = HologramPresets.class.getDeclaredField("cached");
             cache.setAccessible(true);
@@ -41,8 +42,10 @@ final class HologramPresetPersistenceRegression {
             HologramPresets.Preset edit = preset("preset_5", "Updated");
             HologramPresets.Cell target = new HologramPresets.Cell();
             target.item = "minecraft:stone";
+            target.block = "minecraft:stone";
             target.x = 2;
             target.facing = 5;
+            edit.cells.clear();
             edit.cells.add(target);
             put.invoke(null, updated, edit, true);
             SimpleAssert.eq(32, updated.size(), "updating a full library does not add a row");
@@ -85,13 +88,26 @@ final class HologramPresetPersistenceRegression {
             Files.delete(blocked);
             Files.delete(file);
         } catch (Exception failure) {
-            throw new AssertionError("preset persistence transaction regression", failure);
+            regressionFailure = new AssertionError("preset persistence transaction regression", failure);
+            throw regressionFailure;
+        } catch (AssertionError failure) {
+            regressionFailure = failure;
+            throw failure;
         } finally {
             try {
                 if (cache != null) cache.set(null, previousCache);
-                if (directory != null) Files.deleteIfExists(directory);
+                if (directory != null) {
+                    // These exact paths belong to this fixture, including failures before normal cleanup.
+                    Files.deleteIfExists(
+                        directory.resolve("blocked")
+                            .resolve("keep"));
+                    Files.deleteIfExists(directory.resolve("blocked"));
+                    Files.deleteIfExists(directory.resolve("presets.json"));
+                    Files.deleteIfExists(directory);
+                }
             } catch (Exception failure) {
-                throw new AssertionError("preset fixture cleanup", failure);
+                if (regressionFailure != null) regressionFailure.addSuppressed(failure);
+                else throw new AssertionError("preset fixture cleanup", failure);
             }
         }
     }
@@ -101,6 +117,12 @@ final class HologramPresetPersistenceRegression {
         preset.id = id;
         preset.name = name;
         preset.controllerType = "storage-only-fixture";
+        preset.schema = 2;
+        HologramPresets.Cell stone = new HologramPresets.Cell();
+        stone.item = "minecraft:stone";
+        stone.block = "minecraft:stone";
+        preset.cells.add(stone);
+        preset.palette.add(stone);
         return preset;
     }
 

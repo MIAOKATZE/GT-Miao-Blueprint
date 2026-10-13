@@ -269,6 +269,10 @@ public final class HologramNetwork {
             this.tag = (NBTTagCompound) tag.copy();
         }
 
+        protected int expandedBudget() {
+            return 16 * MAX_BYTES;
+        }
+
         public void fromBytes(ByteBuf buf) {
             int length = buf.readInt();
             if (length < 0 || length > MAX_BYTES || length > buf.readableBytes())
@@ -276,7 +280,7 @@ public final class HologramNetwork {
             byte[] bytes = new byte[length];
             buf.readBytes(bytes);
             try {
-                tag = HologramSnapshotCodec.decode(bytes, 16 * MAX_BYTES, 16L * MAX_BYTES);
+                tag = HologramSnapshotCodec.decode(bytes, expandedBudget(), 4L * expandedBudget());
             } catch (IOException e) {
                 throw new IllegalArgumentException("hologram NBT", e);
             }
@@ -295,6 +299,11 @@ public final class HologramNetwork {
     }
 
     public static final class Action extends Packet {
+
+        @Override
+        protected int expandedBudget() {
+            return HologramAeProtocol.MAX_STACK_AGGREGATE;
+        }
 
         public Action() {}
 

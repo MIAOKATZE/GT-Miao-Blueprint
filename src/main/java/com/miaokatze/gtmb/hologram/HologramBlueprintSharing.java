@@ -187,14 +187,23 @@ final class HologramBlueprintSharing {
                     .matches("[12]"))
                 throw new IOException("蓝图条目schema无效");
         }
-        integerFields(entry, "controllerId", "controllerFacing");
-        for (String rows : new String[] { "cells", "palette", "structures", "hintAreas" }) {
+        integerFields(entry, "controllerId", "controllerFacing", "aePolicyVersion");
+        for (String rows : new String[] { "cells", "palette", "structures", "hintAreas", "aeIssues" }) {
             JsonElement list = entry.getAsJsonObject()
                 .get(rows);
             if (list == null) continue;
             if (!list.isJsonArray()) throw new IOException("蓝图条目列表格式无效");
             for (JsonElement row : list.getAsJsonArray()) {
                 if (!row.isJsonObject()) throw new IOException("蓝图条目对象格式无效");
+                if (rows.equals("aeIssues"))
+                    for (String field : new String[] { "code", "severity", "path", "message" }) {
+                        JsonElement value = row.getAsJsonObject()
+                            .get(field);
+                        if (value == null || !value.isJsonPrimitive()
+                            || !value.getAsJsonPrimitive()
+                                .isString())
+                            throw new IOException("AE issue string field invalid: " + field);
+                    }
                 integerFields(
                     row,
                     "x",
