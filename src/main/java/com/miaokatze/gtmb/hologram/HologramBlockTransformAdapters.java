@@ -70,6 +70,21 @@ final class HologramBlockTransformAdapters {
         HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
 
             public boolean accepts(HologramBlockTransforms.Data data) {
+                return data.type("gcewing.architecture.common.block.BlockSawbench") || data.id("gcewing.sawbench");
+            }
+
+            public void turn(HologramBlockTransforms.Data data, boolean vertical) throws IOException {
+                // PropertyTurn packs NORTH,WEST,SOUTH,EAST in the low two bits;
+                // Orient4WaysByState uses that exact index for Trans3.turn.
+                if (vertical) throw new IOException("ArchitectureCraft sawbench supports horizontal rotation only");
+                if (data.metadata < 0 || data.metadata > 3)
+                    throw new IOException("Invalid ArchitectureCraft sawbench turn");
+                data.metadata = (data.metadata + 3) & 3;
+            }
+        });
+        HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
+
+            public boolean accepts(HologramBlockTransforms.Data data) {
                 return data.type("gcewing.architecture.common.block.BlockShape") || data.id("gcewing.shape");
             }
 

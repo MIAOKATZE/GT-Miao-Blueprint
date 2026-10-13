@@ -49,6 +49,8 @@ public final class HologramAeBlueprintCoreRegression {
             .get();
         emptyNativeShellCapability(drive);
         cableBusTargetHost();
+        exportBusRuntimeSchema();
+        reportingPartVisualSchema();
         unknownCell(drive);
         lostPhysicalMarker(drive);
         malformedPhysicalMarkers(drive);
@@ -921,6 +923,186 @@ public final class HologramAeBlueprintCoreRegression {
         for (int index = 0; index < costs.items.size(); index++) check(
             ItemStack.areItemStacksEqual(costs.items.get(index), after.items.get(index)),
             "CBC display cannot change a native component material stack");
+    }
+
+    private static void exportBusRuntimeSchema() throws Exception {
+        Block block = registeredBlock("appeng.block.networking.BlockCableBus");
+        ItemStack definition = AEApi.instance()
+            .definitions()
+            .parts()
+            .exportBus()
+            .maybeStack(1)
+            .get();
+        IPart nativePart = ((IPartItem) definition.getItem()).createPartFromItemStack(definition.copy());
+        check(
+            nativePart.getClass() == appeng.parts.automation.PartExportBus.class,
+            "exact registered Export Bus schema fixture");
+        NBTTagCompound raw = HologramNativeCompatibilityFixture.seed(block, 0, 64, 0), extra = new NBTTagCompound();
+        nativePart.writeToNBT(extra);
+        check(
+            extra.hasKey("nextSlot", 3) && extra.getInteger("nextSlot") == 0,
+            "official Export Bus writer includes default scheduling cursor");
+        raw.setTag("def:2", definition.writeToNBT(new NBTTagCompound()));
+        raw.setTag("extra:2", extra);
+        HologramAeBlueprint.Analysis defaults = HologramAeBlueprint.analyze(block, 0, raw);
+        check(
+            !defaults.blocking && issue(defaults, "runtime_reset", "extra:2/nextSlot"),
+            "default native Export Bus is audited without silently acknowledging unknown schema");
+        extra.setInteger("nextSlot", 8);
+        extra.setString("CRAFT_ONLY", "YES");
+        extra.setString("SCHEDULING_MODE", "ROUNDROBIN");
+        NBTTagCompound ghost = new NBTTagCompound(), config = new NBTTagCompound(), upgrades = new NBTTagCompound();
+        appeng.util.item.AEItemStack.create(new ItemStack(Items.iron_ingot))
+            .writeToNBT(ghost);
+        config.setTag("#0", ghost);
+        extra.setTag("config", config);
+        upgrades.setTag(
+            "#0",
+            AEApi.instance()
+                .definitions()
+                .materials()
+                .cardSpeed()
+                .maybeStack(1)
+                .get()
+                .writeToNBT(new NBTTagCompound()));
+        extra.setTag("upgrades", upgrades);
+        NBTTagCompound oldNode = new NBTTagCompound(), oldLink = new NBTTagCompound();
+        oldNode.setLong("g", 900001);
+        oldNode.setInteger("p", 123456);
+        extra.setTag("part", oldNode);
+        oldLink.setString("craftID", "old-grid-job-identity");
+        oldLink.setLong("g", 900002);
+        extra.setTag("links-0", oldLink.copy());
+        extra.setTag("links-8", oldLink.copy());
+        NBTTagCompound before = (NBTTagCompound) raw.copy();
+        HologramAeBlueprint.Analysis clean = HologramAeBlueprint.analyze(block, 0, raw);
+        NBTTagCompound kept = clean.payload()
+            .getCompoundTag("extra:2");
+        check(
+            !clean.blocking && !kept.hasKey("nextSlot")
+                && !kept.hasKey("part")
+                && !kept.hasKey("links-0")
+                && !kept.hasKey("links-8"),
+            "Export Bus drops cursor, old grid identity and active job links");
+        check(
+            issue(clean, "crafting_link", "extra:2/links-0") && issue(clean, "crafting_link", "extra:2/links-8"),
+            "Export Bus active link loss remains explicit review warnings");
+        check(
+            kept.getString("CRAFT_ONLY")
+                .equals("YES")
+                && kept.getString("SCHEDULING_MODE")
+                    .equals("ROUNDROBIN")
+                && slot(clean, "extra:2/config/#0").stack()
+                    .getItem() == Items.iron_ingot
+                && slot(clean, "extra:2/upgrades/#0").stack()
+                    .isItemEqual(
+                        AEApi.instance()
+                            .definitions()
+                            .materials()
+                            .cardSpeed()
+                            .maybeStack(1)
+                            .get()),
+            "Export Bus retains supported settings, ghost filters and physical upgrade markers");
+        check(before.equals(raw), "Export Bus complete source and nested job/ghost/inventory records stay immutable");
+        for (String key : new String[] { "nextSlot", "links-0", "links-9", "links-00",
+            "unreviewed_external_reference" }) {
+            NBTTagCompound invalid = clean.payload();
+            NBTTagCompound bad = invalid.getCompoundTag("extra:2");
+            if (key.equals("nextSlot")) bad.setInteger(key, 9);
+            else if (key.equals("links-0")) bad.setString(key, "malformed native link");
+            else bad.setTag(key, oldLink.copy());
+            HologramAeBlueprint.Analysis blocked = HologramAeBlueprint.analyze(block, 0, invalid);
+            check(
+                blocked.blocking && issue(blocked, "unreviewed_part_field", "extra:2/" + key),
+                "Export Bus malformed/out-of-range/unknown runtime field stays blocked: " + key);
+            check(
+                HologramAeBlueprint.analyze(block, 0, blocked.payload()).blocking,
+                "Export Bus unknown schema block persists after normalization: " + key);
+        }
+        AENetworkProxy proxy = ((appeng.parts.AEBasePart) nativePart).getProxy();
+        Field node = AENetworkProxy.class.getDeclaredField("node"),
+            data = AENetworkProxy.class.getDeclaredField("data");
+        node.setAccessible(true);
+        data.setAccessible(true);
+        check(
+            !proxy.isReady() && node.get(proxy) == null && data.get(proxy) == null,
+            "Export Bus schema review invokes no native reader, node creation or grid readiness");
+    }
+
+    private static void reportingPartVisualSchema() throws Exception {
+        Block block = registeredBlock("appeng.block.networking.BlockCableBus");
+        for (String name : Arrays.asList(
+            "terminal",
+            "interfaceTerminal",
+            "craftingTerminal",
+            "patternTerminal",
+            "patternTerminalEx",
+            "storageMonitor",
+            "conversionMonitor")) {
+            appeng.api.definitions.IItemDefinition definition = (appeng.api.definitions.IItemDefinition) appeng.api.definitions.IParts.class
+                .getMethod(name)
+                .invoke(
+                    AEApi.instance()
+                        .definitions()
+                        .parts());
+            ItemStack stack = definition.maybeStack(1)
+                .get();
+            IPart nativePart = ((IPartItem) stack.getItem()).createPartFromItemStack(stack.copy());
+            check(
+                nativePart instanceof appeng.parts.reporting.AbstractPartReporting,
+                "actual registered reporting part visual schema: " + name);
+            NBTTagCompound raw = HologramNativeCompatibilityFixture.seed(block, 0, 64, 0), extra = new NBTTagCompound();
+            nativePart.writeToNBT(extra);
+            check(
+                extra.hasKey("spin", 1) && extra.hasKey("opacity", 5) && extra.getFloat("opacity") == -1,
+                "official reporting writer includes byte rotation and float cache: " + name);
+            extra.setByte("spin", (byte) 3);
+            raw.setTag("def:2", stack.writeToNBT(new NBTTagCompound()));
+            raw.setTag("extra:2", extra);
+            NBTTagCompound before = (NBTTagCompound) raw.copy();
+            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, 0, raw);
+            check(
+                !analysis.blocking && analysis.payload()
+                    .getCompoundTag("extra:2")
+                    .getByte("spin") == 3
+                    && !analysis.payload()
+                        .getCompoundTag("extra:2")
+                        .hasKey("opacity")
+                    && issue(analysis, "runtime_reset", "extra:2/opacity"),
+                "reporting rotation retained and light cache explicitly regenerated: " + name);
+            HologramBlockTransforms.Result turn = HologramBlockTransforms
+                .turn(block, "", 0, HologramBlueprintNbt.encodeCanonical(block, analysis.payload()), null, false);
+            NBTTagCompound rotated = HologramBlueprintNbt.decode(turn.tileNbt);
+            check(
+                !HologramAeBlueprint.analyze(block, 0, rotated).blocking
+                    && rotated.getCompoundTag("extra:" + HologramVirtualTransform.front(2, false))
+                        .getByte("spin") == HologramBlockTransformAdapters.aeSpin(2, 3, false),
+                "real reporting visual schema survives native blueprint rotation: " + name);
+            for (int malformed = 0; malformed < 5; malformed++) {
+                NBTTagCompound invalid = analysis.payload(), invalidExtra = invalid.getCompoundTag("extra:2");
+                String key = malformed < 2 ? "spin" : malformed < 4 ? "opacity" : "unreviewed_reporter_reference";
+                if (malformed == 0) invalidExtra.setInteger("spin", 2);
+                else if (malformed == 1) invalidExtra.setByte("spin", (byte) 4);
+                else if (malformed == 2) invalidExtra.setInteger("opacity", -1);
+                else if (malformed == 3) invalidExtra.setFloat("opacity", Float.NaN);
+                else invalidExtra.setString(key, "old foreign state");
+                HologramAeBlueprint.Analysis blocked = HologramAeBlueprint.analyze(block, 0, invalid);
+                check(
+                    blocked.blocking && issue(blocked, "unreviewed_part_field", "extra:2/" + key)
+                        && HologramAeBlueprint.analyze(block, 0, blocked.payload()).blocking,
+                    "malformed/unknown reporting data stays blocked after canonical normalization: " + name
+                        + "/"
+                        + key);
+            }
+            AENetworkProxy proxy = ((appeng.parts.AEBasePart) nativePart).getProxy();
+            Field node = AENetworkProxy.class.getDeclaredField("node"),
+                data = AENetworkProxy.class.getDeclaredField("data");
+            node.setAccessible(true);
+            data.setAccessible(true);
+            check(
+                before.equals(raw) && !proxy.isReady() && node.get(proxy) == null && data.get(proxy) == null,
+                "reporting native source, inventory and grid lifecycle stay unchanged: " + name);
+        }
     }
 
     private static void emptyNativeShellCapability(Block drive) throws Exception {

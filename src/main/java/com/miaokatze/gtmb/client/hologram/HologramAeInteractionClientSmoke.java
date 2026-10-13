@@ -49,6 +49,10 @@ final class HologramAeInteractionClientSmoke {
     private int[] oldSavePoint, oldPlacePoint;
     private NBTTagList oldBusyDraft;
     private long busyBlockedTraffic, busyCancelledWorldTick;
+    private long worldLockFrame, worldLockNonce;
+    private boolean placementLibraryTab;
+    private final HologramActualUsePress usePress = new HologramActualUsePress();
+    private long nativePreviewTabRender = -1;
 
     HologramAeInteractionClientSmoke(File receipts) {
         this.receipts = receipts;
@@ -60,7 +64,7 @@ final class HologramAeInteractionClientSmoke {
         Minecraft mc = Minecraft.getMinecraft();
         frame = renderedFrame;
         if (event.phase == TickEvent.Phase.START) {
-            if (stage == 5) key(Keyboard.KEY_RETURN, true);
+            usePress.tick(event, mc);
             return false;
         }
         if (timedStage != stage) {
@@ -83,13 +87,14 @@ final class HologramAeInteractionClientSmoke {
         // A transient publication is retried before the stage performs any non-idempotent mouse/key input.
         tickReceipt = receiptReader.read();
         if (tickReceipt == null) return false;
+        if (usePress.tick(event, mc)) return false;
         if (guard != null) guard.assertStable("actual AE stage " + stage);
         if (++ticks < 3 || frame <= lastActionFrame) return false;
         switch (stage) {
             case 0:
                 require(mc.currentScreen instanceof HologramScreen, "busy test must continue the real previous draft");
                 parent = (HologramScreen) mc.currentScreen;
-                if (rootClick(130)) next(59);
+                if (libraryTab(parent) || rootClick(130)) next(59);
                 break;
             case 59:
                 oldSavePoint = parent.smokeControlPoint(132);
@@ -136,7 +141,10 @@ final class HologramAeInteractionClientSmoke {
                 if (!java.util.Arrays.equals(bothPoints, wantedCorners)) return false;
                 if (busyPass) oldBusyDraft = (NBTTagList) HologramClient.state.data.getTagList("cells", 10)
                     .copy();
-                key(Keyboard.KEY_RETURN, true);
+                key(Keyboard.KEY_LSHIFT, true);
+                // The finishing gesture targets a different block and must preserve both selected corners.
+                corner(mc, 1, 648, 88, 191);
+                key(Keyboard.KEY_LSHIFT, false);
                 next(5);
                 break;
             case 5:
@@ -266,6 +274,11 @@ final class HologramAeInteractionClientSmoke {
                 break;
             case 58:
                 if (!receipt().getBoolean("aeVirtualEpoch")) return false;
+                if (libraryTab(parent)) {
+                    if (rootClick(148)) nativePreviewTabRender = parent.smokeRenderGeneration();
+                    return false;
+                }
+                if (parent.smokeRenderGeneration() <= nativePreviewTabRender) return false;
                 NBTTagCompound importedPreview = parent.smokeSnapshot();
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(
                     new File(receipts, "ae-source-preview-state.nbt"))) {
@@ -672,6 +685,7 @@ final class HologramAeInteractionClientSmoke {
             case 51:
                 if (!receipt().getBoolean("aeConfirmedVerified")) return false;
                 guard.assertStable("all AE marks/save actions actual inventory conservation");
+                placementLibraryTab = libraryTab(parent);
                 if (!rootClick(141)) return false;
                 NBTTagCompound guarded = guard.receipt();
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(
@@ -699,16 +713,48 @@ final class HologramAeInteractionClientSmoke {
             case 53:
                 mc.objectMouseOver = null;
                 require(
+                    HologramRenderer.lastWorldGeometry > 0
+                        && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                    "AE actual moving world ghost is not rendered green before first RIGHT");
+                require(
                     java.util.Arrays.equals(expectedAnchor, HologramClient.movingAnchor(HologramClient.state)),
                     "AE rendered ghost and actual air use disagree");
-                mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
+                airRightClick(mc, true);
+                worldLockFrame = frame;
                 next(54);
                 break;
             case 54:
+                if (HologramClient.state == null || !HologramClient.state.data.getBoolean("virtualLocked"))
+                    return false;
+                NBTTagCompound lockedWorld = HologramClient.state.data;
+                require(
+                    mc.currentScreen == null && !lockedWorld.getBoolean("open"),
+                    "AE first RIGHT opened GUI before RIGHT2");
+                require(
+                    java.util.Arrays.equals(
+                        expectedAnchor,
+                        new int[] { lockedWorld.getInteger("x"), lockedWorld.getInteger("y"),
+                            lockedWorld.getInteger("z") }),
+                    "AE first C08 locked a different rendered coordinate");
+                if (frame <= worldLockFrame || HologramRenderer.lastWorldPlacementOutlineColor != 0x66d9ef)
+                    return false;
+                require(HologramRenderer.lastWorldGeometry > 0, "AE locked cyan world ghost has no actual geometry");
+                require(receipt().getInteger("aePlaceEvents") == 0, "AE first RIGHT placed before material review");
+                screenshot("ae-v007-first-right-cyan-world-lock");
+                worldLockNonce = lockedWorld.getLong("placementReviewNonce");
+                mc.objectMouseOver = null;
+                airRightClick(mc, false);
+                next(63);
+                break;
+            case 63:
                 if (!(mc.currentScreen instanceof HologramScreen)) return false;
                 parent = (HologramScreen) mc.currentScreen;
                 NBTTagCompound lock = parent.smokeSnapshot();
                 if (!lock.getBoolean("virtualLocked") || parent.smokePending()) return false;
+                require(
+                    lock.getLong("placementReviewNonce") > worldLockNonce && lock.getBoolean("open"),
+                    "AE second RIGHT did not issue a fresh real material review");
+                require(libraryTab(parent) == placementLibraryTab, "AE placement review switched the last peer tab");
                 require(
                     java.util.Arrays.equals(
                         expectedAnchor,
@@ -725,6 +771,9 @@ final class HologramAeInteractionClientSmoke {
                 if (completed.getInteger("job") != 3 && completed.getInteger("job") != 5) return false;
                 NBTTagCompound independent = receipt();
                 if (!independent.getBoolean("aeCompleted")) return false;
+                require(
+                    libraryTab(parent) == placementLibraryTab,
+                    "AE paid placement completion switched the peer tab");
                 require(
                     completed.getInteger("completed") == fixture.getInteger("aeSourceCount")
                         && independent.getInteger("aePlaceEvents") == fixture.getInteger("aeSourceCount"),
@@ -1027,6 +1076,12 @@ final class HologramAeInteractionClientSmoke {
             "actual title-band click failed to release NEI search focus");
     }
 
+    private static boolean libraryTab(HologramScreen screen) throws ReflectiveOperationException {
+        java.lang.reflect.Field tab = HologramScreen.class.getDeclaredField("libraryDrawer");
+        tab.setAccessible(true);
+        return tab.getBoolean(screen);
+    }
+
     private boolean rootClick(int id) {
         if (parent.smokePending()) return false;
         boolean clicked = input.rootControl(parent, id, frame);
@@ -1112,7 +1167,13 @@ final class HologramAeInteractionClientSmoke {
         return true;
     }
 
-    private static void rightClickSource(Minecraft mc) {
+    private void airRightClick(Minecraft mc, boolean checkWorldLock) {
+        usePress.begin(mc, checkWorldLock);
+        mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
+    }
+
+    private void rightClickSource(Minecraft mc) {
+        usePress.begin(mc, false);
         mc.playerController.onPlayerRightClick(
             mc.thePlayer,
             mc.theWorld,
@@ -1124,11 +1185,12 @@ final class HologramAeInteractionClientSmoke {
             Vec3.createVectorHelper(648.5, 88.5, 192));
     }
 
-    private static void corner(Minecraft mc, int button, int x) throws Exception {
+    private void corner(Minecraft mc, int button, int x) throws Exception {
         corner(mc, button, x, 88, 192);
     }
 
-    private static void corner(Minecraft mc, int button, int x, int y, int z) throws Exception {
+    private void corner(Minecraft mc, int button, int x, int y, int z) throws Exception {
+        if (button == 1) usePress.begin(mc, false);
         mc.objectMouseOver = new MovingObjectPosition(x, y, z, 2, Vec3.createVectorHelper(x + .5, y + .5, z));
         net.minecraftforge.client.event.MouseEvent mouse = new net.minecraftforge.client.event.MouseEvent();
         java.lang.reflect.Field b = mouse.getClass()

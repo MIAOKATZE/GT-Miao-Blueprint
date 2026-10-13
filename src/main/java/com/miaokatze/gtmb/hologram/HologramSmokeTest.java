@@ -526,7 +526,37 @@ public final class HologramSmokeTest {
         require(capture.state == previous, "custom_use_server_handler_queues_until_actual_server_scheduler_tick");
         ServerTaskScheduler.INSTANCE.onServerTick(new TickEvent.ServerTickEvent(TickEvent.Phase.END));
         flushTransport();
+        if (capture.state == previous) {
+            Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+            sessions.setAccessible(true);
+            Object pendingSession = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
+            require(
+                !air && pendingSession != null
+                    && sessionField(pendingSession, "player") == player
+                    && ((Integer) sessionField(pendingSession, "x")) == x
+                    && ((Integer) sessionField(pendingSession, "y")) == y
+                    && ((Integer) sessionField(pendingSession, "z")) == z
+                    && sessionField(pendingSession, "target") == player.worldObj.getTileEntity(x, y, z)
+                    && (Boolean) sessionField(pendingSession, "capturePending"),
+                "actual_server_scheduler_dispatch_created_exact_pending_controller_capture");
+            // Cold class loading can exhaust the production capture budget. Only the server's registered
+            // continuation may publish the complete snapshot; do not re-dispatch the request or scan manually.
+            for (int continuation = 0; continuation < 8 && capture.state == previous
+                && (Boolean) sessionField(pendingSession, "capturePending"); continuation++) {
+                long due = (Long) sessionField(pendingSession, "captureRetryDue");
+                player.worldObj.getWorldInfo()
+                    .incrementTotalWorldTime(Math.max(player.worldObj.getTotalWorldTime() + 1, due));
+                serviceTick();
+            }
+        }
         require(capture.state != previous, "actual_server_scheduler_dispatches_custom_use_and_receives_snapshot");
+    }
+
+    private static Object sessionField(Object session, String name) throws ReflectiveOperationException {
+        Field field = session.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(session);
     }
 
     private static void handle(EntityPlayerMP player, NBTTagCompound action) {

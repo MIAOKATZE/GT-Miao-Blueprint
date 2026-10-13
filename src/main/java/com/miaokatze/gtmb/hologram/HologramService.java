@@ -104,6 +104,7 @@ public final class HologramService {
 
     public static void openAir(EntityPlayerMP player) {
         Session previous = SESSIONS.get(player.getUniqueID());
+        if (openPlacementReview(previous, player)) return;
         if (previous != null && previous.player == player
             && !previous.cancelled
             && previous.job != 4
@@ -127,6 +128,7 @@ public final class HologramService {
     /** Ordinary world use imports a constructable controller or opens the existing workspace. */
     public static void openWorld(EntityPlayerMP player, int x, int y, int z, int side) {
         Session previous = SESSIONS.get(player.getUniqueID());
+        if (openPlacementReview(previous, player)) return;
         if (previous != null && previous.player == player
             && !previous.cancelled
             && valid(previous)
@@ -139,6 +141,37 @@ public final class HologramService {
         if (context instanceof IConstructable || context instanceof IConstructableProvider
             || tile != null && IMultiblockInfoContainer.contains(tile.getClass())) open(player, x, y, z, side);
         else openAir(player);
+    }
+
+    /** The second ordinary world click opens review without importing the block beneath the ghost. */
+    private static boolean openPlacementReview(Session s, EntityPlayerMP player) {
+        if (s == null || s.player != player
+            || s.cancelled
+            || !valid(s)
+            || !s.virtual
+            || !s.virtualPlacement
+            || !s.virtualLocked
+            || s.virtualPreset == null
+            || s.job == 1
+            || s.job == 2
+            || s.job == 3
+            || s.job == 5
+            || s.job == 4) return false;
+        if (blockedByAreaImport(s)) {
+            send(s);
+            return true;
+        }
+        refreshPlan(s);
+        s.blueprintAwaitingConfirmation = true;
+        s.placementReviewIssued = true;
+        s.forcePlacementReady = false;
+        s.open = true;
+        s.settingsOnly = false;
+        s.openPurpose = "placementReview";
+        s.placementReviewNonce++;
+        s.status = "位置已锁定，请核对材料与 NBT 条目后确认施工";
+        send(s);
+        return true;
     }
 
     private static Session uiSession(EntityPlayerMP player) {
@@ -238,22 +271,24 @@ public final class HologramService {
             .setBoolean("gtitHologramAreaSelecting", true);
         player.inventory.markDirty();
         s.open = false;
-        s.status = "左键第一角，右键第二角；Alt 使用玩家坐标；Enter 完成，Esc 取消";
+        s.status = "左键第一角，右键第二角；Alt 使用玩家坐标；再次 Shift + 右键完成，Esc 取消";
         send(s);
     }
 
-    public static void finishAreaSelection(EntityPlayerMP player, String session) {
+    public static void finishAreaSelection(EntityPlayerMP player, NBTTagCompound request) {
         Session s = SESSIONS.get(player.getUniqueID());
         HologramArea area = AREAS.get(player.getUniqueID());
         if (s == null || s.player != player
-            || !s.id.equals(session)
+            || !s.id.equals(request.getString("session"))
+            || !request.hasKey("planRevision", 4)
+            || s.planRevision != request.getLong("planRevision")
             || !valid(s)
             || s.job == 1
             || s.job == 2
             || area == null
             || !area.selecting) return;
         if (area.first == null || area.second == null) {
-            s.status = "请先设置两个角点，再按 Enter 完成";
+            s.status = "请先设置两个角点，再次 Shift + 右键完成";
             send(s);
             return;
         }
@@ -672,11 +707,70 @@ public final class HologramService {
         send(s);
     }
 
-    public static void lockVirtual(EntityPlayerMP player, int x, int y, int z, int side) {
-        lockVirtual(player, x, y, z, side, false);
+    /** Last selection belongs to the held logical tool; shortcut loading uses the ordinary validated preset path. */
+    public static void quickPlaceLastBlueprint(EntityPlayerMP player, NBTTagCompound request) {
+        Session previous = uiSession(player);
+        if (!valid(previous)) return;
+        HologramArea area = AREAS.get(player.getUniqueID());
+        if (previous.job == 1 || previous.job == 2
+            || area != null && (area.selecting || area.importing)
+            || previous.virtual && previous.virtualPlacement
+                && previous.job != 3
+                && previous.job != 4
+                && previous.job != 5) {
+            previous.status = "请先完成当前框选或放置，再快捷放置蓝图";
+            presetGuidance(previous, previous.status);
+            send(previous);
+            return;
+        }
+        String id = selectedPreset(previous);
+        if (id.isEmpty()) {
+            previous.status = "尚未选择有效蓝图，或上次选择已删除；普通右键打开蓝图库重新选择后可用 Alt + 右键快捷放置";
+            presetGuidance(previous, previous.status);
+            send(previous);
+            return;
+        }
+        int x = request.getInteger("x"), y = request.getInteger("y"), z = request.getInteger("z");
+        if (!request.hasKey("x", 3) || !request.hasKey("y", 3)
+            || !request.hasKey("z", 3)
+            || !request.hasKey("side", 3)
+            || request.getInteger("side") < 0
+            || request.getInteger("side") > 5
+            || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
+            || !previewReach(player, x, y, z)
+            || !player.worldObj.blockExists(x, y, z)) {
+            previous.status = "快捷放置位置未加载或超出范围；请靠近目标后重试";
+            presetGuidance(previous, previous.status);
+            send(previous);
+            return;
+        }
+        Session placement = new Session(player, x, y, z, false, request.getInteger("side"));
+        placement.virtual = true;
+        loadPreset(placement, id, false);
+        if (placement.virtualPreset == null || placement.capture == null
+            || placement.capture.incomplete
+            || !virtualBoundsValid(placement)
+            || !beginVirtualPlacement(placement, x, y, z, placement.side)) {
+            previous.status = "上次选择的蓝图不可快捷放置：" + placement.status + "；普通右键打开蓝图库重新选择";
+            presetGuidance(previous, previous.status);
+            send(previous);
+            return;
+        }
+        clearAreaSelection(previous);
+        SESSIONS.put(player.getUniqueID(), placement);
+        send(placement);
     }
 
-    private static void lockVirtual(EntityPlayerMP player, int x, int y, int z, int side, boolean placementReview) {
+    private static boolean virtualBoundsValid(Session s) {
+        for (HologramCapture.Cell cell : s.capture.cells)
+            if (!HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, s.player.worldObj.getHeight())) {
+                s.status = "蓝图结构范围超出世界边界或高度";
+                return false;
+            }
+        return true;
+    }
+
+    public static void lockVirtual(EntityPlayerMP player, int x, int y, int z, int side) {
         Session s = SESSIONS.get(player.getUniqueID());
         if (s != null && s.player == player && blockedByAreaImport(s)) {
             send(s);
@@ -704,15 +798,14 @@ public final class HologramService {
         }
         s.virtualLocked = true;
         clearPlacementSelection(s);
-        s.open = true;
+        s.open = false;
         s.blueprintAwaitingConfirmation = true;
+        s.placementReviewIssued = false;
         s.forcePlacementReady = false;
         refreshPlan(s);
-        s.status = "位置已确定，请核对材料；在界面确认后开始施工";
-        if (placementReview) {
-            s.openPurpose = "placementReview";
-            s.placementReviewNonce++;
-        }
+        s.openPurpose = "";
+        s.placementReviewNonce++;
+        s.status = "位置已锁定；Shift + 右键取消锁定，普通右键打开材料与 NBT 放置确认";
         send(s);
     }
 
@@ -756,8 +849,40 @@ public final class HologramService {
             request.getInteger("x"),
             request.getInteger("y"),
             request.getInteger("z"),
-            request.getInteger("side"),
-            true);
+            request.getInteger("side"));
+    }
+
+    /** Unlock invalidates every prior material confirmation capability while retaining the editable draft. */
+    public static void unlockWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
+        Session s = SESSIONS.get(player.getUniqueID());
+        if (s == null || s.player != player
+            || s.cancelled
+            || !s.id.equals(request.getString("session"))
+            || !request.hasKey("planRevision", 4)
+            || s.planRevision != request.getLong("planRevision")
+            || !valid(s)
+            || !s.virtual
+            || !s.virtualPlacement
+            || !s.virtualLocked
+            || s.virtualPreset == null
+            || s.job == 1
+            || s.job == 2
+            || s.job == 4) return;
+        if (blockedByAreaImport(s)) {
+            send(s);
+            return;
+        }
+        s.virtualLocked = false;
+        s.blueprintAwaitingConfirmation = false;
+        s.placementReviewIssued = false;
+        s.forcePlacementReady = false;
+        s.openPurpose = "";
+        s.placementReviewNonce++;
+        s.ae.invalidateReviews();
+        refreshPlan(s);
+        s.open = false;
+        s.status = "已取消位置锁定；移动鼠标调整预览，右键重新锁定，Esc 取消放置";
+        send(s);
     }
 
     private static boolean previewReach(EntityPlayerMP player, int x, int y, int z) {
@@ -776,12 +901,18 @@ public final class HologramService {
             || s.cancelled
             || !s.virtual
             || !s.virtualPlacement
-            || s.virtualLocked
             || s.job == 1
             || s.job == 2
             || s.job == 4) return;
+        boolean expireCapability = s.virtualLocked || s.placementReviewIssued || s.forcePlacementReady;
         s.virtualPlacement = false;
+        s.virtualLocked = false;
         s.blueprintAwaitingConfirmation = false;
+        s.placementReviewIssued = false;
+        s.forcePlacementReady = false;
+        s.openPurpose = "";
+        if (expireCapability) s.placementReviewNonce++;
+        s.ae.invalidateReviews();
         s.blueprintPreview = true;
         s.presetBrowseForPlacement = false;
         s.open = true;
@@ -798,7 +929,8 @@ public final class HologramService {
         s.forcePlacementReady = false;
         s.open = false;
         s.settingsOnly = false;
-        s.status = "移动鼠标预览位置；右击确定位置并核对材料，Esc 取消放置";
+        s.placementReviewIssued = false;
+        s.status = "移动鼠标预览位置；右键锁定位置，再次右键核对材料与 NBT，Esc 取消放置";
         return true;
     }
 
@@ -1059,31 +1191,12 @@ public final class HologramService {
     }
 
     public static void immediateVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
-        Session s = SESSIONS.get(player.getUniqueID());
-        if (s != null && s.player == player && blockedByAreaImport(s)) {
-            send(s);
-            return;
-        }
-        if (s != null && s.player == player && (s.job == 1 || s.job == 2)) {
-            s.status = "请先取消或完成当前施工任务";
-            send(s);
-            return;
-        }
-        if (s == null || s.player != player
-            || !s.virtual
-            || !s.virtualPlacement
-            || s.cancelled
-            || s.virtualPreset == null
-            || !valid(s)) {
-            openVirtual(player, x, y, z, side, presetId);
-            s = SESSIONS.get(player.getUniqueID());
-        }
-        if (s == null || !s.virtual || s.virtualPreset == null) return;
-        if (!s.virtualLocked) lockVirtual(player, x, y, z, side);
-        if (!s.virtualLocked) return;
-        directBuild(s);
-        presetGuidance(s, s.status + "；右击打开界面查看施工进度。");
-        send(s);
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("x", x);
+        request.setInteger("y", y);
+        request.setInteger("z", z);
+        request.setInteger("side", side);
+        quickPlaceLastBlueprint(player, request);
     }
 
     public static void cancel(EntityPlayerMP player) {
@@ -1165,6 +1278,11 @@ public final class HologramService {
         }
         if (construction && s.virtual && s.blueprintAwaitingConfirmation && !"confirmBlueprintPlacement".equals(op)) {
             s.status = "请先在材料界面确认本次放置";
+            send(s);
+            return;
+        }
+        if (construction && s.virtual && s.blueprintAwaitingConfirmation && !s.placementReviewIssued) {
+            s.status = "位置已锁定，请再次右键打开材料与 NBT 确认界面";
             send(s);
             return;
         }
@@ -1251,10 +1369,11 @@ public final class HologramService {
                 s.machine = null;
                 s.context = null;
                 s.blueprintAwaitingConfirmation = false;
+                s.placementReviewIssued = false;
                 s.virtualLocked = false;
                 s.forcePlacementReady = false;
                 s.open = false;
-                s.status = "移动鼠标预览位置；右击确定并核对材料，Esc 取消放置";
+                s.status = "移动鼠标预览位置；右键锁定，再次右键核对材料与 NBT，Esc 取消放置";
             }
         } else if ("dismissPresetBrowse".equals(op)) {
             dismissPresetBrowse(s);
@@ -4759,6 +4878,7 @@ public final class HologramService {
                     || !s.virtualPlacement
                     || !s.virtualLocked
                     || !s.blueprintAwaitingConfirmation
+                    || !s.placementReviewIssued
                     || !s.id.equals(action.getString("session"))) {
                     s.status = "请先放置蓝图，右击确定位置并查看材料";
                 } else if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision) {
@@ -5434,6 +5554,7 @@ public final class HologramService {
             s.placementRetainCovers = null;
             s.presetBrowseForPlacement = false;
             s.virtualLocked = false;
+            s.placementReviewIssued = false;
             s.cancelled = false;
             s.open = !s.virtualPlacement;
             s.settingsOnly = false;
@@ -5443,7 +5564,7 @@ public final class HologramService {
                 .setString(SELECTED_PRESET, id);
             populateVirtual(s);
             s.status = s.virtualPlacement ? "预设已加载；投影跟随鼠标，锁定位置后施工" : "预设已加载，仅编辑模板";
-            if (s.virtualPlacement) presetGuidance(s, "位置预览跟随鼠标：R 水平旋转，Ctrl + R 垂直旋转；右击确定位置并核对材料，Esc 取消放置。");
+            if (s.virtualPlacement) presetGuidance(s, "位置预览跟随鼠标：R 水平旋转，Ctrl + R 垂直旋转；右键锁定，再次右键核对材料与 NBT，Esc 取消放置。");
         } catch (java.io.IOException invalid) {
             s.status = "预设加载失败：" + invalid.getMessage();
         }
@@ -5454,6 +5575,7 @@ public final class HologramService {
         currentTool(s).getTagCompound()
             .setString(SELECTED_PRESET, id);
         s.status = "蓝图已选定；点击放置进入位置预览";
+        s.player.inventory.markDirty();
     }
 
     /** Guidance is emitted only by explicit player actions, never by scan or tick. */
@@ -6543,7 +6665,10 @@ public final class HologramService {
     private static void dismissPresetBrowse(Session s) {
         if (s.presetBrowseForPlacement && s.virtualPreset == null) s.virtualPlacement = false;
         s.presetBrowseForPlacement = false;
-        s.blueprintAwaitingConfirmation = false;
+        if (!s.virtualPlacement || !s.virtualLocked) {
+            s.blueprintAwaitingConfirmation = false;
+            s.placementReviewIssued = false;
+        }
     }
 
     private static void send(Session s) {
@@ -7176,7 +7301,7 @@ public final class HologramService {
         boolean blueprintOperationSuccess;
         final List<HologramPresets.HintArea> blueprintHintAreas = new ArrayList<>();
         NBTTagList blueprintDraftAnnotations = new NBTTagList();
-        boolean blueprintPreview, blueprintAwaitingConfirmation, forcePlacementReady;
+        boolean blueprintPreview, blueprintAwaitingConfirmation, placementReviewIssued, forcePlacementReady;
         final java.util.Set<Integer> selectedIndices = new java.util.LinkedHashSet<>();
         String scanSelectedPosition;
         final java.util.Set<String> scanSelectedPositions = new java.util.LinkedHashSet<>();

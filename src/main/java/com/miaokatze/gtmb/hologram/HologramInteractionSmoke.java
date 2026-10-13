@@ -35,6 +35,9 @@ public final class HologramInteractionSmoke {
     private int mufflerId = -1, lastMufflerWorld, lastMufflerStock;
     private final java.util.Map<String, int[]> blueprintTargets = new java.util.LinkedHashMap<>();
     private boolean sufficientBlueprintJobStarted;
+    private String observedStoneSession;
+    private boolean previousStoneLocked, previousStoneReviewIssued;
+    private int stoneWorldLocks, stoneWorldUnlocks, stoneWorldReviews;
     private boolean sawOneToOneCraftPreview;
     private int craftingEvents;
     private HologramAeInteractionServerProbe aeProbe;
@@ -181,8 +184,16 @@ public final class HologramInteractionSmoke {
             if (world.getBlock(x, 80, 44) != net.minecraft.init.Blocks.stone)
                 throw new AssertionError("area blueprint capture changed its real source block");
         }
-        for (int[] target : blueprintTargets.values())
+        net.minecraft.nbt.NBTTagList sourceFacts = new net.minecraft.nbt.NBTTagList();
+        for (int x = 50; x <= 51; x++) sourceFacts.appendTag(actualBlockFact(world, x, 80, 44));
+        n.setTag("blueprintSourceCells", sourceFacts);
+        n.setBoolean("blueprintSourceIntact", true);
+        net.minecraft.nbt.NBTTagList paidFacts = new net.minecraft.nbt.NBTTagList();
+        for (int[] target : blueprintTargets.values()) {
+            paidFacts.appendTag(actualBlockFact(world, target[0], target[1], target[2]));
             if (world.getBlock(target[0], target[1], target[2]) == net.minecraft.init.Blocks.stone) blueprintPlaced++;
+        }
+        n.setTag("blueprintPaidCells", paidFacts);
         for (ItemStack stack : player.inventory.mainInventory)
             if (stack != null && stack.getItem() == Item.getItemFromBlock(net.minecraft.init.Blocks.stone))
                 blueprintStock += stack.stackSize;
@@ -190,9 +201,15 @@ public final class HologramInteractionSmoke {
             "blueprint material conservation placed=" + blueprintPlaced + " stock=" + blueprintStock);
         if ("final".equals(stage) && (blueprintPlaced != 2 || !sufficientBlueprintJobStarted)) throw new AssertionError(
             "final receipt requires single-confirm sufficient and explicitly confirmed partial blueprint construction");
+        if ("final".equals(stage) && (stoneWorldLocks < 6 || stoneWorldUnlocks < 3 || stoneWorldReviews < 3))
+            throw new AssertionError(
+                "v007 final receipt requires independent first-lock/unlock/relock/RIGHT2 observations");
         n.setInteger("blueprintPlaced", blueprintPlaced);
         n.setInteger("blueprintStock", blueprintStock);
         n.setBoolean("sufficientBlueprintJobStarted", sufficientBlueprintJobStarted);
+        n.setInteger("stoneWorldLocks", stoneWorldLocks);
+        n.setInteger("stoneWorldUnlocks", stoneWorldUnlocks);
+        n.setInteger("stoneWorldReviews", stoneWorldReviews);
         if (aeProbe != null && aeSourcePrepared) {
             n.setBoolean("aeReady", true);
             n.setBoolean("aeBusyStarted", aeBusyStarted);
@@ -570,18 +587,81 @@ public final class HologramInteractionSmoke {
         return stack != null && stack.getItem() == item ? stack.stackSize : 0;
     }
 
+    private static NBTTagCompound actualBlockFact(WorldServer world, int x, int y, int z) {
+        NBTTagCompound fact = new NBTTagCompound();
+        fact.setInteger("x", x);
+        fact.setInteger("y", y);
+        fact.setInteger("z", z);
+        fact.setString(
+            "id",
+            String.valueOf(net.minecraft.block.Block.blockRegistry.getNameForObject(world.getBlock(x, y, z))));
+        fact.setInteger("meta", world.getBlockMetadata(x, y, z));
+        return fact;
+    }
+
     /** Observe authoritative locked capture coordinates; client claims never choose the receipt's world cells. */
     private void observeBlueprintSession(NBTTagCompound receipt) throws Exception {
         java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
-        if (session == null || !((Boolean) sessionField(session, "virtualPlacement"))
-            || !((Boolean) sessionField(session, "virtualLocked"))) return;
+        if (session == null) return;
+        NBTTagCompound observed = new NBTTagCompound();
+        observed.setString("id", String.valueOf(sessionField(session, "id")));
+        observed.setString(
+            "actor",
+            player.getUniqueID()
+                .toString());
+        observed.setString("status", String.valueOf(sessionField(session, "status")));
+        HologramPresets.Preset observedPreset = (HologramPresets.Preset) sessionField(session, "virtualPreset");
+        if (observedPreset != null && observedPreset.id != null && !observedPreset.id.isEmpty())
+            observed.setString("presetId", observedPreset.id);
+        for (String name : new String[] { "uiSequence", "planRevision", "placementReviewNonce", "actionTick" })
+            observed.setLong(name, ((Number) sessionField(session, name)).longValue());
+        for (String name : new String[] { "job", "actionCount" })
+            observed.setInteger(name, ((Number) sessionField(session, name)).intValue());
+        for (String name : new String[] { "virtualPlacement", "virtualLocked", "blueprintAwaitingConfirmation",
+            "placementReviewIssued", "open" }) observed.setBoolean(name, (Boolean) sessionField(session, name));
+        receipt.setTag("blueprintSession", observed);
+        if (!((Boolean) sessionField(session, "virtualPlacement"))) return;
+        HologramCapture capture = (HologramCapture) sessionField(session, "capture");
+        boolean stoneCapture = capture != null && !capture.cells.isEmpty();
+        if (capture != null) for (HologramCapture.Cell cell : capture.cells)
+            stoneCapture &= cell.block == net.minecraft.init.Blocks.stone;
+        boolean locked = (Boolean) sessionField(session, "virtualLocked");
+        boolean reviewIssued = (Boolean) sessionField(session, "placementReviewIssued");
+        if (stoneCapture) {
+            String sessionId = String.valueOf(sessionField(session, "id"));
+            boolean sameSession = sessionId.equals(observedStoneSession);
+            if (locked && (!sameSession || !previousStoneLocked)) {
+                if (reviewIssued) throw new AssertionError("first world lock issued placement review without RIGHT2");
+                stoneWorldLocks++;
+            }
+            if (sameSession && previousStoneLocked && !locked) {
+                if (reviewIssued || ((Boolean) sessionField(session, "blueprintAwaitingConfirmation")))
+                    throw new AssertionError("world unlock retained placement review or confirmation capability");
+                stoneWorldUnlocks++;
+            }
+            if (reviewIssued && (!sameSession || !previousStoneReviewIssued)) {
+                if (!locked || !sameSession || !previousStoneLocked)
+                    throw new AssertionError("RIGHT2 review was issued before an independently observed world lock");
+                stoneWorldReviews++;
+                System.out.println(
+                    "[GTMB-HOLOGRAM-INTERACTION-SERVER] PASS v007 authoritative world lock/unlock/relock/RIGHT2 review="
+                        + stoneWorldReviews
+                        + " locks="
+                        + stoneWorldLocks
+                        + " unlocks="
+                        + stoneWorldUnlocks);
+            }
+            observedStoneSession = sessionId;
+            previousStoneLocked = locked;
+            previousStoneReviewIssued = reviewIssued;
+        }
+        if (!locked) return;
         receipt.setIntArray(
             "blueprintAnchor",
             new int[] { (Integer) sessionField(session, "x"), (Integer) sessionField(session, "y"),
                 (Integer) sessionField(session, "z") });
-        HologramCapture capture = (HologramCapture) sessionField(session, "capture");
         if (capture == null) throw new AssertionError("locked blueprint session lacks complete capture");
         for (HologramCapture.Cell cell : capture.cells) {
             if (cell.block != net.minecraft.init.Blocks.stone) continue;

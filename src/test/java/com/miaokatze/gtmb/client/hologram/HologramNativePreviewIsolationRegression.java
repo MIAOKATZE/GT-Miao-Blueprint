@@ -112,6 +112,25 @@ public final class HologramNativePreviewIsolationRegression {
             SimpleAssert
                 .that(isolated.getTileEntity(7, 68, -3) == planned, "native callbacks cannot remove snapshot tiles");
             SimpleAssert.eq(5, isolated.getBlockMetadata(7, 68, -3), "writes leave snapshot metadata unchanged");
+            SimpleAssert.eq(
+                block.getLightOpacity(isolated, 7, 68, -3),
+                isolated.getBlockLightOpacity(7, 68, -3),
+                "native opacity reads the bounded block without a chunk provider");
+            SimpleAssert
+                .eq(0, isolated.getBlockLightOpacity(100, 68, -3), "outside snapshot opacity follows native air");
+            SimpleAssert.eq(0, isolated.getBlockLightOpacity(7, -1, -3), "outside world height opacity remains zero");
+            SimpleAssert.that(
+                isolated.isSideSolid(7, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, false)
+                    == block.isSideSolid(isolated, 7, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP),
+                "native solidity reads the bounded block without a chunk provider");
+            SimpleAssert.that(
+                !isolated.isSideSolid(100, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, true)
+                    && !isolated.isSideSolid(100, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, false),
+                "snapshot air has native solidity regardless of the caller default");
+            SimpleAssert.that(
+                isolated.isSideSolid(30000000, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, true)
+                    && !isolated.isSideSolid(30000000, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, false),
+                "outside world bounds preserves the native caller default");
             SimpleAssert.eq(before, state.data, "mutating a serializer's input never changes the source snapshot");
             SimpleAssert.eq(
                 "minecraft:planks",

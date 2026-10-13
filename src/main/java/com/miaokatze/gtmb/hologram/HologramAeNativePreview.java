@@ -1,7 +1,11 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.lang.reflect.Field;
+import java.util.EnumSet;
+
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.common.util.ForgeDirection;
@@ -22,6 +26,98 @@ public final class HologramAeNativePreview {
     private static final int VERSION = 1;
 
     private HologramAeNativePreview() {}
+
+    /** Resolve the audited physical definition only; part item NBT never enters a detached visual factory. */
+    public static ItemStack partDefinition(NBTTagCompound definition) {
+        Item item = HologramBlueprintNbt.stableItem(definition);
+        if (item == null || item.getClass() != appeng.items.parts.ItemMultiPart.class
+            || !definition.hasKey("Damage", 99)
+            || !definition.hasKey("Count", 99)
+            || definition.getInteger("Count") <= 0)
+            throw new IllegalArgumentException("Unreviewed AE visual part definition");
+        return new ItemStack(item, 1, definition.getInteger("Damage"));
+    }
+
+    public static ItemStack facadeDefinition(NBTTagCompound definition) {
+        Item item = HologramBlueprintNbt.stableItem(definition);
+        if (item == null || item.getClass() != appeng.items.parts.ItemFacade.class)
+            throw new IllegalArgumentException("Unreviewed AE visual facade factory");
+        ItemStack result = new ItemStack(item, 1, definition.getInteger("Damage"));
+        NBTTagCompound input = definition.getCompoundTag("tag"), material = new NBTTagCompound();
+        int[] ids = input.getIntArray("x");
+        if (ids.length != 2) throw new IllegalArgumentException("Malformed AE visual facade material");
+        material.setIntArray("x", ids.clone());
+        for (String key : new String[] { "modid", "itemname" })
+            if (input.hasKey(key, 8)) material.setString(key, input.getString(key));
+        result.setTagCompound(material);
+        return result;
+    }
+
+    /** Read existing client visual fields or an already-created official grid node; never execute a native writer. */
+    public static NBTTagCompound cableVisual(appeng.parts.CableBusContainer bus) throws ReflectiveOperationException {
+        appeng.api.parts.IPart part = bus.getPart(ForgeDirection.UNKNOWN);
+        if (!(part instanceof appeng.parts.networking.PartCable)) return null;
+        appeng.parts.networking.PartCable cable = (appeng.parts.networking.PartCable) part;
+        int connections = 0, channels = 0;
+        @SuppressWarnings("unchecked")
+        EnumSet<ForgeDirection> sides = (EnumSet<ForgeDirection>) field(
+            appeng.parts.networking.PartCable.class,
+            "connections").get(cable);
+        for (ForgeDirection direction : sides) connections |= 1 << direction.ordinal();
+        int[] amounts = (int[]) field(appeng.parts.networking.PartCable.class, "channelsOnSide").get(cable);
+        for (ForgeDirection direction : ForgeDirection.VALID_DIRECTIONS)
+            channels |= (amounts[direction.ordinal()] & 15) << (4 * direction.ordinal());
+        if (field(appeng.parts.networking.PartCable.class, "powered").getBoolean(cable)) connections |= 64;
+        Object cableProxy = field(appeng.parts.AEBasePart.class, "proxy").get(cable);
+        Object existing = field(appeng.me.helpers.AENetworkProxy.class, "node").get(cableProxy);
+        if (existing != null) {
+            if (existing.getClass() != appeng.me.GridNode.class)
+                throw new IllegalArgumentException("Unreviewed AE visual grid node");
+            appeng.api.networking.IGridNode node = (appeng.api.networking.IGridNode) existing;
+            connections = 0;
+            channels = 0;
+            for (ForgeDirection direction : ForgeDirection.VALID_DIRECTIONS) {
+                appeng.api.parts.IPart sidePart = bus.getPart(direction);
+                if (!(sidePart instanceof appeng.parts.AEBasePart)) continue;
+                Object sideNode = field(appeng.me.helpers.AENetworkProxy.class, "node")
+                    .get(field(appeng.parts.AEBasePart.class, "proxy").get(sidePart));
+                if (sideNode != null && sideNode.getClass() == appeng.me.GridNode.class)
+                    for (appeng.api.networking.IGridConnection connection : ((appeng.api.networking.IGridNode) sideNode)
+                        .getConnections()) channels |= visualChannels(node, connection) << (4 * direction.ordinal());
+            }
+            for (appeng.api.networking.IGridConnection connection : node.getConnections()) {
+                ForgeDirection direction = connection.getDirection(node);
+                if (direction == ForgeDirection.UNKNOWN) continue;
+                connections |= 1 << direction.ordinal();
+                channels |= visualChannels(node, connection) << (4 * direction.ordinal());
+            }
+            appeng.api.networking.IGrid grid = node.getGrid();
+            if (grid != null && grid.getClass() == appeng.me.Grid.class) {
+                appeng.api.networking.energy.IEnergyGrid energy = grid
+                    .getCache(appeng.api.networking.energy.IEnergyGrid.class);
+                if (energy != null && energy.getClass() == appeng.me.cache.EnergyGridCache.class
+                    && energy.isNetworkPowered()) connections |= 64;
+            }
+        }
+        NBTTagCompound result = new NBTTagCompound();
+        result.setInteger("connections", connections);
+        result.setInteger("channels", channels);
+        return result;
+    }
+
+    private static int visualChannels(appeng.api.networking.IGridNode center,
+        appeng.api.networking.IGridConnection connection) {
+        boolean dense = center.hasFlag(appeng.api.networking.GridFlags.DENSE_CAPACITY)
+            && connection.getOtherSide(center)
+                .hasFlag(appeng.api.networking.GridFlags.DENSE_CAPACITY);
+        return dense ? Math.min(connection.getUsedChannels(), 32) / 4 : Math.min(connection.getUsedChannels(), 8);
+    }
+
+    private static Field field(Class<?> type, String name) throws NoSuchFieldException {
+        Field result = type.getDeclaredField(name);
+        result.setAccessible(true);
+        return result;
+    }
 
     public static boolean supports(Block block) {
         if (!(block instanceof AEBaseTileBlock)) return false;

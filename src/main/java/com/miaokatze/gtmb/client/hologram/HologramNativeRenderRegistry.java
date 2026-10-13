@@ -50,6 +50,9 @@ public final class HologramNativeRenderRegistry {
         boolean supports(String type, Object detachedPart);
 
         Object create(String type, Object detachedPart, NBTTagCompound payload) throws ReflectiveOperationException;
+
+        /** Initialize local render caches after binding; do not dispatch native part/network events. */
+        default void prepare(Object detachedPart) throws ReflectiveOperationException {}
     }
 
     private static final List<Adapter> ADAPTERS = new CopyOnWriteArrayList<>();
@@ -82,7 +85,12 @@ public final class HologramNativeRenderRegistry {
     }
 
     static Adapter adapter(Block block) {
-        if (HologramAeNativeRender.INSTANCE.supports(block)) return HologramAeNativeRender.INSTANCE;
+        String family = block == null ? ""
+            : block.getClass()
+                .getName();
+        if ((family.equals("appeng.block.storage.BlockDrive") || family.equals("appeng.block.misc.BlockInterface")
+            || family.equals("appeng.block.networking.BlockCableBus"))
+            && HologramAeNativeRender.INSTANCE.supports(block)) return HologramAeNativeRender.INSTANCE;
         for (Adapter adapter : ADAPTERS) if (adapter.supports(block)) return adapter;
         return null;
     }

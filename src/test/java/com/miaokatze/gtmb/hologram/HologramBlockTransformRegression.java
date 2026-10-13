@@ -31,6 +31,7 @@ final class HologramBlockTransformRegression {
             enderIo();
             multipart();
             architecture();
+            architectureSawbench();
             littleTiles();
             carpenters();
             extensionPriority();
@@ -49,6 +50,35 @@ final class HologramBlockTransformRegression {
         SimpleAssert.eq(11, result.metadata, "default metadata unchanged");
         SimpleAssert.eq(encoded, result.tileNbt, "unadapted tile payload byte identical");
         SimpleAssert.eq(encoded, result.itemNbt, "item payload byte identical");
+    }
+
+    private static void architectureSawbench() throws IOException {
+        for (int meta = 0; meta < 4; meta++) {
+            NBTTagCompound tag = payload();
+            tag.setString("id", "gcewing.sawbench");
+            tag.setInteger("Page", 3);
+            tag.setIntArray("Slots", new int[] { 1, 2, 3, 4 });
+            HologramBlockTransforms.Data data = new HologramBlockTransforms.Data(
+                null,
+                "gcewing.architecture.common.block.BlockSawbench",
+                meta,
+                tag,
+                null);
+            data = HologramBlockTransforms.turn(data, false);
+            SimpleAssert.eq((meta + 3) & 3, data.metadata, "sawbench PropertyTurn follows horizontal quarter turn");
+            SimpleAssert.eq(tag, data.tile, "sawbench rotation preserves inventory/shape selection NBT");
+            for (int i = 0; i < 3; i++) data = HologramBlockTransforms.turn(data, false);
+            SimpleAssert.eq(meta, data.metadata, "four native sawbench turns are identity");
+            try {
+                HologramBlockTransforms.turn(data, true);
+                throw new AssertionError("four-way sawbench cannot represent vertical rotation");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("horizontal rotation"),
+                    "unsupported sawbench rotation is explicit");
+            }
+        }
     }
 
     private static void gregtech() {

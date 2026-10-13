@@ -6,6 +6,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.profiler.Profiler;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.EnumSkyBlock;
+import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProviderSurface;
 import net.minecraft.world.WorldSettings;
@@ -13,13 +14,19 @@ import net.minecraft.world.WorldType;
 import net.minecraft.world.biome.BiomeGenBase;
 import net.minecraft.world.chunk.IChunkProvider;
 import net.minecraft.world.storage.SaveHandlerMP;
+import net.minecraftforge.common.util.ForgeDirection;
 
 /** A detached client world: tile callbacks can read the snapshot, but cannot change its cells. */
 final class HologramRenderWorld extends World {
 
-    private HologramBlockAccess access;
+    private IBlockAccess access;
+    private CarpenterContext carpenterContext;
 
     HologramRenderWorld(HologramBlockAccess access) {
+        this((IBlockAccess) access);
+    }
+
+    HologramRenderWorld(IBlockAccess access) {
         super(
             new SaveHandlerMP(),
             "GTMB render snapshot",
@@ -52,6 +59,8 @@ final class HologramRenderWorld extends World {
 
     @Override
     public int getBlockMetadata(int x, int y, int z) {
+        if (carpenterContext != null && carpenterContext.matches(x, y, z) && carpenterContext.metadata != null)
+            return carpenterContext.metadata;
         return access == null ? 0 : access.getBlockMetadata(x, y, z);
     }
 
@@ -76,8 +85,22 @@ final class HologramRenderWorld extends World {
     }
 
     @Override
+    public int getBlockLightOpacity(int x, int y, int z) {
+        if (x < -30000000 || z < -30000000 || x >= 30000000 || z >= 30000000 || y < 0 || y >= 256) return 0;
+        return getBlock(x, y, z).getLightOpacity(this, x, y, z);
+    }
+
+    @Override
+    public boolean isSideSolid(int x, int y, int z, ForgeDirection side, boolean fallback) {
+        if (x < -30000000 || z < -30000000 || x >= 30000000 || z >= 30000000) return fallback;
+        return getBlock(x, y, z).isSideSolid(this, x, y, z, side);
+    }
+
+    @Override
     public boolean blockExists(int x, int y, int z) {
-        return access != null && access.contains(x, y, z);
+        return access != null
+            && (access instanceof HologramBlockAccess ? ((HologramBlockAccess) access).contains(x, y, z)
+                : !access.isAirBlock(x, y, z));
     }
 
     @Override
@@ -87,7 +110,41 @@ final class HologramRenderWorld extends World {
 
     @Override
     public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {
+        if (flags == 4 && carpenterContext != null && carpenterContext.matches(x, y, z)) {
+            carpenterContext.metadata = meta;
+            return true;
+        }
         return false;
+    }
+
+    /** TEBase temporarily impersonates cover metadata for native color/light queries. */
+    CarpenterContext carpenterRender(TileEntity tile) {
+        if (tile == null || tile.getWorldObj() != this || carpenterContext != null)
+            throw new IllegalArgumentException("Carpenter render context requires one detached tile");
+        carpenterContext = new CarpenterContext(tile.xCoord, tile.yCoord, tile.zCoord);
+        return carpenterContext;
+    }
+
+    final class CarpenterContext implements AutoCloseable {
+
+        final int x, y, z;
+        Integer metadata;
+
+        CarpenterContext(int x, int y, int z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        boolean matches(int x, int y, int z) {
+            return this.x == x && this.y == y && this.z == z;
+        }
+
+        @Override
+        public void close() {
+            metadata = null;
+            if (carpenterContext == this) carpenterContext = null;
+        }
     }
 
     @Override
@@ -121,6 +178,11 @@ final class HologramRenderWorld extends World {
 
     @Override
     public boolean updateLightByType(EnumSkyBlock type, int x, int y, int z) {
+        return false;
+    }
+
+    @Override
+    public boolean func_147451_t(int x, int y, int z) {
         return false;
     }
 

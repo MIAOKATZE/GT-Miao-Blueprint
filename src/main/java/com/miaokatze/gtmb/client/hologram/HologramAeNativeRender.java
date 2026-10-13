@@ -2,6 +2,10 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 import net.minecraft.block.Block;
 import net.minecraft.client.renderer.RenderBlocks;
@@ -16,6 +20,9 @@ import net.minecraftforge.common.util.ForgeDirection;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 
 import appeng.api.AEApi;
+import appeng.api.implementations.parts.IPartCable;
+import appeng.api.parts.IPart;
+import appeng.api.parts.IPartItem;
 import appeng.api.util.AEColor;
 import appeng.block.AEBaseBlock;
 import appeng.block.networking.BlockCableBus;
@@ -26,7 +33,12 @@ import appeng.client.render.BusRenderer;
 import appeng.client.render.WorldRender;
 import appeng.client.render.blocks.RenderBlockInterface;
 import appeng.client.render.blocks.RenderDrive;
+import appeng.parts.CableBusContainer;
+import appeng.parts.CableBusStorage;
+import appeng.parts.networking.PartCable;
+import appeng.parts.reporting.AbstractPartReporting;
 import appeng.tile.misc.TileInterface;
+import appeng.tile.networking.TileCableBus;
 import appeng.tile.storage.TileDrive;
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 
@@ -36,6 +48,137 @@ final class HologramAeNativeRender implements HologramNativeRenderRegistry.Adapt
     static final HologramAeNativeRender INSTANCE = new HologramAeNativeRender();
 
     private HologramAeNativeRender() {}
+
+    private static final Map<CableBusContainer, Boolean> CAPTURED_TOPOLOGY = Collections
+        .synchronizedMap(new WeakHashMap<>());
+
+    /** Construct native visual parts without invoking any persistence, inventory or proxy reader. */
+    static void loadCable(Object host, NBTTagCompound payload) throws ReflectiveOperationException {
+        CableBusContainer bus = cableBus(host);
+        if (bus == null) throw new IllegalArgumentException("Unreviewed AE CableBus visual host");
+        Method center = CableBusStorage.class.getDeclaredMethod("setCenter", IPartCable.class);
+        Method side = CableBusStorage.class.getDeclaredMethod("setSide", ForgeDirection.class, IPart.class);
+        center.setAccessible(true);
+        side.setAccessible(true);
+        for (ForgeDirection direction : ForgeDirection.values()) {
+            String key = "def:" + direction.ordinal();
+            if (!payload.hasKey(key)) continue;
+            ItemStack definition = HologramAeNativePreview.partDefinition(payload.getCompoundTag(key));
+            IPart part = ((IPartItem) definition.getItem()).createPartFromItemStack(definition);
+            if (part == null || !part.getClass()
+                .getName()
+                .startsWith("appeng.parts.")) throw new IllegalArgumentException("Unreviewed AE visual part factory");
+            if (direction == ForgeDirection.UNKNOWN) {
+                if (!(part instanceof IPartCable)) throw new IllegalArgumentException("Invalid AE visual center");
+                center.invoke(bus, part);
+            } else {
+                if (part instanceof IPartCable) throw new IllegalArgumentException("Invalid AE visual side part");
+                side.invoke(bus, direction, part);
+            }
+            part.setPartHostInfo(direction, bus, bus.getTile());
+            if (part instanceof AbstractPartReporting) {
+                NBTTagCompound extra = payload.getCompoundTag("extra:" + direction.ordinal());
+                Field spin = AbstractPartReporting.class.getDeclaredField("spin");
+                spin.setAccessible(true);
+                spin.setByte(part, (byte) (extra.getByte("spin") & 3));
+            }
+        }
+        // Reviewed native facade material factories receive only their bounded material identity.
+        for (ForgeDirection direction : ForgeDirection.VALID_DIRECTIONS) {
+            String key = "facade:" + direction.ordinal();
+            if (payload.hasKey(key, 10)) {
+                ItemStack definition = HologramAeNativePreview.facadeDefinition(payload.getCompoundTag(key));
+                appeng.api.parts.IFacadePart facade = ((appeng.items.parts.ItemFacade) definition.getItem())
+                    .createPartFromItemStack(definition, direction);
+                if (facade == null) throw new IllegalArgumentException("Missing AE visual facade material");
+                bus.setFacade(direction.ordinal(), facade);
+            }
+        }
+        boolean captured = payload.hasKey("gtmb.aeCableVisual", 10);
+        CAPTURED_TOPOLOGY.put(bus, captured);
+        if (captured) {
+            NBTTagCompound visual = payload.getCompoundTag("gtmb.aeCableVisual");
+            visualPacket(bus, visual.getInteger("connections") & 127, visual.getInteger("channels") & 0xffffff);
+        }
+    }
+
+    /** Called after the detached tile enters the bounded cache, so adjacent cable lookup cannot recurse. */
+    static void prepareTopology(TileEntity tile, IBlockAccess access) throws ReflectiveOperationException {
+        CableBusContainer bus = cableBus(tile);
+        if (bus == null || Boolean.TRUE.equals(CAPTURED_TOPOLOGY.get(bus))) return;
+        if (!(bus.getPart(ForgeDirection.UNKNOWN) instanceof PartCable)) return;
+        int connections = 0;
+        for (ForgeDirection direction : ForgeDirection.VALID_DIRECTIONS) {
+            if (bus.getPart(direction) != null || bus.isBlocked(direction)) continue;
+            TileEntity neighbor = access.getTileEntity(
+                tile.xCoord + direction.offsetX,
+                tile.yCoord + direction.offsetY,
+                tile.zCoord + direction.offsetZ);
+            CableBusContainer other = cableBus(neighbor);
+            ForgeDirection opposite = direction.getOpposite();
+            if (other != null && other.getPart(ForgeDirection.UNKNOWN) instanceof PartCable
+                && other.getPart(opposite) == null
+                && !other.isBlocked(opposite)
+                && bus.getColor()
+                    .matches(other.getColor()))
+                connections |= 1 << direction.ordinal();
+            else if (neighbor != null && neighbor.getClass() == Drive.class) {
+                Drive drive = (Drive) neighbor;
+                if (drive.getProxy()
+                    .getConnectableSides()
+                    .contains(opposite)
+                    && bus.getColor()
+                        .matches(drive.getColor()))
+                    connections |= 1 << direction.ordinal();
+            } else if (neighbor != null && neighbor.getClass() == Interface.class) {
+                Interface iface = (Interface) neighbor;
+                if (iface.getProxy()
+                    .getConnectableSides()
+                    .contains(opposite)
+                    && bus.getColor()
+                        .matches(iface.getColor()))
+                    connections |= 1 << direction.ordinal();
+            }
+        }
+        // Planned cables are offline. Only geometric adjacency is projected; saved power/channel state is not copied.
+        visualPacket(bus, connections, 0);
+    }
+
+    private static void visualPacket(CableBusContainer bus, int connections, int channels) {
+        IPart part = bus.getPart(ForgeDirection.UNKNOWN);
+        if (!(part instanceof PartCable)) return;
+        io.netty.buffer.ByteBuf bytes = io.netty.buffer.Unpooled.buffer(5, 5);
+        try {
+            bytes.writeByte(connections);
+            bytes.writeInt(channels);
+            ((PartCable) part).readFromStream(bytes);
+        } catch (java.io.IOException invalidNativeFrame) {
+            throw new IllegalArgumentException("Invalid AE visual cable frame", invalidNativeFrame);
+        } finally {
+            bytes.release();
+        }
+    }
+
+    private static CableBusContainer cableBus(Object host) throws ReflectiveOperationException {
+        if (host instanceof TileCableBus) return ((TileCableBus) host).getCableBus();
+        if (host == null) return null;
+        if (host.getClass()
+            .getName()
+            .equals("appeng.fmp.CableBusPart"))
+            return (CableBusContainer) host.getClass()
+                .getMethod("getCableBus")
+                .invoke(host);
+        boolean multipart = false;
+        for (Class<?> type = host.getClass(); type != null; type = type.getSuperclass()) if (type.getName()
+            .equals("codechicken.multipart.TileMultipart")) multipart = true;
+        if (multipart) for (Object part : (java.util.List<?>) host.getClass()
+            .getMethod("jPartList")
+            .invoke(host)) {
+                CableBusContainer bus = cableBus(part);
+                if (bus != null) return bus;
+            }
+        return null;
+    }
 
     /** CBC's real world pass callback owns a separate native helper; never reuse the live world's thread state. */
     static CableContext cableContext(Block block, TileEntity tile) throws ReflectiveOperationException {
@@ -111,19 +254,61 @@ final class HologramAeNativeRender implements HologramNativeRenderRegistry.Adapt
     }
 
     public boolean supports(Block block) {
-        return HologramAeNativePreview.supports(block);
+        return HologramAeNativePreview.supports(block) || block != null && block.getClass()
+            .getName()
+            .equals("appeng.block.networking.BlockCableBus");
     }
 
     public TileEntity createTile(Block block, int metadata, World isolatedWorld) {
         if (!supports(block)) throw new IllegalArgumentException("Unreviewed AE render factory");
+        if (block.getClass() == BlockCableBus.class) {
+            Class<? extends TileEntity> factory = ((appeng.block.AEBaseTileBlock) block).getTileEntityClass();
+            if (factory == null || factory != registeredCableFactory() || !TileCableBus.class.isAssignableFrom(factory))
+                throw new IllegalArgumentException("Unreviewed AE registered CableBus visual factory");
+            TileEntity tile = block.createTileEntity(isolatedWorld, metadata);
+            if (tile == null || tile.getClass() != factory)
+                throw new IllegalArgumentException("Native AE CableBus factory returned the wrong visual host");
+            return tile;
+        }
         return block.getClass() == BlockDrive.class ? new Drive() : new Interface();
     }
 
     public void loadTile(TileEntity tile, NBTTagCompound payload) {
-        if (tile.getClass() == Drive.class) ((Drive) tile).visual = new Visual(payload, "drive");
-        else if (tile.getClass() == Interface.class) ((Interface) tile).visual = new Visual(payload, "interface");
-        else throw new IllegalArgumentException("Unreviewed AE detached render tile");
+        if (tile instanceof TileCableBus && tile.getClass() == registeredCableFactory()) {
+            try {
+                loadCable(tile, payload);
+                return;
+            } catch (ReflectiveOperationException invalidNativeFactory) {
+                throw new IllegalArgumentException("AE CableBus visual factory unavailable", invalidNativeFactory);
+            }
+        }
+        if (tile.getClass() == Drive.class) {
+            Drive drive = (Drive) tile;
+            drive.visual = new Visual(payload, "drive");
+            drive.getProxy()
+                .setColor(drive.visual.color);
+        } else if (tile.getClass() == Interface.class) {
+            Interface iface = (Interface) tile;
+            iface.visual = new Visual(payload, "interface");
+            iface.getProxy()
+                .setColor(iface.visual.color);
+            iface.getProxy()
+                .setValidSides(EnumSet.complementOf(EnumSet.of(iface.visual.up.getOpposite())));
+        } else throw new IllegalArgumentException("Unreviewed AE detached render tile");
         // AEBaseTile.readFromNBT is final and executes inventory/event readers. It is deliberately never invoked here.
+    }
+
+    /** CBC implements optional MFR interfaces; resolve only its exact declared native API without javac linkage. */
+    static Class<? extends TileEntity> registeredCableFactory() {
+        try {
+            Object factory = BlockCableBus.class.getDeclaredMethod("getNoTesrTile")
+                .invoke(null);
+            if (!(factory instanceof Class<?>) || !TileCableBus.class.isAssignableFrom((Class<?>) factory))
+                throw new IllegalArgumentException("Missing reviewed native CableBus combined factory");
+            return ((Class<?>) factory).asSubclass(TileEntity.class);
+        } catch (ReflectiveOperationException unavailableNativeApi) {
+            throw new IllegalArgumentException("Native CableBus factory API unavailable", unavailableNativeApi);
+        }
     }
 
     public ISimpleBlockRenderingHandler renderer(Block block, ISimpleBlockRenderingHandler registered) {
@@ -131,6 +316,11 @@ final class HologramAeNativeRender implements HologramNativeRenderRegistry.Adapt
             throw new IllegalArgumentException("Unreviewed AE registered renderer");
         Object nativeRenderer = ((AEBaseBlock) block).getRendererInstance()
             .getRendererInstance();
+        if (block.getClass() == BlockCableBus.class) {
+            if (nativeRenderer.getClass() != appeng.client.render.blocks.RendererCableBus.class)
+                throw new IllegalArgumentException("Unreviewed AE CableBus renderer");
+            return registered;
+        }
         Class<?> expected = block.getClass() == BlockDrive.class ? RenderDrive.class : RenderBlockInterface.class;
         if (nativeRenderer.getClass() != expected) throw new IllegalArgumentException("Unreviewed AE block renderer");
         return new IsolatedRenderer();

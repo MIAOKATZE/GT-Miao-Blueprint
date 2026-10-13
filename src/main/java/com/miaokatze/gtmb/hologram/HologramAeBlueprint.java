@@ -1294,6 +1294,60 @@ public final class HologramAeBlueprint {
                 prefix,
                 "runtime_reset",
                 "Storage bus runtime filter cache is regenerated");
+            if (type.equals("appeng.parts.automation.PartExportBus")) {
+                if (data.hasKey("nextSlot")) {
+                    if (!data.hasKey("nextSlot", 3) || data.getInteger("nextSlot") < 0
+                        || data.getInteger("nextSlot") >= 9)
+                        work.issue(
+                            "unreviewed_part_field",
+                            "blocker",
+                            displayPath(path(prefix, "nextSlot")),
+                            "Malformed native Export Bus scheduling cursor is omitted; explicit review is required");
+                    remove(
+                        work,
+                        data,
+                        "nextSlot",
+                        prefix,
+                        "runtime_reset",
+                        "Export Bus scheduling cursor is regenerated");
+                }
+                for (int slot = 0; slot < 9; slot++) {
+                    String key = "links-" + slot;
+                    if (!data.hasKey(key)) continue;
+                    if (!data.hasKey(key, 10)) work.issue(
+                        "unreviewed_part_field",
+                        "blocker",
+                        displayPath(path(prefix, key)),
+                        "Malformed native Export Bus crafting link is omitted; explicit review is required");
+                    remove(work, data, key, prefix, "crafting_link", "Export Bus active crafting link is omitted");
+                }
+            }
+            if (reviewedReporting(type)) {
+                if (data.hasKey("spin")
+                    && (!data.hasKey("spin", 1) || data.getByte("spin") < 0 || data.getByte("spin") > 3)) {
+                    work.issue(
+                        "unreviewed_part_field",
+                        "blocker",
+                        displayPath(path(prefix, "spin")),
+                        "Native reporting part rotation must be a byte from 0 through 3; malformed rotation is omitted");
+                    data.removeTag("spin");
+                }
+                if (data.hasKey("opacity")) {
+                    float opacity = data.getFloat("opacity");
+                    if (!data.hasKey("opacity", 5) || Float.isNaN(opacity) || Float.isInfinite(opacity)) work.issue(
+                        "unreviewed_part_field",
+                        "blocker",
+                        displayPath(path(prefix, "opacity")),
+                        "Native reporting part light cache must be a finite float; malformed cache is omitted");
+                    remove(
+                        work,
+                        data,
+                        "opacity",
+                        prefix,
+                        "runtime_reset",
+                        "Reporting part neighboring light cache is regenerated");
+                }
+            }
             if (type.equals("appeng.parts.p2p.PartP2PLight"))
                 remove(work, data, "lastValue", prefix, "runtime_reset", "P2P last light signal is reset");
             if (type.equals("appeng.parts.automation.PartLevelEmitter")) {
@@ -2099,6 +2153,10 @@ public final class HologramAeBlueprint {
             for (Settings setting : Settings.values()) known.add(setting.name());
             if (host instanceof appeng.parts.automation.PartUpgradeable) known.add("upgrades");
             if (configSize > 0) known.add("config");
+            if (reviewedReporting(
+                host.getClass()
+                    .getName()))
+                known.add("spin");
             if (host.getClass()
                 .getName()
                 .startsWith("appeng.parts.p2p.")) known.addAll(Arrays.asList("freq", "output"));
@@ -2143,6 +2201,19 @@ public final class HologramAeBlueprint {
                     data.removeTag(key);
                 }
             }
+        }
+
+        private static boolean reviewedReporting(String type) {
+            return Arrays
+                .asList(
+                    "appeng.parts.reporting.PartTerminal",
+                    "appeng.parts.reporting.PartInterfaceTerminal",
+                    "appeng.parts.reporting.PartCraftingTerminal",
+                    "appeng.parts.reporting.PartPatternTerminal",
+                    "appeng.parts.reporting.PartPatternTerminalEx",
+                    "appeng.parts.reporting.PartStorageMonitor",
+                    "appeng.parts.reporting.PartConversionMonitor")
+                .contains(type);
         }
 
         private static void guardInterfaceRoots(Work work, NBTTagCompound data, String[] prefix, IPart host) {

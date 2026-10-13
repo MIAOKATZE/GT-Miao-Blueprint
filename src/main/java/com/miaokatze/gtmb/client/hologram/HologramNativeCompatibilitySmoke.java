@@ -169,6 +169,20 @@ final class HologramNativeCompatibilitySmoke {
             require(!HologramBlockRender.missingTexture(cell, current), cell.wantId + " contains missing atlas quads");
             HologramEnderIoPreviewSmoke.verify(state, cell, tile, current);
             NBTTagCompound nativeTile = source.getCompoundTag("nativeTile");
+            String nativeType = cell.block(current)
+                .getClass()
+                .getName();
+            if (nativeType.equals(TYPES[0]) || nativeType.equals(TYPES[1]) || nativeType.equals(TYPES[2])) {
+                require(
+                    HologramBlockRender.usesIcon(cell, current, Blocks.stone.getIcon(2, 0)),
+                    cell.wantId + " must retain its native stone material");
+                require(
+                    HologramBlockRender.usesIcon(cell, current, Blocks.planks.getIcon(2, 0)),
+                    cell.wantId + " must retain its distinct native plank material");
+            }
+            if (nativeType.equals(TYPES[3])) require(
+                HologramBlockRender.usesIcon(cell, current, Blocks.planks.getIcon(2, 0)),
+                "architecture native primary plank material must not default to stone");
             if (cell.block(current)
                 .getClass()
                 .getName()

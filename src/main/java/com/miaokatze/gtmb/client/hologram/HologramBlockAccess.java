@@ -19,6 +19,8 @@ final class HologramBlockAccess implements IBlockAccess {
     private final Map<String, TileEntity> tiles = new HashMap<>();
     private final Map<String, String> failures = new HashMap<>();
     private final java.util.Set<String> loaded = new java.util.HashSet<>();
+    private final java.util.Set<String> topologyPrepared = new java.util.HashSet<>();
+    private boolean preparingTopology;
     private HologramRenderWorld renderWorld;
 
     HologramBlockAccess(HologramState state) {
@@ -47,14 +49,18 @@ final class HologramBlockAccess implements IBlockAccess {
 
     public TileEntity getTileEntity(int x, int y, int z) {
         String key = key(x, y, z);
-        if (loaded.contains(key)) return tiles.get(key);
-        loaded.add(key);
-        HologramState.Cell cell = cells.get(key);
-        if (cell == null) return null;
-        boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        NBTTagCompound display = actual ? cell.actualDisplay : cell.targetDisplay;
-        if (!display.hasKey("nativeTile", 10)) return null;
         try {
+            if (loaded.contains(key)) {
+                TileEntity tile = tiles.get(key);
+                if (tile != null) prepareTopology(key, tile);
+                return tile;
+            }
+            loaded.add(key);
+            HologramState.Cell cell = cells.get(key);
+            if (cell == null) return null;
+            boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+            NBTTagCompound display = actual ? cell.actualDisplay : cell.targetDisplay;
+            if (!display.hasKey("nativeTile", 10)) return null;
             if (renderWorld == null) renderWorld = new HologramRenderWorld(this);
             TileEntity tile = HologramNativeTiles.create(
                 getBlock(x, y, z),
@@ -64,9 +70,14 @@ final class HologramBlockAccess implements IBlockAccess {
                 x,
                 y,
                 z);
-            if (tile != null) tiles.put(key, tile);
+            if (tile != null) {
+                tiles.put(key, tile);
+                prepareTopology(key, tile);
+            }
             return tile;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            tiles.remove(key);
+            topologyPrepared.remove(key);
             if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")) unavailable.printStackTrace();
             Throwable cause = unavailable;
             while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
@@ -77,6 +88,30 @@ final class HologramBlockAccess implements IBlockAccess {
                     + cause.getMessage());
             return null;
         }
+    }
+
+    /** Hydrate at most immediate neighbors, then prepare each cached tile when it is requested for rendering. */
+    private void prepareTopology(String key, TileEntity tile) throws ReflectiveOperationException {
+        if (preparingTopology || topologyPrepared.contains(key)) return;
+        // Ordinary native hosts must remain independent of optional AE client class loading.
+        String host = getBlock(tile.xCoord, tile.yCoord, tile.zCoord).getClass()
+            .getName();
+        boolean cable = host.equals("appeng.block.networking.BlockCableBus");
+        if (host.equals("codechicken.multipart.BlockMultipart")) for (Object part : (java.util.List<?>) tile.getClass()
+            .getMethod("jPartList")
+            .invoke(tile))
+            if (part.getClass()
+                .getName()
+                .equals("appeng.fmp.CableBusPart")) cable = true;
+        if (cable) {
+            preparingTopology = true;
+            try {
+                HologramAeNativeRender.prepareTopology(tile, this);
+            } finally {
+                preparingTopology = false;
+            }
+        }
+        topologyPrepared.add(key);
     }
 
     String failure(int x, int y, int z) {

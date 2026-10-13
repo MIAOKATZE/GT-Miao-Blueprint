@@ -40,6 +40,7 @@ final class HologramRenderer {
     private HologramRenderer() {}
 
     static int lastWorldGeometry, lastWorldGTGeometry, lastWorldFallback, lastWorldMatched, lastWorldGhosts;
+    static int lastWorldPlacementOutlineColor;
     static int lastPreviewRoleMarkers, lastPreviewAnchorMarkers;
     private static HologramState previewState, worldState;
     private static String previewKey = "";
@@ -760,6 +761,7 @@ final class HologramRenderer {
     }
 
     private static void clearWorldGroups() {
+        lastWorldPlacementOutlineColor = 0;
         for (WorldGroup group : worldGroups.values()) for (int list : group.lists) GL11.glDeleteLists(list, 1);
         worldGroups.clear();
         worldGhosts.clear();
@@ -860,6 +862,10 @@ final class HologramRenderer {
         t.startDrawing(GL11.GL_LINES);
         for (HologramState.Cell c : cells) {
             int color = c.anchor ? 0xffffbd : c.color();
+            if (worldState != null && worldState.data.getBoolean("virtualPlacement") && !removal) {
+                color = worldState.data.getBoolean("virtualLocked") ? 0x66d9ef : 0x70e69a;
+                lastWorldPlacementOutlineColor = color;
+            }
             if (removal && c.status.equals("pending")) color = 0xf08b83;
             t.setColorRGBA_F(
                 ((color >> 16) & 255) / 255f,

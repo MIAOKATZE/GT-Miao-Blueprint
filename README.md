@@ -39,19 +39,20 @@ Craft **one StructureLib Hologram Projector into one Neko Projector** with a sha
 
 | Action / 操作 | Purpose / 用途 |
 | --- | --- |
-| Right-click / 普通右键 | Open the workspace; right-click a controller to import its structure directly. 打开工作台；对准控制器右键可直接导入结构。 |
-| Shift + right-click / Shift + 右键 | Begin world-region selection. 开始世界区域框选。 |
-| Left / right-click; Alt + left / right-click / 左右键；Alt+左右键 | Set the two corners; hold Alt to use your position. Enter completes selection; Esc cancels it. 设置两个角点；按住 Alt 使用玩家坐标。Enter 完成，Esc 取消。 |
-| Select a blueprint, then Place / 选择蓝图后点「放置」 | The ghost follows the camera look direction when no block is hit; use the wheel to set distance from 2 to 64 blocks. Right-click locks the position and opens placement review in the Structure tab. 没有命中方块时，ghost 沿镜头视线悬空显示；滚轮可调 2–64 格距离。普通右键锁定位置，并在「结构」页打开放置预检。 |
+| Right-click / 普通右键 | Open the workspace on its remembered tab; right-click a real controller to import its structure directly. 打开工作台时恢复最近使用的并列标签；对准真实控制器右键仍优先直接导入结构。 |
+| Shift + right-click / Shift + 右键 | Use Shift+right-click once to enter world-region selection and a second time to finish the box; Enter is not intercepted. 按 Shift+右键开始世界区域框选，再按一次完成框选；Enter 不拦截。 |
+| Left / right-click; Alt + left / right-click / 左右键；Alt+左右键 | Set the two corners; hold Alt to use your position. Esc cancels selection. 设置两个角点；按住 Alt 使用玩家坐标；按 Esc 取消。 |
+| Select a blueprint, then Place / 选择蓝图后点「放置」 | The ghost follows the camera look direction when no block is hit; use the wheel to set distance from 2 to 64 blocks. When the ghost preview is green, right-click locks it and turns the border cyan; right-click again opens the separate materials and placement confirmation area. While locked, Shift+right-click returns to the movable preview. 没有命中方块时，ghost 沿镜头视线悬空显示；滚轮可调 2–64 格距离。绿色 ghost 预览时普通右键锁定，边框转青；再次右键打开独立的材料与放置确认区。锁定时 Shift+右键返回可移动预览。 |
+| Alt + right-click / Alt+右键 | Start a ghost for the last-used blueprint directly. Alt+右键直接为上一张蓝图生成 world ghost。 |
 | Placement review / 放置预检 | Review fixed coordinates, NBT and materials, then confirm once when fully supplied. If short, a second confirmation places only ready blocks. 核对坐标、NBT 和材料；足料时确认一次施工，缺料时需再次明确确认，且只放置材料足够的方块。 |
 | Ctrl+A, T, Ctrl-click, Shift-drag / Ctrl+A、T、Ctrl+点击、Shift+拖动 | Ctrl+A selects all; hold T and click to select the same block type within the current structure or loose-block area, including the exact GT MetaTile ID. Ctrl-click adds cells; Shift-drag selects a region. Ctrl+A 全选；按住 T 点击选择当前结构或非结构区域内的同种方块，GT 机器按实际 MetaTile ID 区分。Ctrl 多选，Shift 拖动框选。 |
 | Grade and candidates / 等级与候选 | Grade changes refresh candidates within the declared family. The current family selection stays active; invalid options are marked. 等级变化会按机器声明家族更新候选，保留当前家族选择，并标明无效选项。 |
 | Hints and save / 提示与保存 | Saved hints keep their data; icons and hover text are generated from it. Update keeps the current ID; Save As creates a new ID, and Delete asks for confirmation. 提示数据随蓝图保存，图标和悬停说明由数据生成。更新沿用当前 ID，另存生成新 ID，删除前需确认。 |
 | Esc / E | Close a modal first; otherwise leave the workspace. E still types in text fields. 先关闭弹窗；否则退出工作台。文字输入框内 E 仍正常输入。 |
 
-The Structure and Blueprint tabs sit side by side. The library uses flat rows with a selected row and secondary details; actions have separate buttons. Observing or selecting a blueprint does not reduce its placement scope. See the [projector guide](docs/neko-hologram-projector.md) for detailed controls. The workspace has a separate right panel and adapts to Minecraft GUI scale. The saved blueprint library is on the server at `config/gtmb/hologram-presets.json` (64 MiB library limit, 8 MiB per blueprint). Imported and exported share files are under `config/gtmb/hologram-blueprints/`.
+The Structure and Blueprint tabs sit side by side and remember the last-used page. Right-clicking a real controller still imports its structure directly. The library uses flat rows with a selected row and secondary details; actions have separate buttons. Observing or selecting a blueprint does not reduce its placement scope. See the [projector guide](docs/neko-hologram-projector.md) for detailed controls. The workspace has a separate right panel and adapts to Minecraft GUI scale. The saved blueprint library is on the server at `config/gtmb/hologram-presets.json` (64 MiB library limit, 8 MiB per blueprint). Imported and exported share files are under `config/gtmb/hologram-blueprints/`.
 
-「结构」和「蓝图」是并列标签。蓝图库用扁平列表显示选中行和补充信息，操作使用独立按钮；观察或选择蓝图不会缩小其放置范围。详细操作见[投影仪说明](docs/neko-hologram-projector.md)。工作台右侧为独立面板，并会按 Minecraft GUI 缩放适配。蓝图库保存在服务端 `config/gtmb/hologram-presets.json`（全库上限 64 MiB，单份蓝图上限 8 MiB）；导入、导出的分享文件位于 `config/gtmb/hologram-blueprints/`。
+「结构」和「蓝图」是并列标签，普通右键打开工作台时恢复最近使用页；对准真实控制器右键仍优先直接导入结构。蓝图库用扁平列表显示选中行和补充信息，操作使用独立按钮；观察或选择蓝图不会缩小其放置范围。详细操作见[投影仪说明](docs/neko-hologram-projector.md)。工作台右侧为独立面板，并会按 Minecraft GUI 缩放适配。蓝图库保存在服务端 `config/gtmb/hologram-presets.json`（全库上限 64 MiB，单份蓝图上限 8 MiB）；导入、导出的分享文件位于 `config/gtmb/hologram-blueprints/`。
 
 ## License & Origins / 许可与来源
 

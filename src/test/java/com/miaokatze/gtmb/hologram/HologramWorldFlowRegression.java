@@ -19,6 +19,10 @@ public final class HologramWorldFlowRegression {
         Stage workspace = HologramWorldFlow.stage(false, false, false, false, 0);
         SimpleAssert.eq(Intent.OPEN, HologramWorldFlow.intent(workspace, Gesture.RIGHT), "empty tool opens UI");
         SimpleAssert.eq(
+            Intent.QUICK_PLACE,
+            HologramWorldFlow.intent(workspace, Gesture.ALT_RIGHT),
+            "Alt right requests the server's last saved blueprint without opening UI");
+        SimpleAssert.eq(
             Intent.BEGIN_AREA,
             HologramWorldFlow.intent(workspace, Gesture.SHIFT_RIGHT),
             "one modifier starts area");
@@ -27,9 +31,12 @@ public final class HologramWorldFlowRegression {
             Intent.NONE,
             HologramWorldFlow.intent(area, Gesture.RIGHT),
             "right corner never confirms ghost underneath area");
-        SimpleAssert
-            .eq(Intent.NONE, HologramWorldFlow.intent(area, Gesture.SHIFT_RIGHT), "held shift never completes area");
-        SimpleAssert.eq(Intent.FINISH_AREA, HologramWorldFlow.intent(area, Gesture.ENTER), "Enter completes area");
+        SimpleAssert.eq(
+            Intent.FINISH_AREA,
+            HologramWorldFlow.intent(area, Gesture.SHIFT_RIGHT),
+            "second Shift right completes area without overwriting its second corner");
+        SimpleAssert.eq(Intent.NONE, HologramWorldFlow.intent(area, Gesture.ENTER), "Enter remains the chat key");
+        SimpleAssert.eq(Intent.NONE, HologramWorldFlow.intent(area, Gesture.ALT_RIGHT), "Alt right remains a corner");
         SimpleAssert.eq(Intent.CANCEL_AREA, HologramWorldFlow.intent(area, Gesture.ESCAPE), "Escape cancels selection");
         Stage moving = HologramWorldFlow.stage(false, true, true, false, 0);
         SimpleAssert.eq(
@@ -44,15 +51,32 @@ public final class HologramWorldFlowRegression {
             Intent.CANCEL_PLACEMENT,
             HologramWorldFlow.intent(moving, Gesture.ESCAPE),
             "Escape retains draft through placement cancel");
+        SimpleAssert.eq(
+            Intent.NONE,
+            HologramWorldFlow.intent(moving, Gesture.SHIFT_RIGHT),
+            "moving placement never starts a conflicting area selection");
+        SimpleAssert.eq(
+            Intent.NONE,
+            HologramWorldFlow.intent(moving, Gesture.ALT_RIGHT),
+            "moving placement never replaces its blueprint with a shortcut request");
         Stage locked = HologramWorldFlow.stage(false, true, true, true, 0);
         SimpleAssert.eq(
             Intent.OPEN,
             HologramWorldFlow.intent(locked, Gesture.RIGHT),
             "repeat right opens material UI, never executes");
         SimpleAssert.eq(Intent.NONE, HologramWorldFlow.intent(locked, Gesture.ROTATE), "locked plan cannot rotate");
+        SimpleAssert.eq(
+            Intent.UNLOCK_POSITION,
+            HologramWorldFlow.intent(locked, Gesture.SHIFT_RIGHT),
+            "Shift right unlocks without opening UI or starting area selection");
+        SimpleAssert.eq(
+            Intent.CANCEL_PLACEMENT,
+            HologramWorldFlow.intent(locked, Gesture.ESCAPE),
+            "Escape also exits a locked preview");
         for (int job : new int[] { 1, 2 }) {
             Stage active = HologramWorldFlow.stage(true, true, true, false, job);
-            for (Gesture gesture : new Gesture[] { Gesture.ESCAPE, Gesture.ENTER, Gesture.ROTATE, Gesture.SHIFT_RIGHT })
+            for (Gesture gesture : new Gesture[] { Gesture.ESCAPE, Gesture.ENTER, Gesture.ROTATE, Gesture.SHIFT_RIGHT,
+                Gesture.ALT_RIGHT })
                 SimpleAssert.eq(
                     Intent.NONE,
                     HologramWorldFlow.intent(active, gesture),
@@ -64,6 +88,20 @@ public final class HologramWorldFlowRegression {
             Stage.WORKSPACE,
             HologramWorldFlow.stage(false, true, true, false, 4),
             "cancelled job never becomes a moving ghost");
+        for (int job : new int[] { 3, 5 }) {
+            for (boolean lockedPosition : new boolean[] { false, true }) {
+                Stage completed = HologramWorldFlow.stage(false, true, true, lockedPosition, job);
+                SimpleAssert.eq(Stage.WORKSPACE, completed, "a finished placement returns to the workspace");
+                SimpleAssert.eq(
+                    Intent.QUICK_PLACE,
+                    HologramWorldFlow.intent(completed, Gesture.ALT_RIGHT),
+                    "Alt right can preview the saved blueprint again after full or partial completion");
+                SimpleAssert.eq(
+                    Intent.OPEN,
+                    HologramWorldFlow.intent(completed, Gesture.RIGHT),
+                    "ordinary right opens completed job results without another world-position lock");
+            }
+        }
         HologramWorldFlow.KeyEdge key = new HologramWorldFlow.KeyEdge();
         SimpleAssert.that(!key.sample(true, true), "held key on entering projector context is suppressed");
         SimpleAssert.that(!key.sample(true, false), "held key remains suppressed");

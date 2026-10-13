@@ -289,14 +289,26 @@ public final class HologramAeNativePreviewRegression {
             rows.appendTag(row);
             scene.setTag("cells", rows);
             HologramState state = new HologramState(scene);
-            appeng.tile.networking.TileCableBus tile = (appeng.tile.networking.TileCableBus) new HologramBlockAccess(
-                state).getTileEntity(0, 64, 0);
+            HologramBlockAccess nativeAccess = new HologramBlockAccess(state);
+            appeng.tile.networking.TileCableBus tile = (appeng.tile.networking.TileCableBus) nativeAccess
+                .getTileEntity(0, 64, 0);
             check(
                 tile != null && tile.getCableBus()
                     .getPart(net.minecraftforge.common.util.ForgeDirection.NORTH) != null
                     && tile.getCableBus()
                         .getPart(net.minecraftforge.common.util.ForgeDirection.UNKNOWN) != null,
                 "canonical CBC native loader retains actual interface and cable parts before GL");
+            check(
+                tile.getClass() == HologramAeNativeRender.registeredCableFactory()
+                    && appeng.block.networking.BlockCableBus.class
+                        .getDeclaredMethod(
+                            "getTileEntity",
+                            net.minecraft.world.IBlockAccess.class,
+                            int.class,
+                            int.class,
+                            int.class)
+                        .invoke(cable, nativeAccess, 0, 64, 0) == tile,
+                "registered CBC renderer accepts its exact combined native visual host before GL");
             appeng.client.render.BusRenderHelper realHelper = appeng.client.render.BusRenderHelper.instances.get();
             appeng.client.render.BusRenderHelper sentinel = new appeng.client.render.BusRenderHelper();
             sentinel.setPass(1);
@@ -352,6 +364,13 @@ public final class HologramAeNativePreviewRegression {
                 appeng.client.render.BusRenderHelper.instances.set(realHelper);
             }
             System.out.println("AE-NATIVE-PREVIEW real CBC GL alpha-pass/source-parts/context-restoration PASS");
+            try {
+                HologramAeCablePreviewRegression.run();
+            } catch (ReflectiveOperationException reflectionFailure) {
+                throw reflectionFailure;
+            } catch (Exception matrixFailure) {
+                throw new AssertionError("AE native cable/part matrix", matrixFailure);
+            }
         } catch (java.io.IOException invalid) {
             throw new AssertionError("CBC native pass fixture", invalid);
         }

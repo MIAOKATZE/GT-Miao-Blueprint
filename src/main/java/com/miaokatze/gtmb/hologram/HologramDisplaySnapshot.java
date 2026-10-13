@@ -176,27 +176,15 @@ final class HologramDisplaySnapshot {
     }
 
     private static void enrichAeCable(Object host, NBTTagCompound saved) {
-        io.netty.buffer.ByteBuf bytes = io.netty.buffer.Unpooled.buffer(5);
         try {
             Object container = host.getClass()
                 .getMethod("getCableBus")
                 .invoke(host);
-            Object cable = container.getClass()
-                .getMethod("getPart", ForgeDirection.class)
-                .invoke(container, ForgeDirection.UNKNOWN);
-            if (!hasClass(cable, "appeng.parts.networking.PartCable")) return;
-            cable.getClass()
-                .getMethod("writeToStream", io.netty.buffer.ByteBuf.class)
-                .invoke(cable, bytes);
-            if (bytes.readableBytes() != 5) return;
-            NBTTagCompound visual = new NBTTagCompound();
-            visual.setInteger("connections", bytes.readUnsignedByte());
-            visual.setInteger("channels", bytes.readInt());
-            saved.setTag("gtmb.aeCableVisual", visual);
+            if (!(container instanceof appeng.parts.CableBusContainer)) return;
+            NBTTagCompound visual = HologramAeNativePreview.cableVisual((appeng.parts.CableBusContainer) container);
+            if (visual != null) saved.setTag("gtmb.aeCableVisual", visual);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailableVisual) {
-            // Native persistence is still usable when an optional cable subtype has another packet format.
-        } finally {
-            bytes.release();
+            // Native persistence remains usable when an optional host has another visual schema.
         }
     }
 

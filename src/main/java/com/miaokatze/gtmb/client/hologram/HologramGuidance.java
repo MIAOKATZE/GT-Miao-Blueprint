@@ -7,15 +7,17 @@ final class HologramGuidance {
 
     static String next(HologramState state, int selected, boolean blueprints, boolean pending) {
         if (pending) return "等待服务端校验…";
-        if (state.data.getBoolean("areaSelecting")) return "步骤 1/3 · 左键第一角 / 右键第二角 · Alt 使用玩家坐标 · Enter 完成 · Esc 取消";
+        if (state.data.getBoolean("areaSelecting")) return "步骤 1/3 · 左键第一角 / 右键第二角 · Alt 使用玩家坐标 · Shift+右击完成 · Esc 取消";
         if (HologramPlacementConfirmation.forceReview(state.data, state.data.getLong("planRevision")))
             return "缺料：再次确认仅放已有；编辑规划或更换材料来源后重新确认";
         if (state.data.getBoolean("blueprintAwaitingConfirmation")) return "放置预检 · 调整本次 NBT / 核对材料 · 确认放置直接施工";
         if (state.data.getInteger("job") == 1) return "正在施工；可暂停或取消";
         if (state.data.getInteger("job") == 2) return "施工已暂停；确认继续或取消";
-        if (blueprints) return "步骤 1/3 · 列表选择 → 放置 → 世界右键确定位置 → 核对材料 · Esc/E 关闭面板";
+        if (blueprints) return "步骤 1/3 · 列表选择 → 放置 → 世界右键锁定 → 再次右键核对材料 · Alt+右键快捷预览 · Esc/E 关闭";
         if (state.cells.isEmpty()) return "右键控制器导入结构 · Shift+右键框选区域 · 或点击“框选区域”";
-        if (state.data.getBoolean("virtualPlacement")) return "步骤 2/3 · 世界右键确定位置 · R 旋转 · Esc 取消 · 下一步核对材料";
+        if (state.data.getBoolean("virtualPlacement"))
+            return state.data.getBoolean("virtualLocked") ? "位置已锁定（青色）· Shift+右键解锁 · 再次右键核对材料 · Esc 取消"
+                : "位置预览（绿色）· 世界右键锁定 · R 旋转 · Esc 取消 · 再次右键核对材料";
         if (selected >= 0) return "T+点击同种 · Ctrl 多选 · Shift 框选 · Alt 选空气 · Esc/E 关闭面板"
             + (state.data.getBoolean("virtual") ? " · 完整结构 G 移动轴 · Ctrl+拖轴复制" : "");
         return "点击选方块 · 线圈等部件自动同族 · T+点击同种 · 点击结构边缘整选 · Alt 选空气";

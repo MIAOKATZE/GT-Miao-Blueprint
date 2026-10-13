@@ -55,6 +55,27 @@ public final class HologramInteractionClientSmoke {
     private long disconnectedFrame = -1, disconnectedAt;
     private String disconnectedReason;
     private String lastStoneAreaObservation = "";
+    private String quickPresetId;
+    private long lockedNonce;
+    private int reviewStage;
+    private final HologramActualUsePress usePress = new HologramActualUsePress();
+    private String completedSession, completedPreset, completedActor, completedClientActor;
+    private int[] completedStoneAnchor;
+    private int completedPlaced, completedStock, afterRepeatStage;
+    private long repeatStartedAt, repeatFrame, repeatCancelledTick;
+    private String repeatSession;
+    private long repeatNonce;
+    private boolean lockedEscapeChecked;
+    private String lockedEscapeSession;
+    private long lockedEscapeNonce, lockedEscapeStartedAt;
+    private java.lang.reflect.Field rendererWorldStateField;
+    private HologramState lastRenderedProjectionState;
+    private int[] lastRenderedMovingAnchor, aimedMovingAnchor;
+    private int observedWorldGeometry, observedWorldGhosts, observedWorldOutline;
+    private String aimedProjectionGeneration = "";
+    private long aimedWorldFrame;
+    private long repeatCancelAckTick = -1, lockedEscapeCancelSentTick;
+    private String cancelledReceiptWait = "";
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")) {
@@ -67,8 +88,21 @@ public final class HologramInteractionClientSmoke {
     }
 
     @SubscribeEvent(priority = cpw.mods.fml.common.eventhandler.EventPriority.LOWEST)
-    public void worldRendered(net.minecraftforge.client.event.RenderWorldLastEvent event) {
+    public void worldRendered(net.minecraftforge.client.event.RenderWorldLastEvent event)
+        throws ReflectiveOperationException {
         renderedWorldFrames++;
+        if (rendererWorldStateField == null) {
+            rendererWorldStateField = HologramRenderer.class.getDeclaredField("worldState");
+            rendererWorldStateField.setAccessible(true);
+        }
+        lastRenderedProjectionState = (HologramState) rendererWorldStateField.get(null);
+        observedWorldGeometry = HologramRenderer.lastWorldGeometry;
+        observedWorldGhosts = HologramRenderer.lastWorldGhosts;
+        observedWorldOutline = HologramRenderer.lastWorldPlacementOutlineColor;
+        lastRenderedMovingAnchor = lastRenderedProjectionState != null
+            && lastRenderedProjectionState.data.getBoolean("moving")
+                ? HologramClient.movingAnchor(lastRenderedProjectionState)
+                : null;
     }
 
     @SubscribeEvent
@@ -110,7 +144,7 @@ public final class HologramInteractionClientSmoke {
                 return;
             }
             if (event.phase == TickEvent.Phase.START) {
-                if (stage == 46) keyboard(Keyboard.KEY_RETURN, true);
+                usePress.tick(event, mc);
                 return;
             }
             // Validate this tick's real file before any input; publication retries never repeat a sent action.
@@ -120,11 +154,12 @@ public final class HologramInteractionClientSmoke {
                 tickReceipt = receiptReader.read();
                 if (tickReceipt == null) return;
             }
+            if (usePress.tick(event, mc)) return;
             if (timedStage != stage) {
                 timedStage = stage;
                 stageEnteredAt = System.nanoTime();
             }
-            if ((stage == 11 || stage == 17 || stage == 21 || stage == 24)
+            if ((stage == 11 || stage == 17 || stage == 21 || stage == 24 || stage == 66)
                 && System.nanoTime() - stageEnteredAt >= 10000000000L) {
                 HologramScreen waitingScreen = mc.currentScreen instanceof HologramScreen
                     ? (HologramScreen) mc.currentScreen
@@ -133,6 +168,12 @@ public final class HologramInteractionClientSmoke {
                 if (waitingState == null
                     || waitingState.getInteger("job") != 3 && waitingState.getInteger("job") != 5) {
                     String summary = stageSnapshot(waitingState);
+                    if (stage == 66) {
+                        if (waitingScreen != null)
+                            logConfirmClickState(waitingScreen, "single-stone-ten-second-timeout");
+                        saveObservation("stage-66-timeout-state.nbt", waitingState);
+                        saveObservation("stage-66-timeout-receipt.nbt", tickReceipt);
+                    }
                     System.err.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] WAIT TIMEOUT " + summary);
                     IllegalStateException failure = new IllegalStateException("10 second execution wait " + summary);
                     try {
@@ -221,8 +262,13 @@ public final class HologramInteractionClientSmoke {
                 stage = stage == 61 ? 62 : 64;
                 return;
             }
-            if ((stage >= 40 && stage <= 46 || stage == 50 || stage == 51 || stage == 54 || stage == 55)
-                && worldFlow(mc)) return;
+            if ((stage >= 40 && stage <= 46 || stage == 50
+                || stage == 51
+                || stage == 54
+                || stage == 55
+                || stage >= 77 && stage <= 79
+                || stage >= 91 && stage <= 93) && worldFlow(mc)) return;
+            if ((stage >= 83 && stage <= 86 || stage >= 88 && stage <= 90) && repeatCompletedPlacement(mc)) return;
             if (!(mc.currentScreen instanceof HologramScreen)) return;
             HologramScreen screen = (HologramScreen) mc.currentScreen;
             if (screen.smokeRenderGeneration() <= lastClickedRender) {
@@ -258,6 +304,11 @@ public final class HologramInteractionClientSmoke {
             waitTicks = 0;
             if (stage == 2) {
                 if (state.getBoolean("capturePending")) return;
+                // A prior run may have persisted the library tab. Select the EBF workspace through its real tab.
+                if (libraryTab(screen)) {
+                    click(screen, 148);
+                    return;
+                }
                 require(
                     state.getBoolean("target") && state.getBoolean("supported")
                         && state.getTagList("cells", 10)
@@ -503,7 +554,8 @@ public final class HologramInteractionClientSmoke {
                     require(
                         state.getBoolean("virtual") && state.getTagList("cells", 10)
                             .tagCount() == (sufficientBlueprintPass ? 1 : 2),
-                        "shift_mouse_enter_imports_actual_world_blocks_sufficient_" + sufficientBlueprintPass);
+                        "second_shift_right_imports_actual_world_blocks_without_Enter_sufficient_"
+                            + sufficientBlueprintPass);
                     net.minecraft.nbt.NBTTagList importedStoneCells = state.getTagList("cells", 10);
                     java.util.Set<Integer> importedStoneX = new java.util.HashSet<>();
                     for (int i = 0; i < importedStoneCells.tagCount(); i++) {
@@ -527,7 +579,7 @@ public final class HologramInteractionClientSmoke {
                                 && capturedTarget.getItemDamage() == 0,
                             "real_completed_area_contains_exact_source_stone_coordinate_" + i);
                     }
-                    click(screen, 130);
+                    if (!libraryTab(screen)) click(screen, 130);
                     stage = 48;
                     break;
                 case 48:
@@ -536,6 +588,10 @@ public final class HologramInteractionClientSmoke {
                     net.minecraft.client.gui.GuiTextField name = (net.minecraft.client.gui.GuiTextField) nameField
                         .get(screen);
                     name.setFocused(true);
+                    keyboard(Keyboard.KEY_LCONTROL, true);
+                    screen.keyTyped((char) 1, Keyboard.KEY_A);
+                    keyboard(Keyboard.KEY_LCONTROL, false);
+                    screen.keyTyped('\b', Keyboard.KEY_BACK);
                     for (char character : (sufficientBlueprintPass ? "SocketSufficient" : "SocketV004").toCharArray())
                         screen.keyTyped(character, 0);
                     lastClickedRender = screen.smokeRenderGeneration();
@@ -550,14 +606,22 @@ public final class HologramInteractionClientSmoke {
                         !state.getString("selectedPresetId")
                             .isEmpty(),
                         "actual_library_save_creates_server_owned_blueprint");
-                    click(screen, 141);
+                    if (sufficientBlueprintPass) {
+                        quickPresetId = state.getString("selectedPresetId");
+                        require(libraryTab(screen), "saved_blueprint_shortcut_preserves_last_library_tab");
+                        screen.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                        require(mc.currentScreen == null, "quick_place_starts_from_actual_closed_workspace");
+                        keyboard(Keyboard.KEY_LMENU, true);
+                        rightClickSource(mc);
+                        keyboard(Keyboard.KEY_LMENU, false);
+                    } else click(screen, 141);
                     stage = 50;
                     break;
                 case 52:
                     require(
                         state.getBoolean("virtualLocked") && state.getBoolean("blueprintAwaitingConfirmation"),
-                        "normal_right_locks_ghost_and_opens_material_confirmation");
-                    require(!libraryTab(screen), "position_review_initially_opens_structure_peer_tab");
+                        "second_normal_right_opens_material_confirmation_for_locked_ghost");
+                    require(libraryTab(screen), "position_review_preserves_last_library_peer_tab");
                     require(state.getLong("placementReviewNonce") > 0, "position_review_has_explicit_world_open_nonce");
                     require(
                         receipt().getInteger("blueprintPlaced") == (sufficientBlueprintPass ? 0 : 1),
@@ -587,7 +651,7 @@ public final class HologramInteractionClientSmoke {
                     stage = 54;
                     break;
                 case 56:
-                    require(!libraryTab(screen), "second_position_review_initially_opens_structure_peer_tab");
+                    require(libraryTab(screen), "second_position_review_preserves_last_library_peer_tab");
                     require(
                         state.getInteger("missing") == 1,
                         "real_blueprint_missing_material_requires_explicit_review");
@@ -607,6 +671,7 @@ public final class HologramInteractionClientSmoke {
                     break;
                 case 58:
                     if (state.getInteger("job") != 3 && state.getInteger("job") != 5) return;
+                    require(libraryTab(screen), "partial_placement_completion_preserves_library_peer_tab");
                     require(
                         state.getBoolean("jobPartialPlacement") && state.getInteger("completed") == 1
                             && state.getInteger("jobMissingCells") == 1
@@ -621,6 +686,9 @@ public final class HologramInteractionClientSmoke {
                         "second_explicit_missing_review_builds_one_real_block_and_consumes_exactly_one_item");
                     logConstructionScope(screen, "whole-blueprint-real-partial-placement-complete");
                     screenshot(mc, "v004-area-ghost-material-review");
+                    beginRepeatCompletedPlacement(mc, screen, state, 87);
+                    break;
+                case 87:
                     if (Boolean.getBoolean("gtmb.hologram.aeRealInteractionSmoke")) {
                         aeDriver = new HologramAeInteractionClientSmoke(receipts);
                         stage = 100;
@@ -628,7 +696,7 @@ public final class HologramInteractionClientSmoke {
                     }
                     Files.write(
                         new File(receipts, "client-complete.txt").toPath(),
-                        "real socket normal/air C08 + GUI mouse + peer tabs/Esc/E + direct-build/upgrade/full-dismantle + Shift area/Enter/Esc + camera/wheel Place ghost + one-confirm sufficient placement/material cancel/explicit missing confirmation PASS\n"
+                        "real socket C08 + GUI mouse + tabs/Esc/E + build/upgrade/dismantle + Shift-right area finish + Alt-right saved preset ghost + green/right cyan/Shift-right green/right cyan/RIGHT2 review + one-confirm sufficient/material cancel/explicit missing confirmation PASS\n"
                             .getBytes(StandardCharsets.UTF_8));
                     done = true;
                     System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] FINAL PASS stage=" + stage);
@@ -636,6 +704,7 @@ public final class HologramInteractionClientSmoke {
                     break;
                 case 66:
                     if (state.getInteger("job") != 3 && state.getInteger("job") != 5) return;
+                    require(libraryTab(screen), "sufficient_placement_completion_preserves_library_peer_tab");
                     NBTTagCompound sufficientReceipt = receipt();
                     require(
                         sufficientReceipt.getBoolean("sufficientBlueprintJobStarted"),
@@ -646,9 +715,7 @@ public final class HologramInteractionClientSmoke {
                         "one_primary_confirmation_builds_one_real_block_and_consumes_one_material");
                     screenshot(mc, "v004-single-confirm-sufficient-placement");
                     sufficientBlueprintPass = false;
-                    stage = 40;
-                    waitTicks = 0;
-                    mc.displayGuiScreen(null);
+                    beginRepeatCompletedPlacement(mc, screen, state, 40);
                     break;
                 default:
                     throw new IllegalStateException("unknown stage " + stage);
@@ -946,6 +1013,369 @@ public final class HologramInteractionClientSmoke {
         screen.mouseMovedOrUp(x, y, button);
     }
 
+    private void beginRepeatCompletedPlacement(Minecraft mc, HologramScreen screen, NBTTagCompound state, int nextStage)
+        throws Exception {
+        completedSession = state.getString("session");
+        completedPreset = state.getString("selectedPresetId");
+        completedClientActor = mc.thePlayer.getUniqueID()
+            .toString();
+        NBTTagCompound completedServer = receipt().getCompoundTag("blueprintSession");
+        completedActor = completedServer.getString("actor");
+        require(
+            completedSession.equals(completedServer.getString("id"))
+                && completedPreset.equals(completedServer.getString("presetId"))
+                && java.util.UUID.fromString(completedActor)
+                    .toString()
+                    .equals(completedActor),
+            "completed_session_and_preset_bind_actual_canonical_server_actor");
+        System.out.println(
+            "[GTMB-HOLOGRAM-INTERACTION-CLIENT] POSTCOMPLETE-ACTOR-BINDING clientLocalUUID=" + completedClientActor
+                + " canonicalServerActor="
+                + completedActor
+                + " session="
+                + completedSession);
+        completedStoneAnchor = expectedAirAnchor.clone();
+        completedPlaced = receipt().getInteger("blueprintPlaced");
+        completedStock = receipt().getInteger("blueprintStock");
+        afterRepeatStage = nextStage;
+        repeatStartedAt = System.nanoTime();
+        repeatCancelledTick = receipt().getLong("tick");
+        aimedProjectionGeneration = "";
+        saveObservation("post-complete-Alt-before-receipt-" + nextStage + ".nbt", receipt());
+        screen.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+        require(mc.currentScreen == null, "completed_placement_E_returns_to_world_before_Alt_repeat");
+        stage = 83;
+        waitTicks = 0;
+    }
+
+    private boolean repeatCompletedPlacement(Minecraft mc) throws Exception {
+        if (System.nanoTime() - repeatStartedAt > 15000000000L)
+            throw movingWorldTimeout(mc, "post-completion physical Alt/Escape regression exceeded fifteen seconds");
+        NBTTagCompound state = HologramClient.state == null ? null : HologramClient.state.data;
+        if (stage == 83 || stage == 84 || stage == 85 || stage == 88 || stage == 90)
+            require(mc.currentScreen == null, "post_complete_Alt_or_actual_E_close_keeps_world_closed_stage_" + stage);
+        require(
+            completedClientActor.equals(
+                mc.thePlayer.getUniqueID()
+                    .toString()),
+            "post_complete_Alt_repeat_preserves_same_actual_player_UUID");
+        require(
+            completedActor.equals(
+                receipt().getCompoundTag("blueprintSession")
+                    .getString("actor")),
+            "post_complete_all_independent_receipts_preserve_same_canonical_server_actor");
+        require(
+            receipt().getInteger("blueprintPlaced") == completedPlaced
+                && receipt().getInteger("blueprintStock") == completedStock,
+            "post_complete_Alt_Escape_never_places_or_consumes_another_material_stage_" + stage);
+        require(
+            mc.theWorld.getBlock(completedStoneAnchor[0], completedStoneAnchor[1], completedStoneAnchor[2])
+                == net.minecraft.init.Blocks.stone,
+            "post_complete_Alt_Escape_preserves_actual_previously_paid_stone_stage_" + stage);
+        if (stage == 83) {
+            if (receipt().getLong("tick") - repeatCancelledTick < 10) return true;
+            keyboard(Keyboard.KEY_LMENU, true);
+            rightClickSource(mc);
+            keyboard(Keyboard.KEY_LMENU, false);
+            repeatFrame = renderedWorldFrames;
+            stage = 84;
+            return true;
+        }
+        if (stage == 84) {
+            if (state == null || !state.getBoolean("moving") || !state.getBoolean("virtualPlacement")) return true;
+            require(
+                !state.getBoolean("virtualLocked") && !state.getBoolean("open")
+                    && !state.getBoolean("blueprintAwaitingConfirmation")
+                    && state.getInteger("job") == 0,
+                "post_complete_Alt_starts_unpaid_unlocked_world_ghost_without_job");
+            require(
+                !completedSession.equals(state.getString("session"))
+                    && completedPreset.equals(state.getString("selectedPresetId")),
+                "post_complete_Alt_uses_exact_saved_preset_in_new_server_session");
+            repeatSession = state.getString("session");
+            repeatNonce = state.getLong("placementReviewNonce");
+            require(repeatNonce == 0, "fresh_unlocked_Alt_session_has_no_review_nonce");
+            if (!repeatSession.equals(
+                receipt().getCompoundTag("blueprintSession")
+                    .getString("id")))
+                return true;
+            if (!awaitAimedMovingWorldFrame(mc)) return true;
+            require(
+                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldGhosts > 0
+                    && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                "post_complete_Alt_new_world_ghost_is_actually_rendered_green");
+            screenshot(mc, "v007-post-complete-Alt-green-" + afterRepeatStage);
+            saveObservation("post-complete-Alt-green-receipt-" + afterRepeatStage + ".nbt", receipt());
+            stage = 85;
+            return true;
+        }
+        if (stage == 85) {
+            repeatCancelledTick = receipt().getLong("tick");
+            repeatCancelAckTick = -1;
+            mc.displayGuiScreen(new net.minecraft.client.gui.GuiIngameMenu());
+            require(mc.currentScreen == null, "post_complete_repeat_Escape_cancels_without_pause_menu");
+            stage = 86;
+            return true;
+        }
+        if (stage == 86 || stage == 89) {
+            if (state == null || state.getBoolean("moving")
+                || state.getBoolean("virtualPlacement")
+                || !(mc.currentScreen instanceof HologramScreen)) return true;
+            HologramScreen draft = (HologramScreen) mc.currentScreen;
+            require(
+                repeatSession.equals(state.getString("session"))
+                    && completedPreset.equals(state.getString("selectedPresetId"))
+                    && !state.getBoolean("virtualLocked")
+                    && !state.getBoolean("blueprintAwaitingConfirmation")
+                    && state.getInteger("job") == 0
+                    && state.getLong("placementReviewNonce") == repeatNonce
+                    && !(Boolean) observedField(draft, "confirmation")
+                    && libraryTab(draft),
+                "world_Escape_returns_to_same_draft_library_UI_without_review_authority");
+            NBTTagCompound independent = receipt().getCompoundTag("blueprintSession");
+            if (!awaitCancelledReceipt(repeatSession, state, repeatCancelledTick)) return true;
+            System.out.println(
+                "[GTMB-HOLOGRAM-INTERACTION-CLIENT] CANCEL-RECEIPT-PREDICATES stage=" + stage
+                    + " idExpected="
+                    + repeatSession
+                    + " idActual="
+                    + independent.getString("id")
+                    + " presetExpected="
+                    + completedPreset
+                    + " presetActual="
+                    + independent.getString("presetId")
+                    + " serverActorExpected="
+                    + completedActor
+                    + " serverActorActual="
+                    + independent.getString("actor")
+                    + " clientLocalUUID="
+                    + completedClientActor
+                    + " placementExpected=false actual="
+                    + independent.getBoolean("virtualPlacement")
+                    + " lockedExpected=false actual="
+                    + independent.getBoolean("virtualLocked")
+                    + " awaitingExpected=false actual="
+                    + independent.getBoolean("blueprintAwaitingConfirmation")
+                    + " issuedExpected=false actual="
+                    + independent.getBoolean("placementReviewIssued")
+                    + " jobExpected=0 actual="
+                    + independent.getInteger("job")
+                    + " nonceExpected=0 actual="
+                    + independent.getLong("placementReviewNonce"));
+            require(repeatSession.equals(independent.getString("id")), "cancelled_receipt_matches_exact_quick_session");
+            require(
+                completedPreset.equals(independent.getString("presetId")),
+                "cancelled_receipt_matches_exact_saved_preset");
+            require(
+                completedActor.equals(independent.getString("actor")),
+                "cancelled_receipt_matches_same_canonical_server_actor");
+            require(!independent.getBoolean("virtualPlacement"), "cancelled_receipt_has_no_placement_mode");
+            require(!independent.getBoolean("virtualLocked"), "cancelled_receipt_has_no_locked_position");
+            require(
+                !independent.getBoolean("blueprintAwaitingConfirmation"),
+                "cancelled_receipt_has_no_awaiting_confirmation");
+            require(!independent.getBoolean("placementReviewIssued"), "cancelled_receipt_has_no_review_capability");
+            require(independent.getInteger("job") == 0, "cancelled_receipt_has_no_job");
+            require(independent.getLong("placementReviewNonce") == 0, "cancelled_fresh_quick_session_has_zero_nonce");
+            require(
+                repeatSession.equals(independent.getString("id")) && !independent.getBoolean("virtualPlacement")
+                    && completedPreset.equals(independent.getString("presetId"))
+                    && completedActor.equals(independent.getString("actor"))
+                    && !independent.getBoolean("virtualLocked")
+                    && !independent.getBoolean("blueprintAwaitingConfirmation")
+                    && !independent.getBoolean("placementReviewIssued")
+                    && independent.getInteger("job") == 0
+                    && independent.getLong("placementReviewNonce") == 0,
+                "cancelled_Alt_draft_has_no_independent_server_placement_authority");
+            if (stage == 86) {
+                if (repeatCancelAckTick < 0) repeatCancelAckTick = receipt().getLong("tick");
+                if (receipt().getLong("tick") - repeatCancelAckTick < 10) return true;
+                screenshot(mc, "v007-post-complete-Alt-Escape-preserves-paid-world-" + afterRepeatStage);
+                saveObservation("post-complete-Alt-Escape-receipt-" + afterRepeatStage + ".nbt", receipt());
+                draft.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                require(mc.currentScreen == null, "cancelled_Alt_draft_actual_E_exits_root_UI");
+                repeatCancelledTick = receipt().getLong("tick");
+                stage = 88;
+                return true;
+            }
+            screenshot(mc, "v007-post-complete-draft-E-close-right-reopen-" + afterRepeatStage);
+            System.out.println(
+                "[GTMB-HOLOGRAM-INTERACTION-CLIENT] PASS post-complete Alt new-green-session same-player/preset Escape draft-UI E-close10ticks normal-right-reopen paid-world/resources intact placed="
+                    + completedPlaced
+                    + " stock="
+                    + completedStock
+                    + " next="
+                    + afterRepeatStage);
+            lastClickedRender = -1;
+            waitTicks = 0;
+            if (afterRepeatStage == 40) {
+                draft.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                require(mc.currentScreen == null, "sufficient_repeat_reopened_draft_actual_E_closes_before_next_area");
+                repeatCancelledTick = receipt().getLong("tick");
+                stage = 90;
+            } else stage = 87;
+            return true;
+        }
+        if (stage == 88 || stage == 90) {
+            if (receipt().getLong("tick") - repeatCancelledTick < 10) return true;
+            if (stage == 88) {
+                rightClickSource(mc);
+                stage = 89;
+            } else stage = 40;
+            return true;
+        }
+        return true;
+    }
+
+    /** Socket ACK and the independent disk publication are separate observations of the actual server state. */
+    private boolean awaitCancelledReceipt(String session, NBTTagCompound acknowledged, long beforeActionTick)
+        throws Exception {
+        NBTTagCompound actual = receipt();
+        NBTTagCompound server = actual.getCompoundTag("blueprintSession");
+        boolean current = session.equals(server.getString("id")) && actual.getLong("tick") > beforeActionTick
+            && server.getLong("uiSequence") >= acknowledged.getLong("uiSequence")
+            && server.getLong("planRevision") >= acknowledged.getLong("planRevision")
+            && !server.getBoolean("virtualPlacement");
+        if (!current) {
+            String waiting = "stage=" + stage
+                + " receiptTick="
+                + actual.getLong("tick")
+                + " afterActionTick="
+                + beforeActionTick
+                + " receiptSession="
+                + server.getString("id")
+                + " expectedSession="
+                + session
+                + " uiSequence="
+                + server.getLong("uiSequence")
+                + "/"
+                + acknowledged.getLong("uiSequence")
+                + " revision="
+                + server.getLong("planRevision")
+                + "/"
+                + acknowledged.getLong("planRevision")
+                + " placement="
+                + server.getBoolean("virtualPlacement");
+            if (!waiting.equals(cancelledReceiptWait)) {
+                cancelledReceiptWait = waiting;
+                System.out
+                    .println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] WAIT independent cancellation receipt " + waiting);
+            }
+            return false;
+        }
+        cancelledReceiptWait = "";
+        return true;
+    }
+
+    private static String projectionGeneration(HologramState snapshot) {
+        if (snapshot == null) return "none";
+        NBTTagCompound data = snapshot.data;
+        return snapshot.session + ":"
+            + data.getLong("batchSeq")
+            + ":"
+            + data.getLong("planRevision")
+            + ":"
+            + data.getInteger("x")
+            + ","
+            + data.getInteger("y")
+            + ","
+            + data.getInteger("z")
+            + ":moving="
+            + data.getBoolean("moving")
+            + ":locked="
+            + data.getBoolean("virtualLocked");
+    }
+
+    /** Aim through the normal camera/scroll path, then wait for that generation and anchor's actual world mesh. */
+    private boolean awaitAimedMovingWorldFrame(Minecraft mc) throws Exception {
+        HologramState latest = HologramClient.state;
+        String generation = projectionGeneration(latest);
+        mc.objectMouseOver = null;
+        if (!generation.equals(aimedProjectionGeneration)) {
+            mc.thePlayer.rotationYaw = mc.thePlayer.prevRotationYaw = -60;
+            mc.thePlayer.rotationPitch = mc.thePlayer.prevRotationPitch = -30;
+            int[] beforeWheel = HologramClient.movingAnchor(latest);
+            mouseWheel(120);
+            mouseWheel(120);
+            aimedMovingAnchor = HologramClient.movingAnchor(latest);
+            require(
+                !java.util.Arrays.equals(beforeWheel, aimedMovingAnchor),
+                "fresh_moving_ghost_actual_scroll_changes_air_target");
+            require(
+                aimedMovingAnchor[1] > net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posY)
+                    && mc.theWorld.blockExists(aimedMovingAnchor[0], aimedMovingAnchor[1], aimedMovingAnchor[2])
+                    && mc.theWorld.isAirBlock(aimedMovingAnchor[0], aimedMovingAnchor[1], aimedMovingAnchor[2]),
+                "fresh_moving_ghost_camera_aims_loaded_empty_air_above_player");
+            aimedProjectionGeneration = generation;
+            aimedWorldFrame = renderedWorldFrames;
+            return false;
+        }
+        if (renderedWorldFrames <= aimedWorldFrame
+            || !generation.equals(projectionGeneration(lastRenderedProjectionState))
+            || !java.util.Arrays.equals(aimedMovingAnchor, lastRenderedMovingAnchor)
+            || observedWorldGeometry <= 0
+            || observedWorldGhosts <= 0
+            || observedWorldOutline != 0x70e69a) return false;
+        require(
+            java.util.Arrays.equals(aimedMovingAnchor, HologramClient.movingAnchor(latest)),
+            "latest_moving_snapshot_camera_target_equals_actual_rendered_world_anchor");
+        require(
+            HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldGhosts > 0
+                && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+            "latest_aimed_world_frame_has_actual_ghost_geometry_and_green_outline");
+        System.out.println(
+            "[GTMB-HOLOGRAM-INTERACTION-CLIENT] PASS latest moving world frame stage=" + stage
+                + " generation="
+                + generation
+                + " frame="
+                + renderedWorldFrames
+                + " stateIdentity="
+                + System.identityHashCode(latest)
+                + " renderedIdentity="
+                + System.identityHashCode(lastRenderedProjectionState)
+                + " anchor="
+                + java.util.Arrays.toString(aimedMovingAnchor)
+                + " geometry="
+                + observedWorldGeometry
+                + " ghosts="
+                + observedWorldGhosts
+                + " outline=70e69a");
+        return true;
+    }
+
+    private IllegalStateException movingWorldTimeout(Minecraft mc, String reason) {
+        IllegalStateException failure = new IllegalStateException(
+            reason + " stage="
+                + stage
+                + " latest="
+                + projectionGeneration(HologramClient.state)
+                + " rendered="
+                + projectionGeneration(lastRenderedProjectionState)
+                + " frame="
+                + renderedWorldFrames
+                + " preparedFrame="
+                + aimedWorldFrame
+                + " aimedAnchor="
+                + java.util.Arrays.toString(aimedMovingAnchor)
+                + " renderedAnchor="
+                + java.util.Arrays.toString(lastRenderedMovingAnchor)
+                + " geometry="
+                + observedWorldGeometry
+                + " ghosts="
+                + observedWorldGhosts
+                + " outline="
+                + Integer.toHexString(observedWorldOutline));
+        try {
+            screenshot(mc, "stage-" + stage + "-latest-world-frame-timeout");
+            saveObservation(
+                "stage-" + stage + "-latest-world-frame-timeout.nbt",
+                HologramClient.state == null ? null : HologramClient.state.data);
+        } catch (Exception diagnosticFailure) {
+            failure.addSuppressed(diagnosticFailure);
+        }
+        return failure;
+    }
+
     /** Inject native LWJGL key state across real client ticks and dispatch the registered Forge mouse event. */
     private boolean worldFlow(Minecraft mc) throws Exception {
         NBTTagCompound state = HologramClient.state == null ? null : HologramClient.state.data;
@@ -985,7 +1415,10 @@ public final class HologramInteractionClientSmoke {
             int[] expected = { 50, 80, 44, sufficientBlueprintPass ? 50 : 51, 80, 44 };
             if (state == null || !java.util.Arrays.equals(state.getIntArray("areaPoints"), expected) || ++waitTicks < 4)
                 return true;
-            keyboard(Keyboard.KEY_RETURN, true);
+            keyboard(Keyboard.KEY_LSHIFT, true);
+            // Finish deliberately points elsewhere: the gesture must not replace corner two.
+            mouseCorner(mc, 1, 48);
+            keyboard(Keyboard.KEY_LSHIFT, false);
             stage = 46;
             return true;
         }
@@ -1002,6 +1435,9 @@ public final class HologramInteractionClientSmoke {
             require(
                 state.getBoolean("virtualPlacement") && !state.getBoolean("virtualLocked"),
                 "library_Place_enters_unlocked_world_ghost_stage_" + stage);
+            if (sufficientBlueprintPass && stage == 50) require(
+                quickPresetId.equals(state.getString("selectedPresetId")),
+                "Alt_right_uses_exact_last_saved_server_preset");
             require(
                 receipt().getInteger("blueprintPlaced") == (sufficientBlueprintPass ? 0 : 1),
                 "moving_ghost_never_builds_stage_" + stage);
@@ -1039,18 +1475,24 @@ public final class HologramInteractionClientSmoke {
             }
             if (renderedWorldFrames <= airPreparedFrame) return true;
             require(
+                HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                "actual_moving_world_ghost_outline_is_green_stage_" + stage);
+            require(
                 java.util.Arrays.equals(expectedAirAnchor, HologramClient.movingAnchor(HologramClient.state)),
                 "rendered_air_ghost_and_right_click_share_exact_camera_target_stage_" + stage);
             screenshot(mc, "air-camera-scroll-ghost-stage-" + stage);
-            mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
+            airRightClick(mc, true);
             airPlacementPrepared = false;
             stage = stage == 50 ? 51 : 55;
             waitTicks = 0;
             return true;
         }
         if (stage == 51 || stage == 55) {
-            if (!(mc.currentScreen instanceof HologramScreen) || state == null || !state.getBoolean("virtualLocked"))
-                return true;
+            if (state == null || !state.getBoolean("virtualLocked")) return true;
+            require(mc.currentScreen == null, "first_normal_right_locks_without_opening_GUI_stage_" + stage);
+            require(
+                !state.getBoolean("moving") && !state.getBoolean("open"),
+                "first_right_is_world_only_lock_" + stage);
             require(
                 java.util.Arrays.equals(
                     expectedAirAnchor,
@@ -1061,12 +1503,153 @@ public final class HologramInteractionClientSmoke {
             require(
                 authoritative.getInteger("blueprintObservedTargetCount") >= (sufficientBlueprintPass ? 1 : 2),
                 "server_owned_receipt_observes_air_target_cells_stage_" + stage);
+            if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
+            require(
+                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
+                "actual_first_locked_world_ghost_outline_is_cyan_stage_" + stage);
+            require(
+                authoritative.getInteger("blueprintPlaced") == (sufficientBlueprintPass ? 0 : 1),
+                "first_world_lock_never_constructs_" + stage);
+            screenshot(mc, "v007-first-right-cyan-world-lock-stage-" + stage);
+            if (stage == 51 && sufficientBlueprintPass && !lockedEscapeChecked) {
+                lockedEscapeChecked = true;
+                lockedEscapeSession = state.getString("session");
+                lockedEscapeNonce = state.getLong("placementReviewNonce");
+                lockedEscapeStartedAt = System.nanoTime();
+                lockedEscapeCancelSentTick = receipt().getLong("tick");
+                mc.displayGuiScreen(new net.minecraft.client.gui.GuiIngameMenu());
+                require(mc.currentScreen == null, "locked_cyan_Escape_cancels_without_pause_menu");
+                stage = 91;
+                return true;
+            }
+            lockedNonce = state.getLong("placementReviewNonce");
+            reviewStage = stage == 51 ? 52 : 56;
+            keyboard(Keyboard.KEY_LSHIFT, true);
+            rightClickSource(mc);
+            keyboard(Keyboard.KEY_LSHIFT, false);
+            airPreparedFrame = renderedWorldFrames;
+            stage = 77;
+            waitTicks = 0;
+            return true;
+        }
+        if (stage == 77) {
+            if (state == null || !state.getBoolean("moving") || state.getBoolean("virtualLocked")) return true;
+            require(mc.currentScreen == null, "Shift_right_unlock_returns_to_world_without_GUI");
+            require(
+                state.getLong("placementReviewNonce") > lockedNonce
+                    && !state.getBoolean("blueprintAwaitingConfirmation"),
+                "Shift_right_unlock_invalidates_old_review_nonce");
+            if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
+            require(
+                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                "actual_Shift_right_unlocked_world_ghost_returns_to_green");
+            screenshot(mc, "v007-shift-right-green-unlocked-review-" + reviewStage);
+            mc.objectMouseOver = null;
+            expectedAirAnchor = HologramClient.movingAnchor(HologramClient.state);
+            lockedNonce = state.getLong("placementReviewNonce");
+            airRightClick(mc, true);
+            airPreparedFrame = renderedWorldFrames;
+            stage = 78;
+            waitTicks = 0;
+            return true;
+        }
+        if (stage == 78) {
+            if (state == null || !state.getBoolean("virtualLocked")) return true;
+            require(mc.currentScreen == null && !state.getBoolean("open"), "relock_still_keeps_real_GUI_closed");
+            require(state.getLong("placementReviewNonce") > lockedNonce, "relock_invalidates_prior_world_review_nonce");
+            require(
+                java.util.Arrays.equals(
+                    expectedAirAnchor,
+                    new int[] { state.getInteger("x"), state.getInteger("y"), state.getInteger("z") }),
+                "relock_uses_exact_rendered_air_anchor");
+            if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
+            require(
+                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
+                "actual_relocked_world_ghost_returns_to_cyan");
+            screenshot(mc, "v007-relocked-cyan-before-RIGHT2-review-" + reviewStage);
+            lockedNonce = state.getLong("placementReviewNonce");
+            mc.objectMouseOver = null;
+            airRightClick(mc, false);
+            stage = 79;
+            return true;
+        }
+        if (stage == 79) {
+            if (!(mc.currentScreen instanceof HologramScreen) || state == null || !state.getBoolean("virtualLocked"))
+                return true;
+            require(
+                state.getBoolean("open") && state.getLong("placementReviewNonce") > lockedNonce,
+                "RIGHT2_is_the_only_gesture_issuing_material_review");
             System.out.println(
-                "[GTMB-HOLOGRAM-INTERACTION-CLIENT] PASS actual air placement precheck "
+                "[GTMB-HOLOGRAM-INTERACTION-CLIENT] PASS v007 green RIGHT cyan SHIFT_RIGHT green RIGHT cyan RIGHT2 review "
                     + ((HologramScreen) mc.currentScreen).smokePlacementReviewContext());
             logConstructionScope((HologramScreen) mc.currentScreen, "actual-air-position-precheck-whole-blueprint");
             lastClickedRender = -1;
-            stage = stage == 51 ? 52 : 56;
+            stage = reviewStage;
+            return true;
+        }
+        if (stage >= 91 && stage <= 93) {
+            if (System.nanoTime() - lockedEscapeStartedAt > 15000000000L)
+                throw movingWorldTimeout(mc, "locked Escape draft/Place navigation exceeded fifteen seconds");
+            require(
+                receipt().getInteger("blueprintPlaced") == 0 && receipt().getInteger("blueprintStock") == 2,
+                "locked_Escape_and_restarting_Place_never_builds_or_consumes_material");
+            if (stage == 91) {
+                if (!(mc.currentScreen instanceof HologramScreen) || state == null
+                    || state.getBoolean("virtualPlacement")) return true;
+                HologramScreen draft = (HologramScreen) mc.currentScreen;
+                require(
+                    lockedEscapeSession.equals(state.getString("session"))
+                        && quickPresetId.equals(state.getString("selectedPresetId"))
+                        && !state.getBoolean("virtualLocked")
+                        && !state.getBoolean("blueprintAwaitingConfirmation")
+                        && state.getLong("placementReviewNonce") > lockedEscapeNonce
+                        && !(Boolean) observedField(draft, "confirmation")
+                        && libraryTab(draft),
+                    "locked_Escape_returns_same_draft_tab_and_revokes_old_review_nonce");
+                NBTTagCompound server = receipt().getCompoundTag("blueprintSession");
+                if (!awaitCancelledReceipt(lockedEscapeSession, state, lockedEscapeCancelSentTick)) return true;
+                require(
+                    lockedEscapeSession.equals(server.getString("id"))
+                        && quickPresetId.equals(server.getString("presetId"))
+                        && !server.getBoolean("virtualPlacement")
+                        && !server.getBoolean("virtualLocked")
+                        && !server.getBoolean("placementReviewIssued")
+                        && !server.getBoolean("blueprintAwaitingConfirmation")
+                        && server.getInteger("job") == 0
+                        && server.getLong("placementReviewNonce") > lockedEscapeNonce,
+                    "locked_Escape_independent_server_receipt_revokes_placement_capability");
+                if (draft.smokePending()) return true;
+                awaitControl(draft, 141);
+                screenshot(mc, "v007-locked-Escape-draft-UI-capability-revoked");
+                saveObservation("locked-Escape-draft-receipt.nbt", receipt());
+                click(draft, 141);
+                repeatFrame = renderedWorldFrames;
+                aimedProjectionGeneration = "";
+                stage = 92;
+                return true;
+            }
+            if (stage == 92) {
+                if (state == null || !state.getBoolean("moving") || state.getBoolean("virtualLocked")) return true;
+                require(mc.currentScreen == null, "locked_Escape_draft_Place_returns_to_world_ghost");
+                if (!awaitAimedMovingWorldFrame(mc)) return true;
+                require(
+                    HologramRenderer.lastWorldGeometry > 0
+                        && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                    "locked_Escape_draft_Place_renders_actual_green_ghost");
+                mc.objectMouseOver = null;
+                expectedAirAnchor = HologramClient.movingAnchor(HologramClient.state);
+                airRightClick(mc, true);
+                stage = 93;
+                waitTicks = 0;
+                return true;
+            }
+            if (state == null || !state.getBoolean("virtualLocked")) return true;
+            require(
+                mc.currentScreen == null && !state.getBoolean("open"),
+                "locked_Escape_following_Place_first_right_stays_world_only");
+            System.out.println(
+                "[GTMB-HOLOGRAM-INTERACTION-CLIENT] PASS locked-cyan Escape same-draft-UI nonce-revoked zero-world/cost Place green resumes original three reviews");
+            stage = 51;
             return true;
         }
         return false;
@@ -1125,6 +1708,7 @@ public final class HologramInteractionClientSmoke {
     }
 
     private void mouseCorner(Minecraft mc, int button, int x) throws Exception {
+        if (button == 1) usePress.begin(mc, false);
         mc.objectMouseOver = new net.minecraft.util.MovingObjectPosition(
             x,
             80,
@@ -1162,7 +1746,13 @@ public final class HologramInteractionClientSmoke {
         require(wheel.isCanceled(), "real_registered_moving_wheel_consumed_without_hotbar_change");
     }
 
-    private static void rightClickSource(Minecraft mc) {
+    private void airRightClick(Minecraft mc, boolean checkWorldLock) {
+        usePress.begin(mc, checkWorldLock);
+        mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
+    }
+
+    private void rightClickSource(Minecraft mc) {
+        usePress.begin(mc, false);
         mc.objectMouseOver = new net.minecraft.util.MovingObjectPosition(
             50,
             80,
@@ -1182,9 +1772,87 @@ public final class HologramInteractionClientSmoke {
 
     private void click(HologramScreen screen, int id) throws Exception {
         awaitControl(screen, id);
+        if (id == 55) logConfirmClickState(screen, "before-native-mouse");
         screen.smokeClickControl(id);
+        if (id == 55) logConfirmClickState(screen, "after-native-mouse");
         lastClickedRender = screen.smokeRenderGeneration();
         System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] mouse control=" + id + " stage=" + stage);
+    }
+
+    private void saveObservation(String filename, NBTTagCompound observed) throws Exception {
+        if (observed == null) return;
+        try (java.io.FileOutputStream output = new java.io.FileOutputStream(new File(receipts, filename))) {
+            CompressedStreamTools.writeCompressed(observed, output);
+        }
+    }
+
+    /** Read the exact GUI hit and dispatch gates without redrawing, activating controls, or sending packets. */
+    private void logConfirmClickState(HologramScreen screen, String phase) throws Exception {
+        NBTTagCompound state = screen.smokeSnapshot();
+        StringBuilder details = new StringBuilder("stage=" + stage + " phase=" + phase);
+        for (String field : new String[] { "confirmation", "libraryDrawer", "roleDropdown", "resetReview", "nbtDrawer",
+            "promptDrawer", "versionsDrawer", "shortcutsDrawer", "hatchDrawer", "presetDrawer", "deletePresetId",
+            "sequence", "pendingSequence", "queuedDispatchSequence", "confirmedRevision", "pendingBuildReview",
+            "captureRenderSmokeAction", "notice" })
+            details.append(' ')
+                .append(field)
+                .append('=')
+                .append(observedField(screen, field));
+        Object queue = observedField(screen, "editQueue");
+        details.append(" editQueueSize=")
+            .append(((HologramEditQueue) queue).size());
+        java.lang.reflect.Method editable = HologramScreen.class.getDeclaredMethod("editable");
+        editable.setAccessible(true);
+        details.append(" editable=")
+            .append(editable.invoke(screen))
+            .append(" actionQueued=")
+            .append((Long) observedField(screen, "pendingSequence") >= 0)
+            .append(" expectedOp=")
+            .append(state.getBoolean("blueprintAwaitingConfirmation") ? "confirmBlueprintPlacement" : "build");
+        details.append(" planRevision=")
+            .append(state.getLong("planRevision"))
+            .append(" uiSequence=")
+            .append(state.getLong("uiSequence"))
+            .append(" awaiting=")
+            .append(state.getBoolean("blueprintAwaitingConfirmation"))
+            .append(" missing=")
+            .append(state.getInteger("missing"))
+            .append(" job=")
+            .append(state.getInteger("job"));
+        if (screen.smokeHasControl(55)) {
+            int[] point = screen.smokeControlPoint(55);
+            float scale = (Float) observedField(screen, "scale");
+            int localX = (int) ((point[0] - (Integer) observedField(screen, "originX")) / scale);
+            int localY = (int) ((point[1] - (Integer) observedField(screen, "originY")) / scale);
+            details.append(" nativePoint=")
+                .append(java.util.Arrays.toString(point))
+                .append(" logicalPoint=")
+                .append(localX)
+                .append(',')
+                .append(localY)
+                .append(" enabled55=true hitsInDrawOrder=[");
+            for (Object control : (java.util.List<?>) observedField(screen, "controls")) {
+                int x = (Integer) observedField(control, "x"), y = (Integer) observedField(control, "y");
+                int w = (Integer) observedField(control, "w"), h = (Integer) observedField(control, "h");
+                if (localX >= x && localX < x + w && localY >= y && localY < y + h)
+                    details.append(observedField(control, "id"))
+                        .append(':')
+                        .append(observedField(control, "enabled"))
+                        .append(';');
+            }
+            details.append(']');
+        } else details.append(" enabled55=false");
+        Object captured = observedField(screen, "capturedRenderSmokeAction");
+        if (captured instanceof NBTTagCompound) details.append(" mockCapturedOp=")
+            .append(((NBTTagCompound) captured).getString("op"));
+        System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] CONFIRM-DIAGNOSTIC " + details);
+    }
+
+    private static Object observedField(Object instance, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = instance.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(instance);
     }
 
     private String stageSnapshot(NBTTagCompound state) {
@@ -1283,6 +1951,7 @@ public final class HologramInteractionClientSmoke {
     }
 
     private void reopenWithRightClick(Minecraft mc) {
+        usePress.begin(mc, false);
         mc.displayGuiScreen(null);
         mc.playerController.onPlayerRightClick(
             mc.thePlayer,

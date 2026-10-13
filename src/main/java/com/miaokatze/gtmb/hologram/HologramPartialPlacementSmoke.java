@@ -115,8 +115,12 @@ public final class HologramPartialPlacementSmoke {
             HologramService.confirmWorldPosition(player, position);
             HologramSmokeTest.flushTransport();
             require(
-                capture.state.getBoolean("virtualLocked") && capture.state.getBoolean("blueprintAwaitingConfirmation"),
-                "real_position_confirmation_opens_locked_material_review");
+                capture.state.getBoolean("virtualLocked") && capture.state.getBoolean("blueprintAwaitingConfirmation")
+                    && !capture.state.getBoolean("open"),
+                "real_first_position_confirmation_locks_without_opening_material_review");
+            HologramService.openAir(player);
+            HologramSmokeTest.flushTransport();
+            require(capture.state.getBoolean("open"), "real_second_right_opens_locked_material_review");
             NBTTagCompound inspect = new NBTTagCompound();
             for (String key : new String[] { "main", "facing", "mode" })
                 inspect.setInteger(key, capture.state.getInteger(key));

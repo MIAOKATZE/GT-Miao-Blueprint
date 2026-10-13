@@ -16,6 +16,7 @@ import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.IIcon;
+import net.minecraft.world.IBlockAccess;
 import net.minecraftforge.client.ForgeHooksClient;
 import net.minecraftforge.client.MinecraftForgeClient;
 
@@ -155,11 +156,32 @@ final class HologramBlockRender {
         if (tile == null
             && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z))))
             return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
+        return compile(cell, current, access, tile, adapter);
+    }
+
+    /** Opt-in control invokes the original registered ISBRH against independent native tiles. */
+    static List<double[]> nativeControl(HologramState.Cell cell, boolean current, IBlockAccess world) {
+        if (!Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
+            throw new IllegalStateException("native renderer control requires extended compatibility smoke");
+        Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null);
+        try {
+            if (control.list == 0) throw new IllegalStateException("native control failed: " + failure(cell, current));
+            return control.attributes;
+        } finally {
+            if (control.list != 0) GL11.glDeleteLists(control.list, 1);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Model compile(HologramState.Cell cell, boolean current, IBlockAccess access, TileEntity tile,
+        HologramNativeRenderRegistry.Adapter adapter) {
+        Block block = cell.block(current);
         Tessellator tess = Tessellator.instance;
         int list = 0, count = 0;
         boolean opened = false;
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
+        HologramRenderWorld.CarpenterContext carpenterContext = null;
         Set<String> positions = new HashSet<>();
         List<double[]> points = new ArrayList<>();
         List<double[]> textureCenters = new ArrayList<>();
@@ -197,6 +219,15 @@ final class HologramBlockRender {
                 handler = (ISimpleBlockRenderingHandler) handler.getClass()
                     .getConstructor()
                     .newInstance();
+            if (adapter == null && handler.getClass()
+                .getName()
+                .startsWith("com.carpentersblocks.renderer.")
+                && tile != null
+                && tile.getWorldObj() instanceof HologramRenderWorld) {
+                HologramRenderWorld world = (HologramRenderWorld) tile.getWorldObj();
+                carpenterContext = world.carpenterRender(tile);
+                access = world;
+            }
             list = GL11.glGenLists(1);
             if (list == 0) return failed(cell, current, "display list allocation failed");
             RenderBlocks renderer = new RenderBlocks(access);
@@ -246,7 +277,8 @@ final class HologramBlockRender {
                             && w > absent.getMinV() + 1e-6
                             && w < absent.getMaxV() - 1e-6) missing = true;
                     }
-                    if (stride >= 6 && Boolean.getBoolean("gtmb.hologram.aeClientSmoke"))
+                    if (stride >= 6 && (Boolean.getBoolean("gtmb.hologram.aeClientSmoke")
+                        || Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")))
                         for (int v = 0; v < emitted; v++) {
                             int quad = v / 4 * 4;
                             if (quad + 3 >= emitted || !usableQuad(raw, stride, quad)) continue;
@@ -291,6 +323,7 @@ final class HologramBlockRender {
             if (opened) GL11.glEndList();
             if (invokedNative && adapter == null) releaseNativeContext(block);
             if (aeCableContext != null) aeCableContext.close();
+            if (carpenterContext != null) carpenterContext.close();
             tess.setTranslation(ox, oy, oz);
             if (capturedTessState) for (int i = 0; i < TESS_STATE.length; i++) {
                 try {

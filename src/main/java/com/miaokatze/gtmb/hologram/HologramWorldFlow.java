@@ -16,6 +16,7 @@ public final class HologramWorldFlow {
     public enum Gesture {
         RIGHT,
         SHIFT_RIGHT,
+        ALT_RIGHT,
         ENTER,
         ESCAPE,
         ROTATE
@@ -28,6 +29,8 @@ public final class HologramWorldFlow {
         FINISH_AREA,
         CANCEL_AREA,
         CONFIRM_POSITION,
+        UNLOCK_POSITION,
+        QUICK_PLACE,
         CANCEL_PLACEMENT,
         ROTATE
     }
@@ -85,13 +88,13 @@ public final class HologramWorldFlow {
     public static Stage stage(boolean area, boolean virtual, boolean placement, boolean locked, int job) {
         if (job == 1 || job == 2) return Stage.JOB;
         if (area) return Stage.AREA;
-        if (virtual && placement && job != 4) return locked ? Stage.LOCKED : Stage.MOVING;
+        if (virtual && placement && job != 3 && job != 4 && job != 5) return locked ? Stage.LOCKED : Stage.MOVING;
         return Stage.WORKSPACE;
     }
 
     public static Intent intent(Stage stage, Gesture gesture) {
         if (stage == Stage.AREA) {
-            if (gesture == Gesture.ENTER) return Intent.FINISH_AREA;
+            if (gesture == Gesture.SHIFT_RIGHT) return Intent.FINISH_AREA;
             if (gesture == Gesture.ESCAPE) return Intent.CANCEL_AREA;
             return Intent.NONE;
         }
@@ -99,9 +102,17 @@ public final class HologramWorldFlow {
             if (gesture == Gesture.RIGHT) return Intent.CONFIRM_POSITION;
             if (gesture == Gesture.ESCAPE) return Intent.CANCEL_PLACEMENT;
             if (gesture == Gesture.ROTATE) return Intent.ROTATE;
+            return Intent.NONE;
+        }
+        if (stage == Stage.LOCKED) {
+            if (gesture == Gesture.SHIFT_RIGHT) return Intent.UNLOCK_POSITION;
+            if (gesture == Gesture.RIGHT) return Intent.OPEN;
+            if (gesture == Gesture.ESCAPE) return Intent.CANCEL_PLACEMENT;
+            return Intent.NONE;
         }
         if (gesture == Gesture.RIGHT) return Intent.OPEN;
         if (gesture == Gesture.SHIFT_RIGHT && stage != Stage.JOB) return Intent.BEGIN_AREA;
+        if (gesture == Gesture.ALT_RIGHT && stage == Stage.WORKSPACE) return Intent.QUICK_PLACE;
         return Intent.NONE;
     }
 
@@ -114,6 +125,23 @@ public final class HologramWorldFlow {
             boolean edge = pressed && !down && !contextChanged;
             down = pressed;
             return edge;
+        }
+    }
+
+    /** One gesture consumes a use-item press until its actual binding is released. */
+    public static final class UsePressFence {
+
+        private boolean awaitingRelease;
+
+        public void observe(boolean pressed, boolean contextChanged) {
+            if (!pressed) awaitingRelease = false;
+            else if (contextChanged) awaitingRelease = true;
+        }
+
+        public boolean consume() {
+            if (awaitingRelease) return false;
+            awaitingRelease = true;
+            return true;
         }
     }
 }

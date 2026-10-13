@@ -115,6 +115,13 @@ public final class HologramRegressionTest {
             "native_block_rotation_transforms_preserve_payload_and_geometry",
             HologramBlockTransformRegression::run);
         cases.put("world_gestures_require_explicit_material_confirmation", HologramWorldFlowRegression::run);
+        cases.put("world_use_requires_physical_release_between_stages", HologramUsePressFenceRegression::run);
+        cases.put(
+            "opened_placement_review_receives_background_job_updates_without_reopening_dismissed_UI",
+            com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression::run);
+        cases.put(
+            "workspace_tab_survives_server_session_and_client_restart",
+            com.miaokatze.gtmb.client.hologram.HologramUiTabMemoryRegression::run);
         cases.put(
             "world_service_locks_current_revision_and_retains_cancelled_draft",
             HologramWorldServiceRegression::run);

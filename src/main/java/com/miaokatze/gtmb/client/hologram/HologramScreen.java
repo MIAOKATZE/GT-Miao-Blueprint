@@ -33,6 +33,7 @@ public final class HologramScreen extends GuiScreen {
     private static final int DESIGN_W = HologramScreenLayout.WIDTH, DESIGN_H = HologramScreenLayout.HEIGHT;
     private final List<Control> controls = new ArrayList<>();
     private static final java.util.Map<String, UiMemory> UI_MEMORY = new java.util.LinkedHashMap<>();
+    private static HologramUiTabMemory tabMemory;
     private final RenderItem itemRenderer = new RenderItem();
     private HologramState state;
     private GuiTextField mainField, channelNameField, channelValueField, optionValueField;
@@ -74,6 +75,7 @@ public final class HologramScreen extends GuiScreen {
     private long queuedDispatchSequence = -1;
     private long presetSaveSequence = -1;
     private long seenPlacementReviewNonce;
+    private final HologramPlacementReviewContext placementReviewContext = new HologramPlacementReviewContext();
     private String libraryResult = "", deletePresetId = "", deletePresetName = "";
     private HologramState annotationState, promptSummaryState;
     private List<HologramAnnotationMarkers.Marker> annotationMarkers = new ArrayList<>();
@@ -103,6 +105,11 @@ public final class HologramScreen extends GuiScreen {
         retainNbt = !state.data.hasKey("blueprintRetainNbt") || state.data.getBoolean("blueprintRetainNbt");
         retainCovers = !state.data.hasKey("blueprintRetainCovers") || state.data.getBoolean("blueprintRetainCovers");
         libraryDrawer = state.data.getBoolean("presetBrowseForPlacement") || state.data.getBoolean("blueprintPreview");
+        if (tabMemory == null) tabMemory = new HologramUiTabMemory(
+            new java.io.File(
+                net.minecraft.client.Minecraft.getMinecraft().mcDataDir,
+                "config/gtmb-hologram-ui.properties"));
+        libraryDrawer = state.data.getBoolean("presetBrowseForPlacement") || tabMemory.blueprints(libraryDrawer);
         selected = state.data.hasKey("selected") ? state.data.getInteger("selected") : -1;
         selection.load(state.data.getIntArray("selectedIndices"), selected, state.cells.size());
         UiMemory memory = UI_MEMORY.get(state.session);
@@ -129,8 +136,13 @@ public final class HologramScreen extends GuiScreen {
         boolean presetSaveAcknowledged = presetSaveSequence >= 0
             && next.data.getLong("uiSequence") >= presetSaveSequence;
         if (!state.session.equals(next.session)) {
+            rememberUi();
             UiMemory nextMemory = UI_MEMORY.get(next.session);
-            libraryDrawer = nextMemory == null ? next.data.getBoolean("blueprintPreview") : nextMemory.blueprints;
+            libraryDrawer = nextMemory == null
+                ? next.data.getBoolean("presetBrowseForPlacement")
+                    || tabMemory.blueprints(next.data.getBoolean("blueprintPreview"))
+                : nextMemory.blueprints;
+            libraryOffset = nextMemory == null ? 0 : nextMemory.offset;
             seenPlacementReviewNonce = nextMemory == null ? 0 : nextMemory.reviewNonce;
             pinnedAnnotation = "";
             gizmo.cancel();
@@ -306,6 +318,7 @@ public final class HologramScreen extends GuiScreen {
 
     private void rememberUi() {
         if (state.session.isEmpty()) return;
+        if (!captureRenderSmokeAction) tabMemory.remember(libraryDrawer);
         UI_MEMORY.put(
             state.session,
             new UiMemory(
@@ -377,12 +390,25 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private void applyOpeningPurpose() {
+        placementReviewContext.accept(
+            state.session,
+            state.data.getLong("placementReviewNonce"),
+            state.data.getBoolean("open"),
+            state.data.getBoolean("virtualPlacement") && state.data.getBoolean("virtualLocked"),
+            state.data.getBoolean("blueprintAwaitingConfirmation"));
         if (!"placementReview".equals(state.data.getString("openPurpose"))) return;
         long nonce = state.data.getLong("placementReviewNonce");
         if (nonce <= seenPlacementReviewNonce) return;
         seenPlacementReviewNonce = nonce;
-        libraryDrawer = false;
         rememberUi();
+    }
+
+    boolean retainsPlacementReview(HologramState next) {
+        return placementReviewContext.retain(
+            next.session,
+            next.data.getLong("placementReviewNonce"),
+            next.data.getBoolean("virtualPlacement") && next.data.getBoolean("virtualLocked"),
+            next.data.getBoolean("moving"));
     }
 
     private static final class UiMemory {
@@ -3055,7 +3081,7 @@ public final class HologramScreen extends GuiScreen {
             case 179:
                 return "打开自有 AE 标记容器；NEI 拖入、背包样本仅修改蓝图标记。";
             case 178:
-                return "开始世界框选：左键第一角、右键第二角，Alt 使用玩家位置，Enter 完成，Esc 取消。";
+                return "开始世界框选：左键第一角、右键第二角，Alt 使用玩家位置，再次 Shift+右击完成，Esc 取消。";
             case 163:
                 return selectedCell() != null && selectedCell().sourceMissing
                     ? "来源结构缺失：" + selectedCell().sourceWarning + " · " + selectedCell().sourceClass
@@ -3238,6 +3264,20 @@ public final class HologramScreen extends GuiScreen {
             if (button == 0) for (Control control : controls) if (control.contains(mx, my)) {
                 if (control.enabled) activateAeReview(control.id);
                 return;
+            }
+            return;
+        }
+        // The visible confirmation owns its controls even when a remembered background tab or drawer is active.
+        if (confirmation && !nbtDrawer) {
+            if (button == 0) for (int i = controls.size() - 1; i >= 0; i--) {
+                Control control = controls.get(i);
+                if (control.contains(mx, my)) {
+                    if (control.enabled && (control.id == 54 || control.id == 55
+                        || control.id == 162
+                        || control.id == 168
+                        || control.id == 169)) activate(control.id);
+                    return;
+                }
             }
             return;
         }
@@ -5101,15 +5141,15 @@ public final class HologramScreen extends GuiScreen {
             fixture.setLong("placementReviewNonce", 1);
             again.updateState(new HologramState(fixture));
             again.drawScreen(0, 0, 0);
-            if (again.libraryDrawer || !again.confirmation)
-                throw new IllegalStateException("A new placement-review opening did not focus the structure precheck");
+            if (!again.libraryDrawer || !again.confirmation)
+                throw new IllegalStateException("Placement review changed the remembered tab or bypassed materials");
             again.keyTyped('\0', Keyboard.KEY_ESCAPE);
             again.drawScreen(0, 0, 0);
             again.smokeClickDrawnControl(149);
             again.updateState(new HologramState(fixture));
             if (!again.libraryDrawer)
                 throw new IllegalStateException("The same review nonce forced a user-selected tab back to structure");
-            return "peer-tabs=horizontal flat-row=hover,select focused-E=typed Esc/E=root-close tab+selection=preserved review=once";
+            return "peer-tabs=horizontal flat-row=hover,select focused-E=typed Esc/E=root-close tab+selection=preserved review=materials+tab-preserved";
         } finally {
             mc.displayGuiScreen(caller);
             captureRenderSmokeAction = previousCapture;
@@ -5127,8 +5167,8 @@ public final class HologramScreen extends GuiScreen {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")
             && !Boolean.getBoolean("gtmb.hologram.realInteractionSmoke"))
             throw new IllegalStateException("UI smoke disabled");
-        if (!placementReviewActive() || !confirmation || libraryDrawer)
-            throw new IllegalStateException("Position lock did not open the structure placement precheck");
+        if (!placementReviewActive() || !confirmation)
+            throw new IllegalStateException("Repeated right-click did not open the placement precheck");
         drawScreen(0, 0, 0);
         smokeControlPoint(55);
         smokeControlPoint(168);
@@ -5144,14 +5184,45 @@ public final class HologramScreen extends GuiScreen {
             throw new IllegalStateException(
                 "Cancelling NBT adjustment changed the placement authority or fixed position");
         drawScreen(0, 0, 0);
+        smokeAssertPlacementConfirmationDispatch();
         return "purpose=" + state.data.getString("openPurpose")
-            + " tab=structure title="
+            + " tab="
+            + (libraryDrawer ? "blueprints" : "structure")
+            + " title="
             + lastConfirmationTitle
             + " fixed="
             + placementPosition()
             + " primary="
             + lastConfirmationAction
-            + " NBT/materials=direct NBT-cancel=locked";
+            + " NBT/materials=direct NBT-cancel=locked primary-mouse=confirmBlueprintPlacement,both-tabs";
+    }
+
+    /** Exercise the drawn confirmation's real mouse route without dispatching or modifying the live session. */
+    private void smokeAssertPlacementConfirmationDispatch() {
+        for (boolean blueprints : new boolean[] { false, true }) {
+            HologramScreen probe = new HologramScreen(new HologramState((NBTTagCompound) state.data.copy()));
+            probe.captureRenderSmokeAction = true;
+            probe.libraryDrawer = blueprints;
+            // These background surfaces can remain selected while the modal covers their controls.
+            probe.roleDropdown = probe.positionDrawer = probe.sourceDrawer = true;
+            probe.setWorldAndResolution(mc, width, height);
+            probe.drawScreen(0, 0, 0);
+            probe.smokeClickDrawnControl(55);
+            NBTTagCompound request = probe.capturedRenderSmokeAction;
+            if (request == null || !"confirmBlueprintPlacement".equals(request.getString("op"))
+                || !state.session.equals(request.getString("session"))
+                || request.getLong("planRevision") != revision()
+                || request.getBoolean("forceExplicit")
+                    != HologramPlacementConfirmation.forceReview(state.data, confirmedRevision)
+                || probe.libraryDrawer != blueprints
+                || probe.confirmation
+                || probe.pendingSequence < 0)
+                throw new IllegalStateException(
+                    "Drawn placement confirmation did not submit the reviewed plan from "
+                        + (blueprints ? "blueprints" : "structure")
+                        + " tab: "
+                        + request);
+        }
     }
 
     String smokeConstructionScopeContext() {
@@ -5291,14 +5362,14 @@ public final class HologramScreen extends GuiScreen {
             fixture.setBoolean("virtualLocked", false);
             HologramScreen ghost = new HologramScreen(new HologramState(fixture));
             ghost.setWorldAndResolution(mc, width, height);
-            if (ghost.libraryDrawer || ghost.confirmation)
+            if (ghost.confirmation)
                 throw new IllegalStateException("Moving placement opened materials before its position was locked");
             fixture.setBoolean("virtualLocked", true);
             fixture.setBoolean("blueprintAwaitingConfirmation", true);
             HologramScreen locked = new HologramScreen(new HologramState(fixture));
             locked.setWorldAndResolution(mc, width, height);
-            if (!locked.confirmation || locked.libraryDrawer)
-                throw new IllegalStateException("Locked placement did not open the materials confirmation directly");
+            if (!locked.confirmation || locked.libraryDrawer != ghost.libraryDrawer)
+                throw new IllegalStateException("Placement review did not retain its tab with mandatory materials");
             return "UI library Place=ghost locked=materials Save=original SaveAs=new Delete=reviewed-ID cancel=no-packet failures=visible";
         } finally {
             browse.captureRenderSmokeAction = false;

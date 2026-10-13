@@ -21,6 +21,7 @@ final class HologramNativeTiles {
         return name.startsWith("com.carpentersblocks.block.") || name.equals("codechicken.multipart.BlockMultipart")
             || name.equals("com.creativemd.littletiles.common.blocks.BlockTile")
             || name.equals("gcewing.architecture.common.block.BlockShape")
+            || name.equals("gcewing.architecture.common.block.BlockSawbench")
             || name.equals("crazypants.enderio.conduit.BlockConduitBundle")
             || name.equals("appeng.block.networking.BlockCableBus");
     }
@@ -46,43 +47,57 @@ final class HologramNativeTiles {
         boolean conduitBundle = block.getClass()
             .getName()
             .equals("crazypants.enderio.conduit.BlockConduitBundle");
+        boolean carpenters = block.getClass()
+            .getName()
+            .startsWith("com.carpentersblocks.block.");
+        boolean littleTiles = block.getClass()
+            .getName()
+            .equals("com.creativemd.littletiles.common.blocks.BlockTile");
+        if (littleTiles && adapter == null) checkLittleTiles(tag);
+        if (adapter == null && block.getClass()
+            .getName()
+            .equals("gcewing.architecture.common.block.BlockSawbench")) {
+            // Its world model uses block metadata and fixed wood/metal skins.
+            // Inventory restoration would run onInventoryChanged callbacks and
+            // is unrelated to the static model; retain it only in the snapshot.
+            tag.removeTag("inventory");
+        }
         // EnderIO's client NBT reader scans Minecraft.theWorld.playerEntities
         // when worldObj is remote. Its static renderer needs only the decoded
         // local conduit state; leave the new tile detached during that reader.
-        tile.setWorldObj(conduitBundle ? null : world);
+        // TEBase.readFromNBT calls updateWorldAndLighting. Keep Carpenter tiles
+        // detached until decoding completes: the bounded access cannot publish a
+        // half-decoded tile during that lighting query. Its renderer still gets
+        // the isolated world afterwards, including neighbors and light covers.
+        tile.setWorldObj(conduitBundle || carpenters ? null : world);
         tile.xCoord = x;
         tile.yCoord = y;
         tile.zCoord = z;
         if (adapter == null) tile.readFromNBT(tag);
         else adapter.loadTile(tile, tag);
-        if (conduitBundle) tile.setWorldObj(world);
-        if (block.getClass()
-            .getName()
-            .equals("appeng.block.networking.BlockCableBus")) restoreAeVisual(tile, tag);
+        if (conduitBundle || carpenters) tile.setWorldObj(world);
+        if (littleTiles && adapter == null) {
+            java.util.List<?> loaded = (java.util.List<?>) tile.getClass()
+                .getMethod("getTiles")
+                .invoke(tile);
+            if (loaded.size() != tag.getInteger("tilesCount"))
+                throw new IllegalArgumentException("LittleTiles native reader discarded a visual child");
+        }
         return tile;
     }
 
-    private static void restoreAeVisual(Object host, NBTTagCompound tag) throws ReflectiveOperationException {
-        if (tag.hasKey("gtmb.aeCableVisual", 10)) {
-            Object container = host.getClass()
-                .getMethod("getCableBus")
-                .invoke(host);
-            Object cable = container.getClass()
-                .getMethod("getPart", net.minecraftforge.common.util.ForgeDirection.class)
-                .invoke(container, net.minecraftforge.common.util.ForgeDirection.UNKNOWN);
-            if (cable != null) {
-                NBTTagCompound visual = tag.getCompoundTag("gtmb.aeCableVisual");
-                io.netty.buffer.ByteBuf bytes = io.netty.buffer.Unpooled.buffer(5);
-                try {
-                    bytes.writeByte(visual.getInteger("connections"));
-                    bytes.writeInt(visual.getInteger("channels"));
-                    cable.getClass()
-                        .getMethod("readFromStream", io.netty.buffer.ByteBuf.class)
-                        .invoke(cable, bytes);
-                } finally {
-                    bytes.release();
-                }
-            }
+    /** Static block skins only; nested TileEntity readers/TESRs need an audited adapter. */
+    private static void checkLittleTiles(NBTTagCompound tag) {
+        int count = tag.getInteger("tilesCount");
+        if (count <= 0) throw new IllegalArgumentException("LittleTiles snapshot has no visual children");
+        for (int i = 0; i < count; i++) {
+            NBTTagCompound child = tag.getCompoundTag("t" + i);
+            String type = child.getString("tID");
+            boolean legacyBlock = child.hasKey("tileID") && child.hasKey("block", 8);
+            if (!legacyBlock && !type.equals("BlockTileBlock") && !type.equals("BlockTileColored"))
+                throw new IllegalArgumentException("LittleTiles static preview adapter required for " + type);
+            if (child.hasKey("tileEntity") || child.hasKey("tileentity"))
+                throw new IllegalArgumentException("LittleTiles nested tile preview adapter required");
         }
     }
 
@@ -95,16 +110,22 @@ final class HologramNativeTiles {
         Method append = bufferType.getMethod("$plus$eq", Object.class);
         NBTTagList rows = tag.getTagList("parts", 10);
         java.util.List<Object> nativeParts = new java.util.ArrayList<>();
+        java.util.List<HologramNativeRenderRegistry.MultipartAdapter> partAdapters = new java.util.ArrayList<>();
         for (int i = 0; i < rows.tagCount(); i++) {
             NBTTagCompound partTag = rows.getCompoundTagAt(i);
             String type = partTag.getString("id");
             // The deprecated createPart(name, true) passes a null MCDataInput to
             // modern factories. Microblocks read their material from that packet.
             // Load the full native NBT first, then create their real client trait.
-            Object detachedPart = registry.getMethod("loadPart", String.class, NBTTagCompound.class)
-                .invoke(null, type, partTag);
+            boolean aeCableBus = type.equals("ae2_cablebus");
+            Object detachedPart = aeCableBus ? Class.forName("appeng.fmp.CableBusPart")
+                .getConstructor()
+                .newInstance()
+                : registry.getMethod("loadPart", String.class, NBTTagCompound.class)
+                    .invoke(null, type, partTag);
             if (detachedPart == null) throw new IllegalArgumentException("Missing native multipart type " + type);
-            detachedPart.getClass()
+            if (aeCableBus) HologramAeNativeRender.loadCable(detachedPart, partTag);
+            else detachedPart.getClass()
                 .getMethod("load", NBTTagCompound.class)
                 .invoke(detachedPart, partTag);
             Object part;
@@ -142,11 +163,12 @@ final class HologramNativeTiles {
                 }
             if (part == null || !Class.forName("codechicken.multipart.TMultiPart")
                 .isInstance(part)) throw new IllegalArgumentException("Invalid native multipart client part " + type);
-            part.getClass()
+            if (!aeCableBus) part.getClass()
                 .getMethod("load", NBTTagCompound.class)
                 .invoke(part, partTag);
             append.invoke(parts, part);
             nativeParts.add(part);
+            partAdapters.add(adapter);
         }
         if ((Integer) bufferType.getMethod("size")
             .invoke(parts) == 0) return null;
@@ -165,14 +187,22 @@ final class HologramNativeTiles {
         tile.zCoord = z;
         tile.readFromNBT(tag);
         Class<?> multipart = Class.forName("codechicken.multipart.TileMultipart");
-        // loadParts calls onWorldJoin when a world is present. Load with no world,
-        // then initialize only the local occlusion/render caches on this new tile.
+        // loadParts calls onWorldJoin when a world is present. Bind with no world.
         multipart.getMethod("loadParts", iterable)
             .invoke(tile, parts);
         tile.setWorldObj(world);
-        multipart.getMethod("internalPartChange", Class.forName("codechicken.multipart.TMultiPart"))
-            .invoke(tile, new Object[] { null });
-        for (int i = 0; i < nativeParts.size(); i++) restoreAeVisual(nativeParts.get(i), rows.getCompoundTagAt(i));
+        // A blanket internalPartChange would dispatch every part's onPartChanged,
+        // including AE updateConnections/getGridNode. Only microblocks require
+        // the reviewed local bounds/mask cache; vanilla static parts need no event.
+        Class<?> microblock = Class.forName("codechicken.microblock.Microblock");
+        for (int i = 0; i < nativeParts.size(); i++) {
+            Object part = nativeParts.get(i);
+            HologramNativeRenderRegistry.MultipartAdapter adapter = partAdapters.get(i);
+            if (adapter != null) adapter.prepare(part);
+            else if (microblock.isInstance(part)) part.getClass()
+                .getMethod("recalcBounds")
+                .invoke(part);
+        }
         return tile;
     }
 }

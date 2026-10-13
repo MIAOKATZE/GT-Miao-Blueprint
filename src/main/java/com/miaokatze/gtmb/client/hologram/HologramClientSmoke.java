@@ -31,6 +31,7 @@ public final class HologramClientSmoke {
     private NBTTagCompound nativeDisplaySnapshot;
     private NBTTagCompound nativeCompatibilitySnapshot, nativeCompatibilityRotated, activeScene;
     private NBTTagCompound nativeRoofSnapshot, nativeRoofRotated;
+    private NBTTagCompound nativeDecorationSnapshot, nativeDecorationRotated;
     private int scenario = -1;
     private static final String[] BASE_SCENARIOS = { "blueprint", "prompts", "gizmo", "gizmo-hover-structure",
         "gizmo-hover-hint", "gizmo-hover-combined", "missing", "missing-source", "versions", "materials", "nbt-storage",
@@ -50,7 +51,10 @@ public final class HologramClientSmoke {
                 "native-six-rotated-a",
                 "native-six-target-b",
                 "native-six-current-b",
-                "native-six-rotated-b"));
+                "native-six-rotated-b",
+                "native-decoration-target",
+                "native-decoration-current",
+                "native-decoration-rotated"));
         if (Boolean.getBoolean("gtmb.hologram.aeClientSmoke")) scenes.addAll(
             scenes.size() - 1,
             java.util.Arrays.asList(
@@ -131,6 +135,18 @@ public final class HologramClientSmoke {
                     nativeRoofSnapshot = HologramNativeCompatibilitySmoke.fixture(true);
                     nativeRoofRotated = HologramNativeCompatibilitySmoke.rotate(nativeRoofSnapshot, false, 1);
                     verifyNativeTurn(nativeRoofSnapshot, nativeRoofRotated);
+                    nativeDecorationSnapshot = HologramDecorationPreviewSmoke.fixture();
+                    nativeDecorationRotated = HologramNativeCompatibilitySmoke
+                        .rotate(nativeDecorationSnapshot, false, 1);
+                    HologramDecorationPreviewSmoke.verifyTurn(nativeDecorationSnapshot, nativeDecorationRotated);
+                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(
+                        new File(mc.mcDataDir, "hologram-native-decoration-client-state.nbt"))) {
+                        CompressedStreamTools.writeCompressed(nativeDecorationSnapshot, out);
+                    }
+                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(
+                        new File(mc.mcDataDir, "hologram-native-decoration-rotated-client-state.nbt"))) {
+                        CompressedStreamTools.writeCompressed(nativeDecorationRotated, out);
+                    }
                     try (java.io.FileOutputStream out = new java.io.FileOutputStream(
                         new File(mc.mcDataDir, "hologram-native-six-client-state.nbt"))) {
                         CompressedStreamTools.writeCompressed(nativeCompatibilitySnapshot, out);
@@ -187,6 +203,12 @@ public final class HologramClientSmoke {
                 "[GTMB-HOLOGRAM-CLIENT] PASS " + SCENARIOS[scenario]
                     + " "
                     + HologramNativeRasterSmoke.requireVisible(activeScene, SCENARIOS[scenario].contains("current")));
+            if (scenario >= 0 && SCENARIOS[scenario].startsWith("native-decoration-")) System.out.println(
+                "[GTMB-HOLOGRAM-CLIENT] PASS " + SCENARIOS[scenario]
+                    + " "
+                    + HologramNativeRasterSmoke.requireVisible(activeScene, SCENARIOS[scenario].contains("current"))
+                    + HologramDecorationPreviewSmoke
+                        .verify(new HologramState(activeScene), SCENARIOS[scenario].contains("current")));
             int glError = GL11.glGetError();
             if (glError != GL11.GL_NO_ERROR) throw new IllegalStateException("OpenGL error " + glError);
             String name = scenario < 0 ? "hologram-scale-" + scale
@@ -199,7 +221,8 @@ public final class HologramClientSmoke {
             if (!screenshot.isFile() || screenshot.length() == 0)
                 throw new IllegalStateException("Screenshot not saved: " + screenshot);
             if (scenario >= 0
-                && (SCENARIOS[scenario].startsWith("native-six-") || SCENARIOS[scenario].startsWith("native-ae-")))
+                && (SCENARIOS[scenario].startsWith("native-six-") || SCENARIOS[scenario].startsWith("native-ae-")
+                    || SCENARIOS[scenario].startsWith("native-decoration-")))
                 System.out.println(
                     "[GTMB-HOLOGRAM-CLIENT] PASS actual screenshot native material "
                         + HologramNativeRasterSmoke.requireScreenshot(screenshot));
@@ -284,6 +307,9 @@ public final class HologramClientSmoke {
         }
         if (SCENARIOS[scenario].startsWith("native-ae-"))
             scene = HologramAeNativePreviewSmoke.fixture(SCENARIOS[scenario].endsWith("vertical"));
+        if (SCENARIOS[scenario].startsWith("native-decoration-"))
+            scene = (NBTTagCompound) (SCENARIOS[scenario].contains("rotated") ? nativeDecorationRotated
+                : nativeDecorationSnapshot).copy();
         if ("editor-selection".equals(SCENARIOS[scenario])) scene = (NBTTagCompound) snapshot.copy();
         if ("prompt-preview".equals(SCENARIOS[scenario])) {
             scene.setString("blueprintPrompt", "Native preview annotation smoke");
@@ -341,6 +367,7 @@ public final class HologramClientSmoke {
         mc.displayGuiScreen(screen);
         String renderScenario = SCENARIOS[scenario].startsWith("native-six-")
             || SCENARIOS[scenario].startsWith("native-ae-")
+            || SCENARIOS[scenario].startsWith("native-decoration-")
                 ? SCENARIOS[scenario].contains("current") ? "native-display-current" : "native-display-target"
                 : SCENARIOS[scenario];
         screen.smokeRenderScenario(renderScenario);

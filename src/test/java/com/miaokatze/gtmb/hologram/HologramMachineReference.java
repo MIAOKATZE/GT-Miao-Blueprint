@@ -38,6 +38,7 @@ public final class HologramMachineReference {
         "large-chemical-reactor", "industrial-centrifuge" };
     private static final String[] TYPES = { "MTEElectricBlastFurnace", "MTEIndustrialElectrolyzer",
         "MTELargeChemicalReactor", "MTEIndustrialCentrifuge" };
+    private static final int[] CONTROLLER_IDS = { 1000, 15514, 1169, 15512 };
     private static final String[] SERVICES = { "MTEHatchInputBus", "MTEHatchOutputBus", "MTEHatchInput",
         "MTEHatchOutput", "MTEHatchEnergy", "MTEHatchMaintenance" };
     private int ticks;
@@ -82,6 +83,7 @@ public final class HologramMachineReference {
             for (int yy = y - 8; yy <= y + 8; yy++) require(world.isAirBlock(xx, yy, zz), "fresh fixture air");
         }
         int id = registered(TYPES[index]);
+        require(id == CONTROLLER_IDS[index], "exact GT5U 5.09.54.205 registered controller ID");
         BaseMetaTileEntity base = machine(world, x, y, z, id, ForgeDirection.NORTH);
         MTEEnhancedMultiBlockBase<?> controller = (MTEEnhancedMultiBlockBase<?>) base.getMetaTileEntity();
         ItemStack trigger = new ItemStack(net.minecraft.init.Items.feather, 1);
@@ -107,7 +109,9 @@ public final class HologramMachineReference {
                 occupied.add(key(cell));
             }
             if (has(candidates, "MTEHatchEnergy")
-                && !(world.getBlock(cell.x, cell.y, cell.z) instanceof gregtech.api.interfaces.IHeatingCoil))
+                && !(world.getBlock(cell.x, cell.y, cell.z) instanceof gregtech.api.interfaces.IHeatingCoil)
+                // Keep the native turbine overlay's complete casing support plane visible in the reference.
+                && !(index == 3 && cell.z == z && Math.abs(cell.x - x) <= 1 && Math.abs(cell.y - y) <= 1))
                 slots.add(cell);
         }
         // Place visible front/base services first; all substitutions come from this exact structure element.
