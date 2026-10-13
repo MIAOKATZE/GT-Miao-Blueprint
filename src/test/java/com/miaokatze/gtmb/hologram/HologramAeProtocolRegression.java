@@ -861,24 +861,42 @@ public final class HologramAeProtocolRegression {
                 .getCompoundTagAt(1)
                 .equals(ae),
             "AE part entire recipe subtree remains exact through capture transport");
-        NBTTagCompound expectedCapture = HologramBlueprintNbt.decode(HologramBlueprintNbt.encodeCaptured(nonAe));
-        SimpleAssert.that(
+        NBTTagCompound rawCapture = HologramBlueprintNbt.decode(HologramBlueprintNbt.encodeCaptured(nonAe));
+        SimpleAssert.eq(
+            "old non-AE owner",
+            rawCapture.getString("ownerUUID"),
+            "standalone level 0 capture retains its original actor identity");
+        SimpleAssert.eq(
+            "",
             captureDecoded.getTagList("parts", 10)
                 .getCompoundTagAt(0)
-                .equals(expectedCapture),
-            "non-AE capture applies the established v0.0.4 ownership rule exactly");
+                .getString("ownerUUID"),
+            "mandatory AE multipart canonicalization still resets non-AE part ownership and requires level 1");
+        NBTTagCompound explicitOne = (NBTTagCompound) rawCapture.copy();
+        HologramDeidentification.project(explicitOne, 1);
+        SimpleAssert.that(
+            explicitOne.getString("ownerUUID")
+                .isEmpty()
+                && explicitOne.getCompoundTag("nested")
+                    .equals(nested),
+            "explicit level 1 clears device identity without traversing opaque nested recipe configuration");
         UUID actor = UUID.fromString("01234567-89ab-cdef-0123-456789abcdef");
         NBTTagCompound placement = HologramBlueprintNbt.canonicalMultipartPayload(source, actor, "builder", false);
         HologramBlueprintNbt.bindTarget(placement, 10, 64, 20);
         NBTTagCompound legacy = HologramBlueprintNbt
             .forPlacement(HologramBlueprintNbt.encodeCanonical(source), actor, "builder", 10, 64, 20, true, true);
+        SimpleAssert.eq(
+            actor.toString(),
+            placement.getTagList("parts", 10)
+                .getCompoundTagAt(0)
+                .getString("ownerUUID"),
+            "explicit native multipart part root is rebound to the placing actor");
         SimpleAssert.that(
             placement.getTagList("parts", 10)
                 .getCompoundTagAt(0)
-                .equals(
-                    legacy.getTagList("parts", 10)
-                        .getCompoundTagAt(0)),
-            "non-AE placement ownership and nested coordinates match the existing policy exactly");
+                .getCompoundTag("nested")
+                .equals(nested),
+            "opaque non-AE part configuration is preserved during actor binding");
         SimpleAssert.that(
             placement.getTagList("parts", 10)
                 .getCompoundTagAt(1)

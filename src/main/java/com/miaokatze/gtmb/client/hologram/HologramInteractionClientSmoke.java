@@ -1375,6 +1375,10 @@ public final class HologramInteractionClientSmoke {
     /** Aim through the normal camera/scroll path, then wait for that generation and anchor's actual world mesh. */
     private boolean awaitAimedMovingWorldFrame(Minecraft mc) throws Exception {
         HologramState latest = HologramClient.state;
+        if (Boolean.getBoolean("gtmb.hologram.v010MovingWheelSmoke") && !v010WheelChecked) {
+            HologramV010GuiSmoke.assertMovingWheel(mc);
+            v010WheelChecked = true;
+        }
         String generation = projectionGeneration(latest);
         NBTTagCompound currentCamera = cameraObservation(mc, latest);
         mc.objectMouseOver = null;
@@ -1996,6 +2000,8 @@ public final class HologramInteractionClientSmoke {
         require(mouse.isCanceled(), "real_registered_area_mouse_consumes_corner_button_" + button);
     }
 
+    private boolean v010WheelChecked;
+
     private void mouseWheel(int distance) throws Exception {
         net.minecraftforge.client.event.MouseEvent wheel = new net.minecraftforge.client.event.MouseEvent();
         java.lang.reflect.Field delta = wheel.getClass()
@@ -2010,8 +2016,21 @@ public final class HologramInteractionClientSmoke {
         delta.setInt(wheel, distance);
         button.setInt(wheel, -1);
         buttonState.setBoolean(wheel, false);
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(wheel);
-        require(wheel.isCanceled(), "real_registered_moving_wheel_consumed_without_hotbar_change");
+        java.nio.ByteBuffer keys = (java.nio.ByteBuffer) observedKeyboardBuffer();
+        byte previousAlt = keys.get(Keyboard.KEY_LMENU);
+        try {
+            keyboard(Keyboard.KEY_LMENU, true);
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(wheel);
+            require(wheel.isCanceled(), "real_registered_Alt_moving_wheel_consumed_without_hotbar_change");
+        } finally {
+            keys.put(Keyboard.KEY_LMENU, previousAlt);
+        }
+    }
+
+    private static Object observedKeyboardBuffer() throws Exception {
+        java.lang.reflect.Field field = Keyboard.class.getDeclaredField("keyDownBuffer");
+        field.setAccessible(true);
+        return field.get(null);
     }
 
     private void airRightClick(Minecraft mc, boolean checkWorldLock) {

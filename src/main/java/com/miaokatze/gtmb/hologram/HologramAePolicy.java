@@ -82,15 +82,35 @@ final class HologramAePolicy {
         Draft(HologramPresets.Preset preset, List<Issue> issues) {
             this.preset = preset;
             this.issues = issues;
+            Set<String> excluded = new HashSet<>();
+            for (HologramPresets.Cell cell : preset.cells)
+                if (cell.excluded) excluded.add(cell.x + "," + cell.y + "," + cell.z);
             blocking = issues.stream()
-                .anyMatch(issue -> "blocker".equals(issue.severity));
+                .anyMatch(
+                    issue -> "blocker".equals(issue.severity)
+                        && !excluded.contains(issue.x + "," + issue.y + "," + issue.z));
         }
     }
 
     /** Does not mutate the source draft, library cache, source stacks or any world. */
     static Draft sanitize(HologramPresets.Preset source) throws IOException {
         HologramPresets.Preset result = HologramPresets.copy(source);
-        List<Issue> networkChanges = HologramNetworkBindings.sanitize(result);
+        result.deidentificationLevel = HologramDeidentification.level(result);
+        // Native AE canonicalization and verified quantum binding necessarily rebuild identity.
+        for (HologramPresets.Cell cell : result.cells) {
+            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            if (HologramAeBlueprint.supports(cell.block(), payload) || HologramNetworkBindings.node(cell.block())
+                || HologramNetworkSchemas.removeExternalReferences(
+                    cell.block(),
+                    cell.damage,
+                    payload == null ? null : (NBTTagCompound) payload.copy())
+                || payload != null && (payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
+                    || payload.hasKey(HologramNetworkBindings.GROUP)))
+                result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+        }
+        result = HologramDeidentification.apply(result, result.deidentificationLevel);
+        List<Issue> networkChanges = result.deidentificationLevel > 0 ? HologramNetworkBindings.sanitize(result)
+            : java.util.Collections.emptyList();
         Map<String, Issue> issues = new LinkedHashMap<>();
         for (Issue issue : networkChanges) add(issues, issue);
         Set<String> positions = new HashSet<>();

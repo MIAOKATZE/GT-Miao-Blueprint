@@ -307,7 +307,7 @@ final class HologramLibraryClient {
     }
 
     String status() {
-        return status;
+        return HologramUiText.reason(status);
     }
 
     NBTTagCompound smokeQuickState() {

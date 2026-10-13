@@ -66,6 +66,7 @@ public final class HologramClientSmoke {
     }
 
     static void install() {
+        if (Boolean.getBoolean("gtmb.hologram.v010GuiSmoke")) return;
         if (Boolean.getBoolean("gtmb.hologram.referenceClient")) {
             try {
                 Class.forName("com.miaokatze.gtmb.client.hologram.HologramMachineReferenceClient")

@@ -439,8 +439,22 @@ public final class HologramBlueprintPersistenceRegression {
         tile.setTag("gt.covers", covers);
         String encoded = HologramBlueprintNbt.encodeCaptured(tile);
         NBTTagCompound saved = HologramBlueprintNbt.decode(encoded);
-        SimpleAssert.eq("", saved.getString("mOwnerUuid"), "stored blueprint does not retain original UUID");
-        SimpleAssert.eq("", saved.getString("mOwnerName"), "stored blueprint does not retain original owner name");
+        SimpleAssert
+            .eq("original-player-uuid", saved.getString("mOwnerUuid"), "raw level 0 capture retains original UUID");
+        SimpleAssert
+            .eq("Original player", saved.getString("mOwnerName"), "raw level 0 capture retains original owner name");
+        NBTTagCompound deidentified = (NBTTagCompound) saved.copy();
+        HologramDeidentification.project(deidentified, 1);
+        SimpleAssert.that(
+            deidentified.getString("mOwnerUuid")
+                .isEmpty()
+                && deidentified.getString("mOwnerName")
+                    .isEmpty(),
+            "explicit level 1 clears device ownership slots, preserving the raw level 0 baseline");
+        SimpleAssert.that(
+            deidentified.getTag("Inventory")
+                .equals(saved.getTag("Inventory")),
+            "level 1 does not rewrite opaque inventory or recipe payloads");
         SimpleAssert.eq("original-player-uuid", tile.getString("mOwnerUuid"), "capture never mutates live owner");
         UUID user = UUID.fromString("11111111-2222-3333-4444-555555555555");
         NBTTagCompound restored = HologramBlueprintNbt.forPlacement(encoded, user, "New player", 2, 65, -4, true, true);
@@ -448,26 +462,27 @@ public final class HologramBlueprintPersistenceRegression {
         SimpleAssert.eq("New player", restored.getString("mOwnerName"), "GT owner name rewritten");
         NBTTagCompound item = restored.getTagList("Inventory", 10)
             .getCompoundTagAt(0);
-        SimpleAssert.eq(user.toString(), item.getString("ownerID"), "nested list ownerID rewritten");
+        SimpleAssert
+            .eq("original-player-uuid", item.getString("ownerID"), "opaque inventory configuration is preserved");
         SimpleAssert.eq("device-identity", item.getString("UUID"), "unrelated device UUID preserved");
         SimpleAssert.eq(
-            user.toString(),
+            "original-player-uuid",
             item.getCompoundTag("owner")
                 .getString("UUID"),
-            "owner compound UUID rewritten");
+            "inventory owner compound UUID stays exact");
         SimpleAssert.eq(
-            "New player",
+            "Original player",
             item.getCompoundTag("owner")
                 .getString("Name"),
-            "owner compound name rewritten");
+            "inventory owner compound name stays exact");
         SimpleAssert.that(
             item.getCompoundTag("owner")
-                .getLong("UUIDMost") == user.getMostSignificantBits(),
-            "owner UUID most bits rewritten");
+                .getLong("UUIDMost") == 100,
+            "inventory owner UUID most bits stay exact");
         SimpleAssert.that(
             item.getCompoundTag("owner")
-                .getLong("UUIDLeast") == user.getLeastSignificantBits(),
-            "owner UUID least bits rewritten");
+                .getLong("UUIDLeast") == 200,
+            "inventory owner UUID least bits stay exact");
         SimpleAssert.eq(512, item.getInteger("Count"), "full item count survives");
         SimpleAssert.eq(
             64000,
@@ -493,11 +508,11 @@ public final class HologramBlueprintPersistenceRegression {
             HologramBlueprintNbt.forPlacement(encoded, user, "New player", 0, 0, 0, false, false) == null,
             "disabling both toggles yields no restored payload");
         SimpleAssert.eq(
-            "",
+            "original-player-uuid",
             saved.getTagList("Inventory", 10)
                 .getCompoundTagAt(0)
                 .getString("ownerID"),
-            "placement never changes saved owner placeholder");
+            "placement never changes the raw saved owner");
     }
 
     private static void hostileNbt() throws Exception {
@@ -542,7 +557,7 @@ public final class HologramBlueprintPersistenceRegression {
             external.setString("ownerID", "external-original-owner");
             external.setInteger("Amount", 96000);
             external.setString("unselected", "must-not-be-stored");
-            // An external share may contain the original owner; import/export validation must sanitize it.
+            // Raw level zero sharing preserves identity. Explicit level one sanitizes it before placement.
             preset.cells.get(0).tileNbt = Base64.getEncoder()
                 .encodeToString(net.minecraft.nbt.CompressedStreamTools.compress(external));
             preset.retainedNbtKeys = java.util.Collections.singletonList("Amount");
@@ -580,7 +595,16 @@ public final class HologramBlueprintPersistenceRegression {
             SimpleAssert.eq("Wire this area", loaded.hintAreas.get(0).prompt, "hint area survives share");
             SimpleAssert.eq("1.10.3", loaded.modVersions.get("missing_mod"), "dependency version survives share");
             NBTTagCompound payload = HologramBlueprintNbt.decode(loaded.cells.get(0).tileNbt);
-            SimpleAssert.eq("", payload.getString("ownerID"), "shared external owner is sanitized before writing");
+            SimpleAssert.eq(
+                "external-original-owner",
+                payload.getString("ownerID"),
+                "shared raw level zero retains original owner before a deliberate deidentification choice");
+            HologramPresets.Preset publicCopy = HologramDeidentification.apply(loaded, 1);
+            SimpleAssert.eq(
+                "",
+                HologramBlueprintNbt.decode(publicCopy.cells.get(0).tileNbt)
+                    .getString("ownerID"),
+                "explicit level one sanitizes the imported shared identity without changing its level zero source");
             SimpleAssert.eq(96000, payload.getInteger("Amount"), "full NBT survives JSON share round trip");
             SimpleAssert.eq("Amount", loaded.retainedNbtKeys.get(0), "NBT root selector survives sharing");
             SimpleAssert.that(!payload.hasKey("unselected"), "share file contains no unselected root payload");

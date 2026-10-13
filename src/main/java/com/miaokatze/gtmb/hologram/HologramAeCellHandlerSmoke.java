@@ -84,18 +84,61 @@ public final class HologramAeCellHandlerSmoke {
             nativeSource.writeToNBT(raw);
             NBTTagCompound before = (NBTTagCompound) raw.copy();
             HologramAeBlueprint.Analysis first = HologramAeBlueprint.analyze(drive, 0, raw);
-            check(first.blocking && issue(first, "unsupported_cell"), "unknown_native_external_pointer_type_blocks");
+            check(
+                !first.blocking && issue(first, "unsupported_cell", "warning", "inv/item0"),
+                "unknown_native_external_pointer_type_is_explicitly_warned_and_omitted");
+            check(
+                !first.payload()
+                    .getCompoundTag("inv")
+                    .hasKey("item0") && first.materials.isEmpty()
+                    && first.payload()
+                        .toString()
+                        .indexOf(pointer.getString("diskuuid")) < 0
+                    && first.payload()
+                        .toString()
+                        .indexOf("StorageDim") < 0,
+                "unknown_cell_and_external_pointer_are_absent_from_payload_and_materials");
+            AEBaseInvTile restored = (AEBaseInvTile) HologramAeBlueprint
+                .createNative(drive, 0, first.payload(), HologramResourceWorld.create(drive, 0));
+            for (int i = 0; i < restored.getInternalInventory()
+                .getSizeInventory(); i++)
+                check(
+                    restored.getInternalInventory()
+                        .getStackInSlot(i) == null,
+                    "actual_native_restoration_of_remaining_drive_has_no_unreviewed_cell_slot_" + i);
+
+            // A missing/unreviewed cell may be omitted. Malformed physical records still require explicit repair.
+            NBTTagCompound malformed = (NBTTagCompound) raw.copy();
+            malformed.getCompoundTag("inv")
+                .getCompoundTag("item0")
+                .setString("Count", "invalid-physical-count");
+            NBTTagCompound malformedBefore = (NBTTagCompound) malformed.copy();
+            HologramAeBlueprint.Analysis blocked = HologramAeBlueprint.analyze(drive, 0, malformed);
+            check(
+                blocked.blocking && issue(blocked, "missing_physical_item", "blocker", "inv/item0"),
+                "malformed_registered_physical_cell_record_remains_a_blocker");
+            HologramAeBlueprint.Analysis repeated = HologramAeBlueprint.analyze(drive, 0, blocked.payload());
+            check(
+                repeated.blocking
+                    && HologramAeBlueprint.updateSlot(drive, 0, repeated.payload(), "inv/item1", null).blocking,
+                "malformed_physical_loss_survives_reanalysis_and_unrelated_slot_clear");
             boolean denied = false;
             try {
-                HologramAeBlueprint.createNative(drive, 0, first.payload(), HologramResourceWorld.create(drive, 0));
+                HologramAeBlueprint.createNative(drive, 0, repeated.payload(), HologramResourceWorld.create(drive, 0));
             } catch (IOException expected) {
                 denied = true;
             }
-            check(denied, "unknown_type_blocked_before_native_restore_opens_handler");
+            check(denied, "malformed_physical_record_blocks_native_restore_before_any_cell_handler_opening");
+            check(
+                !HologramAeBlueprint.updateSlot(drive, 0, repeated.payload(), "inv/item0", null).blocking
+                    && malformedBefore.equals(malformed),
+                "only_exact_clear_repairs_malformed_physical_marker_without_mutating_source");
             HologramAeBlueprint.Analysis clear = HologramAeBlueprint
                 .updateSlot(drive, 0, first.payload(), "inv/item0", null);
             check(!clear.blocking && clear.materials.isEmpty(), "native_slot_clear_resolves_only_blueprint_pointer");
-            check(calls[0] == 0, "analysis_factory_refusal_and_clear_never_invoke_registered_cell_inventory_handler");
+            check(
+                calls[0] == 0,
+                "analysis_empty_factory_malformed_refusal_and_clear_never_invoke_registered_cell_inventory_handler");
             check(
                 before.equals(raw) && unknown.getTagCompound()
                     .equals(pointer),
@@ -124,8 +167,9 @@ public final class HologramAeCellHandlerSmoke {
             });
     }
 
-    private static boolean issue(HologramAeBlueprint.Analysis analysis, String code) {
-        for (HologramAeBlueprint.Issue issue : analysis.issues) if (issue.code.equals(code)) return true;
+    private static boolean issue(HologramAeBlueprint.Analysis analysis, String code, String severity, String path) {
+        for (HologramAeBlueprint.Issue issue : analysis.issues)
+            if (issue.code.equals(code) && issue.severity.equals(severity) && issue.path.equals(path)) return true;
         return false;
     }
 

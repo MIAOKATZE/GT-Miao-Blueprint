@@ -39,8 +39,10 @@ final class HologramAePreviewModel {
         if (issueTags.tagCount() > MAX_ISSUES) throw new IllegalArgumentException("AE preview issue budget exceeded");
         for (int i = 0; i < issueTags.tagCount(); i++) {
             NBTTagCompound issue = issueTags.getCompoundTagAt(i);
-            String message = issue.getString("message");
-            warnings.add(issue.getString("severity") + " " + issue.getString("path") + ": " + message);
+            HologramAeReviewModel.Issue detail = new HologramAeReviewModel.Issue(issue);
+            warnings.add(
+                HologramUiText.severity(
+                    detail.severity) + " · " + detail.title() + " · " + detail.path + "：" + detail.explanation());
         }
         issues = Collections.unmodifiableList(warnings);
     }

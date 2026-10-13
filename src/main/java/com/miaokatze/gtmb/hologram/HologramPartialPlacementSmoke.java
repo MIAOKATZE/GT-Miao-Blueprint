@@ -93,15 +93,33 @@ public final class HologramPartialPlacementSmoke {
             HologramNativePlacement.register(ADAPTER_ID, adapter);
             registered = true;
             HologramPresets.Preset preset = fixture();
-            HologramPresets.save(preset);
-            presetId = preset.id;
+            if (!HologramLibraryFacade.enabled()) {
+                HologramPresets.save(preset);
+                presetId = preset.id;
+            }
             stock(1, new ItemStack(Blocks.chest));
             stock(2, new ItemStack(Blocks.stone));
             stock(3, new ItemStack(Blocks.cobblestone, 2));
             stock(4, new ItemStack(Blocks.furnace));
             HologramService.openAir(player);
             HologramSmokeTest.flushTransport();
-            action("choosePlacementPreset", tag("presetId", preset.id));
+            if (HologramLibraryFacade.enabled()) {
+                NBTTagCompound upload = HologramLibraryProtocol.request("privateBegin");
+                upload.setString("session", capture.state.getString("session"));
+                upload.setLong("planRevision", capture.state.getLong("planRevision"));
+                upload.setString("action", "place");
+                upload.setString(
+                    "localId",
+                    "local_" + UUID.randomUUID()
+                        .toString());
+                HologramPresets.Preset canonical = HologramBlueprintSharing.decode(
+                    new String(HologramServerLibrary.encodeShare(preset), java.nio.charset.StandardCharsets.UTF_8));
+                String privateId = HologramService.libraryActivate(player, upload, canonical);
+                HologramSmokeTest.flushTransport();
+                require(
+                    privateId.startsWith("private_") && HologramPresets.get(privateId) == null,
+                    "dedicated_partial_fixture_uses_validated_session_private_upload_without_global_save");
+            } else action("choosePlacementPreset", tag("presetId", preset.id));
             require(
                 capture.state.getBoolean("moving") && capture.state.getInteger("missing") > 0,
                 "mixed_blueprint_starts_only_unpaid_preview");

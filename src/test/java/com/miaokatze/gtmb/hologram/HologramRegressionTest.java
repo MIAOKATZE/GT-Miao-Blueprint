@@ -42,6 +42,13 @@ public final class HologramRegressionTest {
         });
         cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
         cases.put("device_buffers_require_paid_energy_and_keep_native_capacity", HologramEnergyPayloadRegression::run);
+        cases.put("blueprint_deidentification_levels_preserve_recipes_and_irregular_selection", () -> {
+            try {
+                HologramDeidentificationRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put("network_groups_drop_external_identity_and_charge_physical_templates", () -> {
             try {
                 HologramNetworkBindingsRegression.run();

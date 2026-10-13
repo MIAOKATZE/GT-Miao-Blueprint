@@ -9,7 +9,6 @@ import java.util.Map;
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -36,7 +35,84 @@ final class HologramArea {
     final java.util.Set<String> edited = new java.util.HashSet<>();
     final List<Structure> discovery = new ArrayList<>();
     int discoveryIndex;
+    long expandedNbt;
     String active = "";
+    String pointMode = "replace";
+    final List<Region> regions = new ArrayList<>();
+    final List<List<Region>> regionUndo = new ArrayList<>();
+
+    static final class Region {
+
+        final int minX, minY, minZ, maxX, maxY, maxZ;
+        final String mode;
+
+        Region(int[] a, int[] b, String mode) {
+            minX = Math.min(a[0], b[0]);
+            minY = Math.min(a[1], b[1]);
+            minZ = Math.min(a[2], b[2]);
+            maxX = Math.max(a[0], b[0]);
+            maxY = Math.max(a[1], b[1]);
+            maxZ = Math.max(a[2], b[2]);
+            this.mode = mode;
+        }
+
+        boolean contains(int x, int y, int z) {
+            return x >= minX && x <= maxX && y >= minY && y <= maxY && z >= minZ && z <= maxZ;
+        }
+    }
+
+    void point(int index, int xx, int yy, int zz, String mode) throws IOException {
+        if (!("replace".equals(mode) || "add".equals(mode) || "subtract".equals(mode)))
+            throw new IOException("区域组合模式无效");
+        if (index == 1) {
+            first = new int[] { xx, yy, zz };
+            second = null;
+            pointMode = mode;
+        }
+        if (index == 2) {
+            if (first == null) throw new IOException("请先选择第一角点");
+            if (regions.size() >= 128 || regionUndo.size() >= 128) throw new IOException("区域组合过多，请撤销或完成");
+            second = new int[] { xx, yy, zz };
+            regionUndo.add(new ArrayList<>(regions));
+            if ("replace".equals(pointMode)) regions.clear();
+            regions.add(new Region(first, second, pointMode));
+        }
+    }
+
+    void undoRegion() {
+        if (regionUndo.isEmpty()) {
+            first = null;
+            second = null;
+            return;
+        }
+        regions.clear();
+        regions.addAll(regionUndo.remove(regionUndo.size() - 1));
+        first = null;
+        second = null;
+    }
+
+    boolean contains(int xx, int yy, int zz) {
+        if (regions.isEmpty()) return xx >= minX && xx <= maxX && yy >= minY && yy <= maxY && zz >= minZ && zz <= maxZ;
+        boolean selected = false;
+        for (Region region : regions) if (region.contains(xx, yy, zz)) selected = !"subtract".equals(region.mode);
+        return selected;
+    }
+
+    NBTTagList regionSnapshot() {
+        NBTTagList rows = new NBTTagList();
+        for (Region region : regions) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("minX", region.minX);
+            row.setInteger("minY", region.minY);
+            row.setInteger("minZ", region.minZ);
+            row.setInteger("maxX", region.maxX);
+            row.setInteger("maxY", region.maxY);
+            row.setInteger("maxZ", region.maxZ);
+            row.setString("mode", region.mode);
+            rows.appendTag(row);
+        }
+        return rows;
+    }
 
     static final class Structure {
 
@@ -61,13 +137,18 @@ final class HologramArea {
     }
 
     void begin(World world) throws IOException {
-        if (first == null || second == null) throw new IOException("请先选择两个区域角点");
-        minX = Math.min(first[0], second[0]);
-        minY = Math.min(first[1], second[1]);
-        minZ = Math.min(first[2], second[2]);
-        maxX = Math.max(first[0], second[0]);
-        maxY = Math.max(first[1], second[1]);
-        maxZ = Math.max(first[2], second[2]);
+        int[] bounds = bounds();
+        minX = bounds[0];
+        minY = bounds[1];
+        minZ = bounds[2];
+        maxX = bounds[3];
+        maxY = bounds[4];
+        maxZ = bounds[5];
+        long width = (long) maxX - minX + 1, height = (long) maxY - minY + 1, depth = (long) maxZ - minZ + 1;
+        if (width > 1000000 || height > 1000000
+            || depth > 1000000
+            || width * height > 1000000
+            || width * height * depth > 1000000) throw new IOException("区域包围盒超过一百万格，请缩小选区");
         if (minY < 0 || maxY >= world.getHeight()) throw new IOException("区域高度无效");
         if (minX < -30000000 || maxX >= 30000000 || minZ < -30000000 || maxZ >= 30000000)
             throw new IOException("区域超出世界坐标边界");
@@ -84,54 +165,83 @@ final class HologramArea {
         paletteKeys.clear();
         edited.clear();
         discoveryIndex = 0;
+        expandedNbt = 0;
         importing = true;
         imported = false;
+    }
+
+    /** Subtraction can only reduce the mask, so its exterior bounds never enlarge the source scan. */
+    int[] bounds() throws IOException {
+        if (regions.isEmpty()) {
+            if (first == null || second == null) throw new IOException("请先选择两个区域角点");
+            regions.add(new Region(first, second, "replace"));
+        }
+        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
+            Integer.MIN_VALUE };
+        for (Region region : regions) {
+            if ("subtract".equals(region.mode)) continue;
+            bounds[0] = Math.min(bounds[0], region.minX);
+            bounds[1] = Math.min(bounds[1], region.minY);
+            bounds[2] = Math.min(bounds[2], region.minZ);
+            bounds[3] = Math.max(bounds[3], region.maxX);
+            bounds[4] = Math.max(bounds[4], region.maxY);
+            bounds[5] = Math.max(bounds[5], region.maxZ);
+        }
+        if (bounds[0] == Integer.MAX_VALUE) throw new IOException("减选后没有可导入的正选区域");
+        return bounds;
     }
 
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
         World world = player.worldObj;
         for (int budget = 4096; y <= maxY && budget > 0; budget--) {
-            if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
-            Block block = world.getBlock(x, y, z);
-            int meta = world.getBlockMetadata(x, y, z);
-            TileEntity tile = world.getTileEntity(x, y, z);
-            if (block != Blocks.air) {
-                NBTTagCompound data = tile == null ? null : HologramNativeCapture.capture(tile);
-                ItemStack sample = serverSample(block, meta, tile, data);
-                HologramPresets.Cell cell = sample == null ? new HologramPresets.Cell()
-                    : HologramPresets.cell(sample, x - minX, y - minY, z - minZ, -1, false);
-                cell.x = x - minX;
-                cell.y = y - minY;
-                cell.z = z - minZ;
-                cell.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
-                cell.metadata = meta;
-                if (sample != null && sample.hasTagCompound())
-                    cell.itemNbt = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
-                if (tile != null) {
-                    cell.tileNbt = HologramAeBlueprint.supports(block, data)
-                        ? HologramBlueprintNbt.encodeCanonical(block, data)
-                        : HologramBlueprintNbt.encodeCaptured(data);
-                }
-                if (tile instanceof IGregTechTileEntity) {
-                    IGregTechTileEntity gt = (IGregTechTileEntity) tile;
-                    cell.facing = HologramBlockIdentity.front(gt);
-                    if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
-                        && gt.getMetaTileEntity() instanceof IConstructable) {
-                        cell.controller = true;
-                        Structure structure = new Structure(
-                            x,
-                            y,
-                            z,
-                            (MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity());
-                        structures.put(structure.id, structure);
-                        addMember(structure.id, structure.id);
-                        discovery.add(structure);
+            if (contains(x, y, z)) {
+                if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
+                Block block = world.getBlock(x, y, z);
+                int meta = world.getBlockMetadata(x, y, z);
+                TileEntity tile = world.getTileEntity(x, y, z);
+                if (block != Blocks.air) {
+                    if (blueprint.cells.size() >= HologramCapture.LIMIT) throw new IOException("区域非空气方块超过蓝图格数上限，请拆分选区");
+                    NBTTagCompound data = tile == null ? null : HologramNativeCapture.capture(tile);
+                    ItemStack sample = serverSample(block, meta, tile, data);
+                    HologramPresets.Cell cell = sample == null ? new HologramPresets.Cell()
+                        : HologramPresets.cell(sample, x - minX, y - minY, z - minZ, -1, false);
+                    cell.x = x - minX;
+                    cell.y = y - minY;
+                    cell.z = z - minZ;
+                    cell.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
+                    cell.metadata = meta;
+                    if (sample != null && sample.hasTagCompound())
+                        cell.itemNbt = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
+                    if (tile != null) {
+                        cell.tileNbt = HologramAeBlueprint.supports(block, data)
+                            ? HologramBlueprintNbt.encodeCanonical(block, data)
+                            : HologramBlueprintNbt.encodeCaptured(data);
                     }
+                    expandedNbt += HologramBlueprintNbt.expandedBytes(cell.tileNbt)
+                        + HologramBlueprintNbt.expandedBytes(cell.itemNbt);
+                    if (expandedNbt > 64L * 1024 * 1024) throw new IOException("区域设备 NBT 超过 64MiB 上限，请拆分选区");
+                    if (tile instanceof IGregTechTileEntity) {
+                        IGregTechTileEntity gt = (IGregTechTileEntity) tile;
+                        cell.facing = HologramBlockIdentity.front(gt);
+                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
+                            && gt.getMetaTileEntity() instanceof IConstructable) {
+                            cell.controller = true;
+                            Structure structure = new Structure(
+                                x,
+                                y,
+                                z,
+                                (MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity());
+                            structures.put(structure.id, structure);
+                            addMember(structure.id, structure.id);
+                            discovery.add(structure);
+                        }
+                    }
+                    blueprint.cells.add(cell);
+                    if (sample != null
+                        && paletteKeys.add(String.valueOf(sample.getItem()) + ":" + sample.getItemDamage()))
+                        blueprint.palette.add(HologramPresets.cell(sample, 0, 0, 0, -1, false));
                 }
-                blueprint.cells.add(cell);
-                if (sample != null && paletteKeys.add(String.valueOf(sample.getItem()) + ":" + sample.getItemDamage()))
-                    blueprint.palette.add(HologramPresets.cell(sample, 0, 0, 0, -1, false));
             }
             if (++x > maxX) {
                 x = minX;
@@ -172,7 +282,8 @@ final class HologramArea {
                             && cell.y >= minY
                             && cell.y <= maxY
                             && cell.z >= minZ
-                            && cell.z <= maxZ) addMember(entry.getKey(), structure.id);
+                            && cell.z <= maxZ
+                            && contains(cell.x, cell.y, cell.z)) addMember(entry.getKey(), structure.id);
                     }
                 discoveryIndex++;
             }
@@ -234,8 +345,7 @@ final class HologramArea {
                 return null;
             }
         }
-        Item item = Item.getItemFromBlock(block);
-        return item == null ? null : new ItemStack(item, 1, block.damageDropped(metadata));
+        return HologramBlockIdentity.materialStack(block, block.damageDropped(metadata));
     }
 
     String member(int xx, int yy, int zz) {

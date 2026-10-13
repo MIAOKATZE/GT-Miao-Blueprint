@@ -9,6 +9,7 @@ public final class ClientProxy extends CommonProxy {
     public void init() {
         super.init();
         HologramClient.install();
+        com.miaokatze.gtmb.client.hologram.HologramV010GuiSmoke.install();
         HologramInteractionClientSmoke.install();
         com.miaokatze.gtmb.client.hologram.HologramProductionPreviewSmoke.install();
         com.miaokatze.gtmb.client.hologram.HologramLibrarySocketClientProbe.install();

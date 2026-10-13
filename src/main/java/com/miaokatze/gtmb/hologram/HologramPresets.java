@@ -134,6 +134,8 @@ final class HologramPresets {
         long createdAt;
         int schema = 1;
         int aePolicyVersion;
+        int deidentificationVersion, deidentificationLevel;
+        boolean deidentificationChosen;
         List<HologramAePolicy.Issue> aeIssues = new ArrayList<>();
         boolean retainNbt = true, retainCovers = true;
         String prompt, sourceMod, sourceClass;
@@ -471,6 +473,9 @@ final class HologramPresets {
 
     static void validate(Preset preset) throws IOException {
         if (preset != null) {
+            HologramDeidentification.checked(preset.deidentificationLevel);
+            if (preset.deidentificationVersion < 0 || preset.deidentificationVersion > HologramDeidentification.VERSION)
+                throw new IOException("去标识版本无效");
             if (preset.aePolicyVersion < 0 || preset.aePolicyVersion > HologramAePolicy.VERSION)
                 throw new IOException("Unsupported AE policy version");
             HologramAePolicy.validateIssues(preset.aeIssues);

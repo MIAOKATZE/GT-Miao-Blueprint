@@ -168,6 +168,10 @@ public final class HologramNativePlacement {
             expected.writeToNBT(expectedTag);
             actualTag = HologramEnergyPayload.withoutBuffers(actualTag);
             expectedTag = HologramEnergyPayload.withoutBuffers(expectedTag);
+            // Capture adds this project-owned display hint, while native writeToNBT deliberately does not.
+            // Compare native persistence symmetrically; never omit arbitrary data using this field name.
+            omitPreviewFlag(actualTag);
+            omitPreviewFlag(expectedTag);
             for (String key : new String[] { "x", "y", "z", HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE,
                 HologramNetworkBindings.HINT, HologramNetworkBindings.CAPTURE_ANCHOR, "GTSWN_IncorporationIdentity" }) {
                 actualTag.removeTag(key);
@@ -177,6 +181,12 @@ public final class HologramNativePlacement {
         } catch (Exception | LinkageError invalid) {
             return false;
         }
+    }
+
+    private static void omitPreviewFlag(NBTTagCompound tag) {
+        if (tag.hasKey("gtmb.nativePreview", 1)
+            && (tag.getByte("gtmb.nativePreview") == 0 || tag.getByte("gtmb.nativePreview") == 1))
+            tag.removeTag("gtmb.nativePreview");
     }
 
     /** Payment and Forge event rollback remain owned by HologramService. */

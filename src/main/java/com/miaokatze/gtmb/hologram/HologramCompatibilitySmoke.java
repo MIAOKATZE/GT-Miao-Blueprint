@@ -69,6 +69,13 @@ public final class HologramCompatibilitySmoke {
                 192,
                 new String[] { "coil" },
                 new int[] { 3 });
+            fixture.machine(
+                world,
+                player,
+                "gregtech.common.tileentities.machines.multi.MTELargeNaquadahReactor",
+                224,
+                new String[0],
+                new int[0]);
             System.out.println("[GTMB-HOLOGRAM-ELECTROLYZER-SMOKE] FINAL PASS assertions=" + fixture.assertions);
         } finally {
             transport.finish();

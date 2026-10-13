@@ -17,7 +17,7 @@ final class HologramGuidance {
         if (state.cells.isEmpty()) return "右键控制器导入结构 · Shift+右键框选区域 · 或点击“框选区域”";
         if (state.data.getBoolean("virtualPlacement")) return state.data.getBoolean("virtualLocked")
             ? "位置已锁定（青色）· 方向键水平微调，Alt+上下调高度 · 右键重新核对材料 · Shift+右键解锁 · Esc 取消"
-            : "位置预览（绿色）· 世界右键锁定 · R 旋转 · Esc 取消 · 再次右键核对材料";
+            : "位置预览（绿色）· Alt+滚轮调悬空距离（0=脚下）· 右键锁定 · R 旋转 · Esc 取消";
         if (selected >= 0) return "T+点击同种 · Ctrl 多选 · Shift 框选 · Alt 选空气 · Esc/E 关闭面板"
             + (state.data.getBoolean("virtual") ? " · 完整结构 G 移动轴 · Ctrl+拖轴复制" : "");
         return "点击选方块 · 线圈等部件自动同族 · T+点击同种 · 点击结构边缘整选 · Alt 选空气";

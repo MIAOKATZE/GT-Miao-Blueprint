@@ -67,6 +67,9 @@ public final class HologramScreen extends GuiScreen {
     private GuiTextField promptField;
     private GuiTextField networkHintField;
     private boolean nbtDrawer, nbtPlacement, resourceReview;
+    private boolean deidentificationDrawer, deidentificationPlacement;
+    private int deidentificationLevel = 1;
+    private long offeredDeidentificationNonce = -1;
     private int nbtOffset;
     private final HologramNbtSelection nbtSelection = new HologramNbtSelection();
     private int dragX, dragY, originX, originY;
@@ -136,12 +139,17 @@ public final class HologramScreen extends GuiScreen {
         syncTargetSelectors();
         applyOpeningPurpose();
         receiveAeReview();
+        offerPlacementDeidentification();
     }
 
     void updateState(HologramState next) {
         HologramState.Cell previousTarget = selectedCell();
+        int previousPrimarySelection = selected;
+        Integer previousDeidentificationChoice = HologramDeidentificationMemory.client()
+            .choice(HologramDeidentificationMemory.source(state.data));
         String previousPreset = state.data.getString("selectedPresetId");
         boolean draftSourceChanged = !HologramDraftNameMemory.sameSource(state.data, next.data);
+        if (draftSourceChanged) deidentificationDrawer = false;
         String savedOperation = next.data.getString("blueprintOperation");
         boolean canonicalSaveAcknowledged = next.data.getBoolean("virtual")
             && next.data.getBoolean("blueprintOperationSuccess")
@@ -154,6 +162,7 @@ public final class HologramScreen extends GuiScreen {
         boolean presetSaveAcknowledged = presetSaveSequence >= 0
             && next.data.getLong("uiSequence") >= presetSaveSequence;
         if (!state.session.equals(next.session)) {
+            offeredDeidentificationNonce = -1;
             rememberUi();
             UiMemory nextMemory = UI_MEMORY.get(next.session);
             blueprintTab = nextMemory == null
@@ -179,6 +188,11 @@ public final class HologramScreen extends GuiScreen {
             cancelQueuedEdits("会话已变化，已取消等待中的编辑");
         }
         state = next;
+        deidentificationLevel = Math.max(deidentificationLevel, HologramDeidentificationMemory.minimum(next.data));
+        if (canonicalSaveAcknowledged && previousDeidentificationChoice != null) HologramDeidentificationMemory.client()
+            .remember(
+                HologramDeidentificationMemory.source(next.data),
+                Math.max(previousDeidentificationChoice, HologramDeidentificationMemory.minimum(next.data)));
         networkDrawer = next.data.getBoolean("networkBindingRequested");
         if (areaImporting()) {
             editQueue.clear();
@@ -188,8 +202,11 @@ public final class HologramScreen extends GuiScreen {
             confirmation = false;
             gizmo.cancel();
         }
-        applyOpeningPurpose();
+        // Opening-purpose changes may persist UI memory immediately. Validate against the
+        // new snapshot before any memory, selector or modal callback can read its cells.
         selection.retain(next.cells.size());
+        selected = selection.first();
+        applyOpeningPurpose();
         if (pendingSelectionSequence >= 0 && next.data.getLong("uiSequence") >= pendingSelectionSequence) {
             selection
                 .load(next.data.getIntArray("selectedIndices"), next.data.getInteger("selected"), next.cells.size());
@@ -227,7 +244,7 @@ public final class HologramScreen extends GuiScreen {
             confirmation = true;
         }
         if (allLayers) layer = next.maxY;
-        int previousSelection = selected;
+        int previousSelection = previousPrimarySelection;
         selected = selection.first();
         if (selected != previousSelection) {
             roleDropdown = false;
@@ -253,6 +270,7 @@ public final class HologramScreen extends GuiScreen {
             }
         }
         receiveAeReview();
+        offerPlacementDeidentification();
         completeAeReviewNavigation();
         drainQueuedEdits();
         if (awaitingAePreview && pendingSequence < 0) {
@@ -435,15 +453,7 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private int[] selectedPositions() {
-        int[] positions = new int[selection.size() * 3];
-        int at = 0;
-        for (int index : selection.indices()) {
-            HologramState.Cell cell = state.cells.get(index);
-            positions[at++] = cell.x;
-            positions[at++] = cell.y;
-            positions[at++] = cell.z;
-        }
-        return positions;
+        return selection.positions(state);
     }
 
     private int[] rememberedSelection(UiMemory memory) {
@@ -763,6 +773,11 @@ public final class HologramScreen extends GuiScreen {
             if (aeReview != null) drawAeReview(mx, my);
             if (aeReviewNavigation != null) drawAeReviewNavigation(mx, my);
             if (networkDrawer) drawNetworkBindings(mx, my);
+            if (deidentificationDrawer) {
+                controls.clear();
+                tooltip = null;
+                drawDeidentification(mx, my);
+            }
             if (tooltip != null) drawHoveringText(tooltip, mx, my, fontRendererObj);
         } finally {
             GL11.glPopMatrix();
@@ -863,6 +878,7 @@ public final class HologramScreen extends GuiScreen {
 
     private boolean annotationInteractive() {
         return aeReviewNavigation == null && aeReview == null
+            && !deidentificationDrawer
             && !inventory
             && (previewInteractive() || libraryDrawer && !confirmation
                 && !resetReview
@@ -1121,7 +1137,7 @@ public final class HologramScreen extends GuiScreen {
                 cellName(cell, true) + " → "
                     + cellName(cell, false)
                     + "；"
-                    + cellTag().getString("reason")
+                    + HologramUiText.reason(cellTag().getString("reason"))
                     + "；"
                     + statusName(cell.status),
                 230);
@@ -1275,6 +1291,7 @@ public final class HologramScreen extends GuiScreen {
         button(166, x + 5, 301, 67, 13, "NBT 条目", editable(), mx, my);
         button(150, x + 77, 301, 66, 13, "来源版本", true, mx, my);
         button(146, x + 148, 301, 67, 13, "提示词", editable(), mx, my);
+        drawDeidentificationLibraryControl(mx, my);
         drawRect(35, 239, 442, 279, 0xe8172f36);
         if (selectedRow == null) {
             text("选择列表中的蓝图，查看预览与资料", 41, 247, 395, 0xb9d5d4);
@@ -1381,6 +1398,7 @@ public final class HologramScreen extends GuiScreen {
             button(209, x + 97, 301, 36, 13, "下页", library.page() + 1 < library.pages(), mx, my);
         } else button(202, x + 5, 301, 67, 13, "刷新", !library.busy(), mx, my);
         button(206, x + 148, 301, 67, 13, "取消传输", library.busy(), mx, my);
+        drawDeidentificationLibraryControl(mx, my);
         drawRect(35, 239, 442, 279, 0xe8172f36);
         text(chosen ? selectedRow.getString("name") : "选择蓝图，预览后开始世界定位", 41, 244, 395, 0xf5e4b9);
         text(library.status(), 41, 258, 395, 0xb9d5d4);
@@ -1532,6 +1550,7 @@ public final class HologramScreen extends GuiScreen {
                     "retainedNbtKeys",
                     state.data.getTagList("blueprintNbtKeys", 8)
                         .copy());
+                deidentificationSaveOptions(options);
                 library.saveDraft(state, options, id == 140 && !publicLibrary);
                 return true;
             default:
@@ -1726,7 +1745,17 @@ public final class HologramScreen extends GuiScreen {
         drawRect(30, 42, 650, 302, 0xfc172f36);
         text(aeReview.review ? "AE 保存综合告知 · " + aeReview.name : "AE 预览综合提示", 42, 49, 598, 0xffe59b);
         text("支持的存储元件仅保留同类型空元件；其中物品 / 流体 / 外置内容不保存。", 42, 63, 598, 0xe5c28d);
-        text("旧网络身份、owner 和原坐标不继承；源世界、源元件和源库存不改变。", 42, 75, 598, 0xe5c28d);
+        text(
+            "保存等级 " + deidentificationChoice(false)
+                + " · 当前 "
+                + state.data.getInteger("blueprintDeidentificationLevel")
+                + " · 推荐 "
+                + state.data.getInteger("deidentificationRecommendedLevel")
+                + "；源世界、源元件和源库存不改变。",
+            42,
+            75,
+            598,
+            0xe5c28d);
         text("编码配方、升级卡、空元件需要施工物料；ghost 配置免费；缺料仍可保存。", 42, 87, 598, 0xa9d6cf);
         text(
             "完整报告 " + aeReview.issues.size()
@@ -1741,14 +1770,14 @@ public final class HologramScreen extends GuiScreen {
             100,
             598,
             0xf2dca5);
-        button(185, 42, 114, 120, 17, "同类汇总", true, mx, my);
+        button(185, 42, 114, 120, 17, "同类相邻汇总", true, mx, my);
         button(186, 168, 114, 120, 17, "全部问题", true, mx, my);
         button(187, 294, 114, 120, 17, "施工物料", true, mx, my);
         button(188, 528, 114, 49, 17, "上一页", aeReviewOffset > 0, mx, my);
         button(189, 583, 114, 55, 17, "下一页", aeReviewOffset + 5 < aeRowCount(), mx, my);
         aePage(0);
         text(
-            (aeReviewTab == 0 ? "按类别查看，再点击展开所有位置"
+            (aeReviewTab == 0 ? "同类相邻问题归组；点击展开每条位置与详情"
                 : aeReviewTab == 1 ? (aeReviewGroup >= 0 ? "该类全部问题 · 点击「全部问题」解除筛选" : "全部问题 · 点击条目查看完整路径与说明")
                     : "服务端精确物料 · 尚缺材料仅作提醒")
                 + " · "
@@ -1772,7 +1801,7 @@ public final class HologramScreen extends GuiScreen {
                     596,
                     16,
                     ("blocker".equals(group.severity) ? "阻塞 · " : "注意 / 说明 · ") + group
-                        .title() + " × " + group.count + " · " + group.rows.size() + " 个位置（展开）",
+                        .title() + " × " + group.count + " · " + group.rows.size() + " 条记录（展开）",
                     true,
                     mx,
                     my);
@@ -1784,17 +1813,8 @@ public final class HologramScreen extends GuiScreen {
                     y,
                     596,
                     16,
-                    (row == aeReviewSelected ? "▶ " : "") + issue.title()
-                        + " × "
-                        + issue.count
-                        + " · "
-                        + issue.x
-                        + ","
-                        + issue.y
-                        + ","
-                        + issue.z
-                        + " · "
-                        + issue.path,
+                    (row == aeReviewSelected ? "▶ " : "") + issue
+                        .title() + " × " + issue.count + " · " + issue.x + "," + issue.y + "," + issue.z,
                     true,
                     mx,
                     my);
@@ -1813,9 +1833,9 @@ public final class HologramScreen extends GuiScreen {
             selectedIssue = aeIssueRows().get(aeReviewSelected);
             detail.addAll(
                 fontRendererObj.listFormattedStringToWidth(
-                    "[" + selectedIssue.severity
+                    "[" + HologramUiText.severity(selectedIssue.severity)
                         + "] "
-                        + selectedIssue.code
+                        + selectedIssue.title()
                         + " · "
                         + selectedIssue.x
                         + ","
@@ -1825,11 +1845,14 @@ public final class HologramScreen extends GuiScreen {
                         + " · 数量 "
                         + selectedIssue.count,
                     488));
+            detail.addAll(fontRendererObj.listFormattedStringToWidth(selectedIssue.explanation(), 488));
+            detail.addAll(fontRendererObj.listFormattedStringToWidth(selectedIssue.guidance(), 488));
             detail.addAll(
                 fontRendererObj
-                    .listFormattedStringToWidth("路径 " + selectedIssue.path + " · 槽 " + selectedIssue.slotId, 488));
-            detail.addAll(fontRendererObj.listFormattedStringToWidth(selectedIssue.message, 488));
-            detail.addAll(fontRendererObj.listFormattedStringToWidth(selectedIssue.guidance(), 488));
+                    .listFormattedStringToWidth("技术路径：" + selectedIssue.path + " · 槽 " + selectedIssue.slotId, 488));
+            detail.addAll(
+                fontRendererObj
+                    .listFormattedStringToWidth("技术诊断：" + selectedIssue.code + " · " + selectedIssue.message, 488));
         } else detail.add(
             aeReview.valid
                 ? aeReview.blockerCount > 0 ? "存在阻塞：展开问题并打开相关容器修正 / 清除，然后重新保存。" : "请查看汇总、完整问题和物料后确认；取消不会写入蓝图库。"
@@ -1854,16 +1877,32 @@ public final class HologramScreen extends GuiScreen {
             181,
             224,
             279,
-            304,
+            198,
             17,
-            aeReview.blockerCount > 0 ? "请先解除阻塞 · 无法继续保存" : "已了解净化变化 · 继续保存",
+            aeReview.blockerCount > 0 ? "请先解除阻塞" : "已核对 · 继续保存",
             aeReview.canConfirm && aeReview.matches(state.session, revision()) && pendingSequence < 0,
             mx,
             my);
+        button(
+            216,
+            426,
+            279,
+            102,
+            17,
+            "移除阻塞方块",
+            editable() && state.data.getBoolean("virtual") && aeReview.blockerCount > 0,
+            mx,
+            my);
+        button(214, 536, 279, 102, 17, "一键去标识", editable() && state.data.getBoolean("virtual"), mx, my);
     }
 
     private void activateAeReview(int id) {
         if (aeReview == null) return;
+        if (id == 214 || id == 216) {
+            deidentificationLevel = deidentificationChoice(false);
+            activateDeidentification(id);
+            return;
+        }
         if (id == 181) {
             if (!aeReview.canConfirm || !aeReview.matches(state.session, revision()) || pendingSequence >= 0) return;
             NBTTagCompound exact = aeReview.action();
@@ -2218,7 +2257,7 @@ public final class HologramScreen extends GuiScreen {
         text("蓝图来源与 Mod 版本", 62, 68, 354, 0xf5e4b9);
         text("缺失 红 · 过时 橙 · 超前 青", 62, 85, 354, 0x94afb4);
         if (state.data.getBoolean("sourceMissing")) {
-            String warning = "来源结构缺失：" + state.data.getString("sourceWarning");
+            String warning = "来源结构缺失：" + HologramUiText.reason(state.data.getString("sourceWarning"));
             text(warning, 62, 96, 354, 0xff7272);
             if (mx >= 62 && mx < 416 && my >= 94 && my < 106) {
                 tooltip = new ArrayList<>(fontRendererObj.listFormattedStringToWidth(warning, 300));
@@ -2243,7 +2282,7 @@ public final class HologramScreen extends GuiScreen {
         }
         HologramState.Cell cell = selectedCell();
         if (cell != null && (cell.missingBlock || cell.sourceMissing)) {
-            String warning = cell.sourceMissing ? "来源结构缺失：" + cell.sourceWarning
+            String warning = cell.sourceMissing ? "来源结构缺失：" + HologramUiText.reason(cell.sourceWarning)
                 : "缺失方块 " + cell.wantId + " · " + cell.sourceMod + " " + cell.sourceVersion;
             text(warning, 62, 240, 354, 0xff7272);
             if (mx >= 62 && mx < 416 && my >= 238 && my < 252) {
@@ -2311,7 +2350,8 @@ public final class HologramScreen extends GuiScreen {
                 if (mx >= x && mx < x + 21 && my >= y && my < y + 21) {
                     tooltip = new ArrayList<>();
                     tooltip.add(row.getString("name"));
-                    tooltip.add(available ? "点击绑定所选网络组" : row.getString("reason"));
+                    tooltip.add(available ? "点击绑定所选网络组" : HologramUiText.reason(row.getString("reason")));
+                    if (!available) tooltip.add("技术诊断：" + row.getString("reason"));
                 }
             }
         }
@@ -2320,7 +2360,8 @@ public final class HologramScreen extends GuiScreen {
             text("提示同步同组设备，保存后可共享", 405, 223, 210, 0x94afb4);
             NBTTagCompound selectedGroup = groups.getCompoundTagAt(networkGroupIndex);
             text(selectedGroup.getString("hint"), 50, 242, 570, 0xffe59b);
-            if (!selectedGroup.getBoolean("bound")) text(selectedGroup.getString("reason"), 50, 257, 570, 0xff9292);
+            if (!selectedGroup.getBoolean("bound"))
+                text(HologramUiText.reason(selectedGroup.getString("reason")), 50, 257, 570, 0xff9292);
         } else text("此蓝图没有需要重新绑定的量子网络组", 50, 242, 570, 0x94afb4);
         button(198, 50, 273, 95, 17, "上一组页", networkGroupOffset > 0, mx, my);
         button(199, 151, 273, 95, 17, "下一组页", networkGroupOffset + 5 < groups.tagCount(), mx, my);
@@ -2394,8 +2435,8 @@ public final class HologramScreen extends GuiScreen {
         if (nbtPlacement)
             button(174, 306, 101, 230, 17, "本次保留覆盖板 " + (nbtSelection.retainCovers() ? "✓" : "×"), true, mx, my);
         NBTTagList entries = state.data.getTagList("nbtEntries", 10);
-        nbtOffset = Math.max(0, Math.min(nbtOffset, Math.max(0, entries.tagCount() - 8)));
-        for (int i = nbtOffset; i < Math.min(entries.tagCount(), nbtOffset + 8); i++) {
+        nbtOffset = Math.max(0, Math.min(nbtOffset, Math.max(0, entries.tagCount() - 7)));
+        for (int i = nbtOffset; i < Math.min(entries.tagCount(), nbtOffset + 7); i++) {
             NBTTagCompound entry = entries.getCompoundTagAt(i);
             String key = entry.getString("key"), category = entry.getString("category");
             String categoryLabel = "item".equals(category) || "items".equals(category) || "inventory".equals(category)
@@ -2413,6 +2454,177 @@ public final class HologramScreen extends GuiScreen {
         text("库存：背包 / AE · 流体：AE · 电力：无线电网；材料确认页可查看可用量与缺口。", 62, 270, 474, 0x94afb4);
         button(172, 62, 283, 230, 17, "取消", true, mx, my);
         button(173, 306, 283, 230, 17, nbtPlacement ? "仅应用本次降级" : "应用蓝图保存选项", editable(), mx, my);
+        button(
+            211,
+            62,
+            251,
+            474,
+            15,
+            "去标识等级 " + deidentificationChoice(nbtPlacement) + " · 点击设置 0–10",
+            editable() && state.data.getBoolean("virtual"),
+            mx,
+            my);
+    }
+
+    private int deidentificationChoice(boolean placement) {
+        HologramDeidentificationMemory memory = HologramDeidentificationMemory.client();
+        return HologramDeidentificationMemory
+            .level(state.data, placement, memory.choice(HologramDeidentificationMemory.source(state.data)));
+    }
+
+    private void offerPlacementDeidentification() {
+        if (!placementReviewActive() || !state.data.getBoolean("placementDeidentificationRecommended")
+            || state.data.getBoolean("placementDeidentificationChosen")
+            || aeReview != null
+            || HologramDeidentificationMemory.minimum(state.data) > 0
+            || HologramDeidentificationMemory.client()
+                .choice(HologramDeidentificationMemory.source(state.data)) != null)
+            return;
+        long nonce = state.data.getLong("placementReviewNonce");
+        if (offeredDeidentificationNonce == nonce) return;
+        offeredDeidentificationNonce = nonce;
+        openDeidentification(true);
+    }
+
+    private void drawDeidentificationLibraryControl(int mx, int my) {
+        button(
+            211,
+            35,
+            284,
+            407,
+            17,
+            "保存去标识等级 " + deidentificationChoice(false)
+                + " · 推荐 "
+                + state.data.getInteger("deidentificationRecommendedLevel")
+                + " · 点击选择 0–10",
+            editable() && !state.cells.isEmpty(),
+            mx,
+            my);
+    }
+
+    private void openDeidentification(boolean placement) {
+        deidentificationPlacement = placement;
+        deidentificationLevel = deidentificationChoice(placement);
+        deidentificationDrawer = true;
+        dragging = boxSelecting = inventoryDragging = false;
+        gizmo.cancel();
+        if (presetNameField != null) presetNameField.setFocused(false);
+    }
+
+    private void drawDeidentification(int mx, int my) {
+        drawRect(40, 47, 650, 310, 0xff172f36);
+        text(deidentificationPlacement ? "本次放置校验与去标识" : "保存校验与去标识", 54, 59, 580, 0xf5e4b9);
+        int actual = state.data.getInteger(
+            deidentificationPlacement ? "placementDeidentificationLevel" : "blueprintDeidentificationLevel");
+        text(
+            "当前等级 " + actual
+                + " · 选择等级 "
+                + deidentificationLevel
+                + " · 推荐等级 "
+                + state.data.getInteger("deidentificationRecommendedLevel"),
+            54,
+            82,
+            580,
+            0x8bdddf);
+        int minimum = HologramDeidentificationMemory.minimum(state.data);
+        text(
+            minimum > 0 ? "已处理的数据无法还原；这份蓝图最低可选等级为 " + minimum + "。" : "等级 0 保留原始身份；等级越高，清除的外部身份与运行数据越多。",
+            54,
+            101,
+            580,
+            0xe5c28d);
+        for (int level = 0; level <= 10; level++) button(
+            22000 + level,
+            54 + level * 53,
+            122,
+            48,
+            20,
+            (level == deidentificationLevel ? "✓ " : "") + level,
+            level >= minimum,
+            mx,
+            my);
+        text("1 身份与网络 · 2 外部坐标 · 3 频率 · 4 安全凭据 · 5 连接记录 · 6 屏幕 / 核心运行缓存", 54, 155, 580, 0xa9d6cf);
+        text("7 监控身份 / 图表缓存 · 8 私人界面页 · 9 停机诊断 · 10 瞬时运行状态；配方数据保留", 54, 172, 580, 0xa9d6cf);
+        text("记住你对这份蓝图的选择（含 0）；下次放置及 Alt 快捷预览沿用。", 54, 190, 580, 0x94afb4);
+        text(
+            deidentificationPlacement ? "请先修正保存数据或清理阻塞物，再重新核对材料并确认放置。" : "保存仍会检查全部数据；同类相邻提示合并展示，可展开查看每个位置。",
+            54,
+            208,
+            580,
+            0xe5c28d);
+        button(
+            214,
+            54,
+            233,
+            278,
+            20,
+            "一键去标识处理 · 等级 " + Math.max(1, deidentificationLevel),
+            editable() && state.data.getBoolean("virtual"),
+            mx,
+            my);
+        button(215, 342, 233, 290, 20, "一键移除放置阻塞物", editable() && placementReviewActive(), mx, my);
+        button(212, 54, 274, 278, 20, "取消", true, mx, my);
+        button(213, 342, 274, 290, 20, deidentificationPlacement ? "记住并应用本次选择" : "记住此蓝图的保存选择", editable(), mx, my);
+    }
+
+    private boolean activateDeidentification(int id) {
+        if (id == 211) {
+            openDeidentification(confirmation && placementReviewActive() || nbtDrawer && nbtPlacement);
+            return true;
+        }
+        if (!deidentificationDrawer && id != 214 && id != 215 && id != 216) return false;
+        if (id >= 22000 && id <= 22010) {
+            int level = id - 22000;
+            if (level >= HologramDeidentificationMemory.minimum(state.data)) deidentificationLevel = level;
+            return true;
+        }
+        if (id == 212) {
+            deidentificationDrawer = false;
+            return true;
+        }
+        if (id != 213 && id != 214 && id != 215 && id != 216) return false;
+        if (!editable()) return true;
+        NBTTagCompound request = new NBTTagCompound();
+        request.setLong("planRevision", revision());
+        request.setLong("placementReviewNonce", state.data.getLong("placementReviewNonce"));
+        if (id == 216) {
+            if (aeReview == null || aeReview.blockerCount == 0) return true;
+            if (aeReview.review) activateAeReview(182);
+            request.setBoolean("confirmDiscard", true);
+            send("excludeBlueprintBlockers", request, true);
+            return true;
+        }
+        if (id == 215) {
+            if (!placementReviewActive()) return true;
+            send("removeBlueprintObstructions", request, true);
+            deidentificationDrawer = false;
+            return true;
+        }
+        int level = id == 214 ? Math.max(1, deidentificationLevel) : deidentificationLevel;
+        HologramDeidentificationMemory.client()
+            .remember(HologramDeidentificationMemory.source(state.data), level);
+        request.setInteger("deidentificationLevel", level);
+        request.setInteger("level", level);
+        request.setBoolean("deidentificationChosen", true);
+        if (id == 214) {
+            if (aeReview != null && aeReview.review) {
+                // Explicitly cancel the exact old save review; processing never confirms that nonce.
+                activateAeReview(182);
+            }
+            send("deidentifyBlueprint", request, true);
+        } else if (deidentificationPlacement) send("configurePlacementDeidentification", request, true);
+        else notice = "已记住保存去标识等级 " + level + "，保存时将重新校验";
+        deidentificationDrawer = false;
+        return true;
+    }
+
+    private void deidentificationSaveOptions(NBTTagCompound options) {
+        HologramDeidentificationMemory memory = HologramDeidentificationMemory.client();
+        Integer remembered = memory.choice(HologramDeidentificationMemory.source(state.data));
+        options
+            .setInteger("deidentificationLevel", HologramDeidentificationMemory.level(state.data, false, remembered));
+        options.setBoolean("deidentificationChosen", remembered != null);
+        options.setLong("planRevision", revision());
     }
 
     private boolean selectedPresetExists() {
@@ -2899,7 +3111,7 @@ public final class HologramScreen extends GuiScreen {
         text("仓室等级：" + tierName(presetTier), 201, 120, 153, 0xe4d3a9);
         button(104, 368, 113, 28, 21, "+", presetTier < state.data.getInteger("hatchTierMax"), mx, my);
         button(105, 165, 143, 231, 21, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
-        String reason = state.data.getString("presetReason");
+        String reason = HologramUiText.reason(state.data.getString("presetReason"));
         List<String> lines = fontRendererObj
             .listFormattedStringToWidth(reason.isEmpty() ? "生成目标后检查差分，再点击底部施工按钮。" : reason, 230);
         for (int i = 0; i < Math.min(4, lines.size()); i++) text(lines.get(i), 165, 174 + i * 12, 231, 0xe4b85a);
@@ -3042,6 +3254,7 @@ public final class HologramScreen extends GuiScreen {
             && !promptDrawer
             && !versionsDrawer
             && !nbtDrawer
+            && !deidentificationDrawer
             && !resetReview
             && deletePresetId.isEmpty()
             && !roleDropdown
@@ -3133,8 +3346,8 @@ public final class HologramScreen extends GuiScreen {
                     tooltip.add(resource.getString("name") + " · " + source);
                     tooltip.add(counts);
                     tooltip.add("NBT 根条目：" + resource.getString("key"));
-                    if (!resource.getString("reason")
-                        .isEmpty()) tooltip.add(resource.getString("reason"));
+                    if (!HologramUiText.reason(resource.getString("reason"))
+                        .isEmpty()) tooltip.add(HologramUiText.reason(resource.getString("reason")));
                     tooltip.add("可在本次 NBT 匹配中取消对应条目降级；原蓝图保存选项保持不变。");
                 }
             }
@@ -3186,8 +3399,31 @@ public final class HologramScreen extends GuiScreen {
             text("点击左侧“本次 NBT”调整", x + 8, 177, 204, 0x94afb4);
             text("取消 NBT 编辑保留位置和草稿", x + 8, 193, 204, 0x94afb4);
             text("材料核对后点击“确认放置”", x + 8, 232, 204, 0x9eedc1);
-            text("确认后直接开始施工", x + 8, 249, 204, 0x94afb4);
-            text("缺料时会要求再次明确确认", x + 8, 281, 204, 0xe4b85a);
+            text("缺料时会要求再次明确确认", x + 8, 249, 204, 0xe4b85a);
+            button(
+                211,
+                x + 8,
+                208,
+                204,
+                17,
+                "去标识 " + deidentificationChoice(true)
+                    + " · 推荐 "
+                    + state.data.getInteger("deidentificationRecommendedLevel"),
+                editable(),
+                mx,
+                my);
+            button(215, x + 8, 267, 204, 17, "一键移除阻塞物", editable(), mx, my);
+            button(
+                184,
+                x + 8,
+                287,
+                204,
+                17,
+                "数据校验详情 · " + state.data.getTagList("aeIssues", 10)
+                    .tagCount() + " 项",
+                true,
+                mx,
+                my);
         }
     }
 
@@ -3228,7 +3464,7 @@ public final class HologramScreen extends GuiScreen {
                 + state.data.getInteger("jobProtectedCells")
                 + " · 不支持 "
                 + state.data.getInteger("jobUnsupportedCells");
-        return state.data.getString("status");
+        return HologramUiText.reason(state.data.getString("status"));
     }
 
     private boolean editable() {
@@ -3612,7 +3848,7 @@ public final class HologramScreen extends GuiScreen {
         if (id == 95) return "先选择有仓室候选或可调整朝向的预览格；拆除模式无需配置目标。";
         if (id == 99) return "本格没有可安全修改的仓室朝向。";
         if (id == 102) return "本格没有单独指定的朝向，无需恢复。";
-        if (id == 106) return state.data.getString("presetReason");
+        if (id == 106) return HologramUiText.reason(state.data.getString("presetReason"));
         if (id == 107) return "当前没有启用整机仓室预设，无需撤销。";
         if (id == 103 || id == 104) return "已到达合法仓室等级边界。";
         if (id == 93 && selectedCell() != null && selectedCell().family.isEmpty()) return "本格没有可安全识别的同类部件，请使用单格范围。";
@@ -3801,6 +4037,13 @@ public final class HologramScreen extends GuiScreen {
     @Override
     protected void mouseClicked(int x, int y, int button) {
         int mx = localX(x), my = localY(y);
+        if (deidentificationDrawer) {
+            if (button == 0) for (Control control : controls) if (control.enabled && control.contains(mx, my)) {
+                activateDeidentification(control.id);
+                return;
+            }
+            return;
+        }
         if (libraryAdminDrawer) {
             libraryUploadField.mouseClicked(mx, my, button);
             libraryDownloadField.mouseClicked(mx, my, button);
@@ -3846,6 +4089,9 @@ public final class HologramScreen extends GuiScreen {
                         || control.id == 162
                         || control.id == 168
                         || control.id == 196
+                        || control.id == 211
+                        || control.id == 215
+                        || control.id == 184
                         || control.id == 169)) activate(control.id);
                     return;
                 }
@@ -3993,7 +4239,7 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void mouseClickMove(int x, int y, int button, long elapsed) {
-        if (areaImporting() || aeReviewNavigation != null) return;
+        if (areaImporting() || aeReviewNavigation != null || deidentificationDrawer) return;
         if (gizmo.axis() >= 0) {
             gizmo.update(localX(x), localY(y));
             return;
@@ -4013,7 +4259,7 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void mouseMovedOrUp(int x, int y, int button) {
-        if (areaImporting() || aeReviewNavigation != null) return;
+        if (areaImporting() || aeReviewNavigation != null || deidentificationDrawer) return;
         if (aeReview != null) return;
         if (button == 0 && gizmo.axis() >= 0) {
             int axis = gizmo.axis(), delta = gizmo.update(localX(x), localY(y));
@@ -4066,7 +4312,7 @@ public final class HologramScreen extends GuiScreen {
     public void handleMouseInput() {
         super.handleMouseInput();
         if (networkDrawer) return;
-        if (areaImporting() || aeReviewNavigation != null) return;
+        if (areaImporting() || aeReviewNavigation != null || deidentificationDrawer) return;
         int wheel = Mouse.getEventDWheel();
         if (wheel == 0) return;
         if (aeReview != null) {
@@ -4082,7 +4328,7 @@ public final class HologramScreen extends GuiScreen {
                     Math.max(
                         0,
                         state.data.getTagList("nbtEntries", 10)
-                            .tagCount() - 8),
+                            .tagCount() - 7),
                     nbtOffset + (wheel > 0 ? -1 : 1)));
             return;
         }
@@ -4165,6 +4411,11 @@ public final class HologramScreen extends GuiScreen {
 
     @Override
     protected void keyTyped(char c, int key) {
+        if (deidentificationDrawer) {
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) activateDeidentification(212);
+            else if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) activateDeidentification(213);
+            return;
+        }
         if (libraryAdminDrawer) {
             if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E && !libraryUploadField.isFocused()
                 && !libraryDownloadField.isFocused()
@@ -4333,6 +4584,7 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private void activate(int id) {
+        if (activateDeidentification(id)) return;
         if (activateClientLibrary(id)) return;
         if (id == 195) {
             send("resetBlueprintNetworks", new NBTTagCompound(), true);
@@ -4610,6 +4862,7 @@ public final class HologramScreen extends GuiScreen {
                     "retainedNbtKeys",
                     state.data.getTagList("blueprintNbtKeys", 8)
                         .copy());
+                deidentificationSaveOptions(savePreset);
                 libraryResult = notice = id == 140 ? "正在保存，请等待服务器确认" : "正在另存为新蓝图，请等待服务器确认";
                 send(id == 140 ? "saveBlueprint" : "saveBlueprintAs", savePreset, true);
                 presetSaveSequence = sequence;
@@ -4915,6 +5168,7 @@ public final class HologramScreen extends GuiScreen {
                         || HologramPlacementConfirmation.canBuild(state.data, confirmedRevision))) {
                     NBTTagCompound n = new NBTTagCompound();
                     n.setLong("planRevision", confirmedRevision);
+                    n.setLong("placementReviewNonce", state.data.getLong("placementReviewNonce"));
                     n.setBoolean(
                         "forceExplicit",
                         HologramPlacementConfirmation.forceReview(state.data, confirmedRevision));

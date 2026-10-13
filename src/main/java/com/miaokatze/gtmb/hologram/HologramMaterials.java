@@ -169,6 +169,13 @@ public final class HologramMaterials {
                 take(ItemStackPredicate.from(stack, ItemStackPredicate.NBTMode.EXACT), stack, true, limit, null));
         }
 
+        /** Construction shell only: retain item/damage identity, and enumerate real tagged variants in ME. */
+        public int countFuzzy(ItemStack stack, int limit) {
+            if (stack == null || stack.getItem() == null || limit <= 0) return 0;
+            if (HologramRecovery.hasSeal(stack)) return count(stack, limit);
+            return amount(take(shellPredicate(stack), null, true, limit, null));
+        }
+
         public BigInteger energyAvailable() {
             return WirelessNetworkManager.getUserEU(player.getUniqueID());
         }
@@ -379,6 +386,16 @@ public final class HologramMaterials {
             Predicate<ItemStack> predicate = ItemStackPredicate.from(stack, ItemStackPredicate.NBTMode.EXACT);
             if (amount(take(predicate, stack, true, stack.stackSize, null)) < stack.stackSize) return false;
             return simulate || amount(take(predicate, stack, false, stack.stackSize, transaction)) == stack.stackSize;
+        }
+
+        private boolean fuzzyOne(ItemStack stack, boolean simulate, Transaction transaction) {
+            requireOne(stack);
+            if (HologramRecovery.hasSeal(stack)) return exact(stack, simulate, transaction);
+            Predicate<ItemStack> predicate = shellPredicate(stack);
+            // A null exact sample is essential: AE must extract the actual matching tag, and the refund ledger
+            // must record that actual identity. Exact-only container APIs cannot impersonate fuzzy support.
+            if (amount(take(predicate, null, true, 1, null)) < 1) return false;
+            return simulate || amount(take(predicate, null, false, 1, transaction)) == 1;
         }
 
         private Map<ItemStack, Integer> take(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate,
@@ -700,6 +717,11 @@ public final class HologramMaterials {
             return !closed && context.exact(stack, simulate, this);
         }
 
+        /** Explicit shell payment; takeAll and retained internal resource payments stay exact. */
+        public boolean takeOneFuzzy(ItemStack stack, boolean simulate) {
+            return !closed && context.fuzzyOne(stack, simulate, this);
+        }
+
         @Override
         public boolean takeAll(ItemStack stack, boolean simulate) {
             return !closed && context.exact(stack, simulate, this);
@@ -982,6 +1004,15 @@ public final class HologramMaterials {
 
     private static void requireOne(ItemStack stack) {
         if (stack == null || stack.getItem() == null || stack.stackSize != 1) throw new IllegalArgumentException();
+    }
+
+    static Predicate<ItemStack> shellPredicate(ItemStack sample) {
+        if (HologramRecovery.hasSeal(sample)) return candidate -> candidate != null && candidate.stackSize > 0
+            && candidate.isItemEqual(sample)
+            && ItemStack.areItemStackTagsEqual(candidate, sample);
+        return candidate -> candidate != null && candidate.stackSize > 0
+            && candidate.isItemEqual(sample)
+            && !HologramRecovery.hasSeal(candidate);
     }
 
     private static boolean placeable(ItemStack stack) {

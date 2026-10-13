@@ -27,6 +27,7 @@ import appeng.util.item.AEFluidStack;
 public final class HologramBlueprintResourcesRegression {
 
     private static int aeAssertions;
+    private static net.minecraft.item.Item controllerMaterialFixture;
 
     private HologramBlueprintResourcesRegression() {}
 
@@ -44,6 +45,10 @@ public final class HologramBlueprintResourcesRegression {
             rejectionBeforePayment();
             bulkPayment();
             exactBulkContext();
+            fuzzyShellKeepsInternalResourcesExact();
+            sealedRecoveryNeverUsesFuzzyShellPayment();
+            clearedControllerPinKeepsRegisteredMaterial();
+            sealedBlueprintStateHasPriority();
         } catch (Throwable failure) {
             failure.printStackTrace(System.err);
             throw new AssertionError("blueprint resources regression", failure);
@@ -406,6 +411,352 @@ public final class HologramBlueprintResourcesRegression {
             player.inventory.mainInventory[1].getTagCompound()
                 .getInteger("materials"),
             "large exact payment physically removes all five thousand items from container");
+    }
+
+    private static void fuzzyShellKeepsInternalResourcesExact() throws Exception {
+        java.lang.reflect.Method playerFactory = HologramRegressionTest.class.getDeclaredMethod("materialPlayer");
+        playerFactory.setAccessible(true);
+        net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) playerFactory
+            .invoke(null);
+        player.inventory.mainInventory[1] = null;
+        ItemStack sample = new ItemStack(net.minecraft.init.Blocks.wool, 1, 3);
+        sample.setTagCompound(new NBTTagCompound());
+        sample.getTagCompound()
+            .setString("network", "saved");
+        ItemStack material = sample.copy();
+        material.stackSize = 2;
+        material.getTagCompound()
+            .setString("network", "inventory");
+        player.inventory.mainInventory[2] = material;
+        player.inventory.mainInventory[3] = new ItemStack(net.minecraft.init.Blocks.wool, 5, 4);
+        HologramMaterials.Settings settings = new HologramMaterials.Settings();
+        settings.containers = settings.me = false;
+        HologramMaterials.Context context = new HologramMaterials.Context(player, settings);
+        SimpleAssert.eq(0, context.count(sample, 64), "ordinary resource count requires exact tags");
+        SimpleAssert.eq(2, context.countFuzzy(sample, 64), "fuzzy shell count ignores tags and retains exact damage");
+        SimpleAssert.eq(2, material.stackSize, "shell availability simulation preserves inventory");
+        HologramMaterials.Transaction transaction = context.begin();
+        SimpleAssert
+            .that(!transaction.takeAll(sample, true), "internal resource payment stays exact in shell transaction");
+        SimpleAssert.that(transaction.takeOneFuzzy(sample, true), "shell simulation accepts available tag variant");
+        SimpleAssert.eq(2, material.stackSize, "shell simulation consumes nothing");
+        SimpleAssert.that(transaction.takeOneFuzzy(sample, false), "shell payment consumes actual matching variant");
+        SimpleAssert.eq(1, material.stackSize, "shell payment consumes exactly one item");
+        SimpleAssert.eq(
+            "inventory",
+            material.getTagCompound()
+                .getString("network"),
+            "remaining source tag is preserved");
+        SimpleAssert
+            .that(!transaction.takeAll(sample, false), "fuzzy shell choice never relaxes later internal resource tags");
+        SimpleAssert
+            .eq(5, player.inventory.mainInventory[3].stackSize, "different damage never supplies shell material");
+        transaction.commit();
+    }
+
+    private static void sealedRecoveryNeverUsesFuzzyShellPayment() throws Exception {
+        java.lang.reflect.Method playerFactory = HologramRegressionTest.class.getDeclaredMethod("materialPlayer");
+        playerFactory.setAccessible(true);
+        net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) playerFactory
+            .invoke(null);
+        player.inventory.mainInventory[1] = null;
+        ItemStack plain = new ItemStack(net.minecraft.init.Blocks.wool, 1, 3);
+        ItemStack sealed = plain.copy();
+        NBTTagCompound tile = new NBTTagCompound();
+        tile.setInteger("mID", 17);
+        NBTTagList inventory = new NBTTagList();
+        inventory.appendTag(new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        tile.setTag("Inventory", inventory);
+        tile.setLong("mStoredEnergy", 4000);
+        sealed.setTagCompound(new NBTTagCompound());
+        sealed.getTagCompound()
+            .setTag(HologramRecovery.TAG, HologramRecovery.sealNBT(tile, "minecraft:wool", 3, "minecraft:wool", 3, 17));
+        ItemStack differentSeal = sealed.copy();
+        differentSeal.getTagCompound()
+            .getCompoundTag(HologramRecovery.TAG)
+            .getCompoundTag("tile")
+            .setLong("mStoredEnergy", 8000);
+        SimpleAssert.that(
+            !HologramMaterials.shellPredicate(sealed)
+                .test(plain),
+            "same item/meta ordinary shell cannot pay for a sealed device inventory and energy");
+        SimpleAssert.that(
+            !HologramMaterials.shellPredicate(sealed)
+                .test(differentSeal),
+            "another sealed inventory state is not interchangeable with the requested seal");
+        SimpleAssert.that(
+            !HologramMaterials.shellPredicate(plain)
+                .test(sealed),
+            "ordinary fuzzy shell extraction never destroys a sealed device's paid contents");
+
+        HologramMaterials.Settings settings = new HologramMaterials.Settings();
+        settings.containers = settings.me = false;
+        HologramMaterials.Context context = new HologramMaterials.Context(player, settings);
+        player.inventory.mainInventory[2] = new ItemStack(net.minecraft.init.Blocks.wool, 2, 3);
+        SimpleAssert.eq(0, context.countFuzzy(sealed, 64), "sealed availability uses exact NBT even via the fuzzy API");
+        HologramMaterials.Transaction denied = context.begin();
+        SimpleAssert
+            .that(!denied.takeOneFuzzy(sealed, false), "fuzzy payment entry point rejects unsealed substitutes");
+        denied.rollbackExternal();
+        SimpleAssert
+            .eq(2, player.inventory.mainInventory[2].stackSize, "rejected sealed payment consumes no ordinary shell");
+        player.inventory.mainInventory[3] = differentSeal;
+        SimpleAssert.eq(0, context.countFuzzy(sealed, 64), "a different real seal also cannot satisfy the target");
+        player.inventory.mainInventory[4] = sealed.copy();
+        SimpleAssert.eq(1, context.countFuzzy(sealed, 64), "the identical real sealed item can pay exactly");
+        SimpleAssert.eq(2, context.countFuzzy(plain, 64), "sealed variants are excluded from ordinary fuzzy counts");
+
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+        Object session = unsafe.allocateInstance(type);
+        for (Object[] entry : new Object[][] { { "player", player }, { "materialContext", context },
+            { "virtual", true } }) {
+            java.lang.reflect.Field field = type.getDeclaredField((String) entry[0]);
+            field.setAccessible(true);
+            field.set(session, entry[1]);
+        }
+        HologramPresets.Preset preset = new HologramPresets.Preset();
+        preset.deidentificationLevel = 1;
+        java.lang.reflect.Field presetField = type.getDeclaredField("virtualPreset");
+        presetField.setAccessible(true);
+        presetField.set(session, preset);
+        java.lang.reflect.Method fuzzy = HologramService.class
+            .getDeclaredMethod("fuzzyBlueprintShells", type, ItemStack.class);
+        fuzzy.setAccessible(true);
+        SimpleAssert.that(
+            !(Boolean) fuzzy.invoke(null, session, sealed) && (Boolean) fuzzy.invoke(null, session, plain),
+            "level one construction still applies exact sealed payment while allowing ordinary fuzzy shells");
+        java.lang.reflect.Method copyInventory = HologramService.class
+            .getDeclaredMethod("copyInventory", net.minecraft.entity.player.EntityPlayerMP.class);
+        copyInventory.setAccessible(true);
+        ItemStack[] before = (ItemStack[]) copyInventory.invoke(null, player);
+        HologramMaterials.Transaction transaction = context.begin();
+        SimpleAssert.that(
+            transaction.takeOneFuzzy(sealed, false),
+            "real identical seal is physically reserved via exact fallback");
+        SimpleAssert.eq(0, context.count(sealed, 64), "reservation removes the one paid sealed item");
+        java.lang.reflect.Method rollback = HologramService.class
+            .getDeclaredMethod("rollbackMaterials", type, HologramMaterials.Transaction.class, ItemStack[].class);
+        rollback.setAccessible(true);
+        rollback.invoke(null, session, transaction, before);
+        rollback.invoke(null, session, transaction, before);
+        SimpleAssert.eq(
+            1,
+            context.count(sealed, 64),
+            "service rollback restores exactly one original seal without duplicating its inventory");
+        SimpleAssert.eq(2, context.countFuzzy(plain, 64), "sealed refund leaves the two ordinary shells unchanged");
+        SimpleAssert.that(
+            ItemStack.areItemStackTagsEqual(sealed, player.inventory.mainInventory[4]),
+            "refunded sealed inventory and energy NBT remain byte-for-byte exact");
+    }
+
+    private static void clearedControllerPinKeepsRegisteredMaterial() throws Exception {
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        int id = 247;
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity previous = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+        try {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = (gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor) unsafe
+                .allocateInstance(gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor.class);
+            String registry = "gtmb:cleared_controller_material_fixture";
+            net.minecraft.item.Item material = (net.minecraft.item.Item) net.minecraft.item.Item.itemRegistry
+                .getObject(registry);
+            if (material == null) {
+                int free = 4095;
+                while (free > 0 && (net.minecraft.item.Item.getItemById(free) != null
+                    || net.minecraft.block.Block.getBlockById(free) != null
+                        && net.minecraft.block.Block.getBlockById(free) != net.minecraft.init.Blocks.air))
+                    free--;
+                if (free == 0) throw new AssertionError("No free isolated controller block/item registry slot");
+                net.minecraft.block.Block block = new net.minecraft.block.Block(
+                    net.minecraft.block.material.Material.rock) {};
+                net.minecraft.block.Block.blockRegistry.addObject(free, registry, block);
+                material = new gregtech.common.blocks.ItemMachines(block);
+                net.minecraft.item.Item.itemRegistry.addObject(free, registry, material);
+            }
+            controllerMaterialFixture = material;
+            String registeredMaterial = String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(material));
+            SimpleAssert.that(
+                net.minecraft.item.Item.itemRegistry.getObject(registeredMaterial) == material,
+                "isolated controller material uses the actual Forge registry name");
+            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Object session = unsafe.allocateInstance(type);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.controllerId = id;
+            preset.sourceClass = gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor.class.getName();
+            for (Object[] entry : new Object[][] { { "virtual", true }, { "virtualPreset", preset },
+                { "pins", new java.util.HashMap<Integer, ItemStack>() },
+                { "coordinatePins", new java.util.HashMap<String, ItemStack>() } }) {
+                java.lang.reflect.Field field = type.getDeclaredField((String) entry[0]);
+                field.setAccessible(true);
+                field.set(session, entry[1]);
+            }
+            HologramCapture.Cell controller = new HologramCapture.Cell(null, 0, 64, 0);
+            controller.userPosition = true;
+            controller.role = "templateController";
+            controller.blueprintItem = registeredMaterial;
+            controller.blueprintDamage = id;
+            controller.meta = 0;
+            java.lang.reflect.Method draft = HologramService.class
+                .getDeclaredMethod("draftTarget", type, HologramCapture.Cell.class, int.class);
+            draft.setAccessible(true);
+            java.lang.reflect.Method explicit = HologramService.class
+                .getDeclaredMethod("explicitTarget", type, HologramCapture.Cell.class, int.class);
+            explicit.setAccessible(true);
+            java.lang.reflect.Method warning = HologramService.class
+                .getDeclaredMethod("blueprintSourceWarning", HologramPresets.Preset.class, String.class);
+            warning.setAccessible(true);
+            SimpleAssert.eq(
+                "",
+                warning.invoke(null, preset, controller.structureId),
+                "controller fixture has a complete registered source-class and ID descriptor");
+            ItemStack restored = (ItemStack) draft.invoke(null, session, controller, 0);
+            SimpleAssert.that(
+                restored != null && restored.getItem() == material && restored.getItemDamage() == id,
+                "cleared controller pin restores its registered blueprint damage, never world metadata zero");
+            SimpleAssert.that(
+                (Boolean) explicit.invoke(null, session, controller, 0),
+                "valid default controller is a construction target and cannot silently become satisfied without a pin");
+            controller.sourceWarning = "source identity mismatch";
+            SimpleAssert.that(
+                draft.invoke(null, session, controller, 0) == null
+                    && !(Boolean) explicit.invoke(null, session, controller, 0),
+                "source warning still rejects implicit controller restoration");
+            controller.sourceWarning = "";
+            controller.blueprintDamage = id + 1;
+            SimpleAssert.that(
+                draft.invoke(null, session, controller, 0) == null,
+                "default restoration cannot substitute another registered or unregistered controller ID");
+            controller.blueprintDamage = id;
+            controller.role = "prefab";
+            SimpleAssert.that(
+                draft.invoke(null, session, controller, 0) == null,
+                "ordinary unspecified new positions retain their existing keep-world behavior");
+        } finally {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
+        }
+    }
+
+    private static void sealedBlueprintStateHasPriority() throws Exception {
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        int id = 247;
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity previous = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+        try {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = (gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor) unsafe
+                .allocateInstance(gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor.class);
+            net.minecraft.item.Item item = controllerMaterialFixture;
+            SimpleAssert
+                .that(item != null, "sealed fixture reuses the actual isolated registered ItemMachines instance");
+            String fixtureItemName = String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(item));
+            net.minecraft.block.Block fixtureBlock = net.minecraft.block.Block.getBlockFromItem(item);
+            String fixtureBlockName = String
+                .valueOf(net.minecraft.block.Block.blockRegistry.getNameForObject(fixtureBlock));
+            NBTTagCompound paid = new NBTTagCompound();
+            paid.setString("id", "fixture_sealed_machine");
+            paid.setInteger("mID", id);
+            paid.setString("mOwnerUuid", new UUID(1, 2).toString());
+            NBTTagList inventory = new NBTTagList();
+            inventory.appendTag(new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+            paid.setTag("Inventory", inventory);
+            paid.setLong("mStoredEnergy", 4000);
+            NBTTagCompound fluid = new NBTTagCompound();
+            fluid.setString("FluidName", "water");
+            fluid.setInteger("Amount", 2400);
+            paid.setTag("mFluid", fluid);
+            paid.setTag("gt.covers", new NBTTagList());
+            NBTTagCompound rebound = HologramService.sealedActorTile(paid, new UUID(9, 8), "builder", 1, 64, 2);
+            SimpleAssert.that(
+                inventory.equals(rebound.getTag("Inventory")) && fluid.equals(rebound.getTag("mFluid"))
+                    && rebound.getLong("mStoredEnergy") == 4000
+                    && paid.getTag("gt.covers")
+                        .equals(rebound.getTag("gt.covers")),
+                "actor binding preserves all paid sealed inventory, fluid, cache and covers");
+            SimpleAssert.eq(
+                new UUID(9, 8).toString(),
+                rebound.getString("mOwnerUuid"),
+                "seal state is bound to the actual placing actor");
+
+            ItemStack sealed = new ItemStack(item, 1, id);
+            sealed.setTagCompound(new NBTTagCompound());
+            sealed.getTagCompound()
+                .setTag(
+                    HologramRecovery.TAG,
+                    HologramRecovery.sealNBT(paid, fixtureBlockName, 0, fixtureItemName, id, id));
+            SimpleAssert.that(
+                HologramRecovery.validItem(sealed, fixtureBlock),
+                "sealed fixture envelope matches its actual registered block/item identities");
+            NBTTagCompound template = new NBTTagCompound();
+            NBTTagList templateInventory = new NBTTagList();
+            templateInventory.appendTag(new ItemStack(Items.emerald, 19).writeToNBT(new NBTTagCompound()));
+            template.setTag("Inventory", templateInventory);
+            template.setLong("mStoredEnergy", 98765);
+            HologramCapture.Cell cell = new HologramCapture.Cell(null, 1, 64, 2);
+            cell.tileNbt = HologramBlueprintNbt.encodeCaptured(template);
+            cell.block = fixtureBlock;
+            HologramCapture capture = new HologramCapture(null, new ItemStack(Items.feather));
+            capture.cells.add(cell);
+            java.util.Map<HologramCapture.Cell, Integer> indices = new java.util.IdentityHashMap<>();
+            indices.put(cell, 0);
+            java.lang.reflect.Method playerFactory = HologramRegressionTest.class.getDeclaredMethod("materialPlayer");
+            playerFactory.setAccessible(true);
+            net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) playerFactory
+                .invoke(null);
+            for (java.lang.reflect.Field field : net.minecraft.entity.player.EntityPlayer.class.getDeclaredFields())
+                if (field.getType() == com.mojang.authlib.GameProfile.class) {
+                    field.setAccessible(true);
+                    field.set(player, new com.mojang.authlib.GameProfile(new UUID(9, 8), "builder"));
+                }
+            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Object session = unsafe.allocateInstance(type);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            for (Object[] entry : new Object[][] { { "player", player }, { "virtual", true },
+                { "virtualPreset", preset }, { "capture", capture }, { "indexedCapture", capture },
+                { "cellIndices", indices }, { "planTargets", java.util.Collections.singletonList(sealed) },
+                { "networkBindings", new HologramNetworkBindings.State() } }) {
+                java.lang.reflect.Field field = type.getDeclaredField((String) entry[0]);
+                field.setAccessible(true);
+                field.set(session, entry[1]);
+            }
+            java.lang.reflect.Method resources = HologramService.class
+                .getDeclaredMethod("resourcePlan", type, HologramCapture.Cell.class);
+            java.lang.reflect.Method cache = HologramService.class
+                .getDeclaredMethod("cachePlan", type, HologramCapture.Cell.class, int.class);
+            java.lang.reflect.Method covers = HologramService.class
+                .getDeclaredMethod("coverCosts", type, HologramCapture.Cell.class);
+            resources.setAccessible(true);
+            cache.setAccessible(true);
+            covers.setAccessible(true);
+            HologramBlueprintResources.Plan bill = (HologramBlueprintResources.Plan) resources
+                .invoke(null, session, cell);
+            SimpleAssert.that(
+                bill.items.isEmpty() && bill.fluids.isEmpty() && bill.energy.signum() == 0,
+                "a paid complete seal never charges its contents or a different template inventory again");
+            SimpleAssert.that(
+                ((HologramEnergyPayload.Prepared) cache.invoke(null, session, cell, 0)).demand.empty()
+                    && ((java.util.List<?>) covers.invoke(null, session, cell)).isEmpty(),
+                "sealed cache and covers have no additional blueprint restoration charge");
+            paid.setInteger("anchorDim", 0);
+            sealed.getTagCompound()
+                .getCompoundTag(HologramRecovery.TAG)
+                .setTag("tile", paid);
+            try {
+                resources.invoke(null, session, cell);
+                throw new AssertionError("unmergeable external seal state must fail before payment");
+            } catch (java.lang.reflect.InvocationTargetException expected) {
+                SimpleAssert.that(
+                    expected.getCause() instanceof IOException,
+                    "unmergeable seal is rejected by pure preflight rather than losing paid resources");
+            }
+        } finally {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
+        }
     }
 
     private static void fluidLedger() {

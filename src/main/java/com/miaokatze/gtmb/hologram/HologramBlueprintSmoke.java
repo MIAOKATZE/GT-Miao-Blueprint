@@ -54,6 +54,8 @@ public final class HologramBlueprintSmoke {
     private WorldServer world;
     private FakePlayer player;
     private String blueprintId;
+    private final java.util.Map<String, HologramPresets.Preset> dedicatedFiles = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, String> dedicatedLocalIds = new java.util.LinkedHashMap<>();
 
     private HologramBlueprintSmoke() {}
 
@@ -95,12 +97,23 @@ public final class HologramBlueprintSmoke {
         channel.setAccessible(true);
         Object previous = channel.get(null);
         channel.set(null, capture);
+        if (HologramLibraryFacade.enabled()) {
+            require(
+                HologramLibraryFacade.backend() != null && HologramLibraryFacade.backend()
+                    .available(),
+                "dedicated_library_ready_for_real_private_download");
+            HologramLibraryFacade.backend()
+                .submit(player, HologramLibraryProtocol.request("configGet"), false);
+            HologramLibraryFacade.backend()
+                .heartbeat();
+        }
         HologramService.clear();
         try {
             sourceFixture();
             areaAndSharing();
             placement();
             wirelessEnergy();
+            explicitLevelOneSave();
         } finally {
             HologramService.clear();
             channel.set(null, previous);
@@ -185,7 +198,7 @@ public final class HologramBlueprintSmoke {
         save.setString("name", "Runtime blueprint receipt");
         action("saveBlueprint", save);
         blueprintId = capture.state.getString("virtualPresetId");
-        HologramPresets.Preset saved = HologramPresets.get(blueprintId);
+        HologramPresets.Preset saved = preset(blueprintId);
         require(
             saved != null && saved.schema == 2 && saved.cells.size() == 5,
             "public_save_publishes_schema2_region_blueprint");
@@ -208,11 +221,9 @@ public final class HologramBlueprintSmoke {
             "saved_chest_non_inventory_configuration_is_exact");
         NBTTagCompound machineData = HologramBlueprintNbt.decode(cell(saved, 0, 0, 0).tileNbt);
         require(
-            machineData.getString("mOwnerName")
-                .isEmpty()
-                && machineData.getString("mOwnerUuid")
-                    .isEmpty(),
-            "stored_GT_NBT_strips_original_owner");
+            "OriginalBlueprintOwner".equals(machineData.getString("mOwnerName")) && SOURCE_OWNER.toString()
+                .equals(machineData.getString("mOwnerUuid")),
+            "level_zero_storage_preserves_original_owner_for_explicit_review");
         require(
             machineData.getTagList("gt.covers", 10)
                 .tagCount() == 1,
@@ -235,9 +246,12 @@ public final class HologramBlueprintSmoke {
             capture.state.getBoolean("virtual") && blueprintId.equals(capture.state.getString("virtualPresetId")),
             "returning_from_live_structure_restores_the_saved_area_overview");
         action("saveBlueprint", save);
+        String savedAgain = capture.state.getString("virtualPresetId");
         require(
-            blueprintId.equals(capture.state.getString("virtualPresetId")),
-            "saving_cached_area_updates_its_original_id");
+            HologramLibraryFacade.enabled() ? dedicatedLocalIds.get(blueprintId)
+                .equals(dedicatedLocalIds.get(savedAgain)) : blueprintId.equals(savedAgain),
+            "saving_cached_area_updates_its_original_private_file");
+        blueprintId = savedAgain;
         action("selectStructure", chooseStructure);
         settle();
         require(!capture.state.getBoolean("virtual"), "saving_cached_overview_keeps_live_structure_editor_ownership");
@@ -256,8 +270,10 @@ public final class HologramBlueprintSmoke {
         Path path = HologramBlueprintSharing.resolve(fileId);
         try {
             action("exportBlueprint", share);
+            if (HologramLibraryFacade.enabled()) path = capture.lastDownload;
             require(Files.isRegularFile(path), "public_export_writes_separate_share_file");
-            HologramPresets.Preset imported = HologramPresets.importBlueprint(fileId);
+            HologramPresets.Preset imported = HologramLibraryFacade.enabled() ? HologramBlueprintSharing.read(path)
+                : HologramPresets.importBlueprint(fileId);
             require(
                 imported.schema == 2 && imported.cells.size() == 5
                     && cell(imported, 4, 0, 0).excluded
@@ -272,11 +288,20 @@ public final class HologramBlueprintSmoke {
                 "share_roundtrip_retains_arbitrary_full_tile_NBT");
             int oldSize = HologramPresets.all()
                 .size();
-            action("importBlueprint", share);
-            require(
-                HologramPresets.all()
-                    .size() == oldSize + 1,
-                "public_import_adds_independent_library_entry");
+            if (HologramLibraryFacade.enabled()) {
+                String activated = activatePrivate(imported, "edit", imported.id);
+                require(
+                    activated.startsWith("private_") && !activated.equals(blueprintId)
+                        && HologramPresets.all()
+                            .size() == oldSize,
+                    "private_import_allocates_independent_session_identity_without_server_global_save");
+            } else {
+                action("importBlueprint", share);
+                require(
+                    HologramPresets.all()
+                        .size() == oldSize + 1,
+                    "public_import_adds_independent_library_entry");
+            }
         } finally {
             Files.deleteIfExists(path);
         }
@@ -297,7 +322,7 @@ public final class HologramBlueprintSmoke {
     }
 
     private void placement() throws Exception {
-        HologramPresets.Preset saved = HologramPresets.get(blueprintId);
+        HologramPresets.Preset saved = preset(blueprintId);
         supply(saved, true);
         beginPlacement(208, blueprintId);
         require(
@@ -461,11 +486,11 @@ public final class HologramBlueprintSmoke {
         String noCovers = capture.state.getString("virtualPresetId");
         require(!blueprintId.equals(noCovers), "no_covers_variant_is_saved_as_an_independent_blueprint");
         require(
-            HologramBlueprintNbt.decode(cell(HologramPresets.get(blueprintId), 0, 0, 0).tileNbt)
+            HologramBlueprintNbt.decode(cell(preset(blueprintId), 0, 0, 0).tileNbt)
                 .getTagList("gt.covers", 10)
                 .tagCount() == 1,
             "saving_no_covers_variant_preserves_original_cover_payload");
-        supply(HologramPresets.get(noCovers), false);
+        supply(preset(noCovers), false);
         beginPlacement(272, noCovers);
         HologramService.lockVirtual(player, 176, 80, 272, 1);
         HologramService.openAir(player);
@@ -479,7 +504,7 @@ public final class HologramBlueprintSmoke {
         original.setString("presetId", blueprintId);
         action("editPreset", original);
         require(
-            blueprintId.equals(capture.state.getString("virtualPresetId")),
+            samePrivateFile(blueprintId, capture.state.getString("virtualPresetId")),
             "covers_only_storage_case_reloads_original_complete_blueprint");
         retention.setString("name", "Runtime no NBT receipt");
         retention.setBoolean("retainNbt", false);
@@ -489,7 +514,7 @@ public final class HologramBlueprintSmoke {
         require(
             !blueprintId.equals(noNbt) && !noCovers.equals(noNbt),
             "covers_only_variant_is_saved_as_a_second_independent_blueprint");
-        HologramPresets.Preset originalComplete = HologramPresets.get(blueprintId);
+        HologramPresets.Preset originalComplete = preset(blueprintId);
         require(
             originalComplete.retainNbt && originalComplete.retainCovers
                 && HologramBlueprintNbt.decode(cell(originalComplete, 2, 0, 0).tileNbt)
@@ -499,7 +524,7 @@ public final class HologramBlueprintSmoke {
                     .getTagList("gt.covers", 10)
                     .tagCount() == 1,
             "saving_retention_variants_preserves_original_device_NBT_and_cover_configuration");
-        HologramPresets.Preset coversOnly = HologramPresets.get(noNbt);
+        HologramPresets.Preset coversOnly = preset(noNbt);
         require(
             !coversOnly.retainNbt && coversOnly.retainCovers
                 && HologramBlueprintNbt.decode(cell(coversOnly, 0, 0, 0).tileNbt)
@@ -562,11 +587,10 @@ public final class HologramBlueprintSmoke {
         verifyChest(400, true, false);
         verifyController(400, true);
         require(
-            stock(Items.diamond) == 0
-                && HologramBlueprintNbt.decode(cell(HologramPresets.get(blueprintId), 2, 0, 0).tileNbt)
-                    .getTagList("Items", 10)
-                    .getCompoundTagAt(0)
-                    .getByte("Count") == 7,
+            stock(Items.diamond) == 0 && HologramBlueprintNbt.decode(cell(preset(blueprintId), 2, 0, 0).tileNbt)
+                .getTagList("Items", 10)
+                .getCompoundTagAt(0)
+                .getByte("Count") == 7,
             "temporary_inventory_downgrade_keeps_original_saved_blueprint_contents_unchanged");
         require(
             world.getBlock(178, 80, 176) == Blocks.chest
@@ -623,7 +647,7 @@ public final class HologramBlueprintSmoke {
         save.setString("name", "Runtime wireless energy receipt");
         action("saveBlueprint", save);
         String energyId = capture.state.getString("virtualPresetId");
-        HologramPresets.Preset energy = HologramPresets.get(energyId);
+        HologramPresets.Preset energy = preset(energyId);
         require(
             energy != null && energy.cells.size() == 1
                 && HologramBlueprintNbt.decode(energy.cells.get(0).tileNbt)
@@ -738,6 +762,33 @@ public final class HologramBlueprintSmoke {
         }
     }
 
+    private void explicitLevelOneSave() throws Exception {
+        String originalId = capture.state.getString("virtualPresetId");
+        HologramPresets.Preset original = preset(originalId);
+        require(
+            original != null && original.deidentificationLevel == 0,
+            "level_one_save_starts_from_retained_raw_identity");
+        String originalPayload = original.cells.get(0).tileNbt;
+        NBTTagCompound save = new NBTTagCompound();
+        save.setString("name", "Runtime explicit level one identity receipt");
+        save.setInteger("deidentificationLevel", 1);
+        save.setBoolean("deidentificationChosen", true);
+        action("saveBlueprintAs", save);
+        HologramPresets.Preset processed = preset(capture.state.getString("virtualPresetId"));
+        NBTTagCompound nativePayload = HologramBlueprintNbt.decode(processed.cells.get(0).tileNbt);
+        require(
+            processed.deidentificationLevel == 1 && processed.deidentificationChosen
+                && nativePayload.getString("mOwnerName")
+                    .isEmpty()
+                && nativePayload.getString("mOwnerUuid")
+                    .isEmpty(),
+            "actual_explicit_level_one_save_removes_owner_identity");
+        require(
+            originalPayload.equals(preset(originalId).cells.get(0).tileNbt)
+                && SOURCE_OWNER.equals(((BaseMetaTileEntity) world.getTileEntity(176, 80, 432)).getOwnerUuid()),
+            "explicit_level_one_save_preserves_raw_private_file_and_actual_source_owner");
+    }
+
     private void verifyChest(int z, boolean retained) {
         verifyChest(z, retained, retained);
     }
@@ -809,11 +860,53 @@ public final class HologramBlueprintSmoke {
 
     private void submitConstruction() {
         if (!capture.state.getBoolean("blueprintAwaitingConfirmation")) action("scan");
+        if (capture.state.getBoolean("blueprintAwaitingConfirmation") && capture.state.getString("session")
+            .equals(capture.reviewedSession) && capture.state.getInteger("placementDeidentificationLevel") == 0) {
+            int before = carriedStock();
+            NBTTagCompound rawReview = new NBTTagCompound();
+            rawReview.setLong("placementReviewNonce", capture.state.getLong("placementReviewNonce"));
+            action("confirmBlueprintPlacement", rawReview);
+            require(
+                capture.state.getInteger("job") == 0 && !capture.state.getBoolean("forcePlacementReady")
+                    && before == carriedStock(),
+                "foreign_raw_identity_review_refuses_construction_without_material_payment");
+            NBTTagCompound choice = new NBTTagCompound();
+            choice.setInteger("level", 1);
+            long rawNonce = capture.state.getLong("placementReviewNonce");
+            long rawRevision = capture.state.getLong("planRevision");
+            choice.setLong("placementReviewNonce", rawNonce);
+            action("configurePlacementDeidentification", choice);
+            require(
+                capture.state.getInteger("placementDeidentificationLevel") == 1
+                    && capture.state.getBoolean("placementDeidentificationChosen")
+                    && capture.state.getLong("placementReviewNonce") > rawNonce
+                    && capture.state.getLong("planRevision") > rawRevision
+                    && capture.state.getInteger("job") == 0
+                    && before == carriedStock(),
+                "actual_review_explicitly_chooses_level_one_before_current_actor_placement");
+        }
         NBTTagCompound review = new NBTTagCompound();
         review.setBoolean("forceExplicit", capture.state.getBoolean("forcePlacementReady"));
+        review.setLong("placementReviewNonce", capture.state.getLong("placementReviewNonce"));
         action(
             capture.state.getBoolean("blueprintAwaitingConfirmation") ? "confirmBlueprintPlacement" : "build",
             review);
+    }
+
+    private int carriedStock() {
+        int count = 0;
+        for (int slot = 1; slot < player.inventory.mainInventory.length; slot++)
+            if (player.inventory.mainInventory[slot] != null) count += player.inventory.mainInventory[slot].stackSize;
+        return count;
+    }
+
+    private boolean foreignOwnerIssue() {
+        NBTTagList issues = capture.state.getTagList("aeIssues", 10);
+        for (int i = 0; i < issues.tagCount(); i++) if ("identity.foreign_owner".equals(
+            issues.getCompoundTagAt(i)
+                .getString("code")))
+            return true;
+        return false;
     }
 
     private void action(String op) {
@@ -822,13 +915,72 @@ public final class HologramBlueprintSmoke {
 
     private void action(String op, NBTTagCompound fields) {
         require(capture.state != null, "service_snapshot_available_before_" + op);
+        if (HologramLibraryFacade.enabled() && fields.hasKey("presetId", 8)
+            && dedicatedFiles.containsKey(fields.getString("presetId"))
+            && ("editPreset".equals(op) || "previewPreset".equals(op) || "choosePlacementPreset".equals(op))) {
+            String oldId = fields.getString("presetId");
+            try {
+                activatePrivate(
+                    preset(oldId),
+                    "choosePlacementPreset".equals(op) ? "place" : "previewPreset".equals(op) ? "preview" : "edit",
+                    dedicatedLocalIds.get(oldId));
+            } catch (Exception invalid) {
+                throw new AssertionError("real dedicated private activation failed", invalid);
+            }
+            return;
+        }
         NBTTagCompound request = (NBTTagCompound) fields.copy();
         request.setString("session", capture.state.getString("session"));
         request.setString("op", op);
         request.setLong("planRevision", capture.state.getLong("planRevision"));
+        int previousDownloads = capture.downloads;
         advance();
         HologramService.handle(player, request);
         HologramSmokeTest.flushTransport();
+        if (HologramLibraryFacade.enabled()
+            && ("saveBlueprint".equals(op) || "saveBlueprintAs".equals(op) || "exportBlueprint".equals(op))) {
+            capture.awaitDownload(player, previousDownloads);
+            try {
+                if (!"exportBlueprint".equals(op)) {
+                    String id = capture.state.getString("virtualPresetId");
+                    String local = capture.state.getString("libraryLocalId");
+                    require(
+                        id.startsWith("private_") && local.startsWith("local_")
+                            && capture.lastDownload.getFileName()
+                                .toString()
+                                .equals(local + ".json"),
+                        "actual_dedicated_save_has_distinct_private_session_and_local_file_identity");
+                    dedicatedFiles.put(id, HologramBlueprintSharing.read(capture.lastDownload));
+                    dedicatedLocalIds.put(id, local);
+                }
+            } catch (Exception invalid) {
+                throw new AssertionError("actual dedicated private file could not be read", invalid);
+            }
+        }
+    }
+
+    private HologramPresets.Preset preset(String id) throws java.io.IOException {
+        HologramPresets.Preset saved = dedicatedFiles.get(id);
+        return saved == null ? HologramPresets.get(id) : HologramPresets.copy(saved);
+    }
+
+    private boolean samePrivateFile(String before, String after) {
+        return HologramLibraryFacade.enabled() ? dedicatedLocalIds.containsKey(before) && dedicatedLocalIds.get(before)
+            .equals(dedicatedLocalIds.get(after)) : before.equals(after);
+    }
+
+    private String activatePrivate(HologramPresets.Preset preset, String action, String localId) throws Exception {
+        NBTTagCompound request = HologramLibraryProtocol.request("privateBegin");
+        request.setString("session", capture.state.getString("session"));
+        request.setLong("planRevision", capture.state.getLong("planRevision"));
+        request.setString("action", action);
+        request.setString("localId", localId);
+        // This is the production post-transfer entry; full authenticated wire transfer is exercised by Socket smoke.
+        String id = HologramService.libraryActivate(player, request, HologramPresets.copy(preset));
+        HologramSmokeTest.flushTransport();
+        dedicatedFiles.put(id, HologramPresets.copy(preset));
+        dedicatedLocalIds.put(id, localId);
+        return id;
     }
 
     private void advance() {
@@ -953,7 +1105,14 @@ public final class HologramBlueprintSmoke {
 
     private static final class CaptureNetwork extends SimpleNetworkWrapper {
 
-        NBTTagCompound state;
+        volatile NBTTagCompound state;
+        volatile String reviewedSession = "";
+        volatile int downloads;
+        volatile Path lastDownload;
+        volatile Throwable libraryFailure;
+        private java.io.ByteArrayOutputStream download;
+        private String transfer, downloadHash, downloadId;
+        private int nextChunk, total;
         final HologramSnapshotAssembly assembly = new HologramSnapshotAssembly();
 
         CaptureNetwork() {
@@ -963,8 +1122,83 @@ public final class HologramBlueprintSmoke {
         @Override
         public void sendTo(IMessage message, EntityPlayerMP recipient) {
             if (USER.equals(recipient.getUniqueID())) {
+                if (message instanceof HologramNetwork.LibraryReply) {
+                    try {
+                        acceptLibrary(((HologramNetwork.LibraryReply) message).tag);
+                    } catch (Exception failure) {
+                        libraryFailure = failure;
+                    }
+                    return;
+                }
                 NBTTagCompound decoded = HologramSmokeTest.decodeState(message, assembly);
-                if (decoded != null) state = decoded;
+                if (decoded != null) {
+                    // open is a one-shot GUI intent. Subsequent stale-action snapshots do not close the review.
+                    if (!decoded.getBoolean("virtualPlacement") || !decoded.getBoolean("virtualLocked")
+                        || !decoded.getBoolean("blueprintAwaitingConfirmation")) reviewedSession = "";
+                    else if (decoded.getBoolean("open") && "placementReview".equals(decoded.getString("openPurpose")))
+                        reviewedSession = decoded.getString("session");
+                    state = decoded;
+                }
+            }
+        }
+
+        private synchronized void acceptLibrary(NBTTagCompound packet) throws Exception {
+            String op = packet.getString("op");
+            if ("error".equals(op)) throw new java.io.IOException(packet.getString("message"));
+            if ("downloadBegin".equals(op)) {
+                if (download != null) throw new java.io.IOException("Overlapping fixture download");
+                transfer = packet.getString("transfer");
+                downloadHash = packet.getString("hash");
+                downloadId = HologramLibraryService.localId(packet.getString("localId"), false);
+                total = packet.getInteger("total");
+                HologramLibraryProtocol.header(transfer, total, downloadHash);
+                nextChunk = 0;
+                download = new java.io.ByteArrayOutputStream();
+            } else if ("downloadChunk".equals(op)) {
+                if (download == null || !transfer.equals(packet.getString("transfer")))
+                    throw new java.io.IOException("Fixture download transfer changed");
+                byte[] bytes = packet.getByteArray("data");
+                HologramLibraryProtocol
+                    .chunk(total, download.size(), nextChunk++, packet.getInteger("index"), bytes.length);
+                download.write(bytes);
+            } else if ("downloadDone".equals(op)) {
+                if (download == null || !transfer.equals(packet.getString("transfer")) || download.size() != total)
+                    throw new java.io.IOException("Fixture download incomplete");
+                byte[] bytes = download.toByteArray();
+                if (!downloadHash.equals(
+                    HologramLibraryProtocol.hex(
+                        HologramLibraryProtocol.digest()
+                            .digest(bytes))))
+                    throw new java.io.IOException("Fixture actual download hash mismatch");
+                HologramPresets.Preset parsed = HologramBlueprintSharing
+                    .decode(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+                // The actual client file writer replaces the server's private draft ID with its local file ID.
+                parsed.id = downloadId;
+                Path directory = java.nio.file.Paths.get("config/gtmb/smoke-client-blueprints");
+                Files.createDirectories(directory);
+                Path saved = directory.resolve(downloadId + ".json");
+                Files.write(saved, HologramServerLibrary.encodeShare(parsed));
+                lastDownload = saved;
+                download = null;
+                downloads++;
+            }
+        }
+
+        void awaitDownload(EntityPlayerMP player, int previous) {
+            long deadline = System.nanoTime() + 30000000000L;
+            while (downloads == previous) {
+                if (libraryFailure != null)
+                    throw new AssertionError("Actual dedicated download failed", libraryFailure);
+                if (System.nanoTime() > deadline) throw new AssertionError("Actual dedicated download timed out");
+                HologramLibraryFacade.backend()
+                    .heartbeat();
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread()
+                        .interrupt();
+                    throw new AssertionError(interrupted);
+                }
             }
         }
     }

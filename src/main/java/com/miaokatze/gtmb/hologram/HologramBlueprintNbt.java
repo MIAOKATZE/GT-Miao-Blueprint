@@ -41,7 +41,7 @@ final class HologramBlueprintNbt {
     private HologramBlueprintNbt() {}
 
     static String encodeCaptured(NBTTagCompound tag) throws IOException {
-        return encode(tag, true);
+        return encode(tag, false);
     }
 
     /** AE schemas already handled identities; never recursively rewrite encoded pattern recipe data. */
@@ -84,6 +84,8 @@ final class HologramBlueprintNbt {
         NBTBase report = copy.getTag(HologramAeBlueprint.UNRESOLVED);
         copy.removeTag(HologramAeBlueprint.UNRESOLVED);
         rewrite(copy, owner, ownerName == null ? "" : ownerName, stripCovers, false);
+        for (int index = 0; index < legacy.tagCount(); index++)
+            rewrite(legacy.getCompoundTagAt(index), owner, ownerName == null ? "" : ownerName, stripCovers, false);
         copy.setTag("parts", parts);
         if (report != null) copy.setTag(HologramAeBlueprint.UNRESOLVED, report);
         return copy;
@@ -186,7 +188,6 @@ final class HologramBlueprintNbt {
         NBTTagCompound source = decode(value);
         if (source == null) return null;
         NBTTagCompound filtered = filter(source, keys, retainCovers);
-        rewrite(filtered, null, "", !retainCovers, false);
         return encodeCaptured(filtered);
     }
 
@@ -376,8 +377,14 @@ final class HologramBlueprintNbt {
     }
 
     private static void rewrite(NBTBase tag, UUID uuid, String name, boolean stripCovers, boolean ownerContext) {
+        rewrite(tag, uuid, name, stripCovers, ownerContext, false);
+    }
+
+    private static void rewrite(NBTBase tag, UUID uuid, String name, boolean stripCovers, boolean ownerContext,
+        boolean coverContext) {
         if (tag instanceof NBTTagCompound) {
             NBTTagCompound compound = (NBTTagCompound) tag;
+            if (itemCompound(compound)) return;
             for (Object raw : new ArrayList<>(compound.func_150296_c())) {
                 String key = (String) raw;
                 String normalized = key.toLowerCase(Locale.ROOT);
@@ -385,12 +392,10 @@ final class HologramBlueprintNbt {
                 if (stripCovers && coverKey(normalized)) {
                     compound.removeTag(key);
                 } else if (original instanceof NBTTagCompound || original instanceof NBTTagList) {
-                    rewrite(
-                        original,
-                        uuid,
-                        name,
-                        stripCovers,
-                        ownerContext || nameKey(normalized) || uuidKey(normalized));
+                    boolean actor = ownerContext || nameKey(normalized) || uuidKey(normalized);
+                    boolean cover = coverKey(normalized) || coverContext
+                        && (normalized.equals("d") || normalized.equals("data") || normalized.equals("coverdata"));
+                    if (actor || cover) rewrite(original, uuid, name, stripCovers, actor, cover);
                 } else if (nameKey(normalized) || (ownerContext && normalized.equals("name"))) {
                     compound.setString(key, name);
                 } else if (uuidKey(normalized) || (ownerContext && (normalized.equals("id") || normalized.equals("uuid")
@@ -407,11 +412,11 @@ final class HologramBlueprintNbt {
                                     (int) uuid.getMostSignificantBits(), (int) (uuid.getLeastSignificantBits() >>> 32),
                                     (int) uuid.getLeastSignificantBits() });
                         else compound.setString(key, uuid == null ? "" : uuid.toString());
-                    } else rewrite(original, uuid, name, stripCovers, ownerContext);
+                    }
             }
         } else if (tag instanceof NBTTagList) {
             NBTTagList list = (NBTTagList) tag;
-            for (NBTBase entry : listEntries(list)) rewrite(entry, uuid, name, stripCovers, ownerContext);
+            for (NBTBase entry : listEntries(list)) rewrite(entry, uuid, name, stripCovers, ownerContext, coverContext);
         }
     }
 

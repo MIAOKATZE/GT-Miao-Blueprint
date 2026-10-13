@@ -96,7 +96,8 @@ public final class HologramClient {
                     .getString("gtitHologramToolId"),
             tool);
         previewDistance.sync(
-            projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
+            projectorWorld()
+                && (worldStage() == HologramWorldFlow.Stage.MOVING || worldStage() == HologramWorldFlow.Stage.AREA),
             mc.theWorld,
             state == null ? "" : state.session);
     }
@@ -129,7 +130,7 @@ public final class HologramClient {
             && mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) return;
         lastUseWorld = mc.theWorld;
         lastUseTick = tick;
-        boolean shift = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
+        boolean shift = shiftHeld() && (worldStage() != HologramWorldFlow.Stage.AREA || !controlHeld());
         boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
         HologramWorldFlow.Intent intent = HologramWorldFlow.intent(
             worldStage(),
@@ -166,17 +167,20 @@ public final class HologramClient {
     }
 
     private final HologramWorldFlow.KeyEdge rotationKey = new HologramWorldFlow.KeyEdge();
+    private final HologramWorldFlow.KeyEdge areaUndoKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyRepeat[] nudgeKeys = { new HologramWorldFlow.KeyRepeat(),
         new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat() };
     private final HologramWorldFlow.NudgeDispatch nudgeDispatch = new HologramWorldFlow.NudgeDispatch();
     private int queuedRepeatKey = -1;
     private String nudgeInputSession = "";
-    private Object inputWorld, inputTool, inputScreen;
+    private final HologramInputContext inputContext = new HologramInputContext();
     private boolean inputScreenChanged;
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
-        if (event.dwheel == 0 || !projectorWorld() || worldStage() != HologramWorldFlow.Stage.MOVING) return;
+        if (event.dwheel == 0 || !projectorWorld()
+            || worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
+            || !altHeld()) return;
         syncPreviewDistance();
         previewDistance.scroll(event.dwheel);
         event.setCanceled(true);
@@ -194,7 +198,8 @@ public final class HologramClient {
             || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
                 .isProjector(mc.thePlayer.getHeldItem()))
             return;
-        if (event.button == 1 && (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT))) {
+        boolean control = controlHeld(), shift = shiftHeld();
+        if (event.button == 1 && shift && !control) {
             event.setCanceled(true);
             if (!usePressFence.consume()) return;
             lastUseWorld = mc.theWorld;
@@ -215,14 +220,18 @@ public final class HologramClient {
         }
         request.setString("action", "areaPoint");
         request.setInteger("point", event.button == 0 ? 1 : 2);
-        request.setBoolean("atPlayer", alt);
-        request.setInteger("x", alt ? net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posX) : hit.blockX);
-        request.setInteger("y", alt ? net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posY) : hit.blockY);
-        request.setInteger("z", alt ? net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posZ) : hit.blockZ);
+        request.setString("mode", areaSelectionMode(control, shift));
+        syncPreviewDistance();
+        int[] anchor = alt ? airSelectionAnchor() : new int[] { hit.blockX, hit.blockY, hit.blockZ };
+        request.setBoolean("atPlayer", alt && previewDistance.distance() == 0);
+        request.setInteger("x", anchor[0]);
+        request.setInteger("y", anchor[1]);
+        request.setInteger("z", anchor[2]);
         event.setCanceled(true);
         lastUseWorld = mc.theWorld;
         lastUseTick = mc.theWorld.getTotalWorldTime();
         request.setString("session", state.session);
+        request.setLong("planRevision", state.data.getLong("planRevision"));
         HologramNetwork.sendAction(request);
     }
 
@@ -241,17 +250,31 @@ public final class HologramClient {
                     : stage == HologramWorldFlow.Stage.LOCKED ? "worldGuideLocked"
                         : stage == HologramWorldFlow.Stage.JOB ? "worldGuideJob" : "worldGuideIdle";
         event.left.add(text(key, "Right-click: projector workspace"));
-        if (stage == HologramWorldFlow.Stage.MOVING) {
-            int[] anchor = movingAnchor(state);
+        if (stage == HologramWorldFlow.Stage.AREA && !state.data.getBoolean("areaImporting")) {
+            net.minecraft.nbt.NBTTagList regions = state.data.getTagList("areaRegions", 10);
+            int subtracted = 0;
+            for (int i = 0; i < regions.tagCount(); i++) if ("subtract".equals(
+                regions.getCompoundTagAt(i)
+                    .getString("mode")))
+                subtracted++;
             event.left.add(
                 String.format(
                     java.util.Locale.ROOT,
-                    text("worldGuideTarget", "Distance %d | Target %d, %d, %d | Scroll: distance"),
+                    text("worldGuideAreaRegions", "Regions %d, subtract %d"),
+                    regions.tagCount() - subtracted,
+                    subtracted));
+        }
+        if (stage == HologramWorldFlow.Stage.MOVING || stage == HologramWorldFlow.Stage.AREA) {
+            int[] anchor = stage == HologramWorldFlow.Stage.AREA ? airSelectionAnchor() : movingAnchor(state);
+            event.left.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    text("worldGuideTarget", "Distance %d | Target %d, %d, %d | Alt + scroll: distance"),
                     previewDistance.distance(),
                     anchor[0],
                     anchor[1],
                     anchor[2]));
-            String status = state.data.getString("status");
+            String status = HologramUiText.reason(state.data.getString("status"));
             if (!status.isEmpty()) event.left.add(status);
         } else if (stage == HologramWorldFlow.Stage.LOCKED) {
             event.left.add(
@@ -261,7 +284,7 @@ public final class HologramClient {
                     state.data.getInteger("x"),
                     state.data.getInteger("y"),
                     state.data.getInteger("z")));
-            String status = state.data.getString("status");
+            String status = HologramUiText.reason(state.data.getString("status"));
             if (!status.isEmpty()) event.left.add(status);
         }
     }
@@ -273,19 +296,34 @@ public final class HologramClient {
         syncSnapshotWorld();
         installDecoded(snapshotInbox.poll());
         Minecraft mc = Minecraft.getMinecraft();
-        Object tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
-        boolean changed = inputScreenChanged || inputWorld != mc.theWorld
-            || inputTool != tool
-            || inputScreen != mc.currentScreen;
+        ItemStack tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
+        boolean changed = inputContext.observe(
+            mc.theWorld,
+            mc.currentScreen,
+            tool == null ? null : tool.getItem(),
+            tool == null ? 0 : tool.getItemDamage(),
+            mc.thePlayer == null ? -1 : mc.thePlayer.inventory.currentItem,
+            tool == null || !tool.hasTagCompound() ? ""
+                : tool.getTagCompound()
+                    .getString("gtitHologramToolId"),
+            tool,
+            inputScreenChanged);
         inputScreenChanged = false;
-        inputWorld = mc.theWorld;
-        inputTool = tool;
-        inputScreen = mc.currentScreen;
         usePressFence.observe(mc.gameSettings.keyBindUseItem.getIsKeyPressed(), changed);
         syncPreviewDistance();
         lockedNudge(mc, changed);
         boolean rotate = rotationKey.sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed);
+        boolean undoArea = areaUndoKey.sample(
+            Keyboard.isCreated() && controlHeld() && Keyboard.isKeyDown(Keyboard.KEY_Z) && !shiftHeld(),
+            changed);
         if (!projectorWorld() || state == null || mc.theWorld != snapshotWorld) return;
+        if (undoArea && state.data.getBoolean("areaSelecting") && state.data.getBoolean("areaUndoAvailable")) {
+            NBTTagCompound undo = new NBTTagCompound();
+            undo.setString("op", "undoAreaSelection");
+            undo.setString("session", state.session);
+            undo.setLong("planRevision", state.data.getLong("planRevision"));
+            HologramNetwork.sendAction(undo);
+        }
         if (!rotate
             || HologramWorldFlow.intent(worldStage(), HologramWorldFlow.Gesture.ROTATE)
                 != HologramWorldFlow.Intent.ROTATE
@@ -405,11 +443,53 @@ public final class HologramClient {
     static int[] movingAnchor(HologramState snapshot) {
         Minecraft mc = Minecraft.getMinecraft();
         syncPreviewDistance();
+        if (previewDistance.distance() == 0) return playerAnchor(mc);
         MovingObjectPosition hit = mc.objectMouseOver;
         if (hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
             ForgeDirection face = ForgeDirection.getOrientation(hit.sideHit);
             return new int[] { hit.blockX + face.offsetX, hit.blockY + face.offsetY, hit.blockZ + face.offsetZ };
         }
+        net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
+        net.minecraft.util.Vec3 look = camera.getLookVec();
+        return HologramWorldFlow.airAnchor(
+            camera.posX,
+            camera.posY + camera.getEyeHeight(),
+            camera.posZ,
+            look.xCoord,
+            look.yCoord,
+            look.zCoord,
+            previewDistance.distance());
+    }
+
+    private static boolean altHeld() {
+        return Keyboard.isCreated()
+            && (Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU));
+    }
+
+    private static boolean controlHeld() {
+        return Keyboard.isCreated()
+            && (Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL));
+    }
+
+    private static boolean shiftHeld() {
+        return Keyboard.isCreated()
+            && (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT));
+    }
+
+    static String areaSelectionMode(boolean control, boolean shift) {
+        return control ? shift ? "subtract" : "add" : "replace";
+    }
+
+    private static int[] playerAnchor(Minecraft mc) {
+        return new int[] { net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posX),
+            net.minecraft.util.MathHelper.floor_double(mc.thePlayer.boundingBox.minY),
+            net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posZ) };
+    }
+
+    static int[] airSelectionAnchor() {
+        Minecraft mc = Minecraft.getMinecraft();
+        syncPreviewDistance();
+        if (previewDistance.distance() == 0) return playerAnchor(mc);
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
         net.minecraft.util.Vec3 look = camera.getLookVec();
         return HologramWorldFlow.airAnchor(
@@ -524,6 +604,7 @@ public final class HologramClient {
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;
+        restorePlacementDeidentification(next);
         if (!same && mc.currentScreen instanceof HologramScreen
             && ((HologramScreen) mc.currentScreen).hasPendingAeReviewNavigation()) {
             ((HologramScreen) mc.currentScreen).updateState(next);
@@ -559,6 +640,25 @@ public final class HologramClient {
         } else if (!same || nbt.getBoolean("open")) {
             mc.displayGuiScreen(new HologramScreen(next));
         }
+    }
+
+    private static void restorePlacementDeidentification(HologramState snapshot) {
+        if (!snapshot.data.getBoolean("virtualPlacement")) return;
+        HologramDeidentificationMemory memory = HologramDeidentificationMemory.client();
+        Integer remembered = memory.choice(HologramDeidentificationMemory.source(snapshot.data));
+        if (remembered == null) return;
+        int level = HologramDeidentificationMemory.level(snapshot.data, true, remembered);
+        if (snapshot.data.getBoolean("placementDeidentificationChosen")
+            && snapshot.data.getInteger("placementDeidentificationLevel") == level) return;
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("op", "configurePlacementDeidentification");
+        request.setString("session", snapshot.session);
+        request.setLong("planRevision", snapshot.data.getLong("planRevision"));
+        request.setLong("placementReviewNonce", snapshot.data.getLong("placementReviewNonce"));
+        request.setInteger("deidentificationLevel", level);
+        request.setInteger("level", level);
+        request.setBoolean("deidentificationChosen", true);
+        HologramNetwork.sendAction(request);
     }
 
     private static void hints(HologramState snapshot) {

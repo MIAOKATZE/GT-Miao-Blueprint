@@ -136,9 +136,9 @@ public final class HologramWorldFlowRegression {
             HologramWorldFlow.airAnchor(0, 64, 0, 3, 0, 4, 10),
             "oblique ray uses distance rather than one-axis offsets");
         anchor(
-            new int[] { 2, 64, 0 },
+            new int[] { 0, 64, 0 },
             HologramWorldFlow.airAnchor(0, 64, 0, 1, 0, 0, 0),
-            "minimum distance remains outside the player");
+            "zero distance preserves the supplied foot anchor");
         anchor(
             new int[] { 64, 64, 0 },
             HologramWorldFlow.airAnchor(0, 64, 0, 1, 0, 0, Integer.MAX_VALUE),
@@ -171,7 +171,7 @@ public final class HologramWorldFlowRegression {
         distance.scroll(Integer.MAX_VALUE);
         SimpleAssert.eq(64, distance.distance(), "wheel overflow clamps at maximum distance");
         distance.scroll(Integer.MIN_VALUE);
-        SimpleAssert.eq(2, distance.distance(), "negative wheel overflow clamps without wrapping");
+        SimpleAssert.eq(0, distance.distance(), "negative wheel overflow reaches the foot anchor without wrapping");
         distance.sync(true, firstWorld, "second-preview");
         SimpleAssert.eq(6, distance.distance(), "new preview session resets wheel distance");
         distance.scroll(120);
