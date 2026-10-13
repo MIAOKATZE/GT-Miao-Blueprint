@@ -62,6 +62,15 @@ public final class HologramClientSmoke {
     }
 
     static void install() {
+        if (Boolean.getBoolean("gtmb.hologram.referenceClient")) {
+            try {
+                Class.forName("com.miaokatze.gtmb.client.hologram.HologramMachineReferenceClient")
+                    .getMethod("install")
+                    .invoke(null);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("Reference run requires the test fixture classpath", failure);
+            }
+        }
         if (Boolean.getBoolean("gtmb.hologram.clientSmoke")) FMLCommonHandler.instance()
             .bus()
             .register(new HologramClientSmoke());

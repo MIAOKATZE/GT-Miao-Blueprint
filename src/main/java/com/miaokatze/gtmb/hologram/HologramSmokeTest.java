@@ -39,6 +39,15 @@ public final class HologramSmokeTest {
     private int deferredSuites, deferredFailures, deferredTicks;
 
     public static void registerIfEnabled() {
+        if (Boolean.getBoolean("gtmb.hologram.referenceServer")) {
+            try {
+                Class.forName("com.miaokatze.gtmb.hologram.HologramMachineReference")
+                    .getMethod("install")
+                    .invoke(null);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("Reference run requires the test fixture classpath", failure);
+            }
+        }
         HologramCompatibilitySmoke.registerIfEnabled();
         if (Boolean.getBoolean("gtmb.hologram.smoketest")) FMLCommonHandler.instance()
             .bus()

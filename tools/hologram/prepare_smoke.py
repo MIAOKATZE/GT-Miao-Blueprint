@@ -179,11 +179,13 @@ def invalidate_dependency_scan_cache(destination):
 
 def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=None,
             extended_compatibility=False):
+    if mode == 'reference' and (coexistence or extended_compatibility):
+        raise SystemExit('Machine references require their separate GTMB-only profile')
     if coexistence and mode not in ('smoke', 'interaction'):
         raise SystemExit('Coexistence is supported only for smoke and interaction fixtures')
     relative = ('hologram-coexistence/' + mode) if coexistence else {
         'smoke': 'hologram-smoke', 'interaction': 'hologram-interaction',
-        'compatibility': 'hologram-compat'}[mode]
+        'compatibility': 'hologram-compat', 'reference': 'hologram-reference'}[mode]
     server = ROOT / 'build' / relative / 'server'
     mods = server / 'mods'
     mods.mkdir(parents=True, exist_ok=True)
@@ -230,7 +232,7 @@ def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=No
         library_archive = {'original_path': str(library), 'archive_path': str(archived_library),
                            'sha256': digest}
     world_prefix = {'smoke': 'hologram-smoke-', 'interaction': 'hologram-interaction-',
-                    'compatibility': 'hologram-compat-'}[mode]
+                    'compatibility': 'hologram-compat-', 'reference': 'hologram-reference-'}[mode]
     world = world_prefix + stamp
     receipt_directory = None
     receipt_archive = None
@@ -245,7 +247,7 @@ def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=No
             receipt_archive.parent.mkdir(parents=True, exist_ok=True)
             receipt_directory.rename(receipt_archive)
         receipt_directory.mkdir(parents=True, exist_ok=False)
-    port = 25581 if mode == 'interaction' else 25579
+    port = 25581 if mode == 'interaction' else (25582 if mode == 'reference' else 25579)
     (server / 'eula.txt').write_text('eula=true\n', encoding='ascii')
     properties = [
         'level-name=' + world, 'level-type=FLAT', 'generator-settings=2;0;1;',
@@ -278,7 +280,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mods-source', type=Path, required=True,
                         help='Directory of explicit GTNH fixture support jars; no worlds or configs are copied')
-    parser.add_argument('--mode', choices=['smoke', 'interaction', 'compatibility'], default='smoke')
+    parser.add_argument('--mode', choices=['smoke', 'interaction', 'compatibility', 'reference'], default='smoke')
     parser.add_argument('--coexistence', action='store_true', help='Use a separate co-installed GTIT/GTMB fixture')
     parser.add_argument('--extended-compatibility', action='store_true',
                         help='Match -PhologramExtendedCompatibility; let Gradle supply CCC, CoFHLib and Postea 1.2.7 once')

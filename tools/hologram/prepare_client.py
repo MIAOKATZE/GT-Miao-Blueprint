@@ -8,7 +8,7 @@ from prepare_smoke import cached_jar, copy_support_jar, validate_support_jars
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=['smoke', 'interaction'], default='smoke')
+    parser.add_argument('--mode', choices=['smoke', 'interaction', 'reference'], default='smoke')
     parser.add_argument('--coexistence', action='store_true')
     parser.add_argument('--extended-compatibility', action='store_true')
     parser.add_argument('--gtit-jar', type=Path, help='Optional check of the explicit jar used by the prepared server')
@@ -17,9 +17,11 @@ def main():
     parser.add_argument('--navigator-jar', type=Path,
                         help='Explicit Navigator dev jar if Navigator 1.1.9 is not in the Gradle cache')
     args = parser.parse_args()
+    if args.mode == 'reference' and (args.coexistence or args.extended_compatibility):
+        parser.error('Machine references require their separate GTMB-only profile')
     root = Path(__file__).resolve().parents[2]
     relative = ('hologram-coexistence/' + args.mode) if args.coexistence else (
-        'hologram-interaction' if args.mode == 'interaction' else 'hologram-smoke')
+        {'smoke': 'hologram-smoke', 'interaction': 'hologram-interaction', 'reference': 'hologram-reference'}[args.mode])
     fixture = root / 'build' / relative
     source = fixture / 'server/mods'
     if not source.is_dir():

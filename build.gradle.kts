@@ -61,6 +61,28 @@ if (hologramExtendedCompatibility) {
 }
 val smokeRoot = layout.buildDirectory.dir(if (hologramCoexistence) "hologram-coexistence/smoke" else "hologram-smoke")
 val interactionRoot = layout.buildDirectory.dir(if (hologramCoexistence) "hologram-coexistence/interaction" else "hologram-interaction")
+val hologramReferenceServer = providers.gradleProperty("hologramReferenceServer").isPresent
+val hologramReferenceClient = providers.gradleProperty("hologramReferenceClient").isPresent
+val referenceRoot = layout.buildDirectory.dir("hologram-reference")
+if (hologramReferenceServer || hologramReferenceClient) {
+    require(!(hologramReferenceServer && hologramReferenceClient) && !hologramCoexistence &&
+        !hologramExtendedCompatibility && !hologramAeDeepCompatibility &&
+        listOf("hologramSmoke", "hologramCompatibilitySmoke", "hologramClientSmoke", "hologramInteractionServer",
+            "hologramInteractionClient").none { providers.gradleProperty(it).isPresent }) {
+        "Machine reference capture must run alone in its dedicated profile."
+    }
+    extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
+        extraRunJvmArguments.add(if (hologramReferenceServer) "-Dgtmb.hologram.referenceServer=true"
+            else "-Dgtmb.hologram.referenceClient=true")
+        extraRunJvmArguments.add("-Dgtmb.hologram.referenceStateDir=" + referenceRoot.get().dir("server").asFile.absolutePath)
+    }
+    tasks.named<JavaExec>(if (hologramReferenceServer) "runServer" else "runClient") {
+        dependsOn("compileTestJava")
+        classpath += sourceSets["test"].output
+        workingDir(referenceRoot.map { it.dir(if (hologramReferenceServer) "server" else "client") })
+        if (hologramReferenceClient) args("--width", "1400", "--height", "1100")
+    }
+}
 
 if (hologramCoexistence) {
     extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
