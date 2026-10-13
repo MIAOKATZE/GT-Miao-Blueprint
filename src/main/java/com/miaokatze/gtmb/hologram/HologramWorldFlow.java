@@ -4,6 +4,16 @@ package com.miaokatze.gtmb.hologram;
 public final class HologramWorldFlow {
 
     public static final int DEFAULT_DISTANCE = 6, MIN_DISTANCE = 2, MAX_DISTANCE = 64;
+    public static final int NUDGE_REPEAT_DELAY = 8, NUDGE_REPEAT_INTERVAL = 4;
+
+    public enum Nudge {
+        FORWARD,
+        BACKWARD,
+        LEFT,
+        RIGHT,
+        UP,
+        DOWN
+    }
 
     public enum Stage {
         WORKSPACE,
@@ -36,6 +46,105 @@ public final class HologramWorldFlow {
     }
 
     private HologramWorldFlow() {}
+
+    /** Minecraft yaw zero faces south; left/right stay horizontal even when the camera looks vertically. */
+    public static int[] nudgeOffset(double yaw, Nudge direction) {
+        if (!Double.isFinite(yaw)) throw new IllegalArgumentException("camera yaw");
+        if (direction == Nudge.UP) return new int[] { 0, 1, 0 };
+        if (direction == Nudge.DOWN) return new int[] { 0, -1, 0 };
+        int quadrant = Math.floorMod((int) Math.floor((yaw % 360 + 45) / 90), 4);
+        int[] forwardX = { 0, -1, 0, 1 }, forwardZ = { 1, 0, -1, 0 };
+        int x = forwardX[quadrant], z = forwardZ[quadrant];
+        if (direction == Nudge.FORWARD) return new int[] { x, 0, z };
+        if (direction == Nudge.BACKWARD) return new int[] { -x, 0, -z };
+        if (direction == Nudge.LEFT) return new int[] { z, 0, -x };
+        if (direction == Nudge.RIGHT) return new int[] { -z, 0, x };
+        throw new IllegalArgumentException("nudge direction");
+    }
+
+    public static boolean unitNudge(int dx, int dy, int dz) {
+        return Math.abs((long) dx) + Math.abs((long) dy) + Math.abs((long) dz) == 1;
+    }
+
+    /** One initial step, then a bounded repeat; entering a screen/tool context with held keys requires release. */
+    public static final class KeyRepeat {
+
+        private boolean down, blocked, repeated;
+        private long nextTick;
+
+        public boolean sample(boolean pressed, boolean enabled, boolean contextChanged, long tick) {
+            repeated = false;
+            if (!pressed) {
+                down = blocked = false;
+                return false;
+            }
+            if (!enabled || contextChanged) {
+                down = blocked = true;
+                return false;
+            }
+            if (blocked) return false;
+            if (!down) {
+                down = true;
+                nextTick = tick + NUDGE_REPEAT_DELAY;
+                return true;
+            }
+            if (tick < nextTick) return false;
+            repeated = true;
+            nextTick = tick + NUDGE_REPEAT_INTERVAL;
+            return true;
+        }
+
+        public boolean repeated() {
+            return repeated;
+        }
+    }
+
+    /** Shared interval and revision ACK for all arrows, with one queued deliberate step. */
+    public static final class NudgeDispatch {
+
+        private String session = "";
+        private long pendingRevision = -1, pendingTick, lastSentTick = Long.MIN_VALUE;
+        private int[] queued;
+        private boolean queuedRepeat;
+
+        public void sync(String currentSession, long revision, long tick, boolean contextChanged) {
+            if (contextChanged || !session.equals(currentSession)) {
+                session = currentSession;
+                pendingRevision = -1;
+                lastSentTick = Long.MIN_VALUE;
+                queued = null;
+                return;
+            }
+            if (pendingRevision >= 0 && revision > pendingRevision) pendingRevision = -1;
+            else if (pendingRevision >= 0 && tick - pendingTick >= 20) {
+                // Recovery from a rejected/lost request is distinct from a successful revision ACK.
+                pendingRevision = -1;
+            }
+        }
+
+        public void queue(int[] offset, boolean repeat) {
+            if (offset == null || offset.length != 3 || !unitNudge(offset[0], offset[1], offset[2]))
+                throw new IllegalArgumentException("nudge offset");
+            if (repeat && queued != null && !queuedRepeat) return;
+            queued = offset.clone();
+            queuedRepeat = repeat;
+        }
+
+        public void releaseRepeats() {
+            if (queuedRepeat) queued = null;
+        }
+
+        public int[] poll(long revision, long tick) {
+            if (session.isEmpty() || queued == null
+                || pendingRevision >= 0
+                || lastSentTick != Long.MIN_VALUE && tick - lastSentTick < NUDGE_REPEAT_INTERVAL) return null;
+            int[] offset = queued;
+            queued = null;
+            pendingRevision = revision;
+            pendingTick = lastSentTick = tick;
+            return offset;
+        }
+    }
 
     /** Use normalized view direction and floor, including negative coordinates and vertical camera angles. */
     public static int[] airAnchor(double x, double y, double z, double dx, double dy, double dz, int distance) {

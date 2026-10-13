@@ -339,6 +339,7 @@ public final class HologramNetwork {
             || "areaPoint".equals(action)
             || "confirmVirtualPosition".equals(action)
             || "unlockVirtualPosition".equals(action)
+            || "nudgeVirtualPosition".equals(action)
             || "quickPlaceLastBlueprint".equals(action)
             || "cancelVirtualPlacement".equals(action)) {
             if (!com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem()))
@@ -351,6 +352,8 @@ public final class HologramNetwork {
                 HologramService.confirmWorldPosition(player, tag);
             } else if ("unlockVirtualPosition".equals(action)) {
                 HologramService.unlockWorldPosition(player, tag);
+            } else if ("nudgeVirtualPosition".equals(action)) {
+                HologramService.nudgeWorldPosition(player, tag);
             } else if ("quickPlaceLastBlueprint".equals(action)) {
                 HologramService.quickPlaceLastBlueprint(player, tag);
             } else if ("cancelVirtualPlacement".equals(action)) HologramService.cancelWorldPlacement(player, tag);

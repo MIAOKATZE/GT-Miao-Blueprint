@@ -890,6 +890,68 @@ public final class HologramService {
             .withinPreviewReach(player.posX, player.posY + player.getEyeHeight(), player.posZ, x, y, z);
     }
 
+    /** Adjust only a locked, unpaid preview; every previous construction and AE review capability expires. */
+    public static void nudgeWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
+        Session s = SESSIONS.get(player.getUniqueID());
+        if (s == null || s.player != player
+            || s.cancelled
+            || !s.id.equals(request.getString("session"))
+            || !request.hasKey("planRevision", 4)
+            || s.planRevision != request.getLong("planRevision")
+            || !valid(s)
+            || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem())
+            || !s.virtual
+            || !s.virtualPlacement
+            || !s.virtualLocked
+            || s.job != 0
+            || s.virtualPreset == null
+            || s.capture == null
+            || s.capture.incomplete
+            || s.capture.pending
+            || s.capturePending
+            || blockedByAreaImport(s)
+            || !request.hasKey("dx", 3)
+            || !request.hasKey("dy", 3)
+            || !request.hasKey("dz", 3)) return;
+        int dx = request.getInteger("dx"), dy = request.getInteger("dy"), dz = request.getInteger("dz");
+        if (!HologramWorldFlow.unitNudge(dx, dy, dz)) return;
+        long tick = player.worldObj.getTotalWorldTime();
+        if (s.positionNudgeTick != Long.MIN_VALUE && tick >= s.positionNudgeTick
+            && tick - s.positionNudgeTick < HologramWorldFlow.NUDGE_REPEAT_INTERVAL) return;
+        s.positionNudgeTick = tick;
+        int x = s.x + dx, y = s.y + dy, z = s.z + dz;
+        boolean allowed = HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
+            && previewReach(player, x, y, z)
+            && player.worldObj.blockExists(x, y, z);
+        if (allowed) for (HologramCapture.Cell cell : s.capture.cells) {
+            long xx = (long) cell.x + dx, yy = (long) cell.y + dy, zz = (long) cell.z + dz;
+            if (xx < -30000000L || xx >= 30000000L
+                || yy < 0
+                || yy >= player.worldObj.getHeight()
+                || zz < -30000000L
+                || zz >= 30000000L
+                || !player.worldObj.blockExists((int) xx, (int) yy, (int) zz)) {
+                allowed = false;
+                break;
+            }
+        }
+        if (!allowed || !moveVirtual(s, x, y, z, s.side)) {
+            s.open = false;
+            s.status = "微调位置超出距离、世界边界或已加载区域；原锁定位置与草稿保留";
+            send(s);
+            return;
+        }
+        s.blueprintAwaitingConfirmation = true;
+        s.placementReviewIssued = false;
+        s.forcePlacementReady = false;
+        s.openPurpose = "";
+        s.placementReviewNonce++;
+        s.ae.invalidateReviews();
+        s.open = false;
+        s.status = "锁定位置已微调一格；箭头水平微调，Alt + 上下调整高度；右键重新核对材料与 NBT";
+        send(s);
+    }
+
     /** Escape leaves the editable draft and stored blueprint intact and never changes an active job. */
     public static void cancelWorldPlacement(EntityPlayerMP player, NBTTagCompound request) {
         Session s = SESSIONS.get(player.getUniqueID());
@@ -7365,6 +7427,7 @@ public final class HologramService {
         final List<String> planStatus = new ArrayList<>();
         final List<ItemStack> planTargets = new ArrayList<>();
         long actionTick = -1;
+        long positionNudgeTick = Long.MIN_VALUE;
         int actionCount;
 
         Session(EntityPlayerMP p, int x, int y, int z) {

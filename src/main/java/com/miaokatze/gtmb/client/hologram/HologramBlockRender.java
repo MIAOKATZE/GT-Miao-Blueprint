@@ -31,6 +31,7 @@ final class HologramBlockRender {
 
     private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
     private static final Map<String, String> FAILURES = new HashMap<>();
+    private static final Set<String> WARNED_FAILURES = new HashSet<>();
     private static HologramState snapshot;
     private static HologramBlockAccess target, actual;
     private static final Field DRAWING = field(Tessellator.class, "isDrawing", "field_78415_z");
@@ -38,8 +39,6 @@ final class HologramBlockRender {
     private static final Field OFFSET_Y = field(Tessellator.class, "yOffset", "field_78407_w");
     private static final Field OFFSET_Z = field(Tessellator.class, "zOffset", "field_78417_x");
     private static final Field VERTEX_COUNT = field(Tessellator.class, "vertexCount", "field_78406_i");
-    private static final Field RAW_BUFFER = field(Tessellator.class, "rawBuffer", "field_78405_h");
-    private static final Field RAW_INDEX = field(Tessellator.class, "rawBufferIndex", "field_147569_p");
     private static final Field WORLD_PASS = field(ForgeHooksClient.class, "worldRenderPass");
     private static final Field HANDLERS = field(RenderingRegistry.class, "blockRenderers");
     private static final Field[] TESS_STATE = { field(Tessellator.class, "textureU", "field_78403_j"),
@@ -177,6 +176,7 @@ final class HologramBlockRender {
         HologramNativeRenderRegistry.Adapter adapter) {
         Block block = cell.block(current);
         Tessellator tess = Tessellator.instance;
+        Tessellator callerTess = tess;
         int list = 0, count = 0;
         boolean opened = false;
         boolean invokedNative = false;
@@ -235,6 +235,9 @@ final class HologramBlockRender {
             renderer.enableAO = false;
             GL11.glNewList(list, GL11.GL_COMPILE);
             opened = true;
+            // Angelica starts a GTNHLib DirectTessellator capture in glNewList.
+            // Resolve it after the list opens, just as the native renderer does.
+            tess = Tessellator.instance;
             for (int pass = 0; pass <= 1; pass++) {
                 WORLD_PASS.setInt(null, pass);
                 ForgeHooksClient.setRenderPass(pass);
@@ -249,8 +252,8 @@ final class HologramBlockRender {
                 int emitted = VERTEX_COUNT.getInt(tess);
                 count += emitted;
                 if (emitted > 0) {
-                    int[] raw = (int[]) RAW_BUFFER.get(tess);
-                    int stride = RAW_INDEX.getInt(tess) / emitted;
+                    int[] raw = HologramVertexData.read(tess, emitted);
+                    int stride = 8;
                     if (stride >= 3) for (int v = 0; v < emitted; v++) {
                         int quad = v / 4 * 4;
                         if (quad + 3 < emitted && !usableQuad(raw, stride, quad)) continue;
@@ -324,10 +327,10 @@ final class HologramBlockRender {
             if (invokedNative && adapter == null) releaseNativeContext(block);
             if (aeCableContext != null) aeCableContext.close();
             if (carpenterContext != null) carpenterContext.close();
-            tess.setTranslation(ox, oy, oz);
+            callerTess.setTranslation(ox, oy, oz);
             if (capturedTessState) for (int i = 0; i < TESS_STATE.length; i++) {
                 try {
-                    TESS_STATE[i].set(tess, tessState[i]);
+                    TESS_STATE[i].set(callerTess, tessState[i]);
                 } catch (IllegalAccessException ignored) {}
             }
             ForgeHooksClient.setRenderPass(previousPass);
@@ -348,7 +351,18 @@ final class HologramBlockRender {
     }
 
     private static Model failed(HologramState.Cell cell, boolean current, String message) {
-        FAILURES.put(current ? cell.id : cell.wantId, message);
+        String id = current ? cell.id : cell.wantId;
+        int meta = current ? cell.meta : cell.wantMeta;
+        FAILURES.put(id, message);
+        String diagnostic = id + ":" + meta + " " + message;
+        // Keep diagnostics useful across snapshot changes without logging once per missing block/frame.
+        if (WARNED_FAILURES.size() < 128 && WARNED_FAILURES.add(diagnostic))
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(
+                "[GTMB-NATIVE-PREVIEW] block={} meta={} side={} reason={}",
+                id,
+                meta,
+                current ? "current" : "target",
+                message);
         return new Model(0, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
     }
 

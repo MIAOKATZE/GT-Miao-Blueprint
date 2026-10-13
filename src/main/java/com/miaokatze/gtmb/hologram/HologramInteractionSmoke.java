@@ -615,12 +615,13 @@ public final class HologramInteractionSmoke {
         HologramPresets.Preset observedPreset = (HologramPresets.Preset) sessionField(session, "virtualPreset");
         if (observedPreset != null && observedPreset.id != null && !observedPreset.id.isEmpty())
             observed.setString("presetId", observedPreset.id);
-        for (String name : new String[] { "uiSequence", "planRevision", "placementReviewNonce", "actionTick" })
-            observed.setLong(name, ((Number) sessionField(session, name)).longValue());
+        for (String name : new String[] { "uiSequence", "planRevision", "placementReviewNonce", "actionTick",
+            "positionNudgeTick" }) observed.setLong(name, ((Number) sessionField(session, name)).longValue());
         for (String name : new String[] { "job", "actionCount" })
             observed.setInteger(name, ((Number) sessionField(session, name)).intValue());
         for (String name : new String[] { "virtualPlacement", "virtualLocked", "blueprintAwaitingConfirmation",
-            "placementReviewIssued", "open" }) observed.setBoolean(name, (Boolean) sessionField(session, name));
+            "placementReviewIssued", "forcePlacementReady", "open" })
+            observed.setBoolean(name, (Boolean) sessionField(session, name));
         receipt.setTag("blueprintSession", observed);
         if (!((Boolean) sessionField(session, "virtualPlacement"))) return;
         HologramCapture capture = (HologramCapture) sessionField(session, "capture");

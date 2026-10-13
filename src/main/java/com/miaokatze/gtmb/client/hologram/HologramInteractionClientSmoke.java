@@ -57,6 +57,8 @@ public final class HologramInteractionClientSmoke {
     private String lastStoneAreaObservation = "";
     private String quickPresetId;
     private long lockedNonce;
+    private HologramLockedNudgeClientSmoke nudgeSmoke;
+    private boolean nudgeChecked;
     private int reviewStage;
     private final HologramActualUsePress usePress = new HologramActualUsePress();
     private String completedSession, completedPreset, completedActor, completedClientActor;
@@ -267,6 +269,7 @@ public final class HologramInteractionClientSmoke {
                 || stage == 54
                 || stage == 55
                 || stage >= 77 && stage <= 79
+                || stage == 94
                 || stage >= 91 && stage <= 93) && worldFlow(mc)) return;
             if ((stage >= 83 && stage <= 86 || stage >= 88 && stage <= 90) && repeatCompletedPlacement(mc)) return;
             if (!(mc.currentScreen instanceof HologramScreen)) return;
@@ -1379,6 +1382,13 @@ public final class HologramInteractionClientSmoke {
     /** Inject native LWJGL key state across real client ticks and dispatch the registered Forge mouse event. */
     private boolean worldFlow(Minecraft mc) throws Exception {
         NBTTagCompound state = HologramClient.state == null ? null : HologramClient.state.data;
+        if (stage == 94) {
+            if (nudgeSmoke.worldTick(mc)) {
+                stage = 78;
+                waitTicks = 0;
+            }
+            return true;
+        }
         if (stage == 40 || stage == 42) {
             if (stage == 42 && (state == null || state.getBoolean("areaSelecting"))) return true;
             mc.displayGuiScreen(null);
@@ -1567,6 +1577,16 @@ public final class HologramInteractionClientSmoke {
                 HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
                 "actual_relocked_world_ghost_returns_to_cyan");
             screenshot(mc, "v007-relocked-cyan-before-RIGHT2-review-" + reviewStage);
+            if (sufficientBlueprintPass && !nudgeChecked) {
+                nudgeChecked = true;
+                nudgeSmoke = new HologramLockedNudgeClientSmoke(
+                    mc,
+                    HologramInteractionClientSmoke::keyboard,
+                    this::receipt,
+                    name -> screenshot(mc, name));
+                stage = 94;
+                return true;
+            }
             lockedNonce = state.getLong("placementReviewNonce");
             mc.objectMouseOver = null;
             airRightClick(mc, false);
@@ -1576,6 +1596,7 @@ public final class HologramInteractionClientSmoke {
         if (stage == 79) {
             if (!(mc.currentScreen instanceof HologramScreen) || state == null || !state.getBoolean("virtualLocked"))
                 return true;
+            if (nudgeSmoke != null && !nudgeSmoke.uiTick(mc)) return true;
             require(
                 state.getBoolean("open") && state.getLong("placementReviewNonce") > lockedNonce,
                 "RIGHT2_is_the_only_gesture_issuing_material_review");

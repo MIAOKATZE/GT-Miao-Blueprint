@@ -15,9 +15,9 @@ final class HologramGuidance {
         if (state.data.getInteger("job") == 2) return "施工已暂停；确认继续或取消";
         if (blueprints) return "步骤 1/3 · 列表选择 → 放置 → 世界右键锁定 → 再次右键核对材料 · Alt+右键快捷预览 · Esc/E 关闭";
         if (state.cells.isEmpty()) return "右键控制器导入结构 · Shift+右键框选区域 · 或点击“框选区域”";
-        if (state.data.getBoolean("virtualPlacement"))
-            return state.data.getBoolean("virtualLocked") ? "位置已锁定（青色）· Shift+右键解锁 · 再次右键核对材料 · Esc 取消"
-                : "位置预览（绿色）· 世界右键锁定 · R 旋转 · Esc 取消 · 再次右键核对材料";
+        if (state.data.getBoolean("virtualPlacement")) return state.data.getBoolean("virtualLocked")
+            ? "位置已锁定（青色）· 方向键水平微调，Alt+上下调高度 · 右键重新核对材料 · Shift+右键解锁 · Esc 取消"
+            : "位置预览（绿色）· 世界右键锁定 · R 旋转 · Esc 取消 · 再次右键核对材料";
         if (selected >= 0) return "T+点击同种 · Ctrl 多选 · Shift 框选 · Alt 选空气 · Esc/E 关闭面板"
             + (state.data.getBoolean("virtual") ? " · 完整结构 G 移动轴 · Ctrl+拖轴复制" : "");
         return "点击选方块 · 线圈等部件自动同族 · T+点击同种 · 点击结构边缘整选 · Alt 选空气";

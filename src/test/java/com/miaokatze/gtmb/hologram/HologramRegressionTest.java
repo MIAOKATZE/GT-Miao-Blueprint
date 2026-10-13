@@ -63,6 +63,9 @@ public final class HologramRegressionTest {
             "machine_textures_support_optional_inventory_api_and_legacy_six_face_fallback",
             com.miaokatze.gtmb.client.hologram.HologramTextureCompatibilityRegression::run);
         cases.put(
+            "native_direct_vertex_layouts_keep_geometry_material_and_source_buffer_state",
+            com.miaokatze.gtmb.client.hologram.HologramVertexDataRegression::run);
+        cases.put(
             "declared_alternatives_include_all_chain_and_tier_branches",
             HologramRegressionTest::declaredAlternatives);
         cases.put(
@@ -116,6 +119,9 @@ public final class HologramRegressionTest {
             HologramBlockTransformRegression::run);
         cases.put("world_gestures_require_explicit_material_confirmation", HologramWorldFlowRegression::run);
         cases.put("world_use_requires_physical_release_between_stages", HologramUsePressFenceRegression::run);
+        cases.put("locked_world_arrows_quantize_camera_direction_and_throttle_repeat", HologramNudgeRegression::run);
+        cases
+            .put("locked_nudge_revokes_old_authority_and_rejects_hostile_offsets", HologramNudgeServiceRegression::run);
         cases.put(
             "opened_placement_review_receives_background_job_updates_without_reopening_dismissed_UI",
             com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression::run);

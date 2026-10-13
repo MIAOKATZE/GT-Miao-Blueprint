@@ -161,6 +161,11 @@ public final class HologramClient {
     }
 
     private final HologramWorldFlow.KeyEdge rotationKey = new HologramWorldFlow.KeyEdge();
+    private final HologramWorldFlow.KeyRepeat[] nudgeKeys = { new HologramWorldFlow.KeyRepeat(),
+        new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat() };
+    private final HologramWorldFlow.NudgeDispatch nudgeDispatch = new HologramWorldFlow.NudgeDispatch();
+    private int queuedRepeatKey = -1;
+    private String nudgeInputSession = "";
     private Object inputWorld, inputTool, inputScreen;
     private boolean inputScreenChanged;
 
@@ -238,6 +243,16 @@ public final class HologramClient {
                     anchor[2]));
             String status = state.data.getString("status");
             if (!status.isEmpty()) event.left.add(status);
+        } else if (stage == HologramWorldFlow.Stage.LOCKED) {
+            event.left.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    text("worldGuideLockedTarget", "Locked target %d, %d, %d"),
+                    state.data.getInteger("x"),
+                    state.data.getInteger("y"),
+                    state.data.getInteger("z")));
+            String status = state.data.getString("status");
+            if (!status.isEmpty()) event.left.add(status);
         }
     }
 
@@ -257,6 +272,7 @@ public final class HologramClient {
         inputScreen = mc.currentScreen;
         usePressFence.observe(mc.gameSettings.keyBindUseItem.getIsKeyPressed(), changed);
         syncPreviewDistance();
+        lockedNudge(mc, changed);
         boolean rotate = rotationKey.sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed);
         if (!projectorWorld() || state == null || mc.theWorld != snapshotWorld) return;
         if (!rotate
@@ -271,6 +287,59 @@ public final class HologramClient {
         request.setBoolean(
             "vertical",
             Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL));
+        HologramNetwork.sendAction(request);
+    }
+
+    private void lockedNudge(Minecraft mc, boolean contextChanged) {
+        boolean enabled = projectorWorld() && state != null
+            && mc.theWorld == snapshotWorld
+            && worldStage() == HologramWorldFlow.Stage.LOCKED
+            && state.data.getInteger("job") == 0
+            && !state.data.getBoolean("capturePending")
+            && !state.cells.isEmpty();
+        long tick = mc.theWorld == null ? 0 : mc.theWorld.getTotalWorldTime();
+        String currentSession = enabled ? state.session : "";
+        boolean changed = contextChanged || !nudgeInputSession.equals(currentSession);
+        nudgeInputSession = currentSession;
+        nudgeDispatch
+            .sync(currentSession, state == null ? -1 : state.data.getLong("planRevision"), tick, changed || !enabled);
+        if (changed || !enabled) queuedRepeatKey = -1;
+        int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT };
+        int fired = -1, pressed = 0;
+        boolean repeat = false;
+        boolean repeatHeld = queuedRepeatKey < 0;
+        for (int i = 0; i < keys.length; i++) {
+            boolean held = Keyboard.isCreated() && Keyboard.isKeyDown(keys[i]);
+            if (i == queuedRepeatKey) repeatHeld = held;
+            if (held) pressed++;
+            if (nudgeKeys[i].sample(held, enabled, changed, tick)) {
+                fired = i;
+                repeat = nudgeKeys[i].repeated();
+            }
+        }
+        if (pressed == 0 || !repeatHeld) nudgeDispatch.releaseRepeats();
+        if (!enabled) return;
+        if (fired >= 0 && pressed == 1) {
+            boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+            HologramWorldFlow.Nudge direction = fired == 0
+                ? alt ? HologramWorldFlow.Nudge.UP : HologramWorldFlow.Nudge.FORWARD
+                : fired == 1 ? alt ? HologramWorldFlow.Nudge.DOWN : HologramWorldFlow.Nudge.BACKWARD
+                    : fired == 2 ? HologramWorldFlow.Nudge.LEFT : HologramWorldFlow.Nudge.RIGHT;
+            net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer
+                : mc.renderViewEntity;
+            nudgeDispatch.queue(HologramWorldFlow.nudgeOffset(camera.rotationYaw, direction), repeat);
+            queuedRepeatKey = repeat ? fired : -1;
+        }
+        int[] offset = nudgeDispatch.poll(state.data.getLong("planRevision"), tick);
+        if (offset == null) return;
+        queuedRepeatKey = -1;
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("action", "nudgeVirtualPosition");
+        request.setString("session", state.session);
+        request.setLong("planRevision", state.data.getLong("planRevision"));
+        request.setInteger("dx", offset[0]);
+        request.setInteger("dy", offset[1]);
+        request.setInteger("dz", offset[2]);
         HologramNetwork.sendAction(request);
     }
 
