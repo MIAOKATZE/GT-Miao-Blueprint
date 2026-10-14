@@ -3,6 +3,7 @@ package com.miaokatze.gtmb.client.hologram;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,6 +42,7 @@ public final class HologramV011ProcessingClientProbe {
     private long saveStarted, saveGeneration = -1, nativeKeyEvents;
     private NBTTagCompound saveReview;
     private NBTTagCompound fullReviewBefore, fullReviewAfter;
+    private NBTTagCompound keyboardWitness;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.followupProductionFlow")
@@ -109,18 +111,16 @@ public final class HologramV011ProcessingClientProbe {
             screen.mouseMovedOrUp(x, y, 0);
             nativeMouseEvents++;
             require(target.isFocused(), "native mouse focuses actual author name field");
-            Field keyboard = Keyboard.class.getDeclaredField("keyDownBuffer");
-            keyboard.setAccessible(true);
-            ByteBuffer keys = (ByteBuffer) keyboard.get(null);
-            byte previousControl = keys.get(Keyboard.KEY_LCONTROL);
+            ControlKey control = controlKey();
+            keyboardWitness = control.witness;
             try {
-                keys.put(Keyboard.KEY_LCONTROL, (byte) 1);
+                control.set(true);
                 screen.keyTyped('\u0001', Keyboard.KEY_A);
                 require(
                     target.getText()
                         .equals(target.getSelectedText()),
                     "native Ctrl+A selects author name");
-                keys.put(Keyboard.KEY_LCONTROL, (byte) 0);
+                control.set(false);
                 Method injectText = null;
                 Constructor<?> textEvent = null;
                 try {
@@ -137,7 +137,7 @@ public final class HologramV011ProcessingClientProbe {
                 }
                 nativeKeyEvents += name.length() + 1;
             } finally {
-                keys.put(Keyboard.KEY_LCONTROL, previousControl);
+                control.restore();
             }
             require(name.equals(target.getText()), "native keyboard enters exact author name");
             click(screen, 140);
@@ -172,6 +172,7 @@ public final class HologramV011ProcessingClientProbe {
         receipt.setInteger("processingEndFrames", modalEndFrames);
         receipt.setLong("nativeMouseEvents", nativeMouseEvents);
         receipt.setLong("nativeKeyEvents", nativeKeyEvents);
+        receipt.setTag("actualKeyboardState", keyboardWitness.copy());
         receipt.setTag("actualConfirmedAeReview", saveReview.copy());
         receipt.setTag("actualSnapshot", data.copy());
         receipt.setTag("actualUi", ui.copy());
@@ -357,6 +358,90 @@ public final class HologramV011ProcessingClientProbe {
         } catch (Throwable problem) {
             failure = problem;
             problem.printStackTrace();
+        }
+    }
+
+    /** Select only the actual LWJGL2 state buffer or the inspected lwjgl3ify 3.0.37 SDL delegate. */
+    private static ControlKey controlKey() throws Exception {
+        Field field;
+        int index = Keyboard.KEY_LCONTROL;
+        String mapping = "LWJGL2 key code";
+        try {
+            field = Keyboard.class.getDeclaredField("keyDownBuffer");
+        } catch (NoSuchFieldException modernDelegate) {
+            ClassLoader loader = Keyboard.class.getClassLoader();
+            Class<?> shim = Class.forName("org.lwjglx.input.Keyboard", false, loader);
+            require(
+                shim.getField("KEY_LCONTROL")
+                    .getInt(null) == Keyboard.KEY_LCONTROL,
+                "SDL shim uses the native LWJGL2 control key code");
+            field = shim.getField("sdlKeyPressedArray");
+            Method translate = Class.forName("org.lwjglx.input.KeyCodes", false, loader)
+                .getMethod("lwjglToSdlScancode", int.class);
+            require(
+                Modifier.isStatic(translate.getModifiers()) && translate.getReturnType() == int.class,
+                "known SDL key mapping is a static integer function");
+            index = (Integer) translate.invoke(null, Keyboard.KEY_LCONTROL);
+            int expected = Class.forName("org.lwjgl.sdl.SDLScancode", false, loader)
+                .getField("SDL_SCANCODE_LCTRL")
+                .getInt(null);
+            require(index == expected && index == 224, "known SDL shim maps left Control to scan code 224");
+            mapping = "org.lwjglx.input.KeyCodes.lwjglToSdlScancode";
+        }
+        require(
+            Modifier.isStatic(field.getModifiers()) && field.getType() == ByteBuffer.class,
+            "known native keyboard state is a static ByteBuffer");
+        field.setAccessible(true);
+        Object state = field.get(null);
+        require(state instanceof ByteBuffer, "actual keyboard state buffer is initialized");
+        ByteBuffer keys = (ByteBuffer) state;
+        require(
+            !keys.isReadOnly() && index > 0 && index < keys.limit(),
+            "native control index is inside the writable current keyboard state");
+        return new ControlKey(
+            keys,
+            index,
+            field.getDeclaringClass()
+                .getName() + "."
+                + field.getName(),
+            mapping);
+    }
+
+    private static final class ControlKey {
+
+        private final ByteBuffer keys;
+        private final int index;
+        private final byte previous;
+        private final NBTTagCompound witness = new NBTTagCompound();
+
+        private ControlKey(ByteBuffer keys, int index, String field, String mapping) {
+            this.keys = keys;
+            this.index = index;
+            previous = keys.get(index);
+            require(
+                Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) == (previous != 0),
+                "native Keyboard reads the selected control state");
+            witness.setString("stateField", field);
+            witness.setString("indexMapping", mapping);
+            witness.setInteger("stateIndex", index);
+            witness.setInteger("bufferLimit", keys.limit());
+            witness.setBoolean("controlBefore", previous != 0);
+        }
+
+        private void set(boolean pressed) {
+            keys.put(index, (byte) (pressed ? 1 : 0));
+            require(
+                Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) == pressed,
+                "native Keyboard observes the requested control press or release");
+            witness.setBoolean(pressed ? "nativeControlPressed" : "nativeControlReleased", true);
+        }
+
+        private void restore() {
+            keys.put(index, previous);
+            require(
+                Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) == (previous != 0),
+                "native Keyboard control state restored after text input");
+            witness.setBoolean("nativeControlRestored", true);
         }
     }
 
