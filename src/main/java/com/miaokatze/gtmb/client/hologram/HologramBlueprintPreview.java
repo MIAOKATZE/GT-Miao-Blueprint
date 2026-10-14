@@ -47,6 +47,7 @@ import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL32;
 import org.lwjgl.opengl.GLContext;
 
 import com.google.gson.JsonArray;
@@ -359,11 +360,14 @@ public final class HologramBlueprintPreview {
             GL11.glPixelStorei(GL11.GL_PACK_ROW_LENGTH, 0);
             GL11.glPixelStorei(GL11.GL_PACK_SKIP_ROWS, 0);
             GL11.glPixelStorei(GL11.GL_PACK_SKIP_PIXELS, 0);
-            GL11.glPixelTransferi(GL11.GL_MAP_COLOR, GL11.GL_FALSE);
-            for (int channel : new int[] { GL11.GL_RED_SCALE, GL11.GL_GREEN_SCALE, GL11.GL_BLUE_SCALE,
-                GL11.GL_ALPHA_SCALE }) GL11.glPixelTransferf(channel, 1);
-            for (int channel : new int[] { GL11.GL_RED_BIAS, GL11.GL_GREEN_BIAS, GL11.GL_BLUE_BIAS,
-                GL11.GL_ALPHA_BIAS }) GL11.glPixelTransferf(channel, 0);
+            if (saved.pixelTransferAvailable) {
+                // Legacy readback applies this state. Core profiles removed it and Angelica does not emulate it.
+                GL11.glPixelTransferi(GL11.GL_MAP_COLOR, GL11.GL_FALSE);
+                for (int channel : new int[] { GL11.GL_RED_SCALE, GL11.GL_GREEN_SCALE, GL11.GL_BLUE_SCALE,
+                    GL11.GL_ALPHA_SCALE }) GL11.glPixelTransferf(channel, 1);
+                for (int channel : new int[] { GL11.GL_RED_BIAS, GL11.GL_GREEN_BIAS, GL11.GL_BLUE_BIAS,
+                    GL11.GL_ALPHA_BIAS }) GL11.glPixelTransferf(channel, 0);
+            }
             ByteBuffer pixels = BufferUtils.createByteBuffer(SIZE * SIZE * 4);
             GL11.glReadPixels(0, 0, SIZE, SIZE, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
             if (witness) {
@@ -574,6 +578,11 @@ public final class HologramBlueprintPreview {
     private static final class RenderState {
 
         private final ContextCapabilities caps = GLContext.getCapabilities();
+        private final boolean pixelTransferAvailable = legacyPixelTransferAvailable(caps);
+        private final int[] pixelStoreNames = { GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH, GL11.GL_PACK_SKIP_ROWS,
+            GL11.GL_PACK_SKIP_PIXELS, GL11.GL_UNPACK_ALIGNMENT, GL11.GL_UNPACK_ROW_LENGTH, GL11.GL_UNPACK_SKIP_ROWS,
+            GL11.GL_UNPACK_SKIP_PIXELS };
+        private final int[] pixelStoreValues = new int[pixelStoreNames.length];
         private final boolean splitFramebuffer = caps.OpenGL30 || caps.GL_ARB_framebuffer_object;
         private final boolean buffers = caps.OpenGL15 || caps.GL_ARB_vertex_buffer_object;
         private final boolean pixelBuffers = caps.OpenGL21 || caps.GL_ARB_pixel_buffer_object;
@@ -594,6 +603,26 @@ public final class HologramBlueprintPreview {
         private final float brightnessX = OpenGlHelper.lastBrightnessX, brightnessY = OpenGlHelper.lastBrightnessY;
         private final List<Matrix> matrices = new ArrayList<>();
         private boolean attributes, clientAttributes;
+
+        RenderState() {
+            for (int index = 0; index < pixelStoreNames.length; index++)
+                pixelStoreValues[index] = GL11.glGetInteger(pixelStoreNames[index]);
+        }
+
+        private static boolean legacyPixelTransferAvailable(ContextCapabilities caps) {
+            // This extension restores legacy pixel transfer even when a legacy-created context reports no profile.
+            if (caps.GL_ARB_compatibility) return true;
+            if (caps.OpenGL32) {
+                int profile = GL11.glGetInteger(GL32.GL_CONTEXT_PROFILE_MASK);
+                if ((profile & GL32.GL_CONTEXT_CORE_PROFILE_BIT) != 0) return false;
+                if ((profile & GL32.GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) != 0) return true;
+                throw new IllegalStateException("Native preview OpenGL profile is invalid: " + profile);
+            }
+            if (caps.OpenGL31) return caps.GL_ARB_compatibility;
+            if (caps.OpenGL30)
+                return (GL11.glGetInteger(GL30.GL_CONTEXT_FLAGS) & GL30.GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT) == 0;
+            return true;
+        }
 
         void push() {
             GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
@@ -673,6 +702,9 @@ public final class HologramBlueprintPreview {
             OpenGlHelper.func_153176_h(RENDERBUFFER, renderbuffer);
             if (clientAttributes) GL11.glPopClientAttrib();
             if (attributes) GL11.glPopAttrib();
+            // Angelica's client attribute stack stores vertex state, not pixel-store parameters.
+            for (int index = 0; index < pixelStoreNames.length; index++)
+                GL11.glPixelStorei(pixelStoreNames[index], pixelStoreValues[index]);
             if (buffers) {
                 bindBuffer(0x8892, arrayBuffer);
                 bindBuffer(0x8893, elementBuffer);
