@@ -80,10 +80,12 @@ public final class HologramV011ProcessingClientProbe {
         if (generation <= saveGeneration || screen.smokePending() || ui.getBoolean("busy")) return false;
         if (saveStep == 0) {
             if (!ui.getBoolean("library")) {
+                if (!controlEnabled(ui, 149)) return false;
                 click(screen, 149);
                 saveGeneration = generation;
                 return false;
             }
+            if (!controlEnabled(ui, 140) || !displayedSource(screen, ui)) return false;
             NBTTagCompound data = HologramClient.state.data;
             require(
                 data.getBoolean("blueprintProcessingComplete") && data.getBoolean("blueprintRetainNbt")
@@ -145,13 +147,7 @@ public final class HologramV011ProcessingClientProbe {
         }
         if (saveStep == 1) {
             if (!ui.getBoolean("aeReview")) return false;
-            boolean enabled = false;
-            NBTTagList controls = ui.getTagList("drawnControls", 10);
-            for (int i = 0; i < controls.tagCount(); i++) {
-                NBTTagCompound control = controls.getCompoundTagAt(i);
-                if (control.getInteger("id") == 181) enabled = control.getBoolean("enabled");
-            }
-            require(enabled, "actual AE review permits manual author confirmation");
+            if (control(ui, 181) == null) return false;
             saveReview = (NBTTagCompound) HologramClient.state.data.getCompoundTag("aeSaveReview")
                 .copy();
             require(
@@ -196,7 +192,12 @@ public final class HologramV011ProcessingClientProbe {
         if (generation <= 0) return false;
         if (generation <= lastGeneration || screen.smokePending()) return false;
         if (!ui.getBoolean("processingFlow") && stage == 0 && step == 0) {
-            if (!ui.getBoolean("blueprintTab")) {
+            NBTTagCompound source = HologramClient.state.data;
+            if (source.getBoolean("capturePending") || source.getBoolean("areaImporting")
+                || HologramClient.state.cells.isEmpty()
+                || !displayedSource(screen, ui)) return false;
+            if (!ui.getBoolean("blueprintTab") || !ui.getBoolean("library")) {
+                if (!controlEnabled(ui, 149)) return false;
                 click(screen, 149);
                 lastGeneration = generation;
                 return false;
@@ -204,6 +205,7 @@ public final class HologramV011ProcessingClientProbe {
             require(
                 HologramClient.state.data.getBoolean("blueprintProcessingRequired"),
                 "raw author blueprint requires processing");
+            if (!controlEnabled(ui, 220)) return false;
             click(screen, 220);
             lastGeneration = generation;
             return false;
@@ -358,7 +360,56 @@ public final class HologramV011ProcessingClientProbe {
         }
     }
 
-    private void click(HologramScreen screen, int id) {
+    private static NBTTagCompound control(NBTTagCompound ui, int id) {
+        NBTTagList controls = ui.getTagList("drawnControls", 10);
+        for (int i = 0; i < controls.tagCount(); i++) {
+            NBTTagCompound control = controls.getCompoundTagAt(i);
+            if (control.getInteger("id") == id) return control;
+        }
+        return null;
+    }
+
+    private static boolean controlEnabled(NBTTagCompound ui, int id) {
+        NBTTagCompound control = control(ui, id);
+        return control != null && control.getBoolean("enabled");
+    }
+
+    /** A decoded ACK can arrive between frames; only the native preview binds the current displayed snapshot. */
+    private static boolean displayedSource(HologramScreen screen, NBTTagCompound ui) throws Exception {
+        Field screenState = HologramScreen.class.getDeclaredField("state");
+        Field renderedState = HologramRenderer.class.getDeclaredField("previewState");
+        screenState.setAccessible(true);
+        renderedState.setAccessible(true);
+        HologramState source = HologramClient.state;
+        return source != null && screenState.get(screen) == source
+            && renderedState.get(null) == source
+            && source.session.equals(ui.getString("session"))
+            && source.data.getLong("planRevision") == ui.getLong("planRevision");
+    }
+
+    private void click(HologramScreen screen, int id) throws Exception {
+        NBTTagCompound ui = screen.smokeLibraryUiState();
+        if (!controlEnabled(ui, id)) {
+            NBTTagCompound diagnostic = new NBTTagCompound();
+            diagnostic.setBoolean("passed", false);
+            diagnostic.setInteger("requestedControl", id);
+            diagnostic.setInteger("flowStage", stage);
+            diagnostic.setInteger("flowStep", step);
+            diagnostic.setInteger("saveStep", saveStep);
+            diagnostic.setLong("lastRenderGeneration", lastGeneration);
+            diagnostic.setBoolean("displayedSourceMatches", displayedSource(screen, ui));
+            diagnostic.setTag("actualUi", ui.copy());
+            if (HologramClient.state != null) diagnostic.setTag("actualSnapshot", HologramClient.state.data.copy());
+            HologramV011Evidence.write("processing-client-control-failure.nbt", diagnostic);
+            throw new IllegalStateException(
+                "Actual author control " + id
+                    + " is absent or disabled; library="
+                    + ui.getBoolean("library")
+                    + ", blueprintTab="
+                    + ui.getBoolean("blueprintTab")
+                    + ", generation="
+                    + ui.getLong("renderGeneration"));
+        }
         int[] point = screen.smokeControlPoint(id);
         screen.mouseClicked(point[0], point[1], 0);
         screen.mouseMovedOrUp(point[0], point[1], 0);
