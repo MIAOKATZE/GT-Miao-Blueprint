@@ -20,7 +20,15 @@ import gregtech.common.covers.Cover;
 /** Detached native render payloads and GT visual data; no load/tick hook or shared prototype mutation. */
 final class HologramDisplaySnapshot {
 
+    static final String QUANTUM_SIDES = "gtmb.quantumSides";
+
     private HologramDisplaySnapshot() {}
+
+    /** Six native ForgeDirection bits only; a similarly named compound is never presentation data. */
+    static boolean validQuantumSides(NBTTagCompound saved) {
+        return saved.hasKey(QUANTUM_SIDES, 3) && saved.getInteger(QUANTUM_SIDES) >= 0
+            && saved.getInteger(QUANTUM_SIDES) <= 63;
+    }
 
     static NBTTagCompound capture(TileEntity tile) {
         try {
@@ -100,13 +108,18 @@ final class HologramDisplaySnapshot {
         }
         net.minecraft.block.Block nativeBlock = stack == null ? null
             : net.minecraft.block.Block.getBlockFromItem(stack.getItem());
+        boolean quantum = nativeBlock != null && nativeBlock.getClass()
+            .getName()
+            .equals("com.miaokatze.gtswn.common.block.BlockNetworkQuantumNode");
+        if (saved == null && quantum) saved = new NBTTagCompound();
         if (saved == null && HologramAeNativePreview.supports(nativeBlock)) saved = new NBTTagCompound();
         if (saved != null) {
             // The planned tile has already passed the blueprint transform. Keep its native
             // geometry/material data together, rather than interpreting part NBT as a cube.
             if (HologramAeNativePreview.supports(nativeBlock))
                 display.setTag("nativeTile", HologramAeNativePreview.target(nativeBlock, saved));
-            else if ((registeredCableBus(declaredHost) || saved.getBoolean("gtmb.nativePreview")
+            else if ((quantum || registeredCableBus(declaredHost)
+                || saved.getBoolean("gtmb.nativePreview")
                 || saved.hasKey("parts", 9)
                 || saved.hasKey("tilesCount")
                 || saved.hasKey("Shape")
@@ -183,6 +196,23 @@ final class HologramDisplaySnapshot {
     /** AE cable topology is a visual packet, not persistent grid NBT. Preserve its native visual payload. */
     static void enrichNativeTile(TileEntity tile, NBTTagCompound saved) {
         if (nativeTile(tile)) saved.setBoolean("gtmb.nativePreview", true);
+        if (tile != null && HologramNetworkBindings.NODE_TILE.equals(
+            tile.getClass()
+                .getName())) {
+            try {
+                Field sides = tile.getClass()
+                    .getDeclaredField(
+                        tile.getWorldObj() != null && tile.getWorldObj().isRemote ? "clientConnectedSides"
+                            : "lastSyncedSides");
+                sides.setAccessible(true);
+                if (sides.getType() != int.class)
+                    throw new IllegalArgumentException("GTSWN quantum visual field type changed");
+                saved.setInteger(QUANTUM_SIDES, sides.getInt(tile) & 63);
+                if (saved.hasKey("partContainer", 10)) enrichAeCable(tile, saved.getCompoundTag("partContainer"));
+            } catch (ReflectiveOperationException unavailableVisual) {
+                throw new IllegalArgumentException("GTSWN quantum visual fields unavailable", unavailableVisual);
+            }
+        }
         if (hasClass(tile, "appeng.tile.networking.TileCableBus")) enrichAeCable(tile, saved);
         if (hasClass(tile, "codechicken.multipart.TileMultipart")) {
             try {
@@ -200,7 +230,9 @@ final class HologramDisplaySnapshot {
     private static void enrichAeCable(Object host, NBTTagCompound saved) {
         try {
             Object container = host.getClass()
-                .getMethod("getCableBus")
+                .getMethod(
+                    hasClass(host, "com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode") ? "getPartContainer"
+                        : "getCableBus")
                 .invoke(host);
             if (!(container instanceof appeng.parts.CableBusContainer)) return;
             NBTTagCompound visual = HologramAeNativePreview.cableVisual((appeng.parts.CableBusContainer) container);
@@ -232,7 +264,8 @@ final class HologramDisplaySnapshot {
             || name.startsWith("gcewing.architecture.")
             || name.startsWith("crazypants.enderio.conduit.")
             || name.startsWith("appeng.tile.networking.")
-            || name.equals("appeng.block.networking.BlockCableBus");
+            || name.equals("appeng.block.networking.BlockCableBus")
+            || name.equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode");
     }
 
     private static Integer integerField(Object value, String... names) {

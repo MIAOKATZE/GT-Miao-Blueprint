@@ -583,8 +583,11 @@ public final class HologramNetwork {
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         String action = tag.getString("action");
+        if ("cancelAreaSelection".equals(action)) {
+            HologramService.cancelAreaSelection(player, tag.getString("session"));
+            return;
+        }
         if ("beginAreaSelection".equals(action) || "finishAreaSelection".equals(action)
-            || "cancelAreaSelection".equals(action)
             || "areaPoint".equals(action)
             || "confirmVirtualPosition".equals(action)
             || "unlockVirtualPosition".equals(action)
@@ -595,8 +598,6 @@ public final class HologramNetwork {
                 return;
             if ("beginAreaSelection".equals(action)) HologramService.beginAreaSelection(player);
             else if ("finishAreaSelection".equals(action)) HologramService.finishAreaSelection(player, tag);
-            else if ("cancelAreaSelection".equals(action))
-                HologramService.cancelAreaSelection(player, tag.getString("session"));
             else if ("confirmVirtualPosition".equals(action)) {
                 HologramService.confirmWorldPosition(player, tag);
             } else if ("unlockVirtualPosition".equals(action)) {

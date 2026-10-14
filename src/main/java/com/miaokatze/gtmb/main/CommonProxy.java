@@ -34,6 +34,10 @@ public class CommonProxy {
             .register(new HologramLifecycle());
         HologramSmokeTest.registerIfEnabled();
         HologramInteractionSmoke.registerIfEnabled();
+        com.miaokatze.gtmb.hologram.HologramV011InteractionFixture.install();
+        com.miaokatze.gtmb.hologram.HologramV011WorldSmoke.install();
+        com.miaokatze.gtmb.hologram.HologramV011WorkbenchFixture.install();
+        com.miaokatze.gtmb.hologram.HologramSulfurLineSmoke.install();
         engineReady = true;
     }
 

@@ -1174,7 +1174,7 @@ public final class HologramBlueprintSmoke {
                     .decode(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
                 // The actual client file writer replaces the server's private draft ID with its local file ID.
                 parsed.id = downloadId;
-                Path directory = java.nio.file.Paths.get("config/gtmb/smoke-client-blueprints");
+                Path directory = java.nio.file.Paths.get("MiaoBlueprints/smoke-client-blueprints");
                 Files.createDirectories(directory);
                 Path saved = directory.resolve(downloadId + ".json");
                 Files.write(saved, HologramServerLibrary.encodeShare(parsed));

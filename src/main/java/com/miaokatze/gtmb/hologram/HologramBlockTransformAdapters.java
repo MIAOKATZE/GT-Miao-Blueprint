@@ -20,6 +20,20 @@ final class HologramBlockTransformAdapters {
         HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
 
             public boolean accepts(HologramBlockTransforms.Data data) {
+                return data.type("com.miaokatze.gtswn.common.block.BlockNetworkQuantumNode")
+                    || data.id("gtswn.network_quantum_node");
+            }
+
+            public void turn(HologramBlockTransforms.Data data, boolean vertical) throws IOException {
+                if (data.tile == null) return;
+                if (data.tile.hasKey("gtmb.quantumSides", 3)) data.tile
+                    .setInteger("gtmb.quantumSides", mask(data.tile.getInteger("gtmb.quantumSides"), vertical));
+                if (data.tile.hasKey("partContainer", 10)) ae(data.tile.getCompoundTag("partContainer"), vertical);
+            }
+        });
+        HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
+
+            public boolean accepts(HologramBlockTransforms.Data data) {
                 return data.type("gregtech.") || data.id("BaseMetaTileEntity") || data.id("BaseMetaPipeEntity");
             }
 

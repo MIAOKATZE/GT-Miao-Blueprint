@@ -7,13 +7,73 @@ final class HologramUiText {
 
     private HologramUiText() {}
 
+    static String localized(String key, String fallback) {
+        String result = net.minecraft.util.StatCollector.translateToLocal(key);
+        return key.equals(result) ? fallback : result;
+    }
+
     static String severity(String value) {
         return "blocker".equals(value) ? "阻塞" : "warning".equals(value) ? "注意" : "说明";
     }
 
+    static String nbtMeaning(String key) {
+        String lower = key.toLowerCase(Locale.ROOT);
+        if ("Aspect".equals(key)) return "源质罐中的源质类型；与 Amount 数量一起构成实际源质资源。";
+        if ("Amount".equals(key)) return "资源数量字段；源质罐中表示源质单位数，流体记录中表示流体数量，具体以所属设备格式为准。";
+        if ("mstoredenergy".equals(lower)) return "设备中保存的 EU 能量；保留时按实际资源计费。";
+        if ("mstoredsteam".equals(lower)) return "设备内部保存的蒸汽能量；保留时按已登记换算计入蒸汽资源。";
+        if (lower.equals("items") || lower.equals("mitems")
+            || lower.equals("inventory")
+            || lower.equals("minventory")
+            || lower.equals("itemhandler")
+            || lower.equals("itemstorage")) return "实际物品库存记录；保留时逐项核对并支付对应物品，带标签物品精确匹配。";
+        if (lower.equals("fluid") || lower.equals("fluids")
+            || lower.equals("mfluid")
+            || lower.equals("mfluids")
+            || lower.equals("tank")
+            || lower.equals("tanks")) return "设备流体储存记录；保留时核对流体类型与数量并支付对应资源。";
+        if (lower.equals("owner") || lower.equals("ownerid")
+            || lower.equals("owneruuid")
+            || lower.equals("ownername")
+            || lower.equals("mowneruuid")
+            || lower.equals("mownername")) return "设备或网络所有者身份；去标识阶段按登记规则处理，放置时仍核验权限。";
+        if (lower.equals("x") || lower.equals("y")
+            || lower.equals("z")
+            || lower.equals("dimension")
+            || lower.equals("dim")
+            || lower.equals("anchorx")
+            || lower.equals("anchory")
+            || lower.equals("anchorz")
+            || lower.equals("anchordim")) return "已登记的设备位置或网络锚点字段；请在坐标关系步骤核对清除、绝对或相对方式。";
+        if (lower.equals("frequency") || lower.equals("freq") || lower.equals("channelid") || lower.equals("networkid"))
+            return "登记的网络频率、频道或网络标识；去标识等级可能清除此项。";
+        if (lower.equals("id") || lower.equals("mid")
+            || lower.equals("gtitblueprintitemregistry")
+            || lower.equals("gtitblueprintblockregistry")) return "设备或物品的注册身份，影响类型恢复；此类必需字段由服务端保护。";
+        return "该模组的未登记字段；没有通用含义说明。忽略会从所有匹配方块清除此同名根条目及其子内容。";
+    }
+
     static String reason(String value) {
         if (value == null || value.isEmpty()) return "";
+        if (value.startsWith("蓝图库索引保存失败：")) return "蓝图库索引保存失败，请检查磁盘空间与存储目录后重试；当前修改尚未保存";
         String lower = value.toLowerCase(Locale.ROOT);
+        if (lower.contains("framebuffer") || lower.contains("preview readback gl error"))
+            return "当前图形环境无法生成结构预览图，请检查渲染设置后重试，蓝图尚未保存";
+        if (lower.contains("native blueprint model unavailable") || lower.contains("blueprint material unavailable"))
+            return "部分方块的模型或材质无法生成预览图，请核对模组与资源包后重试";
+        if (lower.contains("preview has no cells") || lower.contains("preview has no buildable cells"))
+            return "蓝图中没有可构建的方块，请检查被排除的区域";
+        if (lower.contains("blueprint preview queue is full") || lower.contains("save result queue is busy"))
+            return "蓝图保存队列繁忙，请稍候重试";
+        if (lower.contains("png") || lower.contains("artifact")
+            || lower.contains("saved json")
+            || lower.contains("blueprint preview source"))
+            return lower.contains("rollback") ? "蓝图文件回退尚未完成，请核对 JSON 与预览图后重试" : "蓝图与预览图的保存校验未完成，请保持当前蓝图并重试";
+        if (lower.contains("native tile id does not match the registered block factory"))
+            return "方块 NBT 的设备类型与实际方块不一致，请重新采集该方块或移除这条错误记录";
+        if (lower.contains("native tile id must be a nonempty registered string"))
+            return "方块 NBT 的设备类型无效，必须使用已登记的原生类型名称";
+        if (lower.contains("unsupported native block factory identity")) return "无法核验该方块的原生设备类型，请重新采集并核对模组版本";
         if (lower.contains("needs a real bound quantum terminal")) return "这个网络组尚未绑定，请选择背包中已绑定真实网络的量子终端";
         if (lower.contains("selected quantum terminal changed")) return "背包里的量子终端已变化，请重新选择并绑定";
         if (lower.contains("select a real quantum node or terminal")) return "请选择携带网络坐标的真实量子节点或终端";

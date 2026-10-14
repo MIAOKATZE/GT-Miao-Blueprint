@@ -40,7 +40,7 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 public final class HologramClient {
 
     private static boolean installed;
-    static HologramState state;
+    static volatile HologramState state;
     private static net.minecraft.world.World snapshotWorld;
     static boolean worldPreview = true;
     private static long receivedAt;
@@ -96,8 +96,8 @@ public final class HologramClient {
                     .getString("gtitHologramToolId"),
             tool);
         previewDistance.sync(
-            projectorWorld()
-                && (worldStage() == HologramWorldFlow.Stage.MOVING || worldStage() == HologramWorldFlow.Stage.AREA),
+            worldStage() == HologramWorldFlow.Stage.AREA ? areaProjectorWorld()
+                : projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
             mc.theWorld,
             state == null ? "" : state.session);
     }
@@ -120,9 +120,29 @@ public final class HologramClient {
                 .isProjector(mc.thePlayer.getHeldItem());
     }
 
+    static boolean areaProjectorWorld() {
+        if (!projectorWorld() || !areaWorldContext()) return false;
+        ItemStack held = Minecraft.getMinecraft().thePlayer.getHeldItem();
+        return HologramInputContext.selectionTool(
+            state.data.getString("areaToolId"),
+            held.hasTagCompound() ? held.getTagCompound()
+                .getString("gtitHologramToolId") : "");
+    }
+
+    private static boolean areaWorldContext() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return mc.currentScreen == null && mc.thePlayer != null
+            && mc.theWorld != null
+            && mc.theWorld == snapshotWorld
+            && state != null
+            && mc.thePlayer.dimension == state.data.getInteger("dimension")
+            && (state.data.getBoolean("areaSelecting") || state.data.getBoolean("areaImporting"));
+    }
+
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!projectorWorld()) return;
+        if (worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()) return;
         boolean air = input.getBoolean("air");
         long tick = mc.theWorld.getTotalWorldTime();
         if (mc.theWorld == lastUseWorld && tick == lastUseTick) return;
@@ -180,6 +200,7 @@ public final class HologramClient {
     public void movingWheel(MouseEvent event) {
         if (event.dwheel == 0 || !projectorWorld()
             || worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
+            || worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()
             || !altHeld()) return;
         syncPreviewDistance();
         previewDistance.scroll(event.dwheel);
@@ -190,14 +211,8 @@ public final class HologramClient {
     public void areaMouse(MouseEvent event) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!event.buttonstate || (event.button != 0 && event.button != 1)
-            || mc.currentScreen != null
-            || state == null
-            || !state.data.getBoolean("areaSelecting")
-            || mc.thePlayer == null
-            || mc.theWorld == null
-            || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
-                .isProjector(mc.thePlayer.getHeldItem()))
-            return;
+            || !areaProjectorWorld()
+            || !state.data.getBoolean("areaSelecting")) return;
         boolean control = controlHeld(), shift = shiftHeld();
         if (event.button == 1 && shift && !control) {
             event.setCanceled(true);
@@ -207,13 +222,7 @@ public final class HologramClient {
             worldAction("finishAreaSelection");
             return;
         }
-        boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
         NBTTagCompound request = new NBTTagCompound();
-        MovingObjectPosition hit = mc.objectMouseOver;
-        if (!alt && (hit == null || hit.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK)) {
-            event.setCanceled(true);
-            return;
-        }
         if (event.button == 1 && !usePressFence.consume()) {
             event.setCanceled(true);
             return;
@@ -222,8 +231,8 @@ public final class HologramClient {
         request.setInteger("point", event.button == 0 ? 1 : 2);
         request.setString("mode", areaSelectionMode(control, shift));
         syncPreviewDistance();
-        int[] anchor = alt ? airSelectionAnchor() : new int[] { hit.blockX, hit.blockY, hit.blockZ };
-        request.setBoolean("atPlayer", alt && previewDistance.distance() == 0);
+        int[] anchor = areaSelectionAnchor();
+        request.setBoolean("atPlayer", previewDistance.distance() == 0);
         request.setInteger("x", anchor[0]);
         request.setInteger("y", anchor[1]);
         request.setInteger("z", anchor[2]);
@@ -237,19 +246,35 @@ public final class HologramClient {
 
     @SubscribeEvent
     public void areaGuide(RenderGameOverlayEvent.Text event) {
-        if (!projectorWorld()) return;
-        if (HologramLibraryClient.INSTANCE.quickInProgress()) event.left.add(
+        HologramWorldGuide.clearRenderWitness();
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null) return;
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (projectorWorld() && HologramLibraryClient.INSTANCE.quickInProgress()) lines.add(
             HologramLibraryClient.INSTANCE.status() + " · "
                 + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.progressBytes())
                 + " / "
                 + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.totalBytes()));
         HologramWorldFlow.Stage stage = worldStage();
+        if (stage == HologramWorldFlow.Stage.WORKSPACE) {
+            HologramWorldGuide.draw(lines, event.resolution);
+            return;
+        }
+        if (stage == HologramWorldFlow.Stage.AREA && areaWorldContext() && !areaProjectorWorld()) {
+            lines.add(
+                text(
+                    "worldGuideAreaPaused",
+                    "Area selection paused · Hold the same projector to continue · Esc exits selection"));
+            HologramWorldGuide.draw(lines, event.resolution);
+            return;
+        }
+        if (!projectorWorld() || state == null || mc.theWorld != snapshotWorld) return;
         String key = state != null && state.data.getBoolean("areaImporting") ? "worldGuideAreaImport"
             : stage == HologramWorldFlow.Stage.AREA ? "worldGuideArea"
                 : stage == HologramWorldFlow.Stage.MOVING ? "worldGuideMoving"
                     : stage == HologramWorldFlow.Stage.LOCKED ? "worldGuideLocked"
                         : stage == HologramWorldFlow.Stage.JOB ? "worldGuideJob" : "worldGuideIdle";
-        event.left.add(text(key, "Right-click: projector workspace"));
+        lines.add(text(key, "Right-click: projector workspace"));
         if (stage == HologramWorldFlow.Stage.AREA && !state.data.getBoolean("areaImporting")) {
             net.minecraft.nbt.NBTTagList regions = state.data.getTagList("areaRegions", 10);
             int subtracted = 0;
@@ -257,16 +282,27 @@ public final class HologramClient {
                 regions.getCompoundTagAt(i)
                     .getString("mode")))
                 subtracted++;
-            event.left.add(
+            lines.add(
                 String.format(
                     java.util.Locale.ROOT,
                     text("worldGuideAreaRegions", "Regions %d, subtract %d"),
                     regions.tagCount() - subtracted,
                     subtracted));
+            lines.add(
+                text(
+                    "worldGuideAreaOrder",
+                    "Mark either corner first · Ctrl / Ctrl+Shift at the first mark locks the combination mode"));
+            if (state.data.getInteger("areaPendingCorner") != 0) lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    text("worldGuideAreaMode", "Locked mode: %s · Mark the other corner to complete"),
+                    text(
+                        "worldGuideAreaMode." + state.data.getString("areaPointMode"),
+                        state.data.getString("areaPointMode"))));
         }
         if (stage == HologramWorldFlow.Stage.MOVING || stage == HologramWorldFlow.Stage.AREA) {
-            int[] anchor = stage == HologramWorldFlow.Stage.AREA ? airSelectionAnchor() : movingAnchor(state);
-            event.left.add(
+            int[] anchor = stage == HologramWorldFlow.Stage.AREA ? areaSelectionAnchor() : movingAnchor(state);
+            lines.add(
                 String.format(
                     java.util.Locale.ROOT,
                     text("worldGuideTarget", "Distance %d | Target %d, %d, %d | Alt + scroll: distance"),
@@ -275,9 +311,9 @@ public final class HologramClient {
                     anchor[1],
                     anchor[2]));
             String status = HologramUiText.reason(state.data.getString("status"));
-            if (!status.isEmpty()) event.left.add(status);
+            if (!status.isEmpty()) lines.add(status);
         } else if (stage == HologramWorldFlow.Stage.LOCKED) {
-            event.left.add(
+            lines.add(
                 String.format(
                     java.util.Locale.ROOT,
                     text("worldGuideLockedTarget", "Locked target %d, %d, %d"),
@@ -285,16 +321,17 @@ public final class HologramClient {
                     state.data.getInteger("y"),
                     state.data.getInteger("z")));
             String status = HologramUiText.reason(state.data.getString("status"));
-            if (!status.isEmpty()) event.left.add(status);
+            if (!status.isEmpty()) lines.add(status);
         }
+        HologramWorldGuide.draw(lines, event.resolution);
     }
 
     @SubscribeEvent
     public void clientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
-        HologramLibraryClient.INSTANCE.tick();
         syncSnapshotWorld();
         installDecoded(snapshotInbox.poll());
+        HologramLibraryClient.INSTANCE.tick();
         Minecraft mc = Minecraft.getMinecraft();
         ItemStack tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
         boolean changed = inputContext.observe(
@@ -317,7 +354,9 @@ public final class HologramClient {
             Keyboard.isCreated() && controlHeld() && Keyboard.isKeyDown(Keyboard.KEY_Z) && !shiftHeld(),
             changed);
         if (!projectorWorld() || state == null || mc.theWorld != snapshotWorld) return;
-        if (undoArea && state.data.getBoolean("areaSelecting") && state.data.getBoolean("areaUndoAvailable")) {
+        if (undoArea && areaProjectorWorld()
+            && state.data.getBoolean("areaSelecting")
+            && state.data.getBoolean("areaUndoAvailable")) {
             NBTTagCompound undo = new NBTTagCompound();
             undo.setString("op", "undoAreaSelection");
             undo.setString("session", state.session);
@@ -407,7 +446,7 @@ public final class HologramClient {
                 return;
             }
         }
-        if (!(event.gui instanceof GuiIngameMenu) || !projectorWorld() || state == null) return;
+        if (!(event.gui instanceof GuiIngameMenu) || state == null || !areaWorldContext() && !projectorWorld()) return;
         HologramWorldFlow.Intent intent = HologramWorldFlow.intent(worldStage(), HologramWorldFlow.Gesture.ESCAPE);
         if (intent != HologramWorldFlow.Intent.CANCEL_AREA && intent != HologramWorldFlow.Intent.CANCEL_PLACEMENT)
             return;
@@ -500,6 +539,12 @@ public final class HologramClient {
             look.yCoord,
             look.zCoord,
             previewDistance.distance());
+    }
+
+    /** The floating cursor and point packets share one target; Alt only changes its distance. */
+    static int[] areaSelectionAnchor() {
+        syncPreviewDistance();
+        return airSelectionAnchor();
     }
 
     private static void receive(NBTTagCompound nbt) {
@@ -635,11 +680,12 @@ public final class HologramClient {
             }
         } else if (mc.currentScreen instanceof HologramAeContainerScreen && same) {
             ((HologramAeContainerScreen) mc.currentScreen).updateState(next);
-        } else if (mc.currentScreen instanceof HologramScreen && same) {
-            ((HologramScreen) mc.currentScreen).updateState(next);
-        } else if (!same || nbt.getBoolean("open")) {
-            mc.displayGuiScreen(new HologramScreen(next));
-        }
+        } else if (mc.currentScreen instanceof HologramScreen
+            && (same || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
+                ((HologramScreen) mc.currentScreen).updateState(next);
+            } else if (!same || nbt.getBoolean("open")) {
+                mc.displayGuiScreen(new HologramScreen(next));
+            }
     }
 
     private static void restorePlacementDeidentification(HologramState snapshot) {
@@ -726,6 +772,7 @@ public final class HologramClient {
 
     @SubscribeEvent
     public void renderWorld(RenderWorldLastEvent event) {
+        HologramAreaOverlay.clearRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();

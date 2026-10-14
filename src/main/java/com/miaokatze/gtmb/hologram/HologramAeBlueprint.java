@@ -87,6 +87,13 @@ public final class HologramAeBlueprint {
         Arrays.asList("unsupported_host", "unsupported_part", "unsupported_part_item", "unsupported_cell"));
     private static final String TILE = "appeng.tile.";
     private static final Map<String, Schema> SCHEMAS = new HashMap<>();
+    // AE2FluidCraft 1.5.113: these finite cells inherit AEBaseCell's stack-backed FLUID schema.
+    // Creative, void, infinity-water and portable cells have different native behavior and remain unreviewed.
+    private static final Set<String> AE2FC_CELL_TYPES = new HashSet<>(
+        Arrays.asList(
+            "com.glodblock.github.common.item.ItemBasicFluidStorageCell",
+            "com.glodblock.github.common.item.ItemMultiFluidStorageCell",
+            "com.glodblock.github.common.item.ItemFluidExtremeStorageCell"));
     private static final Set<String> CELL_TYPES = new HashSet<>(
         Arrays.asList(
             "appeng.items.storage.ItemBasicStorageCell",
@@ -108,6 +115,7 @@ public final class HologramAeBlueprint {
     private static Field listContents;
 
     static {
+        CELL_TYPES.addAll(AE2FC_CELL_TYPES);
         schema("storage.TileDrive", inv("inv", "item", 10, "emptyCell", 1, "cell"));
         schema("storage.TileChest", inv("inv", "item", 2, "physical", 64, "any"));
         schema("storage.TileIOPort", inv("cells", "#", 12, "emptyCell", 1, "cell"), upgrade(3));
@@ -156,6 +164,28 @@ public final class HologramAeBlueprint {
     }
 
     private HologramAeBlueprint() {}
+
+    /** Exact AE2FC class/API gate; a generic storage-cell implementation cannot acquire this schema. */
+    static boolean nativeFluidCellSchema(ItemStack source) {
+        return source != null && source.getItem() instanceof appeng.items.AEBaseCell
+            && AE2FC_CELL_TYPES.contains(
+                source.getItem()
+                    .getClass()
+                    .getName())
+            && ((appeng.items.AEBaseCell) source.getItem()).getStackType()
+                == appeng.util.item.AEFluidStackType.FLUID_STACK_TYPE;
+    }
+
+    /** Only the native root storage records are contents; nested recipes and other metadata are inert here. */
+    static NBTTagCompound projectNativeFluidCellMetadata(String type, NBTTagCompound source) throws IOException {
+        if (!AE2FC_CELL_TYPES.contains(type)) throw new IOException("Unreviewed AE2FluidCraft cell schema");
+        NBTTagCompound empty = source == null ? new NBTTagCompound() : (NBTTagCompound) source.copy();
+        for (Object raw : new HashSet<Object>(empty.func_150296_c())) {
+            String key = (String) raw;
+            if (key.equals("ft") || key.equals("fc") || key.matches("[#@][0-9]+")) empty.removeTag(key);
+        }
+        return empty;
+    }
 
     public static final class Issue {
 
@@ -599,6 +629,18 @@ public final class HologramAeBlueprint {
             if (!data.hasKey("partContainer", 10)) throw new IOException("Malformed GTSWN part container");
             cable(work, data.getCompoundTag("partContainer"), new String[] { "partContainer" });
         }
+        // Keep this exact scalar in saved/preview data. nativePayload removes it before native readers or payment.
+        if (data.hasKey(HologramDisplaySnapshot.QUANTUM_SIDES)) {
+            work.roots.add(HologramDisplaySnapshot.QUANTUM_SIDES);
+            if (!HologramBlueprintNbt.registeredQuantumTile(data) || !HologramDisplaySnapshot.validQuantumSides(data)) {
+                work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    HologramDisplaySnapshot.QUANTUM_SIDES,
+                    "Quantum display mask requires the registered node identity and an integer from 0 to 63");
+                data.removeTag(HologramDisplaySnapshot.QUANTUM_SIDES);
+            }
+        }
         Set<String> known = new HashSet<>(
             Arrays.asList(
                 "id",
@@ -607,6 +649,7 @@ public final class HologramAeBlueprint {
                 "z",
                 "color",
                 "partContainer",
+                HologramDisplaySnapshot.QUANTUM_SIDES,
                 HologramNetworkBindings.GROUP,
                 HologramNetworkBindings.ROLE,
                 HologramNetworkBindings.HINT,
@@ -2099,11 +2142,23 @@ public final class HologramAeBlueprint {
             String cellPath = displayPath(location);
             if (CELL_TYPES.contains(type)) {
                 NBTTagCompound original = source.hasTagCompound() ? source.getTagCompound() : new NBTTagCompound();
-                NBTTagCompound kept = new NBTTagCompound();
+                boolean nativeFluid = AE2FC_CELL_TYPES.contains(type);
+                if (nativeFluid && !nativeFluidCellSchema(source)) {
+                    work.issue(
+                        "unsupported_cell",
+                        "warning",
+                        cellPath,
+                        "Reviewed fluid cell no longer supplies the native stack-backed fluid schema; replace this marker");
+                    return null;
+                }
+                NBTTagCompound kept = nativeFluid ? projectNativeFluidCellMetadata(type, original)
+                    : new NBTTagCompound();
                 boolean hadContents = false;
                 for (Object raw : original.func_150296_c()) {
                     String key = (String) raw;
-                    if (CELL_CONFIG_KEYS.contains(key)) kept.setTag(
+                    if (nativeFluid) {
+                        if (!kept.hasKey(key)) hadContents = true;
+                    } else if (CELL_CONFIG_KEYS.contains(key)) kept.setTag(
                         key,
                         original.getTag(key)
                             .copy());

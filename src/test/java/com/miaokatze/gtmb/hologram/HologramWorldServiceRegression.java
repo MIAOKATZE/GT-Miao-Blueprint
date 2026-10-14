@@ -387,8 +387,8 @@ public final class HologramWorldServiceRegression {
                 .setString("gtitHologramPreset", missing);
             HologramService.quickPlaceLastBlueprint(player, request);
             SimpleAssert.that(
-                ((FeedbackPlayer) player).message.contains("预设不存在"),
-                "deleted last blueprint gives explicit feedback");
+                ((FeedbackPlayer) player).message.contains("蓝图不存在"),
+                "deleted last blueprint gives explicit feedback: " + ((FeedbackPlayer) player).message);
             SimpleAssert
                 .that(sessions.get(player.getUniqueID()) == session, "missing last selection retains the old session");
             SimpleAssert.that(

@@ -150,6 +150,8 @@ final class HologramStructureIsolationRegression {
             preset.structures.add(a);
             preset.structures.add(b);
             HologramPresets.Cell saved = HologramPresets.cell(hotCasing, 1, 0, 0, -1, false);
+            saved.metadata = hotCasing.getItem()
+                .getMetadata(hotCasing.getItemDamage());
             saved.structureId = "furnace";
             saved.allowedTargets = new ArrayList<>(Arrays.asList(new HologramPresets.Target(hotCasing)));
             preset.cells.add(saved);
@@ -215,9 +217,21 @@ final class HologramStructureIsolationRegression {
     }
 
     private static Block casing(int id, String name) {
-        Block block = new Block(net.minecraft.block.material.Material.iron) {};
+        Block block = new Block(net.minecraft.block.material.Material.iron) {
+
+            @Override
+            public int damageDropped(int metadata) {
+                return metadata;
+            }
+        };
         Block.blockRegistry.addObject(id, "gtmb:" + name, block);
-        Item item = new ItemBlock(block);
+        Item item = new ItemBlock(block) {
+
+            @Override
+            public int getMetadata(int damage) {
+                return damage;
+            }
+        }.setHasSubtypes(true);
         Item.itemRegistry.addObject(id, "gtmb:" + name, item);
         return block;
     }

@@ -28,7 +28,89 @@ public final class HologramDeidentificationRegression {
         coverSlotsBindActor();
         recipesSurviveEveryLevel();
         monotonicMetadata();
+        carpenterOwnerBoundary();
         orderedRegions();
+    }
+
+    private static void carpenterOwnerBoundary() throws Exception {
+        UUID actor = new UUID(11, 22), other = new UUID(33, 44);
+        NBTTagCompound nativeTag = new NBTTagCompound();
+        nativeTag.setString("id", "TileEntityCarpentersBlock");
+        nativeTag.setString("cbOwner", actor.toString());
+        nativeTag.setInteger("cbMetadata", 19);
+        NBTTagCompound recipe = new NBTTagCompound();
+        recipe.setString("cbOwner", "recipe owner literal");
+        NBTTagCompound material = new ItemStack(Items.paper, 7).writeToNBT(new NBTTagCompound());
+        material.setTag("tag", recipe.copy());
+        NBTTagList attributes = new NBTTagList();
+        attributes.appendTag(material);
+        nativeTag.setTag("cbAttrList", attributes);
+        nativeTag.setTag("encodedRecipe", recipe.copy());
+        for (int level = 0; level <= 10; level++) {
+            NBTTagCompound projected = (NBTTagCompound) nativeTag.copy();
+            HologramDeidentification.project(projected, level);
+            SimpleAssert.eq(
+                level == 0 ? actor.toString() : "",
+                projected.getString("cbOwner"),
+                "Carpenter owner is retained at zero and explicitly blank from level one " + level);
+            SimpleAssert.that(
+                attributes.equals(projected.getTag("cbAttrList")) && recipe.equals(projected.getTag("encodedRecipe")),
+                "Carpenter identity policy leaves physical attribute quantities and opaque recipe ownership exact "
+                    + level);
+        }
+        SimpleAssert.that(
+            !HologramDeidentification.foreignOwner(nativeTag, actor, "display name"),
+            "registered Carpenter owner's own UUID can use level zero");
+        SimpleAssert.that(
+            HologramDeidentification.foreignOwner(nativeTag, other, "different player"),
+            "level-zero native Carpenter identity belonging to another player is detected");
+        NBTTagCompound cleared = (NBTTagCompound) nativeTag.copy();
+        HologramDeidentification.project(cleared, 1);
+        SimpleAssert.that(
+            !HologramDeidentification.foreignOwner(cleared, other, "different player"),
+            "blank level-one Carpenter ownership waits for native actor binding");
+        NBTTagCompound transported = HologramBlueprintNbt.forPlacement(
+            HologramBlueprintNbt.encodeCaptured(nativeTag),
+            other,
+            "different player",
+            1,
+            64,
+            2,
+            true,
+            true);
+        SimpleAssert.eq(
+            actor.toString(),
+            transported.getString("cbOwner"),
+            "detached NBT transport never unconditionally rewrites the original Carpenter owner");
+        NBTTagCompound selected = HologramBlueprintNbt.decode(
+            HologramBlueprintNbt.filterCaptured(
+                HologramBlueprintNbt.encodeCaptured(nativeTag),
+                java.util.Collections.emptyList(),
+                true));
+        SimpleAssert.eq(
+            actor.toString(),
+            selected.getString("cbOwner"),
+            "an NBT selection cannot silently remove Carpenter identity while claiming level zero");
+        HologramDeidentification.project(selected, 1);
+        SimpleAssert.eq(
+            "",
+            selected.getString("cbOwner"),
+            "omitting optional Carpenter attributes does not disable the registered owner policy");
+        NBTTagCompound opaque = new NBTTagCompound();
+        opaque.setString("id", "opaque.tile");
+        opaque.setString("cbOwner", other.toString());
+        HologramDeidentification.project(opaque, 10);
+        SimpleAssert
+            .eq(other.toString(), opaque.getString("cbOwner"), "unknown same-name string is not a Carpenter identity");
+        SimpleAssert.that(
+            !HologramDeidentification.foreignOwner(opaque, actor, "self"),
+            "unknown cbOwner data is not guessed as a permission field");
+        NBTTagCompound complex = (NBTTagCompound) nativeTag.copy();
+        complex.setTag("cbOwner", recipe.copy());
+        HologramDeidentification.project(complex, 1);
+        SimpleAssert.that(
+            recipe.equals(complex.getTag("cbOwner")),
+            "unreviewed complex cbOwner data is preserved for explicit schema rejection rather than recursively cleared");
     }
 
     private static void coverSlotsBindActor() throws Exception {

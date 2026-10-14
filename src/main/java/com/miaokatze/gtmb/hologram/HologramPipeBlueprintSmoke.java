@@ -3,7 +3,9 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -66,10 +68,17 @@ final class HologramPipeBlueprintSmoke {
             "area_keeps_pipe_metatile_identity");
         require(original.equals(snapshot(source)), "area_capture_preserves_real_source");
         HologramPresets.validate(preset);
-        boolean saved = false;
+        Path library = HologramPresets.libraryPath();
+        byte[] libraryBefore = Files.exists(library)
+            ? HologramBlueprintSharing.readBytes(library, HologramPresets.MAX_LIBRARY_BYTES)
+            : null;
+        Field cache = HologramPresets.class.getDeclaredField("cached");
+        cache.setAccessible(true);
+        Object cacheBefore = cache.get(null);
+        boolean saveAttempted = false;
         try {
+            saveAttempted = true;
             HologramPresets.save(preset);
-            saved = true;
             HologramPresets.Preset loaded = readSaved(preset.id);
             require(loaded.cells.get(0).facing == -1, "real_disk_reload_keeps_no_front");
             HologramBlockTransforms.turn(loaded.cells.get(0), false);
@@ -147,18 +156,41 @@ final class HologramPipeBlueprintSmoke {
             System.out.println(
                 "[GTMB-HOLOGRAM-PIPE-BLUEPRINT] FINAL PASS real area/disk/rotation/paid placement; UNKNOWN front normalized");
         } finally {
-            if (saved) HologramPresets.delete(preset.id);
+            if (saveAttempted) {
+                try {
+                    Path pair = library.getParent()
+                        .resolve("local_" + preset.id + ".json");
+                    if (Files.exists(pair) || Files.exists(HologramBlueprintArtifact.previewPath(pair)))
+                        HologramPresets.delete(preset.id);
+                } finally {
+                    restoreLibrary(library, libraryBefore, cache, cacheBefore);
+                }
+            }
         }
+    }
+
+    /** This server-only fixture restores its own state; it does not manufacture a native preview. */
+    private static void restoreLibrary(Path library, byte[] bytes, Field cache, Object previousCache) throws Exception {
+        if (bytes == null) {
+            Files.deleteIfExists(library);
+        } else {
+            Path restore = Files.createTempFile(library.getParent(), "gtmb-pipe-fixture-restore-", ".tmp");
+            try {
+                Files.write(restore, bytes);
+                Files.move(restore, library, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                Files.deleteIfExists(restore);
+            }
+        }
+        cache.set(null, previousCache);
     }
 
     @SuppressWarnings("unchecked")
     private static HologramPresets.Preset readSaved(String id) throws Exception {
-        Field file = HologramPresets.class.getDeclaredField("FILE");
-        file.setAccessible(true);
         Method read = HologramPresets.class.getDeclaredMethod("readLibrary", Path.class);
         read.setAccessible(true);
-        for (HologramPresets.Preset preset : (List<HologramPresets.Preset>) read.invoke(null, file.get(null)))
-            if (id.equals(preset.id)) return preset;
+        for (HologramPresets.Preset preset : (List<HologramPresets.Preset>) read
+            .invoke(null, HologramPresets.libraryPath())) if (id.equals(preset.id)) return preset;
         throw new AssertionError("pipe saved library entry missing on disk");
     }
 

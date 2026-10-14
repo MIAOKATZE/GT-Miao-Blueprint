@@ -110,6 +110,114 @@ final class HologramPresetPersistenceRegression {
                 else throw new AssertionError("preset fixture cleanup", failure);
             }
         }
+        directoryLayout();
+    }
+
+    private static void directoryLayout() {
+        Path game = null;
+        Field root = null, cache = null;
+        Object previousRoot = null, previousCache = null;
+        try {
+            root = HologramLibraryFacade.class.getDeclaredField("clientGameDirectory");
+            cache = HologramPresets.class.getDeclaredField("cached");
+            root.setAccessible(true);
+            cache.setAccessible(true);
+            previousRoot = root.get(null);
+            previousCache = cache.get(null);
+            game = Files.createTempDirectory("gtmb-blueprint-directory-");
+            Path oldLibrary = game.resolve("config/gtmb/hologram-presets.json");
+            Files.createDirectories(oldLibrary.getParent());
+            HologramPresets.Preset oldPreset = preset("old-folder-only", "Old directory only");
+            byte[] oldBytes = ("{\"schema\":2,\"presets\":[" + new com.google.gson.Gson().toJson(oldPreset) + "]}")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            Files.write(oldLibrary, oldBytes);
+            HologramLibraryFacade.configureClientGameDirectory(game);
+            Path expected = game.resolve("MiaoBlueprints/hologram-presets.json");
+            SimpleAssert.eq(expected, HologramPresets.libraryPath(), "integrated collection uses actual game root");
+            SimpleAssert.eq(
+                0,
+                HologramPresets.all()
+                    .size(),
+                "old integrated collection is not read or migrated");
+            SimpleAssert.that(!Files.exists(expected), "loading a new library does not copy old blueprint files");
+            HologramPresets.Preset saved = preset("unsaved", "New directory fixture");
+            HologramPresets.save(saved);
+            SimpleAssert.that(Files.isRegularFile(expected), "integrated save writes the new exact collection path");
+            HologramPresets.clearCache();
+            SimpleAssert.eq(
+                1,
+                HologramPresets.all()
+                    .size(),
+                "new integrated collection survives disk reload");
+            SimpleAssert.eq(
+                saved.id,
+                HologramPresets.all()
+                    .get(0).id,
+                "reload retains the saved identity");
+            SimpleAssert.that(
+                java.util.Arrays.equals(oldBytes, Files.readAllBytes(oldLibrary)),
+                "new integrated saves leave old blueprint collection bytes untouched");
+            SimpleAssert.eq(
+                java.nio.file.Paths.get("MiaoBlueprints")
+                    .toAbsolutePath()
+                    .normalize(),
+                HologramLibraryFacade.blueprintDirectory(game, true),
+                "dedicated storage remains at the server run root rather than a configured client root");
+
+            Path oldShare = game.resolve("config/gtmb/hologram-blueprints/shared_fixture.json");
+            Files.createDirectories(oldShare.getParent());
+            byte[] preview = com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng();
+            Path sourcePair = game.resolve("MiaoBlueprints/local_" + saved.id + ".json");
+            HologramBlueprintSharing.write(sourcePair, saved, preview);
+            HologramBlueprintSharing.write(oldShare, saved, preview);
+            byte[] oldShareBytes = Files.readAllBytes(oldShare);
+            byte[] oldPreviewBytes = Files.readAllBytes(HologramBlueprintArtifact.previewPath(oldShare));
+            Method importFile = HologramBlueprintSharing.class.getDeclaredMethod("importFile", String.class);
+            Method resolve = HologramBlueprintSharing.class.getDeclaredMethod("resolve", String.class);
+            importFile.setAccessible(true);
+            resolve.setAccessible(true);
+            expectIo(importFile, "shared_fixture");
+            HologramPresets.exportBlueprint("shared_fixture", saved);
+            SimpleAssert.eq(
+                game.resolve("MiaoBlueprints/shared_fixture.json"),
+                HologramBlueprintSharing.resolve("shared_fixture"),
+                "share import and export use the same new blueprint directory");
+            SimpleAssert.eq(
+                saved.id,
+                HologramPresets.importBlueprint("shared_fixture").id,
+                "new share survives an actual disk round trip");
+            SimpleAssert.that(
+                java.util.Arrays.equals(oldShareBytes, Files.readAllBytes(oldShare)),
+                "share export leaves the old sharing directory untouched");
+            SimpleAssert.that(
+                java.util.Arrays
+                    .equals(oldPreviewBytes, Files.readAllBytes(HologramBlueprintArtifact.previewPath(oldShare))),
+                "share export leaves the old preview bytes untouched");
+            SimpleAssert.that(
+                java.util.Arrays.equals(
+                    HologramBlueprintArtifact.readPair(sourcePair).png,
+                    HologramBlueprintArtifact.readPair(HologramBlueprintSharing.resolve("shared_fixture")).png),
+                "manual share carries the matching source preview without changing its pixels or source digest");
+            expectIo(resolve, "hologram-presets");
+            expectIo(resolve, "Hologram-Presets");
+            expectIo(resolve, "local_11111111-1111-1111-1111-111111111111");
+            expectIo(resolve, "public_11111111-1111-1111-1111-111111111111");
+        } catch (Exception failure) {
+            throw new AssertionError("blueprint directory regression", failure);
+        } finally {
+            try {
+                if (root != null) root.set(null, previousRoot);
+                if (cache != null) cache.set(null, previousCache);
+                if (game != null) {
+                    try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                        for (Path path : (Iterable<Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator)
+                            Files.deleteIfExists(path);
+                    }
+                }
+            } catch (Exception failure) {
+                throw new AssertionError("blueprint directory fixture cleanup", failure);
+            }
+        }
     }
 
     private static HologramPresets.Preset preset(String id, String name) {

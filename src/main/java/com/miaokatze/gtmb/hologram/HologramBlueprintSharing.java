@@ -10,7 +10,6 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
 import com.google.gson.Gson;
@@ -23,7 +22,6 @@ import com.google.gson.JsonParser;
 final class HologramBlueprintSharing {
 
     static final int MAX_BYTES = 8 * 1024 * 1024;
-    private static final Path DIRECTORY = Paths.get("config", "gtmb", "hologram-blueprints");
     private static final Gson GSON = new GsonBuilder().create();
 
     private HologramBlueprintSharing() {}
@@ -44,16 +42,33 @@ final class HologramBlueprintSharing {
 
     static Path resolve(String name) throws IOException {
         if (name == null || !name.matches("[a-zA-Z0-9_-]{1,64}")) throw new IOException("蓝图文件名只能包含字母、数字、下划线和短横线");
-        return DIRECTORY.resolve(name + ".json");
+        if (name.equalsIgnoreCase("hologram-presets") || name.toLowerCase(java.util.Locale.ROOT)
+            .startsWith("local_")
+            || name.toLowerCase(java.util.Locale.ROOT)
+                .startsWith("public_"))
+            throw new IOException("蓝图文件名与蓝图库保留名称冲突");
+        return HologramLibraryFacade.blueprintDirectory()
+            .resolve(name + ".json");
     }
 
     static void write(Path file, HologramPresets.Preset preset) throws IOException {
+        String id = preset == null ? "" : preset.id;
+        String basename = id.startsWith("local_") || id.startsWith("public_") ? id : "local_" + id;
+        if (!basename.matches("(?:local_|public_)[a-fA-F0-9-]{36}")) throw new IOException("蓝图必须先完成真实结构预览保存");
+        HologramBlueprintArtifact.Artifact original = HologramBlueprintArtifact.readPair(
+            HologramLibraryFacade.blueprintDirectory()
+                .resolve(basename + ".json"));
+        write(file, preset, original.png);
+    }
+
+    static void write(Path file, HologramPresets.Preset preset, byte[] preview) throws IOException {
         HologramPresets.Preset copy = HologramPresets.copy(preset);
+        HologramBlueprintVersions.validate(copy);
         HologramPresets.validate(copy);
         Share share = new Share();
         share.blueprint = copy;
         byte[] bytes = encodeBounded(GSON, share, MAX_BYTES);
-        atomicWrite(file, bytes);
+        HologramBlueprintArtifact.writePair(file, bytes, preview);
     }
 
     /** Stop serialization at the byte budget instead of allocating an unbounded JSON string first. */
@@ -100,7 +115,7 @@ final class HologramBlueprintSharing {
     }
 
     static HologramPresets.Preset read(Path file) throws IOException {
-        return decode(new String(readBytes(file), StandardCharsets.UTF_8));
+        return decode(new String(HologramBlueprintArtifact.readPair(file).json, StandardCharsets.UTF_8));
     }
 
     static byte[] readBytes(Path file) throws IOException {
@@ -165,6 +180,9 @@ final class HologramBlueprintSharing {
                         .getAsString()))
                 throw new IOException("蓝图分享文件schema无效");
             validatePresetSchema(
+                root.getAsJsonObject()
+                    .get("blueprint"));
+            HologramBlueprintVersions.validateJson(
                 root.getAsJsonObject()
                     .get("blueprint"));
             Share share = GSON.fromJson(root, Share.class);

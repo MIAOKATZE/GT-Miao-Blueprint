@@ -50,13 +50,12 @@ public final class HologramAeInteractionServerProbe {
             root.getNameCount() > 2 && root.toString()
                 .contains("hologram"),
             "isolated hologram fixture root required");
-        library = root.resolve("config")
-            .resolve("gtmb")
+        library = root.resolve("MiaoBlueprints")
             .resolve("hologram-presets.json")
             .normalize();
         require(library.startsWith(root), "library escaped the isolated fixture root");
         clientLibrary = root.getParent()
-            .resolve("client/config/gtmb/client-blueprints")
+            .resolve("client/MiaoBlueprints")
             .normalize();
         require(
             !HologramLibraryFacade.enabled() || clientLibrary.startsWith(root.getParent()) && root.getFileName()

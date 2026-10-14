@@ -980,7 +980,7 @@ final class HologramAeInteractionClientSmoke {
     private java.util.Map<String, String> localFiles() throws Exception {
         java.util.Map<String, String> files = new java.util.TreeMap<>();
         java.nio.file.Path directory = Minecraft.getMinecraft().mcDataDir.toPath()
-            .resolve("config/gtmb/client-blueprints");
+            .resolve("MiaoBlueprints");
         if (!Files.exists(directory)) return files;
         try (
             java.nio.file.DirectoryStream<java.nio.file.Path> entries = Files.newDirectoryStream(directory, "*.json")) {

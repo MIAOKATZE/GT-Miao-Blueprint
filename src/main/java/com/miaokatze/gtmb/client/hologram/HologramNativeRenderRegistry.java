@@ -85,6 +85,7 @@ public final class HologramNativeRenderRegistry {
     }
 
     static Adapter adapter(Block block) {
+        if (HologramQuantumNativeRender.INSTANCE.supports(block)) return HologramQuantumNativeRender.INSTANCE;
         String family = block == null ? ""
             : block.getClass()
                 .getName();

@@ -41,6 +41,9 @@ public final class HologramBlueprintResourcesRegression {
         try {
             inventoryAndEnergy();
             configurationSamples();
+            standalonePhysicalAssets();
+            carpenterNamesNeverGrantAssetCredit();
+            nativeItemDefaultsRemainPayable();
             fluidCostsAndSelectedKeys();
             rejectionBeforePayment();
             bulkPayment();
@@ -65,6 +68,8 @@ public final class HologramBlueprintResourcesRegression {
                 "server AE lifecycle is initialized before data stack and fluid ledger checks");
             taggedFluidRejection();
             fluidLedger();
+            if (cpw.mods.fml.common.Loader.isModLoaded("CarpentersBlocks"))
+                HologramDecorMaterialsRegression.nativeCarpenterResources();
             System.out.println("[AE-FLUID-TEST] FINAL PASS assertCount=" + aeAssertions + " monitor=fixture");
         } catch (Throwable failure) {
             failure.printStackTrace(System.err);
@@ -279,11 +284,18 @@ public final class HologramBlueprintResourcesRegression {
             new FluidStack(fixtureFluid("gtmb_blueprint_resource_fixture"), 1000).writeToNBT(new NBTTagCompound()));
         NBTTagCompound payload = new NBTTagCompound();
         payload.setTag("recipe", recipe);
+        reject(payload, "recipe");
+        payload.removeTag("recipe");
         payload.setTag("filter", recipe.copy());
+        reject(payload, "filter");
+        payload.removeTag("filter");
+        NBTTagCompound scalarConfiguration = new NBTTagCompound();
+        scalarConfiguration.setString("selectedRecipe", "fixture:recipe");
+        scalarConfiguration.setBoolean("whitelist", true);
+        payload.setTag("recipe", scalarConfiguration);
         HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(payload);
-        SimpleAssert
-            .eq(0, plan.items.size(), "recipe/filter ghost items remain configuration without inventory payment");
-        SimpleAssert.eq(0, plan.fluids.size(), "recipe/filter fluid samples remain configuration without tank payment");
+        SimpleAssert.eq(0, plan.items.size(), "scalar recipe settings have no physical item assets");
+        SimpleAssert.eq(0, plan.fluids.size(), "scalar settings have no physical fluid assets");
         NBTTagList inventory = new NBTTagList();
         inventory.appendTag(new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
         NBTTagCompound coverData = new NBTTagCompound();
@@ -293,6 +305,306 @@ public final class HologramBlueprintResourcesRegression {
             7,
             HologramBlueprintResources.plan(payload).items.get(0).stackSize,
             "actual nested cover inventory still pays its entire stored quantity");
+    }
+
+    private static void standalonePhysicalAssets() throws Exception {
+        ItemStack physical = new ItemStack(Items.diamond, 1);
+        NBTTagCompound physicalTag = new NBTTagCompound();
+        physicalTag.setString("physicalIdentity", "exact upgrade contents");
+        physical.setTagCompound(physicalTag);
+        NBTTagCompound vacuum = new NBTTagCompound();
+        vacuum.setString("id", "blockVacuumChestTileEntity");
+        vacuum.setTag("filter", physical.writeToNBT(new NBTTagCompound()));
+        NBTTagCompound original = (NBTTagCompound) vacuum.copy();
+        HologramBlueprintResources.Plan filter = HologramBlueprintResources.plan(vacuum);
+        SimpleAssert.eq(1, filter.items.size(), "reviewed EIO filter root is a paid physical item");
+        SimpleAssert.that(
+            ItemStack.areItemStackTagsEqual(physical, filter.items.get(0)),
+            "physical filter upgrade payment retains its complete actual tag");
+        SimpleAssert.that(vacuum.equals(original), "physical asset inspection never modifies source contents");
+        NBTTagCompound unknown = new NBTTagCompound();
+        unknown.setTag("usedQueen", physical.writeToNBT(new NBTTagCompound()));
+        reject(unknown, "usedQueen");
+        unknown.removeTag("usedQueen");
+        unknown.setTag("customAsset", physical.writeToNBT(new NBTTagCompound()));
+        reject(unknown, "customAsset");
+        HologramBlueprintResources.Plan nativePaid = HologramBlueprintResources
+            .plan(unknown, Arrays.asList(physical.copy()));
+        SimpleAssert
+            .that(nativePaid.items.isEmpty(), "an exact separately quoted native component is not charged twice");
+        unknown.setTag("secondAsset", physical.writeToNBT(new NBTTagCompound()));
+        try {
+            HologramBlueprintResources.plan(unknown, Arrays.asList(physical.copy()));
+            throw new AssertionError("one paid native component cannot cover two standalone physical copies");
+        } catch (IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("未审核"),
+                "native component credit is consumed exactly once");
+        }
+    }
+
+    private static void carpenterNamesNeverGrantAssetCredit() throws Exception {
+        ItemStack item = new ItemStack(Items.diamond);
+        NBTTagCompound row = item.writeToNBT(new NBTTagCompound());
+        row.setByte("cbAttribute", (byte) 6);
+        row.setString("cbUniqueId", "minecraft:diamond");
+        NBTTagList attributes = new NBTTagList();
+        attributes.appendTag(row);
+        for (String identity : Arrays.asList("Chest", "opaque.TileEntityCarpentersBlock", "")) {
+            NBTTagCompound unknown = new NBTTagCompound();
+            unknown.setString("id", identity);
+            unknown.setTag("cbAttrList", attributes.copy());
+            NBTTagCompound original = (NBTTagCompound) unknown.copy();
+            try {
+                HologramBlueprintResources.plan(unknown, Arrays.asList(item.copy()));
+                throw new AssertionError("a Carpenter field name cannot consume an unrelated native asset credit");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("cbAttrList"),
+                    "unknown Carpenter family is explicit");
+            }
+            SimpleAssert.eq(original, unknown, "rejected same-name native attribute data is unchanged");
+        }
+    }
+
+    private static void nativeItemDefaultsRemainPayable() throws Exception {
+        ItemStack physical = new ItemStack(Items.diamond, 1, 0);
+        NBTTagCompound identity = new NBTTagCompound();
+        identity.setString("physicalIdentity", "opaque tagged default-damage asset");
+        physical.setTagCompound(identity);
+        NBTTagCompound omittedDamage = physical.writeToNBT(new NBTTagCompound());
+        omittedDamage.removeTag("Damage");
+        ItemStack nativeDefault = ItemStack.loadItemStackFromNBT(omittedDamage);
+        SimpleAssert.that(
+            nativeDefault != null && nativeDefault.isItemEqual(physical)
+                && ItemStack.areItemStackTagsEqual(nativeDefault, physical),
+            "actual native ItemStack reader restores omitted Damage as zero and preserves its entire tag");
+
+        NBTTagCompound vacuum = new NBTTagCompound();
+        vacuum.setString("id", "blockVacuumChestTileEntity");
+        vacuum.setTag("filter", omittedDamage.copy());
+        assertOnlyItem(vacuum, nativeDefault, "default-damage EIO filter is a paid exact physical item");
+        NBTTagCompound original = (NBTTagCompound) vacuum.copy();
+        HologramBlueprintResources.plan(vacuum);
+        SimpleAssert.that(vacuum.equals(original), "native default accounting never fills or changes captured Damage");
+
+        // Constructor-free registry identity is the actual native apiary class; no live bee housing is claimed.
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        int apiaryId = 31003;
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity oldApiary = gregtech.api.GregTechAPI.METATILEENTITIES[apiaryId];
+        try (RawNativeUiScope ui = RawNativeUiScope.open()) {
+            try {
+                gregtech.api.GregTechAPI.METATILEENTITIES[apiaryId] = (gregtech.api.interfaces.metatileentity.IMetaTileEntity) unsafe
+                    .allocateInstance(Class.forName("gregtech.common.tileentities.machines.basic.MTEIndustrialApiary"));
+                NBTTagCompound apiary = new NBTTagCompound();
+                apiary.setString("id", "BaseMetaTileEntity");
+                apiary.setInteger("mID", apiaryId);
+                apiary.setTag("usedQueen", omittedDamage.copy());
+                assertOnlyItem(apiary, nativeDefault, "default-damage native usedQueen is a paid exact physical item");
+                NBTTagCompound noCount = (NBTTagCompound) omittedDamage.copy();
+                noCount.removeTag("Count");
+                apiary.setTag("usedQueen", noCount);
+                reject(apiary, "usedQueen");
+            } finally {
+                gregtech.api.GregTechAPI.METATILEENTITIES[apiaryId] = oldApiary;
+            }
+        }
+
+        for (String root : Arrays.asList("Inventory", "Items", "patterns")) {
+            NBTTagCompound payload = new NBTTagCompound();
+            NBTTagList rows = new NBTTagList();
+            rows.appendTag(omittedDamage.copy());
+            payload.setTag(root, rows);
+            assertOnlyItem(payload, nativeDefault, "native damage default remains charged in " + root);
+        }
+        NBTTagCompound directInventory = new NBTTagCompound();
+        directInventory.setTag("mOutputItem2", omittedDamage.copy());
+        assertOnlyItem(directInventory, nativeDefault, "native output item default remains charged");
+        NBTTagCompound optionalTag = (NBTTagCompound) omittedDamage.copy();
+        optionalTag.removeTag("tag");
+        vacuum.setTag("filter", optionalTag);
+        assertOnlyItem(vacuum, new ItemStack(Items.diamond, 1, 0), "omitted optional item tag still costs one item");
+
+        NBTTagCompound unknown = new NBTTagCompound();
+        unknown.setString("id", "bogus");
+        unknown.setTag("filter", omittedDamage.copy());
+        reject(unknown, "filter");
+        unknown.removeTag("id");
+        reject(unknown, "filter");
+        SimpleAssert.that(
+            HologramBlueprintResources.plan(unknown, Arrays.asList(nativeDefault.copy())).items.isEmpty(),
+            "native component credit matches the actual default-damage item, including its exact tag");
+        unknown.setTag("secondAsset", omittedDamage.copy());
+        try {
+            HologramBlueprintResources.plan(unknown, Arrays.asList(nativeDefault.copy()));
+            throw new AssertionError("native Damage defaults cannot reuse one physical component credit twice");
+        } catch (IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("未审核"),
+                "second native default asset still needs payment");
+        }
+
+        for (String field : Arrays.asList("id", "Count")) {
+            NBTTagCompound bad = (NBTTagCompound) omittedDamage.copy();
+            bad.removeTag(field);
+            vacuum.setTag("filter", bad);
+            reject(vacuum, "filter");
+        }
+        for (String field : Arrays.asList("id", "Count", "Damage", "tag")) {
+            NBTTagCompound bad = (NBTTagCompound) omittedDamage.copy();
+            bad.setString(field, "wrong native type");
+            vacuum.setTag("filter", bad);
+            reject(vacuum, "filter");
+        }
+        for (long count : new long[] { 0, -1, 4_294_967_296L }) {
+            NBTTagCompound bad = (NBTTagCompound) omittedDamage.copy();
+            bad.setLong("Count", count);
+            vacuum.setTag("filter", bad);
+            reject(vacuum, "filter");
+        }
+        vacuum.setTag("filter", new NBTTagCompound());
+        reject(vacuum, "filter");
+        vacuum.setTag("filter", new NBTTagString("opaque native item"));
+        reject(vacuum, "filter");
+        NBTTagCompound partial = new NBTTagCompound();
+        partial.setByte("Count", (byte) 1);
+        unknown = new NBTTagCompound();
+        unknown.setTag("opaqueAsset", partial);
+        reject(unknown, "opaqueAsset");
+        partial = physical.writeToNBT(new NBTTagCompound());
+        partial.removeTag("Count");
+        unknown.setTag("opaqueAsset", partial);
+        reject(unknown, "opaqueAsset");
+
+        NBTTagCompound fluid = new FluidStack(fixtureFluid("gtmb_blueprint_resource_fixture"), 17)
+            .writeToNBT(new NBTTagCompound());
+        NBTTagCompound tank = new NBTTagCompound();
+        tank.setTag("mFluid", fluid);
+        SimpleAssert.eq(
+            17L,
+            HologramBlueprintResources.plan(tank).fluids.get(0).amount,
+            "native FluidStack omitted optional Tag remains fully charged");
+        fluid.setString("Tag", "wrong native type");
+        reject(tank, "mFluid");
+        fluid.removeTag("Tag");
+        fluid.removeTag("Amount");
+        reject(tank, "mFluid");
+    }
+
+    private static void assertOnlyItem(NBTTagCompound payload, ItemStack expected, String label) throws Exception {
+        HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(payload);
+        SimpleAssert.eq(1, plan.items.size(), label + " has one required variant");
+        ItemStack billed = plan.items.get(0);
+        SimpleAssert.that(
+            billed.stackSize == expected.stackSize && billed.isItemEqual(expected)
+                && ItemStack.areItemStackTagsEqual(billed, expected),
+            label + " has the complete native identity, quantity and opaque tag");
+    }
+
+    /** Supplies only the actual UI class-registration prerequisites; this is not a loaded FML mod profile. */
+    private static final class RawNativeUiScope implements AutoCloseable {
+
+        private static final String DEV_KEY = "fml.deobfuscatedEnvironment";
+        private final List<Object[]> restored = new ArrayList<>();
+
+        static RawNativeUiScope open() throws Exception {
+            RawNativeUiScope scope = new RawNativeUiScope();
+            try {
+                scope.initialize();
+                return scope;
+            } catch (Exception | Error failure) {
+                try {
+                    scope.close();
+                } catch (Exception cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
+                throw failure;
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private void initialize() throws Exception {
+            java.util.Map<String, Object> blackboard = new java.util.HashMap<>();
+            if (net.minecraft.launchwrapper.Launch.blackboard != null)
+                blackboard.putAll(net.minecraft.launchwrapper.Launch.blackboard);
+            if (blackboard.get(DEV_KEY) == null) blackboard.put(DEV_KEY, Boolean.TRUE);
+            // Isolate all keys and restore the exact original reference, including an uninitialized null map.
+            swap(field(net.minecraft.launchwrapper.Launch.class, "blackboard"), null, blackboard);
+            cpw.mods.fml.common.Loader loader = cpw.mods.fml.common.Loader.instance();
+            java.lang.reflect.Field namedMods = field(cpw.mods.fml.common.Loader.class, "namedMods");
+            java.util.Map<String, cpw.mods.fml.common.ModContainer> names = new java.util.HashMap<>();
+            Object previousNames = namedMods.get(loader);
+            if (previousNames != null)
+                names.putAll((java.util.Map<String, cpw.mods.fml.common.ModContainer>) previousNames);
+            swap(namedMods, loader, names);
+
+            Class<?> module = Class.forName("com.gtnewhorizons.modularui.ModularUI");
+            java.lang.reflect.Field instance = field(module, "INSTANCE");
+            // A real FML profile already owns its native mapper/container and needs no test registration.
+            if (instance.get(null) != null) return;
+            Object mod = module.getDeclaredConstructor()
+                .newInstance();
+            swap(instance, null, mod);
+            cpw.mods.fml.common.ModMetadata metadata = new cpw.mods.fml.common.ModMetadata();
+            metadata.modId = "modularui";
+            metadata.name = "ModularUI native raw class fixture";
+            cpw.mods.fml.common.ModContainer container = new cpw.mods.fml.common.DummyModContainer(metadata);
+            names.put(metadata.modId, container);
+
+            cpw.mods.fml.common.LoadController controller = new cpw.mods.fml.common.LoadController(loader);
+            com.google.common.collect.BiMap<cpw.mods.fml.common.ModContainer, Object> objects = com.google.common.collect.HashBiMap
+                .create();
+            objects.put(container, mod);
+            field(cpw.mods.fml.common.LoadController.class, "modObjectList").set(controller, objects);
+            swap(field(cpw.mods.fml.common.Loader.class, "modController"), loader, controller);
+
+            cpw.mods.fml.common.network.NetworkRegistry network = cpw.mods.fml.common.network.NetworkRegistry.INSTANCE;
+            for (String name : Arrays.asList("serverGuiHandlers", "clientGuiHandlers")) {
+                java.lang.reflect.Field handlers = field(cpw.mods.fml.common.network.NetworkRegistry.class, name);
+                java.util.Map<Object, Object> isolated = new java.util.HashMap<>();
+                isolated.putAll((java.util.Map<Object, Object>) handlers.get(network));
+                swap(handlers, network, isolated);
+            }
+            Class<?> mapper = Class.forName("com.gtnewhorizons.modularui.common.internal.InternalUIMapper");
+            java.lang.reflect.Field mapperInstance = field(mapper, "INSTANCE");
+            restored.add(new Object[] { mapperInstance, null, mapperInstance.get(null) });
+            // GTUIInfos initializes the actual native mapper and registers its real GUI factories in this scope.
+        }
+
+        private static java.lang.reflect.Field field(Class<?> owner, String name) throws Exception {
+            java.lang.reflect.Field field = owner.getDeclaredField(name);
+            field.setAccessible(true);
+            return field;
+        }
+
+        private void swap(java.lang.reflect.Field field, Object owner, Object value) throws Exception {
+            restored.add(new Object[] { field, owner, field.get(owner) });
+            field.set(owner, value);
+        }
+
+        @Override
+        public void close() throws Exception {
+            Exception failure = null;
+            for (int index = restored.size() - 1; index >= 0; index--) {
+                Object[] value = restored.get(index);
+                try {
+                    java.lang.reflect.Field field = (java.lang.reflect.Field) value[0];
+                    field.set(value[1], value[2]);
+                    SimpleAssert
+                        .that(field.get(value[1]) == value[2], "raw native UI scope restores " + field.getName());
+                } catch (Exception cleanup) {
+                    if (failure == null) failure = cleanup;
+                    else failure.addSuppressed(cleanup);
+                }
+            }
+            restored.clear();
+            if (failure != null) throw failure;
+        }
     }
 
     private static void rejectionBeforePayment() throws Exception {

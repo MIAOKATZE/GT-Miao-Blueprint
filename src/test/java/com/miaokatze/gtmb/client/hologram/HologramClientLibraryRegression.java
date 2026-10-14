@@ -8,6 +8,8 @@ import java.util.Comparator;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Portable private storage must not depend on a server working directory or trust public ownership labels. */
@@ -15,7 +17,8 @@ public final class HologramClientLibraryRegression {
 
     private HologramClientLibraryRegression() {}
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
+        if (!MinecraftTestBootstrap.enter(HologramClientLibraryRegression.class, args)) return;
         run();
     }
 
@@ -31,14 +34,51 @@ public final class HologramClientLibraryRegression {
     private static void exercise() throws Exception {
         Path game = Files.createTempDirectory("gtmb-client-library-");
         try {
+            Path oldDirectory = Files.createDirectories(game.resolve("config/gtmb/client-blueprints"));
+            Path oldFile = oldDirectory.resolve("local_11111111-1111-1111-1111-111111111111.json");
+            byte[] oldBytes = json("Old directory only", null);
+            Files.write(oldFile, oldBytes);
             HologramClientLibrary library = new HologramClientLibrary(game);
-            String first = library.save(json("Original", null), "", "Alice", "alice-uuid");
+            SimpleAssert.eq(
+                0,
+                library.list()
+                    .size(),
+                "old client directory is neither scanned nor migrated");
+            SimpleAssert.that(
+                java.util.Arrays.equals(oldBytes, Files.readAllBytes(oldFile)),
+                "old client blueprint remains untouched");
+            byte[] original = json("Original", null);
+            String first = library.save(original, png(0xff335577), "");
             SimpleAssert.that(first.startsWith("local_"), "local id is distinct from public server id");
             SimpleAssert.eq(
-                game.resolve("config/gtmb/client-blueprints")
+                game.resolve("MiaoBlueprints")
                     .toAbsolutePath(),
                 library.directory(),
                 "private files are rooted under the actual client game directory");
+            SimpleAssert.eq(
+                game.resolve("MiaoBlueprints/" + first + ".json")
+                    .toAbsolutePath(),
+                library.savedPath(first),
+                "new saves use the exact top-level blueprint path");
+            SimpleAssert.that(Files.isRegularFile(library.savedPath(first)), "new blueprint is persisted at that path");
+            SimpleAssert.that(
+                Files.isRegularFile(HologramBlueprintArtifact.previewPath(library.savedPath(first))),
+                "save commits a same-basename PNG beside JSON");
+            SimpleAssert.that(
+                java.util.Arrays.equals(original, library.read(first)),
+                "client persistence keeps exact server JSON for strict nonce acknowledgement");
+            Files.write(
+                library.directory()
+                    .resolve("hologram-presets.json"),
+                oldBytes);
+            Files.write(
+                library.directory()
+                    .resolve("shared_fixture.json"),
+                oldBytes);
+            Files.write(
+                library.directory()
+                    .resolve("public_22222222-2222-2222-2222-222222222222.json"),
+                oldBytes);
             HologramClientLibrary restarted = new HologramClientLibrary(game);
             SimpleAssert.eq(
                 1,
@@ -50,14 +90,39 @@ public final class HologramClientLibraryRegression {
             SimpleAssert.eq("Alice", entry.authorName, "new capture receives current player author");
             SimpleAssert.eq("alice-uuid", entry.authorUuid, "new capture records creator UUID");
             SimpleAssert.that(entry.createdAt > 0, "new capture records creation timestamp");
-            restarted.save(json("Revised", "Mallory"), first, "Bob", "bob-uuid");
+            byte[] revised = json("Revised", "Alice"), revisedPng = png(0xff776644);
+            restarted.save(revised, revisedPng, first);
             HologramClientLibrary.Entry updated = restarted.list()
                 .get(0);
             SimpleAssert.eq("Alice", updated.authorName, "updating retains the original creator");
             SimpleAssert.eq(entry.createdAt, updated.createdAt, "updating retains original timestamp");
             SimpleAssert.eq("Revised", updated.name, "updating changes blueprint content in place");
+            SimpleAssert.that(
+                java.util.Arrays.equals(revised, restarted.read(first)),
+                "overwrite preserves reviewed JSON bytes without local provenance rewrites");
+            SimpleAssert.eq(
+                0xff776644,
+                javax.imageio.ImageIO.read(
+                    HologramBlueprintArtifact.previewPath(library.savedPath(first))
+                        .toFile())
+                    .getRGB(0, 0),
+                "overwrite replaces previous preview pixels at the same path");
+            reject(
+                () -> restarted.save(json("Broken preview", null), new byte[] { 1, 2, 3 }, first),
+                "invalid PNG cannot replace a saved artifact");
+            SimpleAssert.that(
+                java.util.Arrays.equals(revised, restarted.read(first)),
+                "invalid PNG leaves the old JSON/PNG pair intact");
             String publicId = "public_12345678-1234-1234-1234-123456789abc";
             restarted.uploadedId("server-a:25565", first, publicId);
+            SimpleAssert.that(
+                Files.isRegularFile(game.resolve("config/gtmb/client-blueprint-library.properties")),
+                "upload and source settings remain in the mod config directory");
+            SimpleAssert.that(
+                !Files.exists(
+                    library.directory()
+                        .resolve("uploads.properties")),
+                "blueprint directory is separate from client upload metadata");
             SimpleAssert.eq(
                 publicId,
                 new HologramClientLibrary(game).uploadedId("server-a:25565", first),
@@ -110,6 +175,7 @@ public final class HologramClientLibraryRegression {
                     .size(),
                 "one damaged file does not hide healthy entries");
             reject(() -> restarted.read("../server-blueprints/library"), "path traversal is rejected");
+            reject(() -> restarted.read(publicId), "client files cannot be addressed with server public IDs");
             reject(
                 () -> restarted.save("{}".getBytes(StandardCharsets.UTF_8), "", "Alice", "uuid"),
                 "invalid draft cannot become a client entry");
@@ -127,9 +193,12 @@ public final class HologramClientLibraryRegression {
                     "Alice",
                     "uuid"),
                 "deeply nested JSON rejected before recursive parsing");
-            String legacy = restarted.save(json("Imported legacy", null), "", "Alice", "uuid");
+            String legacy = restarted.save(json("Imported current format", null), png(0xff224466), "");
             SimpleAssert.that(!legacy.equals(first), "importing a public copy creates a distinct private identity");
             restarted.delete(first);
+            SimpleAssert.that(
+                !Files.exists(HologramBlueprintArtifact.previewPath(library.savedPath(first))),
+                "private delete removes its preview alongside JSON");
             SimpleAssert.eq(
                 1,
                 restarted.list()
@@ -140,7 +209,7 @@ public final class HologramClientLibraryRegression {
             SimpleAssert.that(
                 stored.getAsJsonObject("blueprint")
                     .has("authorName"),
-                "legacy import upgrades absent attribution safely");
+                "received author attribution is preserved exactly");
         } finally {
             try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
                 paths.sorted(Comparator.reverseOrder())
@@ -219,13 +288,41 @@ public final class HologramClientLibraryRegression {
     private static byte[] json(String name, String author) {
         JsonObject blueprint = new JsonObject();
         blueprint.addProperty("schema", 2);
+        blueprint.addProperty("id", "local_33333333-3333-3333-3333-333333333333");
         blueprint.addProperty("name", name);
-        blueprint.add("cells", new com.google.gson.JsonArray());
-        if (author != null) blueprint.addProperty("authorName", author);
+        blueprint.addProperty("controllerType", "area");
+        JsonObject cell = new JsonObject();
+        cell.addProperty("item", "minecraft:stone");
+        cell.addProperty("block", "minecraft:stone");
+        cell.addProperty("count", 1);
+        cell.addProperty("facing", -1);
+        com.google.gson.JsonArray cells = new com.google.gson.JsonArray();
+        cells.add(cell);
+        blueprint.add("cells", cells);
+        blueprint.addProperty("authorName", author == null ? "Alice" : author);
+        blueprint.addProperty("authorUuid", "alice-uuid");
+        blueprint.addProperty("createdAt", 1234);
+        JsonObject version = new JsonObject();
+        version.addProperty("formatVersion", 1);
+        version.addProperty("gtmbVersion", "0.1.0");
+        version.addProperty("gtnhVersion", "unknown");
+        version.addProperty("gtnhVersionSource", "unavailable");
+        blueprint.add("nativeBlueprint", version);
         JsonObject share = new JsonObject();
         share.addProperty("schema", 2);
         share.add("blueprint", blueprint);
         return share.toString()
             .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] png(int color) throws IOException {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+            HologramBlueprintArtifact.WIDTH,
+            HologramBlueprintArtifact.HEIGHT,
+            java.awt.image.BufferedImage.TYPE_INT_RGB);
+        image.setRGB(0, 0, color);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", bytes);
+        return bytes.toByteArray();
     }
 }

@@ -59,6 +59,7 @@ final class HologramBlockRender {
         HologramRenderer.nativeSnapshotChanged();
         clear();
         snapshot = state;
+        HologramLinkNodePreview.begin();
         target = new HologramBlockAccess(state, false);
         actual = new HologramBlockAccess(state, true);
     }
@@ -100,6 +101,13 @@ final class HologramBlockRender {
             Minecraft.getMinecraft()
                 .getTextureManager()
                 .bindTexture(TextureMap.locationBlocksTexture);
+            // A world hologram enables back-face culling for ordinary solid cube meshes.
+            // Carpenter slopes include open triangular faces: their material remains visible
+            // from either side in the translucent preview, including mirrored/negative slopes.
+            if (cell.block(current)
+                .getClass()
+                .getName()
+                .equals("com.carpentersblocks.block.BlockCarpentersSlope")) GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glCallList(model.list);
         } finally {
             popMatrices(originalMode);

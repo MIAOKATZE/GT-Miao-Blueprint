@@ -7,6 +7,10 @@ final class HologramInputContext {
     private int damage, slot = -1;
     private String uuid = "";
 
+    static boolean selectionTool(String boundUuid, String heldUuid) {
+        return boundUuid == null || boundUuid.isEmpty() || boundUuid.equals(heldUuid);
+    }
+
     boolean observe(Object nextWorld, Object nextScreen, Object nextItem, int nextDamage, int nextSlot, String nextUuid,
         Object nextStack, boolean screenEvent) {
         String identity = nextUuid == null ? "" : nextUuid;

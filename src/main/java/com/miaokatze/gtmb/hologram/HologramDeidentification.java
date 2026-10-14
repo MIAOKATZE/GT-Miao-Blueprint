@@ -4,10 +4,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import net.minecraft.block.Block;
 import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -30,6 +33,17 @@ final class HologramDeidentification {
         { "shutDownReasonID", "shutDownReason", "mWasShutdown" }, { "lastAESampleTick", "mActive" } };
     private static final Set<String> CONFIG_WRAPPERS = new HashSet<>(
         Arrays.asList("gt.covers", "covers", "cover", "mCoverData"));
+    private static final Set<String> CARPENTER_TILES = new HashSet<>(
+        Arrays.asList(
+            "TileEntityCarpentersSlope",
+            "TileEntityCarpentersBed",
+            "TileEntityCarpentersBlock",
+            "TileEntityCarpentersExt",
+            "TileEntityCarpentersDaylightSensor",
+            "TileEntityCarpentersFlowerPot",
+            "TileEntityCarpentersSafe",
+            "TileEntityCarpentersTorch",
+            "TileEntityCarpentersGarageDoor"));
 
     private HologramDeidentification() {}
 
@@ -61,6 +75,7 @@ final class HologramDeidentification {
     private static String project(HologramPresets.Cell cell, String encoded, int level) throws IOException {
         if (encoded == null || encoded.isEmpty() || level == 0) return encoded;
         NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+        if (carpenterOwner(cell.block(), tag)) tag.setString("cbOwner", "");
         boolean registered = cell.block() != null && cell.block() == GregTechAPI.sBlockMachines
             || HologramAeBlueprint.supports(cell.block(), tag)
             || HologramNetworkBindings.node(cell.block())
@@ -80,10 +95,13 @@ final class HologramDeidentification {
         if (tag == null || level == 0) return;
         // A recipe input/output ItemStack owns its entire tag subtree, even when names resemble identity fields.
         if (tag.hasKey("id", 99) && tag.hasKey("Count", 99) && tag.hasKey("Damage", 99)) return;
+        if (!cover && carpenterOwner(tag)) tag.setString("cbOwner", "");
         for (Object raw : new ArrayList<>(tag.func_150296_c())) {
             String key = (String) raw;
             for (int index = 1; index <= (registered || cover ? level : Math.min(2, level)); index++)
                 for (String field : FIELDS[index]) if (key.equalsIgnoreCase(field)) {
+                    // An explicitly reviewed relationship owns its tuple; later canonical passes retain that decision.
+                    if (tag.hasKey(HologramCoordinatePolicies.RELATIONS, 9) && (index == 2 || index == 6)) continue;
                     if (index == 1) clearActorField(tag, key);
                     else if (!("proxy".equals(field) && tag.hasKey("mID", 99))) tag.removeTag(key);
                 }
@@ -127,9 +145,151 @@ final class HologramDeidentification {
         return foreignOwner(tag, actor, actorName, false, false);
     }
 
+    static boolean foreignOwner(Block block, NBTTagCompound tag, UUID actor, String actorName) {
+        if (carpenterOwner(block, tag)) {
+            String owner = tag.getString("cbOwner");
+            if (!owner.isEmpty() && !owner.equals("00000000-0000-0000-0000-000000000000")
+                && !owner.equalsIgnoreCase(actor.toString())
+                && !owner.equalsIgnoreCase(actorName)) return true;
+        }
+        return foreignOwner(tag, actor, actorName);
+    }
+
+    /** TEBase 3.7.3's exact registered root IDs and string field; never arbitrary or nested cbOwner data. */
+    static boolean carpenterOwner(NBTTagCompound tag) {
+        return tag != null && CARPENTER_TILES.contains(tag.getString("id")) && tag.hasKey("cbOwner", 8);
+    }
+
+    static boolean carpenterOwner(Block block, NBTTagCompound tag) {
+        return tag != null && tag.hasKey("cbOwner", 8) && (carpenterBlock(block) || carpenterOwner(tag));
+    }
+
+    /** The exact audited native base contract, rather than a class-name package prefix. */
+    static boolean carpenterBlock(Block block) {
+        for (Class<?> type = block == null ? null : block.getClass(); type != null; type = type.getSuperclass())
+            if (type.getName()
+                .equals("com.carpentersblocks.block.BlockCoverable")) return true;
+        return false;
+    }
+
+    /** Reports only the fields understood by the projection; source values never become hint text. */
+    static Map<Integer, List<String>> changedFields(HologramPresets.Cell cell, NBTTagCompound before,
+        NBTTagCompound after, String path) {
+        Map<Integer, Set<String>> fields = new java.util.TreeMap<>();
+        collectFields(cell, before, after, path, registered(cell, before), false, false, fields);
+        return fieldLists(fields);
+    }
+
+    static Map<Integer, List<String>> retainedRiskFields(HologramPresets.Cell cell, NBTTagCompound tag, String path) {
+        Map<Integer, Set<String>> fields = new java.util.TreeMap<>();
+        collectFields(cell, tag, tag, path, registered(cell, tag), false, true, fields);
+        return fieldLists(fields);
+    }
+
+    private static boolean registered(HologramPresets.Cell cell, NBTTagCompound tag) {
+        return cell.block() != null && cell.block() == GregTechAPI.sBlockMachines
+            || HologramAeBlueprint.supports(cell.block(), tag)
+            || HologramNetworkBindings.node(cell.block())
+            || tag != null && tag.getString("id")
+                .startsWith("gtswn.");
+    }
+
+    private static Map<Integer, List<String>> fieldLists(Map<Integer, Set<String>> fields) {
+        Map<Integer, List<String>> result = new java.util.LinkedHashMap<>();
+        for (Map.Entry<Integer, Set<String>> entry : fields.entrySet())
+            result.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        return result;
+    }
+
+    private static void collectFields(HologramPresets.Cell cell, NBTTagCompound before, NBTTagCompound after,
+        String path, boolean registered, boolean cover, boolean retained, Map<Integer, Set<String>> fields) {
+        if (before == null || before.hasKey("id", 99) && before.hasKey("Count", 99) && before.hasKey("Damage", 99))
+            return;
+        for (Object raw : before.func_150296_c()) {
+            String key = (String) raw;
+            int group = !cover && "cbOwner".equals(key) && carpenterOwner(cell.block(), before) ? 1 : 0;
+            for (int index = 1; index <= (registered || cover ? 10 : 2); index++)
+                for (String field : FIELDS[index]) if (key.equalsIgnoreCase(field)) group = index;
+            if (group == 0) continue;
+            NBTBase original = before.getTag(key), current = after == null ? null : after.getTag(key);
+            boolean changed = !java.util.Objects.equals(original, current);
+            if (retained) {
+                if (changed || group > 6 || !(group == 1 ? meaningfulActor(original) : meaningful(original))) continue;
+                if (group == 2 && (key.equalsIgnoreCase("x") || key.equalsIgnoreCase("y") || key.equalsIgnoreCase("z")))
+                    continue; // Native root XYZ is always rebound by placement.
+            } else if (!changed) continue;
+            fields.computeIfAbsent(group, ignored -> new java.util.TreeSet<>())
+                .add(path + "/" + key);
+        }
+        for (Object raw : before.func_150296_c()) {
+            String key = (String) raw;
+            if (!"gt.covers".equals(key) && !(registered && CONFIG_WRAPPERS.contains(key))
+                && !(registered && key.matches("mCoverData[0-5]"))
+                && !(cover && ("d".equals(key) || "data".equals(key) || "coverData".equals(key)))) continue;
+            NBTBase child = before.getTag(key), target = after == null ? null : after.getTag(key);
+            if (child instanceof NBTTagCompound) collectFields(
+                cell,
+                (NBTTagCompound) child,
+                target instanceof NBTTagCompound ? (NBTTagCompound) target : null,
+                path + "/" + key,
+                registered,
+                true,
+                retained,
+                fields);
+            else if (child instanceof NBTTagList && ((NBTTagList) child).func_150303_d() == 10) {
+                NBTTagList list = (NBTTagList) child;
+                NBTTagList next = target instanceof NBTTagList && ((NBTTagList) target).func_150303_d() == 10
+                    ? (NBTTagList) target
+                    : null;
+                for (int i = 0; i < list.tagCount(); i++) collectFields(
+                    cell,
+                    list.getCompoundTagAt(i),
+                    next != null && i < next.tagCount() ? next.getCompoundTagAt(i) : null,
+                    path + "/" + key + "/#" + i,
+                    registered,
+                    true,
+                    retained,
+                    fields);
+            }
+        }
+    }
+
+    private static boolean meaningful(NBTBase value) {
+        if (value instanceof net.minecraft.nbt.NBTTagString) {
+            String text = ((net.minecraft.nbt.NBTTagString) value).func_150285_a_();
+            return !text.isEmpty() && !"00000000-0000-0000-0000-000000000000".equals(text);
+        }
+        if (value instanceof NBTTagCompound) return !((NBTTagCompound) value).hasNoTags();
+        if (value instanceof net.minecraft.nbt.NBTTagIntArray) {
+            for (int part : ((net.minecraft.nbt.NBTTagIntArray) value).func_150302_c()) if (part != 0) return true;
+            return false;
+        }
+        return !(value instanceof NBTBase.NBTPrimitive) || ((NBTBase.NBTPrimitive) value).func_150291_c() != 0;
+    }
+
+    private static boolean meaningfulActor(NBTBase value) {
+        if (!(value instanceof NBTTagCompound)) return meaningful(value);
+        NBTTagCompound actor = (NBTTagCompound) value;
+        for (Object raw : actor.func_150296_c()) {
+            String key = (String) raw;
+            String name = key.toLowerCase(Locale.ROOT);
+            if ((name.equals("id") || name.equals("uuid")
+                || name.equals("name")
+                || name.equals("uuidmost")
+                || name.equals("uuidleast")) && meaningfulActor(actor.getTag(key))) return true;
+        }
+        return false;
+    }
+
     private static boolean foreignOwner(NBTTagCompound tag, UUID actor, String actorName, boolean actorContext,
         boolean coverContext) {
         if (tag == null || tag.hasKey("id", 99) && tag.hasKey("Count", 99) && tag.hasKey("Damage", 99)) return false;
+        if (!actorContext && !coverContext && carpenterOwner(tag)) {
+            String owner = tag.getString("cbOwner");
+            if (!owner.isEmpty() && !owner.equals("00000000-0000-0000-0000-000000000000")
+                && !owner.equalsIgnoreCase(actor.toString())
+                && !owner.equalsIgnoreCase(actorName)) return true;
+        }
         for (Object raw : tag.func_150296_c()) {
             String key = (String) raw;
             String normalized = key.toLowerCase(Locale.ROOT);

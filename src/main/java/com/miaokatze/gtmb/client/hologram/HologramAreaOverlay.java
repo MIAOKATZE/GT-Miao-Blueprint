@@ -6,20 +6,46 @@ import net.minecraft.entity.Entity;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.AxisAlignedBB;
-import net.minecraft.util.MovingObjectPosition;
 
 import org.lwjgl.opengl.GL11;
 
 /** Read-only bounded world overlay; the inclusive coordinates always come from the server mirror. */
 final class HologramAreaOverlay {
 
+    static final class RenderWitness {
+
+        final HologramState state;
+        private final int[] cursor;
+
+        RenderWitness(HologramState state, int[] cursor) {
+            this.state = state;
+            this.cursor = cursor == null ? null : cursor.clone();
+        }
+
+        int[] cursor() {
+            return cursor == null ? null : cursor.clone();
+        }
+    }
+
+    private static RenderWitness lastRenderWitness;
+
     private HologramAreaOverlay() {}
+
+    static RenderWitness lastRenderWitness() {
+        return lastRenderWitness;
+    }
+
+    static void clearRenderWitness() {
+        lastRenderWitness = null;
+    }
 
     static void render(HologramState state, float partialTicks) {
         Minecraft mc = Minecraft.getMinecraft();
         Entity camera = mc.renderViewEntity;
         int[] points = state.data.getIntArray("areaPoints");
+        lastRenderWitness = null;
         if (camera == null) return;
+        int[] cursor = HologramClient.areaProjectorWorld() ? HologramClient.areaSelectionAnchor() : null;
         double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
         double py = camera.lastTickPosY + (camera.posY - camera.lastTickPosY) * partialTicks;
         double pz = camera.lastTickPosZ + (camera.posZ - camera.lastTickPosZ) * partialTicks;
@@ -54,23 +80,21 @@ final class HologramAreaOverlay {
                     bx = points[3];
                     by = points[4];
                     bz = points[5];
-                } else if (org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_LMENU)
-                    || org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_RMENU)) {
-                        int[] anchor = HologramClient.airSelectionAnchor();
-                        bx = anchor[0];
-                        by = anchor[1];
-                        bz = anchor[2];
-                    } else {
-                        MovingObjectPosition hit = mc.objectMouseOver;
-                        if (hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
-                            bx = hit.blockX;
-                            by = hit.blockY;
-                            bz = hit.blockZ;
-                        }
-                    }
+                } else if (cursor != null) {
+                    bx = cursor[0];
+                    by = cursor[1];
+                    bz = cursor[2];
+                }
                 GL11.glColor4f(.35f, .85f, 1, .85f);
                 draw(points[0], points[1], points[2], bx, by, bz, px, py, pz);
             }
+            // Draw last so the live red target remains legible on confirmed regions and the pending cyan box.
+            if (cursor != null) {
+                GL11.glLineWidth(3);
+                GL11.glColor4f(1, .15f, .15f, 1);
+                draw(cursor[0], cursor[1], cursor[2], cursor[0], cursor[1], cursor[2], px, py, pz);
+            }
+            lastRenderWitness = new RenderWitness(state, cursor);
         } finally {
             GL11.glPopAttrib();
         }

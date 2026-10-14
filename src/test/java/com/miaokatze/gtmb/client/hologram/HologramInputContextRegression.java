@@ -36,5 +36,18 @@ public final class HologramInputContextRegression {
         SimpleAssert.that(
             legacy.observe(world, null, item, 0, 2, "", new Object(), false),
             "unidentified legacy stacks cannot inherit another tool's pressed state");
+        SimpleAssert.that(
+            HologramInputContext.selectionTool("projector", "projector"),
+            "a synchronized copy of the selected projector resumes its own area");
+        SimpleAssert.that(
+            !HologramInputContext.selectionTool("projector", "another"),
+            "another projector cannot mark a suspended area owned by the original UUID");
+        SimpleAssert.that(
+            !HologramInputContext.selectionTool("projector", ""),
+            "an unidentified held stack cannot mark an identified selection");
+        SimpleAssert.that(
+            HologramWorldGuide.highlight("区域框选 · Ctrl+Shift 减选 · Esc 退出", "\u00a7b")
+                .contains("\u00a7eCtrl+Shift\u00a7r\u00a7b"),
+            "world guidance colors complete shortcuts without splitting their modifiers");
     }
 }

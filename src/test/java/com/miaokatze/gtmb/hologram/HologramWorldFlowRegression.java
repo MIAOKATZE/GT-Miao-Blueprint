@@ -15,6 +15,7 @@ public final class HologramWorldFlowRegression {
     }
 
     public static void run() {
+        HologramAreaRegression.run();
         airPlacement();
         Stage workspace = HologramWorldFlow.stage(false, false, false, false, 0);
         SimpleAssert.eq(Intent.OPEN, HologramWorldFlow.intent(workspace, Gesture.RIGHT), "empty tool opens UI");

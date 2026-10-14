@@ -58,6 +58,7 @@ public final class HologramAeBlueprintCoreRegression {
         discardedField(drive);
         interfaceStorageAliases();
         previewCacheSchema();
+        quantumDisplayTransport(actor);
         deletedPartMarkers(false);
         deletedPartMarkers(true);
         for (IItemDefinition definition : Arrays.asList(
@@ -297,6 +298,7 @@ public final class HologramAeBlueprintCoreRegression {
                         && issue.y == 2
                         && issue.z == 1),
             "whole-preset policy persists exact unavailable-item warning with local coordinate " + path);
+        HologramBlueprintVersions.stamp(first.preset);
         byte[] actualJson = HologramServerLibrary.encodeShare(first.preset);
         HologramPresets.Preset loaded = HologramBlueprintSharing
             .decode(new String(actualJson, java.nio.charset.StandardCharsets.UTF_8));
@@ -508,6 +510,119 @@ public final class HologramAeBlueprintCoreRegression {
         check(
             !HologramAeBlueprint.analyze(drive, 0, ordinary).blocking,
             "ordinary AE native capture recognizes the same exact boolean transport marker");
+    }
+
+    private static void quantumDisplayTransport(EntityPlayerMP actor) throws Exception {
+        Block node = null;
+        for (Object registered : Block.blockRegistry)
+            if (registered instanceof Block && HologramNetworkBindings.node((Block) registered))
+                node = (Block) registered;
+        if (node == null) {
+            System.out.println(PREFIX + "SKIP quantum display contract: optional GTSWN node is not registered");
+            return;
+        }
+        NBTTagCompound raw = new NBTTagCompound();
+        node.createTileEntity(null, 0)
+            .writeToNBT(raw);
+        raw.setInteger("gtmb.quantumSides", 33);
+        raw.setBoolean("gtmb.nativePreview", true);
+        ItemStack anchor = AEApi.instance()
+            .definitions()
+            .parts()
+            .cableAnchor()
+            .maybeStack(1)
+            .get();
+        NBTTagCompound parts = new NBTTagCompound();
+        parts.setTag("def:5", anchor.writeToNBT(new NBTTagCompound()));
+        parts.setTag("extra:5", new NBTTagCompound());
+        raw.setTag("partContainer", parts);
+        byte[] source = CompressedStreamTools.compress(raw);
+        ItemStack shell = HologramAeBlueprint.blockSample(node, 0);
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(node, 0, raw);
+        check(
+            !analysis.blocking && analysis.payload()
+                .getInteger("gtmb.quantumSides") == 33,
+            "registered quantum connection directions survive canonical blueprint processing for offline preview");
+        String saved = HologramBlueprintNbt.encodeCanonical(analysis.payload());
+        NBTTagCompound reloaded = HologramBlueprintNbt.decode(saved);
+        check(
+            HologramDisplaySnapshot.target(node, shell, -1, null, saved, true)
+                .getCompoundTag("nativeTile")
+                .getInteger("gtmb.quantumSides") == 33,
+            "saved quantum preview retains the original six-side visual topology without a live world");
+        NBTTagCompound nativeData = HologramBlueprintNbt.nativePayload(reloaded);
+        check(!nativeData.hasKey("gtmb.quantumSides"), "native persistence never receives the display side mask");
+        NBTTagCompound placement = HologramBlueprintNbt.forPlacement(
+            node,
+            0,
+            saved,
+            actor.getUniqueID(),
+            actor.getCommandSenderName(),
+            12,
+            64,
+            34,
+            true,
+            true,
+            null);
+        check(
+            !placement.hasKey("gtmb.quantumSides") && placement.hasKey("partContainer", 10),
+            "placement removes only presentation metadata and retains the payable native component container");
+        HologramBlueprintResources.Plan bill = HologramAeBlueprint.resourcePlan(node, 0, reloaded, shell);
+        check(
+            bill.items.size() == 1 && bill.items.get(0)
+                .isItemEqual(anchor) && bill.items.get(0).stackSize == 1,
+            "visual topology grants no material credit: the real retained anchor still costs one item");
+        for (int mask : new int[] { -1, 64 }) {
+            NBTTagCompound outside = (NBTTagCompound) raw.copy();
+            outside.setInteger("gtmb.quantumSides", mask);
+            quantumDisplayBlocked(node, outside, "out-of-range quantum directions cannot be silently clamped");
+        }
+        NBTTagCompound wrongType = (NBTTagCompound) raw.copy();
+        wrongType.setByte("gtmb.quantumSides", (byte) 33);
+        quantumDisplayBlocked(node, wrongType, "a byte side mask is not the reviewed integer transport schema");
+        NBTTagCompound hiddenAsset = (NBTTagCompound) raw.copy();
+        hiddenAsset.setTag("gtmb.quantumSides", new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        quantumDisplayBlocked(
+            node,
+            hiddenAsset,
+            "a physical compound under the visual key remains an explicit blocker");
+        NBTTagCompound missingIdentity = (NBTTagCompound) raw.copy();
+        missingIdentity.removeTag("id");
+        check(
+            HologramAeBlueprint.analyze(node, 0, missingIdentity).blocking,
+            "a display marker without a registered root identity cannot claim the quantum exemption");
+        Block drive = AEApi.instance()
+            .definitions()
+            .blocks()
+            .drive()
+            .maybeBlock()
+            .get();
+        NBTTagCompound wrongFamily = root();
+        wrongFamily.setInteger("gtmb.quantumSides", 33);
+        check(
+            HologramAeBlueprint.analyze(drive, 0, wrongFamily).blocking,
+            "an ordinary AE host cannot borrow the quantum visual field whitelist");
+        check(
+            Arrays.equals(source, CompressedStreamTools.compress(raw)),
+            "preview, quote and placement projections leave the original quantum source bytes unchanged");
+    }
+
+    private static void quantumDisplayBlocked(Block node, NBTTagCompound raw, String message) throws Exception {
+        byte[] source = CompressedStreamTools.compress(raw);
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(node, 0, raw);
+        check(
+            analysis.blocking && issue(analysis, "unreviewed_tile_field", "gtmb.quantumSides")
+                && HologramAeBlueprint.analyze(node, 0, analysis.payload()).blocking,
+            message);
+        try {
+            HologramBlueprintNbt.nativePayload(raw);
+            throw new AssertionError("malformed registered quantum display must reject the native projection");
+        } catch (IOException expected) {
+            check(true, "malformed quantum preview is rejected before a native reader can discard hidden data");
+        }
+        check(
+            Arrays.equals(source, CompressedStreamTools.compress(raw)),
+            "failed quantum visual review preserves source bytes");
     }
 
     private static void deletedPartMarkers(boolean multipart) throws Exception {

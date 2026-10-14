@@ -409,7 +409,7 @@ final class HologramLibraryUiSocketSmoke {
     private static JsonObject fileBlueprint(Minecraft mc, String id) throws Exception {
         require(id.matches("local_[a-f0-9-]{36}"), "canonical private file ID");
         Path path = mc.mcDataDir.toPath()
-            .resolve("config/gtmb/client-blueprints/" + id + ".json");
+            .resolve("MiaoBlueprints/" + id + ".json");
         JsonObject root = new JsonParser().parse(new String(Files.readAllBytes(path), StandardCharsets.UTF_8))
             .getAsJsonObject();
         return root.getAsJsonObject("blueprint");

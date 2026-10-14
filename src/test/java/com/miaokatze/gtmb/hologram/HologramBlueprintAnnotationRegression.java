@@ -90,6 +90,19 @@ final class HologramBlueprintAnnotationRegression {
                 "单格提示",
                 ((HologramCapture) get(session, "capture")).cells.get(0).prompt,
                 "repopulating the virtual preview retains unsaved cell annotations");
+            HologramBlueprintProcessing.Policy reviewed = HologramBlueprintProcessing.defaults("self", 0);
+            reviewed.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+            NBTTagCompound processing = new NBTTagCompound();
+            processing.setLong("planRevision", (Long) get(session, "planRevision"));
+            processing.setTag("policy", reviewed.write());
+            Method process = HologramService.class
+                .getDeclaredMethod("processingAction", type, NBTTagCompound.class, String.class);
+            process.setAccessible(true);
+            process.invoke(null, session, processing, "processBlueprint");
+            SimpleAssert.that(
+                (Boolean) get(session, "processingReviewed"),
+                "save failure fixture completes the actual author workflow");
+            preset = (HologramPresets.Preset) get(session, "virtualPreset");
             Object originalCapture = get(session, "capture");
             request.setString("name", new String(new char[49]).replace('\0', 'x'));
             request.setString("prompt", "过期客户端文本");

@@ -38,6 +38,8 @@ import appeng.api.networking.security.PlayerSource;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
+import appeng.api.storage.data.IAEStack;
+import appeng.api.storage.data.IAEStackType;
 import appeng.core.stats.Stats;
 import appeng.helpers.WirelessTerminalGuiObject;
 import appeng.util.Platform;
@@ -56,9 +58,22 @@ public final class HologramMaterials {
     private static final String RECOVERY_COUNT = "gtmbRecoveryCount";
     private static final String RECOVERY_FLUID = "gtmbHologramFluidRecovery";
     private static final String RECOVERY_ENERGY = "gtmbHologramEnergyRecovery";
+    private static final String RECOVERY_ESSENTIA = "gtmbHologramEssentiaRecovery";
+    private static final String ESSENTIA_SOURCE = "gtmbEssentiaSourceKey";
+    private static final String ESSENTIA_UNCERTAIN = "gtmbEssentiaRefundUncertain";
     private static final Logger LOG = LogManager.getLogger("gtmb");
 
     private HologramMaterials() {}
+
+    private static boolean coordinatePayment(ItemStack expected) {
+        return HologramCoordinatePolicies.reviewedCoordinateItem(expected);
+    }
+
+    private static Predicate<ItemStack> paymentPredicate(ItemStack expected) {
+        return coordinatePayment(expected)
+            ? candidate -> HologramCoordinatePolicies.paymentEquivalent(expected, candidate)
+            : ItemStackPredicate.from(expected, ItemStackPredicate.NBTMode.EXACT);
+    }
 
     public static final class Settings {
 
@@ -165,8 +180,7 @@ public final class HologramMaterials {
 
         public int count(ItemStack stack, int limit) {
             if (stack == null || stack.getItem() == null || limit <= 0) return 0;
-            return amount(
-                take(ItemStackPredicate.from(stack, ItemStackPredicate.NBTMode.EXACT), stack, true, limit, null));
+            return amount(take(paymentPredicate(stack), stack, true, limit, null));
         }
 
         /** Construction shell only: retain item/damage identity, and enumerate real tagged variants in ME. */
@@ -187,6 +201,140 @@ public final class HologramMaterials {
 
         public long fluidCount(FluidStack stack, long limit) {
             return simulateFluid(fluidAccess(null), stack, limit);
+        }
+
+        public long essentiaCount(String aspect, long limit) {
+            if (limit <= 0 || !HologramEssentia.knownAspect(aspect)) return 0;
+            long available = localEssentia(aspect, limit, true);
+            if (available < limit) available += HologramEssentia.quote(essentiaAccess(null), aspect, limit - available);
+            return available;
+        }
+
+        private long localEssentia(String aspect, long limit, boolean simulate) {
+            if (!settings.main || limit <= 0) return 0;
+            long result = 0;
+            for (int slot = 0; slot < player.inventory.mainInventory.length && result < limit; slot++) {
+                if (slot == player.inventory.currentItem) continue;
+                ItemStack source = player.inventory.mainInventory[slot];
+                int amount = (int) Math.min(limit - result, HologramEssentia.jarAmount(source, aspect));
+                if (amount <= 0) continue;
+                if (!simulate) {
+                    ItemStack drained = HologramEssentia.drainJar(source, aspect, amount);
+                    if (drained == null || player.inventory.mainInventory[slot] != source) continue;
+                    player.inventory.mainInventory[slot] = drained;
+                    player.inventory.markDirty();
+                }
+                result += amount;
+            }
+            return result;
+        }
+
+        @SuppressWarnings({ "rawtypes", "unchecked" })
+        private HologramEssentia.Access essentiaAccess(Transaction transaction) {
+            return new HologramEssentia.Access() {
+
+                private IMEMonitor monitor() {
+                    IAEStackType<?> type = HologramEssentia.stackType();
+                    return type != null && terminalAvailable() ? terminal.getMEMonitor(type) : null;
+                }
+
+                @Override
+                public boolean available() {
+                    return settings.me && monitor() != null;
+                }
+
+                @Override
+                public IAEStack<?> request(String aspect, long amount) {
+                    return HologramEssentia.request(aspect, amount);
+                }
+
+                @Override
+                public long poweredCount(IAEStack<?> stack) {
+                    if (!available()) return 0;
+                    double power = networkPower(
+                        Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                        Actionable.SIMULATE,
+                        PowerMultiplier.CONFIG,
+                        transaction);
+                    return Math.min(stack.getStackSize(), (long) (power * stack.getAmountPerUnit() + 0.9));
+                }
+
+                @Override
+                public IAEStack<?> extract(IAEStack<?> stack, Actionable mode) {
+                    IMEMonitor monitor = monitor();
+                    return monitor == null ? null
+                        : monitor.extractItems(stack, mode, new PlayerSource(player, terminal));
+                }
+
+                @Override
+                public IAEStack<?> inject(IAEStack<?> stack) {
+                    IMEMonitor monitor = monitor();
+                    return monitor == null ? stack
+                        : monitor.injectItems(stack, Actionable.MODULATE, new PlayerSource(player, terminal));
+                }
+
+                @Override
+                public void charge(long amount, int unit) {
+                    Context.this.charge(amount, unit, transaction);
+                }
+            };
+        }
+
+        private boolean takeEssentia(String aspect, long amount, Transaction transaction) {
+            if (amount == 0) return true;
+            if (amount < 0 || essentiaCount(aspect, amount) < amount) return false;
+            long remaining = amount;
+            try {
+                if (settings.priority == 2) {
+                    long fromMe = HologramEssentia.quote(essentiaAccess(transaction), aspect, remaining);
+                    if (fromMe > 0 && !reserveEssentia(aspect, fromMe, transaction)) return false;
+                    remaining -= fromMe;
+                }
+                remaining -= localEssentia(aspect, remaining, false);
+                return remaining == 0 || reserveEssentia(aspect, remaining, transaction);
+            } finally {
+                if (terminalSlot >= 0) {
+                    transaction.terminalSlot = terminalSlot;
+                    transaction.terminalState = terminalStack.copy();
+                }
+            }
+        }
+
+        private boolean reserveEssentia(String aspect, long amount, Transaction transaction) {
+            return HologramEssentia.reserve(essentiaAccess(transaction), aspect, amount, stack -> {
+                NBTTagCompound receipt = new NBTTagCompound();
+                stack.writeToNBT(receipt);
+                receipt.setString(ESSENTIA_SOURCE, terminalKey == null ? "" : terminalKey);
+                transaction.meEssentia.add(receipt);
+            });
+        }
+
+        private void refundEssentia(NBTTagCompound receipt) {
+            if (receipt.getBoolean(ESSENTIA_UNCERTAIN)) return;
+            IAEStackType<?> type = HologramEssentia.stackType();
+            if (type == null || !receipt.getString(ESSENTIA_SOURCE)
+                .equals(terminalKey)) return;
+            IAEStack<?> stack = type.loadStackFromNBT(receipt);
+            if (stack == null || stack.getStackSize() <= 0) return;
+            try {
+                HologramEssentia.refund(essentiaAccess(null), stack);
+            } catch (RuntimeException | LinkageError failure) {
+                // An insertion adapter can throw after accepting points. Preserve the real receipt for
+                // review, but never automatically inject its unacknowledged original amount a second time.
+                receipt.setBoolean(ESSENTIA_UNCERTAIN, true);
+                throw failure;
+            } finally {
+                // Native ThE serializes the long count in Cnt; retain source identity across retry.
+                receipt.setLong("Cnt", stack.getStackSize());
+            }
+        }
+
+        private void recoverEssentia(NBTTagCompound receipt) {
+            if (receipt.getLong("Cnt") <= 0) return;
+            NBTTagCompound owner = recoveryOwner();
+            NBTTagList stored = owner.getTagList(RECOVERY_ESSENTIA, 10);
+            stored.appendTag(receipt.copy());
+            owner.setTag(RECOVERY_ESSENTIA, stored);
         }
 
         private FluidAccess fluidAccess(Transaction transaction) {
@@ -299,6 +447,18 @@ public final class HologramMaterials {
                 if (stack.getStackSize() > 0) remaining.appendTag(receipt.copy());
             }
             owner.setTag(RECOVERY_FLUID, remaining);
+            NBTTagList essentia = owner.getTagList(RECOVERY_ESSENTIA, 10);
+            NBTTagList pendingEssentia = new NBTTagList();
+            for (int i = 0; i < essentia.tagCount(); i++) {
+                NBTTagCompound receipt = essentia.getCompoundTagAt(i);
+                if (i < 96) try {
+                    refundEssentia(receipt);
+                } catch (RuntimeException | LinkageError failure) {
+                    LOG.warn("Hologram native essentia refund remains queued", failure);
+                }
+                if (receipt.getLong("Cnt") > 0) pendingEssentia.appendTag(receipt.copy());
+            }
+            owner.setTag(RECOVERY_ESSENTIA, pendingEssentia);
         }
 
         /** Enabled main inventory stock. Disabled sources are not inspected; the held tool slot is excluded. */
@@ -383,7 +543,7 @@ public final class HologramMaterials {
 
         private boolean exact(ItemStack stack, boolean simulate, Transaction transaction) {
             if (stack == null || stack.getItem() == null || stack.stackSize < 1) return false;
-            Predicate<ItemStack> predicate = ItemStackPredicate.from(stack, ItemStackPredicate.NBTMode.EXACT);
+            Predicate<ItemStack> predicate = paymentPredicate(stack);
             if (amount(take(predicate, stack, true, stack.stackSize, null)) < stack.stackSize) return false;
             return simulate || amount(take(predicate, stack, false, stack.stackSize, transaction)) == stack.stackSize;
         }
@@ -404,6 +564,9 @@ public final class HologramMaterials {
             // Anonymous predicates retain the construction batch budget. Explicit exact identities can pay
             // large GT inventory slots through one bounded adapter call without millions of takeOne calls.
             if (predicate == null || count < 1 || !simulate && exact == null && count > 4096) return result;
+            // A reviewed relocated card keeps its exact item/meta and other NBT, but must enumerate the
+            // actual coordinate variant. Never send a synthetic payment marker to an AE exact extractor.
+            ItemStack nativeExact = coordinatePayment(exact) ? null : exact;
             int[] order = settings.priority == 1 ? new int[] { 1, 0, 2 }
                 : settings.priority == 2 ? new int[] { 2, 0, 1 } : new int[] { 0, 1, 2 };
             for (int type : order) {
@@ -411,8 +574,9 @@ public final class HologramMaterials {
                 if (remaining <= 0) break;
                 if (type == 0 && settings.main) fromMain(predicate, simulate, remaining, result);
                 else if (type == 1 && settings.containers)
-                    fromContainers(predicate, exact, simulate, remaining, result, transaction);
-                else if (type == 2 && settings.me) fromMe(predicate, exact, simulate, remaining, result, transaction);
+                    fromContainers(predicate, nativeExact, simulate, remaining, result, transaction);
+                else if (type == 2 && settings.me)
+                    fromMe(predicate, nativeExact, simulate, remaining, result, transaction);
             }
             if (!simulate) player.inventory.markDirty();
             return result;
@@ -695,6 +859,7 @@ public final class HologramMaterials {
         private final List<ItemStack> containerItems = new ArrayList<>();
         private final List<IAEItemStack> meItems = new ArrayList<>();
         private final List<IAEFluidStack> meFluids = new ArrayList<>();
+        private final List<NBTTagCompound> meEssentia = new ArrayList<>();
         private BigInteger energyTaken = BigInteger.ZERO;
         private final List<HologramEnergy.Receipt> cachedEnergyReceipts = new ArrayList<>();
         private final Map<Integer, ItemStack> containerStates = new LinkedHashMap<>();
@@ -732,6 +897,12 @@ public final class HologramMaterials {
                 && (simulate ? context.fluidCount(stack, amount) >= amount : context.takeFluid(stack, amount, this));
         }
 
+        public boolean takeEssentia(String aspect, long amount, boolean simulate) {
+            return !closed && amount >= 0
+                && (simulate ? amount == 0 || context.essentiaCount(aspect, amount) >= amount
+                    : context.takeEssentia(aspect, amount, this));
+        }
+
         public boolean takeEnergy(BigInteger amount, boolean simulate) {
             if (closed || amount == null || amount.signum() < 0) return false;
             if (amount.signum() == 0) return true;
@@ -761,6 +932,7 @@ public final class HologramMaterials {
             containerStates.clear();
             meItems.clear();
             meFluids.clear();
+            meEssentia.clear();
             energyTaken = BigInteger.ZERO;
             terminalState = null;
         }
@@ -771,6 +943,15 @@ public final class HologramMaterials {
             closed = true;
             for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) receipt.refund();
             cachedEnergyReceipts.clear();
+            for (NBTTagCompound receipt : meEssentia) {
+                try {
+                    context.refundEssentia(receipt);
+                } catch (RuntimeException | LinkageError failure) {
+                    LOG.warn("Hologram native essentia refund queued", failure);
+                } finally {
+                    context.recoverEssentia(receipt);
+                }
+            }
             context.retainedContainers.putAll(containerStates);
             if (energyTaken.signum() > 0) {
                 try {
@@ -818,6 +999,7 @@ public final class HologramMaterials {
             containerStates.clear();
             meItems.clear();
             meFluids.clear();
+            meEssentia.clear();
             energyTaken = BigInteger.ZERO;
             terminalState = null;
         }
@@ -1012,7 +1194,8 @@ public final class HologramMaterials {
             && ItemStack.areItemStackTagsEqual(candidate, sample);
         return candidate -> candidate != null && candidate.stackSize > 0
             && candidate.isItemEqual(sample)
-            && !HologramRecovery.hasSeal(candidate);
+            && !HologramRecovery.hasSeal(candidate)
+            && HologramEssentia.allowsFuzzyShell(candidate);
     }
 
     private static boolean placeable(ItemStack stack) {

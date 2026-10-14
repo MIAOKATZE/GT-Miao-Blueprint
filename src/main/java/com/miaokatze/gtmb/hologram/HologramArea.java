@@ -64,15 +64,19 @@ final class HologramArea {
     void point(int index, int xx, int yy, int zz, String mode) throws IOException {
         if (!("replace".equals(mode) || "add".equals(mode) || "subtract".equals(mode)))
             throw new IOException("区域组合模式无效");
-        if (index == 1) {
-            first = new int[] { xx, yy, zz };
+        if (index != 1 && index != 2) throw new IOException("区域角点无效");
+        boolean pending = (first == null) != (second == null);
+        boolean completes = pending && (index == 1 ? second != null : first != null);
+        if (completes && (regions.size() >= 128 || regionUndo.size() >= 128)) throw new IOException("区域组合过多，请撤销或完成");
+        // Either mouse button may start the next pair. Re-marking that same corner keeps its original mode.
+        if (!pending) {
+            first = null;
             second = null;
             pointMode = mode;
         }
-        if (index == 2) {
-            if (first == null) throw new IOException("请先选择第一角点");
-            if (regions.size() >= 128 || regionUndo.size() >= 128) throw new IOException("区域组合过多，请撤销或完成");
-            second = new int[] { xx, yy, zz };
+        if (index == 1) first = new int[] { xx, yy, zz };
+        else second = new int[] { xx, yy, zz };
+        if (completes) {
             regionUndo.add(new ArrayList<>(regions));
             if ("replace".equals(pointMode)) regions.clear();
             regions.add(new Region(first, second, pointMode));
@@ -345,7 +349,12 @@ final class HologramArea {
                 return null;
             }
         }
-        return HologramBlockIdentity.materialStack(block, block.damageDropped(metadata));
+        try {
+            return HologramBlockIdentity.materialStack(block, HologramPresets.materialDamage(block, metadata));
+        } catch (IOException unsupported) {
+            // Retain the world cell as unsupported instead of publishing a different payable item variant.
+            return null;
+        }
     }
 
     String member(int xx, int yy, int zz) {

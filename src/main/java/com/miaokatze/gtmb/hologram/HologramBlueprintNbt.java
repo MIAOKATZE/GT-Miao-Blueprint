@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.zip.GZIPInputStream;
@@ -23,8 +24,11 @@ import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
+
+import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Bounded binary NBT transport and detached ownership rewriting for shared blueprints. */
 final class HologramBlueprintNbt {
@@ -215,7 +219,50 @@ final class HologramBlueprintNbt {
         return canonical;
     }
 
+    static NBTTagCompound filterSelection(NBTTagCompound source, List<String> keys, boolean retainCovers) {
+        return filter((NBTTagCompound) source.copy(), keys, retainCovers);
+    }
+
+    static NBTTagCompound filterSelection(Block block, NBTTagCompound source, List<String> keys, boolean retainCovers) {
+        return filter((NBTTagCompound) source.copy(), keys, retainCovers, block);
+    }
+
+    static boolean protectedKey(String key) {
+        String normalized = key.toLowerCase(Locale.ROOT);
+        return essentialKey(normalized) || HologramNetworkBindings.descriptorKey(key)
+            || HologramCoordinatePolicies.RELATIONS.equals(key)
+            || HologramRecovery.TAG.equals(key)
+            || ITEM_REGISTRY.equals(key)
+            || MISSING_ITEM.equals(key)
+            || COVER_REGISTRY.equals(key)
+            || COVER_DAMAGE.equals(key)
+            || MISSING_COVER.equals(key);
+    }
+
+    static boolean protectedKey(NBTTagCompound source, String key) {
+        return protectedKey(key) || "cbOwner".equals(key) && HologramDeidentification.carpenterOwner(source);
+    }
+
+    static boolean protectedKey(Block block, NBTTagCompound source, String key) {
+        return protectedKey(key) || "cbOwner".equals(key) && HologramDeidentification.carpenterOwner(block, source);
+    }
+
+    /** Exact audited paired asset schema. An omitted type or quantity cannot leave a malformed phantom payload. */
+    static void normalizeResourceSelection(NBTTagCompound tag) {
+        if (tag == null) return;
+        String id = tag.getString("id");
+        if (("TileJar".equals(id) || "TileJarVoid".equals(id))
+            && (!tag.hasKey("Aspect", 8) || !tag.hasKey("Amount", 2))) {
+            tag.removeTag("Aspect");
+            tag.setShort("Amount", (short) 0);
+        }
+    }
+
     private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers) {
+        return filter(source, keys, retainCovers, null);
+    }
+
+    private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers, Block block) {
         if (keys == null && retainCovers) return source;
         Set<String> selected = keys == null ? null : new HashSet<>(keys);
         NBTTagCompound result = new NBTTagCompound();
@@ -223,13 +270,14 @@ final class HologramBlueprintNbt {
             String key = (String) raw;
             String normalized = key.toLowerCase(Locale.ROOT);
             boolean cover = coverKey(normalized);
-            if ((cover && retainCovers) || (!cover && (selected == null || selected.contains(key)
-                || essentialKey(normalized)
-                || HologramNetworkBindings.descriptorKey(key)))) result.setTag(
+            if ((cover && retainCovers)
+                || (!cover && (selected == null || selected.contains(key) || protectedKey(block, source, key))))
+                result.setTag(
                     key,
                     source.getTag(key)
                         .copy());
         }
+        normalizeResourceSelection(result);
         return result;
     }
 
@@ -277,8 +325,28 @@ final class HologramBlueprintNbt {
         if (tag == null) return null;
         if (hasMissingItems(tag)) throw new IOException("蓝图NBT包含缺失物品，不能恢复或扣除资源");
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
+        removeQuantumVisual(copy);
         removeMarkers(copy);
         return copy;
+    }
+
+    /** Resolve only the registered root tile ID; nested items/recipes and unknown families keep their own data. */
+    static boolean registeredQuantumTile(NBTTagCompound tag) throws IOException {
+        if (!tag.hasKey("id", 8)) return false;
+        try {
+            Field names = ReflectionHelper.findField(TileEntity.class, "nameToClassMap", "field_145855_i");
+            Object type = ((Map<?, ?>) names.get(null)).get(tag.getString("id"));
+            return type instanceof Class<?> && HologramNetworkBindings.NODE_TILE.equals(((Class<?>) type).getName());
+        } catch (ReflectiveOperationException | RuntimeException failure) {
+            throw new IOException("Cannot verify registered quantum visual payload", failure);
+        }
+    }
+
+    private static void removeQuantumVisual(NBTTagCompound tag) throws IOException {
+        if (!tag.hasKey(HologramDisplaySnapshot.QUANTUM_SIDES) || !registeredQuantumTile(tag)) return;
+        if (!HologramDisplaySnapshot.validQuantumSides(tag))
+            throw new IOException("Malformed quantum preview side mask cannot enter a native payload");
+        tag.removeTag(HologramDisplaySnapshot.QUANTUM_SIDES);
     }
 
     private static void removeMarkers(NBTBase tag) {
@@ -289,6 +357,7 @@ final class HologramBlueprintNbt {
             compound.removeTag(COVER_REGISTRY);
             compound.removeTag(COVER_DAMAGE);
             compound.removeTag(MISSING_COVER);
+            compound.removeTag(HologramCoordinatePolicies.RELATIONS);
             for (Object raw : compound.func_150296_c()) removeMarkers(compound.getTag((String) raw));
         } else if (tag instanceof NBTTagList) {
             for (NBTBase entry : listEntries((NBTTagList) tag)) removeMarkers(entry);

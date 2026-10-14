@@ -17,8 +17,10 @@ public final class HologramBlockIdentity {
     /** A saved world state and its construction item can have different registered identities. */
     public static ItemStack materialStack(Block block, int metadata) {
         if (block == null || block == Blocks.air) return null;
-        // Vanilla's powered lamp has no ItemBlock; both states consume the ordinary lamp item.
-        Block material = block == Blocks.lit_redstone_lamp ? Blocks.redstone_lamp : block;
+        // Vanilla's state-only blocks consume the ordinary construction item.
+        Block material = block == Blocks.lit_redstone_lamp ? Blocks.redstone_lamp
+            : block == Blocks.lit_furnace ? Blocks.furnace
+                : block == Blocks.unlit_redstone_torch ? Blocks.redstone_torch : block;
         Item item = Item.getItemFromBlock(material);
         return item == null ? null : new ItemStack(item, 1, metadata);
     }

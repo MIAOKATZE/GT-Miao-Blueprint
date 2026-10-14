@@ -64,7 +64,7 @@ public final class HologramLibrarySocketServerProbe {
             if (!"uploaded".equals(op) && !"deleted".equals(op)) return;
             String id = reply.getString("id");
             if (!id.matches("public_[a-f0-9-]{36}")) throw new IllegalStateException("Probe public ID invalid");
-            Path file = root.resolve("config/gtmb/server-blueprints")
+            Path file = root.resolve("MiaoBlueprints")
                 .resolve(id + ".json")
                 .normalize();
             if (!file.startsWith(root)) throw new IllegalStateException("Probe path escaped fixture");

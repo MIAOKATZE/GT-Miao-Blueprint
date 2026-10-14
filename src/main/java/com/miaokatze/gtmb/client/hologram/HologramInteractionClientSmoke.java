@@ -661,8 +661,7 @@ public final class HologramInteractionClientSmoke {
                             .getString("id")
                             .isEmpty()) return;
                         require(
-                            new File(mc.mcDataDir, "config/gtmb/client-blueprints/" + library.selected(false) + ".json")
-                                .isFile(),
+                            new File(mc.mcDataDir, "MiaoBlueprints/" + library.selected(false) + ".json").isFile(),
                             "actual_library_save_publishes_private_file_before_place_or_Alt");
                         if (Boolean.getBoolean("gtmb.hologram.librarySocketSmoke") && libraryUiDriver == null) {
                             libraryUiDriver = new HologramLibraryUiSocketSmoke(
@@ -1870,8 +1869,7 @@ public final class HologramInteractionClientSmoke {
                     if (library.busy()) return true;
                     require(
                         quickLocalId.equals(library.selected(false))
-                            && new File(mc.mcDataDir, "config/gtmb/client-blueprints/" + quickLocalId + ".json")
-                                .isFile(),
+                            && new File(mc.mcDataDir, "MiaoBlueprints/" + quickLocalId + ".json").isFile(),
                         "locked_Escape_reopened_library_selects_the_same_portable_private_file");
                 }
                 awaitControl(draft, 141);

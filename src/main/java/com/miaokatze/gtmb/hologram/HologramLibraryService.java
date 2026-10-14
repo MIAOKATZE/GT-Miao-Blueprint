@@ -28,6 +28,15 @@ public final class HologramLibraryService {
             && HologramService.librarySessionCurrent(player, request);
     }
 
+    static boolean saveCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        return connectedProjector(player) && HologramService.librarySaveCurrent(player, request);
+    }
+
+    static boolean draftCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        return !request.getString("saveReceipt")
+            .isEmpty() ? saveCurrent(player, request) : sessionCurrent(player, request);
+    }
+
     static boolean connectedProjector(EntityPlayerMP player) {
         return player != null && !player.isDead
             && player.worldObj != null

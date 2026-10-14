@@ -17,6 +17,7 @@ import java.util.zip.GZIPOutputStream;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.testutil.BlueprintArtifactTestData;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -39,6 +40,7 @@ public final class HologramBlueprintPersistenceRegression {
             ownershipAndNbt();
             selectedNbt();
             stableItemIdentities();
+            visualNamesCannotHideAssets();
             hostileNbt();
             sharingTransaction();
             versions();
@@ -163,13 +165,13 @@ public final class HologramBlueprintPersistenceRegression {
         HologramPresets.validate(upgraded);
         expectIo(() -> HologramPresets.validate(old));
 
-        Field fileField = HologramPresets.class.getDeclaredField("FILE");
         Field cacheField = HologramPresets.class.getDeclaredField("cached");
-        fileField.setAccessible(true);
         cacheField.setAccessible(true);
-        Path file = (Path) fileField.get(null);
+        Path file = HologramPresets.libraryPath();
         Object previousCache = cacheField.get(null);
         byte[] previousBytes = Files.exists(file) ? Files.readAllBytes(file) : null;
+        // Internal schema 1 templates remain supported inside the current native file contract.
+        HologramBlueprintVersions.stamp(old);
         String json = "{\"schema\":1,\"presets\":[" + new com.google.gson.Gson().toJson(old) + "]}";
         byte[] legacyBytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Files.createDirectories(file.getParent());
@@ -307,6 +309,31 @@ public final class HologramBlueprintPersistenceRegression {
             "GT cover packed id remaps by stable item registry and damage");
     }
 
+    private static void visualNamesCannotHideAssets() throws Exception {
+        NBTTagCompound hidden = new net.minecraft.item.ItemStack(net.minecraft.init.Items.diamond, 7)
+            .writeToNBT(new NBTTagCompound());
+        NBTTagCompound unknown = new NBTTagCompound();
+        unknown.setString("id", "unregistered_visual_asset_fixture");
+        unknown.setTag("gtmb.quantumSides", hidden.copy());
+        NBTTagCompound source = (NBTTagCompound) unknown.copy();
+        NBTTagCompound nativeData = HologramBlueprintNbt.nativePayload(unknown);
+        SimpleAssert.that(nativeData.equals(source), "an unknown family keeps the entire similarly named item asset");
+        expectIo(() -> HologramBlueprintResources.plan(nativeData));
+        SimpleAssert.that(unknown.equals(source), "rejected unknown visual asset leaves source NBT unchanged");
+
+        NBTTagCompound nested = new NBTTagCompound();
+        nested.setString("id", "gtswn.network_quantum_node");
+        nested.setTag("gtmb.quantumSides", hidden.copy());
+        NBTTagCompound recipe = new NBTTagCompound();
+        recipe.setString("id", "ordinary_recipe_owner");
+        recipe.setTag("recipe", nested);
+        SimpleAssert.that(
+            HologramBlueprintNbt.nativePayload(recipe)
+                .equals(recipe),
+            "a nested recipe cannot claim the root quantum presentation exemption by borrowing its tile ID");
+        expectIo(() -> HologramBlueprintResources.plan(HologramBlueprintNbt.nativePayload(recipe)));
+    }
+
     private static HologramPresets.Preset blueprint() {
         HologramPresets.Preset preset = new HologramPresets.Preset();
         preset.id = "fixture";
@@ -348,14 +375,21 @@ public final class HologramBlueprintPersistenceRegression {
 
         Method decode = HologramPresets.class.getDeclaredMethod("decode", String.class);
         decode.setAccessible(true);
-        Object file = decode.invoke(
-            null,
-            "{\"schema\":1,\"presets\":[{\"id\":\"legacy\",\"name\":\"Legacy\",\"cells\":[],\"palette\":[]}]}");
+        HologramPresets.Preset internalTemplate = new HologramPresets.Preset();
+        HologramBlueprintVersions.stamp(internalTemplate);
+        com.google.gson.JsonObject nativeFile = new com.google.gson.JsonParser()
+            .parse("{\"schema\":1,\"presets\":[{\"id\":\"legacy\",\"name\":\"Legacy\",\"cells\":[],\"palette\":[]}]}")
+            .getAsJsonObject();
+        nativeFile.getAsJsonArray("presets")
+            .get(0)
+            .getAsJsonObject()
+            .add("nativeBlueprint", new com.google.gson.Gson().toJsonTree(internalTemplate.nativeBlueprint));
+        Object file = decode.invoke(null, nativeFile.toString());
         Field entries = file.getClass()
             .getDeclaredField("presets");
         entries.setAccessible(true);
         HologramPresets.Preset legacy = ((List<HologramPresets.Preset>) entries.get(file)).get(0);
-        SimpleAssert.eq(1, legacy.schema, "old schema 1 entries retain legacy semantics");
+        SimpleAssert.eq(1, legacy.schema, "current native template defaults to internal schema 1 semantics");
         SimpleAssert.that(legacy.retainNbt && legacy.retainCovers, "missing optional settings have safe defaults");
         SimpleAssert.that(legacy.retainedNbtKeys == null, "missing legacy selector retains full baseline");
     }
@@ -548,7 +582,8 @@ public final class HologramBlueprintPersistenceRegression {
     private static void sharingTransaction() throws Exception {
         Path directory = Files.createTempDirectory("gtmb-blueprint-share-");
         Path file = directory.resolve("blueprint.json");
-        Path blocked = directory.resolve("blocked");
+        Path previewFile = HologramBlueprintArtifact.previewPath(file);
+        Path blocked = directory.resolve("blocked.json");
         try {
             HologramPresets.Preset preset = blueprint();
             preset.prompt = "Global prompt";
@@ -582,8 +617,20 @@ public final class HologramBlueprintPersistenceRegression {
             area.x2 = 10;
             area.prompt = "Wire this area";
             preset.hintAreas.add(area);
-            HologramBlueprintSharing.write(file, preset);
+            HologramBlueprintVersions.stamp(preset);
+            byte[] preview = BlueprintArtifactTestData.previewPng();
+            expectIo(() -> HologramBlueprintSharing.write(file, preset));
+            HologramBlueprintSharing.write(file, preset, preview);
             byte[] original = Files.readAllBytes(file);
+            byte[] originalPreview = Files.readAllBytes(previewFile);
+            Files.delete(previewFile);
+            expectIo(() -> HologramBlueprintSharing.read(file));
+            Files.write(previewFile, originalPreview);
+            byte[] mismatchedJson = original.clone();
+            mismatchedJson[0] ^= 1;
+            Files.write(file, mismatchedJson);
+            expectIo(() -> HologramBlueprintSharing.read(file));
+            Files.write(file, original);
             HologramPresets.Preset loaded = HologramBlueprintSharing.read(file);
             SimpleAssert.eq(
                 "missing_mod:missing_block",
@@ -637,12 +684,15 @@ public final class HologramBlueprintPersistenceRegression {
                 .that(legacyMembership.belongsTo("structure_a"), "empty multi-membership falls back to legacy primary");
             Files.createDirectory(blocked);
             Files.write(blocked.resolve("keep"), new byte[] { 1 });
-            expectIo(() -> HologramBlueprintSharing.write(blocked, preset));
+            expectIo(() -> HologramBlueprintSharing.write(blocked, preset, preview));
             SimpleAssert.that(
                 java.util.Arrays.equals(original, Files.readAllBytes(file)),
                 "failed atomic export preserves prior file");
+            SimpleAssert.that(
+                java.util.Arrays.equals(originalPreview, Files.readAllBytes(previewFile)),
+                "failed atomic export preserves matching preview");
             try (java.util.stream.Stream<Path> files = Files.list(directory)) {
-                SimpleAssert.eq(2, (int) files.count(), "failed atomic write removes temporary file");
+                SimpleAssert.eq(3, (int) files.count(), "failed atomic write removes temporary files and retains pair");
             }
             expectIo(
                 () -> HologramBlueprintSharing.atomicWrite(file, new byte[HologramBlueprintSharing.MAX_BYTES + 1]));
@@ -653,6 +703,7 @@ public final class HologramBlueprintPersistenceRegression {
             Files.deleteIfExists(blocked.resolve("keep"));
             Files.deleteIfExists(blocked);
             Files.deleteIfExists(file);
+            Files.deleteIfExists(previewFile);
             Files.deleteIfExists(directory);
         }
     }

@@ -7,13 +7,16 @@ final class HologramGuidance {
 
     static String next(HologramState state, int selected, boolean blueprints, boolean pending) {
         if (pending) return "等待服务端校验…";
-        if (state.data.getBoolean("areaSelecting")) return "步骤 1/3 · 左键第一角 / 右键第二角 · Alt 使用玩家坐标 · Shift+右击完成 · Esc 取消";
+        if (state.data.getBoolean("areaSelecting"))
+            return "步骤 1/3 · 浮空框选：左键第一角 / 右键第二角 · Alt+滚轮调距 · Shift+右击完成 · Esc 取消";
         if (HologramPlacementConfirmation.forceReview(state.data, state.data.getLong("planRevision")))
             return "缺料：再次确认仅放已有；编辑规划或更换材料来源后重新确认";
         if (state.data.getBoolean("blueprintAwaitingConfirmation")) return "放置预检 · 调整本次 NBT / 核对材料 · 确认放置直接施工";
         if (state.data.getInteger("job") == 1) return "正在施工；可暂停或取消";
         if (state.data.getInteger("job") == 2) return "施工已暂停；确认继续或取消";
-        if (blueprints) return "步骤 1/3 · 列表选择 → 放置 → 世界右键锁定 → 再次右键核对材料 · Alt+右键快捷预览 · Esc/E 关闭";
+        if (blueprints) return state.data.getBoolean("blueprintProcessingRequired")
+            && !state.data.getBoolean("blueprintProcessingComplete") ? "先完成蓝图处理流程，再保存蓝图或编辑方块 NBT"
+                : "拖动预览旋转查看 · 列表选择蓝图 · 上方放置进入世界定位";
         if (state.cells.isEmpty()) return "右键控制器导入结构 · Shift+右键框选区域 · 或点击“框选区域”";
         if (state.data.getBoolean("virtualPlacement")) return state.data.getBoolean("virtualLocked")
             ? "位置已锁定（青色）· 方向键水平微调，Alt+上下调高度 · 右键重新核对材料 · Shift+右键解锁 · Esc 取消"
@@ -29,8 +32,9 @@ final class HologramGuidance {
         if (blueprints) return state.data.getString("selectedPresetId")
             .isEmpty() ? 149 : 141;
         if (state.data.getBoolean("virtualPlacement") && !state.data.getBoolean("virtualLocked")) return 135;
-        if (selected >= 0) return 146;
-        if (state.data.getBoolean("target") && !state.cells.isEmpty()) return 50;
+        if (selected >= 0) return 97;
+        if (state.data.getBoolean("target") && !state.cells.isEmpty())
+            return state.data.getBoolean("presetActive") ? 50 : 94;
         return 149;
     }
 

@@ -103,6 +103,8 @@ final class HologramKeyBindings {
 
     private static boolean reserved(int key, int modifiers) {
         return key == Keyboard.KEY_T || key == Keyboard.KEY_G
+            || modifiers == 0
+                && (key == Keyboard.KEY_W || key == Keyboard.KEY_A || key == Keyboard.KEY_S || key == Keyboard.KEY_D)
             || key == Keyboard.KEY_A && modifiers == 1
             || modifiers == 0 && (key == Keyboard.KEY_1 || key == Keyboard.KEY_2 || key == Keyboard.KEY_3);
     }
