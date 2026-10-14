@@ -376,21 +376,29 @@ public final class HologramProductionPreviewSmoke {
         if (!(mc.currentScreen instanceof HologramScreen) || HologramClient.state == null
             || !editedSession.equals(HologramClient.state.session)) return;
         try {
-            if (++frames < 3) return;
             HologramState state = HologramClient.state;
+            HologramScreen screen = (HologramScreen) mc.currentScreen;
+            NBTTagCompound ui = screen.smokeLibraryUiState();
+            boolean current = renderStage == 2;
+            int renderedView = field(HologramRenderer.class, "visibleView").getInt(null);
+            int renderedMode = field(HologramRenderer.class, "visibleMode").getInt(null);
+            if (field(HologramScreen.class, "state").get(screen) != state
+                || field(HologramRenderer.class, "previewState").get(null) != state
+                || !state.session.equals(ui.getString("session"))
+                || state.data.getLong("planRevision") != ui.getLong("planRevision")
+                || ui.getLong("renderGeneration") <= 0
+                || (renderedView == 1 || renderedMode == 2) != current) {
+                frames = 0;
+                return;
+            }
+            if (++frames < 3) return;
             require(
                 state.cells.size() == expectedCells() && state.data.getBoolean("supported")
                     && !state.data.getBoolean("capturePending"),
                 "complete original and adjacent network snapshot");
-            boolean current = renderStage == 2;
             write("received-service-state.nbt", state.data);
             String name = current ? "production-native-current.png" : "production-native-target.png";
             screenshot(name);
-            HologramV011NormalDecorProbe.verify(
-                state,
-                current,
-                output.resolve(name)
-                    .toFile());
             // Consume this displayed frame's faces, camera and native models before the
             // independent model verifiers begin fresh snapshots and invalidate the screen caches.
             NBTTagCompound adjacentReceipt = null;
@@ -408,6 +416,11 @@ public final class HologramProductionPreviewSmoke {
                     current ? "source-current-reference-receipt.nbt" : "source-target-reference-receipt.nbt",
                     reference);
             }
+            HologramV011NormalDecorProbe.verify(
+                state,
+                current,
+                output.resolve(name)
+                    .toFile());
             NBTTagCompound receipt = HologramAeWorldPreviewVerification.verify(state.data, current);
             receipt.setTag("allNative", verifyAll(state, current, adjacentProfile));
             if (adjacentReceipt != null) receipt.setTag("adjacent", adjacentReceipt);
