@@ -3,7 +3,7 @@ package com.miaokatze.gtmb.hologram;
 /** World gestures never authorize construction; that remains an explicit server-validated UI action. */
 public final class HologramWorldFlow {
 
-    public static final int DEFAULT_DISTANCE = 6, MIN_DISTANCE = 2, MAX_DISTANCE = 64;
+    public static final int DEFAULT_DISTANCE = 6, MIN_DISTANCE = 0, MAX_DISTANCE = 64;
     public static final int NUDGE_REPEAT_DELAY = 8, NUDGE_REPEAT_INTERVAL = 4;
 
     public enum Nudge {
@@ -102,24 +102,36 @@ public final class HologramWorldFlow {
     /** Shared interval and revision ACK for all arrows, with one queued deliberate step. */
     public static final class NudgeDispatch {
 
+        private static final int ACK_TIMEOUT_TICKS = 20, MAX_RETRIES = 2;
         private String session = "";
         private long pendingRevision = -1, pendingTick, lastSentTick = Long.MIN_VALUE;
-        private int[] queued;
-        private boolean queuedRepeat;
+        private int[] queued, inFlight;
+        private boolean queuedRepeat, inFlightRepeat, retryDue;
+        private int retries;
 
         public void sync(String currentSession, long revision, long tick, boolean contextChanged) {
             if (contextChanged || !session.equals(currentSession)) {
                 session = currentSession;
-                pendingRevision = -1;
+                clearPending();
                 lastSentTick = Long.MIN_VALUE;
                 queued = null;
                 return;
             }
-            if (pendingRevision >= 0 && revision > pendingRevision) pendingRevision = -1;
-            else if (pendingRevision >= 0 && tick - pendingTick >= 20) {
-                // Recovery from a rejected/lost request is distinct from a successful revision ACK.
-                pendingRevision = -1;
+            if (pendingRevision >= 0 && revision > pendingRevision) clearPending();
+            else if (pendingRevision >= 0 && tick - pendingTick >= ACK_TIMEOUT_TICKS) {
+                // Client/server tick boundaries can differ. The server's four-tick throttle
+                // may silently reject one deliberate press; retain its original world offset.
+                // An accepted retry raises revision, so duplicate old-revision packets cannot move twice.
+                if (!inFlightRepeat && retries < MAX_RETRIES) retryDue = true;
+                else clearPending();
             }
+        }
+
+        private void clearPending() {
+            pendingRevision = -1;
+            inFlight = null;
+            inFlightRepeat = retryDue = false;
+            retries = 0;
         }
 
         public void queue(int[] offset, boolean repeat) {
@@ -135,12 +147,27 @@ public final class HologramWorldFlow {
         }
 
         public int[] poll(long revision, long tick) {
-            if (session.isEmpty() || queued == null
-                || pendingRevision >= 0
+            if (session.isEmpty() || queued == null && !retryDue
+                || pendingRevision >= 0 && !retryDue
                 || lastSentTick != Long.MIN_VALUE && tick - lastSentTick < NUDGE_REPEAT_INTERVAL) return null;
-            int[] offset = queued;
-            queued = null;
-            pendingRevision = revision;
+            int[] offset;
+            if (retryDue) {
+                // Never rebase an old press onto a changed draft if a caller missed sync.
+                if (revision != pendingRevision) {
+                    clearPending();
+                    return null;
+                }
+                offset = inFlight.clone();
+                retryDue = false;
+                retries++;
+            } else {
+                offset = queued;
+                queued = null;
+                inFlight = offset.clone();
+                inFlightRepeat = queuedRepeat;
+                retries = 0;
+                pendingRevision = revision;
+            }
             pendingTick = lastSentTick = tick;
             return offset;
         }

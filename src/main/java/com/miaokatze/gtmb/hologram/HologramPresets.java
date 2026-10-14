@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -29,19 +28,28 @@ import com.google.gson.JsonParser;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 
 import gregtech.api.GregTechAPI;
+import gregtech.api.metatileentity.MetaPipeEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.ItemMachines;
 
-/** Server-owned bounded storage. Schema 1 prefabs remain readable alongside schema 2 blueprints. */
+/** Server-owned native storage. Internal schema 1 templates and schema 2 blueprints share version metadata. */
 final class HologramPresets {
 
-    private static final Path FILE = Paths.get("config", "gtmb", "hologram-presets.json");
     // The whole library has a separate budget; one large entry must not consume every other slot.
     static final int MAX_LIBRARY_BYTES = 64 * 1024 * 1024;
     private static final Gson GSON = new GsonBuilder().create();
     private static List<Preset> cached;
 
     private HologramPresets() {}
+
+    static Path libraryPath() {
+        return HologramLibraryFacade.blueprintDirectory()
+            .resolve("hologram-presets.json");
+    }
+
+    static synchronized void clearCache() {
+        cached = null;
+    }
 
     static final class Cell {
 
@@ -132,8 +140,13 @@ final class HologramPresets {
         // Creator attribution is descriptive; public-library ownership is verified separately by the server.
         String authorName, authorUuid;
         long createdAt;
+        HologramBlueprintVersions.Metadata nativeBlueprint;
         int schema = 1;
         int aePolicyVersion;
+        int deidentificationVersion, deidentificationLevel;
+        boolean deidentificationChosen;
+        // Schema 2 extension: a bounded binary NBT receipt, never a recoverable copy of stripped identities.
+        String processingNbt;
         List<HologramAePolicy.Issue> aeIssues = new ArrayList<>();
         boolean retainNbt = true, retainCovers = true;
         String prompt, sourceMod, sourceClass;
@@ -177,7 +190,7 @@ final class HologramPresets {
 
     static synchronized List<Preset> all() throws IOException {
         if (cached != null) return copies(cached);
-        cached = readLibrary(FILE);
+        cached = readLibrary(libraryPath());
         return copies(cached);
     }
 
@@ -194,6 +207,7 @@ final class HologramPresets {
                 Set<String> ids = new HashSet<>();
                 for (Preset preset : data.presets) {
                     Preset loaded = preset != null && preset.schema == 1 ? upgradeLegacy(preset) : preset;
+                    HologramBlueprintProcessing.markLegacy(loaded);
                     validate(loaded);
                     HologramBlueprintSharing.encodeBounded(GSON, loaded, HologramBlueprintSharing.MAX_BYTES);
                     if (!ids.add(loaded.id)) throw new IOException("模板ID重复");
@@ -207,7 +221,8 @@ final class HologramPresets {
     }
 
     static Preset get(String id) throws IOException {
-        for (Preset preset : all()) if (preset.id.equals(id)) return HologramAePolicy.sanitize(copy(preset)).preset;
+        for (Preset preset : all()) if (preset.id.equals(id))
+            return HologramBlueprintProcessing.enforcePolicy(HologramAePolicy.sanitize(copy(preset)).preset);
         return null;
     }
 
@@ -215,21 +230,149 @@ final class HologramPresets {
         List<Preset> list = all();
         Preset saved = put(list, preset, false);
         validate(saved);
-        write(FILE, list);
+        write(libraryPath(), list);
         preset.id = saved.id;
+        preset.nativeBlueprint = saved.nativeBlueprint;
     }
 
     static synchronized void update(Preset preset) throws IOException {
         List<Preset> list = all();
         Preset updated = put(list, preset, true);
         validate(updated);
-        write(FILE, list);
+        write(libraryPath(), list);
+        preset.nativeBlueprint = updated.nativeBlueprint;
+    }
+
+    /** Prepare the final identity and canonical payload before a client captures its matching preview. */
+    static synchronized Preset prepareSaved(Preset preset, boolean update) throws IOException {
+        return copy(put(all(), preset, update));
+    }
+
+    /** Commit the reviewed bytes without generating another ID or replacing the prepared provenance. */
+    static synchronized void commitSaved(Preset prepared, boolean update) throws IOException {
+        HologramBlueprintVersions.validate(prepared);
+        Preset result = copy(prepared);
+        HologramAePolicy.Draft canonical = HologramAePolicy.sanitize(result);
+        if (canonical.blocking)
+            throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
+        result = HologramBlueprintProcessing.enforcePolicy(canonical.preset);
+        validate(result);
+        byte[] reviewed = HologramBlueprintSharing.encodeBounded(GSON, prepared, HologramBlueprintSharing.MAX_BYTES);
+        byte[] checked = HologramBlueprintSharing.encodeBounded(GSON, result, HologramBlueprintSharing.MAX_BYTES);
+        if (!java.util.Arrays.equals(reviewed, checked)) throw new IOException(
+            "Prepared blueprint changed during canonical validation: "
+                + canonicalDifference(GSON.toJsonTree(prepared), GSON.toJsonTree(result), ""));
+        List<Preset> list = all();
+        int index = indexOf(list, result.id);
+        if (update) {
+            if (index < 0) throw new IOException("要更新的模板不存在");
+            Preset original = list.get(index);
+            if (!java.util.Objects.equals(result.authorName, original.authorName)
+                || !java.util.Objects.equals(result.authorUuid, original.authorUuid)
+                || result.createdAt != original.createdAt)
+                throw new IOException("Prepared blueprint author metadata no longer matches the stored entry");
+            list.set(index, result);
+        } else {
+            if (index >= 0) throw new IOException("模板ID重复");
+            if (list.size() >= 32) throw new IOException("最多保存32个模板");
+            list.add(result);
+        }
+        write(libraryPath(), list);
+    }
+
+    /** Rejection diagnostics expose a field path, never the player's saved device contents. */
+    private static String canonicalDifference(JsonElement reviewed, JsonElement checked, String path)
+        throws IOException {
+        if (java.util.Objects.equals(reviewed, checked)) return path.isEmpty() ? "/ (JSON representation differs)" : "";
+        if (reviewed != null && checked != null && reviewed.isJsonObject() && checked.isJsonObject()) {
+            Set<String> fields = new java.util.TreeSet<>();
+            for (Map.Entry<String, JsonElement> entry : reviewed.getAsJsonObject()
+                .entrySet()) fields.add(entry.getKey());
+            for (Map.Entry<String, JsonElement> entry : checked.getAsJsonObject()
+                .entrySet()) fields.add(entry.getKey());
+            for (String field : fields) {
+                String difference = canonicalDifference(
+                    reviewed.getAsJsonObject()
+                        .get(field),
+                    checked.getAsJsonObject()
+                        .get(field),
+                    path + "/" + field);
+                if (!difference.isEmpty()) return difference;
+            }
+        } else if (reviewed != null && checked != null && reviewed.isJsonArray() && checked.isJsonArray()) {
+            int count = Math.min(
+                reviewed.getAsJsonArray()
+                    .size(),
+                checked.getAsJsonArray()
+                    .size());
+            for (int i = 0; i < count; i++) {
+                String difference = canonicalDifference(
+                    reviewed.getAsJsonArray()
+                        .get(i),
+                    checked.getAsJsonArray()
+                        .get(i),
+                    path + "/" + i);
+                if (!difference.isEmpty()) return difference;
+            }
+            return path + "/length";
+        } else if ((path.endsWith("/tileNbt") || path.endsWith("/itemNbt") || path.endsWith("/processingNbt"))
+            && reviewed != null
+            && checked != null
+            && reviewed.isJsonPrimitive()
+            && checked.isJsonPrimitive()) {
+                boolean same = java.util.Objects.equals(
+                    HologramBlueprintNbt.decode(reviewed.getAsString()),
+                    HologramBlueprintNbt.decode(checked.getAsString()));
+                return path + (same ? " (decoded NBT equal)" : " (decoded NBT differs)");
+            }
+        return path.isEmpty() ? "/" : path;
     }
 
     static synchronized void delete(String id) throws IOException {
+        delete(id, HologramBlueprintArtifact::deletePair);
+    }
+
+    interface ArtifactDeleteOperation {
+
+        void delete(Path file) throws IOException;
+    }
+
+    /** Keep the logical collection and both native artifact members together on failed deletion. */
+    static synchronized void delete(String id, ArtifactDeleteOperation removeArtifact) throws IOException {
         List<Preset> list = all();
         remove(list, id);
-        write(FILE, list);
+        if (id == null || !id.matches("[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"))
+            throw new IOException("蓝图必须具有当前原生保存格式的完整 JSON 和 PNG 文件");
+        Path library = libraryPath();
+        Path artifact = library.getParent()
+            .resolve("local_" + id + ".json");
+        Preset artifactBlueprint = HologramBlueprintSharing.read(artifact);
+        if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+        byte[] previousBytes = HologramBlueprintSharing.readBytes(library, MAX_LIBRARY_BYTES);
+        List<Preset> previousCache = cached;
+        write(library, list);
+        try {
+            removeArtifact.delete(artifact);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                restoreLibraryBytes(library, previousBytes);
+                cached = previousCache;
+            } catch (IOException restoreFailure) {
+                failure.addSuppressed(restoreFailure);
+            }
+            throw failure;
+        }
+    }
+
+    private static void restoreLibraryBytes(Path file, byte[] bytes) throws IOException {
+        if (bytes.length > MAX_LIBRARY_BYTES) throw new IOException("蓝图库超过64MiB上限");
+        Path temp = Files.createTempFile(file.getParent(), "hologram-presets-restore-", ".tmp");
+        try {
+            Files.write(temp, bytes);
+            Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 
     private static void remove(List<Preset> list, String id) throws IOException {
@@ -249,6 +392,8 @@ final class HologramPresets {
         if (canonical.blocking)
             throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
         result = canonical.preset;
+        result = HologramBlueprintProcessing.enforcePolicy(result);
+        HologramBlueprintVersions.stampSaved(result);
         validate(result);
         if (update) {
             int index = indexOf(list, result.id);
@@ -393,16 +538,18 @@ final class HologramPresets {
 
     private static void write(Path file, List<Preset> list) throws IOException {
         FileData data = new FileData();
-        data.presets = list;
-        for (Preset preset : list)
+        data.presets = copies(list);
+        for (Preset preset : data.presets) {
+            HologramBlueprintVersions.stamp(preset);
             HologramBlueprintSharing.encodeBounded(GSON, preset, HologramBlueprintSharing.MAX_BYTES);
+        }
         byte[] bytes = HologramBlueprintSharing.encodeBounded(GSON, data, MAX_LIBRARY_BYTES);
         Files.createDirectories(file.getParent());
         Path temp = Files.createTempFile(file.getParent(), "hologram-presets-", ".tmp");
         try {
             Files.write(temp, bytes);
             Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            cached = copies(list);
+            cached = copies(data.presets);
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -451,6 +598,7 @@ final class HologramPresets {
             JsonElement presets = root.getAsJsonObject()
                 .get("presets");
             if (presets.isJsonArray()) for (JsonElement entry : presets.getAsJsonArray()) {
+                HologramBlueprintVersions.validateJson(entry);
                 HologramBlueprintSharing.validatePresetSchema(entry);
                 if (!entry.isJsonObject() || !entry.getAsJsonObject()
                     .has("controllerFacing")) continue;
@@ -470,7 +618,12 @@ final class HologramPresets {
     }
 
     static void validate(Preset preset) throws IOException {
+        HologramBlueprintVersions.validateIfPresent(preset);
         if (preset != null) {
+            HologramBlueprintProcessing.validateReceipt(preset);
+            HologramDeidentification.checked(preset.deidentificationLevel);
+            if (preset.deidentificationVersion < 0 || preset.deidentificationVersion > HologramDeidentification.VERSION)
+                throw new IOException("去标识版本无效");
             if (preset.aePolicyVersion < 0 || preset.aePolicyVersion > HologramAePolicy.VERSION)
                 throw new IOException("Unsupported AE policy version");
             HologramAePolicy.validateIssues(preset.aeIssues);
@@ -599,7 +752,7 @@ final class HologramPresets {
             validateMembership(cell, structureIds);
         }
         for (Cell cell : preset.palette) {
-            validateBlueprintCell(cell);
+            validateBlueprintCell(cell, false);
             validateMembership(cell, structureIds);
             filterSelectedPayload(preset, cell);
         }
@@ -643,6 +796,7 @@ final class HologramPresets {
     }
 
     private static void filterSelectedPayload(Preset preset, Cell cell) throws IOException {
+        HologramCoordinatePolicies.validatePaymentPayload(HologramBlueprintNbt.decode(cell.tileNbt));
         List<String> keys = preset.retainNbt ? preset.retainedNbtKeys : java.util.Collections.emptyList();
         cell.tileNbt = HologramAePolicy.handles(cell.block(), cell.tileNbt)
             ? HologramBlueprintNbt.filterCanonical(cell.block(), cell.tileNbt, keys, preset.retainCovers)
@@ -651,6 +805,10 @@ final class HologramPresets {
     }
 
     private static void validateBlueprintCell(Cell cell) throws IOException {
+        validateBlueprintCell(cell, true);
+    }
+
+    private static void validateBlueprintCell(Cell cell, boolean placedCell) throws IOException {
         if (cell == null || (cell.item == null && cell.block == null)
             || cell.count != 1
             || cell.damage < 0
@@ -661,6 +819,7 @@ final class HologramPresets {
         registryText(cell.item, true);
         registryText(cell.block, true);
         registryText(cell.defaultItem, true);
+        validateMaterialIdentity(cell, placedCell);
         coordinates(cell.x, cell.y, cell.z);
         text(cell.prompt, 4096);
         if (cell.allowedTargets != null) {
@@ -673,6 +832,94 @@ final class HologramPresets {
             }
         }
         // filterSelectedPayload validates binary NBT budgets and strips unselected entries before storage.
+    }
+
+    private static void validateMaterialIdentity(Cell cell, boolean placedCell) throws IOException {
+        ItemStack material = cell.stack();
+        if (material == null) return; // Missing registry entries remain inspectable; placement rejects them separately.
+        Block actual = Block.getBlockFromItem(material.getItem());
+        Block declared = cell.block();
+        boolean gt = material.getItem() instanceof ItemMachines;
+        if (gt && actual != GregTechAPI.sBlockMachines) throw new IOException("GT 材料没有对应的真实机器方块");
+        if (material.getItem() instanceof ItemBlock && actual != null && actual != Blocks.air) {
+            if (cell.block == null) cell.block = Block.blockRegistry.getNameForObject(actual);
+            else if (!materialBlockAlias(actual, declared)) {
+                // Composite adapters derive their complete materials from the actual reviewed native factory.
+                if (gt || declared == null
+                    || !HologramNativePlacement.supported(declared)
+                    || !HologramNativePlacement
+                        .matchesSample(declared, cell.metadata, HologramBlueprintNbt.decode(cell.tileNbt), material))
+                    throw new IOException("蓝图方块与实际付款物品对应的方块不一致");
+            }
+        }
+        if (declared != null && declared == GregTechAPI.sBlockMachines && !gt)
+            throw new IOException("GT 机器必须使用对应的真实 GT 机器物品付款");
+        if (!gt) {
+            if (placedCell) validateMaterialVariant(cell.block(), cell.metadata, material);
+            return;
+        }
+        int expected = material.getItemDamage();
+        if (expected < 0 || expected >= GregTechAPI.METATILEENTITIES.length)
+            throw new IOException("GT 机器材料 ID 超出原生注册范围");
+        String tileId = GregTechAPI.METATILEENTITIES[expected] instanceof MetaPipeEntity ? "BaseMetaPipeEntity"
+            : "BaseMetaTileEntity";
+        // An absent add-on prototype can still be inspected; its canonical pipe header remains descriptive only.
+        NBTTagCompound tile = HologramBlueprintNbt.decode(cell.tileNbt);
+        if (GregTechAPI.METATILEENTITIES[expected] == null && tile != null
+            && "BaseMetaPipeEntity".equals(tile.getString("id"))) tileId = "BaseMetaPipeEntity";
+        validateGtPayload(tile, expected, tileId);
+        NBTTagCompound item = HologramBlueprintNbt.decode(cell.itemNbt);
+        if (item != null && (item.hasKey("mID") || item.hasKey("id"))) validateGtPayload(item, expected, tileId);
+    }
+
+    private static boolean materialBlockAlias(Block actual, Block declared) {
+        return HologramBlockIdentity.sameForPlacement(actual, 0, declared, 0)
+            || actual == Blocks.furnace && declared == Blocks.lit_furnace
+            || actual == Blocks.lit_furnace && declared == Blocks.furnace
+            || actual == Blocks.redstone_torch && declared == Blocks.unlit_redstone_torch
+            || actual == Blocks.unlit_redstone_torch && declared == Blocks.redstone_torch;
+    }
+
+    /** Common-side native pick identity, including state/axis folding and Dirt's podzol exception. */
+    static int materialDamage(Block block, int metadata) throws IOException {
+        if (block == null || block == Blocks.air) throw new IOException("无法核验缺失方块的实际材料变种");
+        try {
+            Block identity = block == Blocks.lit_furnace ? Blocks.furnace
+                : block == Blocks.unlit_redstone_torch ? Blocks.redstone_torch : block;
+            ItemStack sample = HologramBlockIdentity.materialStack(identity, 0);
+            if (sample != null && !sample.getItem()
+                .getHasSubtypes()) return 0;
+            HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
+            int damage = block.getDamageValue(world, 0, 64, 0);
+            if (damage < 0) throw new IOException("原生方块返回了无效的实际材料变种");
+            return damage;
+        } catch (RuntimeException | LinkageError failure) {
+            throw new IOException("无法使用原生服务端规则核验方块材料变种", failure);
+        }
+    }
+
+    /** Ordinary saved states must consume their native physical variant; composite bills are validated separately. */
+    static void validateMaterialVariant(Block block, int metadata, ItemStack paid) throws IOException {
+        if (paid == null || paid.getItem() == null) throw new IOException("方块没有可核验的实际付款材料");
+        if (paid.getItem() instanceof ItemMachines || HologramNativePlacement.supported(block)) return;
+        if (!(paid.getItem() instanceof ItemBlock)) return; // Non-block native carriers have their own audited planner.
+        Block material = Block.getBlockFromItem(paid.getItem());
+        if (!materialBlockAlias(material, block)) throw new IOException("实际方块与付款物品的原生方块不一致");
+        if (materialDamage(block, metadata) != paid.getItemDamage()) throw new IOException("实际方块材料变种与付款物品 damage 不一致");
+    }
+
+    /** Shared pure boundary: world metadata is not the machine material damage/MetaTile ID. */
+    static void validateGtPayload(NBTTagCompound payload, int expectedDamage, String expectedTileId)
+        throws IOException {
+        if (payload == null) return; // A deliberately omitted payload installs the paid shell's native defaults.
+        if (!payload.hasKey("mID", 99) || payload.getTag("mID")
+            .getId() < 1
+            || payload.getTag("mID")
+                .getId() > 4
+            || payload.getLong("mID") != expectedDamage) throw new IOException("GT 设备 NBT 的 mID 必须精确对应实际付款物品 damage");
+        // Planned casing visuals contain mID/texture only; a supplied native root ID must be canonical.
+        if (payload.hasKey("id") && (!payload.hasKey("id", 8) || !expectedTileId.equals(payload.getString("id"))))
+            throw new IOException("GT 设备 NBT 的原生类型与实际付款机器不一致");
     }
 
     private static void coordinates(int x, int y, int z) throws IOException {

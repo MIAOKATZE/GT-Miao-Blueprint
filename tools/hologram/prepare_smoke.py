@@ -217,7 +217,7 @@ def prepare(mode, source, coexistence=False, gtit_jar=None, support_classpath=No
             cache_invalidations.append(invalidation)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     library_archive = None
-    library = server / 'config' / 'gtmb' / 'hologram-presets.json'
+    library = server / 'MiaoBlueprints' / 'hologram-presets.json'
     if mode in ('smoke', 'interaction') and library.is_file():
         if not library.resolve().is_relative_to(server.resolve()):
             raise SystemExit('Preset library must remain inside the isolated server fixture')

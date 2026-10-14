@@ -204,4 +204,18 @@ public final class HologramSelection {
         for (int index : indices) result[at++] = index;
         return result;
     }
+
+    /** Memory reads can race a replacement snapshot; never dereference a retired index. */
+    int[] positions(HologramState state) {
+        int[] result = new int[indices.size() * 3];
+        int at = 0;
+        for (int index : indices) {
+            if (index < 0 || index >= state.cells.size()) continue;
+            HologramState.Cell cell = state.cells.get(index);
+            result[at++] = cell.x;
+            result[at++] = cell.y;
+            result[at++] = cell.z;
+        }
+        return java.util.Arrays.copyOf(result, at);
+    }
 }

@@ -1,6 +1,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import net.minecraft.block.Block;
+import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -12,8 +14,26 @@ public final class HologramBlockIdentity {
 
     private HologramBlockIdentity() {}
 
+    /** A saved world state and its construction item can have different registered identities. */
+    public static ItemStack materialStack(Block block, int metadata) {
+        if (block == null || block == Blocks.air) return null;
+        // Vanilla's state-only blocks consume the ordinary construction item.
+        Block material = block == Blocks.lit_redstone_lamp ? Blocks.redstone_lamp
+            : block == Blocks.lit_furnace ? Blocks.furnace
+                : block == Blocks.unlit_redstone_torch ? Blocks.redstone_torch : block;
+        Item item = Item.getItemFromBlock(material);
+        return item == null ? null : new ItemStack(item, 1, metadata);
+    }
+
     public static boolean same(Block first, int firstMeta, Block second, int secondMeta) {
         return first != null && second != null && firstMeta == secondMeta && first == second;
+    }
+
+    /** Vanilla lamp power is recomputed by native neighbor updates after placing the ordinary lamp item. */
+    public static boolean sameForPlacement(Block first, int firstMeta, Block second, int secondMeta) {
+        return same(first, firstMeta, second, secondMeta)
+            || firstMeta == secondMeta && (first == Blocks.redstone_lamp || first == Blocks.lit_redstone_lamp)
+                && (second == Blocks.redstone_lamp || second == Blocks.lit_redstone_lamp);
     }
 
     public static String key(Block block, int metadata) {

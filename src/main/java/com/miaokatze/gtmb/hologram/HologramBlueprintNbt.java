@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.zip.GZIPInputStream;
@@ -19,18 +21,24 @@ import java.util.zip.GZIPOutputStream;
 
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
-import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTBase;
+import net.minecraft.nbt.NBTTagByteArray;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagIntArray;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.nbt.NBTTagString;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
+
+import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Bounded binary NBT transport and detached ownership rewriting for shared blueprints. */
 final class HologramBlueprintNbt {
 
     static final int MAX_COMPRESSED = 1024 * 1024;
     static final int MAX_EXPANDED = 4 * 1024 * 1024;
+    private static final int MAX_DEPTH = 512;
     static final String ITEM_REGISTRY = "gtitBlueprintItemRegistry";
     static final String MISSING_ITEM = "gtitBlueprintMissingItem";
     static final String COVER_REGISTRY = "gtitBlueprintCoverRegistry";
@@ -41,7 +49,7 @@ final class HologramBlueprintNbt {
     private HologramBlueprintNbt() {}
 
     static String encodeCaptured(NBTTagCompound tag) throws IOException {
-        return encode(tag, true);
+        return encode(tag, false);
     }
 
     /** AE schemas already handled identities; never recursively rewrite encoded pattern recipe data. */
@@ -84,6 +92,8 @@ final class HologramBlueprintNbt {
         NBTBase report = copy.getTag(HologramAeBlueprint.UNRESOLVED);
         copy.removeTag(HologramAeBlueprint.UNRESOLVED);
         rewrite(copy, owner, ownerName == null ? "" : ownerName, stripCovers, false);
+        for (int index = 0; index < legacy.tagCount(); index++)
+            rewrite(legacy.getCompoundTagAt(index), owner, ownerName == null ? "" : ownerName, stripCovers, false);
         copy.setTag("parts", parts);
         if (report != null) copy.setTag(HologramAeBlueprint.UNRESOLVED, report);
         return copy;
@@ -97,16 +107,96 @@ final class HologramBlueprintNbt {
 
     private static String encode(NBTTagCompound tag, boolean rewriteOwnership) throws IOException {
         if (tag == null) return null;
+        checkDepth(tag, 0);
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
         if (rewriteOwnership) rewrite(copy, null, "", false, false);
         stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(new GZIPOutputStream(new LimitedOutput(bytes, MAX_COMPRESSED)), MAX_EXPANDED))) {
-            CompressedStreamTools.write(copy, output);
+            output.writeByte(10);
+            output.writeUTF("");
+            writeCanonicalPayload(copy, output, 0);
         }
         return Base64.getEncoder()
             .encodeToString(bytes.toByteArray());
+    }
+
+    /** Validate before native copy can recurse, including when a caller supplies a cyclic compound. */
+    private static void checkDepth(NBTBase tag, int depth) throws IOException {
+        if (tag == null || depth > MAX_DEPTH) throw new IOException("蓝图NBT嵌套超出上限");
+        if (tag.getId() < 1 || tag.getId() > 11) throw new IOException("蓝图NBT类型无效");
+        if (tag instanceof NBTTagCompound) {
+            NBTTagCompound compound = (NBTTagCompound) tag;
+            for (Object key : compound.func_150296_c()) checkDepth(compound.getTag((String) key), depth + 1);
+        } else if (tag instanceof NBTTagList) {
+            for (NBTBase child : listEntries((NBTTagList) tag)) checkDepth(child, depth + 1);
+        }
+    }
+
+    /** Standard 1.7 NBT wire format, independent of a vanilla or modded compound map's iteration order. */
+    private static void writeCanonicalPayload(NBTBase tag, DataOutput output, int depth) throws IOException {
+        if (tag == null || depth > MAX_DEPTH) throw new IOException("蓝图NBT嵌套超出上限");
+        switch (tag.getId()) {
+            case 1:
+                output.writeByte(((NBTBase.NBTPrimitive) tag).func_150290_f());
+                break;
+            case 2:
+                output.writeShort(((NBTBase.NBTPrimitive) tag).func_150289_e());
+                break;
+            case 3:
+                output.writeInt(((NBTBase.NBTPrimitive) tag).func_150287_d());
+                break;
+            case 4:
+                output.writeLong(((NBTBase.NBTPrimitive) tag).func_150291_c());
+                break;
+            case 5:
+                output.writeFloat(((NBTBase.NBTPrimitive) tag).func_150288_h());
+                break;
+            case 6:
+                output.writeDouble(((NBTBase.NBTPrimitive) tag).func_150286_g());
+                break;
+            case 7:
+                byte[] bytes = ((NBTTagByteArray) tag).func_150292_c();
+                output.writeInt(bytes.length);
+                output.write(bytes);
+                break;
+            case 8:
+                output.writeUTF(((NBTTagString) tag).func_150285_a_());
+                break;
+            case 9:
+                NBTTagList list = (NBTTagList) tag;
+                int type = list.func_150303_d();
+                if (type < 0 || type > 11 || type == 0 && list.tagCount() != 0) throw new IOException("蓝图NBT列表类型无效");
+                output.writeByte(type);
+                output.writeInt(list.tagCount());
+                for (NBTBase child : listEntries(list)) {
+                    if (child.getId() != type) throw new IOException("蓝图NBT列表类型不一致");
+                    writeCanonicalPayload(child, output, depth + 1);
+                }
+                break;
+            case 10:
+                NBTTagCompound compound = (NBTTagCompound) tag;
+                List<String> keys = new ArrayList<>();
+                for (Object key : compound.func_150296_c()) keys.add((String) key);
+                java.util.Collections.sort(keys);
+                for (String key : keys) {
+                    NBTBase child = compound.getTag(key);
+                    if (child.getId() < 1 || child.getId() > 11) throw new IOException("蓝图NBT类型无效");
+                    output.writeByte(child.getId());
+                    output.writeUTF(key);
+                    writeCanonicalPayload(child, output, depth + 1);
+                }
+                output.writeByte(0);
+                break;
+            case 11:
+                int[] integers = ((NBTTagIntArray) tag).func_150302_c();
+                output.writeInt(integers.length);
+                for (int value : integers) output.writeInt(value);
+                break;
+            default:
+                throw new IOException("蓝图NBT类型无效");
+        }
     }
 
     static NBTTagCompound decode(String value) throws IOException {
@@ -186,7 +276,6 @@ final class HologramBlueprintNbt {
         NBTTagCompound source = decode(value);
         if (source == null) return null;
         NBTTagCompound filtered = filter(source, keys, retainCovers);
-        rewrite(filtered, null, "", !retainCovers, false);
         return encodeCaptured(filtered);
     }
 
@@ -214,7 +303,50 @@ final class HologramBlueprintNbt {
         return canonical;
     }
 
+    static NBTTagCompound filterSelection(NBTTagCompound source, List<String> keys, boolean retainCovers) {
+        return filter((NBTTagCompound) source.copy(), keys, retainCovers);
+    }
+
+    static NBTTagCompound filterSelection(Block block, NBTTagCompound source, List<String> keys, boolean retainCovers) {
+        return filter((NBTTagCompound) source.copy(), keys, retainCovers, block);
+    }
+
+    static boolean protectedKey(String key) {
+        String normalized = key.toLowerCase(Locale.ROOT);
+        return essentialKey(normalized) || HologramNetworkBindings.descriptorKey(key)
+            || HologramCoordinatePolicies.RELATIONS.equals(key)
+            || HologramRecovery.TAG.equals(key)
+            || ITEM_REGISTRY.equals(key)
+            || MISSING_ITEM.equals(key)
+            || COVER_REGISTRY.equals(key)
+            || COVER_DAMAGE.equals(key)
+            || MISSING_COVER.equals(key);
+    }
+
+    static boolean protectedKey(NBTTagCompound source, String key) {
+        return protectedKey(key) || "cbOwner".equals(key) && HologramDeidentification.carpenterOwner(source);
+    }
+
+    static boolean protectedKey(Block block, NBTTagCompound source, String key) {
+        return protectedKey(key) || "cbOwner".equals(key) && HologramDeidentification.carpenterOwner(block, source);
+    }
+
+    /** Exact audited paired asset schema. An omitted type or quantity cannot leave a malformed phantom payload. */
+    static void normalizeResourceSelection(NBTTagCompound tag) {
+        if (tag == null) return;
+        String id = tag.getString("id");
+        if (("TileJar".equals(id) || "TileJarVoid".equals(id))
+            && (!tag.hasKey("Aspect", 8) || !tag.hasKey("Amount", 2))) {
+            tag.removeTag("Aspect");
+            tag.setShort("Amount", (short) 0);
+        }
+    }
+
     private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers) {
+        return filter(source, keys, retainCovers, null);
+    }
+
+    private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers, Block block) {
         if (keys == null && retainCovers) return source;
         Set<String> selected = keys == null ? null : new HashSet<>(keys);
         NBTTagCompound result = new NBTTagCompound();
@@ -222,13 +354,14 @@ final class HologramBlueprintNbt {
             String key = (String) raw;
             String normalized = key.toLowerCase(Locale.ROOT);
             boolean cover = coverKey(normalized);
-            if ((cover && retainCovers) || (!cover && (selected == null || selected.contains(key)
-                || essentialKey(normalized)
-                || HologramNetworkBindings.descriptorKey(key)))) result.setTag(
+            if ((cover && retainCovers)
+                || (!cover && (selected == null || selected.contains(key) || protectedKey(block, source, key))))
+                result.setTag(
                     key,
                     source.getTag(key)
                         .copy());
         }
+        normalizeResourceSelection(result);
         return result;
     }
 
@@ -276,8 +409,28 @@ final class HologramBlueprintNbt {
         if (tag == null) return null;
         if (hasMissingItems(tag)) throw new IOException("蓝图NBT包含缺失物品，不能恢复或扣除资源");
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
+        removeQuantumVisual(copy);
         removeMarkers(copy);
         return copy;
+    }
+
+    /** Resolve only the registered root tile ID; nested items/recipes and unknown families keep their own data. */
+    static boolean registeredQuantumTile(NBTTagCompound tag) throws IOException {
+        if (!tag.hasKey("id", 8)) return false;
+        try {
+            Field names = ReflectionHelper.findField(TileEntity.class, "nameToClassMap", "field_145855_i");
+            Object type = ((Map<?, ?>) names.get(null)).get(tag.getString("id"));
+            return type instanceof Class<?> && HologramNetworkBindings.NODE_TILE.equals(((Class<?>) type).getName());
+        } catch (ReflectiveOperationException | RuntimeException failure) {
+            throw new IOException("Cannot verify registered quantum visual payload", failure);
+        }
+    }
+
+    private static void removeQuantumVisual(NBTTagCompound tag) throws IOException {
+        if (!tag.hasKey(HologramDisplaySnapshot.QUANTUM_SIDES) || !registeredQuantumTile(tag)) return;
+        if (!HologramDisplaySnapshot.validQuantumSides(tag))
+            throw new IOException("Malformed quantum preview side mask cannot enter a native payload");
+        tag.removeTag(HologramDisplaySnapshot.QUANTUM_SIDES);
     }
 
     private static void removeMarkers(NBTBase tag) {
@@ -288,6 +441,7 @@ final class HologramBlueprintNbt {
             compound.removeTag(COVER_REGISTRY);
             compound.removeTag(COVER_DAMAGE);
             compound.removeTag(MISSING_COVER);
+            compound.removeTag(HologramCoordinatePolicies.RELATIONS);
             for (Object raw : compound.func_150296_c()) removeMarkers(compound.getTag((String) raw));
         } else if (tag instanceof NBTTagList) {
             for (NBTBase entry : listEntries((NBTTagList) tag)) removeMarkers(entry);
@@ -376,8 +530,14 @@ final class HologramBlueprintNbt {
     }
 
     private static void rewrite(NBTBase tag, UUID uuid, String name, boolean stripCovers, boolean ownerContext) {
+        rewrite(tag, uuid, name, stripCovers, ownerContext, false);
+    }
+
+    private static void rewrite(NBTBase tag, UUID uuid, String name, boolean stripCovers, boolean ownerContext,
+        boolean coverContext) {
         if (tag instanceof NBTTagCompound) {
             NBTTagCompound compound = (NBTTagCompound) tag;
+            if (itemCompound(compound)) return;
             for (Object raw : new ArrayList<>(compound.func_150296_c())) {
                 String key = (String) raw;
                 String normalized = key.toLowerCase(Locale.ROOT);
@@ -385,12 +545,10 @@ final class HologramBlueprintNbt {
                 if (stripCovers && coverKey(normalized)) {
                     compound.removeTag(key);
                 } else if (original instanceof NBTTagCompound || original instanceof NBTTagList) {
-                    rewrite(
-                        original,
-                        uuid,
-                        name,
-                        stripCovers,
-                        ownerContext || nameKey(normalized) || uuidKey(normalized));
+                    boolean actor = ownerContext || nameKey(normalized) || uuidKey(normalized);
+                    boolean cover = coverKey(normalized) || coverContext
+                        && (normalized.equals("d") || normalized.equals("data") || normalized.equals("coverdata"));
+                    if (actor || cover) rewrite(original, uuid, name, stripCovers, actor, cover);
                 } else if (nameKey(normalized) || (ownerContext && normalized.equals("name"))) {
                     compound.setString(key, name);
                 } else if (uuidKey(normalized) || (ownerContext && (normalized.equals("id") || normalized.equals("uuid")
@@ -407,11 +565,11 @@ final class HologramBlueprintNbt {
                                     (int) uuid.getMostSignificantBits(), (int) (uuid.getLeastSignificantBits() >>> 32),
                                     (int) uuid.getLeastSignificantBits() });
                         else compound.setString(key, uuid == null ? "" : uuid.toString());
-                    } else rewrite(original, uuid, name, stripCovers, ownerContext);
+                    }
             }
         } else if (tag instanceof NBTTagList) {
             NBTTagList list = (NBTTagList) tag;
-            for (NBTBase entry : listEntries(list)) rewrite(entry, uuid, name, stripCovers, ownerContext);
+            for (NBTBase entry : listEntries(list)) rewrite(entry, uuid, name, stripCovers, ownerContext, coverContext);
         }
     }
 

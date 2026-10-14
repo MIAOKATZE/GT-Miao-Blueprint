@@ -198,6 +198,8 @@ final class HologramBlockTransforms {
         if (!HologramNativePlacement.supported(block)) return null;
         List<ItemStack> costs = HologramNativePlacement
             .materials(block, metadata, HologramBlueprintNbt.decode(tileNbt));
+        if (costs.isEmpty())
+            return HologramNativePlacement.sample(block, metadata, HologramBlueprintNbt.decode(tileNbt));
         for (ItemStack cost : costs)
             if (previous != null && cost.isItemEqual(previous) && ItemStack.areItemStackTagsEqual(cost, previous))
                 return previous.copy();

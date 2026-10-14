@@ -58,6 +58,7 @@ public final class HologramAeBlueprintCoreRegression {
         discardedField(drive);
         interfaceStorageAliases();
         previewCacheSchema();
+        quantumDisplayTransport(actor);
         deletedPartMarkers(false);
         deletedPartMarkers(true);
         for (IItemDefinition definition : Arrays.asList(
@@ -149,27 +150,31 @@ public final class HologramAeBlueprintCoreRegression {
         NBTTagCompound source = (NBTTagCompound) raw.copy();
         HologramAeBlueprint.Analysis first = HologramAeBlueprint.analyze(drive, 0, raw);
         check(
-            issue(first, "missing_physical_item", "inv/item0") && first.blocking,
-            "missing physical record is a blocker");
+            issue(first, "missing_physical_item", "inv/item0") && !first.blocking && first.materials.isEmpty(),
+            "unavailable mod physical record is warned and omitted without charging or restoring it");
         check(
             !first.payload()
                 .getCompoundTag("inv")
                 .hasKey("item0"),
             "unrestorable physical record is not retained");
+        HologramAeBlueprint.Analysis second = HologramAeBlueprint.analyze(drive, 0, first.payload());
         check(
-            HologramAeBlueprint.analyze(drive, 0, first.payload()).blocking,
-            "removed invalid physical record cannot disappear on second analyze");
+            !second.blocking && second.materials.isEmpty() && slot(second, "inv/item0").stack() == null,
+            "canonical reanalysis cannot restore or charge the unavailable physical item");
+        persistentPolicyWarning(drive, raw, "missing_physical_item", "inv/item0");
         check(raw.equals(source), "missing-item source record is unchanged");
         HologramAeBlueprint.Analysis unrelated = HologramAeBlueprint
             .updateSlot(drive, 0, first.payload(), "inv/item1", null);
-        check(unrelated.blocking, "unrelated edit does not acknowledge missing physical inventory");
+        check(
+            !unrelated.blocking && slot(unrelated, "inv/item0").stack() == null,
+            "unrelated edit cannot resurrect the omitted unavailable item");
         HologramAeBlueprint.Analysis cleared = HologramAeBlueprint
             .updateSlot(drive, 0, first.payload(), "inv/item0", null);
         check(!cleared.blocking, "explicit invalid-slot CLEAR acknowledges its omitted marker");
         check(
             HologramAeBlueprint.resolvedIssuePaths("inv/item0", first, cleared)
                 .contains("inv/item0"),
-            "server receives exact resolved issue path");
+            "exact CLEAR reports the originally warned physical issue path");
     }
 
     private static void malformedPhysicalMarkers(Block drive) throws Exception {
@@ -248,14 +253,66 @@ public final class HologramAeBlueprintCoreRegression {
         cell.setTagCompound(cellTag);
         HologramAeBlueprint.Analysis missing = HologramAeBlueprint.analyze(drive, 0, cellPayload(cell));
         check(
-            missing.blocking && issue(missing, "missing_physical_item", "inv/item0/tag/upgrades/#0"),
-            "missing imported embedded card is omitted with an exact persistent physical blocker");
+            !missing.blocking && issue(missing, "missing_physical_item", "inv/item0/tag/upgrades/#0"),
+            "missing imported embedded card is omitted with an exact persistent warning");
+        HologramAeBlueprint.Analysis clean = HologramAeBlueprint.analyze(drive, 0, missing.payload());
         check(
-            HologramAeBlueprint.analyze(drive, 0, missing.payload()).blocking,
-            "missing embedded card remains blocked after sanitization");
+            !clean.blocking && clean.materials.stream()
+                .noneMatch(stack -> stack.isItemEqual(fuzzy)),
+            "canonical reanalysis cannot restore or charge the unavailable embedded card");
+        persistentPolicyWarning(drive, cellPayload(cell), "missing_physical_item", "inv/item0/tag/upgrades/#0");
         check(
             !HologramAeBlueprint.updateSlot(drive, 0, missing.payload(), "inv/item0/tag/upgrades/#0", null).blocking,
             "exact embedded-card CLEAR resolves its omitted physical marker");
+    }
+
+    private static void persistentPolicyWarning(Block block, NBTTagCompound raw, String code, String path)
+        throws Exception {
+        HologramPresets.Preset source = new HologramPresets.Preset();
+        source.id = "local_" + java.util.UUID.randomUUID()
+            .toString();
+        source.schema = 2;
+        source.controllerType = "area";
+        source.name = "Native persistent missing-item policy fixture";
+        ItemStack shell = HologramAeBlueprint.sampleIdentity(
+            block,
+            0,
+            HologramAeBlueprint.analyze(block, 0, raw)
+                .payload());
+        check(
+            shell != null && shell.getItem() != null,
+            "persistent-warning fixture uses actual registered native shell");
+        HologramPresets.Cell cell = HologramPresets.cell(shell, 3, 2, 1, -1, false);
+        cell.block = Block.blockRegistry.getNameForObject(block);
+        cell.metadata = 0;
+        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(raw);
+        String originalPayload = cell.tileNbt;
+        source.cells.add(cell);
+        HologramAePolicy.Draft first = HologramAePolicy.sanitize(source);
+        check(
+            !first.blocking && first.issues.stream()
+                .anyMatch(
+                    issue -> code.equals(issue.code) && path.equals(issue.path)
+                        && "warning".equals(issue.severity)
+                        && issue.x == 3
+                        && issue.y == 2
+                        && issue.z == 1),
+            "whole-preset policy persists exact unavailable-item warning with local coordinate " + path);
+        HologramBlueprintVersions.stamp(first.preset);
+        byte[] actualJson = HologramServerLibrary.encodeShare(first.preset);
+        HologramPresets.Preset loaded = HologramBlueprintSharing
+            .decode(new String(actualJson, java.nio.charset.StandardCharsets.UTF_8));
+        HologramAePolicy.Draft again = HologramAePolicy.sanitize(loaded);
+        check(
+            !again.blocking && again.preset.aeIssues.stream()
+                .anyMatch(
+                    issue -> code.equals(issue.code) && path.equals(issue.path)
+                        && "warning".equals(issue.severity)
+                        && issue.x == 3
+                        && issue.y == 2
+                        && issue.z == 1),
+            "actual canonical JSON roundtrip and repeated whole-preset policy preserve omission warning " + path);
+        check(source.cells.get(0).tileNbt.equals(originalPayload), "policy warning projection preserves source draft");
     }
 
     private static void discardedField(Block drive) throws Exception {
@@ -455,6 +512,119 @@ public final class HologramAeBlueprintCoreRegression {
             "ordinary AE native capture recognizes the same exact boolean transport marker");
     }
 
+    private static void quantumDisplayTransport(EntityPlayerMP actor) throws Exception {
+        Block node = null;
+        for (Object registered : Block.blockRegistry)
+            if (registered instanceof Block && HologramNetworkBindings.node((Block) registered))
+                node = (Block) registered;
+        if (node == null) {
+            System.out.println(PREFIX + "SKIP quantum display contract: optional GTSWN node is not registered");
+            return;
+        }
+        NBTTagCompound raw = new NBTTagCompound();
+        node.createTileEntity(null, 0)
+            .writeToNBT(raw);
+        raw.setInteger("gtmb.quantumSides", 33);
+        raw.setBoolean("gtmb.nativePreview", true);
+        ItemStack anchor = AEApi.instance()
+            .definitions()
+            .parts()
+            .cableAnchor()
+            .maybeStack(1)
+            .get();
+        NBTTagCompound parts = new NBTTagCompound();
+        parts.setTag("def:5", anchor.writeToNBT(new NBTTagCompound()));
+        parts.setTag("extra:5", new NBTTagCompound());
+        raw.setTag("partContainer", parts);
+        byte[] source = CompressedStreamTools.compress(raw);
+        ItemStack shell = HologramAeBlueprint.blockSample(node, 0);
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(node, 0, raw);
+        check(
+            !analysis.blocking && analysis.payload()
+                .getInteger("gtmb.quantumSides") == 33,
+            "registered quantum connection directions survive canonical blueprint processing for offline preview");
+        String saved = HologramBlueprintNbt.encodeCanonical(analysis.payload());
+        NBTTagCompound reloaded = HologramBlueprintNbt.decode(saved);
+        check(
+            HologramDisplaySnapshot.target(node, shell, -1, null, saved, true)
+                .getCompoundTag("nativeTile")
+                .getInteger("gtmb.quantumSides") == 33,
+            "saved quantum preview retains the original six-side visual topology without a live world");
+        NBTTagCompound nativeData = HologramBlueprintNbt.nativePayload(reloaded);
+        check(!nativeData.hasKey("gtmb.quantumSides"), "native persistence never receives the display side mask");
+        NBTTagCompound placement = HologramBlueprintNbt.forPlacement(
+            node,
+            0,
+            saved,
+            actor.getUniqueID(),
+            actor.getCommandSenderName(),
+            12,
+            64,
+            34,
+            true,
+            true,
+            null);
+        check(
+            !placement.hasKey("gtmb.quantumSides") && placement.hasKey("partContainer", 10),
+            "placement removes only presentation metadata and retains the payable native component container");
+        HologramBlueprintResources.Plan bill = HologramAeBlueprint.resourcePlan(node, 0, reloaded, shell);
+        check(
+            bill.items.size() == 1 && bill.items.get(0)
+                .isItemEqual(anchor) && bill.items.get(0).stackSize == 1,
+            "visual topology grants no material credit: the real retained anchor still costs one item");
+        for (int mask : new int[] { -1, 64 }) {
+            NBTTagCompound outside = (NBTTagCompound) raw.copy();
+            outside.setInteger("gtmb.quantumSides", mask);
+            quantumDisplayBlocked(node, outside, "out-of-range quantum directions cannot be silently clamped");
+        }
+        NBTTagCompound wrongType = (NBTTagCompound) raw.copy();
+        wrongType.setByte("gtmb.quantumSides", (byte) 33);
+        quantumDisplayBlocked(node, wrongType, "a byte side mask is not the reviewed integer transport schema");
+        NBTTagCompound hiddenAsset = (NBTTagCompound) raw.copy();
+        hiddenAsset.setTag("gtmb.quantumSides", new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        quantumDisplayBlocked(
+            node,
+            hiddenAsset,
+            "a physical compound under the visual key remains an explicit blocker");
+        NBTTagCompound missingIdentity = (NBTTagCompound) raw.copy();
+        missingIdentity.removeTag("id");
+        check(
+            HologramAeBlueprint.analyze(node, 0, missingIdentity).blocking,
+            "a display marker without a registered root identity cannot claim the quantum exemption");
+        Block drive = AEApi.instance()
+            .definitions()
+            .blocks()
+            .drive()
+            .maybeBlock()
+            .get();
+        NBTTagCompound wrongFamily = root();
+        wrongFamily.setInteger("gtmb.quantumSides", 33);
+        check(
+            HologramAeBlueprint.analyze(drive, 0, wrongFamily).blocking,
+            "an ordinary AE host cannot borrow the quantum visual field whitelist");
+        check(
+            Arrays.equals(source, CompressedStreamTools.compress(raw)),
+            "preview, quote and placement projections leave the original quantum source bytes unchanged");
+    }
+
+    private static void quantumDisplayBlocked(Block node, NBTTagCompound raw, String message) throws Exception {
+        byte[] source = CompressedStreamTools.compress(raw);
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(node, 0, raw);
+        check(
+            analysis.blocking && issue(analysis, "unreviewed_tile_field", "gtmb.quantumSides")
+                && HologramAeBlueprint.analyze(node, 0, analysis.payload()).blocking,
+            message);
+        try {
+            HologramBlueprintNbt.nativePayload(raw);
+            throw new AssertionError("malformed registered quantum display must reject the native projection");
+        } catch (IOException expected) {
+            check(true, "malformed quantum preview is rejected before a native reader can discard hidden data");
+        }
+        check(
+            Arrays.equals(source, CompressedStreamTools.compress(raw)),
+            "failed quantum visual review preserves source bytes");
+    }
+
     private static void deletedPartMarkers(boolean multipart) throws Exception {
         Block block = registeredBlock(
             multipart ? "codechicken.multipart.BlockMultipart" : "appeng.block.networking.BlockCableBus");
@@ -490,17 +660,22 @@ public final class HologramAeBlueprintCoreRegression {
         String prefix = multipart ? "@part=0/" : "";
         HologramAeBlueprint.Analysis blocked = HologramAeBlueprint.analyze(block, 0, raw);
         check(
-            blocked.blocking && issue(blocked, "unsupported_part", prefix + "extra:2"),
-            "unregistered native part metadata creates its permanent exact-side blocker " + prefix);
-        HologramAeBlueprint.Analysis deleted = HologramAeBlueprint
-            .updateSlot(block, 0, blocked.payload(), prefix + "def:2", null);
+            !blocked.blocking && issue(blocked, "unsupported_part", prefix + "extra:2"),
+            "unregistered native part metadata is explicitly warned and safely omitted " + prefix);
+        persistentPolicyWarning(block, raw, "unsupported_part", prefix + "extra:2");
+        HologramAeBlueprint.Analysis deleted = HologramAeBlueprint.analyze(block, 0, blocked.payload());
         check(
             !deleted.blocking && !HologramAeBlueprint.analyze(block, 0, deleted.payload()).blocking,
-            "native definition CLEAR retires corresponding extra blockers through complete reanalysis " + prefix);
+            "canonical reanalysis cannot resurrect the omitted unregistered part " + prefix);
+        NBTTagCompound omittedBus = multipart ? deleted.payload()
+            .getTagList("parts", 10)
+            .getCompoundTagAt(0) : deleted.payload();
         check(
-            HologramAeBlueprint.resolvedIssuePaths(prefix + "def:2", blocked, deleted)
-                .contains(prefix + "extra:2"),
-            "definition deletion reports the exact retired extra issue to server metadata " + prefix);
+            !omittedBus.hasKey("def:2") && !omittedBus.hasKey("extra:2"),
+            "unregistered side omits both definition and every hidden physical payload " + prefix);
+        expectDenied(
+            () -> HologramAeBlueprint.resolveDiscardedIssue(blocked.payload(), "unsupported_part", prefix + "extra:2"),
+            "omitted native part has no approval tombstone bypass " + prefix);
         check(
             deleted.materials.isEmpty(),
             "deleted unsupported part does not restore or charge omitted hidden inventory " + prefix);
@@ -516,10 +691,11 @@ public final class HologramAeBlueprintCoreRegression {
             "paid main shell has no duplicate or deleted-part extra cost " + prefix);
         check(raw.equals(source), "definition CLEAR and material projection preserve source snapshot " + prefix);
         NBTTagCompound stillBlocked = blocked.payload();
-        stillBlocked.getTagList(HologramAeBlueprint.UNRESOLVED, 10)
-            .appendTag(lossMarker("unsupported_host", ""));
+        NBTTagList hostMarkers = stillBlocked.getTagList(HologramAeBlueprint.UNRESOLVED, 10);
+        hostMarkers.appendTag(lossMarker("unsupported_host", ""));
+        stillBlocked.setTag(HologramAeBlueprint.UNRESOLVED, hostMarkers);
         HologramAeBlueprint.Analysis host = HologramAeBlueprint
-            .updateSlot(block, 0, stillBlocked, prefix + "def:2", null);
+            .updateSlot(block, 0, stillBlocked, prefix + "def:3", null);
         check(
             host.blocking && issue(host, "unsupported_host", ""),
             "part deletion cannot acknowledge an unrelated unknown host " + prefix);
@@ -541,9 +717,13 @@ public final class HologramAeBlueprintCoreRegression {
             otherPath = "extra:3/unreviewedHiddenBuffer";
         }
         NBTTagCompound otherSource = (NBTTagCompound) otherRaw.copy();
+        NBTTagCompound editableBus = multipart ? otherRaw.getTagList("parts", 10)
+            .getCompoundTagAt(0) : otherRaw;
+        editableBus.setTag("def:4", retainedDef.copy());
+        otherSource = (NBTTagCompound) otherRaw.copy();
         HologramAeBlueprint.Analysis both = HologramAeBlueprint.analyze(block, 0, otherRaw);
         HologramAeBlueprint.Analysis one = HologramAeBlueprint
-            .updateSlot(block, 0, both.payload(), prefix + "def:2", null);
+            .updateSlot(block, 0, both.payload(), prefix + "def:4", null);
         check(
             one.blocking && issue(one, "unreviewed_part_field", otherPath),
             "deleting one side preserves another side or FMP part's physical-loss blocker " + prefix);

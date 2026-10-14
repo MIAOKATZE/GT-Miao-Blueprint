@@ -168,6 +168,12 @@ final class HologramAeNativeRender implements HologramNativeRenderRegistry.Adapt
             return (CableBusContainer) host.getClass()
                 .getMethod("getCableBus")
                 .invoke(host);
+        if (host.getClass()
+            .getName()
+            .equals(HologramQuantumNativeRender.TILE))
+            return (CableBusContainer) host.getClass()
+                .getMethod("getPartContainer")
+                .invoke(host);
         boolean multipart = false;
         for (Class<?> type = host.getClass(); type != null; type = type.getSuperclass()) if (type.getName()
             .equals("codechicken.multipart.TileMultipart")) multipart = true;
@@ -182,6 +188,7 @@ final class HologramAeNativeRender implements HologramNativeRenderRegistry.Adapt
 
     /** CBC's real world pass callback owns a separate native helper; never reuse the live world's thread state. */
     static CableContext cableContext(Block block, TileEntity tile) throws ReflectiveOperationException {
+        if (HologramQuantumNativeRender.INSTANCE.supports(block)) return new CableContext();
         if (block.getClass() == BlockCableBus.class && tile instanceof appeng.tile.networking.TileCableBus)
             return new CableContext();
         if (!block.getClass()

@@ -71,6 +71,7 @@ final class HologramRenderer {
     static String selectedStructureId = "";
     private static int projectedX, projectedY, projectedWidth, projectedHeight;
     private static double projectedYaw, projectedPitch, projectedScale;
+    private static double projectedPanX, projectedPanZ;
     private static final Map<String, double[][]> structureBoxes = new LinkedHashMap<>();
     private static final Set<String> missingStructures = new HashSet<>();
     private static final Map<String, double[][]> hintBoxes = new LinkedHashMap<>();
@@ -84,6 +85,7 @@ final class HologramRenderer {
         worldState = previewState = null;
         boundsState = null;
         HologramTextures.clear();
+        HologramLinkNodePreview.clear();
         HologramBlockRender.clear();
         nativePreviewCells.clear();
         cachedFaces.clear();
@@ -101,6 +103,31 @@ final class HologramRenderer {
 
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
         int layer, int view, int selected, int mouseX, int mouseY, double rehearsal) {
+        return preview(
+            state,
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            0,
+            0,
+            layer,
+            view,
+            selected,
+            mouseX,
+            mouseY,
+            rehearsal);
+    }
+
+    static double previewExtent() {
+        return boundsExtent;
+    }
+
+    static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+        double panX, double panZ, int layer, int view, int selected, int mouseX, int mouseY, double rehearsal) {
         HologramTextures.begin(state);
         HologramBlockRender.begin(state);
         projectedX = x;
@@ -109,6 +136,8 @@ final class HologramRenderer {
         projectedHeight = height;
         projectedYaw = yaw;
         projectedPitch = pitch;
+        projectedPanX = panX;
+        projectedPanZ = panZ;
         String key = x + ":"
             + y
             + ":"
@@ -121,6 +150,10 @@ final class HologramRenderer {
             + pitch
             + ":"
             + zoom
+            + ":"
+            + panX
+            + ":"
+            + panZ
             + ":"
             + layer
             + ":"
@@ -205,7 +238,7 @@ final class HologramRenderer {
                         .max(maxX - minX + 2, Math.max(maxZ - minZ + 2, (double) state.maxY - state.minY + 2));
                 }
             }
-            double cx = boundsX, cy = boundsY, cz = boundsZ, extent = boundsExtent;
+            double cx = boundsX + panX, cy = boundsY, cz = boundsZ + panZ, extent = boundsExtent;
             double scale = Math.min(width, height) * .72 / extent * zoom;
             projectedScale = scale;
             buildStructureBoxes(state);
@@ -224,7 +257,7 @@ final class HologramRenderer {
                     double depth = py * sinPitch + rz * cosPitch;
                     projected[v] = new double[] { x + width / 2.0 + rx * scale, y + height / 2.0 - ry * scale, depth };
                 }
-                if (!role.isEmpty() && (c.anchor || markers.size() < 64))
+                if (!HologramBlueprintPreview.cleanCapture() && !role.isEmpty() && (c.anchor || markers.size() < 64))
                     markers.add(new RoleMarker(c, projected, role));
                 outlines.add(new Face(c, projected, 0, currentView));
                 if (HologramBlockRender.ready(c, currentView)) {
@@ -337,18 +370,31 @@ final class HologramRenderer {
                 GL11.glScaled(projectedScale, -projectedScale, depthScale);
                 GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
                 GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
-                GL11.glTranslated(cell.dx - boundsX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - .5);
+                GL11.glTranslated(cell.dx - boundsX - panX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - panZ - .5);
                 HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
                 GL11.glPopMatrix();
                 if (pixels != null) raster.after(cell, pixels);
             }
             HologramNativeRasterSmoke.finish(raster);
+            for (HologramState.Cell cell : visibleCells) {
+                boolean current = view == 1 || state.data.getInteger("mode") == 2;
+                if (HologramLinkNodePreview.prepare(cell, current)
+                    .isEmpty()) continue;
+                GL11.glPushMatrix();
+                GL11.glTranslated(x + width / 2.0, y + height / 2.0, 0);
+                GL11.glScaled(projectedScale, -projectedScale, depthScale);
+                GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
+                GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
+                GL11.glTranslated(cell.dx - boundsX - panX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - panZ - .5);
+                HologramLinkNodePreview.draw(cell, current, .96f);
+                GL11.glPopMatrix();
+            }
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             // Read face depth without writing line depth. The small z bias avoids coplanar
             // flicker while keeping back edges hidden; all cells retain clear wireframes.
             GL11.glDepthMask(false);
             t.startDrawing(GL11.GL_LINES);
-            for (Face face : cachedOutlines) {
+            if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
                 boolean chosen = face.cell.index == selected
                     || selection != null && selection.contains(face.cell.index);
                 t.setColorRGBA_F(
@@ -367,32 +413,34 @@ final class HologramRenderer {
             GL11.glLineWidth(2.5f);
             t.startDrawing(GL11.GL_LINES);
             String hoveredStructure = pickStructure(mouseX, mouseY);
-            for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
-                if (entry.getKey()
-                    .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
-                else if (entry.getKey()
-                    .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
-                else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
-                else t.setColorRGBA_F(.45f, .85f, 1, .72f);
-                for (int[] edge : EDGES) {
-                    double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
-                    t.addVertex(a[0], a[1], 1);
-                    t.addVertex(b[0], b[1], 1);
+            if (!HologramBlueprintPreview.cleanCapture())
+                for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
+                    if (entry.getKey()
+                        .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
+                    else if (entry.getKey()
+                        .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
+                    else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
+                    else t.setColorRGBA_F(.45f, .85f, 1, .72f);
+                    for (int[] edge : EDGES) {
+                        double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
+                        t.addVertex(a[0], a[1], 1);
+                        t.addVertex(b[0], b[1], 1);
+                    }
                 }
-            }
             t.draw();
             GL11.glLineWidth(1.5f);
             t.startDrawing(GL11.GL_LINES);
             t.setColorRGBA_F(.95f, .77f, .39f, .48f);
-            for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
-                double[] a = box[edge[0]], b = box[edge[1]];
-                t.addVertex(a[0], a[1], 1);
-                t.addVertex(b[0], b[1], 1);
-            }
+            if (!HologramBlueprintPreview.cleanCapture())
+                for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
+                    double[] a = box[edge[0]], b = box[edge[1]];
+                    t.addVertex(a[0], a[1], 1);
+                    t.addVertex(b[0], b[1], 1);
+                }
             t.draw();
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glColor4f(1, 1, 1, 1);
-            for (RoleMarker marker : markers) {
+            if (!HologramBlueprintPreview.cleanCapture()) for (RoleMarker marker : markers) {
                 if (!marker.cell.anchor
                     && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
                 float labelScale = marker.cell.anchor || marker.cell.missingBlock ? 1f : .7f;
@@ -462,7 +510,7 @@ final class HologramRenderer {
     }
 
     static double[] project(double dx, double dy, double dz) {
-        double px = dx - boundsX, py = dy - boundsY, pz = dz - boundsZ;
+        double px = dx - boundsX - projectedPanX, py = dy - boundsY, pz = dz - boundsZ - projectedPanZ;
         double rx = px * Math.cos(projectedYaw) - pz * Math.sin(projectedYaw);
         double rz = px * Math.sin(projectedYaw) + pz * Math.cos(projectedYaw);
         double ry = py * Math.cos(projectedPitch) - rz * Math.sin(projectedPitch);
@@ -483,10 +531,10 @@ final class HologramRenderer {
         double ry = -(my - projectedY - projectedHeight / 2.0) / projectedScale;
         double py = planeY - state.data.getInteger("y") - boundsY;
         double rz = (py * Math.cos(projectedPitch) - ry) / Math.sin(projectedPitch);
-        int x = state.data.getInteger("x")
-            + (int) Math.floor(rx * Math.cos(projectedYaw) + rz * Math.sin(projectedYaw) + boundsX + .5);
-        int z = state.data.getInteger("z")
-            + (int) Math.floor(-rx * Math.sin(projectedYaw) + rz * Math.cos(projectedYaw) + boundsZ + .5);
+        int x = state.data.getInteger("x") + (int) Math
+            .floor(rx * Math.cos(projectedYaw) + rz * Math.sin(projectedYaw) + boundsX + projectedPanX + .5);
+        int z = state.data.getInteger("z") + (int) Math
+            .floor(-rx * Math.sin(projectedYaw) + rz * Math.cos(projectedYaw) + boundsZ + projectedPanZ + .5);
         int minX = Integer.MAX_VALUE, minY = minX, minZ = minX;
         int maxX = Integer.MIN_VALUE, maxY = maxX, maxZ = maxX;
         for (HologramState.Cell cell : state.cells) {
@@ -868,8 +916,10 @@ final class HologramRenderer {
         int end = Math.min(group.built + WORLD_MESH_BATCH, group.cells.size());
         List<HologramState.Cell> cells = group.cells.subList(group.built, end);
         // Native lists must be built before opening the group's list and its tessellator.
-        for (HologramState.Cell c : cells)
-            if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) HologramBlockRender.ready(c, false);
+        for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
+            HologramBlockRender.ready(c, false);
+            HologramLinkNodePreview.prepare(c, false);
+        }
         GL11.glNewList(list, GL11.GL_COMPILE);
         Tessellator t = Tessellator.instance;
         GL11.glEnable(GL11.GL_TEXTURE_2D);
@@ -919,6 +969,12 @@ final class HologramRenderer {
                 GL11.glPopMatrix();
             }
         GL11.glPopAttrib();
+        for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
+            GL11.glPushMatrix();
+            GL11.glTranslated(c.x, c.y, c.z);
+            HologramLinkNodePreview.draw(c, false, .38f);
+            GL11.glPopMatrix();
+        }
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         t.startDrawing(GL11.GL_LINES);
         for (HologramState.Cell c : cells) {

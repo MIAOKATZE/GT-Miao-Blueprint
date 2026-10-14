@@ -47,6 +47,7 @@ public final class HologramLibraryRegression {
         configuration();
         hydration();
         ownershipAndPublishing();
+        directoryLayout();
         brokenStorageFailsClosed();
         permissions();
     }
@@ -199,6 +200,9 @@ public final class HologramLibraryRegression {
                     .replace(".json", "");
             }
             SimpleAssert.that(savedId.startsWith("public_"), "server chooses the public ID");
+            SimpleAssert.that(
+                Files.isRegularFile(directory.resolve("entries/" + savedId + ".png")),
+                "dedicated publish stores a same-basename true PNG");
             SimpleAssert.eq(
                 "OriginalCreator",
                 store.get(savedId).authorName,
@@ -215,6 +219,9 @@ public final class HologramLibraryRegression {
             SimpleAssert.that(store.get(savedId) != null, "denied deletion preserves entry");
             runWorker(store, () -> handle(store, ownPeer, delete));
             SimpleAssert.that(store.get(savedId) == null, "owner can delete own upload");
+            SimpleAssert.that(
+                !Files.exists(directory.resolve("entries/" + savedId + ".png")),
+                "owner deletion clears the corresponding preview");
             denied(() -> transfer(store, ownPeer, bytes, "", true), "wrong transfer hash is rejected");
             try (java.nio.file.DirectoryStream<Path> files = Files
                 .newDirectoryStream(directory.resolve("entries"), "public_*.json")) {
@@ -274,6 +281,64 @@ public final class HologramLibraryRegression {
         }
     }
 
+    private static void directoryLayout() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-server-blueprint-directory-");
+        Path directory = Files.createDirectories(root.resolve("MiaoBlueprints"));
+        Path configuration = root.resolve("config/gtmb/server-blueprint-library.cfg");
+        Path oldDirectory = Files.createDirectories(root.resolve("config/gtmb/server-blueprints"));
+        String oldId = "public_" + UUID.randomUUID();
+        byte[] oldBytes = "old path must not be read".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Path oldFile = oldDirectory.resolve(oldId + ".json");
+        Files.write(oldFile, oldBytes);
+        Files.write(directory.resolve("local_" + UUID.randomUUID() + ".json"), oldBytes);
+        Files.write(directory.resolve("hologram-presets.json"), oldBytes);
+        Files.write(directory.resolve("shared_fixture.json"), oldBytes);
+        HologramServerLibrary store = new HologramServerLibrary(directory, configuration);
+        HologramServerLibrary restarted = null;
+        boolean storeStopped = false;
+        try {
+            runWorker(store, () -> {});
+            SimpleAssert.that(store.available(), "only server public filenames are loaded from the new directory");
+            SimpleAssert.that(store.get(oldId) == null, "old dedicated directory is not scanned or migrated");
+            EntityPlayerMP owner = player(UUID.randomUUID(), "DirectoryPublisher");
+            byte[] bytes = HologramServerLibrary.encodeShare(blueprint());
+            transfer(store, peer(owner), bytes, "", false);
+            String savedId;
+            try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "public_*.json")) {
+                savedId = files.iterator()
+                    .next()
+                    .getFileName()
+                    .toString()
+                    .replace(".json", "");
+            }
+            SimpleAssert.that(
+                Files.isRegularFile(root.resolve("MiaoBlueprints/" + savedId + ".json")),
+                "dedicated upload writes the exact new top-level directory");
+            SimpleAssert.that(Files.isRegularFile(configuration), "server limits and settings remain in config/gtmb");
+            store.stop();
+            storeStopped = true;
+            restarted = new HologramServerLibrary(directory, configuration);
+            HologramServerLibrary reloaded = restarted;
+            runWorker(reloaded, () -> {});
+            SimpleAssert.that(reloaded.get(savedId) != null, "new dedicated files reload after worker restart");
+            SimpleAssert.that(reloaded.get(oldId) == null, "restart continues to ignore the old directory");
+            Object otherPeer = peer(player(UUID.randomUUID(), "DirectoryOtherPublisher"));
+            denied(
+                () -> transfer(reloaded, otherPeer, bytes, savedId, false),
+                "new storage location retains the original upload ownership boundary");
+            SimpleAssert.that(
+                Arrays.equals(oldBytes, Files.readAllBytes(oldFile)),
+                "dedicated new saves preserve old blueprint files without migration");
+        } finally {
+            if (!storeStopped) store.stop();
+            if (restarted != null) restarted.stop();
+            try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
+                for (Path path : (Iterable<Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
     private static void brokenStorageFailsClosed() throws Exception {
         Path directory = Files.createTempDirectory("gtmb-library-broken-");
         Path entries = Files.createDirectories(directory.resolve("entries"));
@@ -330,6 +395,11 @@ public final class HologramLibraryRegression {
         preset.authorUuid = UUID.randomUUID()
             .toString();
         preset.createdAt = 1234;
+        try {
+            HologramBlueprintVersions.stamp(preset);
+        } catch (IOException invalid) {
+            throw new IllegalStateException(invalid);
+        }
         HologramPresets.Cell cell = HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false);
         cell.block = "minecraft:stone";
         preset.cells.add(cell);
@@ -338,10 +408,18 @@ public final class HologramLibraryRegression {
 
     private static void transfer(HologramServerLibrary store, Object peer, byte[] bytes, String replace,
         boolean wrongHash) throws Exception {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+            HologramBlueprintArtifact.WIDTH,
+            HologramBlueprintArtifact.HEIGHT,
+            java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", png);
+        bytes = HologramBlueprintArtifact.encode(bytes, png.toByteArray());
         String transfer = UUID.randomUUID()
             .toString();
         NBTTagCompound begin = HologramLibraryProtocol.request("uploadBegin");
         begin.setString("transfer", transfer);
+        begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
         begin.setInteger("total", bytes.length);
         begin.setString(
             "hash",

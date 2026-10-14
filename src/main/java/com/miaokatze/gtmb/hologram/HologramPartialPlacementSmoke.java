@@ -1,6 +1,9 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -87,21 +90,49 @@ public final class HologramPartialPlacementSmoke {
         NativeExtraFixture adapter = new NativeExtraFixture();
         String presetId = null;
         boolean registered = false;
+        Path library = HologramPresets.libraryPath();
+        byte[] libraryBefore = Files.exists(library)
+            ? HologramBlueprintSharing.readBytes(library, HologramPresets.MAX_LIBRARY_BYTES)
+            : null;
+        Field cache = HologramPresets.class.getDeclaredField("cached");
+        cache.setAccessible(true);
+        Object cacheBefore = cache.get(null);
+        boolean libraryTouched = false;
         HologramService.clear();
         channel.set(null, capture);
         try {
             HologramNativePlacement.register(ADAPTER_ID, adapter);
             registered = true;
             HologramPresets.Preset preset = fixture();
-            HologramPresets.save(preset);
-            presetId = preset.id;
+            HologramBlueprintVersions.stamp(preset);
+            if (!HologramLibraryFacade.enabled()) {
+                libraryTouched = true;
+                HologramPresets.save(preset);
+                presetId = preset.id;
+            }
             stock(1, new ItemStack(Blocks.chest));
             stock(2, new ItemStack(Blocks.stone));
             stock(3, new ItemStack(Blocks.cobblestone, 2));
             stock(4, new ItemStack(Blocks.furnace));
             HologramService.openAir(player);
             HologramSmokeTest.flushTransport();
-            action("choosePlacementPreset", tag("presetId", preset.id));
+            if (HologramLibraryFacade.enabled()) {
+                NBTTagCompound upload = HologramLibraryProtocol.request("privateBegin");
+                upload.setString("session", capture.state.getString("session"));
+                upload.setLong("planRevision", capture.state.getLong("planRevision"));
+                upload.setString("action", "place");
+                upload.setString(
+                    "localId",
+                    "local_" + UUID.randomUUID()
+                        .toString());
+                HologramPresets.Preset canonical = HologramBlueprintSharing.decode(
+                    new String(HologramServerLibrary.encodeShare(preset), java.nio.charset.StandardCharsets.UTF_8));
+                String privateId = HologramService.libraryActivate(player, upload, canonical);
+                HologramSmokeTest.flushTransport();
+                require(
+                    privateId.startsWith("private_") && HologramPresets.get(privateId) == null,
+                    "dedicated_partial_fixture_uses_validated_session_private_upload_without_global_save");
+            } else action("choosePlacementPreset", tag("presetId", preset.id));
             require(
                 capture.state.getBoolean("moving") && capture.state.getInteger("missing") > 0,
                 "mixed_blueprint_starts_only_unpaid_preview");
@@ -235,14 +266,44 @@ public final class HologramPartialPlacementSmoke {
             HologramService.clear();
             channel.set(null, previousChannel);
             try {
-                if (registered) removeAdapter(adapter);
-                if (presetId != null) HologramPresets.delete(presetId);
+                try {
+                    if (registered) removeAdapter(adapter);
+                } finally {
+                    if (libraryTouched) {
+                        try {
+                            if (presetId != null) {
+                                Path pair = library.getParent()
+                                    .resolve("local_" + presetId + ".json");
+                                if (Files.exists(pair) || Files.exists(HologramBlueprintArtifact.previewPath(pair)))
+                                    HologramPresets.delete(presetId);
+                            }
+                        } finally {
+                            restoreLibrary(library, libraryBefore, cache, cacheBefore);
+                        }
+                    }
+                }
             } finally {
                 transport.finish();
                 Object pending;
                 while ((pending = transport.readOutbound()) != null) io.netty.util.ReferenceCountUtil.release(pending);
             }
         }
+    }
+
+    /** Restore the logical-only server fixture without weakening native JSON/PNG deletion. */
+    private static void restoreLibrary(Path library, byte[] bytes, Field cache, Object previousCache) throws Exception {
+        if (bytes == null) {
+            Files.deleteIfExists(library);
+        } else {
+            Path restore = Files.createTempFile(library.getParent(), "gtmb-partial-fixture-restore-", ".tmp");
+            try {
+                Files.write(restore, bytes);
+                Files.move(restore, library, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                Files.deleteIfExists(restore);
+            }
+        }
+        cache.set(null, previousCache);
     }
 
     private HologramPresets.Preset fixture() throws Exception {

@@ -50,7 +50,8 @@ public final class HologramProductionPreviewSmoke {
     private boolean launched, muted;
     private boolean hatchVerified;
     private volatile boolean stopped;
-    private int serverStage, settling, renderStage, frames;
+    private volatile int serverStage;
+    private int settling, renderStage, frames;
     private EntityPlayerMP actor;
     private HologramAeWorldPreviewFixture.Fixture ae;
     private HologramDecorSourceSmoke.Source decor;
@@ -60,7 +61,8 @@ public final class HologramProductionPreviewSmoke {
     private int sourceFrames;
     private long sourceClientTick = -1;
     private NBTTagCompound sources;
-    private String savedId;
+    private volatile String savedId;
+    private volatile boolean authorSaveCompleted;
     private long loginTick;
     private boolean sourceChunksAcquired, sourceProofBeforeNetwork;
 
@@ -101,6 +103,18 @@ public final class HologramProductionPreviewSmoke {
                 stopped = true;
                 mc.shutdown();
                 return;
+            }
+            if (serverStage == 2 && mc.currentScreen instanceof HologramScreen) {
+                HologramV011ProcessingClientProbe.drive(mc);
+            }
+            if (serverStage == 3 && !authorSaveCompleted
+                && mc.currentScreen instanceof HologramScreen
+                && HologramV011ProcessingClientProbe.save(mc, "Production native preview")) {
+                NBTTagCompound pair = HologramV011NormalDecorProbe
+                    .verifySavedArtifact(HologramClient.state, output, expectedCells(), "Production native preview");
+                write("normal-native-blueprint-pair.nbt", pair);
+                savedId = pair.getString("savedPresetId");
+                authorSaveCompleted = true;
             }
             if (rendered && Boolean.getBoolean("gtmb.hologram.networkInteractionSmoke")) {
                 HologramNetworkInteractionClientSmoke.clientTick(mc, ++frames);
@@ -269,27 +283,22 @@ public final class HologramProductionPreviewSmoke {
                 require(
                     ((java.util.List<?>) read(capture, "cells")).size() == expectedCells(),
                     "Area collected complete original and adjacent world sources");
-                NBTTagCompound configuration = request("configureBlueprintNbt");
-                configuration.setBoolean("all", true);
-                HologramService.handle(actor, configuration);
-                NBTTagCompound save = request("saveBlueprintAs");
-                save.setString("name", "Production native preview");
-                save.setBoolean("retainNbt", true);
-                save.setBoolean("retainCovers", true);
-                save.setBoolean("retainAllNbt", true);
-                HologramService.handle(actor, save);
+                if (!Boolean.TRUE.equals(read(session, "processingReviewed"))
+                    || !HologramV011ProcessingClientProbe.completed()) return;
+                // The real author GUI now issues Save and confirms its own exact AE report.
                 serverStage = 3;
             } else if (serverStage == 3) {
+                if (!authorSaveCompleted) return;
                 Object session = session();
-                Object review = read(read(session, "ae"), "review");
-                require(review != null, "real AE save review issued");
-                NBTTagCompound confirmation = request("confirmAeSave");
-                confirmation.setString("transactionId", (String) read(review, "transactionId"));
-                HologramService.handle(actor, confirmation);
-                require(Boolean.TRUE.equals(read(session(), "blueprintOperationSuccess")), "confirmed save succeeded");
-                savedId = (String) read(read(session(), "virtualPreset"), "id");
+                require(
+                    Boolean.TRUE.equals(read(session, "blueprintOperationSuccess"))
+                        && !Boolean.TRUE.equals(read(session, "blueprintDirty"))
+                        && "".equals(read(session, "blueprintSaveReceipt")),
+                    "actual JSON/PNG owner ACK completed before disk reload");
+                require(savedId.equals(read(read(session, "virtualPreset"), "id")), "owner ACK agrees with saved ID");
                 require(savedId != null && !savedId.isEmpty(), "saved blueprint id issued");
-                Path library = new File("config/gtmb/hologram-presets.json").toPath();
+                Path library = new File(Minecraft.getMinecraft().mcDataDir, "MiaoBlueprints/hologram-presets.json")
+                    .toPath();
                 require(Files.isRegularFile(library), "real library file written");
                 Files.copy(library, output.resolve("saved-library.json"), StandardCopyOption.REPLACE_EXISTING);
                 // Evict only the library cache to force the ordinary edit operation to read the actual saved disk file.
@@ -367,13 +376,26 @@ public final class HologramProductionPreviewSmoke {
         if (!(mc.currentScreen instanceof HologramScreen) || HologramClient.state == null
             || !editedSession.equals(HologramClient.state.session)) return;
         try {
-            if (++frames < 3) return;
             HologramState state = HologramClient.state;
+            HologramScreen screen = (HologramScreen) mc.currentScreen;
+            NBTTagCompound ui = screen.smokeLibraryUiState();
+            boolean current = renderStage == 2;
+            int renderedView = field(HologramRenderer.class, "visibleView").getInt(null);
+            int renderedMode = field(HologramRenderer.class, "visibleMode").getInt(null);
+            if (field(HologramScreen.class, "state").get(screen) != state
+                || field(HologramRenderer.class, "previewState").get(null) != state
+                || !state.session.equals(ui.getString("session"))
+                || state.data.getLong("planRevision") != ui.getLong("planRevision")
+                || ui.getLong("renderGeneration") <= 0
+                || (renderedView == 1 || renderedMode == 2) != current) {
+                frames = 0;
+                return;
+            }
+            if (++frames < 3) return;
             require(
                 state.cells.size() == expectedCells() && state.data.getBoolean("supported")
                     && !state.data.getBoolean("capturePending"),
                 "complete original and adjacent network snapshot");
-            boolean current = renderStage == 2;
             write("received-service-state.nbt", state.data);
             String name = current ? "production-native-current.png" : "production-native-target.png";
             screenshot(name);
@@ -394,6 +416,11 @@ public final class HologramProductionPreviewSmoke {
                     current ? "source-current-reference-receipt.nbt" : "source-target-reference-receipt.nbt",
                     reference);
             }
+            HologramV011NormalDecorProbe.verify(
+                state,
+                current,
+                output.resolve(name)
+                    .toFile());
             NBTTagCompound receipt = HologramAeWorldPreviewVerification.verify(state.data, current);
             receipt.setTag("allNative", verifyAll(state, current, adjacentProfile));
             if (adjacentReceipt != null) receipt.setTag("adjacent", adjacentReceipt);
@@ -418,6 +445,7 @@ public final class HologramProductionPreviewSmoke {
         NBTTagList rows = new NBTTagList();
         int bareSlopes = 0, coveredSlopes = 0, brickRoofs = 0, quartzRoofs = 0, sawbenches = 0;
         int adjacentQuartzSlopes = 0;
+        boolean followup = Boolean.getBoolean("gtmb.hologram.followupNormalDecor");
         for (HologramState.Cell cell : state.cells) {
             if (!HologramNativeTiles.supported(cell.block(current))) continue;
             require(
@@ -461,6 +489,26 @@ public final class HologramProductionPreviewSmoke {
                     coveredSlopes++;
                     row.setBoolean("quartzAndJungleAtlas", true);
                 } else {
+                    if (followup) {
+                        int[][] positions = { { 9, 12 }, { 12, 12 }, { 9, 15 }, { 12, 15 }, { 10, 13 }, { 11, 14 },
+                            { 10, 15 } };
+                        int[] shapes = { 0, 12, 28, 41, 45, 60, 64 };
+                        int expected = -1;
+                        for (int i = 0; i < positions.length; i++)
+                            if (positions[i][0] == sourceX && positions[i][1] == sourceZ) expected = shapes[i];
+                        require(
+                            adjacentProfile && expected >= 0 && original.getInteger("cbMetadata") == expected,
+                            "seven actual native complex Carpenter source shapes");
+                        require(
+                            usesMaterial(cell, current, Blocks.quartz_block, 0),
+                            "complex native quartz skin is present");
+                        coveredSlopes++;
+                        adjacentQuartzSlopes++;
+                        row.setBoolean("actualComplexNativeSource", true);
+                        row.setInteger("complexShape", expected);
+                        rows.appendTag(row);
+                        continue;
+                    }
                     int expectedShape = sourceX == 9 && sourceZ == 12 ? 8
                         : sourceX == 12 && sourceZ == 12 ? 9
                             : sourceX == 9 && sourceZ == 15 ? 10 : sourceX == 12 && sourceZ == 15 ? 11 : -1;
@@ -499,11 +547,11 @@ public final class HologramProductionPreviewSmoke {
             rows.appendTag(row);
         }
         require(
-            bareSlopes == 1 && coveredSlopes == (adjacentProfile ? 5 : 1)
+            bareSlopes == 1 && coveredSlopes == (adjacentProfile ? followup ? 8 : 5 : 1)
                 && brickRoofs == 1
                 && quartzRoofs == 1
                 && sawbenches == (adjacentProfile ? 1 : 0)
-                && adjacentQuartzSlopes == (adjacentProfile ? 4 : 0),
+                && adjacentQuartzSlopes == (adjacentProfile ? followup ? 7 : 4 : 0),
             "all four native decor variants verified");
         return rows;
     }

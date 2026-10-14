@@ -130,6 +130,10 @@ public final class HologramDecorSourceSmoke {
             .get(null);
         String[] directions = { "N", "S", "W", "E" };
         int[][] locations = { { 9, 12, 0, -1 }, { 12, 12, 0, 1 }, { 9, 15, -1, 0 }, { 12, 15, 1, 0 } };
+        boolean followup = Boolean.getBoolean("gtmb.hologram.followupNormalDecor");
+        int[] complexShapes = { 0, 12, 28, 41, 45, 60, 64 };
+        if (followup) locations = new int[][] { { 9, 12, 0, -1 }, { 12, 12, 0, 1 }, { 9, 15, -1, 0 }, { 12, 15, 1, 0 },
+            { 10, 13, 0, 0 }, { 11, 14, 0, 0 }, { 10, 15, 0, 0 } };
         Block slope = registered("com.carpentersblocks.block.BlockCarpentersSlope");
         for (int i = 0; i < locations.length; i++) {
             int x = locations[i][0], z = locations[i][1];
@@ -138,13 +142,16 @@ public final class HologramDecorSourceSmoke {
             carpenter.getMethod("setData", int.class)
                 .invoke(
                     tile,
-                    (int) slopes.getField("ID_WEDGE_POS_" + directions[i])
-                        .getByte(null));
+                    followup ? complexShapes[i]
+                        : (int) slopes.getField("ID_WEDGE_POS_" + directions[i])
+                            .getByte(null));
             carpenter.getMethod("addAttribute", byte.class, ItemStack.class)
                 .invoke(tile, covers[6], new ItemStack(Blocks.quartz_block));
             carpenter.getMethod("addAttribute", byte.class, ItemStack.class)
                 .invoke(tile, covers[i < 2 ? 5 : 3], new ItemStack(Blocks.planks, 1, 3));
-            put(world, positions, x + locations[i][2], 80, z + locations[i][3], casing, 11);
+            if (followup) carpenter.getMethod("addAttribute", byte.class, ItemStack.class)
+                .invoke(tile, (byte) 13, new ItemStack(net.minecraft.init.Items.dye, 1, 1));
+            if (i < 4) put(world, positions, x + locations[i][2], 80, z + locations[i][3], casing, 11);
         }
         put(world, positions, 16, 79, 12, casing, 11);
         put(world, positions, 16, 80, 12, registered("gcewing.architecture.common.block.BlockSawbench"), 0);

@@ -2,6 +2,11 @@ plugins {
     id("com.gtnewhorizons.gtnhconvention")
 }
 
+// Blueprint metadata needs the release version independently of the Git-derived build version.
+extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
+    injectedTags.put("RELEASE_VERSION", providers.gradleProperty("RELEASE_VERSION"))
+}
+
 // 手写回归由 JavaExec 运行，不通过 JUnit 发现。
 tasks.test {
     failOnNoDiscoveredTests = false
@@ -17,7 +22,10 @@ val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
         dependencies.create("com.github.GTNewHorizons:waila:1.19.34:dev"),
         dependencies.create("curse.maven:ic2-242638:2353971"),
         dependencies.create("org.joml:joml:1.10.8"),
-        dependencies.create("xyz.wagyourtail.jvmdowngrader:jvmdowngrader-java-api:1.3.5:downgraded-8")
+        dependencies.create("xyz.wagyourtail.jvmdowngrader:jvmdowngrader-java-api:1.3.5:downgraded-8"),
+        dependencies.create("com.github.GTNewHorizons:ForestryMC:4.11.39:dev"),
+        dependencies.create("com.github.GTNewHorizons:Nuclear-Control:2.7.16:dev"),
+        dependencies.create("curse.maven:minefactory-reloaded-66672:2366150")
     ).apply { isTransitive = false }
 
 tasks.register<JavaExec>("runHologramTest") {
@@ -32,6 +40,11 @@ tasks.register<JavaExec>("runHologramTest") {
 }
 
 tasks.named("check") { dependsOn("runHologramTest") }
+
+// The common service and native adapters need more heap for Checkstyle's complete syntax trees.
+tasks.withType<org.gradle.api.plugins.quality.Checkstyle>().configureEach {
+    maxHeapSize = "2g"
+}
 
 tasks.register<JavaExec>("runIndustrialConstraintsTest") {
     group = "verification"

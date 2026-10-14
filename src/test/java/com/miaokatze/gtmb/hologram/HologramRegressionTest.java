@@ -21,12 +21,16 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put(
+            "preview_camera_wasd_follows_orientation_and_normalizes_motion",
+            com.miaokatze.gtmb.client.hologram.HologramPreviewCameraRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);
         cases.put("hostile_packet_lengths_are_rejected", HologramRegressionTest::badLengths);
         cases.put("capture_hooks_are_inert_outside_collection", HologramRegressionTest::inertCapture);
         cases.put("server_batch_receipt_roundtrip", HologramRegressionTest::planProtocol);
+        cases.put("failed_native_draft_encoding_revokes_only_matching_owner", HologramRegressionTest::failedDraftOwner);
         cases.put("frame_factory_material_and_te_boundary", HologramRegressionTest::frames);
         cases.put("sealed_gt_inventory_fluid_and_position_roundtrip", HologramRegressionTest::sealedRecovery);
         cases.put("material_source_settings_persist_and_default", HologramRegressionTest::materialSettings);
@@ -41,7 +45,27 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
+        cases.put("decor_fractional_materials_pay_once_and_refund_failed_cells", HologramDecorMaterialsRegression::run);
+        cases.put(
+            "blueprint_processing_gui_requires_choices_and_preserves_review_progress",
+            com.miaokatze.gtmb.client.hologram.HologramProcessingFlowRegression::run);
+        cases.put("essentia_payloads_require_actual_aspect_payment_and_exact_refunds", HologramEssentiaRegression::run);
+        cases.put("gt_me_samples_keep_filters_and_drop_simulated_inventory_shadows", HologramGtMeShadowRegression::run);
+        cases.put("blueprint_processing_reviews_nbt_coordinates_and_reusable_presets", () -> {
+            try {
+                HologramBlueprintProcessingRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put("device_buffers_require_paid_energy_and_keep_native_capacity", HologramEnergyPayloadRegression::run);
+        cases.put("blueprint_deidentification_levels_preserve_recipes_and_irregular_selection", () -> {
+            try {
+                HologramDeidentificationRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put("network_groups_drop_external_identity_and_charge_physical_templates", () -> {
             try {
                 HologramNetworkBindingsRegression.run();
@@ -166,6 +190,11 @@ public final class HologramRegressionTest {
             .put("registered_declared_families_never_mix_unaccepted_metadata", HologramRegisteredFamilyRegression::run);
         cases.put("ae_edit_review_tokens_and_canonical_persistence", HologramAeProtocolRegression::run);
         cases.put("ae_unresolved_loss_markers_require_explicit_resolution", HologramAeBlueprintMarkerRegression::run);
+        cases.put("ae2fc_fluid_cells_keep_strict_metadata_and_drop_contents", HologramAeFluidCellRegression::run);
+        cases.put(
+            "blueprint_metadata_records_release_and_exact_pack_versions",
+            HologramBlueprintVersionsRegression::run);
+        cases.put("blueprint_json_png_artifacts_preserve_atomic_pairs", HologramBlueprintArtifactRegression::run);
         cases.put(
             "ae_virtual_container_isolates_marks_from_real_inventory",
             com.miaokatze.gtmb.client.hologram.HologramAeContainerRegression::run);
@@ -173,6 +202,128 @@ public final class HologramRegressionTest {
             "ae_save_guidance_preserves_complete_bounded_issue_reports",
             com.miaokatze.gtmb.client.hologram.HologramAeGuidanceRegression::run);
         TestRunner.run(HologramRegressionTest.class, cases);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void failedDraftOwner() {
+        Map<java.util.UUID, Object> sessions = null;
+        java.util.Queue<Runnable> tasks = null;
+        java.util.List<Runnable> previousTasks = new java.util.ArrayList<>();
+        java.util.UUID actor = java.util.UUID.fromString("f4bf794d-95f5-4c02-ad27-6924a035b31f");
+        Object previous = null;
+        net.minecraft.entity.player.EntityPlayerMP owner = null, reconnect = null;
+        try {
+            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            java.lang.reflect.Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod(
+                "player",
+                sun.misc.Unsafe.class,
+                HologramServiceEditRegression.ReadOnlyWorld.class,
+                java.util.UUID.class,
+                String.class);
+            factory.setAccessible(true);
+            owner = (net.minecraft.entity.player.EntityPlayerMP) factory
+                .invoke(null, unsafe, world, actor, "DraftOwner");
+            reconnect = (net.minecraft.entity.player.EntityPlayerMP) factory
+                .invoke(null, unsafe, world, actor, "DraftOwner");
+            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(
+                net.minecraft.entity.player.EntityPlayerMP.class,
+                int.class,
+                int.class,
+                int.class,
+                boolean.class,
+                int.class);
+            constructor.setAccessible(true);
+            Object session = constructor.newInstance(owner, 0, 64, 0, false, 2);
+            java.lang.reflect.Field sessionMap = HologramService.class.getDeclaredField("SESSIONS");
+            sessionMap.setAccessible(true);
+            sessions = (Map<java.util.UUID, Object>) sessionMap.get(null);
+            previous = sessions.put(actor, session);
+            java.lang.reflect.Method set = HologramLibraryServiceRegression.class
+                .getDeclaredMethod("set", Object.class, String.class, Object.class);
+            java.lang.reflect.Method get = HologramLibraryServiceRegression.class
+                .getDeclaredMethod("get", Object.class, String.class);
+            set.setAccessible(true);
+            get.setAccessible(true);
+            set.invoke(null, session, "libraryUiActive", true);
+            set.invoke(null, session, "planRevision", 42L);
+            set.invoke(null, session, "blueprintSaveRevision", 42L);
+            String receipt = java.util.UUID.randomUUID()
+                .toString(), local = "local_" + java.util.UUID.randomUUID();
+            set.invoke(null, session, "blueprintSaveReceipt", receipt);
+            set.invoke(null, session, "blueprintSaveLocalId", local);
+            set.invoke(null, session, "blueprintDirty", false);
+            NBTTagCompound proof = new NBTTagCompound();
+            proof.setString("session", (String) get.invoke(null, session, "id"));
+            proof.setLong("planRevision", 42L);
+            proof.setString("saveReceipt", receipt);
+            proof.setString("replaceLocalId", local);
+            java.lang.reflect.Field queue = com.miaokatze.gtmb.util.ServerTaskScheduler.class
+                .getDeclaredField("SERVER_TASKS");
+            queue.setAccessible(true);
+            tasks = (java.util.Queue<Runnable>) queue.get(null);
+            Runnable previousTask;
+            while ((previousTask = tasks.poll()) != null) previousTasks.add(previousTask);
+            for (String field : new String[] { "session", "planRevision", "saveReceipt", "replaceLocalId" }) {
+                NBTTagCompound stale = (NBTTagCompound) proof.copy();
+                if ("planRevision".equals(field)) stale.setLong(field, 41L);
+                else stale.setString(field, "stale");
+                HologramLibraryFacade.draftPreparationFailed(owner, stale, "encode failure");
+                tasks.remove()
+                    .run();
+                SimpleAssert.eq(
+                    receipt,
+                    get.invoke(null, session, "blueprintSaveReceipt"),
+                    "failed encoding cannot revoke another " + field);
+            }
+            HologramLibraryFacade.draftPreparationFailed(reconnect, proof, "encode failure");
+            tasks.remove()
+                .run();
+            SimpleAssert.eq(
+                receipt,
+                get.invoke(null, session, "blueprintSaveReceipt"),
+                "a reconnected actor cannot revoke the old owner capability");
+            owner.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            HologramLibraryFacade.draftPreparationFailed(owner, proof, "encode failure");
+            tasks.remove()
+                .run();
+            SimpleAssert.eq(
+                receipt,
+                get.invoke(null, session, "blueprintSaveReceipt"),
+                "a reloaded world cannot revoke another world capability");
+            owner.worldObj = world;
+            HologramLibraryFacade.draftPreparationFailed(owner, proof, "encode failure");
+            SimpleAssert.eq(
+                receipt,
+                get.invoke(null, session, "blueprintSaveReceipt"),
+                "the worker never mutates the server owner before its queued callback");
+            tasks.remove()
+                .run();
+            SimpleAssert.that(
+                ((String) get.invoke(null, session, "blueprintSaveReceipt")).isEmpty()
+                    && (Boolean) get.invoke(null, session, "blueprintDirty"),
+                "the exact issued capability is retired before preview verification and its draft stays dirty");
+        } catch (Exception failure) {
+            throw new RuntimeException(failure);
+        } finally {
+            if (sessions != null) {
+                if (previous == null) sessions.remove(actor);
+                else sessions.put(actor, previous);
+            }
+            if (tasks != null) {
+                tasks.clear();
+                tasks.addAll(previousTasks);
+            }
+            for (net.minecraft.entity.player.EntityPlayerMP player : new net.minecraft.entity.player.EntityPlayerMP[] {
+                owner, reconnect }) if (player != null)
+                    player.playerNetServerHandler.netManager.channel()
+                        .close();
+        }
     }
 
     private static void hatchMatching() {

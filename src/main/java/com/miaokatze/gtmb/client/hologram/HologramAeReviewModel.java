@@ -84,9 +84,35 @@ final class HologramAeReviewModel {
     }
 
     private static List<Group> group(List<Issue> issues) {
+        int[] parent = new int[issues.size()];
+        Map<String, Integer> at = new LinkedHashMap<>();
+        for (int i = 0; i < issues.size(); i++) {
+            parent[i] = i;
+            Issue issue = issues.get(i);
+            String kind = issue.severity + '\u0001'
+                + issue.code
+                + '\u0001'
+                + issue.message
+                + '\u0001'
+                + issue.resolution
+                + '\u0001';
+            if (!issue.location) {
+                Integer first = at.putIfAbsent(kind + "global", i);
+                if (first != null) parent[find(parent, i)] = find(parent, first);
+                continue;
+            }
+            for (int[] delta : new int[][] { { 0, 0, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 },
+                { 0, 0, 1 }, { 0, 0, -1 } }) {
+                Integer neighbor = at
+                    .get(kind + (issue.x + delta[0]) + "," + (issue.y + delta[1]) + "," + (issue.z + delta[2]));
+                if (neighbor != null) parent[find(parent, i)] = find(parent, neighbor);
+            }
+            at.put(kind + issue.x + "," + issue.y + "," + issue.z, i);
+        }
         Map<String, Group> result = new LinkedHashMap<>();
-        for (Issue issue : issues) {
-            String key = issue.severity + ":" + issue.code;
+        for (int i = 0; i < issues.size(); i++) {
+            Issue issue = issues.get(i);
+            String key = Integer.toString(find(parent, i));
             Group group = result.get(key);
             if (group == null) {
                 group = new Group(issue);
@@ -96,6 +122,17 @@ final class HologramAeReviewModel {
             group.count = issue.count > Long.MAX_VALUE - group.count ? Long.MAX_VALUE : group.count + issue.count;
         }
         return new ArrayList<>(result.values());
+    }
+
+    private static int find(int[] parent, int index) {
+        int root = index;
+        while (parent[root] != root) root = parent[root];
+        while (index != root) {
+            int next = parent[index];
+            parent[index] = root;
+            index = next;
+        }
+        return root;
     }
 
     static String plain(String value, int limit) {
@@ -189,14 +226,75 @@ final class HologramAeReviewModel {
                     return "元件未知数据不保留";
                 case "cpu_runtime_omitted":
                     return "CPU 运行数据需要明确清除";
+                case "identity.foreign_owner":
+                    return "原始数据包含其他玩家的所有者身份";
+                case "cpu_core_reset":
+                    return "合成 CPU 核心运行状态重建";
+                case "cell_stack_count":
+                    return "存储元件标记数量必须为 1";
+                case "interface_storage_alias_conflict":
+                    return "接口存储槽的配置记录冲突";
+                case "part_item_data_reset":
+                    return "部件物品数据重建";
+                case "static_block_data":
+                    return "静态方块存在未支持配置";
+                case "unreviewed_cable_field":
+                case "unreviewed_interface_field":
+                case "unreviewed_part_field":
+                case "unreviewed_tile_field":
+                    return "设备存在未校验的配置字段";
+                case "unsupported_cell":
+                    return "未支持的存储元件类型";
+                case "unsupported_ghost":
+                    return "未支持的虚拟配置标记";
+                case "unsupported_p2p_energy":
+                    return "未支持的 P2P 能源隧道配置";
+                case "unsupported_part_item":
+                    return "未支持的部件物品标记";
+                case "waiting_stack_invalid":
+                case "waiting_stack_unsupported":
+                    return "等待输出槽存在无效或未支持物品";
                 default:
                     String key = "gtmb.ae.issue." + shortCode;
                     String localized = net.minecraft.util.StatCollector.translateToLocal(key);
-                    return key.equals(localized) ? "AE 提示 · " + shortCode : plain(localized, 128);
+                    return key.equals(localized) ? "设备配置未通过校验" : plain(localized, 128);
+            }
+        }
+
+        String explanation() {
+            if ("identity.foreign_owner".equals(code)) return "等级 0 保留了其他玩家的身份，不能直接放置；选择至少等级 1 去标识后重新核对。";
+            String shortCode = code.startsWith("ae.") ? code.substring(3) : code;
+            switch (shortCode) {
+                case "cell_contents_cleared":
+                    return "存储元件中的物品、流体及外置存储内容不写入蓝图；仅保留同类型空元件。";
+                case "p2p_rebind":
+                    return "原 P2P 频率和绑定关系不继承，放置后需按新网络重新绑定。";
+                case "node_reset":
+                case "network_reset":
+                    return "原 AE 网络身份将清除，放置后由新网络重新建立连接。";
+                case "cpu_core_reset":
+                    return "合成 CPU 的临时运行记录不保留；设备结构与支持的配置继续保留。";
+                case "cpu_runtime_omitted":
+                    return "蓝图中仍有未支持的 CPU 运行状态，请在问题槽明确确认丢弃后重试。";
+                case "mark.missing_material":
+                    return "安装标记所需的真实材料尚不足；可以保存，施工前需要补齐或再次确认仅放已有。";
+                case "slot_overflow":
+                    return "物品标记数量超过此槽位上限，请减少数量后重新保存。";
+                case "hidden_pattern":
+                    return "禁用的配方槽仍含物理物品标记，请启用该槽或明确清除标记。";
+                case "cell_stack_count":
+                    return "存储元件槽每次只允许一个元件，请把标记数量改为 1。";
+                case "interface_storage_alias_conflict":
+                    return "同一个接口存储槽出现冲突记录，请重新设置该槽的物品标记。";
+                case "cell_unknown_data":
+                    return "该存储元件有未识别字段；这些额外数据不会随蓝图保存。";
+                default:
+                    return title() + "。" + guidance();
             }
         }
 
         String guidance() {
+            if ("deidentifyBlueprint".equals(resolution)) return "点击“一键去标识”，处理草稿后重新保存 / 核对放置。";
             if ("replaceCell".equals(resolution)) return "替换或删除这个蓝图方块，然后重新保存。";
             if ("discardOmitted".equals(resolution)) return "在相关容器的只读问题槽明确清除，即确认丢弃未支持标记；然后重新保存。";
             if ("clearSlot".equals(resolution) || !slotId.isEmpty()) return "打开相关容器，补正标记或明确清除对应槽；然后重新保存。";

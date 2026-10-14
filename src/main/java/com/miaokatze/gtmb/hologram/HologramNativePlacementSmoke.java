@@ -36,7 +36,6 @@ public final class HologramNativePlacementSmoke {
                 .startsWith("hologram-smoke-"),
             "isolated_world_guard");
         HologramAeNativeResourcesSmoke.run();
-        rfSchema();
         HologramNativeCaptureSmoke.run(world);
         Object saveCache = storageCache("s_savehandler");
         Object mapCache = storageCache("s_mapStorage");
@@ -50,6 +49,8 @@ public final class HologramNativePlacementSmoke {
         player.theItemInWorldManager.setGameType(net.minecraft.world.WorldSettings.GameType.SURVIVAL);
         player.inventory.mainInventory[0] = new ItemStack(
             (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector"));
+        stateAndControllerPlacement(world, player);
+        rfSchema();
         int kind = 0;
         for (Block block : HologramNativeCompatibilityFixture.blocks()) {
             HologramResourceWorld isolated = HologramResourceWorld.create(block, 0);
@@ -221,6 +222,239 @@ public final class HologramNativePlacementSmoke {
         System.out.println(PREFIX + "FINAL PASS mods=" + kind);
     }
 
+    /** Regression for real area imports whose item, world state, or GT controller metadata differ. */
+    private static void stateAndControllerPlacement(WorldServer world, EntityPlayerMP player) throws Exception {
+        String reactorType = "gregtech.common.tileentities.machines.multi.MTELargeNaquadahReactor";
+        int reactorId = -1;
+        for (int id = 1; id < gregtech.api.GregTechAPI.METATILEENTITIES.length; id++) {
+            gregtech.api.interfaces.metatileentity.IMetaTileEntity machine = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+            if (machine != null && machine.getClass()
+                .getName()
+                .equals(reactorType)) {
+                reactorId = id;
+                break;
+            }
+        }
+        require(reactorId > 0, "area_controller_real_large_naquadah_reactor_registered");
+        Block[] blocks = { net.minecraft.init.Blocks.lit_redstone_lamp,
+            registeredBlock("gcewing.architecture.common.block.BlockSawbench"),
+            registeredBlock("gcewing.architecture.common.block.BlockShape"), gregtech.api.GregTechAPI.sBlockMachines };
+        for (int kind : new int[] { 0, 1, 3, 2 }) {
+            int sourceX = 416 + kind * 4, destinationX = 464 + kind * 4, y = 88, z = 128;
+            for (int x = sourceX - 16; x <= destinationX + 16; x += 8)
+                for (int zz = z - 16; zz <= z + 16; zz += 8) world.getChunkFromBlockCoords(x, zz);
+            require(
+                world.isAirBlock(sourceX, y, z) && world.isAirBlock(destinationX, y, z),
+                "state_controller_fresh_fixture_" + kind);
+            Block block = blocks[kind];
+            if (kind == 0) world.setBlock(sourceX, y - 1, z, net.minecraft.init.Blocks.redstone_block, 0, 3);
+            if (kind == 3) {
+                ItemStack controller = new ItemStack(block, 1, reactorId);
+                require(
+                    ((gregtech.common.blocks.ItemMachines) controller.getItem())
+                        .placeBlockAt(controller, player, world, sourceX, y, z, 1, .5F, .5F, .5F, 0),
+                    "state_controller_native_gt_item_source");
+            } else require(
+                world.setBlock(sourceX, y, z, kind == 0 ? net.minecraft.init.Blocks.redstone_lamp : block, 0, 3),
+                "state_controller_real_source_" + kind);
+            if (kind == 0) require(world.getBlock(sourceX, y, z) == block, "native_powered_lamp_source_state");
+            if (kind == 2)
+                HologramNativePlacement.install(world, sourceX, y, z, block, 0, canonicalSeed(block, sourceX, y, z));
+            if (kind == 3) {
+                gregtech.api.metatileentity.BaseMetaTileEntity base = (gregtech.api.metatileentity.BaseMetaTileEntity) world
+                    .getTileEntity(sourceX, y, z);
+                base.setFrontFacing(net.minecraftforge.common.util.ForgeDirection.NORTH);
+                require(
+                    base.getMetaTileEntity()
+                        .getClass()
+                        .getName()
+                        .equals(reactorType),
+                    "reactor_source_has_actual_registered_machine");
+            }
+            TileEntity sourceTile = world.getTileEntity(sourceX, y, z);
+            NBTTagCompound before = sourceTile == null ? null : snapshot(sourceTile);
+            HologramArea area = new HologramArea();
+            area.point(1, sourceX, y, z);
+            area.point(2, sourceX, y, z);
+            area.begin(world);
+            for (int attempt = 0; attempt < 256 && !area.imported; attempt++) area.tick(player, player.getHeldItem());
+            require(area.imported && area.blueprint.cells.size() == 1, "real_area_capture_completes_" + kind);
+            HologramPresets.Cell saved = area.blueprint.cells.get(0);
+            ItemStack primary = saved.stack();
+            require(
+                !saved.missing() && primary != null && primary.getItem() != null,
+                "real_area_capture_has_payable_identity_" + kind);
+            require(
+                saved.block()
+                    .equals(block),
+                "real_area_capture_retains_native_block_identity_" + kind);
+            if (kind == 3) {
+                require(
+                    saved.controller && primary.getItemDamage() == reactorId,
+                    "reactor_area_import_keeps_controller_flag_and_full_meta_id");
+                HologramPresets.Structure declared = new HologramPresets.Structure();
+                declared.id = sourceX + "," + y + "," + z;
+                declared.name = "Large Naquadah Reactor";
+                declared.controllerId = reactorId;
+                declared.sourceClass = reactorType;
+                area.blueprint.structures.add(declared);
+                saved.structureId = declared.id;
+                saved.structureIds = java.util.Collections.singletonList(declared.id);
+            }
+            HologramCapture.Cell placeholder = cell(
+                block,
+                saved.metadata,
+                sourceTile == null ? new NBTTagCompound() : before,
+                primary,
+                destinationX,
+                y,
+                z);
+            Object session = session(player, placeholder, primary);
+            set(session, "virtualPreset", area.blueprint);
+            Method populate = HologramService.class.getDeclaredMethod("populateVirtual", session.getClass());
+            populate.setAccessible(true);
+            populate.invoke(null, session);
+            HologramCapture capture = (HologramCapture) get(session, "capture");
+            require(!capture.incomplete && capture.cells.size() == 1, "real_area_virtual_population_" + kind);
+            HologramCapture.Cell target = capture.cells.get(0);
+            if (kind == 3) require(
+                !target.anchor && "templateController".equals(target.role),
+                "virtual_reactor_controller_is_a_construction_target");
+            if (kind == 3) {
+                ((java.util.Map<?, ?>) get(session, "pins")).clear();
+                ((java.util.Map<?, ?>) get(session, "coordinatePins")).clear();
+                Method refresh = HologramService.class.getDeclaredMethod("refreshPlan", session.getClass());
+                refresh.setAccessible(true);
+                refresh.invoke(null, session);
+                @SuppressWarnings("unchecked")
+                List<ItemStack> restoredTargets = (List<ItemStack>) get(session, "planTargets");
+                require(
+                    restoredTargets.get(0) != null && restoredTargets.get(0)
+                        .getItemDamage() == reactorId && "pending".equals(target.status),
+                    "cleared_reactor_pin_keeps_registered_default_target_and_pending_cost");
+                target.sourceWarning = "fixture invalid controller source";
+                Method classify = HologramService.class
+                    .getDeclaredMethod("classify", session.getClass(), HologramCapture.Cell.class, int.class);
+                classify.setAccessible(true);
+                require(
+                    "unsupported".equals(classify.invoke(null, session, target, 0)),
+                    "cleared_reactor_pin_does_not_bypass_source_identity_warning");
+                target.sourceWarning = "";
+            }
+            List<ItemStack> payment = kind == 2
+                ? HologramNativePlacement.materials(block, saved.metadata, HologramBlueprintNbt.decode(saved.tileNbt))
+                : java.util.Collections.singletonList(primary);
+            if (kind == 2) {
+                ItemStack actualSample = HologramArea.serverSample(block, saved.metadata, sourceTile);
+                require(
+                    actualSample != null && actualSample.hasTagCompound()
+                        && HologramNativePlacement.matchesSample(
+                            block,
+                            saved.metadata,
+                            HologramBlueprintNbt.decode(saved.tileNbt),
+                            actualSample),
+                    "produced_shape_payment_is_actual_native_tagged_sample_at_level_zero");
+                require(
+                    payment.stream()
+                        .anyMatch(stack -> ItemStack.areItemStacksEqual(stack, actualSample)),
+                    "produced_shape_native_cost_contains_actual_tagged_sample");
+            }
+            fill(player, payment, false);
+            require(
+                operate(session, target) && "placed".equals(target.status),
+                "real_area_service_places_state_or_controller_" + kind
+                    + "_"
+                    + target.status
+                    + "_"
+                    + get(session, "status")
+                    + "_"
+                    + target.resourceError);
+            require(materialsCount(player) == 0, "real_area_placement_pays_one_primary_exactly_once_" + kind);
+            require(
+                HologramBlockIdentity.sameForPlacement(
+                    block,
+                    saved.metadata,
+                    world.getBlock(destinationX, y, z),
+                    world.getBlockMetadata(destinationX, y, z)) || kind == 3,
+                "real_area_world_has_expected_native_state_" + kind);
+            TileEntity placed = world.getTileEntity(destinationX, y, z);
+            if (kind == 0) require(
+                world.getBlock(destinationX, y, z) == net.minecraft.init.Blocks.redstone_lamp,
+                "unpowered_destination_uses_native_off_lamp_state");
+            else require(
+                placed != null && placed.getClass()
+                    .equals(sourceTile.getClass()),
+                "real_area_world_contains_actual_native_tile_" + kind);
+            if (kind == 2) {
+                NBTTagCompound expected = HologramBlueprintNbt.decode(saved.tileNbt);
+                NBTTagCompound actual = snapshot(placed);
+                System.out.println(PREFIX + "ARCHITECTURE SHAPE PERSISTENCE source=" + before + " target=" + actual);
+                require(
+                    HologramNativePlacement.matchesPlaced(block, saved.metadata, placed, expected),
+                    "produced_architecture_shape_preserves_material_and_shape");
+                NBTTagCompound changed = (NBTTagCompound) expected.copy();
+                changed.setInteger("Shape", expected.getInteger("Shape") == 0 ? 1 : 0);
+                require(
+                    !HologramNativePlacement.matchesPlaced(block, saved.metadata, placed, changed),
+                    "produced_architecture_shape_rejects_different_shape");
+                changed = (NBTTagCompound) expected.copy();
+                changed.setString(
+                    "BaseName",
+                    expected.getString("BaseName")
+                        .equals("minecraft:stone") ? "minecraft:planks" : "minecraft:stone");
+                require(
+                    !HologramNativePlacement.matchesPlaced(block, saved.metadata, placed, changed),
+                    "produced_architecture_shape_rejects_different_base_material");
+                changed = (NBTTagCompound) expected.copy();
+                changed.setString(
+                    "Name2",
+                    expected.getString("Name2")
+                        .equals("minecraft:glass") ? "minecraft:stone" : "minecraft:glass");
+                require(
+                    !HologramNativePlacement.matchesPlaced(block, saved.metadata, placed, changed),
+                    "produced_architecture_shape_rejects_different_secondary_material");
+                changed = (NBTTagCompound) expected.copy();
+                changed.setByte("offsetX", (byte) (expected.getByte("offsetX") == 0 ? 1 : 0));
+                require(
+                    !HologramNativePlacement.matchesPlaced(block, saved.metadata, placed, changed),
+                    "produced_architecture_shape_rejects_different_native_offset");
+            }
+            if (kind == 3) {
+                require(
+                    world.getBlock(destinationX, y, z) == gregtech.api.GregTechAPI.sBlockMachines
+                        && placed instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity,
+                    "virtual_reactor_world_contains_actual_gt_controller_block");
+                gregtech.api.interfaces.tileentity.IGregTechTileEntity gt = (gregtech.api.interfaces.tileentity.IGregTechTileEntity) placed;
+                require(
+                    gt.getMetaTileID() == reactorId && gt.getMetaTileEntity() != null
+                        && gt.getMetaTileEntity()
+                            .getClass()
+                            .getName()
+                            .equals(reactorType),
+                    "virtual_reactor_world_controller_has_exact_registered_machine_id");
+            }
+            require(
+                sourceTile == null || before.equals(snapshot(sourceTile)),
+                "real_area_capture_and_placement_leave_source_unchanged_" + kind);
+            System.out.println(
+                PREFIX + "AREA STATE CONTROLLER PASS kind="
+                    + kind
+                    + " source="
+                    + Block.blockRegistry.getNameForObject(block)
+                    + " primary="
+                    + Item.itemRegistry.getNameForObject(primary.getItem())
+                    + "@"
+                    + primary.getItemDamage());
+        }
+    }
+
+    private static Block registeredBlock(String className) {
+        for (Object registered : Block.blockRegistry) if (registered instanceof Block && registered.getClass()
+            .getName()
+            .equals(className)) return (Block) registered;
+        throw new AssertionError("Installed state/controller fixture requires " + className);
+    }
+
     private static NBTTagCompound canonicalSeed(Block block, int x, int y, int z) throws Exception {
         NBTTagCompound tag = new NBTTagCompound();
         TileEntity prototype = block.createTileEntity(HologramResourceWorld.create(block, 0), 0);
@@ -313,7 +547,9 @@ public final class HologramNativePlacementSmoke {
             found && row.getCompoundTag("conduit")
                 .getInteger("energyStoredRF") == 137,
             "official_conduit_serializer_preserves_rf");
-        require(rfRejected(charged), "selected_power_conduit_rf_is_not_free");
+        require(
+            HologramEnergyPayload.prepare(charged, null).demand.rf.intValueExact() == 137,
+            "selected_power_conduit_rf_has_exact_paid_energy_demand");
         NBTTagCompound legacy = (NBTTagCompound) charged.copy();
         for (int i = 0; i < legacy.getTagList("conduits", 10)
             .tagCount(); i++) {
@@ -324,7 +560,9 @@ public final class HologramNativePlacementSmoke {
             body.setInteger("energyStoredRF", 0);
             body.setFloat("energyStored", 13.7F);
         }
-        require(rfRejected(legacy), "legacy_power_conduit_rf_is_not_free");
+        require(
+            HologramEnergyPayload.prepare(legacy, null).demand.rf.compareTo(new java.math.BigDecimal("137")) == 0,
+            "legacy_power_conduit_rf_has_equivalent_paid_energy_demand");
         NBTTagCompound deselected = HologramBlueprintNbt.decode(
             HologramBlueprintNbt.filterCaptured(
                 HologramBlueprintNbt.encodeCaptured(charged),
@@ -339,14 +577,35 @@ public final class HologramNativePlacementSmoke {
         HologramCapture.Cell cell = cell(block, 0, charged, primary, x, y, z);
         Object session = session(player, cell, primary);
         fill(player, HologramNativePlacement.materials(block, 0, source), false);
-        ItemStack[] inventory = inventory(player);
-        require(
-            !operate(session, cell) && "unsupported".equals(cell.status)
-                && cell.resourceError.contains("energyStoredRF"),
-            "real_service_rejects_unpaid_rf_before_construction");
-        require(
-            world.isAirBlock(x, y, z) && sameInventory(inventory, player),
-            "rf_rejection_preserves_world_and_inventory");
+        java.math.BigInteger oldBalance = gregtech.common.misc.WirelessNetworkManager.getUserEU(player.getUniqueID());
+        try {
+            gregtech.common.misc.WirelessNetworkManager.setUserEU(player.getUniqueID(), java.math.BigInteger.ZERO);
+            require(
+                operate(session, cell) && world.getBlock(x, y, z) == block,
+                "unfunded_rf_still_places_paid_physical_conduit_with_empty_buffer");
+            NBTTagCompound unpaid = snapshot(world.getTileEntity(x, y, z));
+            require(
+                HologramEnergyPayload.prepare(unpaid, null).demand.rf.signum() == 0
+                    && gregtech.common.misc.WirelessNetworkManager.getUserEU(player.getUniqueID())
+                        .signum() == 0,
+                "unfunded_rf_never_restores_copied_charge_or_invents_EU");
+            HologramCapture.Cell paidCell = cell(block, 0, charged, primary, x + 1, y, z);
+            Object paidSession = session(player, paidCell, primary);
+            fill(player, HologramNativePlacement.materials(block, 0, source), false);
+            java.math.BigInteger initial = java.math.BigInteger.valueOf(10000);
+            gregtech.common.misc.WirelessNetworkManager.setUserEU(player.getUniqueID(), initial);
+            HologramEnergy.Quote quote = HologramEnergy
+                .quote(HologramEnergyPayload.prepare(charged, null).demand, new HologramEnergyNetwork(player));
+            require(operate(paidSession, paidCell), "funded_rf_native_conduit_actual_placement");
+            require(
+                HologramEnergyPayload.prepare(snapshot(world.getTileEntity(x + 1, y, z)), null).demand.rf
+                    .compareTo(new java.math.BigDecimal("137")) == 0
+                    && gregtech.common.misc.WirelessNetworkManager.getUserEU(player.getUniqueID())
+                        .equals(initial.subtract(quote.eu)),
+                "funded_rf_restores_exact_native_charge_and_debits_exact_converted_EU_once");
+        } finally {
+            gregtech.common.misc.WirelessNetworkManager.setUserEU(player.getUniqueID(), oldBalance);
+        }
     }
 
     private static void rfSchema() throws Exception {
@@ -367,13 +626,19 @@ public final class HologramNativePlacementSmoke {
         rows.appendTag(row);
         NBTTagCompound payload = new NBTTagCompound();
         payload.setTag("conduits", rows);
-        require(rfRejected(payload), "official_nonzero_rf_resource_rejected");
+        HologramEnergyPayload.Prepared charged = HologramEnergyPayload.prepare(payload, null);
+        require(
+            charged.demand.rf.intValueExact() == 137
+                && HologramBlueprintResources.plan(charged.tileEmpty).energy.signum() == 0,
+            "official_nonzero_rf_is_separate_exact_paid_demand_and_empty_resource_projection");
         row.getCompoundTag("conduit")
             .setInteger("energyStoredRF", 0);
         require(HologramBlueprintResources.plan(payload).energy.signum() == 0, "official_zero_rf_resource_supported");
         row.getCompoundTag("conduit")
             .setFloat("energyStored", 13.7F);
-        require(rfRejected(payload), "official_legacy_nonzero_rf_resource_rejected");
+        require(
+            HologramEnergyPayload.prepare(payload, null).demand.rf.compareTo(new java.math.BigDecimal("137")) == 0,
+            "official_legacy_nonzero_rf_has_exact_paid_demand");
     }
 
     private static void fmpAeLifecycle(WorldServer world, EntityPlayerMP player) throws Exception {

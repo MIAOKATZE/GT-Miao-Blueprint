@@ -150,8 +150,67 @@ final class HologramDecorationPreviewSmoke {
         }
         verifyUnsupportedNestedTile(state);
         verifyCarpenterContext(reference, state.cells.get(1));
+        verifySlopeFamilies(state, current, result);
         require(before.equals(state.data), "native source/control/render must preserve snapshot NBT");
         return result.toString();
+    }
+
+    /** Complex triangular skins must survive the same native path as a simple covered wedge. */
+    private static void verifySlopeFamilies(HologramState source, boolean current, StringBuilder receipt) {
+        int[] shapes = { 0, 12, 28, 41, 45, 60, 64 };
+        for (int shape : shapes) {
+            NBTTagCompound variant = (NBTTagCompound) source.data.copy();
+            NBTTagCompound cell = variant.getTagList("cells", 10)
+                .getCompoundTagAt(1);
+            for (String display : new String[] { "actualDisplay", "targetDisplay" }) cell.getCompoundTag(display)
+                .getCompoundTag("nativeTile")
+                .setInteger("cbMetadata", shape);
+            HologramState state = new HologramState(variant);
+            ReferenceAccess reference = new ReferenceAccess(state, current);
+            HologramState.Cell slope = state.cells.get(1);
+            HologramBlockRender.begin(state);
+            require(HologramBlockRender.ready(slope, current), "complex Carpenter slope native factory " + shape);
+            List<double[]> nativeVertices = HologramBlockRender.nativeControl(slope, current, reference.world);
+            List<double[]> preview = HologramBlockRender.attributes(slope, current);
+            require(
+                !nativeVertices.isEmpty() && nativeVertices.size() == preview.size(),
+                "complex Carpenter slope keeps every triangle/cover vertex " + shape);
+            for (int vertex = 0; vertex < preview.size(); vertex++) for (int field = 0; field < 6; field++) require(
+                Math.abs(preview.get(vertex)[field] - nativeVertices.get(vertex)[field]) < 0.00002,
+                "complex Carpenter slope preserves native position/skin/dye " + shape);
+            require(hasSlopedFace(preview), "complex Carpenter slope retains a non-axis-aligned face " + shape);
+            icon(slope, current, Blocks.quartz_block.getIcon(2, 1));
+            icon(slope, current, Blocks.planks.getIcon(2, 3));
+            require(hasTint(slope, current, true), "complex Carpenter slope retains original red dye " + shape);
+            boolean previousCull = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+            org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+            HologramBlockRender.draw(slope, current);
+            require(
+                org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_CULL_FACE),
+                "slope double-sided draw restores enclosing world culling " + shape);
+            if (!previousCull) org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+            receipt.append("carp-complex-shape=")
+                .append(shape)
+                .append(" originalVertices=")
+                .append(nativeVertices.size())
+                .append(" previewVertices=")
+                .append(preview.size())
+                .append(" slopedFaces=retained nativePositionUvColor=equal\n");
+        }
+        HologramBlockRender.begin(source);
+    }
+
+    private static boolean hasSlopedFace(List<double[]> vertices) {
+        for (int quad = 0; quad + 3 < vertices.size(); quad += 4) {
+            double[] a = vertices.get(quad), b = vertices.get(quad + 1), c = vertices.get(quad + 2);
+            double bx = b[0] - a[0], by = b[1] - a[1], bz = b[2] - a[2];
+            double cx = c[0] - a[0], cy = c[1] - a[1], cz = c[2] - a[2];
+            double nx = by * cz - bz * cy, ny = bz * cx - bx * cz, nz = bx * cy - by * cx;
+            int components = (Math.abs(nx) > 0.00001 ? 1 : 0) + (Math.abs(ny) > 0.00001 ? 1 : 0)
+                + (Math.abs(nz) > 0.00001 ? 1 : 0);
+            if (components >= 2) return true;
+        }
+        return false;
     }
 
     private static String vertexHash(List<double[]> vertices) {

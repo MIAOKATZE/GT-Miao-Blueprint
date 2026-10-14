@@ -15,8 +15,10 @@ import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagInt;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.testutil.BlueprintArtifactTestData;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -39,7 +41,9 @@ public final class HologramBlueprintPersistenceRegression {
             ownershipAndNbt();
             selectedNbt();
             stableItemIdentities();
+            visualNamesCannotHideAssets();
             hostileNbt();
+            stableNativeNbtEncoding();
             sharingTransaction();
             versions();
             fluidProviderVersions();
@@ -163,13 +167,13 @@ public final class HologramBlueprintPersistenceRegression {
         HologramPresets.validate(upgraded);
         expectIo(() -> HologramPresets.validate(old));
 
-        Field fileField = HologramPresets.class.getDeclaredField("FILE");
         Field cacheField = HologramPresets.class.getDeclaredField("cached");
-        fileField.setAccessible(true);
         cacheField.setAccessible(true);
-        Path file = (Path) fileField.get(null);
+        Path file = HologramPresets.libraryPath();
         Object previousCache = cacheField.get(null);
         byte[] previousBytes = Files.exists(file) ? Files.readAllBytes(file) : null;
+        // Internal schema 1 templates remain supported inside the current native file contract.
+        HologramBlueprintVersions.stamp(old);
         String json = "{\"schema\":1,\"presets\":[" + new com.google.gson.Gson().toJson(old) + "]}";
         byte[] legacyBytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Files.createDirectories(file.getParent());
@@ -307,6 +311,31 @@ public final class HologramBlueprintPersistenceRegression {
             "GT cover packed id remaps by stable item registry and damage");
     }
 
+    private static void visualNamesCannotHideAssets() throws Exception {
+        NBTTagCompound hidden = new net.minecraft.item.ItemStack(net.minecraft.init.Items.diamond, 7)
+            .writeToNBT(new NBTTagCompound());
+        NBTTagCompound unknown = new NBTTagCompound();
+        unknown.setString("id", "unregistered_visual_asset_fixture");
+        unknown.setTag("gtmb.quantumSides", hidden.copy());
+        NBTTagCompound source = (NBTTagCompound) unknown.copy();
+        NBTTagCompound nativeData = HologramBlueprintNbt.nativePayload(unknown);
+        SimpleAssert.that(nativeData.equals(source), "an unknown family keeps the entire similarly named item asset");
+        expectIo(() -> HologramBlueprintResources.plan(nativeData));
+        SimpleAssert.that(unknown.equals(source), "rejected unknown visual asset leaves source NBT unchanged");
+
+        NBTTagCompound nested = new NBTTagCompound();
+        nested.setString("id", "gtswn.network_quantum_node");
+        nested.setTag("gtmb.quantumSides", hidden.copy());
+        NBTTagCompound recipe = new NBTTagCompound();
+        recipe.setString("id", "ordinary_recipe_owner");
+        recipe.setTag("recipe", nested);
+        SimpleAssert.that(
+            HologramBlueprintNbt.nativePayload(recipe)
+                .equals(recipe),
+            "a nested recipe cannot claim the root quantum presentation exemption by borrowing its tile ID");
+        expectIo(() -> HologramBlueprintResources.plan(HologramBlueprintNbt.nativePayload(recipe)));
+    }
+
     private static HologramPresets.Preset blueprint() {
         HologramPresets.Preset preset = new HologramPresets.Preset();
         preset.id = "fixture";
@@ -348,14 +377,21 @@ public final class HologramBlueprintPersistenceRegression {
 
         Method decode = HologramPresets.class.getDeclaredMethod("decode", String.class);
         decode.setAccessible(true);
-        Object file = decode.invoke(
-            null,
-            "{\"schema\":1,\"presets\":[{\"id\":\"legacy\",\"name\":\"Legacy\",\"cells\":[],\"palette\":[]}]}");
+        HologramPresets.Preset internalTemplate = new HologramPresets.Preset();
+        HologramBlueprintVersions.stamp(internalTemplate);
+        com.google.gson.JsonObject nativeFile = new com.google.gson.JsonParser()
+            .parse("{\"schema\":1,\"presets\":[{\"id\":\"legacy\",\"name\":\"Legacy\",\"cells\":[],\"palette\":[]}]}")
+            .getAsJsonObject();
+        nativeFile.getAsJsonArray("presets")
+            .get(0)
+            .getAsJsonObject()
+            .add("nativeBlueprint", new com.google.gson.Gson().toJsonTree(internalTemplate.nativeBlueprint));
+        Object file = decode.invoke(null, nativeFile.toString());
         Field entries = file.getClass()
             .getDeclaredField("presets");
         entries.setAccessible(true);
         HologramPresets.Preset legacy = ((List<HologramPresets.Preset>) entries.get(file)).get(0);
-        SimpleAssert.eq(1, legacy.schema, "old schema 1 entries retain legacy semantics");
+        SimpleAssert.eq(1, legacy.schema, "current native template defaults to internal schema 1 semantics");
         SimpleAssert.that(legacy.retainNbt && legacy.retainCovers, "missing optional settings have safe defaults");
         SimpleAssert.that(legacy.retainedNbtKeys == null, "missing legacy selector retains full baseline");
     }
@@ -439,8 +475,22 @@ public final class HologramBlueprintPersistenceRegression {
         tile.setTag("gt.covers", covers);
         String encoded = HologramBlueprintNbt.encodeCaptured(tile);
         NBTTagCompound saved = HologramBlueprintNbt.decode(encoded);
-        SimpleAssert.eq("", saved.getString("mOwnerUuid"), "stored blueprint does not retain original UUID");
-        SimpleAssert.eq("", saved.getString("mOwnerName"), "stored blueprint does not retain original owner name");
+        SimpleAssert
+            .eq("original-player-uuid", saved.getString("mOwnerUuid"), "raw level 0 capture retains original UUID");
+        SimpleAssert
+            .eq("Original player", saved.getString("mOwnerName"), "raw level 0 capture retains original owner name");
+        NBTTagCompound deidentified = (NBTTagCompound) saved.copy();
+        HologramDeidentification.project(deidentified, 1);
+        SimpleAssert.that(
+            deidentified.getString("mOwnerUuid")
+                .isEmpty()
+                && deidentified.getString("mOwnerName")
+                    .isEmpty(),
+            "explicit level 1 clears device ownership slots, preserving the raw level 0 baseline");
+        SimpleAssert.that(
+            deidentified.getTag("Inventory")
+                .equals(saved.getTag("Inventory")),
+            "level 1 does not rewrite opaque inventory or recipe payloads");
         SimpleAssert.eq("original-player-uuid", tile.getString("mOwnerUuid"), "capture never mutates live owner");
         UUID user = UUID.fromString("11111111-2222-3333-4444-555555555555");
         NBTTagCompound restored = HologramBlueprintNbt.forPlacement(encoded, user, "New player", 2, 65, -4, true, true);
@@ -448,26 +498,27 @@ public final class HologramBlueprintPersistenceRegression {
         SimpleAssert.eq("New player", restored.getString("mOwnerName"), "GT owner name rewritten");
         NBTTagCompound item = restored.getTagList("Inventory", 10)
             .getCompoundTagAt(0);
-        SimpleAssert.eq(user.toString(), item.getString("ownerID"), "nested list ownerID rewritten");
+        SimpleAssert
+            .eq("original-player-uuid", item.getString("ownerID"), "opaque inventory configuration is preserved");
         SimpleAssert.eq("device-identity", item.getString("UUID"), "unrelated device UUID preserved");
         SimpleAssert.eq(
-            user.toString(),
+            "original-player-uuid",
             item.getCompoundTag("owner")
                 .getString("UUID"),
-            "owner compound UUID rewritten");
+            "inventory owner compound UUID stays exact");
         SimpleAssert.eq(
-            "New player",
+            "Original player",
             item.getCompoundTag("owner")
                 .getString("Name"),
-            "owner compound name rewritten");
+            "inventory owner compound name stays exact");
         SimpleAssert.that(
             item.getCompoundTag("owner")
-                .getLong("UUIDMost") == user.getMostSignificantBits(),
-            "owner UUID most bits rewritten");
+                .getLong("UUIDMost") == 100,
+            "inventory owner UUID most bits stay exact");
         SimpleAssert.that(
             item.getCompoundTag("owner")
-                .getLong("UUIDLeast") == user.getLeastSignificantBits(),
-            "owner UUID least bits rewritten");
+                .getLong("UUIDLeast") == 200,
+            "inventory owner UUID least bits stay exact");
         SimpleAssert.eq(512, item.getInteger("Count"), "full item count survives");
         SimpleAssert.eq(
             64000,
@@ -493,11 +544,11 @@ public final class HologramBlueprintPersistenceRegression {
             HologramBlueprintNbt.forPlacement(encoded, user, "New player", 0, 0, 0, false, false) == null,
             "disabling both toggles yields no restored payload");
         SimpleAssert.eq(
-            "",
+            "original-player-uuid",
             saved.getTagList("Inventory", 10)
                 .getCompoundTagAt(0)
                 .getString("ownerID"),
-            "placement never changes saved owner placeholder");
+            "placement never changes the raw saved owner");
     }
 
     private static void hostileNbt() throws Exception {
@@ -530,10 +581,168 @@ public final class HologramBlueprintPersistenceRegression {
         expectIo(() -> HologramBlueprintSharing.boundedJson(deep.toString()));
     }
 
+    private static void stableNativeNbtEncoding() throws Exception {
+        NBTTagCompound source = canonicalNbtFixture(false), reordered = canonicalNbtFixture(true);
+        NBTTagCompound before = (NBTTagCompound) source.copy();
+        SimpleAssert.eq(source, reordered, "collision fixture differs only in map insertion and allocation history");
+        String encoded = HologramBlueprintNbt.encodeCanonical(source);
+        SimpleAssert.eq(
+            encoded,
+            HologramBlueprintNbt.encodeCanonical(reordered),
+            "nested canonical bytes ignore compound insertion order and map capacity");
+        SimpleAssert.eq(
+            encoded,
+            HologramBlueprintNbt.encodeCaptured(source),
+            "raw capture uses the same stable binary representation");
+        NBTTagCompound copied = source;
+        for (int i = 0; i < 8; i++) {
+            copied = (NBTTagCompound) copied.copy();
+            SimpleAssert.eq(
+                encoded,
+                HologramBlueprintNbt.encodeCanonical(copied),
+                "native compound copy and rebuilding cannot change canonical bytes");
+            SimpleAssert.eq(
+                encoded,
+                HologramBlueprintNbt.encodeCanonical(HologramBlueprintNbt.decode(encoded)),
+                "decode and re-encode preserves the exact canonical bytes");
+        }
+        SimpleAssert.eq(before, source, "canonical sorting and stable item projection never mutate source NBT");
+        NBTTagCompound decoded = HologramBlueprintNbt.decode(encoded);
+        NBTTagCompound expected = (NBTTagCompound) before.copy();
+        expected.getTagList("Inventory", 10)
+            .getCompoundTagAt(0)
+            .setString(HologramBlueprintNbt.ITEM_REGISTRY, "minecraft:stone");
+        SimpleAssert.eq(expected, decoded, "standard native decoder retains all typed fields and portable item marker");
+        SimpleAssert.eq(
+            "minecraft:stone",
+            decoded.getTagList("Inventory", 10)
+                .getCompoundTagAt(0)
+                .getString(HologramBlueprintNbt.ITEM_REGISTRY),
+            "stable item conversion remains active inside canonical compounds");
+        String[] fields = { "byte", "short", "int", "long", "float", "double", "bytes", "string", "rows", "compound",
+            "integers" };
+        for (int i = 0; i < fields.length; i++) SimpleAssert.eq(
+            i + 1,
+            (int) decoded.getTag(fields[i])
+                .getId(),
+            "canonical writer preserves native NBT type");
+        SimpleAssert.eq(
+            Float.floatToRawIntBits(-0.0f),
+            Float.floatToRawIntBits(decoded.getFloat("float")),
+            "float negative zero is preserved by the native wire format");
+        SimpleAssert.eq(
+            Double.doubleToRawLongBits(-0.0d),
+            Double.doubleToRawLongBits(decoded.getDouble("double")),
+            "double negative zero is preserved by the native wire format");
+        SimpleAssert.that(
+            java.util.Arrays.equals(new byte[] { Byte.MIN_VALUE, 0, Byte.MAX_VALUE }, decoded.getByteArray("bytes"))
+                && java.util.Arrays
+                    .equals(new int[] { Integer.MIN_VALUE, 0, Integer.MAX_VALUE }, decoded.getIntArray("integers")),
+            "byte and integer array order and signed values are preserved");
+        SimpleAssert.eq(
+            "猫猫" + (char) 0 + (char) 0xd83d + (char) 0xde3a,
+            decoded.getString("string"),
+            "native modified UTF preserves NUL and supplementary characters");
+        NBTTagCompound changed = (NBTTagCompound) source.copy();
+        changed.setInteger("short", source.getShort("short"));
+        SimpleAssert.that(
+            !encoded.equals(HologramBlueprintNbt.encodeCanonical(changed)),
+            "equal numeric values with different native types have different canonical bytes");
+        NBTTagList rows = source.getTagList("rows", 10), reversed = new NBTTagList();
+        reversed.appendTag(
+            rows.getCompoundTagAt(1)
+                .copy());
+        reversed.appendTag(
+            rows.getCompoundTagAt(0)
+                .copy());
+        changed = (NBTTagCompound) source.copy();
+        changed.setTag("rows", reversed);
+        SimpleAssert.that(
+            !encoded.equals(HologramBlueprintNbt.encodeCanonical(changed)),
+            "list order is meaningful and must never be sorted with compound keys");
+        NBTTagCompound expanded = new NBTTagCompound();
+        expanded.setByteArray("large", new byte[HologramBlueprintNbt.MAX_EXPANDED + 1]);
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(expanded));
+        NBTTagCompound compressed = new NBTTagCompound();
+        byte[] noise = new byte[HologramBlueprintNbt.MAX_COMPRESSED * 2];
+        new java.util.Random(142857).nextBytes(noise);
+        compressed.setByteArray("noise", noise);
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(compressed));
+        NBTTagCompound deep = new NBTTagCompound();
+        for (int i = 0; i < 513; i++) {
+            NBTTagCompound parent = new NBTTagCompound();
+            parent.setTag("nested", deep);
+            deep = parent;
+        }
+        NBTTagCompound tooDeep = deep;
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(tooDeep));
+        NBTTagCompound cyclic = new NBTTagCompound();
+        cyclic.setTag("self", cyclic);
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(cyclic));
+    }
+
+    private static NBTTagCompound canonicalNbtFixture(boolean reverse) {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setByte("byte", Byte.MIN_VALUE);
+        source.setShort("short", Short.MIN_VALUE);
+        source.setInteger("int", Integer.MIN_VALUE);
+        source.setLong("long", Long.MIN_VALUE);
+        source.setFloat("float", -0.0f);
+        source.setDouble("double", -0.0d);
+        source.setByteArray("bytes", new byte[] { Byte.MIN_VALUE, 0, Byte.MAX_VALUE });
+        source.setString("string", "猫猫" + (char) 0 + (char) 0xd83d + (char) 0xde3a);
+        source.setIntArray("integers", new int[] { Integer.MIN_VALUE, 0, Integer.MAX_VALUE });
+        source.setTag("compound", collisionNbtFixture(reverse));
+        NBTTagList rows = new NBTTagList();
+        NBTTagCompound first = collisionNbtFixture(reverse), second = collisionNbtFixture(!reverse);
+        first.setInteger("row", 1);
+        second.setInteger("row", 2);
+        rows.appendTag(first);
+        rows.appendTag(second);
+        source.setTag("rows", rows);
+        NBTTagList numbers = new NBTTagList();
+        numbers.appendTag(new NBTTagInt(2));
+        numbers.appendTag(new NBTTagInt(1));
+        NBTTagList lists = new NBTTagList();
+        lists.appendTag(numbers);
+        lists.appendTag(new NBTTagList());
+        source.setTag("nestedLists", lists);
+        source.setTag("emptyCompound", new NBTTagCompound());
+        NBTTagCompound item = new NBTTagCompound();
+        new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone, 3, 1).writeToNBT(item);
+        NBTTagList inventory = new NBTTagList();
+        inventory.appendTag(item);
+        source.setTag("Inventory", inventory);
+        NBTTagCompound result = new NBTTagCompound();
+        if (reverse) growThenClear(result);
+        List<String> keys = new java.util.ArrayList<>();
+        for (Object key : source.func_150296_c()) keys.add((String) key);
+        keys.sort(reverse ? java.util.Comparator.reverseOrder() : java.util.Comparator.naturalOrder());
+        for (String key : keys) result.setTag(key, source.getTag(key));
+        return result;
+    }
+
+    private static NBTTagCompound collisionNbtFixture(boolean reverse) {
+        NBTTagCompound result = new NBTTagCompound();
+        if (reverse) growThenClear(result);
+        String[] keys = { "Aa", "BB", "AaAa", "BBBB", "AaBB", "BBAa" };
+        for (int i = 0; i < keys.length; i++) {
+            int index = reverse ? keys.length - i - 1 : i;
+            result.setInteger(keys[index], index);
+        }
+        return result;
+    }
+
+    private static void growThenClear(NBTTagCompound compound) {
+        for (int i = 0; i < 96; i++) compound.setInteger("temporary_capacity_" + i, i);
+        for (int i = 0; i < 96; i++) compound.removeTag("temporary_capacity_" + i);
+    }
+
     private static void sharingTransaction() throws Exception {
         Path directory = Files.createTempDirectory("gtmb-blueprint-share-");
         Path file = directory.resolve("blueprint.json");
-        Path blocked = directory.resolve("blocked");
+        Path previewFile = HologramBlueprintArtifact.previewPath(file);
+        Path blocked = directory.resolve("blocked.json");
         try {
             HologramPresets.Preset preset = blueprint();
             preset.prompt = "Global prompt";
@@ -542,7 +751,7 @@ public final class HologramBlueprintPersistenceRegression {
             external.setString("ownerID", "external-original-owner");
             external.setInteger("Amount", 96000);
             external.setString("unselected", "must-not-be-stored");
-            // An external share may contain the original owner; import/export validation must sanitize it.
+            // Raw level zero sharing preserves identity. Explicit level one sanitizes it before placement.
             preset.cells.get(0).tileNbt = Base64.getEncoder()
                 .encodeToString(net.minecraft.nbt.CompressedStreamTools.compress(external));
             preset.retainedNbtKeys = java.util.Collections.singletonList("Amount");
@@ -567,8 +776,20 @@ public final class HologramBlueprintPersistenceRegression {
             area.x2 = 10;
             area.prompt = "Wire this area";
             preset.hintAreas.add(area);
-            HologramBlueprintSharing.write(file, preset);
+            HologramBlueprintVersions.stamp(preset);
+            byte[] preview = BlueprintArtifactTestData.previewPng();
+            expectIo(() -> HologramBlueprintSharing.write(file, preset));
+            HologramBlueprintSharing.write(file, preset, preview);
             byte[] original = Files.readAllBytes(file);
+            byte[] originalPreview = Files.readAllBytes(previewFile);
+            Files.delete(previewFile);
+            expectIo(() -> HologramBlueprintSharing.read(file));
+            Files.write(previewFile, originalPreview);
+            byte[] mismatchedJson = original.clone();
+            mismatchedJson[0] ^= 1;
+            Files.write(file, mismatchedJson);
+            expectIo(() -> HologramBlueprintSharing.read(file));
+            Files.write(file, original);
             HologramPresets.Preset loaded = HologramBlueprintSharing.read(file);
             SimpleAssert.eq(
                 "missing_mod:missing_block",
@@ -580,7 +801,16 @@ public final class HologramBlueprintPersistenceRegression {
             SimpleAssert.eq("Wire this area", loaded.hintAreas.get(0).prompt, "hint area survives share");
             SimpleAssert.eq("1.10.3", loaded.modVersions.get("missing_mod"), "dependency version survives share");
             NBTTagCompound payload = HologramBlueprintNbt.decode(loaded.cells.get(0).tileNbt);
-            SimpleAssert.eq("", payload.getString("ownerID"), "shared external owner is sanitized before writing");
+            SimpleAssert.eq(
+                "external-original-owner",
+                payload.getString("ownerID"),
+                "shared raw level zero retains original owner before a deliberate deidentification choice");
+            HologramPresets.Preset publicCopy = HologramDeidentification.apply(loaded, 1);
+            SimpleAssert.eq(
+                "",
+                HologramBlueprintNbt.decode(publicCopy.cells.get(0).tileNbt)
+                    .getString("ownerID"),
+                "explicit level one sanitizes the imported shared identity without changing its level zero source");
             SimpleAssert.eq(96000, payload.getInteger("Amount"), "full NBT survives JSON share round trip");
             SimpleAssert.eq("Amount", loaded.retainedNbtKeys.get(0), "NBT root selector survives sharing");
             SimpleAssert.that(!payload.hasKey("unselected"), "share file contains no unselected root payload");
@@ -613,12 +843,15 @@ public final class HologramBlueprintPersistenceRegression {
                 .that(legacyMembership.belongsTo("structure_a"), "empty multi-membership falls back to legacy primary");
             Files.createDirectory(blocked);
             Files.write(blocked.resolve("keep"), new byte[] { 1 });
-            expectIo(() -> HologramBlueprintSharing.write(blocked, preset));
+            expectIo(() -> HologramBlueprintSharing.write(blocked, preset, preview));
             SimpleAssert.that(
                 java.util.Arrays.equals(original, Files.readAllBytes(file)),
                 "failed atomic export preserves prior file");
+            SimpleAssert.that(
+                java.util.Arrays.equals(originalPreview, Files.readAllBytes(previewFile)),
+                "failed atomic export preserves matching preview");
             try (java.util.stream.Stream<Path> files = Files.list(directory)) {
-                SimpleAssert.eq(2, (int) files.count(), "failed atomic write removes temporary file");
+                SimpleAssert.eq(3, (int) files.count(), "failed atomic write removes temporary files and retains pair");
             }
             expectIo(
                 () -> HologramBlueprintSharing.atomicWrite(file, new byte[HologramBlueprintSharing.MAX_BYTES + 1]));
@@ -629,6 +862,7 @@ public final class HologramBlueprintPersistenceRegression {
             Files.deleteIfExists(blocked.resolve("keep"));
             Files.deleteIfExists(blocked);
             Files.deleteIfExists(file);
+            Files.deleteIfExists(previewFile);
             Files.deleteIfExists(directory);
         }
     }

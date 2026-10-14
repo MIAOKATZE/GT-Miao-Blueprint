@@ -13,6 +13,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
+import cpw.mods.fml.relauncher.ReflectionHelper;
+
 /** Audited native persistence and material callbacks on the main thread. No harvesting, ticking or extraction. */
 public final class HologramNativePlacement {
 
@@ -68,7 +70,16 @@ public final class HologramNativePlacement {
             return HologramAeBlueprint.blockSample(block, metadata);
         if (tile == null || !supported(block)) return null;
         NBTTagCompound tag = HologramNativeCapture.capture(tile);
-        List<ItemStack> costs = materials(block, metadata, tag);
+        return sample(block, metadata, tag);
+    }
+
+    /** A native placement identity is distinct from its bill, which may legitimately be empty. */
+    public static ItemStack sample(Block block, int metadata, NBTTagCompound payload) throws IOException {
+        List<ItemStack> costs = materials(block, metadata, payload);
+        if (costs.isEmpty()) {
+            Item item = Item.getItemFromBlock(block);
+            return item == null ? null : new ItemStack(item, 1, block.damageDropped(metadata));
+        }
         ItemStack first = costs.get(0)
             .copy();
         first.stackSize = 1;
@@ -113,7 +124,6 @@ public final class HologramNativePlacement {
                     throw unsupported("native component has no payable material");
                 result.add(stack.copy());
             }
-            if (result.isEmpty()) throw unsupported("native component has no payable material");
             return result;
         } catch (IOException failure) {
             throw failure;
@@ -132,7 +142,8 @@ public final class HologramNativePlacement {
         if (costs.isEmpty()) return costs;
         for (int i = 0; i < costs.size(); i++) {
             ItemStack cost = costs.get(i);
-            if (main != null && cost.isItemEqual(main) && ItemStack.areItemStackTagsEqual(cost, main)) {
+            if (main != null && (cost.isItemEqual(main) && ItemStack.areItemStackTagsEqual(cost, main)
+                || sameCarpenterShell(block, cost, main))) {
                 if (--cost.stackSize == 0) costs.remove(i);
                 return costs;
             }
@@ -142,16 +153,40 @@ public final class HologramNativePlacement {
 
     public static boolean matchesSample(Block block, int metadata, NBTTagCompound payload, ItemStack sample) {
         try {
-            for (ItemStack cost : materials(block, metadata, payload))
-                if (sample != null && cost.isItemEqual(sample) && ItemStack.areItemStackTagsEqual(cost, sample))
-                    return true;
+            List<ItemStack> costs = materials(block, metadata, payload);
+            if (costs.isEmpty()) {
+                ItemStack identity = sample(block, metadata, payload);
+                return sample != null && identity != null
+                    && identity.isItemEqual(sample)
+                    && ItemStack.areItemStackTagsEqual(identity, sample);
+            }
+            for (ItemStack cost : costs)
+                if (sample != null && (cost.isItemEqual(sample) && ItemStack.areItemStackTagsEqual(cost, sample)
+                    || sameCarpenterShell(block, cost, sample))) return true;
         } catch (IOException failure) {
             return false;
         }
         return false;
     }
 
+    private static boolean sameCarpenterShell(Block block, ItemStack cost, ItemStack sample) {
+        return block.getClass()
+            .getName()
+            .equals("com.carpentersblocks.block.BlockCarpentersSlope") && cost.getItem() == Item.getItemFromBlock(block)
+            && sample.getItem() == cost.getItem()
+            && cost.getItemDamage() == 0
+            && sample.getItemDamage() >= 0
+            && sample.getItemDamage() < 5
+            && ItemStack.areItemStackTagsEqual(cost, sample);
+    }
+
     public static boolean matchesPlaced(Block block, int metadata, TileEntity actual, NBTTagCompound payload) {
+        return matchesPlaced(block, metadata, actual, payload, null);
+    }
+
+    /** Actor-aware projection binds only an empty native Carpenter owner; every other field remains exact. */
+    public static boolean matchesPlaced(Block block, int metadata, TileEntity actual, NBTTagCompound payload,
+        net.minecraft.entity.player.EntityPlayerMP actor) {
         if (actual == null || payload == null) return false;
         if (HologramAeBlueprint.supports(block, payload))
             return HologramAeBlueprint.matchesPlaced(block, metadata, actual, payload);
@@ -164,10 +199,15 @@ public final class HologramNativePlacement {
                 detached);
             if (expected == null || !actual.getClass()
                 .equals(expected.getClass())) return false;
+            bindUnownedCarpenter(block, expected, actor);
             NBTTagCompound actualTag = HologramNativeCapture.capture(actual), expectedTag = new NBTTagCompound();
             expected.writeToNBT(expectedTag);
             actualTag = HologramEnergyPayload.withoutBuffers(actualTag);
             expectedTag = HologramEnergyPayload.withoutBuffers(expectedTag);
+            // Capture adds this project-owned display hint, while native writeToNBT deliberately does not.
+            // Compare native persistence symmetrically; never omit arbitrary data using this field name.
+            omitPreviewFlag(actualTag);
+            omitPreviewFlag(expectedTag);
             for (String key : new String[] { "x", "y", "z", HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE,
                 HologramNetworkBindings.HINT, HologramNetworkBindings.CAPTURE_ANCHOR, "GTSWN_IncorporationIdentity" }) {
                 actualTag.removeTag(key);
@@ -177,6 +217,12 @@ public final class HologramNativePlacement {
         } catch (Exception | LinkageError invalid) {
             return false;
         }
+    }
+
+    private static void omitPreviewFlag(NBTTagCompound tag) {
+        if (tag.hasKey("gtmb.nativePreview", 1)
+            && (tag.getByte("gtmb.nativePreview") == 0 || tag.getByte("gtmb.nativePreview") == 1))
+            tag.removeTag("gtmb.nativePreview");
     }
 
     /** Payment and Forge event rollback remain owned by HologramService. */
@@ -192,8 +238,17 @@ public final class HologramNativePlacement {
 
     static TileEntity install(World world, int x, int y, int z, Block block, int metadata, NBTTagCompound payload,
         net.minecraft.entity.player.EntityPlayerMP actor, HologramNetworkBindings.State bindings) throws IOException {
+        return install(world, x, y, z, block, metadata, payload, actor, bindings, false);
+    }
+
+    /** The server Service alone derives this permission from its validated, completed six-stage processing policy. */
+    static TileEntity install(World world, int x, int y, int z, Block block, int metadata, NBTTagCompound payload,
+        net.minecraft.entity.player.EntityPlayerMP actor, HologramNetworkBindings.State bindings,
+        boolean verifiedQuantumClear) throws IOException {
         Adapter adapter = adapter(block);
         if (adapter == null) throw unsupported("unregistered native placement provider");
+        if (verifiedQuantumClear && (!HologramNetworkBindings.node(block) || actor == null))
+            throw unsupported("explicit quantum clear requires the registered node and a verified actor");
         try {
             NBTTagCompound selected = payload;
             if (HologramAeBlueprint.supports(block, payload)) {
@@ -213,8 +268,11 @@ public final class HologramNativePlacement {
                 throw unsupported("native factory did not create a detached tile");
             if (HologramAeBlueprint.supports(block, tag)) {
                 HologramAeBlueprint.prepareActor(tile, actor);
-                if (actor != null && HologramNetworkBindings.node(block) && !tag.hasKey(HologramNetworkBindings.GROUP))
-                    throw unsupported("Quantum blueprint node requires a server-owned local group descriptor");
+                if (actor != null && HologramNetworkBindings.node(block)) {
+                    if (verifiedQuantumClear) prepareClearedQuantum(tile, tag, actor);
+                    else if (!tag.hasKey(HologramNetworkBindings.GROUP))
+                        throw unsupported("Quantum blueprint node requires a server-owned local group descriptor");
+                }
                 if (tag.hasKey(HologramNetworkBindings.GROUP) && HologramNetworkBindings.node(block)) {
                     if (actor == null || bindings == null) throw unsupported("Quantum network binding is required");
                     HologramNetworkBindings.bindNode(tile, tag, actor, bindings);
@@ -242,23 +300,14 @@ public final class HologramNativePlacement {
                 }
                 if (changed) tile = adapter.create(block, metadata, tag, detached);
             }
-            if (actor != null && block.getClass()
-                .getName()
-                .startsWith("com.carpentersblocks.block.")) {
-                Class<?> owner = Class.forName("com.carpentersblocks.util.protection.ProtectedObject");
-                call(
-                    tile,
-                    "setOwner",
-                    new Class<?>[] { owner },
-                    owner.getConstructor(net.minecraft.entity.player.EntityPlayer.class)
-                        .newInstance(actor));
-            }
+            bindUnownedCarpenter(block, tile, actor);
             world.removeTileEntity(x, y, z);
             tile.setWorldObj(world);
             tile.xCoord = x;
             tile.yCoord = y;
             tile.zCoord = z;
             world.setTileEntity(x, y, z, tile);
+            if (verifiedQuantumClear) requireUnboundQuantum(tile);
             finishJoin(world, block, tile);
             tile.markDirty();
             world.markBlockForUpdate(x, y, z);
@@ -276,6 +325,42 @@ public final class HologramNativePlacement {
         }
     }
 
+    private static void prepareClearedQuantum(TileEntity tile, NBTTagCompound canonical,
+        net.minecraft.entity.player.EntityPlayerMP actor) throws Exception {
+        if (!HologramNetworkBindings.NODE_TILE.equals(
+            tile.getClass()
+                .getName()))
+            throw unsupported("cleared quantum node factory/schema changed");
+        for (String key : new String[] { HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE,
+            HologramNetworkBindings.HINT, HologramNetworkBindings.CAPTURE_ANCHOR, "anchorDim", "anchorX", "anchorY",
+            "anchorZ", "proxy", "linked" })
+            if (canonical.hasKey(key)) throw unsupported("cleared quantum payload retained a network relation: " + key);
+        requireUnboundQuantum(tile);
+        // GTSWN's original setPlacer only assigns the local AE proxy owner. It never supplies an anchor.
+        call(tile, "setPlacer", new Class<?>[] { net.minecraft.entity.player.EntityPlayer.class }, actor);
+        requireUnboundQuantum(tile);
+    }
+
+    private static void requireUnboundQuantum(TileEntity tile) throws Exception {
+        if (!hasUnboundNativeNode(tile))
+            throw unsupported("cleared quantum node acquired an unverified external anchor");
+    }
+
+    /** Read-only exact GTSWN query shared by installation and Service target matching. */
+    static boolean hasUnboundNativeNode(TileEntity tile) {
+        if (tile == null || !HologramNetworkBindings.NODE_TILE.equals(
+            tile.getClass()
+                .getName()))
+            return false;
+        try {
+            return !(Boolean) call(tile, "hasAnchor", new Class<?>[0])
+                && (Integer) call(tile, "getAnchorDim", new Class<?>[0]) == Integer.MIN_VALUE
+                && !(Boolean) call(tile, "isLinked", new Class<?>[0]);
+        } catch (Exception | LinkageError invalidNativeSchema) {
+            return false;
+        }
+    }
+
     static TileEntity rollbackTile(World world, Block block, int metadata, NBTTagCompound tag) {
         if (!supported(block)) return TileEntity.createAndLoadEntity(tag);
         try {
@@ -285,6 +370,24 @@ public final class HologramNativePlacement {
         } catch (Exception | LinkageError failure) {
             throw new IllegalStateException("Native recovery tile failed", failure);
         }
+    }
+
+    private static void bindUnownedCarpenter(Block block, TileEntity tile,
+        net.minecraft.entity.player.EntityPlayerMP actor) throws Exception {
+        if (actor == null || !block.getClass()
+            .getName()
+            .startsWith("com.carpentersblocks.block.")) return;
+        // TEBase.getOwner returns exactly its persisted cbOwner string. An empty string is the native unowned state.
+        // ProtectedObject selects UUID on an online server and the player's display name on an offline server.
+        String retained = (String) call(tile, "getOwner", new Class<?>[0]);
+        if (!retained.isEmpty()) return;
+        Class<?> owner = Class.forName("com.carpentersblocks.util.protection.ProtectedObject");
+        call(
+            tile,
+            "setOwner",
+            new Class<?>[] { owner },
+            owner.getConstructor(net.minecraft.entity.player.EntityPlayer.class)
+                .newInstance(actor));
     }
 
     private static boolean rewriteCableOwners(Object host, NBTTagCompound rootTag, int playerId) throws Exception {
@@ -331,6 +434,35 @@ public final class HologramNativePlacement {
         return method.invoke(target, args);
     }
 
+    /** The known block factory owns the tile class; a supplied ID must resolve to that exact registered class. */
+    static void validateFactoryId(NBTTagCompound payload, TileEntity prototype) throws IOException {
+        // Existing detached compatibility seeds are partial native schemas. Real captured tiles always retain id.
+        // A missing id never selects another factory: the audited, registry-bound block already selected prototype.
+        if (!payload.hasKey("id")) return;
+        if (!payload.hasKey("id", 8) || payload.getString("id")
+            .isEmpty()) throw unsupported("native tile id must be a nonempty registered string");
+        try {
+            NBTTagCompound factory = new NBTTagCompound();
+            prototype.writeToNBT(factory);
+            if (!factory.hasKey("id", 8) || factory.getString("id")
+                .isEmpty()) throw unsupported("native block factory has no registered tile identity");
+            if (factory.getString("id")
+                .equals(payload.getString("id"))) return;
+            java.lang.reflect.Field names = ReflectionHelper
+                .findField(TileEntity.class, "nameToClassMap", "field_145855_i");
+            @SuppressWarnings("unchecked")
+            Map<String, Class<?>> registered = (Map<String, Class<?>>) names.get(null);
+            // CarpentersBlocks registers official compatibility aliases for the same native TE class.
+            // Accept only real runtime aliases, without instantiating an untrusted payload-selected class.
+            if (registered.get(payload.getString("id")) != prototype.getClass())
+                throw unsupported("native tile id does not match the registered block factory");
+        } catch (IOException failure) {
+            throw failure;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            throw new IOException("Unsupported native block factory identity", failure);
+        }
+    }
+
     private static final class Builtin implements Adapter {
 
         public boolean includesInventoryDrops(Block block) {
@@ -354,6 +486,10 @@ public final class HologramNativePlacement {
             String type = block.getClass()
                 .getName();
             if (type.equals("codechicken.multipart.BlockMultipart")) {
+                // MultipartSaveLoad uses savedMultipart -> TileNBTContainer at load time, then creates a dynamic tile.
+                // Its writer maps every dynamic tile class back to this exact native persistence carrier.
+                if (tag.hasKey("id") && (!tag.hasKey("id", 8) || !"savedMultipart".equals(tag.getString("id"))))
+                    throw unsupported("multipart root id does not match the native persistence carrier");
                 for (int i = 0; i < tag.getTagList("parts", 10)
                     .tagCount(); i++) {
                     NBTTagCompound part = tag.getTagList("parts", 10)
@@ -396,8 +532,20 @@ public final class HologramNativePlacement {
                             throw unsupported("unregistered ArchitectureCraft material");
                     }
                 }
+                if (type.equals("com.carpentersblocks.block.BlockCarpentersSlope")) {
+                    java.lang.reflect.Field registered = Class.forName("com.carpentersblocks.data.Slope")
+                        .getDeclaredField("slopesList");
+                    registered.setAccessible(true);
+                    Object[] shapes = (Object[]) registered.get(null);
+                    int shape = tag.getInteger("cbMetadata");
+                    if (!tag.hasKey("cbMetadata", 99) || shape < 0 || shape >= shapes.length || shapes[shape] == null)
+                        throw unsupported("unregistered Carpenter slope shape");
+                }
                 tile = block.createTileEntity(world, metadata);
                 if (tile == null) throw unsupported("missing native tile factory");
+                if (type.startsWith("com.carpentersblocks.block.")
+                    || type.equals("gcewing.architecture.common.block.BlockShape")
+                    || type.equals("com.creativemd.littletiles.common.blocks.BlockTile")) validateFactoryId(tag, tile);
                 tile.setWorldObj(world);
                 tile.xCoord = tag.getInteger("x");
                 tile.yCoord = tag.getInteger("y");
@@ -408,11 +556,16 @@ public final class HologramNativePlacement {
                     && ((List<?>) call(tile, "getTiles", new Class<?>[0])).size() != tag.getInteger("tilesCount"))
                     throw unsupported("unregistered LittleTiles component");
                 if (type.startsWith("com.carpentersblocks.block.")) {
+                    if (tag.hasKey("cbOwner") && !tag.hasKey("cbOwner", 8))
+                        throw unsupported("invalid Carpenter ownership type");
+                    java.util.Set<Byte> retained = new java.util.HashSet<>();
                     for (int i = 0; i < tag.getTagList("cbAttrList", 10)
                         .tagCount(); i++) {
                         byte attr = tag.getTagList("cbAttrList", 10)
                             .getCompoundTagAt(i)
                             .getByte("cbAttribute");
+                        if (attr < 0 || attr > 25 || !retained.add(attr))
+                            throw unsupported("unregistered or duplicate Carpenter attribute");
                         if (!(Boolean) call(tile, "hasAttribute", new Class<?>[] { byte.class }, attr))
                             throw unsupported("unregistered Carpenter material");
                     }

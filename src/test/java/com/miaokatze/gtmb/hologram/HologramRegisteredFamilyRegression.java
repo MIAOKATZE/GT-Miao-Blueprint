@@ -52,5 +52,39 @@ final class HologramRegisteredFamilyRegression {
             !HologramBlockIdentity.key(one)
                 .equals(HologramBlockIdentity.key(two)),
             "ordinary exact block identity distinguishes registered metadata");
+        ItemStack lamp = HologramBlockIdentity.materialStack(Blocks.lit_redstone_lamp, 0);
+        SimpleAssert.that(
+            lamp != null && lamp.isItemEqual(new ItemStack(Blocks.redstone_lamp)),
+            "powered vanilla lamp pays the registered ordinary lamp item");
+        SimpleAssert.that(
+            !HologramBlockIdentity.key(Blocks.lit_redstone_lamp, 0)
+                .equals(HologramBlockIdentity.key(Blocks.redstone_lamp, 0)),
+            "material mapping preserves distinct captured powered world state");
+        SimpleAssert.that(
+            HologramBlockIdentity.sameForPlacement(Blocks.lit_redstone_lamp, 0, Blocks.redstone_lamp, 0),
+            "native placement accepts the lamp state chosen by neighbor power updates");
+        SimpleAssert.that(
+            !HologramBlockIdentity.sameForPlacement(Blocks.redstone_lamp, 0, Blocks.stone, 0)
+                && !HologramBlockIdentity.sameForPlacement(Blocks.lit_redstone_lamp, 0, Blocks.redstone_lamp, 1),
+            "lamp placement equivalence never authorizes another block or metadata");
+        HologramDeclarationCandidates powered = new HologramDeclarationCandidates();
+        powered.collect(
+            StructureUtility.ofBlock(Blocks.lit_redstone_lamp, 0),
+            null,
+            null,
+            0,
+            64,
+            0,
+            new ItemStack(Blocks.stone),
+            null,
+            0);
+        SimpleAssert.that(
+            powered.complete && powered.stacks.size() == 1
+                && powered.stacks.get(0)
+                    .isItemEqual(lamp),
+            "reviewed fixed powered state exposes its exact payable lamp item");
+        SimpleAssert.that(
+            HologramBlockIdentity.materialStack(Blocks.air, 0) == null,
+            "material mapping never fabricates an item for air");
     }
 }

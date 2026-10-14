@@ -356,12 +356,17 @@ public final class HologramLockedNudgeClientSmoke {
             listeners.setAccessible(true);
             for (Object listener : ((java.util.Map<?, ?>) listeners.get(bus)).keySet()) {
                 if (!(listener instanceof HologramClient)) continue;
+                Object context = observed(listener, "inputContext");
                 message.append(" clientContext={worldSame=")
-                    .append(observed(listener, "inputWorld") == mc.theWorld)
-                    .append(" toolSame=")
-                    .append(observed(listener, "inputTool") == mc.thePlayer.getHeldItem())
+                    .append(observed(context, "world") == mc.theWorld)
+                    .append(" itemSame=")
+                    .append(
+                        observed(context, "item") == mc.thePlayer.getHeldItem()
+                            .getItem())
+                    .append(" toolUuid=")
+                    .append(observed(context, "uuid"))
                     .append(" screenSame=")
-                    .append(observed(listener, "inputScreen") == mc.currentScreen)
+                    .append(observed(context, "screen") == mc.currentScreen)
                     .append(" screenChanged=")
                     .append(observed(listener, "inputScreenChanged"))
                     .append(" nudgeSession=")
@@ -374,8 +379,16 @@ public final class HologramLockedNudgeClientSmoke {
                 Object dispatch = observed(listener, "nudgeDispatch");
                 message.append(" pendingRevision=")
                     .append(observed(dispatch, "pendingRevision"))
+                    .append(" pendingTick=")
+                    .append(observed(dispatch, "pendingTick"))
                     .append(" lastSentTick=")
                     .append(observed(dispatch, "lastSentTick"))
+                    .append(" retries=")
+                    .append(observed(dispatch, "retries"))
+                    .append(" retryDue=")
+                    .append(observed(dispatch, "retryDue"))
+                    .append(" inFlight=")
+                    .append(observed(dispatch, "inFlight") != null)
                     .append(" queued=")
                     .append(observed(dispatch, "queued") != null)
                     .append('}');

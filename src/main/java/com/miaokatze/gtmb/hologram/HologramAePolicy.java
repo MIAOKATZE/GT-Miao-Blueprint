@@ -82,15 +82,35 @@ final class HologramAePolicy {
         Draft(HologramPresets.Preset preset, List<Issue> issues) {
             this.preset = preset;
             this.issues = issues;
+            Set<String> excluded = new HashSet<>();
+            for (HologramPresets.Cell cell : preset.cells)
+                if (cell.excluded) excluded.add(cell.x + "," + cell.y + "," + cell.z);
             blocking = issues.stream()
-                .anyMatch(issue -> "blocker".equals(issue.severity));
+                .anyMatch(
+                    issue -> "blocker".equals(issue.severity)
+                        && !excluded.contains(issue.x + "," + issue.y + "," + issue.z));
         }
     }
 
     /** Does not mutate the source draft, library cache, source stacks or any world. */
     static Draft sanitize(HologramPresets.Preset source) throws IOException {
         HologramPresets.Preset result = HologramPresets.copy(source);
-        List<Issue> networkChanges = HologramNetworkBindings.sanitize(result);
+        result.deidentificationLevel = HologramDeidentification.level(result);
+        // Native AE canonicalization and verified quantum binding necessarily rebuild identity.
+        for (HologramPresets.Cell cell : result.cells) {
+            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            if (HologramAeBlueprint.supports(cell.block(), payload) || HologramNetworkBindings.node(cell.block())
+                || HologramNetworkSchemas.removeExternalReferences(
+                    cell.block(),
+                    cell.damage,
+                    payload == null ? null : (NBTTagCompound) payload.copy())
+                || payload != null && (payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
+                    || payload.hasKey(HologramNetworkBindings.GROUP)))
+                result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+        }
+        result = HologramDeidentification.apply(result, result.deidentificationLevel);
+        List<Issue> networkChanges = result.deidentificationLevel > 0 ? HologramNetworkBindings.sanitize(result)
+            : java.util.Collections.emptyList();
         Map<String, Issue> issues = new LinkedHashMap<>();
         for (Issue issue : networkChanges) add(issues, issue);
         Set<String> positions = new HashSet<>();
@@ -255,12 +275,41 @@ final class HologramAePolicy {
                     total.merge(HologramAeBlueprint.resourcePlan(block, cell.metadata, payload, null));
                 } else {
                     payload = HologramBlueprintNbt.nativePayload(payload);
-                    HologramBlueprintResources.Plan extra = HologramBlueprintResources.plan(payload)
+                    boolean nativePlacement = HologramNativePlacement.supported(block);
+                    List<ItemStack> nativeCosts = nativePlacement
+                        ? HologramNativePlacement.materials(block, cell.metadata, payload)
+                        : java.util.Collections.emptyList();
+                    List<ItemStack> attributeCredits = new ArrayList<>();
+                    String blockId = block == null ? null : Block.blockRegistry.getNameForObject(block);
+                    if (blockId != null && Block.getBlockFromName(blockId) == block
+                        && block.getClass()
+                            .getName()
+                            .startsWith("com.carpentersblocks.block.")) {
+                        List<ItemStack> remainingNativeCosts = new ArrayList<>();
+                        for (ItemStack cost : nativeCosts) remainingNativeCosts.add(cost.copy());
+                        for (ItemStack attribute : HologramDecorMaterials.carpenterAttributeCosts(payload)
+                            .values()) {
+                            int remaining = attribute.stackSize;
+                            for (ItemStack cost : remainingNativeCosts) {
+                                if (!cost.isItemEqual(attribute) || !ItemStack.areItemStackTagsEqual(cost, attribute))
+                                    continue;
+                                int covered = Math.min(remaining, cost.stackSize);
+                                cost.stackSize -= covered;
+                                remaining -= covered;
+                                if (remaining == 0) break;
+                            }
+                            if (remaining != 0)
+                                throw new IOException("Native Carpenter attribute has no complete material bill");
+                            attributeCredits.add(attribute.copy());
+                        }
+                    }
+                    // Only audited cbAttrList rows receive credit. The shell and unrelated native costs cannot
+                    // exempt an independent unknown item record elsewhere in this payload.
+                    HologramBlueprintResources.Plan extra = HologramBlueprintResources.plan(payload, attributeCredits)
                         .merge(
                             HologramBlueprintResources
                                 .plan(HologramBlueprintNbt.nativePayload(HologramBlueprintNbt.decode(cell.itemNbt))));
-                    if (HologramNativePlacement.supported(block)) {
-                        List<ItemStack> nativeCosts = HologramNativePlacement.materials(block, cell.metadata, payload);
+                    if (nativePlacement) {
                         if (HologramNativePlacement.adapter(block)
                             .includesInventoryDrops(block)) extra.removeItemsIncludedByNativeDrops(nativeCosts);
                         total.addNativeItems(nativeCosts);

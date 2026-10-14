@@ -15,6 +15,7 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.miaokatze.gtmb.testutil.BlueprintArtifactTestData;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Byte-bounded large libraries and transactional deletion, using only temporary files. */
@@ -52,13 +53,14 @@ final class HologramBlueprintStorageV003Regression {
             structure.noHatches = true;
             structure.channels.put("height", 128);
             large.structures.add(structure);
+            HologramBlueprintVersions.stamp(large);
             SimpleAssert.that(
                 new GsonBuilder().setPrettyPrinting()
                     .create()
                     .toJson(large)
                     .getBytes(StandardCharsets.UTF_8).length > HologramBlueprintSharing.MAX_BYTES,
                 "large structure reproduces pretty JSON exceeding the old share budget");
-            HologramBlueprintSharing.write(share, large);
+            HologramBlueprintSharing.write(share, large, BlueprintArtifactTestData.previewPng());
             SimpleAssert.that(
                 Files.size(share) < HologramBlueprintSharing.MAX_BYTES,
                 "compact share fits the same bounded byte budget");
@@ -102,6 +104,7 @@ final class HologramBlueprintStorageV003Regression {
             Files.delete(blocked.resolve("keep"));
             Files.delete(blocked);
             Files.delete(share);
+            Files.delete(HologramBlueprintArtifact.previewPath(share));
             Files.delete(library);
 
             expectIo(() -> HologramBlueprintSharing.encodeBounded(new Gson(), "猫猫猫", 8));
@@ -127,6 +130,7 @@ final class HologramBlueprintStorageV003Regression {
                     Files.deleteIfExists(directory.resolve("blocked/keep"));
                     Files.deleteIfExists(directory.resolve("blocked"));
                     Files.deleteIfExists(directory.resolve("share.json"));
+                    Files.deleteIfExists(directory.resolve("share.png"));
                     Files.deleteIfExists(directory.resolve("library.json"));
                     Files.deleteIfExists(directory);
                 }

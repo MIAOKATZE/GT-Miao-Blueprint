@@ -60,6 +60,9 @@ public final class HologramSelectionRegression {
             .eq(8, selection.size(), "whole structure selection follows membership rather than screen rectangle");
         selection.retain(4);
         SimpleAssert.eq(4, selection.size(), "snapshot shrink never leaves invalid indices");
+        snapshotShrinkRegression();
+        HologramInputContextRegression.run();
+        HologramDeidentificationMemoryRegression.run();
         sharedWallRegression();
         placementConfirmationRegression();
         annotationRegression();
@@ -116,6 +119,33 @@ public final class HologramSelectionRegression {
             "empty key list explicitly cancels optional root entries");
         storage.all(true);
         SimpleAssert.that(storage.selected("NewMachineKey"), "default all retains newly encountered actual keys");
+    }
+
+    private static void snapshotShrinkRegression() {
+        NBTTagCompound largeTag = (NBTTagCompound) volume().data.copy();
+        NBTTagList cells = largeTag.getTagList("cells", 10);
+        for (int i = cells.tagCount(); i <= 153; i++) {
+            NBTTagCompound cell = new NBTTagCompound();
+            cell.setInteger("x", i);
+            cells.appendTag(cell);
+        }
+        HologramState large = new HologramState(largeTag), small = volume();
+        HologramSelection selection = new HologramSelection();
+        selection.load(new int[] { 0, 153 }, -1, large.cells.size());
+        SimpleAssert.eq(6, selection.positions(large).length, "memory stores both selected source positions");
+        SimpleAssert.eq(
+            3,
+            selection.positions(small).length,
+            "memory read during snapshot shrink ignores index 153 without placeholder coordinates or crash");
+        selection.retain(small.cells.size());
+        SimpleAssert.that(
+            selection.size() == 1 && selection.contains(0),
+            "replacement snapshot validation retains the live selection before opening-purpose memory writes");
+        selection.retain(0);
+        SimpleAssert.eq(
+            0,
+            selection.positions(new HologramState(new NBTTagCompound())).length,
+            "empty import progress snapshot safely clears all selected positions");
     }
 
     private static HologramState volume() {

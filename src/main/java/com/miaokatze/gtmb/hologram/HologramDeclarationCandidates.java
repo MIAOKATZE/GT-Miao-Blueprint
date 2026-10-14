@@ -121,6 +121,15 @@ final class HologramDeclarationCandidates {
                 return;
             }
             boolean fixed = factory.getDeclaringClass() == StructureUtility.class && "ofBlock".equals(name);
+            if (fixed && captured(element, "val$defaultBlock") == net.minecraft.init.Blocks.lit_redstone_lamp) {
+                // This reviewed fixed declaration retains its world state, but pays the vanilla lamp item.
+                ItemStack material = HologramBlockIdentity.materialStack(
+                    net.minecraft.init.Blocks.lit_redstone_lamp,
+                    (Integer) captured(element, "val$defaultMeta"));
+                if (material == null) complete = false;
+                else add(material);
+                return;
+            }
             boolean flat = factory.getDeclaringClass() == StructureUtility.class && "ofBlocksFlat".equals(name);
             if (factory.getDeclaringClass() == StructureUtility.class && "ofBlockAnyMeta".equals(name)) {
                 Object accepted = captured(element, "val$block");

@@ -201,6 +201,10 @@ final class HologramTextures {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             int side = row.getByte("s");
             if (side < 0 || side >= 6) continue;
+            if (HologramLinkNodePreview.enhanced(row)) {
+                coverMask |= 1 << side;
+                continue;
+            }
             try {
                 ITexture cover = coverTexture(row, side, pipe);
                 append(covers[side], cover, side, 0);

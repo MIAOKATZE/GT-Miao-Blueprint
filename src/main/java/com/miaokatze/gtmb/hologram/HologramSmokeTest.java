@@ -70,7 +70,8 @@ public final class HologramSmokeTest {
         boolean coexistence = Boolean.getBoolean("gtmb.hologram.coexistSmoke");
         boolean extended = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
         boolean aeExternal = Boolean.getBoolean("gtmb.hologram.aeExternalCellSmoke");
-        int suites = (coexistence ? 8 : 7) + 1 + (extended ? 3 : 0) + (aeExternal ? 1 : 0);
+        boolean v010World = Boolean.getBoolean("gtmb.hologram.v010WorldSmoke");
+        int suites = (coexistence ? 8 : 7) + 1 + (extended ? 3 : 0) + (aeExternal ? 1 : 0) + (v010World ? 1 : 0);
         try {
             try {
                 run(server.worldServerForDimension(0));
@@ -174,6 +175,14 @@ public final class HologramSmokeTest {
                 } catch (Throwable failure) {
                     failedSuites++;
                     suiteFailure("AE-EXTERNAL-CELL", failure);
+                }
+            }
+            if (v010World) {
+                try {
+                    HologramV010WorldSmoke.run(server.worldServerForDimension(0));
+                } catch (Throwable failure) {
+                    failedSuites++;
+                    suiteFailure("V010-WORLD", failure);
                 }
             }
             // Start AE last: other suites may clear Service or modify fixture actors/inventories.

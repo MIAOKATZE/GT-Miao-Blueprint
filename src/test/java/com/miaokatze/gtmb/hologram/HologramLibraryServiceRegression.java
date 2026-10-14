@@ -86,6 +86,61 @@ final class HologramLibraryServiceRegression {
             request.setLong("planRevision", 41L);
             SimpleAssert.that(!HologramService.librarySessionCurrent(owner, request), "old plan cannot activate");
             request.setLong("planRevision", 42L);
+            String saveReceipt = UUID.randomUUID()
+                .toString();
+            String savedLocal = "local_" + UUID.randomUUID();
+            String jsonSha = HologramBlueprintArtifact.hash(new byte[] { 1, 2, 3 });
+            String previewSha = HologramBlueprintArtifact.hash(new byte[] { 4, 5, 6 });
+            NBTTagCompound saveRequest = (NBTTagCompound) request.copy();
+            saveRequest.setString("saveReceipt", saveReceipt);
+            saveRequest.setString("replaceLocalId", savedLocal);
+            set(session, "blueprintSaveReceipt", saveReceipt);
+            set(session, "blueprintSaveLocalId", savedLocal);
+            set(session, "blueprintSaveRevision", 42L);
+            set(session, "blueprintDirty", true);
+            SimpleAssert.that(
+                HologramService.librarySaveCurrent(owner, saveRequest),
+                "native artifact save capability is owner, source revision, and local ID bound");
+            SimpleAssert.that(
+                !HologramService.librarySaveCurrent(other, saveRequest),
+                "other actor cannot submit a saved preview for the owner");
+            SimpleAssert.that(
+                !HologramService.librarySaveCurrent(reconnect, saveRequest),
+                "reconnected actor object cannot reuse preview save capability");
+            SimpleAssert.that(
+                HologramService.libraryDraftPrepared(owner, saveRequest, jsonSha),
+                "server records the exact pre-transfer JSON SHA under its save nonce");
+            SimpleAssert.that(
+                !HologramService.libraryPreviewVerified(owner, saveRequest, previewSha, previewSha),
+                "preview with a different JSON digest cannot verify the save");
+            SimpleAssert.that(
+                HologramService.libraryPreviewVerified(owner, saveRequest, jsonSha, previewSha),
+                "validated source-bound PNG can arm its own preview digest");
+            NBTTagCompound acknowledgement = (NBTTagCompound) saveRequest.copy();
+            acknowledgement.setString("op", "ackBlueprintSaved");
+            acknowledgement.setString("localId", savedLocal);
+            acknowledgement.setString("jsonSha256", previewSha);
+            acknowledgement.setString("previewSha256", previewSha);
+            HologramService.handle(owner, acknowledgement);
+            SimpleAssert.that(
+                (Boolean) get(session, "blueprintDirty"),
+                "ACK of rewritten JSON preserves the dirty source and pending nonce");
+            acknowledgement.setString("jsonSha256", jsonSha);
+            acknowledgement.setString("previewSha256", jsonSha);
+            HologramService.handle(owner, acknowledgement);
+            SimpleAssert
+                .that((Boolean) get(session, "blueprintDirty"), "ACK of another PNG preserves the dirty source");
+            acknowledgement.setString("previewSha256", previewSha);
+            acknowledgement.setLong("planRevision", 41L);
+            HologramService.handle(owner, acknowledgement);
+            SimpleAssert.that(
+                (Boolean) get(session, "blueprintDirty"),
+                "old source revision cannot acknowledge a complete artifact");
+            acknowledgement.setLong("planRevision", 42L);
+            HologramService.handle(owner, acknowledgement);
+            SimpleAssert.that(
+                !(Boolean) get(session, "blueprintDirty") && ((String) get(session, "blueprintSaveReceipt")).isEmpty(),
+                "only exact JSON and verified PNG disk ACK retires the nonce");
             NBTTagCompound close = (NBTTagCompound) request.copy();
             close.setString("op", "close");
             HologramService.handle(owner, close);

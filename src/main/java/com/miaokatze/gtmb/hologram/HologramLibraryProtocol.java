@@ -14,7 +14,7 @@ public final class HologramLibraryProtocol {
     public static final int CHUNK_BYTES = 1024;
     public static final int PACKET_BYTES = 8192;
     public static final int EXPANDED_PACKET_BYTES = 16384;
-    public static final int MAX_BYTES = HologramBlueprintSharing.MAX_BYTES;
+    public static final int MAX_BYTES = HologramBlueprintArtifact.MAX_BYTES;
     public static final int PAGE_SIZE = 12;
     public static final long TIMEOUT_NANOS = 120L * 1000000000L;
 

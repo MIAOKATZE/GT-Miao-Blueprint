@@ -12,15 +12,21 @@ import java.util.UUID;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 
 /** Client-owned files, independent of world saves and server identities. Call from the library worker only. */
 final class HologramClientLibrary {
 
     static final int MAX_BYTES = 8 * 1024 * 1024, MAX_ENTRIES = 128;
     private final Path directory;
+    private final Path metadataFile;
 
     HologramClientLibrary(Path gameDirectory) {
-        directory = gameDirectory.resolve("config/gtmb/client-blueprints")
+        directory = gameDirectory.resolve("MiaoBlueprints")
+            .toAbsolutePath()
+            .normalize();
+        metadataFile = gameDirectory.resolve("config/gtmb/client-blueprint-library.properties")
             .toAbsolutePath()
             .normalize();
     }
@@ -70,54 +76,81 @@ final class HologramClientLibrary {
         return entries;
     }
 
-    String save(byte[] data, String replaceId, String playerName, String playerUuid) throws IOException {
-        JsonObject root = parse(data), blueprint = blueprint(root);
+    String save(byte[] data, byte[] preview, String replaceId) throws IOException {
+        return save(data, preview, replaceId, () -> true);
+    }
+
+    String save(byte[] data, byte[] preview, String replaceId, java.util.function.BooleanSupplier stillCurrent)
+        throws IOException {
+        JsonObject blueprint = blueprint(data);
         String id = replaceId == null || replaceId.isEmpty() ? "local_" + UUID.randomUUID() : replaceId;
         Path target = file(id);
-        if (Files.exists(target)) {
-            JsonObject original = blueprint(read(id));
-            for (String key : new String[] { "authorName", "authorUuid", "createdAt" }) {
-                if (original.has(key)) blueprint.add(key, original.get(key));
-                else blueprint.remove(key);
-            }
-        } else {
-            if (list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
-            if (string(blueprint, "authorName").isEmpty()) {
-                blueprint.addProperty("authorName", playerName);
-                blueprint.addProperty("authorUuid", playerUuid);
-            }
-            if (!blueprint.has("createdAt") || blueprint.get("createdAt")
-                .getAsLong() <= 0) blueprint.addProperty("createdAt", System.currentTimeMillis());
-        }
-        blueprint.addProperty("id", id);
-        byte[] encoded = root.toString()
-            .getBytes(StandardCharsets.UTF_8);
-        if (encoded.length > MAX_BYTES) throw new IOException("客户端蓝图超过 8 MiB");
-        Files.createDirectories(directory);
-        Path temporary = Files.createTempFile(directory, "blueprint-", ".tmp");
-        try {
-            Files.write(temporary, encoded);
-            try {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temporary);
-        }
+        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
+            throw new IOException("蓝图缺少服务器确认的作者信息");
+        HologramBlueprintArtifact.writePair(target, data, preview, stillCurrent);
         return id;
     }
 
+    /** A JSON-only save can never acknowledge a completed native artifact. */
+    String save(byte[] data, String replaceId, String playerName, String playerUuid) throws IOException {
+        parse(data);
+        throw new IOException("蓝图缺少真实结构预览 PNG");
+    }
+
+    HologramBlueprintArtifact.PairWrite savePending(byte[] data, byte[] preview, String id,
+        java.util.function.BooleanSupplier stillCurrent) throws IOException {
+        JsonObject blueprint = blueprint(data);
+        Path target = file(id);
+        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
+            throw new IOException("蓝图缺少服务器确认的作者信息");
+        return HologramBlueprintArtifact.writePairPending(target, data, preview, stillCurrent);
+    }
+
+    /** Resolve only this local integrated save if shutdown outpaces its final network reply. */
+    boolean logicalSaveCommitted(String id, String expectedJsonHash) throws IOException {
+        HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(file(id));
+        if (!artifact.jsonSha256.equals(expectedJsonHash)) return false;
+        Path catalog = directory.resolve("hologram-presets.json");
+        if (!Files.isRegularFile(catalog)) return false;
+        if (Files.size(catalog) > 64L * 1024 * 1024) throw new IOException("蓝图库超过64MiB上限");
+        JsonObject expected = blueprint(artifact.json);
+        try {
+            JsonObject collection = new JsonParser()
+                .parse(new String(Files.readAllBytes(catalog), StandardCharsets.UTF_8))
+                .getAsJsonObject();
+            JsonElement rows = collection.get("presets");
+            if (rows == null || !rows.isJsonArray()) return false;
+            for (JsonElement row : rows.getAsJsonArray()) if (expected.equals(row)) return true;
+            return false;
+        } catch (RuntimeException invalid) {
+            throw new IOException("蓝图库索引格式无效", invalid);
+        }
+    }
+
     byte[] read(String id) throws IOException {
-        Path path = file(id);
-        if (Files.size(path) > MAX_BYTES) throw new IOException("客户端蓝图超过 8 MiB");
-        byte[] data = Files.readAllBytes(path);
-        if (data.length > MAX_BYTES) throw new IOException("客户端蓝图超过 8 MiB");
+        byte[] data = HologramBlueprintArtifact.readPair(file(id)).json;
+        parse(data);
         return data;
     }
 
+    byte[] artifact(String id) throws IOException {
+        HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
+        parse(saved.json);
+        return HologramBlueprintArtifact.encode(saved.json, saved.png);
+    }
+
+    Path savedPath(String id) throws IOException {
+        return file(id);
+    }
+
+    String savedName(String id) throws IOException {
+        return string(blueprint(read(id)), "name");
+    }
+
     void delete(String id) throws IOException {
-        Files.deleteIfExists(file(id));
+        HologramBlueprintArtifact.deletePair(file(id));
     }
 
     String uploadedId(String server, String localId) throws IOException {
@@ -131,16 +164,7 @@ final class HologramClientLibrary {
         if (publicId == null || !publicId.matches("public_[a-fA-F0-9-]{36}")) throw new IOException("公库 ID 无效");
         java.util.Properties links = links();
         links.setProperty(linkKey(server, localId), publicId);
-        Files.createDirectories(directory);
-        Path temporary = Files.createTempFile(directory, "uploads-", ".tmp");
-        try {
-            try (java.io.OutputStream output = Files.newOutputStream(temporary)) {
-                links.store(output, "Server-verified upload links");
-            }
-            Files.move(temporary, directory.resolve("uploads.properties"), StandardCopyOption.REPLACE_EXISTING);
-        } finally {
-            Files.deleteIfExists(temporary);
-        }
+        writeLinks(links);
     }
 
     void forgetUpload(String server, String publicId) throws IOException {
@@ -161,7 +185,7 @@ final class HologramClientLibrary {
 
     private java.util.Properties links() throws IOException {
         java.util.Properties links = new java.util.Properties();
-        Path path = directory.resolve("uploads.properties");
+        Path path = metadataFile;
         if (Files.exists(path)) {
             if (Files.size(path) > 1024 * 1024) throw new IOException("上传映射文件过大");
             try (java.io.InputStream input = Files.newInputStream(path)) {
@@ -218,20 +242,17 @@ final class HologramClientLibrary {
     }
 
     private void writeLinks(java.util.Properties preferences) throws IOException {
-        Files.createDirectories(directory);
-        Path temporary = Files.createTempFile(directory, "library-memory-", ".tmp");
+        Files.createDirectories(metadataFile.getParent());
+        Path temporary = Files.createTempFile(metadataFile.getParent(), "library-memory-", ".tmp");
         try {
             try (java.io.OutputStream output = Files.newOutputStream(temporary)) {
                 preferences.store(output, "Client library memory");
             }
             try {
-                Files.move(
-                    temporary,
-                    directory.resolve("uploads.properties"),
-                    StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
+                Files
+                    .move(temporary, metadataFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                Files.move(temporary, directory.resolve("uploads.properties"), StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temporary, metadataFile, StandardCopyOption.REPLACE_EXISTING);
             }
         } finally {
             Files.deleteIfExists(temporary);
@@ -273,6 +294,7 @@ final class HologramClientLibrary {
             if (!root.isJsonObject()) throw new IOException("蓝图 JSON 无效");
             JsonObject object = root.getAsJsonObject();
             blueprint(object);
+            HologramLibraryFacade.validateNativeJson(data);
             return object;
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图 JSON 无效", invalid);

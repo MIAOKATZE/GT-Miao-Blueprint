@@ -17,6 +17,7 @@ public final class HologramAeGuidanceRegression {
 
     public static void run() {
         reviewNavigation();
+        adjacentWarnings();
         NBTTagCompound dto = review(8192, false);
         HologramAeReviewModel model = new HologramAeReviewModel(dto, true);
         check(model.valid && model.canConfirm, "Complete warning-only report remains saveable");
@@ -114,6 +115,40 @@ public final class HologramAeGuidanceRegression {
         check(
             markers.size() == 1,
             "Unknown/stale coordinates never guessed into a cell marker; full report remains reachable");
+    }
+
+    private static void adjacentWarnings() {
+        NBTTagCompound dto = review(6, false);
+        NBTTagList issues = dto.getTagList("issues", 10);
+        int[] x = { 0, 2, 1, 7, 8, 8 };
+        for (int i = 0; i < x.length; i++) issues.getCompoundTagAt(i)
+            .setInteger("x", x[i]);
+        issues.getCompoundTagAt(4)
+            .setString("message", "different contents");
+        HologramAeReviewModel model = new HologramAeReviewModel(dto, true);
+        check(model.groups.size() == 3, "nonadjacent or different-message issues remain separate groups");
+        check(
+            model.groups.get(0).rows.size() == 3 && model.groups.get(0).count == 6,
+            "out-of-order bridging voxel merges its two adjacent groups without losing locations or counts");
+        check(
+            model.groups.get(1).rows.size() == 2 && model.groups.get(2).rows.size() == 1,
+            "same-position repeated rows preserve exact location entries and different-message boundaries");
+        check(
+            model.issues.size() == 6 && model.issues.get(5).x == 8,
+            "all issue details stay individually reachable after adjacent summary grouping");
+        issues.getCompoundTagAt(0)
+            .setString("code", "identity.foreign_owner");
+        issues.getCompoundTagAt(0)
+            .setString("resolution", "deidentifyBlueprint");
+        model = new HologramAeReviewModel(dto, true);
+        check(
+            model.issues.get(0)
+                .title()
+                .contains("其他玩家")
+                && model.issues.get(0)
+                    .explanation()
+                    .contains("等级 1"),
+            "foreign ownership gets a specific Chinese cause and deidentification remedy");
     }
 
     private static void reviewNavigation() {
