@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -20,10 +21,12 @@ import java.util.zip.GZIPOutputStream;
 
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
-import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTBase;
+import net.minecraft.nbt.NBTTagByteArray;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagIntArray;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.nbt.NBTTagString;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
@@ -35,6 +38,7 @@ final class HologramBlueprintNbt {
 
     static final int MAX_COMPRESSED = 1024 * 1024;
     static final int MAX_EXPANDED = 4 * 1024 * 1024;
+    private static final int MAX_DEPTH = 512;
     static final String ITEM_REGISTRY = "gtitBlueprintItemRegistry";
     static final String MISSING_ITEM = "gtitBlueprintMissingItem";
     static final String COVER_REGISTRY = "gtitBlueprintCoverRegistry";
@@ -103,16 +107,96 @@ final class HologramBlueprintNbt {
 
     private static String encode(NBTTagCompound tag, boolean rewriteOwnership) throws IOException {
         if (tag == null) return null;
+        checkDepth(tag, 0);
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
         if (rewriteOwnership) rewrite(copy, null, "", false, false);
         stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(new GZIPOutputStream(new LimitedOutput(bytes, MAX_COMPRESSED)), MAX_EXPANDED))) {
-            CompressedStreamTools.write(copy, output);
+            output.writeByte(10);
+            output.writeUTF("");
+            writeCanonicalPayload(copy, output, 0);
         }
         return Base64.getEncoder()
             .encodeToString(bytes.toByteArray());
+    }
+
+    /** Validate before native copy can recurse, including when a caller supplies a cyclic compound. */
+    private static void checkDepth(NBTBase tag, int depth) throws IOException {
+        if (tag == null || depth > MAX_DEPTH) throw new IOException("蓝图NBT嵌套超出上限");
+        if (tag.getId() < 1 || tag.getId() > 11) throw new IOException("蓝图NBT类型无效");
+        if (tag instanceof NBTTagCompound) {
+            NBTTagCompound compound = (NBTTagCompound) tag;
+            for (Object key : compound.func_150296_c()) checkDepth(compound.getTag((String) key), depth + 1);
+        } else if (tag instanceof NBTTagList) {
+            for (NBTBase child : listEntries((NBTTagList) tag)) checkDepth(child, depth + 1);
+        }
+    }
+
+    /** Standard 1.7 NBT wire format, independent of a vanilla or modded compound map's iteration order. */
+    private static void writeCanonicalPayload(NBTBase tag, DataOutput output, int depth) throws IOException {
+        if (tag == null || depth > MAX_DEPTH) throw new IOException("蓝图NBT嵌套超出上限");
+        switch (tag.getId()) {
+            case 1:
+                output.writeByte(((NBTBase.NBTPrimitive) tag).func_150290_f());
+                break;
+            case 2:
+                output.writeShort(((NBTBase.NBTPrimitive) tag).func_150289_e());
+                break;
+            case 3:
+                output.writeInt(((NBTBase.NBTPrimitive) tag).func_150287_d());
+                break;
+            case 4:
+                output.writeLong(((NBTBase.NBTPrimitive) tag).func_150291_c());
+                break;
+            case 5:
+                output.writeFloat(((NBTBase.NBTPrimitive) tag).func_150288_h());
+                break;
+            case 6:
+                output.writeDouble(((NBTBase.NBTPrimitive) tag).func_150286_g());
+                break;
+            case 7:
+                byte[] bytes = ((NBTTagByteArray) tag).func_150292_c();
+                output.writeInt(bytes.length);
+                output.write(bytes);
+                break;
+            case 8:
+                output.writeUTF(((NBTTagString) tag).func_150285_a_());
+                break;
+            case 9:
+                NBTTagList list = (NBTTagList) tag;
+                int type = list.func_150303_d();
+                if (type < 0 || type > 11 || type == 0 && list.tagCount() != 0) throw new IOException("蓝图NBT列表类型无效");
+                output.writeByte(type);
+                output.writeInt(list.tagCount());
+                for (NBTBase child : listEntries(list)) {
+                    if (child.getId() != type) throw new IOException("蓝图NBT列表类型不一致");
+                    writeCanonicalPayload(child, output, depth + 1);
+                }
+                break;
+            case 10:
+                NBTTagCompound compound = (NBTTagCompound) tag;
+                List<String> keys = new ArrayList<>();
+                for (Object key : compound.func_150296_c()) keys.add((String) key);
+                java.util.Collections.sort(keys);
+                for (String key : keys) {
+                    NBTBase child = compound.getTag(key);
+                    if (child.getId() < 1 || child.getId() > 11) throw new IOException("蓝图NBT类型无效");
+                    output.writeByte(child.getId());
+                    output.writeUTF(key);
+                    writeCanonicalPayload(child, output, depth + 1);
+                }
+                output.writeByte(0);
+                break;
+            case 11:
+                int[] integers = ((NBTTagIntArray) tag).func_150302_c();
+                output.writeInt(integers.length);
+                for (int value : integers) output.writeInt(value);
+                break;
+            default:
+                throw new IOException("蓝图NBT类型无效");
+        }
     }
 
     static NBTTagCompound decode(String value) throws IOException {

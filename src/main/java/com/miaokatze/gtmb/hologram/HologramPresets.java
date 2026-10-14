@@ -259,8 +259,9 @@ final class HologramPresets {
         validate(result);
         byte[] reviewed = HologramBlueprintSharing.encodeBounded(GSON, prepared, HologramBlueprintSharing.MAX_BYTES);
         byte[] checked = HologramBlueprintSharing.encodeBounded(GSON, result, HologramBlueprintSharing.MAX_BYTES);
-        if (!java.util.Arrays.equals(reviewed, checked))
-            throw new IOException("Prepared blueprint changed during canonical validation");
+        if (!java.util.Arrays.equals(reviewed, checked)) throw new IOException(
+            "Prepared blueprint changed during canonical validation: "
+                + canonicalDifference(GSON.toJsonTree(prepared), GSON.toJsonTree(result), ""));
         List<Preset> list = all();
         int index = indexOf(list, result.id);
         if (update) {
@@ -277,6 +278,54 @@ final class HologramPresets {
             list.add(result);
         }
         write(libraryPath(), list);
+    }
+
+    /** Rejection diagnostics expose a field path, never the player's saved device contents. */
+    private static String canonicalDifference(JsonElement reviewed, JsonElement checked, String path)
+        throws IOException {
+        if (java.util.Objects.equals(reviewed, checked)) return path.isEmpty() ? "/ (JSON representation differs)" : "";
+        if (reviewed != null && checked != null && reviewed.isJsonObject() && checked.isJsonObject()) {
+            Set<String> fields = new java.util.TreeSet<>();
+            for (Map.Entry<String, JsonElement> entry : reviewed.getAsJsonObject()
+                .entrySet()) fields.add(entry.getKey());
+            for (Map.Entry<String, JsonElement> entry : checked.getAsJsonObject()
+                .entrySet()) fields.add(entry.getKey());
+            for (String field : fields) {
+                String difference = canonicalDifference(
+                    reviewed.getAsJsonObject()
+                        .get(field),
+                    checked.getAsJsonObject()
+                        .get(field),
+                    path + "/" + field);
+                if (!difference.isEmpty()) return difference;
+            }
+        } else if (reviewed != null && checked != null && reviewed.isJsonArray() && checked.isJsonArray()) {
+            int count = Math.min(
+                reviewed.getAsJsonArray()
+                    .size(),
+                checked.getAsJsonArray()
+                    .size());
+            for (int i = 0; i < count; i++) {
+                String difference = canonicalDifference(
+                    reviewed.getAsJsonArray()
+                        .get(i),
+                    checked.getAsJsonArray()
+                        .get(i),
+                    path + "/" + i);
+                if (!difference.isEmpty()) return difference;
+            }
+            return path + "/length";
+        } else if ((path.endsWith("/tileNbt") || path.endsWith("/itemNbt") || path.endsWith("/processingNbt"))
+            && reviewed != null
+            && checked != null
+            && reviewed.isJsonPrimitive()
+            && checked.isJsonPrimitive()) {
+                boolean same = java.util.Objects.equals(
+                    HologramBlueprintNbt.decode(reviewed.getAsString()),
+                    HologramBlueprintNbt.decode(checked.getAsString()));
+                return path + (same ? " (decoded NBT equal)" : " (decoded NBT differs)");
+            }
+        return path.isEmpty() ? "/" : path;
     }
 
     static synchronized void delete(String id) throws IOException {

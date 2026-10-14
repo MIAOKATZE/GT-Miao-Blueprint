@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagInt;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.testutil.BlueprintArtifactTestData;
@@ -42,6 +43,7 @@ public final class HologramBlueprintPersistenceRegression {
             stableItemIdentities();
             visualNamesCannotHideAssets();
             hostileNbt();
+            stableNativeNbtEncoding();
             sharingTransaction();
             versions();
             fluidProviderVersions();
@@ -577,6 +579,163 @@ public final class HologramBlueprintPersistenceRegression {
         StringBuilder deep = new StringBuilder();
         for (int i = 0; i < 40; i++) deep.append('[');
         expectIo(() -> HologramBlueprintSharing.boundedJson(deep.toString()));
+    }
+
+    private static void stableNativeNbtEncoding() throws Exception {
+        NBTTagCompound source = canonicalNbtFixture(false), reordered = canonicalNbtFixture(true);
+        NBTTagCompound before = (NBTTagCompound) source.copy();
+        SimpleAssert.eq(source, reordered, "collision fixture differs only in map insertion and allocation history");
+        String encoded = HologramBlueprintNbt.encodeCanonical(source);
+        SimpleAssert.eq(
+            encoded,
+            HologramBlueprintNbt.encodeCanonical(reordered),
+            "nested canonical bytes ignore compound insertion order and map capacity");
+        SimpleAssert.eq(
+            encoded,
+            HologramBlueprintNbt.encodeCaptured(source),
+            "raw capture uses the same stable binary representation");
+        NBTTagCompound copied = source;
+        for (int i = 0; i < 8; i++) {
+            copied = (NBTTagCompound) copied.copy();
+            SimpleAssert.eq(
+                encoded,
+                HologramBlueprintNbt.encodeCanonical(copied),
+                "native compound copy and rebuilding cannot change canonical bytes");
+            SimpleAssert.eq(
+                encoded,
+                HologramBlueprintNbt.encodeCanonical(HologramBlueprintNbt.decode(encoded)),
+                "decode and re-encode preserves the exact canonical bytes");
+        }
+        SimpleAssert.eq(before, source, "canonical sorting and stable item projection never mutate source NBT");
+        NBTTagCompound decoded = HologramBlueprintNbt.decode(encoded);
+        NBTTagCompound expected = (NBTTagCompound) before.copy();
+        expected.getTagList("Inventory", 10)
+            .getCompoundTagAt(0)
+            .setString(HologramBlueprintNbt.ITEM_REGISTRY, "minecraft:stone");
+        SimpleAssert.eq(expected, decoded, "standard native decoder retains all typed fields and portable item marker");
+        SimpleAssert.eq(
+            "minecraft:stone",
+            decoded.getTagList("Inventory", 10)
+                .getCompoundTagAt(0)
+                .getString(HologramBlueprintNbt.ITEM_REGISTRY),
+            "stable item conversion remains active inside canonical compounds");
+        String[] fields = { "byte", "short", "int", "long", "float", "double", "bytes", "string", "rows", "compound",
+            "integers" };
+        for (int i = 0; i < fields.length; i++) SimpleAssert.eq(
+            i + 1,
+            (int) decoded.getTag(fields[i])
+                .getId(),
+            "canonical writer preserves native NBT type");
+        SimpleAssert.eq(
+            Float.floatToRawIntBits(-0.0f),
+            Float.floatToRawIntBits(decoded.getFloat("float")),
+            "float negative zero is preserved by the native wire format");
+        SimpleAssert.eq(
+            Double.doubleToRawLongBits(-0.0d),
+            Double.doubleToRawLongBits(decoded.getDouble("double")),
+            "double negative zero is preserved by the native wire format");
+        SimpleAssert.that(
+            java.util.Arrays.equals(new byte[] { Byte.MIN_VALUE, 0, Byte.MAX_VALUE }, decoded.getByteArray("bytes"))
+                && java.util.Arrays
+                    .equals(new int[] { Integer.MIN_VALUE, 0, Integer.MAX_VALUE }, decoded.getIntArray("integers")),
+            "byte and integer array order and signed values are preserved");
+        SimpleAssert.eq(
+            "猫猫" + (char) 0 + (char) 0xd83d + (char) 0xde3a,
+            decoded.getString("string"),
+            "native modified UTF preserves NUL and supplementary characters");
+        NBTTagCompound changed = (NBTTagCompound) source.copy();
+        changed.setInteger("short", source.getShort("short"));
+        SimpleAssert.that(
+            !encoded.equals(HologramBlueprintNbt.encodeCanonical(changed)),
+            "equal numeric values with different native types have different canonical bytes");
+        NBTTagList rows = source.getTagList("rows", 10), reversed = new NBTTagList();
+        reversed.appendTag(
+            rows.getCompoundTagAt(1)
+                .copy());
+        reversed.appendTag(
+            rows.getCompoundTagAt(0)
+                .copy());
+        changed = (NBTTagCompound) source.copy();
+        changed.setTag("rows", reversed);
+        SimpleAssert.that(
+            !encoded.equals(HologramBlueprintNbt.encodeCanonical(changed)),
+            "list order is meaningful and must never be sorted with compound keys");
+        NBTTagCompound expanded = new NBTTagCompound();
+        expanded.setByteArray("large", new byte[HologramBlueprintNbt.MAX_EXPANDED + 1]);
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(expanded));
+        NBTTagCompound compressed = new NBTTagCompound();
+        byte[] noise = new byte[HologramBlueprintNbt.MAX_COMPRESSED * 2];
+        new java.util.Random(142857).nextBytes(noise);
+        compressed.setByteArray("noise", noise);
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(compressed));
+        NBTTagCompound deep = new NBTTagCompound();
+        for (int i = 0; i < 513; i++) {
+            NBTTagCompound parent = new NBTTagCompound();
+            parent.setTag("nested", deep);
+            deep = parent;
+        }
+        NBTTagCompound tooDeep = deep;
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(tooDeep));
+        NBTTagCompound cyclic = new NBTTagCompound();
+        cyclic.setTag("self", cyclic);
+        expectIo(() -> HologramBlueprintNbt.encodeCanonical(cyclic));
+    }
+
+    private static NBTTagCompound canonicalNbtFixture(boolean reverse) {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setByte("byte", Byte.MIN_VALUE);
+        source.setShort("short", Short.MIN_VALUE);
+        source.setInteger("int", Integer.MIN_VALUE);
+        source.setLong("long", Long.MIN_VALUE);
+        source.setFloat("float", -0.0f);
+        source.setDouble("double", -0.0d);
+        source.setByteArray("bytes", new byte[] { Byte.MIN_VALUE, 0, Byte.MAX_VALUE });
+        source.setString("string", "猫猫" + (char) 0 + (char) 0xd83d + (char) 0xde3a);
+        source.setIntArray("integers", new int[] { Integer.MIN_VALUE, 0, Integer.MAX_VALUE });
+        source.setTag("compound", collisionNbtFixture(reverse));
+        NBTTagList rows = new NBTTagList();
+        NBTTagCompound first = collisionNbtFixture(reverse), second = collisionNbtFixture(!reverse);
+        first.setInteger("row", 1);
+        second.setInteger("row", 2);
+        rows.appendTag(first);
+        rows.appendTag(second);
+        source.setTag("rows", rows);
+        NBTTagList numbers = new NBTTagList();
+        numbers.appendTag(new NBTTagInt(2));
+        numbers.appendTag(new NBTTagInt(1));
+        NBTTagList lists = new NBTTagList();
+        lists.appendTag(numbers);
+        lists.appendTag(new NBTTagList());
+        source.setTag("nestedLists", lists);
+        source.setTag("emptyCompound", new NBTTagCompound());
+        NBTTagCompound item = new NBTTagCompound();
+        new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone, 3, 1).writeToNBT(item);
+        NBTTagList inventory = new NBTTagList();
+        inventory.appendTag(item);
+        source.setTag("Inventory", inventory);
+        NBTTagCompound result = new NBTTagCompound();
+        if (reverse) growThenClear(result);
+        List<String> keys = new java.util.ArrayList<>();
+        for (Object key : source.func_150296_c()) keys.add((String) key);
+        keys.sort(reverse ? java.util.Comparator.reverseOrder() : java.util.Comparator.naturalOrder());
+        for (String key : keys) result.setTag(key, source.getTag(key));
+        return result;
+    }
+
+    private static NBTTagCompound collisionNbtFixture(boolean reverse) {
+        NBTTagCompound result = new NBTTagCompound();
+        if (reverse) growThenClear(result);
+        String[] keys = { "Aa", "BB", "AaAa", "BBBB", "AaBB", "BBAa" };
+        for (int i = 0; i < keys.length; i++) {
+            int index = reverse ? keys.length - i - 1 : i;
+            result.setInteger(keys[index], index);
+        }
+        return result;
+    }
+
+    private static void growThenClear(NBTTagCompound compound) {
+        for (int i = 0; i < 96; i++) compound.setInteger("temporary_capacity_" + i, i);
+        for (int i = 0; i < 96; i++) compound.removeTag("temporary_capacity_" + i);
     }
 
     private static void sharingTransaction() throws Exception {
