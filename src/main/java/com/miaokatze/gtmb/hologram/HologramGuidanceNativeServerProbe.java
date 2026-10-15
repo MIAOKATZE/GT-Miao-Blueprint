@@ -18,7 +18,6 @@ import net.minecraft.world.WorldSettings;
 
 import appeng.api.AEApi;
 import appeng.me.helpers.IGridProxyable;
-import appeng.tile.networking.TileController;
 import appeng.tile.networking.TileDenseEnergyCell;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -29,7 +28,7 @@ public final class HologramGuidanceNativeServerProbe {
 
     private EntityPlayerMP actor;
     private WorldServer world;
-    private TileController controller;
+    private TileEntity controller;
     private Item terminalItem;
     private int ticks, warmup;
     private boolean ready, bound, done;
@@ -91,7 +90,12 @@ public final class HologramGuidanceNativeServerProbe {
                 require(
                     world.isAirBlock(48, 80, 72) && world.setBlock(48, 80, 72, controllerBlock, 0, 3),
                     "fresh real controller");
-                controller = (TileController) world.getTileEntity(48, 80, 72);
+                controller = world.getTileEntity(48, 80, 72);
+                require(
+                    controller != null && controller.getClass()
+                        .getName()
+                        .equals("appeng.tile.networking.TileController"),
+                    "registered native controller tile");
                 ((IGridProxyable) controller).getProxy()
                     .setOwner(actor);
                 require(world.setBlock(47, 80, 72, cellBlock, 0, 3), "finite native AE cell");
