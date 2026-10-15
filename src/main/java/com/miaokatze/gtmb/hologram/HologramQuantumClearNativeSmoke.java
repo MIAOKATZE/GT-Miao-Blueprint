@@ -22,9 +22,11 @@ import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.IChatComponent;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.WorldSettings;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.FakePlayerFactory;
 import net.minecraftforge.event.world.BlockEvent;
 
@@ -48,8 +50,9 @@ public final class HologramQuantumClearNativeSmoke {
         for (Object value : Block.blockRegistry)
             if (value instanceof Block && HologramNetworkBindings.node((Block) value)) node = (Block) value;
         require(node != null, "exact installed native GTSWN node");
-        EntityPlayerMP actor = FakePlayerFactory
-            .get(world, new GameProfile(UUID.fromString("39efead7-a1d5-4ef2-af4b-94c71e338794"), "GTMBQuantumClear"));
+        ChatSinkActor actor = new ChatSinkActor(
+            world,
+            new GameProfile(UUID.fromString("39efead7-a1d5-4ef2-af4b-94c71e338794"), "GTMBQuantumClear"));
         actor.inventory.mainInventory = new ItemStack[36];
         actor.inventory.currentItem = 0;
         actor.theItemInWorldManager.setGameType(WorldSettings.GameType.SURVIVAL);
@@ -327,6 +330,7 @@ public final class HologramQuantumClearNativeSmoke {
         require(nativeSourceBefore.equals(nativeSourceAfter), "actual source native tile remains byte-exact unchanged");
         receipt.setTag("nativeSourceAfter", nativeSourceAfter);
         receipt.setBoolean("sourceUnchanged", true);
+        receipt.setTag("fakeActorChatComponents", actor.chatReceipt());
         receipt.setBoolean("passed", true);
         System.out.println(
             "[GTMB-QUANTUM-CLEAR-NATIVE] FINAL PASS clear=paid-unbound-owned refund=exact self/share=own-terminal-rebound source=unchanged");
@@ -334,7 +338,7 @@ public final class HologramQuantumClearNativeSmoke {
     }
 
     /** Real terminal item entry and Service placement for both unmodified recommendation policies. */
-    private static NBTTagCompound defaultTerminalBinding(WorldServer world, EntityPlayerMP actor,
+    private static NBTTagCompound defaultTerminalBinding(WorldServer world, ChatSinkActor actor,
         HologramPresets.Preset source, Block block, ItemStack shell, ItemStack component, TileEntity sourceController,
         TileEntity targetController, int x, int y, int z) throws Exception {
         Item terminalItem = null;
@@ -345,6 +349,7 @@ public final class HologramQuantumClearNativeSmoke {
         ItemStack terminal = new ItemStack(terminalItem);
         actor.inventory.mainInventory[3] = terminal;
         actor.inventory.currentItem = 3;
+        int chatBefore = actor.chat.size();
         try {
             require(
                 terminalItem.onItemUseFirst(
@@ -366,6 +371,7 @@ public final class HologramQuantumClearNativeSmoke {
             terminal.hasTagCompound() && terminal.getTagCompound()
                 .getBoolean("QT_Bound"),
             "native terminal entry writes a real bound terminal, without hand-written anchor NBT");
+        require(actor.chat.size() > chatBefore, "native terminal binding chat reaches the isolated fake actor sink");
         appeng.api.networking.security.ISecurityGrid security = ((IGridProxyable) targetController).getProxy()
             .getGrid()
             .getCache(appeng.api.networking.security.ISecurityGrid.class);
@@ -375,6 +381,7 @@ public final class HologramQuantumClearNativeSmoke {
             "real target network grants both native placement authorization checks");
         NBTTagCompound receipt = new NBTTagCompound();
         receipt.setBoolean("actualNativeTerminalUseFirst", true);
+        receipt.setInteger("nativeTerminalChatComponentsCaptured", actor.chat.size() - chatBefore);
         receipt.setBoolean("nativeBuildPermissionGranted", true);
         receipt.setBoolean("securityProviderAvailable", security.isAvailable());
         receipt.setString(
@@ -481,6 +488,32 @@ public final class HologramQuantumClearNativeSmoke {
         receipt.setTag("workflows", workflows);
         receipt.setBoolean("passed", true);
         return receipt;
+    }
+
+    /** Forge's FakePlayer suppresses addChatComponentMessage, but leaves the MP addChatMessage network path live. */
+    private static final class ChatSinkActor extends FakePlayer {
+
+        private final List<IChatComponent> chat = new ArrayList<>();
+
+        private ChatSinkActor(WorldServer world, GameProfile profile) {
+            super(world, profile);
+        }
+
+        @Override
+        public void addChatMessage(IChatComponent message) {
+            if (message != null) chat.add(message.createCopy());
+        }
+
+        private NBTTagList chatReceipt() {
+            NBTTagList result = new NBTTagList();
+            for (IChatComponent component : chat) {
+                NBTTagCompound row = new NBTTagCompound();
+                row.setString("json", IChatComponent.Serializer.func_150696_a(component));
+                row.setString("text", component.getUnformattedText());
+                result.appendTag(row);
+            }
+            return result;
+        }
     }
 
     private static TileEntity quantumController(WorldServer world, EntityPlayerMP owner, int x, int y, int z)
