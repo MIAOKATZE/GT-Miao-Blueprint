@@ -47,11 +47,14 @@ public final class HologramV011AreaClientSmoke {
     private final long installed = System.nanoTime();
     private int stage, sequence, afterObservation;
     private long stageStarted, slotChangedTick, frame;
+    private long worldRenderSerial, targetChangedAfterFrame = -1, targetChangedAfterWorldRender = -1;
+    private long witnessBeforeEndFrame;
     private String session;
     private NBTTagCompound observation;
     private boolean captured, finished;
     private HologramAreaOverlay.RenderWitness areaWitness;
     private HologramRenderer.WorldRenderWitness worldWitness;
+    private NBTTagCompound aimAtWorldRender = new NBTTagCompound();
     private final HologramActualUsePress press = new HologramActualUsePress();
     private volatile NBTTagCompound lastAction;
     private volatile long actionCount;
@@ -73,8 +76,16 @@ public final class HologramV011AreaClientSmoke {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void worldRendered(net.minecraftforge.client.event.RenderWorldLastEvent event) {
+        worldRenderSerial++;
+        witnessBeforeEndFrame = frame + 1;
         areaWitness = HologramAreaOverlay.lastRenderWitness();
         worldWitness = HologramRenderer.lastWorldRenderWitness();
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null) try {
+            aimAtWorldRender = aimWitness(mc);
+        } catch (Exception failure) {
+            fail(mc, failure);
+        }
     }
 
     @SubscribeEvent
@@ -206,9 +217,14 @@ public final class HologramV011AreaClientSmoke {
                     key(Keyboard.KEY_LMENU, true);
                     wheel(-12000);
                     desiredTarget = feet(mc);
+                    targetChangedAfterFrame = frame;
+                    targetChangedAfterWorldRender = worldRenderSerial;
                     next(11);
                     break;
                 case 11:
+                    // Several client ticks may run before another world frame. Local Alt/wheel input
+                    // retains the same snapshot object, so state identity alone cannot prove a fresh cursor.
+                    if (frame <= targetChangedAfterFrame || worldRenderSerial <= targetChangedAfterWorldRender) return;
                     if (areaWitness == null || areaWitness.state != HologramClient.state) return;
                     require(
                         Arrays.equals(feet(mc), areaWitness.cursor()),
@@ -566,6 +582,9 @@ public final class HologramV011AreaClientSmoke {
         request.setFloat("requestedCameraPitch", mc.thePlayer.rotationPitch);
         request.setFloat("requestedCameraYaw", mc.thePlayer.rotationYaw);
         request.setLong("requestedAfterRenderFrame", frame);
+        request.setLong("targetChangedAfterRenderFrame", targetChangedAfterFrame);
+        request.setLong("targetChangedAfterWorldRender", targetChangedAfterWorldRender);
+        request.setLong("requestedWorldRenderSerial", worldRenderSerial);
         request.setTag("nettySnapshot", HologramClient.state.data.copy());
         bind(request);
         observation = request;
@@ -579,6 +598,9 @@ public final class HologramV011AreaClientSmoke {
         if (event.phase != TickEvent.Phase.END || finished) return;
         frame++;
         if (observation == null || captured || frame <= observation.getLong("requestedAfterRenderFrame")) return;
+        // Every observation is requested after its camera/modifier/distance/slot input. A fresh
+        // END alone may contain no world render; require the real world pass to advance as well.
+        if (worldRenderSerial <= observation.getLong("requestedWorldRenderSerial")) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
             HologramState actual = HologramClient.state;
@@ -620,6 +642,7 @@ public final class HologramV011AreaClientSmoke {
             witness.setBoolean("passed", true);
             witness.setString("capturePhase", "RenderTick.END");
             witness.setLong("actualRenderFrame", frame);
+            witness.setLong("actualWorldRenderSerial", worldRenderSerial);
             witness.setInteger("stateObjectIdentity", System.identityHashCode(actual));
             witness.setInteger("framebufferObject", mc.getFramebuffer().framebufferObject);
             witness.setFloat("actualCameraPitch", mc.thePlayer.rotationPitch);
@@ -652,6 +675,7 @@ public final class HologramV011AreaClientSmoke {
                 witness.setTag("drawnWorldPreview", drawn);
             }
             witness.setTag("actualNativeAim", aimWitness(mc));
+            witness.setTag("nativeAimAtWorldRender", aimAtWorldRender.copy());
             HologramWorldGuide.RenderWitness hud = HologramWorldGuide.lastRenderWitness();
             if (hud != null) {
                 witness.setInteger("hudTop", hud.top);
@@ -1042,12 +1066,54 @@ public final class HologramV011AreaClientSmoke {
         failure.printStackTrace();
         finished = true;
         try {
-            for (int value : new int[] { Keyboard.KEY_LSHIFT, Keyboard.KEY_LCONTROL, Keyboard.KEY_LMENU })
-                key(value, false);
             NBTTagCompound result = new NBTTagCompound();
             result.setInteger("stage", stage);
             result.setString("failure", failure.toString());
+            result.setLong("actualRenderFrame", frame);
+            result.setLong("actualWorldRenderSerial", worldRenderSerial);
+            result.setLong("targetChangedAfterRenderFrame", targetChangedAfterFrame);
+            result.setLong("targetChangedAfterWorldRender", targetChangedAfterWorldRender);
+            result.setLong("actionCount", actionCount);
+            result.setTag("lastNativeInput", lastInput.copy());
+            result.setTag("nativeAimAtLastWorldRender", aimAtWorldRender.copy());
+            result.setLong("lastWitnessBeforeEndFrame", witnessBeforeEndFrame);
+            if (observation != null) result.setTag("pendingObservation", observation.copy());
+            if (desiredTarget != null) result.setIntArray("expectedTarget", desiredTarget);
+            if (mc.thePlayer != null) {
+                // Observe the real modifier and local distance before releasing fixture-owned keys.
+                result.setTag("nativeAimBeforeRelease", aimWitness(mc));
+                result.setFloat("actualCameraPitch", mc.thePlayer.rotationPitch);
+                result.setFloat("actualCameraYaw", mc.thePlayer.rotationYaw);
+                if (HologramClient.areaProjectorWorld())
+                    result.setIntArray("liveAreaTargetBeforeRelease", HologramClient.areaSelectionAnchor());
+            }
+            if (areaWitness != null) {
+                NBTTagCompound drawn = new NBTTagCompound();
+                drawn.setString("session", areaWitness.state.session);
+                drawn.setLong("planRevision", areaWitness.state.data.getLong("planRevision"));
+                drawn.setInteger("stateObjectIdentity", System.identityHashCode(areaWitness.state));
+                drawn.setLong("worldRenderSerial", worldRenderSerial);
+                drawn.setLong("beforeEndFrame", witnessBeforeEndFrame);
+                if (areaWitness.cursor() != null) drawn.setIntArray("cursor", areaWitness.cursor());
+                result.setTag("lastAreaRenderWitness", drawn);
+            }
+            if (worldWitness != null) {
+                NBTTagCompound drawn = new NBTTagCompound();
+                drawn.setString("session", worldWitness.session);
+                drawn.setLong("planRevision", worldWitness.revision);
+                drawn.setLong("generation", worldWitness.generation);
+                drawn.setBoolean("moving", worldWitness.moving);
+                drawn.setInteger("outlineColor", worldWitness.outlineColor);
+                drawn.setIntArray(
+                    "anchor",
+                    new int[] { worldWitness.anchorX, worldWitness.anchorY, worldWitness.anchorZ });
+                result.setTag("lastWorldRenderWitness", drawn);
+            }
+            if (HologramClient.state != null)
+                result.setInteger("liveStateObjectIdentity", System.identityHashCode(HologramClient.state));
             if (HologramClient.state != null) result.setTag("actualSnapshot", HologramClient.state.data.copy());
+            for (int value : new int[] { Keyboard.KEY_LSHIFT, Keyboard.KEY_LCONTROL, Keyboard.KEY_LMENU })
+                key(value, false);
             bind(result);
             HologramV011Evidence.write("area-client-failure.nbt", result);
             HologramV011Evidence.marker("area-client-fail.txt", "FAIL stage=" + stage + " " + failure);
