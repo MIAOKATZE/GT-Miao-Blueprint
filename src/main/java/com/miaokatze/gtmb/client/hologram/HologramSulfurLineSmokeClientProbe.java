@@ -380,10 +380,21 @@ public final class HologramSulfurLineSmokeClientProbe {
                             .getString("quantum")),
                     "native tendency selected its actual quantum default");
                 nativeClick(screen, choice);
-                require(
-                    screen.smokeLibraryUiState()
-                        .getBoolean("flowChosen") && confirmed(flow(screen).policy()) == stage,
-                    "choice is explicit and leaves Next unconfirmed");
+                NBTTagCompound after = screen.smokeLibraryUiState();
+                require(confirmed(flow(screen).policy()) == stage, "explicit choice leaves its own Next unconfirmed");
+                if (stage == 2) {
+                    require(
+                        ("share".equals(intent) ? "rebind" : "preserve").equals(
+                            flow(screen).values()
+                                .getString("quantum"))
+                            && !after.getBoolean("flowQuantumGroupsConfirmed")
+                            && !after.getBoolean("flowChosen")
+                            && !enabled(after, 231)
+                            && enabled(after, 263),
+                        "native quantum choice is retained while unconfirmed classification visibly blocks Next");
+                } else require(
+                    after.getBoolean("flowChosen"),
+                    "explicit non-quantum choice is ready for its unconfirmed Next");
                 return true;
             });
             shot("sulfur-processing-stage-" + stage + "-choice", "sulfur-server-ready.nbt");
@@ -652,6 +663,15 @@ public final class HologramSulfurLineSmokeClientProbe {
         screen("quantum-classification-real-netty-ack", (mc, screen, ui) -> {
             if (!idle(screen, ui) || !data().getCompoundTag("processing")
                 .getBoolean("quantumGroupsConfirmed")) return false;
+            require(
+                data().getBoolean("quantumGroupsOperationSuccess")
+                    && "configureBlueprintQuantumGroups".equals(data().getString("processingPresetOperation"))
+                    && ui.getInteger("flowStage") == 2
+                    && confirmed(flow(screen).policy()) == 2
+                    && ui.getBoolean("flowQuantumGroupsConfirmed")
+                    && ui.getBoolean("flowChosen")
+                    && enabled(ui, 231),
+                "only the actual complete classification ACK enables stage-2 Next while leaving it unconfirmed");
             NBTTagList groups = data().getCompoundTag("processing")
                 .getTagList("quantumGroups", 10);
             require(

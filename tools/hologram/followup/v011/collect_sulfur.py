@@ -230,6 +230,23 @@ def validate_author(run, client, frames):
         require(before['actualUi']['flowStage'] == chosen['actualUi']['flowStage'] == stage
                 and before['actualLocalPolicy']['confirmedStages'] == chosen['actualLocalPolicy']['confirmedStages'] == STAGES[:stage]
                 and chosen['nativeMouseEvents'] > before['nativeMouseEvents'], 'A real stage choice/Next was bypassed or reordered')
+        if stage == 2:
+            controls = [control for control in chosen['actualUi']['drawnControls'] if control['id'] == 231]
+            require(chosen['actualLocalPolicy']['quantum'] == policy['quantum']
+                    and not chosen['actualUi']['flowChosen'] and not chosen['actualUi']['flowQuantumGroupsConfirmed']
+                    and len(controls) == 1 and not controls[0]['enabled'],
+                    'Selecting the quantum policy bypassed the real incomplete-classification Next gate')
+        else:
+            require(chosen['actualUi']['flowChosen'], 'A non-quantum choice was not ready for its own unconfirmed Next')
+    group_ack = frames['sulfur-quantum-groups-save-ack-frame']
+    next_controls = [control for control in group_ack['actualUi']['drawnControls'] if control['id'] == 231]
+    require(group_ack['actualSnapshot']['quantumGroupsOperationSuccess']
+            and group_ack['actualSnapshot']['processingPresetOperation'] == 'configureBlueprintQuantumGroups'
+            and group_ack['actualUi']['flowStage'] == 2 and group_ack['actualUi']['flowChosen']
+            and group_ack['actualUi']['flowQuantumGroupsConfirmed']
+            and group_ack['actualLocalPolicy']['confirmedStages'] == STAGES[:2]
+            and len(next_controls) == 1 and next_controls[0]['enabled'],
+            'Classification Save did not receive the real ACK before enabling the still-unconfirmed stage-2 Next')
     groups = frames['sulfur-quantum-groups-save-ack-frame']['actualSnapshot']['processing']['quantumGroups']
     require(sum(len(group['cells']) for group in groups) == 7 and len(groups) == (1 if run['intent'] == 'self' else 2),
             'Server classification omitted or duplicated a physical gateway')
