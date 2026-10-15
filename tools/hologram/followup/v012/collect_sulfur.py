@@ -496,7 +496,8 @@ def validate_target(run, client, frames):
                 and sum((no_terminal['afterMove' + axis] - no_terminal['serverPlayer' + axis]) ** 2 for axis in 'XYZ') >= 16,
                 'Private rejection was not tested after two native C0E drops and server-confirmed terminal absence')
         snapshot = frames['sulfur-recipient-preserved-anchor-blocked-frame']['actualSnapshot']
-        require(snapshot['networkBindings']['nativeAuthority'], 'Private review did not load the native GTSWN named authority')
+        require(not snapshot['networkBindings']['nativeAuthority'] and not snapshot['networkBindings']['terminalSecurityChecked'],
+                'Private review must not perform GTMB terminal or security authorization checks')
         groups = snapshot['networkBindings']['groups']
         require(groups and all(not group['bound'] and not group['terminalBinding'] and '其他存档' in group['reason'] for group in groups),
                 'Private original anchor was silently rebound or lacked explicit foreign-world feedback')
@@ -519,8 +520,9 @@ def validate_target(run, client, frames):
                 require(a['supplied'] > 0 and a['remaining'] == a['supplied'] and a['nativeDebited'] == 0
                         and b['remaining'] == 0 and b['nativeDebited'] == a['supplied'], 'Construction was not actually paid once')
         for index in range(2):
-            require(frames[f'sulfur-recipient-quantum-binding-group-{index}-ack-frame']['actualSnapshot']['networkBindings']['nativeAuthority'],
-                    'Named group binding did not load the native GTSWN terminal authority')
+            bindings = frames[f'sulfur-recipient-quantum-binding-group-{index}-ack-frame']['actualSnapshot']['networkBindings']
+            require(not bindings['nativeAuthority'] and not bindings['terminalSecurityChecked'],
+                    'Shared group binding must select anchors without extra GTMB security authorization')
         first = frames['sulfur-recipient-quantum-binding-group-0-ack-frame']['actualSnapshot']['networkBindings']['groups']
         second = frames['sulfur-recipient-quantum-binding-group-1-ack-frame']['actualSnapshot']['networkBindings']['groups']
         require(len(first) == len(second) == 2 and first[0]['bound'] and not first[1]['bound']
