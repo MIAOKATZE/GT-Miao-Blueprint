@@ -7,6 +7,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiIngameMenu;
@@ -44,7 +46,9 @@ import io.netty.channel.ChannelPromise;
 /** Dedicated actual Netty input scenario; no synthetic snapshots or controller-memory writes. */
 public final class HologramV011AreaClientSmoke {
 
+    private static HologramV011AreaClientSmoke activeDriver;
     private final long installed = System.nanoTime();
+    private final Set<Integer> heldModifiers = new LinkedHashSet<>();
     private int stage, sequence, afterObservation;
     private long stageStarted, slotChangedTick, frame;
     private long worldRenderSerial, targetChangedAfterFrame = -1, targetChangedAfterWorldRender = -1;
@@ -68,10 +72,33 @@ public final class HologramV011AreaClientSmoke {
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.followupAreaClient")) return;
         HologramV011AreaClientSmoke driver = new HologramV011AreaClientSmoke();
+        activeDriver = driver;
         FMLCommonHandler.instance()
             .bus()
             .register(driver);
         MinecraftForge.EVENT_BUS.register(driver);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void holdClientModifiers(TickEvent.ClientTickEvent event) {
+        replayHeldModifiers();
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void holdRenderModifiers(TickEvent.RenderTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) replayHeldModifiers();
+    }
+
+    private void replayHeldModifiers() {
+        if (finished || heldModifiers.isEmpty()) return;
+        try {
+            // LWJGL polls the native keyboard between frames and replaces a one-time buffer write.
+            // Replay only keys this isolated driver explicitly holds, until its matching key(false).
+            ByteBuffer buffer = keyboardState();
+            for (int key : heldModifiers) buffer.put(key, (byte) 1);
+        } catch (Exception failure) {
+            fail(Minecraft.getMinecraft(), failure);
+        }
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
@@ -1045,9 +1072,17 @@ public final class HologramV011AreaClientSmoke {
     }
 
     private static void key(int key, boolean down) throws Exception {
+        keyboardState().put(key, (byte) (down ? 1 : 0));
+        if (activeDriver != null) {
+            if (down) activeDriver.heldModifiers.add(key);
+            else activeDriver.heldModifiers.remove(key);
+        }
+    }
+
+    private static ByteBuffer keyboardState() throws Exception {
         Field field = Keyboard.class.getDeclaredField("keyDownBuffer");
         field.setAccessible(true);
-        ((ByteBuffer) field.get(null)).put(key, (byte) (down ? 1 : 0));
+        return (ByteBuffer) field.get(null);
     }
 
     private static void set(Object owner, String name, Object value) throws Exception {
@@ -1076,6 +1111,9 @@ public final class HologramV011AreaClientSmoke {
             result.setLong("actionCount", actionCount);
             result.setTag("lastNativeInput", lastInput.copy());
             result.setTag("nativeAimAtLastWorldRender", aimAtWorldRender.copy());
+            result.setBoolean("fixtureHoldsAlt", heldModifiers.contains(Keyboard.KEY_LMENU));
+            result.setBoolean("fixtureHoldsControl", heldModifiers.contains(Keyboard.KEY_LCONTROL));
+            result.setBoolean("fixtureHoldsShift", heldModifiers.contains(Keyboard.KEY_LSHIFT));
             result.setLong("lastWitnessBeforeEndFrame", witnessBeforeEndFrame);
             if (observation != null) result.setTag("pendingObservation", observation.copy());
             if (desiredTarget != null) result.setIntArray("expectedTarget", desiredTarget);
