@@ -27,6 +27,156 @@ public final class HologramNetworkBindingsRegression {
         malformedGroup();
         physicalPatternsCost();
         bindingSurvivesDisabledPayload();
+        completeNamedClassification();
+        privateOriginsAndShareProjection();
+    }
+
+    private static void completeNamedClassification() throws Exception {
+        HologramPresets.Preset raw = new HologramPresets.Preset();
+        raw.cells.add(cell(0, 100));
+        raw.cells.add(cell(1, 200));
+        HologramPresets.Cell ordinary = HologramPresets.cell(new ItemStack(Blocks.stone), 2, 0, 0, -1, false);
+        ordinary.block = "minecraft:stone";
+        raw.cells.add(ordinary);
+        String before = new com.google.gson.Gson().toJson(raw);
+        NBTTagList defaults = HologramQuantumGroups.groups(raw);
+        SimpleAssert.that(
+            defaults.tagCount() == 1 && defaults.getCompoundTagAt(0)
+                .getTagList("cells", 10)
+                .tagCount() == 2 && !HologramQuantumGroups.confirmed(raw),
+            "all quantum nodes start in one unconfirmed default class regardless of old source networks");
+        HologramPresets.Preset classified = HologramQuantumGroups.configure(raw, defaults);
+        SimpleAssert
+            .that(HologramQuantumGroups.confirmed(classified), "complete default class is explicitly confirmable");
+        HologramPresets.Preset copied = HologramPresets.copy(classified);
+        SimpleAssert
+            .that(HologramQuantumGroups.confirmed(copied), "classification receipt survives canonical blueprint copy");
+        HologramPresets.Preset reloaded = new com.google.gson.Gson()
+            .fromJson(new com.google.gson.Gson().toJson(classified), HologramPresets.Preset.class);
+        SimpleAssert.that(HologramQuantumGroups.confirmed(reloaded), "classification survives blueprint serialization");
+        copied.cells.get(1).x = 8;
+        SimpleAssert
+            .that(!HologramQuantumGroups.confirmed(copied), "moving a classified node invalidates its exact cell map");
+        copied = HologramPresets.copy(classified);
+        copied.cells.get(1).excluded = true;
+        SimpleAssert.that(
+            !HologramQuantumGroups.confirmed(copied),
+            "excluding a node requires confirmation of the remaining map");
+        copied = HologramPresets.copy(classified);
+        copied.cells.get(0).z = -copied.cells.get(0).x;
+        copied.cells.get(1).z = -copied.cells.get(1).x;
+        copied.cells.get(1).x = 0;
+        SimpleAssert.that(
+            !HologramQuantumGroups.confirmed(copied),
+            "rotating relative node positions invalidates stale classification coordinates");
+        NBTTagList duplicate = (NBTTagList) defaults.copy();
+        duplicate.getCompoundTagAt(0)
+            .getTagList("cells", 10)
+            .appendTag(
+                duplicate.getCompoundTagAt(0)
+                    .getTagList("cells", 10)
+                    .getCompoundTagAt(0)
+                    .copy());
+        rejectGroups(raw, duplicate, "duplicate node");
+        NBTTagList missing = (NBTTagList) defaults.copy();
+        missing.getCompoundTagAt(0)
+            .getTagList("cells", 10)
+            .removeTag(0);
+        rejectGroups(raw, missing, "unassigned node");
+        NBTTagList extra = (NBTTagList) defaults.copy();
+        NBTTagCompound nonNode = new NBTTagCompound();
+        nonNode.setInteger("x", 2);
+        nonNode.setInteger("y", 0);
+        nonNode.setInteger("z", 0);
+        extra.getCompoundTagAt(0)
+            .getTagList("cells", 10)
+            .appendTag(nonNode);
+        rejectGroups(raw, extra, "ordinary block masquerading as a node");
+        NBTTagList wrongPosition = (NBTTagList) defaults.copy();
+        wrongPosition.getCompoundTagAt(0)
+            .getTagList("cells", 10)
+            .getCompoundTagAt(0)
+            .setShort("x", (short) 0);
+        rejectGroups(raw, wrongPosition, "wrong coordinate type");
+        for (String name : new String[] { "", "\u00a7csecret", "bad\nname" }) {
+            NBTTagList invalid = (NBTTagList) defaults.copy();
+            invalid.getCompoundTagAt(0)
+                .setString("name", name);
+            rejectGroups(raw, invalid, "invalid group name");
+        }
+        NBTTagList invalidId = (NBTTagList) defaults.copy();
+        invalidId.getCompoundTagAt(0)
+            .setString("id", "q0");
+        rejectGroups(raw, invalidId, "invalid group identity");
+        NBTTagList wrongCells = (NBTTagList) defaults.copy();
+        NBTTagList strings = new NBTTagList();
+        strings.appendTag(new net.minecraft.nbt.NBTTagString("0,0,0"));
+        wrongCells.getCompoundTagAt(0)
+            .setTag("cells", strings);
+        rejectGroups(raw, wrongCells, "wrong member list type");
+        SimpleAssert.eq(
+            before,
+            new com.google.gson.Gson().toJson(raw),
+            "all accepted and rejected classifications leave source exact");
+    }
+
+    private static void privateOriginsAndShareProjection() throws Exception {
+        HologramPresets.Preset raw = new HologramPresets.Preset();
+        for (int i = 0; i < 2; i++) {
+            HologramPresets.Cell cell = cell(i, 100 + i * 100);
+            NBTTagCompound tag = tag(cell);
+            NBTTagCompound origin = (NBTTagCompound) tag.getCompoundTag(HologramNetworkBindings.CAPTURE_ANCHOR)
+                .copy();
+            origin.setString("world", "cdf90139-63c0-4e89-905e-20833e0683a2");
+            tag.setTag(HologramNetworkBindings.ORIGINAL, origin);
+            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
+            raw.cells.add(cell);
+        }
+        raw = HologramQuantumGroups.configure(raw, HologramQuantumGroups.groups(raw));
+        HologramBlueprintProcessing.Policy self = HologramBlueprintProcessing.defaults("self", 1);
+        self.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        HologramPresets.Preset privateCopy = HologramBlueprintProcessing.process(raw, self, 0, 0, 64, 0);
+        privateCopy = HologramAePolicy.sanitize(privateCopy).preset;
+        for (int i = 0; i < 2; i++) {
+            NBTTagCompound tag = tag(privateCopy.cells.get(i));
+            SimpleAssert.that(
+                "q1".equals(tag.getString(HologramNetworkBindings.GROUP))
+                    && "preserve".equals(tag.getString(HologramNetworkBindings.MODE))
+                    && tag.getCompoundTag(HologramNetworkBindings.ORIGINAL)
+                        .getInteger("anchorX") == 100 + i * 100,
+                "one author class preserves every distinct original private anchor through repeated sanitization");
+        }
+        HologramBlueprintProcessing.Policy share = HologramBlueprintProcessing.defaults("share", 1);
+        share.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        HologramPresets.Preset portable = HologramBlueprintProcessing.process(raw, share, 0, 0, 64, 0);
+        for (HologramPresets.Cell cell : portable.cells) {
+            NBTTagCompound tag = tag(cell);
+            SimpleAssert.that(
+                !tag.hasKey(HologramNetworkBindings.ORIGINAL) && !tag.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
+                    && "rebind".equals(tag.getString(HologramNetworkBindings.MODE))
+                    && "q1".equals(tag.getString(HologramNetworkBindings.GROUP)),
+                "sharing removes save-local provenance and keeps only the reviewed anonymous recipient slot");
+        }
+        NBTTagCompound malformed = tag(raw.cells.get(0));
+        malformed.getCompoundTag(HologramNetworkBindings.ORIGINAL)
+            .setString("world", "bad-world-uuid");
+        try {
+            HologramNetworkBindings.validateOriginal(malformed);
+            throw new AssertionError("invalid world identity must reject");
+        } catch (IOException expected) {
+            SimpleAssert.that(true, "malformed source UUID cannot be repaired or substituted");
+        }
+    }
+
+    private static void rejectGroups(HologramPresets.Preset source, NBTTagList groups, String message)
+        throws Exception {
+        String before = new com.google.gson.Gson().toJson(source);
+        try {
+            HologramQuantumGroups.configure(source, groups);
+            throw new AssertionError("classification accepted " + message);
+        } catch (IOException expected) {
+            SimpleAssert.eq(before, new com.google.gson.Gson().toJson(source), "atomic rejection: " + message);
+        }
     }
 
     private static void grouping() throws Exception {
@@ -95,7 +245,7 @@ public final class HologramNetworkBindingsRegression {
         } catch (IOException expected) {
             SimpleAssert.that(
                 expected.getMessage()
-                    .contains("anchor"),
+                    .contains("锚点"),
                 "partial anchor is not guessed");
         }
     }

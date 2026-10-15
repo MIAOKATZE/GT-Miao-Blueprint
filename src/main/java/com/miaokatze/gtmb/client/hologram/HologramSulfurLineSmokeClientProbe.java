@@ -19,6 +19,7 @@ import javax.imageio.ImageIO;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiMainMenu;
+import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.nbt.CompressedStreamTools;
@@ -29,6 +30,7 @@ import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.MouseEvent;
+import net.minecraftforge.common.DimensionManager;
 import net.minecraftforge.common.MinecraftForge;
 
 import org.lwjgl.input.Keyboard;
@@ -54,6 +56,11 @@ public final class HologramSulfurLineSmokeClientProbe {
         boolean run(Minecraft mc, HologramScreen screen, NBTTagCompound ui) throws Exception;
     }
 
+    private interface GroupAction {
+
+        void run(HologramQuantumGroupsScreen screen) throws Exception;
+    }
+
     private static final class Step {
 
         final String label;
@@ -69,12 +76,16 @@ public final class HologramSulfurLineSmokeClientProbe {
     private final NBTTagList frames = new NBTTagList();
     private final NBTTagList saveProofs = new NBTTagList();
     private final NBTTagList areaSelections = new NBTTagList();
+    private final NBTTagList groupInteractions = new NBTTagList();
     private final HologramActualUsePress press = new HologramActualUsePress();
     private final String role = System.getProperty("gtmb.hologram.sulfurLineRole", "");
+    private final String intent = System.getProperty("gtmb.hologram.sulfurLineIntent", "self");
     private final long installed = System.nanoTime();
     private int step;
     private long stepStarted = installed, lastGeneration = -1, nativeMouseEvents, nativeKeyEvents, nativeWheelEvents;
-    private HologramScreen lastScreen, renderedScreen, captureScreen;
+    private HologramScreen lastScreen, renderedScreen;
+    private GuiScreen captureScreen;
+    private long lastGroupGeneration = -1;
     private HologramState renderedState;
     private long renderedGeneration;
     private NBTTagCompound ready, runtime, capture, verifiedSaveProof;
@@ -104,6 +115,13 @@ public final class HologramSulfurLineSmokeClientProbe {
                     .equals("lumien.custommainmenu.gui.GuiCustom");
             if (!mainMenu) return false;
             require(role.equals("author") || role.equals("placer"), "explicit sulfur client role author or placer");
+            int dimension = Integer.getInteger("gtmb.hologram.sulfurLineDimension", "placer".equals(role) ? 777 : 0);
+            if (dimension != 0) {
+                require(
+                    !DimensionManager.isDimensionRegistered(dimension),
+                    "fresh opt-in client target dimension cannot replace another mod's dimension");
+                DimensionManager.registerDimension(dimension, 0);
+            }
             String address = System.getProperty("gtmb.hologram.sulfurLineAddress", "");
             require(address.matches("127\\.0\\.0\\.1:[0-9]{2,5}"), "explicit paired sulfur loopback address");
             require(
@@ -123,8 +141,95 @@ public final class HologramSulfurLineSmokeClientProbe {
                 .connectToServer(mc.currentScreen, new ServerData("GTMB isolated sulfur " + role, address));
             return true;
         });
+        quantumBootstrap();
         if (role.equals("author")) author();
         else if (role.equals("placer")) placer();
+    }
+
+    private void quantumBootstrap() {
+        add("native-quantum-terminal-controller-click", (mc, screen, ui) -> {
+            NBTTagCompound boot = HologramV011Evidence.read("sulfur-quantum-bootstrap-ready.nbt");
+            if (!connected(mc) || boot == null) return false;
+            validateActor(mc, boot);
+            require("self".equals(intent) || "share".equals(intent), "explicit author tendency");
+            int[] controller = boot.getIntArray("controller");
+            mc.thePlayer.inventory.currentItem = 1;
+            require(
+                mc.thePlayer.getHeldItem() != null && mc.thePlayer.getHeldItem()
+                    .getItem()
+                    .getClass()
+                    .getName()
+                    .equals("com.miaokatze.gtswn.common.items.ItemNetworkQuantumTerminal"),
+                "real unbound native terminal");
+            aim(mc, controller[0] + .5, controller[1] + .5, controller[2] + .5);
+            press.begin(mc, false);
+            useBlock(mc, controller[0], controller[1], controller[2], 3);
+            nativeMouseEvents++;
+            return true;
+        });
+        add("native-terminal-binding-server-ack", (mc, screen, ui) -> {
+            NBTTagCompound bound = HologramV011Evidence.read("sulfur-quantum-native-bound.nbt");
+            if (bound == null) {
+                if (mc.theWorld.getTotalWorldTime() % 40 == 0) {
+                    int[] controller = HologramV011Evidence.read("sulfur-quantum-bootstrap-ready.nbt")
+                        .getIntArray("controller");
+                    useBlock(mc, controller[0], controller[1], controller[2], 3);
+                    nativeMouseEvents++;
+                }
+                return false;
+            }
+            validateActor(mc, bound);
+            mc.thePlayer.inventory.currentItem = 0;
+            requestFrame(mc, null, "sulfur-quantum-native-bind-frame", "sulfur-quantum-native-bound.nbt");
+            return true;
+        });
+        add("native-bound-terminal-places-storage-gateway", (mc, screen, ui) -> {
+            NBTTagCompound place = HologramV011Evidence.read("sulfur-quantum-native-storage-place-ready.nbt");
+            if (place == null) return false;
+            validateActor(mc, place);
+            int[] drive = place.getIntArray("drive");
+            if (mc.thePlayer.getDistanceSq(drive[0] - .5, drive[1], drive[2] + .5) > 36) return false;
+            mc.thePlayer.inventory.currentItem = 1;
+            aim(mc, drive[0], drive[1] + .5, drive[2] + .5);
+            useBlock(mc, drive[0], drive[1], drive[2], 4);
+            nativeMouseEvents++;
+            return true;
+        });
+        if ("author".equals(role)) for (int i = 0; i < 3; i++) {
+            final int index = i;
+            add("native-bound-terminal-places-gateway-" + index, (mc, screen, ui) -> {
+                NBTTagCompound place = HologramV011Evidence.read("sulfur-quantum-native-place-" + index + "-ready.nbt");
+                if (place == null) return false;
+                validateActor(mc, place);
+                int[] support = place.getIntArray("gatewaySupport");
+                if (mc.thePlayer.getDistanceSq(support[0] + .5, support[1], support[2] + .5) > 36) return false;
+                mc.thePlayer.inventory.currentItem = 1;
+                aim(mc, support[0] + 1, support[1] + .5, support[2] + .5);
+                useBlock(mc, support[0], support[1], support[2], support[3]);
+                nativeMouseEvents++;
+                return true;
+            });
+        }
+        add("native-quantum-bootstrap-complete", (mc, screen, ui) -> {
+            if (HologramV011Evidence.read("sulfur-quantum-bootstrap-complete.nbt") == null) return false;
+            mc.thePlayer.inventory.currentItem = 0;
+            return true;
+        });
+    }
+
+    private void quantumCycleFrames(String label) {
+        for (String phase : new String[] { "stopped", "restored" })
+            add("quantum-" + label + "-" + phase + "-native-frame", (mc, screen, ui) -> {
+                String name = "sulfur-" + label + "-quantum-" + phase;
+                NBTTagCompound witness = HologramV011Evidence.read(name + ".nbt");
+                if (!connected(mc) || mc.currentScreen != null || witness == null) return false;
+                validateActor(mc, witness);
+                int[] gateway = HologramV011Evidence.read("sulfur-quantum-bootstrap-ready.nbt")
+                    .getIntArray("gateway");
+                aim(mc, gateway[0] + .5, gateway[1] + .5, gateway[2] + .5);
+                requestFrame(mc, null, name + "-frame", name + ".nbt");
+                return true;
+            });
     }
 
     private void author() {
@@ -144,6 +249,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             requestFrame(mc, null, "sulfur-source-running-frame", "sulfur-source-running.nbt");
             return true;
         });
+        quantumCycleFrames("source");
         add("source-quiescent-native-begin-area", (mc, screen, ui) -> {
             ready = HologramV011Evidence.read("sulfur-server-ready.nbt");
             if (!connected(mc) || ready == null) return false;
@@ -197,7 +303,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         });
         shot("sulfur-source-capture-frame", "sulfur-server-ready.nbt");
         click("open-blueprint-tab", 149);
-        type("native-blueprint-name", "presetNameField", "Sulfur acid native line");
+        type("native-blueprint-name", "presetNameField", "Sulfur acid " + intent + " native line");
         screen("raw-save-gate", (mc, screen, ui) -> {
             require(!enabled(ui, 140) && !enabled(ui, 132) && !enabled(ui, 221), "raw author save and preset gates");
             nativeClick(screen, 140);
@@ -262,12 +368,16 @@ public final class HologramSulfurLineSmokeClientProbe {
                         "actual NBT root click omits stored EU alone and leaves Next unconfirmed");
                     return true;
                 }
-                int[] choices = { 235, 241, 260, 270, 280, 290 };
-                int choice = stage == 1 ? 240 + Math.max(
-                    1,
-                    data().getCompoundTag("processing")
-                        .getInteger("minimumLevel"))
-                    : choices[stage];
+                if (stage == 0) nativeClick(screen, "share".equals(intent) ? 233 : 232);
+                int[] choices = { 235, 240, "share".equals(intent) ? 260 : 262, 270, 280,
+                    "share".equals(intent) ? 291 : 290 };
+                int choice = stage == 1 ? 240 + flow(screen).values()
+                    .getInteger("deidentificationLevel") : choices[stage];
+                if (stage == 2) require(
+                    ("share".equals(intent) ? "rebind" : "preserve").equals(
+                        flow(screen).values()
+                            .getString("quantum")),
+                    "native tendency selected its actual quantum default");
                 nativeClick(screen, choice);
                 require(
                     screen.smokeLibraryUiState()
@@ -276,20 +386,22 @@ public final class HologramSulfurLineSmokeClientProbe {
                 return true;
             });
             shot("sulfur-processing-stage-" + stage + "-choice", "sulfur-server-ready.nbt");
+            if (stage == 2) quantumGrouping();
             click("native-next-" + stage, 231);
         }
         screen("processing-real-netty-ack", (mc, screen, ui) -> {
             if (!idle(screen, ui) || !data().getBoolean("blueprintProcessingComplete")) return false;
             NBTTagCompound policy = data().getCompoundTag("processingPolicy");
             require(
-                confirmed(policy) == 6 && "rebind".equals(policy.getString("quantum"))
+                confirmed(policy) == 6 && intent.equals(policy.getString("tendency"))
+                    && ("share".equals(intent) ? "rebind" : "preserve").equals(policy.getString("quantum"))
                     && "auto".equals(policy.getString("coordinateDefault"))
                     && policy.getTagList("ignoredNbtKeys", 8)
                         .tagCount() == 1
                     && "mStoredEnergy".equals(
                         policy.getTagList("ignoredNbtKeys", 8)
                             .getStringTagAt(0)),
-                "six explicit stages retain configuration with stored EU omitted, quantum rebind/auto coordinates");
+                "six explicit stages retain the actual tendency defaults and omit stored EU");
             NBTTagList relations = data().getTagList("processingRelations", 10);
             boolean internalSensor = false;
             for (int i = 0; i < relations.tagCount(); i++) {
@@ -304,7 +416,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         });
         shot("sulfur-processing-ack-frame", "sulfur-server-ready.nbt");
         click("native-save-processing-preset-review", 221);
-        type("native-processing-preset-name", "processingPresetField", "Sulfur acid reusable flow");
+        type("native-processing-preset-name", "processingPresetField", "Sulfur acid " + intent + " reusable flow");
         shot("sulfur-processing-preset-review-frame", "sulfur-server-ready.nbt");
         click("native-confirm-processing-preset", 224);
         screen("processing-preset-real-netty-ack", (mc, screen, ui) -> {
@@ -314,14 +426,15 @@ public final class HologramSulfurLineSmokeClientProbe {
             NBTTagList presets = data().getTagList("processingPresets", 10);
             for (int i = 0; i < presets.tagCount(); i++) {
                 NBTTagCompound row = presets.getCompoundTagAt(i);
-                if ("Sulfur acid reusable flow".equals(row.getString("name"))) presetId = row.getString("id");
+                if (("Sulfur acid " + intent + " reusable flow").equals(row.getString("name")))
+                    presetId = row.getString("id");
             }
             require(!presetId.isEmpty(), "server returned persisted processing preset ID");
             processingPresetSave = true;
             return true;
         });
         screen("native-new-save", (mc, screen, ui) -> {
-            expectedName = "Sulfur acid native line";
+            expectedName = "Sulfur acid " + intent + " native line";
             resetSaveReview();
             nativeClick(screen, 140);
             return true;
@@ -352,13 +465,13 @@ public final class HologramSulfurLineSmokeClientProbe {
                 "native overwrite row targets actual local file");
             return true;
         });
-        type("native-overwrite-name", "presetNameField", "Sulfur acid shared native line");
+        type("native-overwrite-name", "presetNameField", "Sulfur acid " + intent + " reviewed native line");
         click("native-open-overwrite-review", 140);
         screen("named-overwrite-review", (mc, screen, ui) -> {
             require(
                 ui.getBoolean("overwriteReview") && localId.equals(ui.getString("overwriteTarget")),
                 "mandatory named overwrite review");
-            expectedName = "Sulfur acid shared native line";
+            expectedName = "Sulfur acid " + intent + " reviewed native line";
             resetSaveReview();
             return true;
         });
@@ -391,6 +504,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             byte[] bytes = artifact.json;
             NBTTagCompound result = finalReceipt(mc, ui);
             result.setBoolean("processingComplete", data().getBoolean("blueprintProcessingComplete"));
+            result.setString("intent", intent);
             result.setBoolean("newSave", newSave);
             result.setBoolean("overwriteSave", overwriteSave);
             result.setBoolean("processingPresetSave", processingPresetSave);
@@ -407,6 +521,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             result.setString("newSavePngSha256", originalPreviewHash);
             require(saveProofs.tagCount() == 2, "both actual source artifact saves retain native packet/render proof");
             result.setTag("actualSaveProofs", saveProofs.copy());
+            result.setTag("quantumGroupingInteractions", groupInteractions.copy());
             result.setString("world", ready.getString("world"));
             result.setIntArray("bounds", bounds);
             HologramV011Evidence.write("sulfur-author-final.nbt", result);
@@ -421,6 +536,154 @@ public final class HologramSulfurLineSmokeClientProbe {
                 "PASS actual author GUI, six explicit stages, new save/overwrite/preset ACK and END frames");
             finished = true;
             mc.shutdown();
+            return true;
+        });
+    }
+
+    private void quantumGrouping() {
+        click("native-open-quantum-grouping-preview", 263);
+        groupAction("default-one-group-real-preview", group -> {
+            NBTTagCompound ui = group.smokeUiState();
+            require(
+                ui.getInteger("nodeCount") == 3 && ui.getInteger("groupCount") == 1
+                    && ui.getInteger("unassigned") == 0
+                    && ui.getBoolean("saveEnabled"),
+                "default actual preview assigns all three physical gateways to one named network");
+        });
+        groupShot("sulfur-quantum-groups-default-frame");
+        if ("share".equals(intent)) {
+            groupAction("native-T-selects-all-three", group -> {
+                group.smokeKey(Keyboard.KEY_T, false);
+                nativeKeyEvents++;
+                require(
+                    group.smokeUiState()
+                        .getIntArray("selection").length == 3,
+                    "native T selects all actual nodes");
+            });
+            groupAction("native-CtrlT-complement-clears-all", group -> {
+                group.smokeKey(Keyboard.KEY_T, true);
+                nativeKeyEvents++;
+                require(
+                    group.smokeUiState()
+                        .getIntArray("selection").length == 0,
+                    "native Ctrl T chooses the complement");
+            });
+            groupAction("native-preview-Ctrl-node-multiselect", group -> {
+                group.smokeClickNode(0, false);
+                group.smokeClickNode(1, true);
+                nativeMouseEvents += 2;
+                require(
+                    group.smokeUiState()
+                        .getIntArray("selection").length == 2,
+                    "actual preview hit regions and Ctrl select two nodes");
+            });
+            groupShot("sulfur-quantum-groups-multiselect-frame");
+            groupAction("native-unassigned-gates-save", group -> {
+                group.smokeClickControl(7);
+                nativeMouseEvents++;
+                require(
+                    group.smokeUiState()
+                        .getInteger("unassigned") == 2
+                        && !group.smokeUiState()
+                            .getBoolean("saveEnabled"),
+                    "two unclassified nodes visibly block the real Save control");
+            });
+            groupShot("sulfur-quantum-groups-unassigned-frame");
+            groupAction("native-CtrlZ-restores-complete-grouping", group -> {
+                group.smokeKey(Keyboard.KEY_Z, true);
+                nativeKeyEvents++;
+                require(
+                    group.smokeUiState()
+                        .getInteger("unassigned") == 0 && group.smokeUiState()
+                            .getBoolean("saveEnabled"),
+                    "native undo restores complete actual assignment");
+            });
+            groupAction("native-CtrlY-restores-incomplete-gate", group -> {
+                group.smokeKey(Keyboard.KEY_Y, true);
+                nativeKeyEvents++;
+                require(
+                    group.smokeUiState()
+                        .getInteger("unassigned") == 2
+                        && !group.smokeUiState()
+                            .getBoolean("saveEnabled"),
+                    "native redo restores the actual incomplete classification gate");
+            });
+            groupAction("native-final-complement-and-Chinese-group-names", group -> {
+                group.smokeKey(Keyboard.KEY_Z, true);
+                group.smokeKey(Keyboard.KEY_T, true);
+                nativeKeyEvents += 2;
+                require(
+                    group.smokeUiState()
+                        .getIntArray("selection").length == 1,
+                    "final complement retains one front-stage node");
+                group.smokeName("后段供料");
+                group.smokeClickControl(10);
+                nativeMouseEvents += 2;
+            });
+            groupAction("native-new-front-stage-group", group -> {
+                group.smokeName("前段供料");
+                group.smokeClickControl(5);
+                nativeMouseEvents += 2;
+                require(
+                    group.smokeUiState()
+                        .getInteger("groupCount") == 2
+                        && group.smokeUiState()
+                            .getInteger("unassigned") == 0,
+                    "Chinese native text input creates a second complete actual group");
+            });
+            groupShot("sulfur-quantum-groups-two-named-frame");
+        }
+        groupAction("native-save-complete-quantum-classification", group -> {
+            require(
+                group.smokeUiState()
+                    .getBoolean("saveEnabled"),
+                "all actual nodes assigned before classification submit");
+            group.smokeClickControl(1);
+            nativeMouseEvents++;
+        });
+        screen("quantum-classification-real-netty-ack", (mc, screen, ui) -> {
+            if (!idle(screen, ui) || !data().getCompoundTag("processing")
+                .getBoolean("quantumGroupsConfirmed")) return false;
+            NBTTagList groups = data().getCompoundTag("processing")
+                .getTagList("quantumGroups", 10);
+            require(
+                groups.tagCount() == ("share".equals(intent) ? 2 : 1),
+                "server acknowledged this tendency's actual complete classification");
+            return true;
+        });
+        shot("sulfur-quantum-groups-save-ack-frame", "sulfur-server-ready.nbt");
+    }
+
+    private void groupAction(String label, GroupAction action) {
+        add(label, (mc, screen, ui) -> {
+            if (!(mc.currentScreen instanceof HologramQuantumGroupsScreen)) return false;
+            HologramQuantumGroupsScreen group = (HologramQuantumGroupsScreen) mc.currentScreen;
+            NBTTagCompound before = group.smokeUiState();
+            if (before.getLong("renderGeneration") <= lastGroupGeneration) return false;
+            NBTTagCompound proof = new NBTTagCompound();
+            proof.setString("action", label);
+            proof.setTag("before", before);
+            action.run(group);
+            proof.setTag("after", group.smokeUiState());
+            proof.setLong("nativeMouseEvents", nativeMouseEvents);
+            proof.setLong("nativeKeyEvents", nativeKeyEvents);
+            groupInteractions.appendTag(proof);
+            lastGroupGeneration = before.getLong("renderGeneration");
+            return true;
+        });
+    }
+
+    private void groupShot(String label) {
+        add(label, (mc, screen, ui) -> {
+            if (!(mc.currentScreen instanceof HologramQuantumGroupsScreen)) return false;
+            HologramQuantumGroupsScreen group = (HologramQuantumGroupsScreen) mc.currentScreen;
+            requestFrame(mc, null, label, "sulfur-server-ready.nbt");
+            captureScreen = group;
+            capture.setBoolean("quantumGroupingScreen", true);
+            NBTTagCompound state = group.smokeUiState();
+            capture.setTag("requestedUi", state.copy());
+            capture.setLong("requestedAfterGeneration", state.getLong("renderGeneration"));
+            capture.setLong("planRevision", data().getLong("planRevision"));
             return true;
         });
     }
@@ -566,6 +829,41 @@ public final class HologramSulfurLineSmokeClientProbe {
                 "normal placement review has authoritative lock and nonce");
             return true;
         });
+        if ("self".equals(intent)) {
+            screen("native-private-preserved-anchor-rejection", (mc, screen, ui) -> {
+                if (!idle(screen, ui)) return false;
+                NBTTagList groups = data().getCompoundTag("networkBindings")
+                    .getTagList("groups", 10);
+                require(groups.tagCount() >= 1, "private blueprint retained its original quantum network descriptor");
+                for (int i = 0; i < groups.tagCount(); i++) {
+                    NBTTagCompound group = groups.getCompoundTagAt(i);
+                    require(
+                        !group.getBoolean("terminalBinding") && !group.getBoolean("bound")
+                            && group.getString("reason")
+                                .contains("其他存档"),
+                        "foreign-world private anchor is explicitly unavailable and cannot be rebound from new terminals");
+                }
+                require(!enabled(ui, 55), "private foreign-world construction is visibly disabled");
+                return true;
+            });
+            shot("sulfur-recipient-preserved-anchor-blocked-frame", "sulfur-materials-ready.nbt");
+            add("write-private-rejection-final", (mc, screen, ui) -> {
+                NBTTagCompound result = finalReceipt(mc, ui);
+                result.setBoolean("preservedAnchorRejected", true);
+                result.setBoolean("nativeImport", imported);
+                result.setString("intent", intent);
+                result.setString("localId", localId);
+                result.setTag("rejectionSnapshot", data().copy());
+                HologramV011Evidence.write("sulfur-placer-final.nbt", result);
+                HologramV011Evidence.marker(
+                    "sulfur-placer-pass.txt",
+                    "PASS actual private original-world anchor rejection; no rebind or construction");
+                finished = true;
+                mc.shutdown();
+                return true;
+            });
+            return;
+        }
         screen("native-open-quantum-binding-picker", (mc, screen, ui) -> {
             if (!idle(screen, ui)) return false;
             if (!ui.getBoolean("networkDrawer")) {
@@ -574,39 +872,52 @@ public final class HologramSulfurLineSmokeClientProbe {
             }
             return true;
         });
-        screen("actual-native-terminal-picker", (mc, screen, ui) -> {
-            if (!idle(screen, ui) || !ui.getBoolean("networkDrawer")) return false;
-            NBTTagList groups = data().getCompoundTag("networkBindings")
-                .getTagList("groups", 10);
-            require(groups.tagCount() == 1, "actual sulfur line has one quantum group");
-            require(enabled(ui, 61035), "server verified real recipient quantum terminal in slot 35");
-            nativeClick(screen, 60000);
-            return true;
-        });
-        shot("sulfur-recipient-quantum-picker-frame", "sulfur-materials-ready.nbt");
-        click("native-bind-quantum-from-real-terminal", 61035);
-        screen("quantum-binding-real-netty-ack", (mc, screen, ui) -> {
-            if (!idle(screen, ui)) return false;
-            NBTTagList groups = data().getCompoundTag("networkBindings")
-                .getTagList("groups", 10);
-            if (groups.tagCount() != 1 || !groups.getCompoundTagAt(0)
-                .getBoolean("bound")) return false;
-            require(
-                screen.retainsPlacementReview(HologramClient.state),
-                "native binding ACK retains actual placement review capability");
-            return true;
-        });
-        shot("sulfur-recipient-quantum-binding-ack-frame", "sulfur-materials-ready.nbt");
+        for (int bindingIndex = 0; bindingIndex < 2; bindingIndex++) {
+            final int groupIndex = bindingIndex;
+            screen("actual-native-terminal-picker-group-" + groupIndex, (mc, screen, ui) -> {
+                if (!idle(screen, ui) || !ui.getBoolean("networkDrawer")) return false;
+                NBTTagList groups = data().getCompoundTag("networkBindings")
+                    .getTagList("groups", 10);
+                require(groups.tagCount() == 2, "actual shared sulfur line has two author-named quantum groups");
+                require(
+                    groups.getCompoundTagAt(groupIndex)
+                        .getBoolean("terminalBinding"),
+                    "shared group requires own terminal");
+                require(enabled(ui, 61035), "server verified real recipient quantum terminal in slot 35");
+                nativeClick(screen, 60000 + groupIndex);
+                return true;
+            });
+            shot("sulfur-recipient-quantum-picker-group-" + groupIndex + "-frame", "sulfur-materials-ready.nbt");
+            click("native-bind-quantum-group-" + groupIndex + "-from-real-terminal", 61035);
+            screen("quantum-binding-group-" + groupIndex + "-real-netty-ack", (mc, screen, ui) -> {
+                if (!idle(screen, ui)) return false;
+                NBTTagList groups = data().getCompoundTag("networkBindings")
+                    .getTagList("groups", 10);
+                if (groups.tagCount() != 2 || !groups.getCompoundTagAt(groupIndex)
+                    .getBoolean("bound")) return false;
+                if (groupIndex == 0) require(
+                    !groups.getCompoundTagAt(1)
+                        .getBoolean("bound") && !enabled(ui, 197),
+                    "one group binding cannot authorize construction or silently bind the other group");
+                require(
+                    screen.retainsPlacementReview(HologramClient.state),
+                    "native binding ACK retains actual placement review capability");
+                return true;
+            });
+            shot("sulfur-recipient-quantum-binding-group-" + groupIndex + "-ack-frame", "sulfur-materials-ready.nbt");
+        }
         click("native-close-quantum-picker", 197);
         screen("fresh-material-review-after-binding-ack", (mc, screen, ui) -> {
             if (!idle(screen, ui) || ui.getBoolean("networkDrawer") || !ui.getBoolean("confirmation")) return false;
             require(data().getInteger("missing") == 0, "fresh production quote sees finite actual payment inventory");
+            NBTTagList groups = data().getCompoundTag("networkBindings")
+                .getTagList("groups", 10);
             require(
-                data().getCompoundTag("networkBindings")
-                    .getTagList("groups", 10)
-                    .getCompoundTagAt(0)
-                    .getBoolean("bound"),
-                "fresh actual quote retains recipient quantum binding");
+                groups.tagCount() == 2 && groups.getCompoundTagAt(0)
+                    .getBoolean("bound")
+                    && groups.getCompoundTagAt(1)
+                        .getBoolean("bound"),
+                "fresh actual quote retains both independently selected terminal bindings");
             require(enabled(ui, 55), "normal reviewed construction control is enabled");
             return true;
         });
@@ -652,6 +963,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             capture.setLong("nativeCloseSequence", closeSequence);
             return true;
         });
+        quantumCycleFrames("target");
         add("target-nc-decor-native-frame", (mc, screen, ui) -> {
             NBTTagCompound monitor = HologramV011Evidence.read("sulfur-target-monitor-ready.nbt");
             if (!connected(mc) || mc.currentScreen != null || monitor == null) return false;
@@ -783,8 +1095,22 @@ public final class HologramSulfurLineSmokeClientProbe {
                 "END frame dimension remains actual world");
             String actualSession = HologramClient.state == null ? "" : HologramClient.state.session;
             require(actualSession.equals(capture.getString("session")), "END frame retains requested real session");
-            NBTTagCompound ui = captureScreen == null ? new NBTTagCompound() : captureScreen.smokeLibraryUiState();
-            if (captureScreen != null) {
+            NBTTagCompound ui = captureScreen instanceof HologramScreen
+                ? ((HologramScreen) captureScreen).smokeLibraryUiState()
+                : captureScreen instanceof HologramQuantumGroupsScreen
+                    ? ((HologramQuantumGroupsScreen) captureScreen).smokeUiState()
+                    : new NBTTagCompound();
+            if (capture.getBoolean("quantumGroupingScreen")) {
+                if (ui.getLong("renderGeneration") <= capture.getLong("requestedAfterGeneration")) return;
+                NBTTagCompound requested = capture.getCompoundTag("requestedUi");
+                require(
+                    ui.getTagList("groups", 10)
+                        .equals(requested.getTagList("groups", 10))
+                        && Arrays.equals(ui.getIntArray("selection"), requested.getIntArray("selection"))
+                        && ui.getBoolean("saveEnabled") == requested.getBoolean("saveEnabled")
+                        && ui.getInteger("unassigned") == requested.getInteger("unassigned"),
+                    "actual independent grouping END frame retains real assignments, selection and Save gate");
+            } else if (captureScreen != null) {
                 if (ui.getLong("renderGeneration") <= capture.getLong("requestedAfterGeneration")) return;
                 NBTTagCompound requested = capture.getCompoundTag("requestedUi");
                 for (String mode : new String[] { "processingFlow", "flowChosen", "blueprintTab", "confirmation",
@@ -799,8 +1125,8 @@ public final class HologramSulfurLineSmokeClientProbe {
                     data().getLong("planRevision") == capture.getLong("planRevision"),
                     "END frame binds real server revision");
                 if (capture.hasKey("actualLocalPolicy", 10)) require(
-                    flow(captureScreen) != null && capture.getCompoundTag("actualLocalPolicy")
-                        .equals(flow(captureScreen).policy()),
+                    flow((HologramScreen) captureScreen) != null && capture.getCompoundTag("actualLocalPolicy")
+                        .equals(flow((HologramScreen) captureScreen).policy()),
                     "END frame retains exact explicit native choices");
             } else {
                 ui.setBoolean("worldFocused", mc.currentScreen == null);
@@ -1193,7 +1519,6 @@ public final class HologramSulfurLineSmokeClientProbe {
     private void corner(Minecraft mc, int button, int x, int y, int z, boolean finish) throws Exception {
         require(mc.currentScreen == null && mc.theWorld != null, "native area input has actual world focus");
         require(mc.renderViewEntity == null || mc.renderViewEntity == mc.thePlayer, "native player is the area camera");
-        mc.objectMouseOver = null;
         aim(mc, x + .5, y + .5, z + .5);
         double dx = x + .5 - mc.thePlayer.posX;
         double dy = y + .5 - mc.thePlayer.posY - mc.thePlayer.getEyeHeight();
@@ -1202,6 +1527,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         require(
             targetDistance > 0 && targetDistance <= HologramWorldFlow.MAX_DISTANCE,
             "actual source corner fits the native floating cursor distance");
+        key(Keyboard.KEY_LMENU, true);
         HologramClient.areaSelectionAnchor();
         Field distanceField = HologramClient.class.getDeclaredField("previewDistance");
         distanceField.setAccessible(true);
@@ -1216,7 +1542,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             try {
                 MinecraftForge.EVENT_BUS.post(wheel);
             } finally {
-                key(Keyboard.KEY_LMENU, false);
+                key(Keyboard.KEY_LMENU, true);
             }
             require(
                 wheel.isCanceled() && distance.distance() == targetDistance,
@@ -1225,9 +1551,9 @@ public final class HologramSulfurLineSmokeClientProbe {
             nativeWheelEvents++;
         }
         require(
-            !Keyboard.isKeyDown(Keyboard.KEY_LMENU) && !Keyboard.isKeyDown(Keyboard.KEY_RMENU)
+            Keyboard.isKeyDown(Keyboard.KEY_LMENU)
                 && Arrays.equals(HologramClient.areaSelectionAnchor(), new int[] { x, y, z }),
-            "actual no-Alt sight-distance cursor targets this source corner");
+            "actual Alt forced-air sight-distance cursor targets this source corner");
         NBTTagCompound selection = new NBTTagCompound();
         selection.setInteger("point", button == 0 ? 1 : 2);
         selection.setIntArray("actualCursor", HologramClient.areaSelectionAnchor());
@@ -1258,6 +1584,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         mouseField(event, "buttonstate", true);
         MinecraftForge.EVENT_BUS.post(event);
         key(Keyboard.KEY_LSHIFT, false);
+        key(Keyboard.KEY_LMENU, false);
         require(event.isCanceled(), "actual registered Forge mouse handler consumed area gesture");
         nativeMouseEvents++;
         selection.setLong("nativeMouseEventsAfter", nativeMouseEvents);

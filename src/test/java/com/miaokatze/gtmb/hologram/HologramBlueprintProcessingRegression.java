@@ -36,6 +36,7 @@ public final class HologramBlueprintProcessingRegression {
     public static void run() throws Exception {
         adaptiveStages();
         explicitStagesAndSessionBacktracking();
+        sharingKeepsAnonymousNetworkSlots();
         actualCellsAndRelativeProjection();
         globalAndCellSelections();
         legacyFloorAndDependencyInvalidation();
@@ -46,6 +47,43 @@ public final class HologramBlueprintProcessingRegression {
         ordinaryMaterialVariantBoundary();
         automaticHintsFollowActualProcessing();
         atomicPolicyLibrary();
+    }
+
+    private static void sharingKeepsAnonymousNetworkSlots() throws Exception {
+        HologramPresets.Preset raw = source(104);
+        NBTTagCompound original = HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt);
+        original.setString(HologramNetworkBindings.GROUP, "q1");
+        original.setString(HologramNetworkBindings.ROLE, "join");
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(original);
+        raw = HologramQuantumGroups.configure(raw, HologramQuantumGroups.groups(raw));
+        HologramBlueprintProcessing.Policy sharing = completed("share");
+        SimpleAssert.eq("rebind", sharing.quantum, "sharing recommends recipient terminal binding by default");
+        SimpleAssert.eq("preserve", completed("self").quantum, "self-use preserves the original network semantics");
+        HologramPresets.Preset portable = HologramBlueprintProcessing.process(raw, sharing, 0, 100, 64, 200);
+        NBTTagCompound processed = HologramBlueprintNbt.decode(portable.cells.get(0).tileNbt);
+        SimpleAssert.that(
+            "q1".equals(processed.getString(HologramNetworkBindings.GROUP))
+                && "join".equals(processed.getString(HologramNetworkBindings.ROLE))
+                && processed.getString("ownerName")
+                    .isEmpty()
+                && !processed.hasKey("coreX")
+                && !HologramBlueprintProcessing.quantumCleared(portable),
+            "sharing keeps an anonymous topology slot while removing source owner and external coordinates");
+        SimpleAssert.that(
+            portable.cells.get(0).prompt.contains("自己的有效终端"),
+            "shared blueprint explains the recipient's own terminal requirement");
+        sharing.quantum = "clear";
+        HologramPresets.Preset cleared = HologramBlueprintProcessing.process(raw, sharing, 0, 100, 64, 200);
+        SimpleAssert.that(
+            HologramBlueprintProcessing.quantumCleared(cleared) && cleared.quantumGroupingNbt == null
+                && !HologramBlueprintNbt.decode(cleared.cells.get(0).tileNbt)
+                    .hasKey(HologramNetworkBindings.GROUP),
+            "explicit clear removes logical groups and retires their exact classification review");
+        SimpleAssert.eq(
+            "original",
+            HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt)
+                .getString("ownerName"),
+            "sharing and clearing leave the author source unchanged");
     }
 
     private static void adaptiveStages() throws Exception {
@@ -827,6 +865,7 @@ public final class HologramBlueprintProcessingRegression {
             quantumTag.setString(HologramNetworkBindings.GROUP, "q1");
             quantumTag.setString(HologramNetworkBindings.ROLE, "join");
             quantum.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(quantumTag);
+            quantum = HologramQuantumGroups.configure(quantum, HologramQuantumGroups.groups(quantum));
             light.quantum = "clear";
             String clearNote = HologramBlueprintProcessing.process(quantum, light, 0, 0, 64, 0).cells.get(0).prompt;
             SimpleAssert.that(

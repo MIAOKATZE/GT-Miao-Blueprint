@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 import net.minecraft.block.Block;
-import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -21,9 +21,10 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.ChunkCoordIntPair;
-import net.minecraft.world.World;
+import net.minecraft.world.Teleporter;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.WorldSettings;
+import net.minecraftforge.common.DimensionManager;
 import net.minecraftforge.common.ForgeChunkManager;
 
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
@@ -44,7 +45,9 @@ public final class HologramSulfurLineSmoke {
 
     private static final String PREFIX = "[GTMB-SULFUR-LINE] ";
     private static final int SOURCE_X = 64, SOURCE_Y = 80, SOURCE_Z = 64;
-    private static final int TARGET_X = 320, TARGET_Y = 80, TARGET_Z = 320;
+    private static final int TARGET_X = "share".equals(System.getProperty("gtmb.hologram.sulfurLineIntent")) ? 512
+        : 320;
+    private static final int TARGET_Y = 80, TARGET_Z = 320;
     private static HologramSulfurLineSmoke installed;
     private final long started = System.nanoTime();
     private final NBTTagCompound findings = new NBTTagCompound();
@@ -59,6 +62,12 @@ public final class HologramSulfurLineSmoke {
     private boolean finished;
     private String session = "", result = "PENDING";
     private ItemStack quantumTerminal;
+    private final NBTTagCompound[] disconnectedNodes = new NBTTagCompound[3];
+    private final Block[] gatewayBlocks = new Block[3];
+    private final int[] gatewayMetas = new int[3];
+    private NBTTagCompound cutBaseline, restoredBaseline;
+    private int quantumCycle, stableTicks;
+    private long cutTick, stableTick;
 
     public static synchronized void install() {
         if (!enabled() || installed != null) return;
@@ -94,7 +103,15 @@ public final class HologramSulfurLineSmoke {
             require(server != null, "actual FML server exists");
             String phase = System.getProperty("gtmb.hologram.sulfurLinePhase", "source");
             require("source".equals(phase) || "target".equals(phase), "explicit source/target phase");
-            world = server.worldServerForDimension(0);
+            int dimension = Integer.getInteger("gtmb.hologram.sulfurLineDimension", "target".equals(phase) ? 777 : 0);
+            if (dimension != 0 && DimensionManager.getWorld(dimension) == null) {
+                require(
+                    !DimensionManager.isDimensionRegistered(dimension),
+                    "fresh custom target dimension must not alias another mod's registered world");
+                DimensionManager.registerDimension(dimension, 0);
+                DimensionManager.initDimension(dimension);
+            }
+            world = DimensionManager.getWorld(dimension);
             require(
                 world != null && world.getWorldInfo()
                     .getWorldName()
@@ -105,6 +122,14 @@ public final class HologramSulfurLineSmoke {
                 require(server.getConfigurationManager().playerEntityList.size() == 1, "one actual connected client");
                 actor = (EntityPlayerMP) server.getConfigurationManager().playerEntityList.get(0);
                 require(!(actor instanceof net.minecraftforge.common.util.FakePlayer), "actor is a real Netty player");
+                if (actor.dimension != dimension) server.getConfigurationManager()
+                    .transferPlayerToDimension(actor, dimension, new Teleporter(world) {
+
+                        @Override
+                        public void placeInPortal(Entity entity, double px, double py, double pz, float yaw) {
+                            entity.setLocationAndAngles(0.5, 90, 0.5, yaw, 0);
+                        }
+                    });
                 actor.theItemInWorldManager.setGameType(WorldSettings.GameType.SURVIVAL);
                 actor.capabilities.allowFlying = actor.capabilities.isFlying = true;
                 actor.sendPlayerAbilities();
@@ -126,7 +151,11 @@ public final class HologramSulfurLineSmoke {
                     actor.getGameProfile()
                         .getName());
                 findings.setString("phase", phase);
-                acquireChunks("source".equals(phase) ? 48 : 304, "source".equals(phase) ? 48 : 304);
+                findings.setInteger("dimension", dimension);
+                findings.setString("intent", System.getProperty("gtmb.hologram.sulfurLineIntent", "self"));
+                acquireChunks(
+                    "source".equals(phase) ? SOURCE_X - 16 : TARGET_X - 16,
+                    "source".equals(phase) ? SOURCE_Z - 16 : TARGET_Z - 16);
                 if ("source".equals(phase)) startSource();
                 else startTarget();
             }
@@ -150,6 +179,8 @@ public final class HologramSulfurLineSmoke {
             "SOURCE_NATIVE_PREFLIGHT_OLD_ISSUES",
             "sulfur-source-old-issues-native.nbt",
             "nativeOldIssues");
+        prepareQuantumController(SOURCE_X - 16, SOURCE_Y, SOURCE_Z + 8);
+        bank = bankStatic("create", world, actor, SOURCE_X - 16, SOURCE_Y, SOURCE_Z + 8);
         line = nativeStatic("create", world, actor, SOURCE_X, SOURCE_Y, SOURCE_Z);
         int[] controller = (int[]) call(line, "firstController");
         decor = decorStatic(
@@ -161,14 +192,10 @@ public final class HologramSulfurLineSmoke {
             controller[0],
             controller[1],
             controller[2]);
-        createQuantum(SOURCE_X - 2, SOURCE_Y, SOURCE_Z + 8, SOURCE_X + 18, SOURCE_Y, SOURCE_Z + 8, true);
         bounds = union((int[]) call(line, "bounds"), (int[]) call(decor, "bounds"));
-        bounds = union(
-            bounds,
-            new int[] { SOURCE_X + 18, SOURCE_Y, SOURCE_Z + 8, SOURCE_X + 18, SOURCE_Y, SOURCE_Z + 8 });
-        moveNear(SOURCE_X, SOURCE_Y, SOURCE_Z + 12);
         findings.setIntArray("bounds", bounds);
-        stage = 1;
+        bootstrapReady(SOURCE_X, SOURCE_Y, SOURCE_Z, true);
+        stage = 0;
     }
 
     /** Independent service-only regressions use their own finite fixture actor, inventory and world coordinates. */
@@ -193,6 +220,10 @@ public final class HologramSulfurLineSmoke {
     }
 
     private void sourceTick(MinecraftServer server) throws Exception {
+        if (stage == 0) {
+            if (!bootstrapBound(SOURCE_X, SOURCE_Y, SOURCE_Z, true)) return;
+            stage = 1;
+        }
         if (stage == 1) {
             if (!(Boolean) call(line, "ready")) return;
             call(line, "supplyInitialStock");
@@ -200,7 +231,8 @@ public final class HologramSulfurLineSmoke {
             stage = 2;
         }
         if (stage == 2) {
-            if (!(Boolean) call(line, "operational") || (Long) call(line, "acid") <= 0) return;
+            if (!findings.hasKey("sourceRunning", 10)
+                && (!(Boolean) call(line, "operational") || (Long) call(line, "acid") <= 0)) return;
             NBTTagCompound running = findings.hasKey("sourceRunning", 10) ? findings.getCompoundTag("sourceRunning")
                 : null;
             if (running == null) {
@@ -219,6 +251,7 @@ public final class HologramSulfurLineSmoke {
             require(
                 frame.getBoolean("passed") && "RenderTick.END".equals(frame.getString("capturePhase")),
                 "actual source runtime frame");
+            if (!quantumCycle("source", SOURCE_X, SOURCE_Y, SOURCE_Z)) return;
             call(line, "stop");
             findings.setTag("sourceRunningFrame", frame);
             stage = 3;
@@ -338,11 +371,16 @@ public final class HologramSulfurLineSmoke {
         for (int x = bounds[0]; x <= bounds[3]; x++)
             for (int y = bounds[1]; y <= bounds[4]; y++) for (int z = bounds[2]; z <= bounds[5]; z++)
                 require(world.isAirBlock(x, y, z), "entire new target footprint fresh air");
-        createQuantum(TARGET_X - 2, TARGET_Y, TARGET_Z + 8, 0, 0, 0, false);
-        bank = bankStatic("create", world, actor, TARGET_X - 2, TARGET_Y, TARGET_Z + 8);
-        actor.inventory.mainInventory[35] = quantumTerminal.copy();
-        actor.inventoryContainer.detectAndSendChanges();
-        moveNear(TARGET_X, TARGET_Y, TARGET_Z + 12);
+        prepareQuantumController(TARGET_X - 16, TARGET_Y, TARGET_Z + 8);
+        bank = bankStatic("create", world, actor, TARGET_X - 16, TARGET_Y, TARGET_Z + 8);
+        bootstrapReady(TARGET_X, TARGET_Y, TARGET_Z, false);
+        stage = 9;
+    }
+
+    private void targetReady() throws Exception {
+        HologramBlueprintArtifact.Artifact artifact = exportedArtifact(transfer, "exportedSha256");
+        byte[] bytes = artifact.json;
+        int[] source = transfer.getIntArray("sourceBounds");
         NBTTagCompound ready = base("TARGET_READY");
         ready.setIntArray("targetOrigin", new int[] { TARGET_X, TARGET_Y, TARGET_Z });
         ready.setIntArray("sourceBounds", source);
@@ -363,6 +401,10 @@ public final class HologramSulfurLineSmoke {
 
     private void targetTick(MinecraftServer server) throws Exception {
         failIfClientMarker("sulfur-placer-fail.txt");
+        if (stage == 9) {
+            if (!bootstrapBound(TARGET_X, TARGET_Y, TARGET_Z, false)) return;
+            targetReady();
+        }
         Object live = liveSession();
         if (stage == 10 && live != null && (Boolean) field(live, "virtualLocked")) {
             if (!(Boolean) call(bank, "ready")) return;
@@ -372,6 +414,32 @@ public final class HologramSulfurLineSmoke {
         }
         if (stage == 11) {
             require(live != null && session.equals(field(live, "id")), "placement uses the actual locked session");
+            if ("self".equals(System.getProperty("gtmb.hologram.sulfurLineIntent", "self"))) {
+                NBTTagCompound client = read("sulfur-placer-final.nbt");
+                if (client == null) return;
+                require(
+                    client.getBoolean("passed") && client.getBoolean("preservedAnchorRejected")
+                        && client.getBoolean("actualNettyClient"),
+                    "actual GUI explicitly rejected the foreign-world preserved anchor");
+                for (int px = bounds[0]; px <= bounds[3]; px++) for (int py = bounds[1]; py <= bounds[4]; py++)
+                    for (int pz = bounds[2]; pz <= bounds[5]; pz++) require(
+                        world.isAirBlock(px, py, pz),
+                        "private foreign-world blueprint rejection left the entire paid-placement footprint air");
+                NBTTagCompound before = findings.getCompoundTag("constructionMeStockBefore");
+                NBTTagCompound after = (NBTTagCompound) call(bank, "receipt");
+                require(
+                    before.getCompoundTag("currentStock")
+                        .equals(after.getCompoundTag("currentStock")),
+                    "private preserved-anchor rejection consumed no finite construction item/fluid stock");
+                findings.setTag("constructionMeStockAfter", after);
+                findings.setTag("placerClient", client.copy());
+                findings.setBoolean("preservedAnchorRejected", true);
+                findings.setBoolean("targetStockFromBlueprint", false);
+                findings.setBoolean("targetRuntimeExpected", false);
+                findings.setBoolean("allTargetFootprintAir", true);
+                finish(server, "TARGET_PRIVATE_REJECTION_PASS");
+                return;
+            }
             int job = (Integer) field(live, "job");
             if (job == 1 || job == 2 || job == 4) return;
             HologramCapture captured = (HologramCapture) field(live, "capture");
@@ -390,7 +458,8 @@ public final class HologramSulfurLineSmoke {
             findings.setTag("constructionInventoryAfter", inventory());
             call(bank, "verifyPaid");
             findings.setTag("constructionMeStockAfter", (NBTTagCompound) call(bank, "receipt"));
-            verifyTargetQuantum(TARGET_X + 18, TARGET_Y, TARGET_Z + 8);
+            for (int[] gateway : gateways(TARGET_X, TARGET_Y, TARGET_Z))
+                verifyTargetQuantum(gateway[0], gateway[1], gateway[2]);
             NBTTagCompound preSupply = (NBTTagCompound) call(line, "receipt");
             findings.setTag("targetBeforeFixtureSupply", preSupply.copy());
             for (String key : new String[] { "acid", "sulfurRemaining", "oxygenRemaining", "waterRemaining",
@@ -429,6 +498,7 @@ public final class HologramSulfurLineSmoke {
             stage = 13;
         }
         if (stage != 13) return;
+        if (!quantumCycle("target", TARGET_X, TARGET_Y, TARGET_Z)) return;
         if (!findings.getBoolean("monitorCameraReady")) {
             NBTTagCompound runtimeFrame = read("sulfur-target-running-frame.nbt");
             if (runtimeFrame == null) return;
@@ -482,7 +552,7 @@ public final class HologramSulfurLineSmoke {
         write("sulfur-materials-ready.nbt", ready);
     }
 
-    private void createQuantum(int cx, int cy, int cz, int nx, int ny, int nz, boolean withNode) throws Exception {
+    private void prepareQuantumController(int cx, int cy, int cz) {
         Block controllerBlock = AEApi.instance()
             .definitions()
             .blocks()
@@ -496,54 +566,14 @@ public final class HologramSulfurLineSmoke {
         require(controller instanceof TileController, "registered native AE controller factory");
         ((IGridProxyable) controller).getProxy()
             .setOwner(actor);
-        ((IGridProxyable) controller).getProxy()
-            .onReady();
-        Class<?> registry = Class.forName("com.miaokatze.gtswn.common.quantum.QuantumControllerRegistry");
-        Object saved = registry.getMethod("get", World.class)
-            .invoke(null, world);
-        registry.getMethod("quantize", int.class, int.class, int.class)
-            .invoke(saved, cx, cy, cz);
         Item terminal = null;
         for (Object candidate : Item.itemRegistry) if (candidate instanceof Item && candidate.getClass()
             .getName()
             .equals("com.miaokatze.gtswn.common.items.ItemNetworkQuantumTerminal")) terminal = (Item) candidate;
         require(terminal != null, "native GTSWN quantum terminal item registered");
         quantumTerminal = new ItemStack(terminal);
-        // GTSWN 1.8.64's native fixture writer is private; it also writes the mandatory bound marker.
-        Method writeAnchor = terminal.getClass()
-            .getDeclaredMethod("writeAnchor", ItemStack.class, World.class, int.class, int.class, int.class);
-        writeAnchor.setAccessible(true);
-        writeAnchor.invoke(null, quantumTerminal, world, cx, cy, cz);
-        require(
-            (Boolean) terminal.getClass()
-                .getMethod("isBound", ItemStack.class)
-                .invoke(null, quantumTerminal),
-            "native quantum terminal binding writer produced a bound fixture terminal");
-        int[] boundAnchor = (int[]) terminal.getClass()
-            .getMethod("getAnchor", ItemStack.class)
-            .invoke(null, quantumTerminal);
-        require(
-            Arrays.equals(boundAnchor, new int[] { world.provider.dimensionId, cx, cy, cz }),
-            "native quantum terminal anchor exactly matches this actor's fixture controller");
-        if (!withNode) return;
-        Block node = null;
-        for (Object candidate : Block.blockRegistry)
-            if (candidate instanceof Block && HologramNetworkBindings.node((Block) candidate)) node = (Block) candidate;
-        require(
-            node != null && world.isAirBlock(nx, ny, nz) && world.setBlock(nx, ny, nz, node, 0, 3),
-            "native GTSWN node installed");
-        TileEntity nativeNode = world.getTileEntity(nx, ny, nz);
-        require(
-            nativeNode != null && HologramNetworkBindings.NODE_TILE.equals(
-                nativeNode.getClass()
-                    .getName()),
-            "native GTSWN node factory");
-        nativeNode.getClass()
-            .getMethod("setAnchor", int.class, int.class, int.class, int.class)
-            .invoke(nativeNode, world.provider.dimensionId, cx, cy, cz);
-        nativeNode.getClass()
-            .getMethod("setPlacer", EntityPlayer.class)
-            .invoke(nativeNode, actor);
+        actor.inventory.mainInventory[1] = quantumTerminal;
+        actor.inventoryContainer.detectAndSendChanges();
     }
 
     private void verifyTargetQuantum(int x, int y, int z) throws Exception {
@@ -556,7 +586,7 @@ public final class HologramSulfurLineSmoke {
         NBTTagCompound tag = new NBTTagCompound();
         node.writeToNBT(tag);
         require(
-            tag.getInteger("anchorDim") == world.provider.dimensionId && tag.getInteger("anchorX") == TARGET_X - 2
+            tag.getInteger("anchorDim") == world.provider.dimensionId && tag.getInteger("anchorX") == TARGET_X - 16
                 && tag.getInteger("anchorY") == TARGET_Y
                 && tag.getInteger("anchorZ") == TARGET_Z + 8,
             "node rebound to placing player's chosen controller");
@@ -569,6 +599,229 @@ public final class HologramSulfurLineSmoke {
                 .getPlayerID() == playerId,
             "target native grid node owner is current placer");
         findings.setTag("targetQuantumNode", tag);
+    }
+
+    private void bootstrapReady(int x, int y, int z, boolean source) throws Exception {
+        moveNear(x - 16, y, z + 10);
+        NBTTagCompound ready = base("QUANTUM_BOOTSTRAP_READY");
+        ready.setIntArray("controller", new int[] { x - 16, y, z + 8 });
+        ready.setIntArray("gateway", new int[] { x + 13, y + 1, z + 3 });
+        ready.setIntArray("gatewaySupport", new int[] { x + 12, y + 1, z + 3 });
+        ready.setBoolean("source", source);
+        ready.setInteger("terminalHotbarSlot", 1);
+        ready.setBoolean("passed", true);
+        write("sulfur-quantum-bootstrap-ready.nbt", ready);
+    }
+
+    private boolean bootstrapBound(int x, int y, int z, boolean source) throws Exception {
+        if (!(Boolean) call(bank, "controllerReady")) return false;
+        if (!(Boolean) quantumTerminal.getItem()
+            .getClass()
+            .getMethod("isBound", ItemStack.class)
+            .invoke(null, quantumTerminal)) return false;
+        int[] anchor = (int[]) quantumTerminal.getItem()
+            .getClass()
+            .getMethod("getAnchor", ItemStack.class)
+            .invoke(null, quantumTerminal);
+        require(
+            Arrays.equals(anchor, new int[] { world.provider.dimensionId, x - 16, y, z + 8 }),
+            "actual terminal native controller click bound this player's own remote controller");
+        actor.inventory.mainInventory[35] = quantumTerminal.copy();
+        actor.inventoryContainer.detectAndSendChanges();
+        if (read("sulfur-quantum-native-bound.nbt") == null) {
+            NBTTagCompound bound = base("QUANTUM_NATIVE_CONTROLLER_BOUND");
+            bound.setBoolean("passed", true);
+            bound.setIntArray("controller", new int[] { x - 16, y, z + 8 });
+            bound.setTag("terminal", quantumTerminal.writeToNBT(new NBTTagCompound()));
+            write("sulfur-quantum-native-bound.nbt", bound);
+        }
+        if (!findings.getBoolean("storageGatewayPlacementReady")) {
+            moveNear(x - 14, y, z + 13);
+            NBTTagCompound ready = base("QUANTUM_NATIVE_STORAGE_GATEWAY_PLACEMENT");
+            ready.setBoolean("passed", true);
+            ready.setIntArray("drive", new int[] { x - 12, y, z + 11 });
+            ready.setIntArray("storageGateway", new int[] { x - 13, y, z + 11 });
+            write("sulfur-quantum-native-storage-place-ready.nbt", ready);
+            findings.setBoolean("storageGatewayPlacementReady", true);
+        }
+        if (!(Boolean) call(bank, "ready")) return false;
+        if (source) {
+            int[][] positions = gateways(x, y, z);
+            int[][] supports = { { x + 12, y + 1, z + 3, 5 }, { x + 3, y + 1, z + 3, 3 }, { x + 8, y + 1, z + 3, 3 } };
+            for (int i = 0; i < positions.length; i++) {
+                int[] point = positions[i];
+                TileEntity node = world.getTileEntity(point[0], point[1], point[2]);
+                if (node == null) {
+                    String filename = "sulfur-quantum-native-place-" + i + "-ready.nbt";
+                    if (read(filename) == null) {
+                        moveNear(point[0], y, point[2] + 3);
+                        NBTTagCompound ready = base("QUANTUM_NATIVE_GATEWAY_PLACEMENT");
+                        ready.setBoolean("passed", true);
+                        ready.setInteger("gatewayIndex", i);
+                        ready.setIntArray("gatewaySupport", supports[i]);
+                        ready.setTag("terminal", quantumTerminal.writeToNBT(new NBTTagCompound()));
+                        write(filename, ready);
+                    }
+                    return false;
+                }
+                require(
+                    HologramNetworkBindings.NODE_TILE.equals(
+                        node.getClass()
+                            .getName()),
+                    "actual native gateway at each location");
+            }
+            if (!(Boolean) call(line, "operational")) return false;
+        }
+        if (read("sulfur-quantum-native-bind-frame.nbt") == null) return false;
+        moveNear(x, y, z + 12);
+        NBTTagCompound proof = base("QUANTUM_NATIVE_BOOTSTRAP_COMPLETE");
+        proof.setBoolean("passed", true);
+        proof.setTag("terminal", quantumTerminal.writeToNBT(new NBTTagCompound()));
+        proof.setString("bindingMethod", "real Netty client C08 native terminal click on its own active controller");
+        if (source) proof.setTag("topology", (NBTTagCompound) call(line, "topology"));
+        findings.setTag("quantumBootstrap", proof);
+        write("sulfur-quantum-bootstrap-complete.nbt", proof);
+        return true;
+    }
+
+    /** Physical gateway fault injection invokes native block invalidation; no AE proxy/connection is edited. */
+    private boolean quantumCycle(String label, int x, int y, int z) throws Exception {
+        if (quantumCycle == 4) return true;
+        int[][] positions = gateways(x, y, z);
+        if (quantumCycle == 0) {
+            if (read("sulfur-" + label + "-running-frame.nbt") == null) return false;
+            NBTTagCompound before = (NBTTagCompound) call(line, "receipt");
+            require(before.getBoolean("operational"), "cut begins on the actually operating remote quantum grid");
+            NBTTagList removed = new NBTTagList();
+            for (int i = 0; i < positions.length; i++) {
+                int[] point = positions[i];
+                TileEntity node = world.getTileEntity(point[0], point[1], point[2]);
+                require(
+                    node != null && HologramNetworkBindings.NODE_TILE.equals(
+                        node.getClass()
+                            .getName()),
+                    "each physical production quantum gateway exists before fault injection");
+                gatewayBlocks[i] = world.getBlock(point[0], point[1], point[2]);
+                gatewayMetas[i] = world.getBlockMetadata(point[0], point[1], point[2]);
+                disconnectedNodes[i] = new NBTTagCompound();
+                node.writeToNBT(disconnectedNodes[i]);
+                removed.appendTag(disconnectedNodes[i].copy());
+                require(world.setBlockToAir(point[0], point[1], point[2]), "physical gateway removal accepted");
+                require(
+                    world.isAirBlock(point[0], point[1], point[2])
+                        && world.getTileEntity(point[0], point[1], point[2]) == null,
+                    "actual gateway block and tile removed");
+            }
+            cutTick = world.getTotalWorldTime();
+            NBTTagCompound cut = base("QUANTUM_GATEWAY_PHYSICALLY_REMOVED");
+            cut.setBoolean("passed", true);
+            cut.setTag("before", before);
+            cut.setTag("removedNativeTiles", removed);
+            write("sulfur-" + label + "-quantum-cut.nbt", cut);
+            quantumCycle = 1;
+            return false;
+        }
+        if (quantumCycle == 1) {
+            for (int[] point : positions) require(
+                world.isAirBlock(point[0], point[1], point[2]),
+                "all gateways stay physically absent throughout drain and stop witness");
+            require(!(Boolean) call(line, "operational"), "physical quantum cut separates the operating network");
+            NBTTagCompound now = (NBTTagCompound) call(line, "receipt");
+            require(
+                !now.getCompoundTag("topology")
+                    .getBoolean("allInputsOnRemoteGrid"),
+                "actual local input grid is separated from the remote storage grid");
+            require(
+                world.getTotalWorldTime() - cutTick <= 2400,
+                "finite in-flight recipe/buffer drain must stop within 2400 natural ticks");
+            if (world.getTotalWorldTime() - cutTick < 200) return false;
+            if (cutBaseline == null || !sameRuntime(cutBaseline, now)) {
+                cutBaseline = now;
+                stableTick = world.getTotalWorldTime();
+                stableTicks = 0;
+                return false;
+            }
+            stableTicks++;
+            if (stableTicks < 200) return false;
+            NBTTagCompound stopped = base("QUANTUM_DISCONNECTED_BUFFER_DRAINED_STOPPED");
+            stopped.setBoolean("passed", true);
+            stopped.setLong("cutTick", cutTick);
+            stopped.setLong("stableStartTick", stableTick);
+            stopped.setInteger("consecutiveStableTicks", stableTicks);
+            stopped.setBoolean("gatewayPhysicallyAbsent", true);
+            stopped.setTag("stableStart", cutBaseline.copy());
+            stopped.setTag("stableEnd", now);
+            write("sulfur-" + label + "-quantum-stopped.nbt", stopped);
+            findings.setTag("quantumDisconnectedStop", stopped.copy());
+            quantumCycle = 2;
+            return false;
+        }
+        if (quantumCycle == 2) {
+            if (read("sulfur-" + label + "-quantum-stopped-frame.nbt") == null) return false;
+            for (int i = 0; i < positions.length; i++) {
+                int[] point = positions[i];
+                require(
+                    world.setBlock(point[0], point[1], point[2], gatewayBlocks[i], gatewayMetas[i], 3),
+                    "physical gateway restoration accepted");
+                TileEntity restored = world.getTileEntity(point[0], point[1], point[2]);
+                require(
+                    restored != null && HologramNetworkBindings.NODE_TILE.equals(
+                        restored.getClass()
+                            .getName()),
+                    "restored actual native gateway factory");
+                restored.readFromNBT((NBTTagCompound) disconnectedNodes[i].copy());
+                restored.markDirty();
+                world.markBlockForUpdate(point[0], point[1], point[2]);
+            }
+            restoredBaseline = (NBTTagCompound) call(line, "receipt");
+            quantumCycle = 3;
+            return false;
+        }
+        NBTTagCompound now = (NBTTagCompound) call(line, "receipt");
+        if (!now.getBoolean("operational") || now.getLong("acid") <= restoredBaseline.getLong("acid")
+            || now.getLong("sulfurRemaining") >= restoredBaseline.getLong("sulfurRemaining")
+            || now.getLong("waterRemaining") >= restoredBaseline.getLong("waterRemaining")) return false;
+        NBTTagList baselineMachines = restoredBaseline.getTagList("machines", 10),
+            machines = now.getTagList("machines", 10);
+        for (int i = 0; i < 3; i++) {
+            NBTTagCompound before = baselineMachines.getCompoundTagAt(i), after = machines.getCompoundTagAt(i);
+            if (after.getLong("nativeRecipesDone") <= before.getLong("nativeRecipesDone")
+                && after.getTagList("nativeCompletionBoundaries", 10)
+                    .tagCount()
+                    <= before.getTagList("nativeCompletionBoundaries", 10)
+                        .tagCount())
+                return false;
+        }
+        if (!findings.hasKey("quantumRestoredProduction", 10)) {
+            NBTTagCompound resumed = base("QUANTUM_RESTORED_NATIVE_ACID_PRODUCTION");
+            resumed.setBoolean("passed", true);
+            resumed.setTag("restoredBaseline", restoredBaseline.copy());
+            resumed.setTag("nativeLine", now);
+            resumed.setBoolean("additionalFixtureStockOrPowerInjected", false);
+            write("sulfur-" + label + "-quantum-restored.nbt", resumed);
+            findings.setTag("quantumRestoredProduction", resumed.copy());
+        }
+        if (read("sulfur-" + label + "-quantum-restored-frame.nbt") == null) return false;
+        quantumCycle = 4;
+        return true;
+    }
+
+    private static int[][] gateways(int x, int y, int z) {
+        return new int[][] { { x + 13, y + 1, z + 3 }, { x + 3, y + 1, z + 4 }, { x + 8, y + 1, z + 4 } };
+    }
+
+    private static boolean sameRuntime(NBTTagCompound before, NBTTagCompound after) {
+        for (String key : new String[] { "sulfurRemaining", "oxygenRemaining", "waterRemaining", "acid",
+            "sulfurDioxide", "sulfurTrioxide" }) if (before.getLong(key) != after.getLong(key)) return false;
+        NBTTagList a = before.getTagList("machines", 10), b = after.getTagList("machines", 10);
+        for (int i = 0; i < 3; i++) {
+            NBTTagCompound left = a.getCompoundTagAt(i), right = b.getCompoundTagAt(i);
+            for (String key : new String[] { "nativeRecipesDone", "progress", "maxProgress", "batteryRemainingEU" })
+                if (left.getLong(key) != right.getLong(key)) return false;
+            if (!left.getTagList("outputCache", 10)
+                .equals(right.getTagList("outputCache", 10))) return false;
+        }
+        return true;
     }
 
     private NBTTagCompound inventory() {
@@ -605,6 +858,7 @@ public final class HologramSulfurLineSmoke {
         tag.setInteger("sourceDimension", world.provider.dimensionId);
         tag.setLong("worldTick", world.getTotalWorldTime());
         tag.setInteger("runtimeSequence", ticks);
+        tag.setString("intent", System.getProperty("gtmb.hologram.sulfurLineIntent", "self"));
         return tag;
     }
 
@@ -630,8 +884,10 @@ public final class HologramSulfurLineSmoke {
                     && machine.getInteger("observedProgress") > 0,
                 "each native reactor naturally progressed and completed recipe " + stage);
             require(
-                machine.getLong("euInjected") > 0 && machine.getLong("euInjected") <= 2000000L,
-                "finite per-reactor native energy budget " + stage);
+                machine.getLong("batteryInitialEU") > 0 && machine.getLong("batteryInitialEU") <= 100000L
+                    && machine.getLong("batteryDebitedEU") > 0
+                    && machine.getLong("fixtureDirectHatchEuInjected") == 0,
+                "finite real battery naturally powered native energy hatch " + stage);
             require(
                 machine.getBoolean("automaticMaintenance") && machine.getInteger("repairStatus") == 6,
                 "real automatic maintenance hatch restored all six native repair flags " + stage);
@@ -751,7 +1007,7 @@ public final class HologramSulfurLineSmoke {
         require(ticket != null, "native sulfur fixture chunk ticket");
         ticket.getModData()
             .setBoolean("gtmbSulfurProbe", true);
-        for (int cx = x >> 4; cx <= (x + 63) >> 4; cx++) for (int cz = z >> 4; cz <= (z + 47) >> 4; cz++) {
+        for (int cx = (x - 16) >> 4; cx <= (x + 63) >> 4; cx++) for (int cz = z >> 4; cz <= (z + 47) >> 4; cz++) {
             world.theChunkProviderServer.loadChunk(cx, cz);
             ChunkCoordIntPair position = new ChunkCoordIntPair(cx, cz);
             chunks.add(position);

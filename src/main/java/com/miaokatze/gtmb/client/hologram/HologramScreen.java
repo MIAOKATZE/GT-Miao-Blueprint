@@ -1642,6 +1642,8 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private int contextualAccent(int id) {
+        if (id == 263 && processingFlow != null && processingFlow.stage == 2 && !quantumGroupsConfirmed())
+            return 0x80efaa;
         if (id == 231 && processingFlow != null && processingFlow.optional()) return 0x80efaa;
         if (!state.data.getBoolean("virtual")) {
             boolean configured = basicConfigured || state.data.getBoolean("presetActive");
@@ -1712,6 +1714,33 @@ public final class HologramScreen extends GuiScreen {
 
     private NBTTagCompound processingState() {
         return state.data.getCompoundTag("processing");
+    }
+
+    private boolean quantumGroupsConfirmed() {
+        return processingState().getTagList("quantumNodes", 10)
+            .tagCount() == 0 || processingState().getBoolean("quantumGroupsConfirmed");
+    }
+
+    private boolean processingChoiceReady() {
+        processingFlow.quantumGroups(
+            processingState().getTagList("quantumNodes", 10)
+                .tagCount() > 0,
+            quantumGroupsConfirmed());
+        return processingFlow.chosen();
+    }
+
+    long saveQuantumGroups(NBTTagList groups, long sourceRevision) {
+        if (sourceRevision != revision()) return -1;
+        NBTTagCompound request = new NBTTagCompound();
+        request.setLong("planRevision", sourceRevision);
+        request.setTag("groups", groups.copy());
+        send("configureBlueprintQuantumGroups", request, true);
+        return sequence;
+    }
+
+    void quantumGroupsSaved() {
+        if (processingFlow != null && processingFlow.stage == 2) processingFlow.choose();
+        notice = "本图量子类群已保存";
     }
 
     private NBTTagList processingList(String key, int type) {
@@ -1801,27 +1830,49 @@ public final class HologramScreen extends GuiScreen {
             text("按已登记设备字段逐级处理；已清除的数据无法恢复", 42, 210, 588, 0x94afb4);
             text("当前最低等级 " + minimum + "；只有点击等级才确认本步骤", 42, 185, 588, 0x94afb4);
         } else if (stage == 2) {
-            text("量子绑定影响放置后的真实网络；选择下一次如何处理绑定", 42, 103, 588, 0xb9d5d4);
+            text("自用保留原网络；分享使用自己的终端。每张图仍需明确确认节点分类。", 42, 103, 588, 0xb9d5d4);
+            button(
+                262,
+                42,
+                121,
+                588,
+                22,
+                ("preserve".equals(policy.getString("quantum")) ? "✓ " : "") + "自用：保留原量子绑定（仅原存档、原网络位置与维度有效）",
+                true,
+                mx,
+                my);
             button(
                 260,
                 42,
-                125,
+                149,
                 588,
-                24,
-                ("rebind".equals(policy.getString("quantum")) ? "✓ " : "") + "保留网络组，放置时用自己的终端重新绑定",
+                22,
+                ("rebind".equals(policy.getString("quantum")) ? "✓ " : "") + "分享：去除源网络锚定，逐类群选择自己的终端重新绑定",
                 true,
                 mx,
                 my);
             button(
                 261,
                 42,
-                158,
+                177,
                 588,
-                24,
-                ("clear".equals(policy.getString("quantum")) ? "✓ " : "") + "清除量子网络绑定，由接收者自行设置",
+                22,
+                ("clear".equals(policy.getString("quantum")) ? "✓ " : "") + "完全清除分组，放置为未绑定节点",
                 true,
                 mx,
                 my);
+            button(
+                263,
+                42,
+                208,
+                588,
+                23,
+                quantumGroupsConfirmed() ? "量子节点网络分类 · 本图已确认，可重新编辑" : "量子节点网络分类 · 请配置并确认本图",
+                editable() && processingState().getTagList("quantumNodes", 10)
+                    .tagCount() > 0,
+                mx,
+                my);
+            text("所有节点默认属于“默认网络”；未分类节点会阻止保存及下一步。", 42, 235, 588, 0x94afb4);
         } else if (stage == 3) {
             text("每项坐标可清除、保留绝对位置、或随蓝图相对移动", 42, 103, 588, 0xb9d5d4);
             if (mx >= 42 && mx < 630 && my >= 100 && my < 140) tooltip = fontRendererObj.listFormattedStringToWidth(
@@ -1943,7 +1994,7 @@ public final class HologramScreen extends GuiScreen {
             318,
             20,
             stage == 5 ? "完成处理 · 等待服务器校验" : processingFlow.optional() ? "下一步 · 本步可跳过" : "下一步",
-            editable() && processingFlow.chosen(),
+            editable() && processingChoiceReady(),
             mx,
             my);
     }
@@ -2000,7 +2051,7 @@ public final class HologramScreen extends GuiScreen {
             return true;
         }
         if (id == 231) {
-            if (!processingFlow.chosen()) return true;
+            if (!processingChoiceReady()) return true;
             if (processingFlow.stage < 5) processingFlow.next();
             else {
                 processingFlow.next();
@@ -2054,9 +2105,12 @@ public final class HologramScreen extends GuiScreen {
         } else if (id >= 240 && id <= 250) {
             values.setInteger("deidentificationLevel", id - 240);
             processingFlow.choose();
-        } else if (id == 260 || id == 261) {
-            values.setString("quantum", id == 260 ? "rebind" : "clear");
+        } else if (id == 260 || id == 261 || id == 262) {
+            values.setString("quantum", id == 260 ? "rebind" : id == 261 ? "clear" : "preserve");
             processingFlow.choose();
+        } else if (id == 263) {
+            if (editable() && processingState().getTagList("quantumNodes", 10)
+                .tagCount() > 0) mc.displayGuiScreen(new HologramQuantumGroupsScreen(this, state));
         } else if (id >= 270 && id <= 273) {
             values.setString("coordinateDefault", new String[] { "auto", "clear", "absolute", "relative" }[id - 270]);
             processingFlow.choose();
@@ -3024,20 +3078,35 @@ public final class HologramScreen extends GuiScreen {
         controls.clear();
         tooltip = null;
         drawRect(35, 50, 645, 299, 0xfc172f36);
-        text("量子网络分组绑定", 50, 64, 570, 0xffe59b);
-        text("选择携带网络坐标的真实量子节点或终端；物品保留在背包，施工前重新核验权限。", 50, 81, 570, 0xa9d6cf);
+        boolean terminalBinding = state.data.getCompoundTag("networkBindings")
+            .getBoolean("terminalBinding");
+        text(terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原绑定", 50, 64, 570, 0xffe59b);
+        text(
+            terminalBinding ? "逐组点击名称，再选择背包中自己的量子终端；所有类群完成后才可确认放置。" : "自用蓝图保留原网络；换存档、原锚点位置或维度不符时无法使用，请按原因核对。",
+            50,
+            81,
+            570,
+            0xa9d6cf);
         NBTTagList groups = networkGroups();
         networkGroupIndex = Math.max(0, Math.min(networkGroupIndex, groups.tagCount() - 1));
         networkGroupOffset = Math.max(0, Math.min(networkGroupOffset, Math.max(0, groups.tagCount() - 5)));
         for (int i = networkGroupOffset; i < Math.min(groups.tagCount(), networkGroupOffset + 5); i++) {
             NBTTagCompound row = groups.getCompoundTagAt(i);
-            String label = (i == networkGroupIndex ? "▶ " : "") + row.getString(
-                "id") + " · " + row.getInteger("cells") + " 格 · " + (row.getBoolean("bound") ? "已绑定" : "待绑定");
+            String groupName = row.getString("name");
+            if (groupName.isEmpty()) groupName = row.getString("hint");
+            if (groupName.isEmpty()) groupName = row.getString("id");
+            String label = (i == networkGroupIndex ? "▶ " : "") + groupName
+                + " · "
+                + row.getInteger("cells")
+                + " 格 · "
+                + (row.getBoolean("bound") ? "已就绪" : "待处理");
             button(60000 + i, 50, 103 + (i - networkGroupOffset) * 22, 325, 19, label, pendingSequence < 0, mx, my);
         }
         NBTTagList inventory = state.data.getCompoundTag("networkBindings")
             .getTagList("inventory", 10);
-        text("主背包与快捷栏", 405, 101, 216, 0xa9d6cf);
+        boolean selectedTerminalBinding = groups.tagCount() > 0 && groups.getCompoundTagAt(networkGroupIndex)
+            .getBoolean("terminalBinding");
+        text(selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : "原网络绑定 · 无需选择终端", 405, 101, 216, 0xa9d6cf);
         for (int slot = 0; slot < 36; slot++) {
             int x = 405 + (slot % 9) * 23;
             int y = slot < 9 ? 194 : 121 + ((slot - 9) / 9) * 23;
@@ -3045,34 +3114,46 @@ public final class HologramScreen extends GuiScreen {
             for (int i = 0; i < inventory.tagCount(); i++) if (inventory.getCompoundTagAt(i)
                 .getInteger("slot") == slot) row = inventory.getCompoundTagAt(i);
             boolean available = row != null && row.getBoolean("available");
-            button(61000 + slot, x, y, 21, 21, "", available && groups.tagCount() > 0 && pendingSequence < 0, mx, my);
+            button(61000 + slot, x, y, 21, 21, "", selectedTerminalBinding && available && pendingSequence < 0, mx, my);
             if (row != null) {
                 ItemStack display = ItemStack.loadItemStackFromNBT(row.getCompoundTag("item"));
                 if (display != null) drawItem(display, x + 2, y + 2);
                 if (mx >= x && mx < x + 21 && my >= y && my < y + 21) {
                     tooltip = new ArrayList<>();
                     tooltip.add(row.getString("name"));
-                    tooltip.add(available ? "点击绑定所选网络组" : HologramUiText.reason(row.getString("reason")));
+                    tooltip.add(
+                        !selectedTerminalBinding ? "本类群保留原绑定，请核对原网络可用性"
+                            : available ? "点击绑定所选网络类群" : HologramUiText.reason(row.getString("reason")));
                     if (!available) tooltip.add("技术诊断：" + row.getString("reason"));
                 }
             }
         }
         if (groups.tagCount() > 0) {
             if (networkHintField != null) networkHintField.drawTextBox();
-            text("提示同步同组设备，保存后可共享", 405, 223, 210, 0x94afb4);
             NBTTagCompound selectedGroup = groups.getCompoundTagAt(networkGroupIndex);
-            text(selectedGroup.getString("hint"), 50, 242, 570, 0xffe59b);
+            text(selectedGroup.getString("name") + " · " + selectedGroup.getString("hint"), 50, 242, 570, 0xffe59b);
             if (!selectedGroup.getBoolean("bound"))
                 text(HologramUiText.reason(selectedGroup.getString("reason")), 50, 257, 570, 0xff9292);
         } else text("此蓝图没有需要重新绑定的量子网络组", 50, 242, 570, 0x94afb4);
         button(198, 50, 273, 95, 17, "上一组页", networkGroupOffset > 0, mx, my);
         button(199, 151, 273, 95, 17, "下一组页", networkGroupOffset + 5 < groups.tagCount(), mx, my);
         button(200, 252, 273, 123, 17, "应用本组提示", editable() && groups.tagCount() > 0 && pendingSequence < 0, mx, my);
-        button(197, 405, 273, 210, 17, "返回 · Esc / E", true, mx, my);
+        button(201, 405, 220, 210, 17, "取消 / 返回 · Esc / E", pendingSequence < 0, mx, my);
+        button(
+            197,
+            405,
+            273,
+            210,
+            17,
+            "确认全部类群 · 返回放置",
+            pendingSequence < 0 && HologramPlacementConfirmation.networksReady(state.data),
+            mx,
+            my);
     }
 
     private void activateNetworkBinding(int id) {
-        if (id == 197) {
+        if (id == 197 || id == 201) {
+            if (id == 197 && !HologramPlacementConfirmation.networksReady(state.data)) return;
             networkDrawer = false;
             send("closeNetworkBindings", new NBTTagCompound(), true);
         } else if (id == 198) networkGroupOffset = Math.max(0, networkGroupOffset - 5);
@@ -3089,6 +3170,8 @@ public final class HologramScreen extends GuiScreen {
             networkGroupIndex = id - 60000;
             loadNetworkHintField();
         } else if (id >= 61000 && id < 61036 && networkGroupIndex < networkGroups().tagCount()) {
+            if (!networkGroups().getCompoundTagAt(networkGroupIndex)
+                .getBoolean("terminalBinding")) return;
             NBTTagCompound action = new NBTTagCompound();
             action.setString(
                 "group",
@@ -3447,6 +3530,11 @@ public final class HologramScreen extends GuiScreen {
         result.setBoolean("processingFlow", processingFlow != null);
         result.setInteger("flowStage", processingFlow == null ? -1 : processingFlow.stage);
         result.setBoolean("flowChosen", processingFlow != null && processingFlow.chosen());
+        result.setBoolean("flowQuantumGroupsConfirmed", quantumGroupsConfirmed());
+        result.setTag(
+            "quantumGroups",
+            processingState().getTagList("quantumGroups", 10)
+                .copy());
         result.setBoolean("flowFullReview", processingFlow != null && processingFlow.fullReview());
         result.setInteger("flowRequiredStages", processingFlow == null ? -1 : processingFlow.requiredStages());
         result.setBoolean("processingComplete", state.data.getBoolean("blueprintProcessingComplete"));
@@ -3489,6 +3577,12 @@ public final class HologramScreen extends GuiScreen {
         result.setBoolean("sourceDrawer", sourceDrawer);
         result.setBoolean("roleDropdown", roleDropdown);
         result.setBoolean("networkDrawer", networkDrawer);
+        result.setInteger("networkGroupIndex", networkGroupIndex);
+        result.setBoolean("networkGroupsReady", HologramPlacementConfirmation.networksReady(state.data));
+        result.setTag(
+            "networkBindings",
+            state.data.getCompoundTag("networkBindings")
+                .copy());
         result.setBoolean("aeReview", aeReview != null);
         result.setBoolean("aeReviewNavigation", aeReviewNavigation != null);
         result.setBoolean("adminDrawer", libraryAdminDrawer);
@@ -4207,6 +4301,7 @@ public final class HologramScreen extends GuiScreen {
             lastConfirmationAction,
             editable() && (state.data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
                 && confirmedRevision == revision()
+                && HologramPlacementConfirmation.networksReady(state.data)
                 && (state.data.getBoolean("blueprintAwaitingConfirmation")
                     || HologramPlacementConfirmation.canBuild(state.data, confirmedRevision))
                 && (state.data.getBoolean("blueprintAwaitingConfirmation") || !state.data.getBoolean("virtual")
@@ -4602,7 +4697,9 @@ public final class HologramScreen extends GuiScreen {
                         : versionsDrawer ? HologramGuidance.modalAccent(id, 160, 151)
                             : resetReview ? HologramGuidance.modalAccent(id, 137, 136)
                                 : HologramGuidance.accent(id, state, selected, libraryDrawer, confirmation);
-        if (processingFlow != null) accent = HologramGuidance.modalAccent(id, 231, 234);
+        if (processingFlow != null)
+            accent = id == 263 && processingFlow.stage == 2 && !quantumGroupsConfirmed() ? 0x80efaa
+                : HologramGuidance.modalAccent(id, 231, 234);
         else if (discardReview || overwriteReview || processingPresetSaveReview)
             accent = HologramGuidance.modalAccent(id, 224, 225);
         else if (aeReview == null && !nbtDrawer && !promptDrawer && !versionsDrawer && !confirmation && !resetReview) {
@@ -5335,7 +5432,7 @@ public final class HologramScreen extends GuiScreen {
         if (networkDrawer) {
             if (key == Keyboard.KEY_ESCAPE
                 || key == Keyboard.KEY_E && (networkHintField == null || !networkHintField.isFocused()))
-                activateNetworkBinding(197);
+                activateNetworkBinding(201);
             else if (networkHintField != null) {
                 if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) activateNetworkBinding(200);
                 else networkHintField.textboxKeyTyped(c, key);
@@ -6223,6 +6320,7 @@ public final class HologramScreen extends GuiScreen {
                 if (!initialStructureSetupRequired() && editable()
                     && confirmation
                     && confirmedRevision == revision()
+                    && HologramPlacementConfirmation.networksReady(state.data)
                     && (state.data.getBoolean("blueprintAwaitingConfirmation")
                         || HologramPlacementConfirmation.canBuild(state.data, confirmedRevision))) {
                     NBTTagCompound n = new NBTTagCompound();

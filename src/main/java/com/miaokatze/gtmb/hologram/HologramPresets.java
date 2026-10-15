@@ -147,6 +147,7 @@ final class HologramPresets {
         boolean deidentificationChosen;
         // Schema 2 extension: a bounded binary NBT receipt, never a recoverable copy of stripped identities.
         String processingNbt;
+        String quantumGroupingNbt;
         List<HologramAePolicy.Issue> aeIssues = new ArrayList<>();
         boolean retainNbt = true, retainCovers = true;
         String prompt, sourceMod, sourceClass;
@@ -315,8 +316,9 @@ final class HologramPresets {
                 if (!difference.isEmpty()) return difference;
             }
             return path + "/length";
-        } else if ((path.endsWith("/tileNbt") || path.endsWith("/itemNbt") || path.endsWith("/processingNbt"))
-            && reviewed != null
+        } else if ((path.endsWith("/tileNbt") || path.endsWith("/itemNbt")
+            || path.endsWith("/processingNbt")
+            || path.endsWith("/quantumGroupingNbt")) && reviewed != null
             && checked != null
             && reviewed.isJsonPrimitive()
             && checked.isJsonPrimitive()) {

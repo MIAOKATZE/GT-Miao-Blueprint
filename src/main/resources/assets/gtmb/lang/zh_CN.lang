@@ -5,7 +5,7 @@ item.neko_hologram_projector.tooltip.2=右击锁定绿色预览，边框变青�
 item.neko_hologram_projector.tooltip.3=Shift右击开始区域框选；左右键设两角，Ctrl加选、Ctrl+Shift减选，Ctrl+Z撤销。
 item.neko_hologram_projector.tooltip.4=框选：再次Shift+右击完成，Esc取消。锁定预览：Shift+右击解锁；移动预览：R水平转、Ctrl+R垂直转。
 item.neko_hologram_projector.tooltip.5=界面：Ctrl点击多选，Shift拖动框选，Ctrl+X/C/V编辑，RGB轴移动。
-item.neko_hologram_projector.tooltip.6=直接框选悬空角点；Alt+滚轮调节距离（0–64格，0为脚下）；普通滚轮切换物品。预览界面 WASD 移动摄像机。
+item.neko_hologram_projector.tooltip.6=指向方块时贴面定位，无命中时悬空；Alt强制悬空，Alt+滚轮调距（0–64格，0为脚下）；普通滚轮切物品。预览界面WASD移动摄像机。
 item.neko_hologram_projector.tooltip.7=青色锁定时：方向键按视角微调一格，Alt+上下调整高度；长按可慢速连续微调，之后右击重新核对材料。
 gtmb.hologram.apply=应用
 gtmb.hologram.back=返回预览
@@ -98,7 +98,7 @@ gtmb.hologram.worldGuideLockedTarget=锁定目标 %d, %d, %d
 gtmb.hologram.worldGuideJob=正在施工 · 右击查看进度与操作
 gtmb.hologram.worldGuideAreaImport=正在导入框选区域 · Esc 取消，当前蓝图保留
 gtmb.hologram.worldGuideAreaRegions=已确认 %d 个加选区域 / %d 个减选区域
-gtmb.hologram.worldGuideTarget=悬空距离 %d 格 · 目标 %d, %d, %d · 直接框选悬空角点 · Alt+滚轮调距（0=脚下）
+gtmb.hologram.worldGuideTarget=悬空距离 %d 格 · 目标 %d, %d, %d · 命中方块定位／无命中悬空 · Alt强制悬空＋滚轮调距（0=脚下）
 gtmb.hologram.worldGuideAreaPaused=区域框选已暂停 · 拿回同一把投影仪继续 · Esc 退出框选
 gtmb.hologram.worldGuideAreaOrder=两角可任意顺序标定 · 本次首次标角的 Ctrl / Ctrl+Shift 按键锁定组合模式
 gtmb.hologram.worldGuideAreaMode=本次模式已锁定：%s · 标定另一角完成

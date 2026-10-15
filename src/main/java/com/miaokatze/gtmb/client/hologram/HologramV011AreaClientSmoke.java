@@ -11,10 +11,14 @@ import java.util.Arrays;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiIngameMenu;
 import net.minecraft.client.gui.GuiMainMenu;
+import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.init.Blocks;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.MathHelper;
+import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.MouseEvent;
@@ -22,13 +26,20 @@ import net.minecraftforge.common.MinecraftForge;
 
 import org.lwjgl.input.Keyboard;
 
+import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramV011Evidence;
+import com.miaokatze.gtmb.hologram.HologramV011InteractionFixture;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import cpw.mods.fml.relauncher.Side;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
 
 /** Dedicated actual Netty input scenario; no synthetic snapshots or controller-memory writes. */
 public final class HologramV011AreaClientSmoke {
@@ -40,7 +51,16 @@ public final class HologramV011AreaClientSmoke {
     private NBTTagCompound observation;
     private boolean captured, finished;
     private HologramAreaOverlay.RenderWitness areaWitness;
+    private HologramRenderer.WorldRenderWitness worldWitness;
     private final HologramActualUsePress press = new HologramActualUsePress();
+    private volatile NBTTagCompound lastAction;
+    private volatile long actionCount;
+    private NBTTagCompound lastInput = new NBTTagCompound();
+    private NBTTagCompound lastWheel = new NBTTagCompound();
+    private final NBTTagList uiInputs = new NBTTagList();
+    private int[] desiredTarget, airCorner, forcedCorner;
+    private String cursorKind = "area", savedLocalId = "";
+    private boolean saveReviewConfirmed;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.followupAreaClient")) return;
@@ -54,6 +74,7 @@ public final class HologramV011AreaClientSmoke {
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void worldRendered(net.minecraftforge.client.event.RenderWorldLastEvent event) {
         areaWitness = HologramAreaOverlay.lastRenderWitness();
+        worldWitness = HologramRenderer.lastWorldRenderWitness();
     }
 
     @SubscribeEvent
@@ -63,10 +84,11 @@ public final class HologramV011AreaClientSmoke {
         try {
             if (mc.theWorld != null && press.tick(event, mc)) return;
             if (event.phase != TickEvent.Phase.END) return;
-            require(System.nanoTime() - installed < 360000000000L, "socket scenario exceeds six minutes");
+            require(System.nanoTime() - installed < 600000000000L, "socket scenario exceeds ten minutes");
             if (stageStarted == 0) stageStarted = System.nanoTime();
             require(
-                System.nanoTime() - stageStarted < (stage <= 1 ? 180000000000L : 20000000000L),
+                System.nanoTime() - stageStarted
+                    < (stage <= 1 ? 180000000000L : stage == 45 ? 60000000000L : 20000000000L),
                 "stage/ACK timeout " + stage);
             if (Files.isRegularFile(
                 HologramV011Evidence.directory()
@@ -78,6 +100,7 @@ public final class HologramV011AreaClientSmoke {
                 require(
                     proof.getBoolean("passed") && proof.getString("session")
                         .equals(observation.getString("session"))
+                        && proof.getLong("planRevision") == observation.getLong("planRevision")
                         && proof.getBoolean("selecting") == observation.getBoolean("selecting")
                         && Arrays.equals(proof.getIntArray("points"), observation.getIntArray("points")),
                     "independent actual server state corroborates Netty mirror");
@@ -100,16 +123,21 @@ public final class HologramV011AreaClientSmoke {
             if (stage == 1) {
                 if (mc.theWorld == null || mc.thePlayer == null
                     || HologramV011Evidence.read("area-server-ready.nbt") == null
-                    || mc.thePlayer.getHeldItem() == null) return;
+                    || mc.thePlayer.getHeldItem() == null
+                    || mc.renderViewEntity != mc.thePlayer
+                    || mc.theWorld.getBlock(50, 80, 44) != Blocks.stone
+                    || mc.theWorld.getBlock(51, 80, 44) != Blocks.stone
+                    || mc.theWorld.getBlock(50, 79, 46) != Blocks.stone) return;
                 mc.displayGuiScreen(null);
+                installPacketObserver();
                 begin(mc);
                 next(2);
                 return;
             }
-            if (stage == 21 && HologramV011Evidence.read("area-server-final.nbt") != null) {
+            if (stage == 60 && HologramV011Evidence.read("area-server-final.nbt") != null) {
                 HologramV011Evidence.marker(
                     "area-client-pass.txt",
-                    "PASS actual Socket input and END render evidence; eight corroborated stages");
+                    "PASS actual Socket input and END render evidence; 23 corroborated stages");
                 finished = true;
                 mc.shutdown();
                 return;
@@ -118,7 +146,7 @@ public final class HologramV011AreaClientSmoke {
                 mc.theWorld != null && mc.thePlayer != null && HologramClient.state != null,
                 "connected actual world and snapshot");
             NBTTagCompound state = HologramClient.state.data;
-            if (session != null)
+            if (session != null && stage < 43)
                 require(session.equals(HologramClient.state.session), "slot pause retains original session");
             switch (stage) {
                 case 2:
@@ -177,6 +205,7 @@ public final class HologramV011AreaClientSmoke {
                     mc.thePlayer.setAngles(0.0F, (mc.thePlayer.rotationPitch - 75.0F) / 0.15F);
                     key(Keyboard.KEY_LMENU, true);
                     wheel(-12000);
+                    desiredTarget = feet(mc);
                     next(11);
                     break;
                 case 11:
@@ -188,7 +217,6 @@ public final class HologramV011AreaClientSmoke {
                     break;
                 case 12:
                     corner(mc, 1, feet(mc), true);
-                    key(Keyboard.KEY_LMENU, false);
                     next(13);
                     break;
                 case 13:
@@ -196,6 +224,7 @@ public final class HologramV011AreaClientSmoke {
                     observe(mc, "alt-current-red-target-equals-server-corner", 14, true);
                     break;
                 case 14:
+                    key(Keyboard.KEY_LMENU, false);
                     escape(mc);
                     next(15);
                     break;
@@ -225,22 +254,285 @@ public final class HologramV011AreaClientSmoke {
                     observe(mc, "other-slot-escape-ack", 20, false);
                     break;
                 case 20:
+                    slot(mc, 0);
+                    begin(mc);
+                    next(21);
+                    break;
+                case 21:
+                    if (!state.getBoolean("areaSelecting") || !HologramClient.areaProjectorWorld()) return;
+                    distance(6);
+                    aimBlock(mc, 50, 80, 44);
+                    desiredTarget = new int[] { 50, 80, 44 };
+                    markActual(mc, 0);
+                    next(22);
+                    break;
+                case 22:
+                    if (!pending(state, 1, desiredTarget)) return;
+                    observe(mc, "no-alt-hit-red-cursor-server-corner", 23, true);
+                    break;
+                case 23:
+                    distance(0);
+                    aimBlock(mc, 51, 80, 44);
+                    desiredTarget = new int[] { 51, 80, 44 };
+                    markActual(mc, 1);
+                    next(24);
+                    break;
+                case 24:
+                    if (!Arrays.equals(state.getIntArray("areaPoints"), new int[] { 50, 80, 44, 51, 80, 44 })) return;
+                    require(
+                        !lastInput.getCompoundTag("packet")
+                            .getBoolean("atPlayer"),
+                        "actual zero-distance block packet has atPlayer=false");
+                    observe(mc, "zero-distance-no-alt-hit-retains-block", 25, true);
+                    break;
+                case 25:
+                    distance(6);
+                    aim(mc, 0, -90);
+                    require(!blockHit(mc), "native sky ray has no block hit");
+                    airCorner = floatingExpected(mc, 6);
+                    desiredTarget = airCorner;
+                    markActual(mc, 0);
+                    next(26);
+                    break;
+                case 26:
+                    if (!pending(state, 1, airCorner)) return;
+                    observe(mc, "no-hit-default-air", 27, true);
+                    break;
+                case 27:
+                    aimBlock(mc, 50, 80, 44);
+                    key(Keyboard.KEY_LMENU, true);
+                    forcedCorner = floatingExpected(mc, 6);
+                    desiredTarget = forcedCorner;
+                    require(
+                        !Arrays.equals(forcedCorner, new int[] { 50, 80, 44 }),
+                        "forced distance target differs from actual hit block");
+                    markActual(mc, 1);
+                    next(28);
+                    break;
+                case 28:
+                    if (!Arrays.equals(state.getIntArray("areaPoints"), pair(airCorner, forcedCorner))) return;
+                    observe(mc, "alt-hit-forced-air", 29, true);
+                    break;
+                case 29:
+                    distance(0);
+                    key(Keyboard.KEY_LMENU, true);
+                    aim(mc, 180, 75);
+                    require(blockHit(mc), "native downward ray hits the real footing stone");
+                    desiredTarget = feet(mc);
+                    markActual(mc, 0);
+                    next(30);
+                    break;
+                case 30:
+                    if (!pending(state, 1, feet(mc))) return;
+                    observe(mc, "alt-zero-with-hit-feet", 31, true);
+                    break;
+                case 31:
+                    key(Keyboard.KEY_LMENU, false);
+                    require(blockHit(mc), "releasing Alt retains the real footing hit");
+                    desiredTarget = new int[] { 50, 79, 46 };
+                    markActual(mc, 1);
+                    next(32);
+                    break;
+                case 32:
+                    if (!Arrays.equals(state.getIntArray("areaPoints"), pair(feet(mc), desiredTarget))) return;
+                    observe(mc, "release-alt-zero-restores-hit-block", 33, true);
+                    break;
+                case 33:
+                    distance(6);
+                    aimBlock(mc, 51, 80, 44);
+                    key(Keyboard.KEY_LCONTROL, true);
+                    key(Keyboard.KEY_LSHIFT, true);
+                    desiredTarget = new int[] { 51, 80, 44 };
+                    markActual(mc, 1);
+                    key(Keyboard.KEY_LCONTROL, false);
+                    key(Keyboard.KEY_LSHIFT, false);
+                    next(34);
+                    break;
+                case 34:
+                    if (!pendingRight(state, desiredTarget)) return;
+                    require(
+                        "subtract".equals(state.getString("areaPointMode")),
+                        "Ctrl+Shift right-first locks subtract instead of finish");
+                    observe(mc, "ctrl-shift-right-first-subtract-ack", 35, true);
+                    break;
+                case 35:
+                    aimBlock(mc, 50, 80, 44);
+                    desiredTarget = new int[] { 50, 80, 44 };
+                    markActual(mc, 0);
+                    next(36);
+                    break;
+                case 36:
+                    if (!Arrays.equals(state.getIntArray("areaPoints"), new int[] { 50, 80, 44, 51, 80, 44 })) return;
+                    require(
+                        state.getTagList("areaRegions", 10)
+                            .tagCount() == 2 && "subtract".equals(
+                                state.getTagList("areaRegions", 10)
+                                    .getCompoundTagAt(1)
+                                    .getString("mode")),
+                        "plain left completes the original subtract combination");
+                    observe(mc, "plain-left-completes-subtract-mode", 37, true);
+                    break;
+                case 37:
+                    ordinaryWheel(mc, -120);
+                    next(38);
+                    break;
+                case 38:
+                    if (mc.theWorld.getTotalWorldTime() - slotChangedTick < 8) return;
+                    require(
+                        mc.thePlayer.inventory.currentItem == 1 && !HologramClient.areaProjectorWorld(),
+                        "ordinary wheel reaches the native stick slot and suspends selection");
+                    observe(mc, "ordinary-wheel-pauses-selection", 39, false);
+                    break;
+                case 39:
+                    ordinaryWheel(mc, 120);
+                    next(40);
+                    break;
+                case 40:
+                    if (!HologramClient.areaProjectorWorld()) return;
+                    aimBlock(mc, 50, 80, 44);
+                    desiredTarget = new int[] { 50, 80, 44 };
+                    markActual(mc, 0);
+                    next(41);
+                    break;
+                case 41:
+                    if (!pending(state, 1, desiredTarget)) return;
+                    aimBlock(mc, 51, 80, 44);
+                    desiredTarget = new int[] { 51, 80, 44 };
+                    markActual(mc, 1);
+                    next(42);
+                    break;
+                case 42:
+                    if (!Arrays.equals(state.getIntArray("areaPoints"), new int[] { 50, 80, 44, 51, 80, 44 })) return;
+                    require(
+                        state.getTagList("areaRegions", 10)
+                            .tagCount() == 1,
+                        "replacement corners reset the import to exactly two real source stones");
+                    key(Keyboard.KEY_LSHIFT, true);
+                    markActual(mc, 1);
+                    key(Keyboard.KEY_LSHIFT, false);
+                    next(43);
+                    break;
+                case 43:
+                    if (!(mc.currentScreen instanceof HologramScreen) || !state.getBoolean("areaImported")
+                        || state.getBoolean("areaImporting")
+                        || state.getBoolean("capturePending")) return;
+                    require(
+                        HologramClient.state.cells.size() == 2 && state.getBoolean("blueprintDirectSave"),
+                        "native two-stone import permits the real direct-save workflow");
+                    if (!enabled((HologramScreen) mc.currentScreen, 149)) return;
+                    nativeClick((HologramScreen) mc.currentScreen, 149);
+                    next(44);
+                    break;
+                case 44:
+                    if (!(mc.currentScreen instanceof HologramScreen)) return;
+                    HologramScreen editor = (HologramScreen) mc.currentScreen;
+                    if (!enabled(editor, 140)) return;
+                    typeName(editor, "Area v0.1.1 native stones");
+                    nativeClick(editor, 140);
+                    next(45);
+                    break;
+                case 45:
+                    if (!(mc.currentScreen instanceof HologramScreen)) return;
+                    HologramScreen saving = (HologramScreen) mc.currentScreen;
+                    if (saving.smokeLibraryUiState()
+                        .getBoolean("aeReview")) {
+                        if (!saveReviewConfirmed && enabled(saving, 181)) {
+                            nativeClick(saving, 181);
+                            saveReviewConfirmed = true;
+                        }
+                        return;
+                    }
+                    if (saving.smokePending() || HologramLibraryClient.INSTANCE.busy()
+                        || state.getBoolean("blueprintSavePending")
+                        || state.getBoolean("blueprintDirty")
+                        || !state.getBoolean("blueprintSaved")
+                        || !state.getBoolean("blueprintOperationSuccess")) return;
+                    savedLocalId = HologramLibraryClient.INSTANCE.selected(false);
+                    require(
+                        savedLocalId.matches("local_[a-fA-F0-9-]{36}")
+                            && savedLocalId.equals(state.getString("libraryLocalId")),
+                        "actual private native save reached its own owner ACK");
+                    if (!enabled(saving, 141)) return;
+                    nativeClick(saving, 141);
+                    next(50);
+                    break;
+                case 50:
+                    if (!state.getBoolean("virtualPlacement") || state.getBoolean("virtualLocked")
+                        || !state.getBoolean("moving")
+                        || mc.currentScreen != null) return;
+                    session = HologramClient.state.session;
+                    cursorKind = "moving";
+                    distance(6);
+                    aimBlock(mc, 50, 80, 44);
+                    desiredTarget = adjacentHit(mc);
+                    observe(mc, "moving-no-alt-hit-face", 51, false);
+                    break;
+                case 51:
+                    key(Keyboard.KEY_LMENU, true);
+                    require(blockHit(mc), "Alt preview still has a real native source block hit");
+                    forcedCorner = floatingExpected(mc, 6);
+                    desiredTarget = forcedCorner;
+                    observe(mc, "moving-alt-hit-forced-air", 52, false);
+                    break;
+                case 52:
+                    useActual(mc, true);
+                    next(53);
+                    break;
+                case 53:
+                    if (!state.getBoolean("virtualLocked")) return;
+                    require(
+                        Arrays.equals(anchor(state), forcedCorner),
+                        "actual Alt-right Netty ACK locks the previously rendered forced-air position");
+                    cursorKind = "locked";
+                    observe(mc, "moving-alt-right-locks-forced-air", 54, false);
+                    break;
+                case 54:
+                    key(Keyboard.KEY_LMENU, false);
+                    key(Keyboard.KEY_LSHIFT, true);
+                    useActual(mc, false);
+                    key(Keyboard.KEY_LSHIFT, false);
+                    next(55);
+                    break;
+                case 55:
+                    if (state.getBoolean("virtualLocked") || !state.getBoolean("moving")) return;
+                    cursorKind = "moving";
+                    distance(0);
+                    aimBlock(mc, 50, 80, 44);
+                    desiredTarget = adjacentHit(mc);
+                    observe(mc, "moving-zero-distance-no-alt-hit-face", 56, false);
+                    break;
+                case 56:
+                    key(Keyboard.KEY_LMENU, true);
+                    aim(mc, 180, 75);
+                    require(blockHit(mc), "Alt-zero green preview still has a real footing hit");
+                    desiredTarget = feet(mc);
+                    observe(mc, "moving-alt-zero-feet", 57, false);
+                    break;
+                case 57:
+                    key(Keyboard.KEY_LMENU, false);
+                    escape(mc);
+                    next(58);
+                    break;
+                case 58:
+                    if (state.getBoolean("virtualPlacement")) return;
+                    cursorKind = "none";
+                    desiredTarget = null;
+                    observe(mc, "moving-escape-cancel-ack", 59, false);
+                    break;
+                case 59:
                     NBTTagCompound result = new NBTTagCompound();
                     result.setBoolean("passed", true);
                     result.setInteger("observations", sequence);
                     result.setString("session", session);
                     result.setBoolean("actualNettyClient", true);
                     result.setBoolean("syntheticSnapshotsUsed", false);
+                    result.setString("savedLocalId", savedLocalId);
+                    result.setTag("nativeUiInputs", uiInputs.copy());
+                    bind(result);
                     HologramV011Evidence.write("area-client-final.nbt", result);
-                    next(21);
+                    next(60);
                     break;
-                case 21:
-                    if (HologramV011Evidence.read("area-server-final.nbt") == null) return;
-                    HologramV011Evidence.marker(
-                        "area-client-pass.txt",
-                        "PASS actual Socket input and END render evidence; eight corroborated stages");
-                    finished = true;
-                    mc.shutdown();
+                case 60:
                     break;
                 default:
                     throw new AssertionError("unknown area scenario stage " + stage);
@@ -260,10 +552,22 @@ public final class HologramV011AreaClientSmoke {
         request.setBoolean("selecting", HologramClient.state.data.getBoolean("areaSelecting"));
         request.setIntArray("points", HologramClient.state.data.getIntArray("areaPoints"));
         request.setBoolean("cursorRequired", cursorRequired);
+        request.setString("cursorKind", cursorKind);
+        if (desiredTarget != null) request.setIntArray("expectedTarget", desiredTarget);
+        request.setTag("nativeInput", lastInput.copy());
+        request.setTag("nativeWheel", lastWheel.copy());
+        request.setTag("nativeAim", aimWitness(mc));
+        request.setLong("actionCount", actionCount);
+        request.setBoolean("virtualPlacement", HologramClient.state.data.getBoolean("virtualPlacement"));
+        request.setBoolean("virtualLocked", HologramClient.state.data.getBoolean("virtualLocked"));
+        request.setBoolean("moving", HologramClient.state.data.getBoolean("moving"));
+        request.setIntArray("serverAnchor", anchor(HologramClient.state.data));
+        request.setLong("requestedAfterWorldGeneration", worldWitness == null ? 0 : worldWitness.generation);
         request.setFloat("requestedCameraPitch", mc.thePlayer.rotationPitch);
         request.setFloat("requestedCameraYaw", mc.thePlayer.rotationYaw);
         request.setLong("requestedAfterRenderFrame", frame);
         request.setTag("nettySnapshot", HologramClient.state.data.copy());
+        bind(request);
         observation = request;
         afterObservation = following;
         captured = false;
@@ -284,6 +588,22 @@ public final class HologramV011AreaClientSmoke {
                 || !Arrays.equals(actual.data.getIntArray("areaPoints"), observation.getIntArray("points"))) return;
             if (observation.getBoolean("cursorRequired")
                 && (areaWitness == null || areaWitness.state != actual || areaWitness.cursor() == null)) return;
+            if (observation.getBoolean("cursorRequired") && observation.hasKey("expectedTarget", 11)) require(
+                Arrays.equals(observation.getIntArray("expectedTarget"), areaWitness.cursor()),
+                "the actual red target drawn in this END frame equals the requested native input target");
+            String kind = observation.getString("cursorKind");
+            if ("moving".equals(kind) || "locked".equals(kind)) {
+                if (worldWitness == null || worldWitness.state != actual
+                    || worldWitness.generation <= observation.getLong("requestedAfterWorldGeneration")) return;
+                require(
+                    Arrays.equals(
+                        observation.getIntArray("expectedTarget"),
+                        new int[] { worldWitness.anchorX, worldWitness.anchorY, worldWitness.anchorZ })
+                        && worldWitness.moving == "moving".equals(kind)
+                        && worldWitness.outlineColor == (worldWitness.moving ? 0x70e69a : 0x66d9ef)
+                        && worldWitness.lists > 0,
+                    "actual submitted world lists use the expected green or cyan preview anchor");
+            }
             require(mc.currentScreen == null, "world evidence is captured from actual unobscured world frame");
             String name = "area-" + sequence + "-" + observation.getString("label") + ".png";
             ScreenShotHelper.saveScreenshot(mc.mcDataDir, name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
@@ -317,6 +637,21 @@ public final class HologramV011AreaClientSmoke {
                         .digest(CompressedStreamTools.compress(actual.data))));
             if (areaWitness != null && areaWitness.state == actual && areaWitness.cursor() != null)
                 witness.setIntArray("drawnCurrentRedTarget", areaWitness.cursor());
+            if ("moving".equals(kind) || "locked".equals(kind)) {
+                NBTTagCompound drawn = new NBTTagCompound();
+                drawn.setIntArray(
+                    "anchor",
+                    new int[] { worldWitness.anchorX, worldWitness.anchorY, worldWitness.anchorZ });
+                drawn.setLong("generation", worldWitness.generation);
+                drawn.setLong("planRevision", worldWitness.revision);
+                drawn.setString("session", worldWitness.session);
+                drawn.setBoolean("moving", worldWitness.moving);
+                drawn.setInteger("outlineColor", worldWitness.outlineColor);
+                drawn.setInteger("submittedLists", worldWitness.lists);
+                drawn.setInteger("geometry", worldWitness.geometry);
+                witness.setTag("drawnWorldPreview", drawn);
+            }
+            witness.setTag("actualNativeAim", aimWitness(mc));
             HologramWorldGuide.RenderWitness hud = HologramWorldGuide.lastRenderWitness();
             if (hud != null) {
                 witness.setInteger("hudTop", hud.top);
@@ -332,28 +667,25 @@ public final class HologramV011AreaClientSmoke {
 
     private void begin(Minecraft mc) throws Exception {
         key(Keyboard.KEY_LSHIFT, true);
-        press.begin(mc, false);
-        mc.playerController.onPlayerRightClick(
-            mc.thePlayer,
-            mc.theWorld,
-            mc.thePlayer.getHeldItem(),
-            50,
-            80,
-            44,
-            2,
-            Vec3.createVectorHelper(50.5, 80.5, 44));
+        aimBlock(mc, 50, 80, 44);
+        useActual(mc, false);
         key(Keyboard.KEY_LSHIFT, false);
     }
 
     private void corner(Minecraft mc, int button, int[] point, boolean consumed) throws Exception {
         if (button == 1 && consumed) press.begin(mc, false);
-        if (consumed) aimFloatingCorner(mc, point);
         mc.objectMouseOver = null;
+        if (consumed) aimFloatingCorner(mc, point);
+        if (consumed) desiredTarget = point.clone();
+        long before = actionCount;
+        NBTTagCompound input = aimWitness(mc);
         MouseEvent mouse = new MouseEvent();
         set(mouse, "button", button);
         set(mouse, "buttonstate", true);
         MinecraftForge.EVENT_BUS.post(mouse);
         require(mouse.isCanceled() == consumed, "actual registered mouse routing matches held context");
+        if (consumed) recordInput(input, before, "areaPoint", button);
+        else require(actionCount == before, "suspended mouse press emits no hologram action packet");
     }
 
     /** Real player mouse-look plus registered Alt-wheel input; no synthetic hit or preview-distance writes. */
@@ -364,6 +696,7 @@ public final class HologramV011AreaClientSmoke {
                 && (mc.renderViewEntity == null || mc.renderViewEntity == mc.thePlayer),
             "floating corner uses the actual held projector and player camera");
         int[] originalFeet = feet(mc);
+        mc.objectMouseOver = null; // Discard the previous frame's block hit before evaluating a requested air aim.
         int[] currentAnchor = HologramClient.areaSelectionAnchor();
         Field distanceField = HologramClient.class.getDeclaredField("previewDistance");
         distanceField.setAccessible(true);
@@ -372,7 +705,7 @@ public final class HologramV011AreaClientSmoke {
         if (currentDistance == 0 && Arrays.equals(point, originalFeet)) {
             require(
                 Arrays.equals(point, currentAnchor),
-                "actual distance zero cursor retains player feet and the existing camera view independently of Alt");
+                "actual no-block distance zero cursor retains player feet and the existing camera view");
             return;
         }
         double eyeX = mc.thePlayer.posX, eyeY = mc.thePlayer.posY + mc.thePlayer.getEyeHeight(),
@@ -404,7 +737,255 @@ public final class HologramV011AreaClientSmoke {
             "floating aiming changes only camera rotation and cursor distance");
         require(
             Arrays.equals(point, HologramClient.areaSelectionAnchor()),
-            "actual floating selection anchor equals the requested corner independently of block mouse-over");
+            "actual no-block floating selection anchor equals the requested camera-ray corner");
+    }
+
+    private void installPacketObserver() throws Exception {
+        Object wrapper = read(HologramNetwork.class, "channel");
+        Channel channel = (Channel) ((java.util.Map<?, ?>) read(wrapper, "channels")).get(Side.CLIENT);
+        require(channel != null, "actual client embedded Netty channel exists");
+        Field payload = HologramNetwork.Packet.class.getDeclaredField("tag");
+        payload.setAccessible(true);
+        channel.pipeline()
+            .addLast("gtmb-area-observe-only", new ChannelOutboundHandlerAdapter() {
+
+                @Override
+                public void write(ChannelHandlerContext context, Object message, ChannelPromise promise)
+                    throws Exception {
+                    if (message instanceof HologramNetwork.Action) {
+                        lastAction = (NBTTagCompound) ((NBTTagCompound) payload.get(message)).copy();
+                        actionCount++;
+                    }
+                    context.write(message, promise); // Forward the original message unchanged to the normal encoder.
+                }
+            });
+    }
+
+    private void recordInput(NBTTagCompound input, long before, String action, int button) {
+        require(
+            actionCount == before + 1 && lastAction != null && action.equals(lastAction.getString("action")),
+            "native input emits exactly one actual Netty action: " + action);
+        input.setInteger("button", button);
+        input.setLong("actionCountBefore", before);
+        input.setLong("actionCountAfter", actionCount);
+        input.setTag("packet", lastAction.copy());
+        lastInput = input;
+    }
+
+    private void markActual(Minecraft mc, int button) throws Exception {
+        if (button == 1) press.begin(mc, false);
+        NBTTagCompound input = aimWitness(mc);
+        long before = actionCount;
+        MouseEvent event = new MouseEvent();
+        set(event, "button", button);
+        set(event, "buttonstate", true);
+        MinecraftForge.EVENT_BUS.post(event);
+        require(event.isCanceled(), "native area mouse event is consumed by the registered production listener");
+        boolean finish = input.getBoolean("shift") && !input.getBoolean("control") && button == 1;
+        recordInput(input, before, finish ? "finishAreaSelection" : "areaPoint", button);
+    }
+
+    private void useActual(Minecraft mc, boolean lock) throws Exception {
+        press.begin(mc, lock);
+        NBTTagCompound input = aimWitness(mc);
+        long before = actionCount;
+        if (blockHit(mc)) {
+            MovingObjectPosition hit = mc.objectMouseOver;
+            mc.playerController.onPlayerRightClick(
+                mc.thePlayer,
+                mc.theWorld,
+                mc.thePlayer.getHeldItem(),
+                hit.blockX,
+                hit.blockY,
+                hit.blockZ,
+                hit.sideHit,
+                hit.hitVec);
+        } else mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
+        String action = lock ? "confirmVirtualPosition"
+            : input.getBoolean("shift")
+                ? HologramClient.state != null && HologramClient.state.data.getBoolean("virtualLocked")
+                    ? "unlockVirtualPosition"
+                    : "beginAreaSelection"
+                : "useBlock";
+        recordInput(input, before, action, 1);
+    }
+
+    private static void aimBlock(Minecraft mc, int x, int y, int z) {
+        double dx = x + .5 - mc.thePlayer.posX, dy = y + .5 - (mc.thePlayer.posY + mc.thePlayer.getEyeHeight()),
+            dz = z + .5 - mc.thePlayer.posZ;
+        aim(
+            mc,
+            (float) Math.toDegrees(Math.atan2(-dx, dz)),
+            (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz))));
+        require(
+            blockHit(mc) && Arrays.equals(new int[] { x, y, z }, hitBlock(mc)),
+            "actual EntityRenderer ray hits the requested native source block");
+    }
+
+    private static void aim(Minecraft mc, float yaw, float pitch) {
+        mc.thePlayer.setAngles((yaw - mc.thePlayer.rotationYaw) / .15F, (mc.thePlayer.rotationPitch - pitch) / .15F);
+        mc.entityRenderer.getMouseOver(1.0F);
+    }
+
+    private static boolean blockHit(Minecraft mc) {
+        return mc.objectMouseOver != null
+            && mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK;
+    }
+
+    private static int[] hitBlock(Minecraft mc) {
+        MovingObjectPosition hit = mc.objectMouseOver;
+        return new int[] { hit.blockX, hit.blockY, hit.blockZ };
+    }
+
+    private static int[] adjacentHit(Minecraft mc) {
+        require(blockHit(mc), "face attachment requires a real native block hit");
+        net.minecraftforge.common.util.ForgeDirection face = net.minecraftforge.common.util.ForgeDirection
+            .getOrientation(mc.objectMouseOver.sideHit);
+        int[] block = hitBlock(mc);
+        return new int[] { block[0] + face.offsetX, block[1] + face.offsetY, block[2] + face.offsetZ };
+    }
+
+    private static int[] floatingExpected(Minecraft mc, int distance) {
+        Vec3 look = mc.thePlayer.getLookVec();
+        return new int[] { MathHelper.floor_double(mc.thePlayer.posX + look.xCoord * distance),
+            MathHelper.floor_double(mc.thePlayer.posY + mc.thePlayer.getEyeHeight() + look.yCoord * distance),
+            MathHelper.floor_double(mc.thePlayer.posZ + look.zCoord * distance) };
+    }
+
+    private static int[] pair(int[] first, int[] second) {
+        return new int[] { first[0], first[1], first[2], second[0], second[1], second[2] };
+    }
+
+    private static int[] anchor(NBTTagCompound data) {
+        return new int[] { data.getInteger("x"), data.getInteger("y"), data.getInteger("z") };
+    }
+
+    private static boolean pending(NBTTagCompound data, int corner, int[] point) {
+        return data.getInteger("areaPendingCorner") == corner && Arrays.equals(data.getIntArray("areaPoints"), point);
+    }
+
+    private static void distance(int value) throws Exception {
+        boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU);
+        key(Keyboard.KEY_LMENU, true);
+        wheel(-120 * HologramWorldFlow.MAX_DISTANCE);
+        if (value > 0) wheel(120 * value);
+        key(Keyboard.KEY_LMENU, alt);
+    }
+
+    private void ordinaryWheel(Minecraft mc, int delta) throws Exception {
+        require(
+            !Keyboard.isKeyDown(Keyboard.KEY_LMENU) && !Keyboard.isKeyDown(Keyboard.KEY_RMENU),
+            "ordinary wheel has no Alt modifier");
+        MouseEvent event = new MouseEvent();
+        set(event, "button", -1);
+        set(event, "buttonstate", false);
+        set(event, "dwheel", delta);
+        MinecraftForge.EVENT_BUS.post(event);
+        require(!event.isCanceled(), "production distance listener leaves ordinary wheel for the native hotbar");
+        lastWheel = new NBTTagCompound();
+        lastWheel.setInteger("delta", delta);
+        lastWheel.setBoolean("alt", false);
+        lastWheel.setBoolean("canceled", event.isCanceled());
+        lastWheel.setInteger("slotBefore", mc.thePlayer.inventory.currentItem);
+        mc.thePlayer.inventory.changeCurrentItem(delta); // The same uncanceled wheel branch as Minecraft.runTick.
+        lastWheel.setInteger("slotAfter", mc.thePlayer.inventory.currentItem);
+        lastWheel.setString("nativeBranch", "InventoryPlayer.changeCurrentItem");
+        mc.playerController.updateController();
+        slotChangedTick = mc.theWorld.getTotalWorldTime();
+    }
+
+    private static NBTTagCompound aimWitness(Minecraft mc) throws Exception {
+        NBTTagCompound result = new NBTTagCompound();
+        result.setBoolean("alt", Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU));
+        result.setBoolean(
+            "control",
+            Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL));
+        result.setBoolean("shift", Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT));
+        result.setBoolean("nativeBlockHit", blockHit(mc));
+        result.setString("hitType", mc.objectMouseOver == null ? "null" : mc.objectMouseOver.typeOfHit.name());
+        if (blockHit(mc)) {
+            result.setIntArray("hitBlock", hitBlock(mc));
+            result.setInteger("hitSide", mc.objectMouseOver.sideHit);
+        }
+        result.setIntArray("feet", feet(mc));
+        result.setDouble("eyeX", mc.thePlayer.posX);
+        result.setDouble("eyeY", mc.thePlayer.posY + mc.thePlayer.getEyeHeight());
+        result.setDouble("eyeZ", mc.thePlayer.posZ);
+        Vec3 look = mc.thePlayer.getLookVec();
+        result.setDouble("lookX", look.xCoord);
+        result.setDouble("lookY", look.yCoord);
+        result.setDouble("lookZ", look.zCoord);
+        result.setInteger(
+            "distance",
+            ((HologramWorldFlow.PreviewDistance) read(HologramClient.class, "previewDistance")).distance());
+        return result;
+    }
+
+    private void nativeClick(HologramScreen screen, int id) {
+        NBTTagCompound input = screen.smokeLibraryUiState();
+        input.setInteger("controlId", id);
+        input.setLong("renderGeneration", screen.smokeRenderGeneration());
+        input.setString("session", HologramClient.state.session);
+        input.setLong("planRevision", HologramClient.state.data.getLong("planRevision"));
+        input.setTag("nettySnapshot", HologramClient.state.data.copy());
+        int[] point = screen.smokeControlPoint(id);
+        input.setIntArray("controlPoint", point);
+        screen.mouseClicked(point[0], point[1], 0);
+        screen.mouseMovedOrUp(point[0], point[1], 0);
+        uiInputs.appendTag(input);
+    }
+
+    private void typeName(HologramScreen screen, String value) throws Exception {
+        GuiTextField field = (GuiTextField) read(screen, "presetNameField");
+        float scale = (Float) read(screen, "scale");
+        int x = (Integer) read(screen, "originX") + Math.round((field.xPosition + 4) * scale);
+        int y = (Integer) read(screen, "originY") + Math.round((field.yPosition + 7) * scale);
+        screen.mouseClicked(x, y, 0);
+        screen.mouseMovedOrUp(x, y, 0);
+        require(field.isFocused(), "native mouse click focuses the actual blueprint name field");
+        key(Keyboard.KEY_LCONTROL, true);
+        screen.keyTyped('\u0001', Keyboard.KEY_A);
+        require(
+            field.getText()
+                .equals(field.getSelectedText()),
+            "native Ctrl+A selects the actual blueprint name");
+        key(Keyboard.KEY_LCONTROL, false);
+        for (char character : value.toCharArray()) screen.keyTyped(character, 0);
+        require(value.equals(field.getText()), "native keyboard names the actual saved blueprint");
+        NBTTagCompound input = new NBTTagCompound();
+        input.setString("kind", "native-keyboard-name");
+        input.setString("text", field.getText());
+        input.setBoolean("focusedAfterNativeClick", field.isFocused());
+        input.setBoolean("ctrlASelectedAll", true);
+        input.setLong("renderGeneration", screen.smokeRenderGeneration());
+        input.setString("session", HologramClient.state.session);
+        input.setLong("planRevision", HologramClient.state.data.getLong("planRevision"));
+        uiInputs.appendTag(input);
+    }
+
+    private static boolean enabled(HologramScreen screen, int id) {
+        if (screen.smokePending()) return false;
+        NBTTagList controls = screen.smokeLibraryUiState()
+            .getTagList("drawnControls", 10);
+        for (int index = 0; index < controls.tagCount(); index++) {
+            NBTTagCompound control = controls.getCompoundTagAt(index);
+            if (control.getInteger("id") == id) return control.getBoolean("enabled");
+        }
+        return false;
+    }
+
+    private static Object read(Object owner, String name) throws Exception {
+        Field field = (owner instanceof Class ? (Class<?>) owner : owner.getClass()).getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(owner instanceof Class ? null : owner);
+    }
+
+    private static void bind(NBTTagCompound data) throws Exception {
+        HologramV011InteractionFixture.bindEvidence(
+            data,
+            "client",
+            HologramClient.state == null ? "" : HologramClient.state.session,
+            HologramClient.state == null ? -1 : HologramClient.state.data.getLong("planRevision"));
     }
 
     private void slot(Minecraft mc, int value) {
@@ -467,6 +1048,7 @@ public final class HologramV011AreaClientSmoke {
             result.setInteger("stage", stage);
             result.setString("failure", failure.toString());
             if (HologramClient.state != null) result.setTag("actualSnapshot", HologramClient.state.data.copy());
+            bind(result);
             HologramV011Evidence.write("area-client-failure.nbt", result);
             HologramV011Evidence.marker("area-client-fail.txt", "FAIL stage=" + stage + " " + failure);
         } catch (Exception evidenceFailure) {

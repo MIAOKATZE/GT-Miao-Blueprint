@@ -1,6 +1,9 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
@@ -38,7 +41,7 @@ public final class HologramV011InteractionFixture {
         if (finished || event.phase != TickEvent.Phase.END) return;
         MinecraftServer server = MinecraftServer.getServer();
         try {
-            require(++ticks <= 7200, "area server fixture exceeded six minutes");
+            require(++ticks <= 12000, "area server fixture exceeded ten minutes");
             WorldServer world = server.worldServerForDimension(0);
             require(
                 world.getWorldInfo()
@@ -58,6 +61,10 @@ public final class HologramV011InteractionFixture {
                     require(world.isAirBlock(x, 80, 44), "new world source positions are air");
                     require(world.setBlock(x, 80, 44, Blocks.stone, 0, 3), "actual source stone installed");
                 }
+                require(world.isAirBlock(50, 79, 46), "new world footing position is air");
+                require(
+                    world.setBlock(50, 79, 46, Blocks.stone, 0, 3),
+                    "actual footing supports downward hit and visible feet cursor");
                 player.theItemInWorldManager.setGameType(net.minecraft.world.WorldSettings.GameType.SURVIVAL);
                 player.capabilities.allowFlying = true;
                 player.capabilities.isFlying = true;
@@ -81,12 +88,21 @@ public final class HologramV011InteractionFixture {
                     world.getWorldInfo()
                         .getWorldName());
                 source.setTag("inventory", inventory(player));
+                bindEvidence(source, "server", "", -1);
                 HologramV011Evidence.write("area-server-ready.nbt", source);
                 return;
             }
             for (int x = 49; x <= 52; x++) require(
                 world.getBlock(x, 80, 44) == Blocks.stone && world.getBlockMetadata(x, 80, 44) == 0,
                 "area selection preserves every real source block");
+            require(
+                world.getBlock(50, 79, 46) == Blocks.stone && world.getBlockMetadata(50, 79, 46) == 0,
+                "selection and preview preserve the real footing stone");
+            require(
+                player.inventory.mainInventory[0] != null && player.inventory.mainInventory[0].stackSize == 1
+                    && com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
+                        .isProjector(player.inventory.mainInventory[0]),
+                "native projector item identity and count remain unchanged");
             require(
                 player.inventory.mainInventory[1] != null && player.inventory.mainInventory[1].getItem() == Items.stick
                     && player.inventory.mainInventory[1].stackSize == 3,
@@ -99,11 +115,43 @@ public final class HologramV011InteractionFixture {
                     session != null && request.getString("session")
                         .equals(field(session, "id")),
                     "observed original Service session");
+                if ((Long) field(session, "planRevision") != request.getLong("planRevision")) return;
                 HologramArea area = areas().get(player.getUniqueID());
                 boolean selecting = area != null && area.selecting;
                 int[] points = area == null ? new int[0] : area.points();
                 if (selecting != request.getBoolean("selecting")
                     || !Arrays.equals(points, request.getIntArray("points"))) return;
+                boolean placement = (Boolean) field(session, "virtualPlacement"),
+                    locked = (Boolean) field(session, "virtualLocked");
+                int[] anchor = { (Integer) field(session, "x"), (Integer) field(session, "y"),
+                    (Integer) field(session, "z") };
+                if (placement != request.getBoolean("virtualPlacement") || locked != request.getBoolean("virtualLocked")
+                    || !Arrays.equals(anchor, request.getIntArray("serverAnchor"))) return;
+                if ("locked".equals(request.getString("cursorKind"))) require(
+                    locked && placement && Arrays.equals(anchor, request.getIntArray("expectedTarget")),
+                    "actual server lock equals the client's previously drawn Alt target");
+                NBTTagCompound input = request.getCompoundTag("nativeInput"), packet = input.getCompoundTag("packet");
+                if (request.getInteger("sequence") >= 9 && request.getInteger("sequence") <= 16) {
+                    require(
+                        "areaPoint".equals(packet.getString("action")) && packet.getString("session")
+                            .equals(request.getString("session")),
+                        "matrix corner comes from the actual observed native action packet");
+                    int[] sent = { packet.getInteger("x"), packet.getInteger("y"), packet.getInteger("z") };
+                    require(
+                        Arrays.equals(sent, request.getIntArray("expectedTarget")),
+                        "actual transmitted corner equals requested native target");
+                    if (packet.getBoolean("atPlayer")) require(
+                        Arrays.equals(
+                            sent,
+                            new int[] { (int) Math.floor(player.posX), (int) Math.floor(player.posY),
+                                (int) Math.floor(player.posZ) }),
+                        "actual foot packet also equals independent server feet");
+                    else if (input.getInteger("distance") == 0 && input.getBoolean("nativeBlockHit")
+                        && !input.getBoolean("alt"))
+                        require(
+                            Arrays.equals(sent, input.getIntArray("hitBlock")),
+                            "actual zero-distance non-Alt packet retains the independent block corner");
+                }
                 NBTTagCompound witness = (NBTTagCompound) source.copy();
                 witness.setInteger("sequence", request.getInteger("sequence"));
                 witness.setString("label", request.getString("label"));
@@ -114,16 +162,27 @@ public final class HologramV011InteractionFixture {
                 witness.setBoolean("selecting", selecting);
                 witness.setIntArray("points", points);
                 witness.setTag("regions", area == null ? new NBTTagList() : area.regionSnapshot());
+                witness.setBoolean("virtualPlacement", placement);
+                witness.setBoolean("virtualLocked", locked);
+                witness.setInteger("job", (Integer) field(session, "job"));
+                witness.setIntArray("serverAnchor", anchor);
+                witness.setIntArray(
+                    "feet",
+                    new int[] { (int) Math.floor(player.posX), (int) Math.floor(player.posY),
+                        (int) Math.floor(player.posZ) });
+                witness.setTag("observedNativePacket", packet.copy());
+                witness.setString("clientSourceLaunchSha256", request.getString("sourceLaunchSha256"));
                 witness.setTag("inventory", inventory(player));
                 witness.setBoolean("sourceUnchanged", true);
                 witness.setBoolean("passed", true);
+                bindEvidence(witness, "server", (String) field(session, "id"), (Long) field(session, "planRevision"));
                 lastSequence = request.getInteger("sequence");
                 HologramV011Evidence.write("area-server-step-" + lastSequence + ".nbt", witness);
             }
             NBTTagCompound complete = HologramV011Evidence.read("area-client-final.nbt");
             if (complete != null) {
                 require(
-                    complete.getBoolean("passed") && lastSequence >= 8,
+                    complete.getBoolean("passed") && lastSequence == 23 && complete.getInteger("observations") == 23,
                     "all independent server observations completed");
                 HologramArea area = areas().get(player.getUniqueID());
                 require(
@@ -134,10 +193,15 @@ public final class HologramV011InteractionFixture {
                 result.setBoolean("passed", true);
                 result.setBoolean("sourceUnchanged", true);
                 result.setTag("inventory", inventory(player));
+                Object session = sessions().get(player.getUniqueID());
+                require(
+                    session != null && !(Boolean) field(session, "virtualPlacement"),
+                    "final Esc leaves no unpaid placement operation");
+                bindEvidence(result, "server", (String) field(session, "id"), (Long) field(session, "planRevision"));
                 HologramV011Evidence.write("area-server-final.nbt", result);
                 HologramV011Evidence.marker(
                     "area-server-pass.txt",
-                    "PASS actual Netty reverse corners, held-slot pause, resume and two Esc paths");
+                    "PASS actual Netty area/placement hit-air matrix, reverse corners, modifiers, wheel, pause/resume and Esc paths");
                 finished = true;
                 server.initiateShutdown();
             }
@@ -151,6 +215,24 @@ public final class HologramV011InteractionFixture {
             }
             server.initiateShutdown();
         }
+    }
+
+    /** Each observation binds to the current role's immutable launch descriptor and its source hashes. */
+    public static void bindEvidence(NBTTagCompound data, String role, String session, long revision) throws Exception {
+        require("client".equals(role) || "server".equals(role), "bounded source launch role");
+        Path launch = HologramV011Evidence.directory()
+            .getParent()
+            .resolve(role + "-launch.json");
+        require(Files.isRegularFile(launch), "actual role launch descriptor exists before evidence is written");
+        byte[] hash = MessageDigest.getInstance("SHA-256")
+            .digest(Files.readAllBytes(launch));
+        StringBuilder hex = new StringBuilder();
+        for (byte value : hash) hex.append(String.format("%02x", value & 255));
+        data.setString("releaseVersion", "0.1.1");
+        data.setString("sourceLaunchSha256", hex.toString());
+        data.setString("sourceRole", role);
+        data.setString("session", session);
+        data.setLong("planRevision", revision);
     }
 
     @SuppressWarnings("unchecked")

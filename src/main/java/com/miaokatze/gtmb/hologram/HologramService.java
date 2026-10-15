@@ -6350,6 +6350,11 @@ public final class HologramService {
                     NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
                     present |= payload != null && payload.hasKey(HologramNetworkBindings.GROUP)
                         && group.equals(HologramNetworkBindings.group(payload));
+                    if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)
+                        && group.equals(HologramNetworkBindings.group(payload))
+                        && ("preserve".equals(payload.getString(HologramNetworkBindings.MODE))
+                            || payload.hasKey(HologramNetworkBindings.ORIGINAL)))
+                        throw new java.io.IOException("私用蓝图保持原量子网络，不能改绑终端；请先按分享流程重新处理");
                 }
                 if (!present) throw new java.io.IOException("Unknown blueprint quantum group");
                 s.networkBindings.select(s.player, group, action.getInteger("slot"));
@@ -7006,6 +7011,7 @@ public final class HologramService {
             || "updateProcessingPreset".equals(op)
             || "deleteProcessingPreset".equals(op)
             || "configureBlueprintCellNbt".equals(op)
+            || "configureBlueprintQuantumGroups".equals(op)
             || "editBlueprintCellNbt".equals(op))) return false;
         s.processingPresetOperation = op;
         s.processingPresetOperationSuccess = false;
@@ -7032,12 +7038,31 @@ public final class HologramService {
                 if (entry == null) throw new java.io.IOException("处理流程预设不存在");
                 NBTTagCompound selected = entry.policy.write();
                 selected.setTag("confirmedStages", new NBTTagList());
+                HologramPresets.Preset rawSource = processingSource(s);
                 s.processingPolicy = HologramBlueprintProcessing.Policy.read(selected);
+                rawSource.quantumGroupingNbt = null;
                 s.processingWorkflowStarted = true;
                 s.selectedProcessingPresetId = entry.id;
                 s.processingReviewed = false;
                 s.blueprintDirty = true;
                 s.status = "处理预设已选定；请依次审核全部步骤";
+            } else if ("configureBlueprintQuantumGroups".equals(op)) {
+                if (!action.hasKey("groups", 9)) throw new java.io.IOException("量子网络分类缺少完整类群列表");
+                HologramPresets.Preset edited = HologramQuantumGroups
+                    .configure(processingSource(s), (NBTTagList) action.getTag("groups"));
+                HologramBlueprintProcessing.invalidate(edited, "quantum");
+                s.processingSource = edited;
+                // Keep the current workflow choice; classification does not choose self/share or confirm Next.
+                if (s.processingPolicy == null) s.processingPolicy = HologramBlueprintProcessing.policy(edited);
+                while (s.processingPolicy.confirmedStages.size() > 2)
+                    s.processingPolicy.confirmedStages.remove(s.processingPolicy.confirmedStages.size() - 1);
+                s.processingReviewed = false;
+                s.blueprintDirty = true;
+                s.blueprintSaveReceipt = "";
+                publishSavedBlueprint(s, HologramPresets.copy(edited));
+                s.ae.invalidate();
+                refreshPlan(s);
+                s.status = "本蓝图全部量子节点已分配到命名类群；请继续确认量子处理步骤";
             } else if ("configureBlueprintCellNbt".equals(op)) {
                 s.blueprintSaveReceipt = "";
                 configureBlueprintCellNbt(s, action);
@@ -7094,6 +7119,7 @@ public final class HologramService {
                 s.status = "蓝图处理流程已完成；请核对报告后保存";
             }
             if ("loadProcessingPreset".equals(op) || "configureBlueprintCellNbt".equals(op)
+                || "configureBlueprintQuantumGroups".equals(op)
                 || "editBlueprintCellNbt".equals(op)
                 || "processBlueprint".equals(op)) clearSourceSwitch(s);
             s.processingPresetOperationSuccess = true;
@@ -7518,6 +7544,10 @@ public final class HologramService {
             s.processingWorkflowStarted && s.processingPolicy != null && !s.processingPolicy.confirmedStages.isEmpty());
         state.setString("processingPresetOperation", s.processingPresetOperation);
         state.setBoolean("processingPresetOperationSuccess", s.processingPresetOperationSuccess);
+        state.setBoolean(
+            "quantumGroupsOperationSuccess",
+            "configureBlueprintQuantumGroups".equals(s.processingPresetOperation)
+                && s.processingPresetOperationSuccess);
         state.setString("selectedProcessingPresetId", s.selectedProcessingPresetId);
         state.setBoolean("discardConfirmationRequired", s.discardConfirmationRequired);
         state.setString("discardTargetOp", s.discardTargetOp);

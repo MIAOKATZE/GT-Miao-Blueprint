@@ -5,7 +5,7 @@ item.neko_hologram_projector.tooltip.2=Right-click locks the green preview with 
 item.neko_hologram_projector.tooltip.3=Shift-right-click starts area selection; left/right sets corners; Ctrl adds, Ctrl+Shift subtracts, Ctrl+Z undoes.
 item.neko_hologram_projector.tooltip.4=Area: Shift-right-click again finishes, Esc cancels. Locked preview: Shift-right-click unlocks; R / Ctrl+R turns a moving preview.
 item.neko_hologram_projector.tooltip.5=UI: Ctrl-click selects multiple cells, Shift-drag selects a volume, Ctrl+X/C/V edits, RGB axes move.
-item.neko_hologram_projector.tooltip.6=Select floating corners directly; Alt+scroll adjusts distance (0–64 blocks, 0 at your feet); ordinary scroll switches items. WASD moves the preview camera.
+item.neko_hologram_projector.tooltip.6=Aim at a block to attach; float when no block is hit. Alt forces floating; Alt+scroll adjusts distance (0–64, 0 at your feet). Ordinary scroll switches items; WASD moves the preview camera.
 item.neko_hologram_projector.tooltip.7=Locked preview: arrows nudge one block relative to the view; Alt+Up/Down changes height; hold to repeat slowly, then right-click to review again.
 gtmb.hologram.apply=Apply
 gtmb.hologram.back=Back to preview
@@ -98,7 +98,7 @@ gtmb.hologram.worldGuideLockedTarget=Locked target %d, %d, %d
 gtmb.hologram.worldGuideJob=Construction in progress: Right-click for progress and controls
 gtmb.hologram.worldGuideAreaImport=Importing selected area: Esc cancels and retains the current draft
 gtmb.hologram.worldGuideAreaRegions=Confirmed %d add regions / %d subtract regions
-gtmb.hologram.worldGuideTarget=Air distance %d | Target %d, %d, %d | Select floating corners directly; Alt+scroll changes distance (0=feet)
+gtmb.hologram.worldGuideTarget=Air distance %d | Target %d, %d, %d | Block hit attaches; no hit floats | Alt forces floating; Alt+scroll changes distance (0=feet)
 gtmb.hologram.worldGuideAreaPaused=Area selection paused ? Hold the same projector to continue ? Esc exits selection
 gtmb.hologram.worldGuideAreaOrder=Mark either corner first ? Ctrl / Ctrl+Shift at the first mark locks the combination mode
 gtmb.hologram.worldGuideAreaMode=Locked mode: %s ? Mark the other corner to complete

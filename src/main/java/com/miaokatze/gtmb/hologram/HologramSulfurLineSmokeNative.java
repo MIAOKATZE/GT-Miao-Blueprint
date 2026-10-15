@@ -1,5 +1,10 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
+
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.Item;
@@ -15,15 +20,18 @@ import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 
 import appeng.api.AEApi;
 import appeng.api.config.Actionable;
+import appeng.api.networking.IGridConnection;
+import appeng.api.networking.IGridNode;
 import appeng.api.networking.security.PlayerSource;
 import appeng.api.parts.IPartHost;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.util.AEColor;
+import appeng.api.util.DimensionalCoord;
 import appeng.me.helpers.IGridProxyable;
 import appeng.parts.PartPlacement;
-import appeng.tile.networking.TileEnergyCell;
+import appeng.tile.networking.TileDenseEnergyCell;
 import appeng.tile.storage.TileDrive;
 import appeng.util.item.AEFluidStack;
 import appeng.util.item.AEItemStack;
@@ -33,8 +41,10 @@ import gregtech.api.enums.Materials;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
+import gregtech.api.metatileentity.implementations.MTEBasicBatteryBuffer;
 import gregtech.api.metatileentity.implementations.MTEHatchEnergy;
 import gregtech.api.metatileentity.implementations.MTEHatchMaintenance;
+import gregtech.api.util.GTModHandler;
 import gregtech.api.util.GTUtility;
 import gregtech.common.blocks.ItemMachines;
 import gregtech.common.tileentities.machines.MTEHatchInputBusME;
@@ -46,8 +56,7 @@ import gregtech.common.tileentities.machines.outputme.MTEHatchOutputME;
 public final class HologramSulfurLineSmokeNative {
 
     private static final long SULFUR = 64, OXYGEN = 192_000, WATER = 64_000;
-    private static final long EU_BUDGET_PER_REACTOR = 2_000_000;
-    private static final double AE_BUDGET = 150_000;
+    private static final int BATTERY_EU = 100_000;
 
     private HologramSulfurLineSmokeNative() {}
 
@@ -57,8 +66,14 @@ public final class HologramSulfurLineSmokeNative {
         for (int px = bounds[0]; px <= bounds[3]; px++) {
             for (int pz = bounds[2]; pz <= bounds[5]; pz++) {
                 world.getChunkFromBlockCoords(px, pz);
-                for (int py = bounds[1]; py <= bounds[4]; py++)
-                    require(world.isAirBlock(px, py, pz), "fresh native line footprint required");
+                for (int py = bounds[1]; py <= bounds[4]; py++) require(
+                    world.isAirBlock(px, py, pz) || px == x + 13 && py == y + 1
+                        && pz == z + 3
+                        && HologramNetworkBindings.NODE_TILE.equals(
+                            world.getTileEntity(px, py, pz)
+                                .getClass()
+                                .getName()),
+                    "fresh native line footprint or the actual sole quantum gateway required");
             }
         }
         for (int stage = 0; stage < 3; stage++) {
@@ -122,41 +137,8 @@ public final class HologramSulfurLineSmokeNative {
             .stack(AEColor.Transparent, 1);
         for (int dx = 0; dx <= 12; dx++) placeCable(world, actor, cable, x + dx, y + 1, z + 3);
         placeCable(world, actor, cable, x + 1, y + 2, z + 3);
-        TileDrive drive = placeAE(
-            world,
-            actor,
-            AEApi.instance()
-                .definitions()
-                .blocks()
-                .drive()
-                .maybeBlock()
-                .get(),
-            x + 13,
-            y + 1,
-            z + 3,
-            TileDrive.class);
-        drive.getInternalInventory()
-            .setInventorySlotContents(
-                0,
-                AEApi.instance()
-                    .definitions()
-                    .items()
-                    .cell1k()
-                    .maybeStack(1)
-                    .get());
-        drive.getInternalInventory()
-            .setInventorySlotContents(1, fluidCell());
-        placeAE(
-            world,
-            actor,
-            registeredBlock("appeng.block.networking.BlockEnergyCell"),
-            x + 13,
-            y + 1,
-            z + 4,
-            TileEnergyCell.class);
-        Line result = discover(world, actor, x, y, z);
-        result.supplyBootPower();
-        return result;
+        // The drive, controller and AE cell are outside this captured footprint. Only the GTSWN gateway reaches them.
+        return discover(world, actor, x, y, z);
     }
 
     /** Discovers the already placed blueprint. It never places a machine, casing, part or storage cell. */
@@ -177,8 +159,10 @@ public final class HologramSulfurLineSmokeNative {
         private final MTEHatchMaintenance[] maintenance = new MTEHatchMaintenance[3];
         private final MTEHatchInputBusME sulfurBus;
         private final TileDrive drive;
-        private final TileEnergyCell power;
-        private final long[] euInjected = new long[3];
+        private final TileDenseEnergyCell power;
+        private final BaseMetaTileEntity[] batteryBases = new BaseMetaTileEntity[3];
+        private final MTEBasicBatteryBuffer[] batteries = new MTEBasicBatteryBuffer[3];
+        private final long[] batteryInitial = new long[3];
         private final int[] maxProgress = new int[3];
         private final long[] completionBaseline = new long[3];
         private final NBTTagCompound[] previousSamples = new NBTTagCompound[3];
@@ -207,8 +191,8 @@ public final class HologramSulfurLineSmokeNative {
                 completionBoundaries[stage] = new NBTTagList();
             }
             sulfurBus = nativeMTE(world, x + 1, y + 2, z + 2, MTEHatchInputBusME.class);
-            drive = cast(world.getTileEntity(x + 13, y + 1, z + 3), TileDrive.class);
-            power = cast(world.getTileEntity(x + 13, y + 1, z + 4), TileEnergyCell.class);
+            drive = cast(world.getTileEntity(x - 12, y, z + 11), TileDrive.class);
+            power = cast(world.getTileEntity(x - 17, y, z + 8), TileDenseEnergyCell.class);
             require(!power.isInfinite(), "finite native AE energy cell required");
         }
 
@@ -262,9 +246,8 @@ public final class HologramSulfurLineSmokeNative {
                 drive.getProxy()
                     .getNode() != null,
                 "natural AE node initialization required before fixture supply");
-            double offered = Math.max(0, AE_BUDGET - initial.getDouble("bootPower"));
-            double rejected = offered == 0 ? 0 : power.injectAEPower(offered, Actionable.MODULATE);
-            initial.setDouble("aeInjected", initial.getDouble("bootPower") + offered - rejected);
+            require(operational(), "remote stock supply requires the naturally linked quantum grid");
+            initial.setDouble("remoteAeStoredBefore", power.getAECurrentPower());
             // Injecting initial fixture inventory is an explicit supply. Machines subsequently use poweredExtraction.
             PlayerSource source = new PlayerSource(actor, drive);
             IAEItemStack item = AEItemStack.create(Materials.Sulfur.getDust(1));
@@ -284,14 +267,32 @@ public final class HologramSulfurLineSmokeNative {
             initial.setLong("oxygen", OXYGEN);
             initial.setLong("water", WATER);
             initial.setLong("acidSupplied", 0);
-            initial.setLong("euBudgetPerReactor", EU_BUDGET_PER_REACTOR);
+            initial.setLong("batteryEuPerReactor", BATTERY_EU);
             initial.setLong("worldTick", suppliedTick);
             initial.setString(
                 "supplyMethod",
-                "native ME monitor injectItems; finite AE cell injectAEPower; finite native LV hatch EU ledger");
+                "once-only remote ME stock; independent once-charged native LV batteries naturally power energy hatches");
             NBTTagList maintenanceSupply = new NBTTagList();
             ItemStack[] bundle = MTEHatchMaintenance.getAutoMaintenanceInputs();
             for (int stage = 0; stage < 3; stage++) {
+                int sx = x + stage * 5;
+                require(world.isAirBlock(sx, y, z - 1), "external battery fixture footprint is fresh air");
+                batteryBases[stage] = placeGT(
+                    world,
+                    actor,
+                    ItemList.Battery_Buffer_1by1_LV.get(1),
+                    sx,
+                    y,
+                    z - 1,
+                    ForgeDirection.SOUTH);
+                batteries[stage] = cast(batteryBases[stage].getMetaTileEntity(), MTEBasicBatteryBuffer.class);
+                ItemStack battery = ItemList.Battery_RE_LV_Lithium.get(1);
+                GTModHandler.chargeElectricItem(battery, BATTERY_EU, Integer.MAX_VALUE, true, false);
+                batteries[stage].setInventorySlotContents(0, battery);
+                batteryInitial[stage] = batteries[stage].getStoredEnergy()[0];
+                require(
+                    batteryInitial[stage] > 0 && batteryInitial[stage] <= BATTERY_EU,
+                    "once-only finite native battery charge");
                 NBTTagCompound suppliedBundle = new NBTTagCompound();
                 suppliedBundle.setInteger("stage", stage);
                 suppliedBundle.setInteger("repairStatusBefore", reactors[stage].getRepairStatus());
@@ -315,22 +316,10 @@ public final class HologramSulfurLineSmokeNative {
             tick();
         }
 
-        /** Allows the finite AE network to boot naturally before material supply. */
+        /** The external bank owns the only finite AE power supply. A discovered blueprint receives no power. */
         public void supplyBootPower() {
-            require(!initial.hasKey("bootPower"), "boot power is once only");
-            double accepted;
-            if (power.getProxy()
-                .isReady()) {
-                accepted = AE_BUDGET - power.injectAEPower(AE_BUDGET, Actionable.MODULATE);
-            } else {
-                // Pre-boot reader seeding precedes the native grid's first power-provider registration.
-                NBTTagCompound seed = new NBTTagCompound();
-                seed.setDouble("internalCurrentPower", AE_BUDGET);
-                power.readFromNBT_TileEnergyCell(seed);
-                accepted = AE_BUDGET;
-            }
-            power.markDirty();
-            initial.setDouble("bootPower", accepted);
+            require(!initial.hasKey("blueprintBootPower"), "discovery power audit is once only");
+            initial.setDouble("blueprintBootPower", 0);
         }
 
         /** Call from the driver's natural server tick. This never invokes a TE tick or recipe method. */
@@ -339,16 +328,6 @@ public final class HologramSulfurLineSmokeNative {
             if (lastTick == now) return;
             lastTick = now;
             for (int stage = 0; stage < 3; stage++) {
-                BaseMetaTileEntity hatch = energy[stage];
-                if (supplied && (stoppedTick < 0 || reactors[stage].mMaxProgresstime > 0)) {
-                    long deficit = Math.max(0, hatch.getEUCapacity() - hatch.getStoredEU());
-                    long offered = Math.min(deficit, EU_BUDGET_PER_REACTOR - euInjected[stage]);
-                    if (offered > 0) {
-                        require(hatch.setStoredEU(hatch.getStoredEU() + offered), "native finite EU refill accepted");
-                        euInjected[stage] += offered;
-                        hatch.markDirty();
-                    }
-                }
                 maxProgress[stage] = Math.max(maxProgress[stage], reactors[stage].mProgresstime);
                 if (supplied) {
                     NBTTagCompound sample = nativeSample(stage, now);
@@ -479,7 +458,11 @@ public final class HologramSulfurLineSmokeNative {
                 row.setLong("nativeRecipesDone", reactor.recipesDone);
                 row.setLong("completionBaseline", completionBaseline[stage]);
                 row.setTag("nativeCompletionBoundaries", completionBoundaries[stage].copy());
-                row.setLong("euInjected", euInjected[stage]);
+                long batteryRemaining = batteries[stage] == null ? 0 : batteries[stage].getStoredEnergy()[0];
+                row.setLong("batteryInitialEU", batteryInitial[stage]);
+                row.setLong("batteryRemainingEU", batteryRemaining);
+                row.setLong("batteryDebitedEU", batteryInitial[stage] - batteryRemaining);
+                row.setLong("fixtureDirectHatchEuInjected", 0);
                 row.setLong("storedEU", energy[stage].getStoredEU());
                 row.setInteger("eut", reactor.mEUt);
                 row.setString(
@@ -508,7 +491,114 @@ public final class HologramSulfurLineSmokeNative {
             NBTTagCompound nativeDrive = new NBTTagCompound();
             drive.writeToNBT(nativeDrive);
             result.setTag("nativeDrive", nativeDrive);
+            result.setTag("topology", topology());
             return result;
+        }
+
+        /** Reads live native graph edges. A route which omits the gateway is always a fixture failure. */
+        public NBTTagCompound topology() {
+            NBTTagCompound result = new NBTTagCompound();
+            result.setIntArray("gateway", new int[] { x + 13, y + 1, z + 3 });
+            result.setIntArray("remoteController", new int[] { x - 16, y, z + 8 });
+            result.setIntArray("remoteDrive", new int[] { x - 12, y, z + 11 });
+            result.setIntArray("storageGateway", new int[] { x - 13, y, z + 11 });
+            result.setIntArray("remoteAePower", new int[] { x - 17, y, z + 8 });
+            result.setInteger("remoteControllerDistance", 35);
+            result.setBoolean("localStorageOrAePowerPlaced", false);
+            result.setBoolean("directFixtureHatchEuWrites", false);
+            try {
+                IGridNode start = sulfurBus.getProxy()
+                    .getNode(),
+                    destination = drive.getProxy()
+                        .getNode();
+                require(start != null && destination != null, "live native graph nodes required");
+                Set<IGridNode> omitted = Collections.newSetFromMap(new IdentityHashMap<IGridNode, Boolean>());
+                NBTTagList nativeGateways = new NBTTagList(), bridge = new NBTTagList();
+                for (int[] point : new int[][] { { x + 13, y + 1, z + 3 }, { x + 3, y + 1, z + 4 },
+                    { x + 8, y + 1, z + 4 } }) {
+                    TileEntity gateway = world.getTileEntity(point[0], point[1], point[2]);
+                    if (gateway instanceof IGridProxyable) {
+                        IGridNode gatewayNode = ((IGridProxyable) gateway).getProxy()
+                            .getNode();
+                        if (gatewayNode != null) {
+                            omitted.add(gatewayNode);
+                            for (IGridConnection edge : gatewayNode.getConnections()) {
+                                NBTTagCompound row = new NBTTagCompound();
+                                row.setTag("from", nativeNode(gatewayNode));
+                                row.setTag("to", nativeNode(edge.getOtherSide(gatewayNode)));
+                                row.setBoolean("directional", edge.hasDirection());
+                                row.setInteger("channels", edge.getUsedChannels());
+                                bridge.appendTag(row);
+                            }
+                        }
+                        NBTTagCompound raw = new NBTTagCompound();
+                        gateway.writeToNBT(raw);
+                        nativeGateways.appendTag(raw);
+                    }
+                }
+                NBTTagList edges = new NBTTagList();
+                Set<IGridNode> visited = Collections.newSetFromMap(new IdentityHashMap<IGridNode, Boolean>());
+                ArrayDeque<IGridNode> pending = new ArrayDeque<>();
+                visited.add(start);
+                pending.add(start);
+                boolean bypass = false;
+                while (!pending.isEmpty()) {
+                    IGridNode node = pending.remove();
+                    require(visited.size() <= 128, "bounded isolated native grid graph");
+                    if (node == destination) bypass = true;
+                    for (IGridConnection edge : node.getConnections()) {
+                        IGridNode other = edge.getOtherSide(node);
+                        NBTTagCompound row = new NBTTagCompound();
+                        row.setTag("from", nativeNode(node));
+                        row.setTag("to", nativeNode(other));
+                        row.setBoolean("directional", edge.hasDirection());
+                        row.setInteger("channels", edge.getUsedChannels());
+                        edges.appendTag(row);
+                        if (!omitted.contains(other) && visited.add(other)) pending.add(other);
+                    }
+                }
+                require(!bypass, "no native graph route from the line to remote storage when gateway is omitted");
+                boolean same = start.getGrid() == destination.getGrid();
+                boolean all = same;
+                for (int stage = 0; stage < 3; stage++) all &= inputs[stage].getProxy()
+                    .getNode()
+                    .getGrid() == destination.getGrid()
+                    && outputs[stage].getProxy()
+                        .getNode()
+                        .getGrid() == destination.getGrid();
+                result.setBoolean("allInputsOnRemoteGrid", all);
+                result.setBoolean("ordinaryBypassRoute", bypass);
+                result.setInteger("localNodeCountWithoutGateway", visited.size());
+                result.setTag("actualLocalEdgesWithoutGateway", edges);
+                result.setInteger("remoteGridIdentity", System.identityHashCode(destination.getGrid()));
+                result.setInteger("localGridIdentity", System.identityHashCode(start.getGrid()));
+                result.setInteger("remoteOwnerPlayerId", destination.getPlayerID());
+                result.setTag("nativeGateways", nativeGateways);
+                result.setTag("actualGatewayEdges", bridge);
+                result.setInteger("productionGatewayCount", nativeGateways.tagCount());
+                result.setBoolean("nativeGraphObserved", true);
+            } catch (RuntimeException failure) {
+                throw failure;
+            } catch (Exception failure) {
+                throw new IllegalStateException("Cannot observe actual quantum topology", failure);
+            }
+            return result;
+        }
+
+        private NBTTagCompound nativeNode(IGridNode node) {
+            NBTTagCompound row = new NBTTagCompound();
+            DimensionalCoord position = node.getGridBlock()
+                .getLocation();
+            row.setIntArray("position", new int[] { position.getDimension(), position.x, position.y, position.z });
+            row.setString(
+                "hostClass",
+                node.getMachine()
+                    .getClass()
+                    .getName());
+            row.setInteger("playerId", node.getPlayerID());
+            row.setInteger("gridIdentity", System.identityHashCode(node.getGrid()));
+            row.setBoolean("active", node.isActive());
+            return row;
         }
 
         private IMEMonitor<IAEItemStack> items() throws Exception {

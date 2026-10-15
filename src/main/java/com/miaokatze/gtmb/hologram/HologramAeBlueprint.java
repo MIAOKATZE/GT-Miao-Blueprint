@@ -575,8 +575,12 @@ public final class HologramAeBlueprint {
                 canonicalActual.removeTag(key);
                 canonicalExpected.removeTag(key);
             }
-            for (String key : Arrays
-                .asList(HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE, HologramNetworkBindings.HINT)) {
+            for (String key : Arrays.asList(
+                HologramNetworkBindings.GROUP,
+                HologramNetworkBindings.ROLE,
+                HologramNetworkBindings.HINT,
+                HologramNetworkBindings.ORIGINAL,
+                HologramNetworkBindings.MODE)) {
                 canonicalActual.removeTag(key);
                 canonicalExpected.removeTag(key);
             }
@@ -619,12 +623,33 @@ public final class HologramAeBlueprint {
                 "quantum_rebind",
                 "Original quantum coordinates are removed; bind the local group before placement");
         if (data.hasKey(HologramNetworkBindings.GROUP)) HologramNetworkBindings.group(data);
+        HologramNetworkBindings.validateOriginal(data);
         if (data.hasKey("color")
             && (!data.hasKey("color", 3) || data.getInteger("color") < 0 || data.getInteger("color") > 15))
             throw new IOException("Invalid GTSWN quantum color");
         // This palette belongs to the selected network; setAnchor rebuilds it from the new controller.
         data.removeTag("color");
         work.roots.add("color");
+        if (data.hasKey("lastAppliedMigration")) {
+            work.roots.add("lastAppliedMigration");
+            // GTSWN 1.8.66 persists the cursor of its world's QuantumMigrationJournal on every node.
+            // It is neither configuration nor portable identity: setAnchor starts at the target world's
+            // current sequence. Validate before omission so a lookalike field cannot hide arbitrary data.
+            if (!validQuantumMigrationCursor(data)) {
+                work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    "lastAppliedMigration",
+                    "GTSWN migration cursor must be a nonnegative long; malformed data requires explicit review");
+            } else {
+                work.issue(
+                    "quantum_migration_reset",
+                    "warning",
+                    "lastAppliedMigration",
+                    "Source-world migration cursor is omitted; the selected target network starts its own cursor");
+            }
+            data.removeTag("lastAppliedMigration");
+        }
         if (data.hasKey("partContainer")) {
             if (!data.hasKey("partContainer", 10)) throw new IOException("Malformed GTSWN part container");
             cable(work, data.getCompoundTag("partContainer"), new String[] { "partContainer" });
@@ -653,6 +678,8 @@ public final class HologramAeBlueprint {
                 HologramNetworkBindings.GROUP,
                 HologramNetworkBindings.ROLE,
                 HologramNetworkBindings.HINT,
+                HologramNetworkBindings.ORIGINAL,
+                HologramNetworkBindings.MODE,
                 UNRESOLVED));
         for (Object raw : new HashSet<Object>(data.func_150296_c())) {
             String key = (String) raw;
@@ -666,6 +693,11 @@ public final class HologramAeBlueprint {
                 data.removeTag(key);
             }
         }
+    }
+
+    /** GTSWN 1.8.66 QuantumMigrationJournal sequences start at zero and are stored as native longs. */
+    static boolean validQuantumMigrationCursor(NBTTagCompound data) {
+        return data != null && data.hasKey("lastAppliedMigration", 4) && data.getLong("lastAppliedMigration") >= 0L;
     }
 
     public static Analysis analyze(Block block, int metadata, NBTTagCompound payload) throws IOException {
@@ -854,6 +886,9 @@ public final class HologramAeBlueprint {
             loadingInventory.setTileEntity(null);
         }
         try {
+            // Private-blueprint provenance is consumed only by the verified binding adapter, never GTSWN's reader.
+            tag.removeTag(HologramNetworkBindings.ORIGINAL);
+            tag.removeTag(HologramNetworkBindings.MODE);
             tile.readFromNBT(tag);
         } finally {
             if (loadingInventory != null) loadingInventory.setTileEntity((IAEAppEngInventory) tile);

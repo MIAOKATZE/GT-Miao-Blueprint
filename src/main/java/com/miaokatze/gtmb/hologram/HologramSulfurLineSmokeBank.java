@@ -61,7 +61,7 @@ public final class HologramSulfurLineSmokeBank {
             "existing registered native AE controller required");
         require(controller.getWorldObj() == world && !controller.isInvalid(), "existing native controller required");
         int[][] positions = { { controllerX - 1, y, z }, { controllerX - 1, y + 1, z }, { controllerX, y + 1, z },
-            { controllerX - 1, y, z + 1 } };
+            { controllerX + 4, y, z + 3 }, { controllerX + 3, y, z + 3 } };
         for (int[] position : positions) {
             world.getChunkFromBlockCoords(position[0], position[2]);
             require(world.isAirBlock(position[0], position[1], position[2]), "fresh payment bank footprint required");
@@ -100,7 +100,7 @@ public final class HologramSulfurLineSmokeBank {
         // Native TileWireless connects only opposite its forward side. The west cable connects downward to the cell.
         wap.setOrientation(ForgeDirection.EAST, ForgeDirection.UP);
         placeCable(world, actor, controllerX - 1, y + 1, z);
-        // Quantized controllers reject a directly adjacent drive. The dense cell carries this physical grid link.
+        // This drive has no physical route to the controller or AE power. A real terminal places its adjacent gateway.
         TileDrive drive = place(
             world,
             actor,
@@ -110,9 +110,9 @@ public final class HologramSulfurLineSmokeBank {
                 .drive()
                 .maybeBlock()
                 .get(),
-            controllerX - 1,
+            controllerX + 4,
             y,
-            z + 1,
+            z + 3,
             TileDrive.class);
         drive.getInternalInventory()
             .setInventorySlotContents(
@@ -179,7 +179,7 @@ public final class HologramSulfurLineSmokeBank {
             try {
                 return live(controller, x, y, z) && live(power, x - 1, y, z)
                     && live(wap, x, y + 1, z)
-                    && live(drive, x - 1, y, z + 1)
+                    && live(drive, x + 4, y, z + 3)
                     && controllerProxy().isActive()
                     && drive.getProxy()
                         .isActive()
@@ -195,6 +195,10 @@ public final class HologramSulfurLineSmokeBank {
             } catch (Exception unavailable) {
                 return false;
             }
+        }
+
+        public boolean controllerReady() {
+            return live(controller, x, y, z) && live(power, x - 1, y, z) && controllerProxy().isActive();
         }
 
         /** One fixture supply of the actual server quote. Production payment owns every subsequent extraction. */
@@ -291,7 +295,9 @@ public final class HologramSulfurLineSmokeBank {
         public NBTTagCompound receipt() throws Exception {
             NBTTagCompound result = new NBTTagCompound();
             result.setIntArray("existingController", new int[] { x, y, z });
-            result.setIntArray("bankBounds", new int[] { x - 1, y, z, x, y + 1, z + 1 });
+            result.setIntArray("bankBounds", new int[] { x - 1, y, z, x + 4, y + 1, z + 3 });
+            result.setIntArray("storageQuantumGateway", new int[] { x + 3, y, z + 3 });
+            result.setIntArray("remoteDrivePosition", new int[] { x + 4, y, z + 3 });
             result.setString(
                 "actor",
                 actor.getUniqueID()

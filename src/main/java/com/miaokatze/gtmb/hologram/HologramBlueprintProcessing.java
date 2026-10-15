@@ -50,7 +50,7 @@ final class HologramBlueprintProcessing {
 
     static final class Policy {
 
-        String tendency = "self", quantum = "rebind", coordinateDefault = "auto", autoHints = "light";
+        String tendency = "self", quantum = "preserve", coordinateDefault = "auto", autoHints = "light";
         int deidentificationLevel;
         List<String> confirmedStages = new ArrayList<>();
         List<String> ignoredNbtKeys = new ArrayList<>(), ignoredNbtPaths = new ArrayList<>();
@@ -89,7 +89,7 @@ final class HologramBlueprintProcessing {
             policy.tendency = choice(tag, "tendency", "self", "share");
             if (!tag.hasKey("deidentificationLevel", 3)) throw new IOException("请明确选择去标识等级");
             policy.deidentificationLevel = HologramDeidentification.checked(tag.getInteger("deidentificationLevel"));
-            policy.quantum = choice(tag, "quantum", "rebind", "clear");
+            policy.quantum = choice(tag, "quantum", "preserve", "rebind", "clear");
             policy.coordinateDefault = choice(tag, "coordinateDefault", "auto", "clear", "absolute", "relative");
             policy.autoHints = choice(tag, "autoHints", "light", "full", "none");
             policy.confirmedStages = readStrings(tag, "confirmedStages", STAGES.size(), 32);
@@ -137,7 +137,7 @@ final class HologramBlueprintProcessing {
         policy.tendency = tendency;
         policy.deidentificationLevel = Math
             .max(HologramDeidentification.checked(minimumLevel), "share".equals(tendency) ? 6 : 0);
-        policy.quantum = "share".equals(tendency) ? "clear" : "rebind";
+        policy.quantum = "share".equals(tendency) ? "rebind" : "preserve";
         policy.autoHints = "share".equals(tendency) ? "full" : "light";
         return policy;
     }
@@ -155,6 +155,7 @@ final class HologramBlueprintProcessing {
         if (source == null || requested == null) throw new IOException("没有可处理的蓝图来源");
         Policy policy = Policy.read(requested.write());
         if (!policy.complete()) throw new IOException("保存前必须明确完成全部处理阶段");
+        HologramQuantumGroups.requireConfirmed(source);
         int minimum = minimumLevel(source);
         if (policy.deidentificationLevel < minimum) throw new IOException("旧结果已清除的身份不能恢复，请选择至少等级 " + minimum);
         // Capture exact coordinate schemas before any identity projection removes a registered relation field.
@@ -198,6 +199,7 @@ final class HologramBlueprintProcessing {
         result.deidentificationChosen = true;
         HologramCoordinatePolicies.apply(result, relations, policy);
         if ("clear".equals(policy.quantum)) clearQuantum(result);
+        else applyQuantumMode(result, policy.quantum);
         NBTTagCompound generatedHints = addHints(source, result, relations, policy);
         NBTTagCompound receipt = new NBTTagCompound();
         receipt.setInteger("version", VERSION);
@@ -218,6 +220,9 @@ final class HologramBlueprintProcessing {
         state.setBoolean("complete", complete(source));
         state.setBoolean("legacy", legacy(source));
         state.setInteger("minimumLevel", minimumLevel(source));
+        state.setTag("quantumGroups", HologramQuantumGroups.groups(source));
+        state.setTag("quantumNodes", HologramQuantumGroups.nodes(source));
+        state.setBoolean("quantumGroupsConfirmed", HologramQuantumGroups.confirmed(source));
         NBTTagList rows = new NBTTagList();
         for (HologramCoordinatePolicies.Relation relation : HologramCoordinatePolicies
             .inspect(source, dimension, originX, originY, originZ)) {
@@ -281,7 +286,18 @@ final class HologramBlueprintProcessing {
     /** Canonical AE/quantum analysis may rediscover a shell node; the explicit completed author decision wins. */
     static HologramPresets.Preset enforcePolicy(HologramPresets.Preset preset) throws IOException {
         if (quantumCleared(preset)) clearQuantum(preset);
+        else if (complete(preset)) applyQuantumMode(preset, policy(preset).quantum);
         return preset;
+    }
+
+    private static void applyQuantumMode(HologramPresets.Preset preset, String mode) throws IOException {
+        for (HologramPresets.Cell cell : preset.cells) {
+            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
+            if (tag == null || !tag.hasKey(HologramNetworkBindings.GROUP)) continue;
+            tag.setString(HologramNetworkBindings.MODE, mode);
+            if ("rebind".equals(mode)) tag.removeTag(HologramNetworkBindings.ORIGINAL);
+            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
+        }
     }
 
     static boolean quantumCleared(HologramPresets.Preset preset) throws IOException {
@@ -344,7 +360,8 @@ final class HologramBlueprintProcessing {
         NBTTagCompound previous = HologramBlueprintNbt.decode(preset.processingNbt);
         Policy policy = policy(preset);
         String stage = "prompt".equals(dependency) ? "hints"
-            : "geometry".equals(dependency) ? "coordinates" : "nbt".equals(dependency) ? "nbt" : "identity";
+            : "quantum".equals(dependency) ? "quantum"
+                : "geometry".equals(dependency) ? "coordinates" : "nbt".equals(dependency) ? "nbt" : "identity";
         int index = STAGES.indexOf(stage);
         while (policy.confirmedStages.size() > index) policy.confirmedStages.remove(policy.confirmedStages.size() - 1);
         NBTTagCompound receipt = new NBTTagCompound();
@@ -606,6 +623,10 @@ final class HologramBlueprintProcessing {
     }
 
     private static void clearQuantum(HologramPresets.Preset preset) throws IOException {
+        // Removing every logical slot also retires the review of that exact named cell map.
+        // The completed processing receipt still authorizes explicit unbound placement; choosing a
+        // binding policy in a later author pass requires confirming a new classification for this blueprint.
+        preset.quantumGroupingNbt = null;
         for (HologramPresets.Cell cell : preset.cells) {
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (tag == null || !tag.hasKey(HologramNetworkBindings.GROUP)) continue;
@@ -613,6 +634,8 @@ final class HologramBlueprintProcessing {
             tag.removeTag(HologramNetworkBindings.ROLE);
             tag.removeTag(HologramNetworkBindings.HINT);
             tag.removeTag(HologramNetworkBindings.CAPTURE_ANCHOR);
+            tag.removeTag(HologramNetworkBindings.ORIGINAL);
+            tag.removeTag(HologramNetworkBindings.MODE);
             if (HologramNetworkBindings.node(cell.block())) {
                 for (String key : new String[] { "anchorDim", "anchorX", "anchorY", "anchorZ", "proxy", "linked" })
                     tag.removeTag(key);
@@ -633,7 +656,8 @@ final class HologramBlueprintProcessing {
         if ("full".equals(policy.autoHints)) {
             String hint = "作者处理：去标识等级 " + policy.deidentificationLevel
                 + "；量子关系"
-                + ("clear".equals(policy.quantum) ? "清除后重新配置" : "放置时重新绑定")
+                + ("clear".equals(policy.quantum) ? "清除后重新配置"
+                    : "preserve".equals(policy.quantum) ? "保持原存档的原网络绑定" : "放置时用自己的终端重新绑定")
                 + "；未明确忽略的未适配数据保留原样";
             preset.prompt = appendGenerated(preset.prompt, java.util.Collections.singletonList(hint), blocks);
         }
@@ -684,8 +708,10 @@ final class HologramBlueprintProcessing {
                 else if (entry.getKey() >= 2 && entry.getKey() <= 6)
                     hints.add("模板保留原锚定、网络或安全设置" + fields + "；移动蓝图不会自动修复这些外部设置，放置后检查目标与权限");
             }
-            if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP))
-                hints.add("量子网络组 " + payload.getString(HologramNetworkBindings.GROUP) + "：放置前选择当前玩家自己的有效终端，按该终端重新绑定");
+            if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) hints.add(
+                "量子网络组 " + payload.getString(HologramNetworkBindings.GROUP)
+                    + ("preserve".equals(policy.quantum) ? "：保持原存档的原量子网络绑定；原网络不可用或无权限时无法施工"
+                        : "：放置前选择当前玩家自己的有效终端，按该终端重新绑定"));
             else if ("clear".equals(policy.quantum) && (HologramNetworkBindings.node(cell.block())
                 || before != null && (before.hasKey(HologramNetworkBindings.GROUP)
                     || before.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))))

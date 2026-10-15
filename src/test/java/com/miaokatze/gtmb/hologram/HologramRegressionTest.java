@@ -49,6 +49,9 @@ public final class HologramRegressionTest {
         cases.put(
             "blueprint_processing_gui_requires_choices_and_preserves_review_progress",
             com.miaokatze.gtmb.client.hologram.HologramProcessingFlowRegression::run);
+        cases.put(
+            "quantum_group_drafts_preserve_selection_history_and_complete_placement",
+            com.miaokatze.gtmb.client.hologram.HologramQuantumGroupsRegression::run);
         cases.put("essentia_payloads_require_actual_aspect_payment_and_exact_refunds", HologramEssentiaRegression::run);
         cases.put("gt_me_samples_keep_filters_and_drop_simulated_inventory_shadows", HologramGtMeShadowRegression::run);
         cases.put("blueprint_processing_reviews_nbt_coordinates_and_reusable_presets", () -> {

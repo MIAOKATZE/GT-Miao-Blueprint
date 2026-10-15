@@ -203,6 +203,10 @@ final class HologramAeReviewModel {
                 case "node_reset":
                 case "network_reset":
                     return "旧网络身份不继承";
+                case "quantum_rebind":
+                    return "量子节点需要绑定目标网络";
+                case "quantum_migration_reset":
+                    return "量子迁移记录按目标世界重建";
                 case "mark.missing_material":
                     return "施工材料尚不足（可保存）";
                 case "slot_overflow":
@@ -272,6 +276,10 @@ final class HologramAeReviewModel {
                 case "node_reset":
                 case "network_reset":
                     return "原 AE 网络身份将清除，放置后由新网络重新建立连接。";
+                case "quantum_rebind":
+                    return "原控制器锚定不继承；请在放置界面逐类群选择自己的量子终端，全部绑定后再确认。";
+                case "quantum_migration_reset":
+                    return "来源世界的量子网络迁移序号不随蓝图复制，节点按目标世界的网络重新记录；这不会复制原网络绑定。";
                 case "cpu_core_reset":
                     return "合成 CPU 的临时运行记录不保留；设备结构与支持的配置继续保留。";
                 case "cpu_runtime_omitted":

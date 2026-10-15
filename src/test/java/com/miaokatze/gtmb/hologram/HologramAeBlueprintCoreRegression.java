@@ -59,6 +59,8 @@ public final class HologramAeBlueprintCoreRegression {
         interfaceStorageAliases();
         previewCacheSchema();
         quantumDisplayTransport(actor);
+        quantumMigrationCursorSchema();
+        quantumClearClassificationLifecycle(actor);
         deletedPartMarkers(false);
         deletedPartMarkers(true);
         for (IItemDefinition definition : Arrays.asList(
@@ -605,6 +607,178 @@ public final class HologramAeBlueprintCoreRegression {
         check(
             Arrays.equals(source, CompressedStreamTools.compress(raw)),
             "preview, quote and placement projections leave the original quantum source bytes unchanged");
+    }
+
+    private static void quantumClearClassificationLifecycle(EntityPlayerMP actor) throws Exception {
+        Block node = null;
+        for (Object registered : Block.blockRegistry)
+            if (registered instanceof Block && HologramNetworkBindings.node((Block) registered))
+                node = (Block) registered;
+        if (node == null) {
+            System.out.println(PREFIX + "SKIP quantum clear classification: optional GTSWN node is not registered");
+            return;
+        }
+        NBTTagCompound raw = new NBTTagCompound();
+        node.createTileEntity(null, 0)
+            .writeToNBT(raw);
+        byte[] before = CompressedStreamTools.compress(raw);
+        ItemStack shell = HologramAeBlueprint.blockSample(node, 0);
+        HologramPresets.Preset source = new HologramPresets.Preset();
+        source.schema = 2;
+        source.id = "quantum_clear_classification";
+        source.name = "Quantum clear classification";
+        source.controllerType = "area";
+        HologramPresets.Cell cell = HologramPresets.cell(shell, 0, 0, 0, -1, false);
+        cell.block = Block.blockRegistry.getNameForObject(node);
+        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(raw);
+        source.cells.add(cell);
+        source.palette.add(HologramPresets.cell(shell, 0, 0, 0, -1, false));
+        source = HologramQuantumGroups.configure(source, HologramQuantumGroups.groups(source));
+        String classifiedReceipt = source.quantumGroupingNbt;
+        HologramBlueprintProcessing.Policy clear = HologramBlueprintProcessing.defaults("share", 1);
+        clear.quantum = "clear";
+        clear.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        HologramPresets.Preset cleared = HologramBlueprintProcessing.process(source, clear, 0, 0, 64, 0);
+        for (int pass = 0; pass < 2; pass++) {
+            cleared = HologramBlueprintProcessing.enforcePolicy(HologramAePolicy.sanitize(cleared).preset);
+            NBTTagCompound state = HologramBlueprintProcessing.state(cleared, null, 0, 0, 64, 0);
+            check(
+                state.getBoolean("complete") && !state.getBoolean("quantumGroupsConfirmed")
+                    && state.getTagList("quantumNodes", 10)
+                        .tagCount() == 1
+                    && HologramBlueprintProcessing.quantumCleared(cleared)
+                    && cleared.quantumGroupingNbt == null
+                    && !HologramBlueprintNbt.decode(cleared.cells.get(0).tileNbt)
+                        .hasKey(HologramNetworkBindings.GROUP),
+                "explicit clear remains complete and inspectable after repeated canonical analysis without restoring a group");
+            check(
+                HologramNetworkBindings.snapshot(cleared, actor, new HologramNetworkBindings.State())
+                    .getTagList("groups", 10)
+                    .tagCount() == 0,
+                "clear placement presents no terminal binding slots");
+        }
+        com.google.gson.Gson gson = new com.google.gson.Gson();
+        com.google.gson.JsonObject wrapper = new com.google.gson.JsonObject();
+        wrapper.addProperty("schema", 2);
+        HologramBlueprintVersions.stamp(cleared);
+        wrapper.add("blueprint", gson.toJsonTree(cleared));
+        HologramPresets.Preset reloaded = HologramBlueprintSharing.decode(
+            new String(
+                HologramBlueprintSharing.encodeBounded(gson, wrapper, HologramBlueprintSharing.MAX_BYTES),
+                java.nio.charset.StandardCharsets.UTF_8));
+        HologramPresets.validate(reloaded);
+        check(
+            HologramBlueprintProcessing.state(reloaded, null, 0, 0, 64, 0)
+                .getBoolean("complete") && HologramBlueprintProcessing.quantumCleared(reloaded),
+            "shared serialization and storage validation preserve the completed explicit-clear decision");
+        reloaded.quantumGroupingNbt = classifiedReceipt;
+        check(
+            !HologramQuantumGroups.confirmed(reloaded) && HologramQuantumGroups.nodes(reloaded)
+                .tagCount() == 1,
+            "older clear files with a stale named-map receipt become unclassified without throwing on absent GROUP");
+        reloaded.quantumGroupingNbt = null;
+        HologramBlueprintProcessing.Policy rebind = HologramBlueprintProcessing.defaults("share", 1);
+        rebind.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        try {
+            HologramBlueprintProcessing.process(reloaded, rebind, 0, 0, 64, 0);
+            throw new AssertionError("a later binding policy must not reuse the removed classification");
+        } catch (IOException expected) {
+            check(
+                expected.getMessage()
+                    .contains("分类"),
+                "reopening rebind requires this blueprint's classification");
+        }
+        HologramPresets.Preset classifiedAgain = HologramQuantumGroups
+            .configure(reloaded, HologramQuantumGroups.groups(reloaded));
+        rebind.confirmedStages.remove(rebind.confirmedStages.size() - 1);
+        try {
+            HologramBlueprintProcessing.process(classifiedAgain, rebind, 0, 0, 64, 0);
+            throw new AssertionError("classification alone cannot bypass the other author stages");
+        } catch (IOException expected) {
+            check(
+                expected.getMessage()
+                    .contains("全部处理阶段"),
+                "all six author stages remain required after classification");
+        }
+        rebind.confirmedStages.add("hints");
+        check(
+            !HologramBlueprintProcessing
+                .quantumCleared(HologramBlueprintProcessing.process(classifiedAgain, rebind, 0, 0, 64, 0)),
+            "a new complete classification and author review can deliberately restore anonymous rebind slots");
+        check(
+            Arrays.equals(before, CompressedStreamTools.compress(raw)),
+            "clear lifecycle leaves native source bytes unchanged");
+    }
+
+    private static void quantumMigrationCursorSchema() throws Exception {
+        Block node = null;
+        for (Object registered : Block.blockRegistry)
+            if (registered instanceof Block && HologramNetworkBindings.node((Block) registered))
+                node = (Block) registered;
+        if (node == null) {
+            System.out.println(PREFIX + "SKIP quantum migration contract: optional GTSWN node is not registered");
+            return;
+        }
+        NBTTagCompound raw = new NBTTagCompound();
+        node.createTileEntity(null, 0)
+            .writeToNBT(raw);
+        raw.removeTag("lastAppliedMigration");
+        check(!HologramAeBlueprint.analyze(node, 0, raw).blocking, "legacy GTSWN cursor-absent node remains supported");
+        for (long cursor : new long[] { 0L, 73L, Long.MAX_VALUE }) {
+            raw.setLong("lastAppliedMigration", cursor);
+            byte[] before = CompressedStreamTools.compress(raw);
+            HologramAeBlueprint.Analysis reviewed = HologramAeBlueprint.analyze(node, 0, raw);
+            check(
+                !reviewed.blocking && !reviewed.payload()
+                    .hasKey("lastAppliedMigration")
+                    && !HologramAeBlueprint.analyze(node, 0, reviewed.payload()).blocking,
+                "nonnegative native long cursor is omitted before target-world migration replay");
+            check(
+                Arrays.equals(before, CompressedStreamTools.compress(raw)),
+                "cursor projection preserves source bytes");
+        }
+        NBTTagCompound integer = (NBTTagCompound) raw.copy();
+        integer.setInteger("lastAppliedMigration", 73);
+        quantumFieldBlocked(node, integer, "lastAppliedMigration", "integer cursor cannot borrow the long schema");
+        NBTTagCompound negative = (NBTTagCompound) raw.copy();
+        negative.setLong("lastAppliedMigration", -1L);
+        quantumFieldBlocked(
+            node,
+            negative,
+            "lastAppliedMigration",
+            "negative native cursor is not a valid journal sequence");
+        NBTTagCompound asset = (NBTTagCompound) raw.copy();
+        asset.setTag("lastAppliedMigration", new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        quantumFieldBlocked(node, asset, "lastAppliedMigration", "physical data cannot hide beneath the cursor key");
+        NBTTagCompound recovery = (NBTTagCompound) raw.copy();
+        NBTTagList recovered = new NBTTagList();
+        recovered.appendTag(new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        recovery.setTag("recoveredPartDrops", recovered);
+        quantumFieldBlocked(
+            node,
+            recovery,
+            "recoveredPartDrops",
+            "pending native refunds remain real assets requiring review");
+        NBTTagCompound future = (NBTTagCompound) raw.copy();
+        future.setLong("futureMigrationState", 0L);
+        quantumFieldBlocked(node, future, "futureMigrationState", "new unknown persistence fields remain blocked");
+    }
+
+    private static void quantumFieldBlocked(Block node, NBTTagCompound raw, String path, String message)
+        throws Exception {
+        byte[] before = CompressedStreamTools.compress(raw);
+        HologramAeBlueprint.Analysis reviewed = HologramAeBlueprint.analyze(node, 0, raw);
+        check(
+            reviewed.blocking && issue(reviewed, "unreviewed_tile_field", path)
+                && HologramAeBlueprint.analyze(node, 0, reviewed.payload()).blocking,
+            message);
+        try {
+            HologramAeBlueprint.resourcePlan(node, 0, reviewed.payload(), HologramAeBlueprint.blockSample(node, 0));
+            throw new AssertionError("unreviewed quantum persistence must reject a material quote");
+        } catch (IOException expected) {
+            check(true, "blocked persistence cannot become payable after its raw field was omitted");
+        }
+        check(Arrays.equals(before, CompressedStreamTools.compress(raw)), "failed review preserves exact source bytes");
     }
 
     private static void quantumDisplayBlocked(Block node, NBTTagCompound raw, String message) throws Exception {

@@ -52,6 +52,11 @@ public final class HologramProcessingFlowRegression {
         check(!flow.chosen() && !flow.next() && flow.stage == 0, "Opening a policy cannot advance it");
         flow.tendency(true);
         check(
+            "rebind".equals(
+                flow.values()
+                    .getString("quantum")),
+            "Sharing preserves anonymous groups for the recipient's own authorized terminal");
+        check(
             flow.chosen() && !flow.complete()
                 && flow.policy()
                     .getTagList("confirmedStages", 8)
@@ -136,6 +141,32 @@ public final class HologramProcessingFlowRegression {
         flow.clearChoice();
         check(!flow.complete() && !flow.next(), "A server-rejected choice must be reviewed again");
         check(saved.getInteger("deidentificationLevel") == 4, "Client flow never mutates the saved preset");
+        HologramProcessingFlow explicitlyCleared = new HologramProcessingFlow(new NBTTagCompound());
+        explicitlyCleared.tendency(false);
+        explicitlyCleared.next();
+        explicitlyCleared.next();
+        explicitlyCleared.values()
+            .setString("quantum", "clear");
+        explicitlyCleared.choose();
+        explicitlyCleared.tendency(true);
+        check(
+            "clear".equals(
+                explicitlyCleared.values()
+                    .getString("quantum")),
+            "Sharing recommendation preserves a deliberately chosen complete group clear");
+        HologramProcessingFlow groups = new HologramProcessingFlow(new NBTTagCompound());
+        groups.tendency(true);
+        groups.next();
+        groups.next();
+        groups.quantumGroups(true, false);
+        groups.choose();
+        check(
+            !groups.chosen() && !groups.next(),
+            "Preset or recommended quantum policy cannot bypass this blueprint's classification");
+        groups.quantumGroups(true, true);
+        check(
+            groups.chosen() && groups.next(),
+            "A complete server-confirmed node classification allows the quantum Next step");
         HologramProcessingFlow changed = new HologramProcessingFlow(new NBTTagCompound());
         changed.tendency(false);
         for (int i = 0; i < 5; i++) changed.next();
