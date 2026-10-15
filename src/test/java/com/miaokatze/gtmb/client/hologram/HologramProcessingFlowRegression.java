@@ -55,7 +55,7 @@ public final class HologramProcessingFlowRegression {
             "rebind".equals(
                 flow.values()
                     .getString("quantum")),
-            "Sharing preserves anonymous groups for the recipient's own authorized terminal");
+            "Sharing preserves groups for a selected target-network terminal");
         check(
             flow.chosen() && !flow.complete()
                 && flow.policy()
@@ -158,15 +158,27 @@ public final class HologramProcessingFlowRegression {
         groups.tendency(true);
         groups.next();
         groups.next();
-        groups.quantumGroups(true, false);
-        groups.choose();
-        check(
-            !groups.chosen() && !groups.next(),
-            "Preset or recommended quantum policy cannot bypass this blueprint's classification");
-        groups.quantumGroups(true, true);
         check(
             groups.chosen() && groups.next(),
-            "A complete server-confirmed node classification allows the quantum Next step");
+            "A recommended quantum policy continues with the default single group without opening classification");
+        HologramProcessingFlow presetGroups = new HologramProcessingFlow(new NBTTagCompound());
+        presetGroups.preset(groups.values());
+        presetGroups.next();
+        presetGroups.next();
+        check(
+            presetGroups.stage == 2 && presetGroups.chosen() && presetGroups.next(),
+            "A reusable preset never requires a separate per-blueprint group confirmation");
+        HologramProcessingFlow selfGroups = new HologramProcessingFlow(new NBTTagCompound());
+        selfGroups.tendency(false);
+        selfGroups.next();
+        selfGroups.next();
+        check(
+            selfGroups.stage == 2 && "preserve".equals(
+                selfGroups.values()
+                    .getString("quantum"))
+                && selfGroups.chosen()
+                && selfGroups.next(),
+            "Self-use keeps the original binding and advances without custom classification");
         HologramProcessingFlow changed = new HologramProcessingFlow(new NBTTagCompound());
         changed.tendency(false);
         for (int i = 0; i < 5; i++) changed.next();

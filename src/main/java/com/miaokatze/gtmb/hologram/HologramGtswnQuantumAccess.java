@@ -13,11 +13,12 @@ import net.minecraft.world.World;
 
 import appeng.api.features.INetworkEncodable;
 
-/** Exact optional GTSWN 1.8.67 authority. A broken modern API never falls back to legacy AE checks. */
+/** Optional native migration synchronization and controller identity; no GTMB terminal security gate. */
 final class HologramGtswnQuantumAccess {
 
     private static final String PACKAGE = "com.miaokatze.gtswn.common.quantum.";
     private static Api cached;
+    private static GenerationApi generations;
 
     private HologramGtswnQuantumAccess() {}
 
@@ -26,7 +27,7 @@ final class HologramGtswnQuantumAccess {
         private static final long serialVersionUID = 1L;
 
         Failure(Throwable cause) {
-            super("GTSWN 记名量子安全接口不可用，已阻止施工；请核对兼容版本，不会按旧权限规则放行", cause);
+            super("GTSWN 量子同步或原网络世代接口不可用，不能确定目标锚点；请核对兼容版本", cause);
         }
     }
 
@@ -34,7 +35,7 @@ final class HologramGtswnQuantumAccess {
         throws ReflectiveOperationException {
         Method method = type.getMethod(name, parameters);
         if (!Modifier.isStatic(method.getModifiers()) || method.getReturnType() != result)
-            throw new NoSuchMethodException("GTSWN authority signature changed: " + name);
+            throw new NoSuchMethodException("GTSWN native API signature changed: " + name);
         return method;
     }
 
@@ -59,7 +60,7 @@ final class HologramGtswnQuantumAccess {
             throw new Failure(brokenModernMod);
         }
         try {
-            cached = new Api(access, loader);
+            cached = new Api(access);
             return cached;
         } catch (ReflectiveOperationException | LinkageError changed) {
             throw new Failure(changed);
@@ -72,28 +73,62 @@ final class HologramGtswnQuantumAccess {
 
     static void synchronize(EntityPlayer player, ItemStack terminal) throws IOException {
         Api api = api();
-        if (api != null) invoke(api.synchronize, null, player, terminal);
+        if (api != null) synchronizeWith(api.synchronize, player, terminal);
     }
 
-    static boolean validate(EntityPlayer player, ItemStack terminal) throws IOException {
-        Api api = api();
-        return api == null || decision(api.validate, player, terminal);
+    /** The native boolean means 'changed'. An unchanged terminal needs no mutation and is still usable. */
+    static void synchronizeWith(Method synchronize, EntityPlayer player, ItemStack terminal) throws IOException {
+        invoke(synchronize, null, player, terminal);
     }
 
-    static boolean canAccess(EntityPlayer player, ItemStack terminal, World world, int x, int y, int z)
-        throws IOException {
-        Api api = api();
-        return api == null || decision(api.canAccess, player, terminal, world, x, y, z);
+    private static GenerationApi generationApi() throws IOException {
+        if (generations != null) return generations;
+        ClassLoader loader = HologramGtswnQuantumAccess.class.getClassLoader();
+        try {
+            // The migration journal already existed in 1.8.66. Named-node attribution marks the
+            // reviewed generation-aware format without invoking any terminal or security API.
+            if (!namedNodeType(Class.forName(HologramNetworkBindings.NODE_TILE, false, loader))) return null;
+        } catch (ClassNotFoundException legacy) {
+            return null;
+        } catch (LinkageError brokenModernMod) {
+            throw new Failure(brokenModernMod);
+        }
+        try {
+            generations = new GenerationApi(loader);
+            return generations;
+        } catch (ReflectiveOperationException | LinkageError changed) {
+            throw new Failure(changed);
+        }
     }
 
-    static boolean securityRequired(World world, int x, int y, int z) throws IOException {
-        Api api = api();
-        return api != null && decision(api.required, world, x, y, z);
+    static boolean generationAware() throws IOException {
+        return generationApi() != null;
     }
 
-    /** Shared by every authorization call: false stays false, and an invocation error stays a blocker. */
-    static boolean decision(Method authority, Object... arguments) throws IOException {
-        return (Boolean) invoke(authority, null, arguments);
+    static boolean namedNode(TileEntity tile) throws IOException {
+        return namedNodeType(tile.getClass());
+    }
+
+    static boolean namedNodeType(Class<?> type) throws IOException {
+        Method uuid = null, name = null;
+        try {
+            uuid = type.getMethod("getPlacerUUID");
+        } catch (NoSuchMethodException legacy) {
+            // Both getters are absent in the reviewed legacy format.
+        }
+        try {
+            name = type.getMethod("getPlacerName");
+        } catch (NoSuchMethodException legacy) {
+            // A partially present format below is an interface error, never a legacy fallback.
+        }
+        if (uuid == null && name == null) return false;
+        if (uuid == null || name == null
+            || uuid.getReturnType() != String.class
+            || name.getReturnType() != String.class
+            || Modifier.isStatic(uuid.getModifiers())
+            || Modifier.isStatic(name.getModifiers()))
+            throw new Failure(new NoSuchMethodException("node attribution type changed"));
+        return true;
     }
 
     static String controllerIdentity(TileEntity tile) throws IOException {
@@ -109,7 +144,7 @@ final class HologramGtswnQuantumAccess {
     }
 
     static boolean currentController(World world, int x, int y, int z) throws IOException {
-        Api api = api();
+        GenerationApi api = generationApi();
         if (api == null) return true;
         Object registry = invoke(api.registry, null, world);
         long position = (Long) invoke(api.pack, null, x, y, z);
@@ -128,7 +163,7 @@ final class HologramGtswnQuantumAccess {
     }
 
     static Migration follow(World world, int[] anchor, long cursor) throws IOException {
-        Api api = api();
+        GenerationApi api = generationApi();
         if (api == null) return new Migration(anchor.clone(), cursor);
         try {
             Object journal = invoke(api.journal, null, world);
@@ -153,32 +188,21 @@ final class HologramGtswnQuantumAccess {
 
     private static final class Api {
 
-        final Method synchronize, validate, canAccess, required, registry, pack, current, journal, resolve;
+        final Method synchronize;
+
+        Api(Class<?> type) throws ReflectiveOperationException {
+            synchronize = requireStatic(type, "synchronize", boolean.class, EntityPlayer.class, ItemStack.class);
+        }
+    }
+
+    private static final class GenerationApi {
+
+        final Method registry, pack, current, journal, resolve;
         final Constructor<?> anchor;
         final Field resolvedAnchor, resolvedCursor;
         final Method[] coordinates = new Method[4];
 
-        Api(Class<?> type, ClassLoader loader) throws ReflectiveOperationException {
-            synchronize = requireStatic(type, "synchronize", boolean.class, EntityPlayer.class, ItemStack.class);
-            validate = requireStatic(type, "validate", boolean.class, EntityPlayer.class, ItemStack.class);
-            canAccess = requireStatic(
-                type,
-                "canAccessAnchor",
-                boolean.class,
-                EntityPlayer.class,
-                ItemStack.class,
-                World.class,
-                int.class,
-                int.class,
-                int.class);
-            required = requireStatic(
-                type,
-                "isSecurityRequired",
-                boolean.class,
-                World.class,
-                int.class,
-                int.class,
-                int.class);
+        GenerationApi(ClassLoader loader) throws ReflectiveOperationException {
             Class<?> controllers = Class.forName(PACKAGE + "QuantumControllerRegistry", false, loader);
             registry = requireStatic(controllers, "get", controllers, World.class);
             pack = requireStatic(controllers, "pack", long.class, int.class, int.class, int.class);

@@ -19,9 +19,13 @@ A standalone GregTech New Horizons mod for **previewing structures, editing blue
 
 ## Downloads & Requirements / 下载与版本需求
 
-Version **0.1.1** is in development and verification; its GitHub Release is deferred. Packaged jars will be published through [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) when released. The target is **GTNH 2.9.0 RC-2 / Minecraft 1.7.10**; install GTMB on both client and server.
+Version **0.1.2** is in development and verification; its GitHub Release is deferred. Packaged jars will be published through [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) when released. The target is **GTNH 2.9.0 RC-2 / Minecraft 1.7.10**; install GTMB on both client and server.
 
-**0.1.1** 正在开发与验收，GitHub Release 暂缓。正式发布时成品 jar 将通过 [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) 提供。目标为 **GTNH 2.9.0 RC-2 / Minecraft 1.7.10**，客户端和服务端均需安装 GTMB。
+**0.1.2** 正在开发与验收，GitHub Release 暂缓。正式发布时成品 jar 将通过 [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) 提供。目标为 **GTNH 2.9.0 RC-2 / Minecraft 1.7.10**，客户端和服务端均需安装 GTMB。
+
+0.1.2 resource rules are being implemented and verified: restored EU caches are paid from wireless EU; quantum-node and GTSWN-cover bodies are free because native terminals generate them; laser hatches require real vacuum tubes and quantum incorporation requires anchors. ME hatches retain configuration and component bodies, with no copied contents. These rules and the final four-world run are still awaiting acceptance.
+
+0.1.2 新资源规则正在实现与验收：EU 缓存从无线 EU 实际扣能；量子节点与 GTSWN 覆盖板本体由原生终端生成，本体免费；激光仓仍需真实真空管，量子并入仍需 anchor。ME 仓室只保留配置与元件本体，不复制内容。资源支付与最终四世界验收均待实际回执；未发布的 0.1.1 不作为已交付版本。
 
 ## Neko Projector / 猫猫投影仪
 
@@ -50,7 +54,7 @@ Craft **one StructureLib Hologram Projector into one Neko Projector** with a sha
 | Ctrl+A, T, Ctrl-click, Shift-drag / Ctrl+A、T、Ctrl+点击、Shift+拖动 | Ctrl+A selects all; hold T and click to select the same block type within the current structure or loose-block area, including the exact GT MetaTile ID. Ctrl-click toggles multi-selection; Shift-drag selects a box in the editor. Ctrl+A 全选；按住 T 点击选择当前结构或非结构区域内的同种方块，GT 机器按实际 MetaTile ID 区分。Ctrl+点击切换编辑器多选；Shift+拖动在编辑器内框选。|
 | Author processing / 作者处理 | The server selects required stages from the actual content; Next skips empty stages, and plain decoration can save directly. Open manual full review to confirm all six stages. 服务端按实际内容确定必要阶段，「下一步」跳过空阶段，纯装饰可直接保存；也可打开「手动完整六步核对」，主动逐步审查全部阶段。 |
 | WASD preview camera / WASD 预览摄像机 | W/S moves forward/back along the horizontal view; A/D moves sideways in both preview tabs. Text fields retain typing; camera movement leaves blueprint and world coordinates unchanged. 两个预览页均可用 W/S 沿水平视角前后移动、A/D 左右移动；输入框内正常输入文字，摄像机移动不改变蓝图或世界坐标。 |
-| Quantum groups / 量子网络类群 | Configure named node groups in the author preview. Private blueprints retain their original network; shared blueprints require the placing player to bind every group with their own terminal. 作者可在独立预览中选择量子节点并命名类群；私用保留原网络，分享放置需逐类群绑定自己的终端。处理预设不能替代本图分类确认。 |
+| Quantum groups / 量子网络类群 | Grouping is optional: leave all nodes in one default network and skip grouping or click Next. Private blueprints keep the original binding without requiring a terminal or GTMB security checks. Shared blueprints use an ordinary natively bound terminal only to select a target anchor; GTMB adds no AE security pairing, BUILD check or native security validation, and does not change GTSWN ACLs or keys. 量子分类可选，不设置时全部节点使用单一默认网络，可直接跳过分类或下一步。私用保留原绑定，当场放置不要求终端、不做GTMB安全核验；分享仅用普通原生已绑定终端选择目标锚点，不额外做AE安全配对、BUILD或原生安全验证，不改GTSWN自身ACL/密钥。 |
 | Coordinates and typed NBT / 坐标与 NBT | Choose clear/absolute/relative for each reviewed relationship. Auto uses actual selected cells: internal relative; external absolute for self, clear for share. Typed edits retain original types and protect identities and assets. 每个已审阅关系可选清除/绝对/相对；推荐按实际选区内相对，自用外绝对、分享外清除。数值编辑保持原类型，身份与资产字段受保护。 |
 | Grade and candidates / 等级与候选 | Grade changes refresh candidates within the declared family. The current family selection stays active; invalid options are marked. 等级变化会按机器声明家族更新候选，保留当前家族选择，并标明无效选项。 |
 | Hints and save / 提示与保存 | After processing, save the blueprint or its reusable flow. Overwrite selects only the target entry and asks for confirmation before saving; unsaved switches ask before discarding. Hints support light/full/none. 处理完成后保存蓝图或复用流程；覆盖模式只选目标，保存时二次确认，切换未保存蓝图须确认丢弃。自动提示词可选轻度/完整/不添加。 |
@@ -62,9 +66,9 @@ The Structure and Blueprint tabs sit side by side and remember the last-used pag
 
 ## Paired Blueprint Files / 蓝图配对文件
 
-Each blueprint uses a same-basename JSON and clean native 3D PNG. Save, overwrite, upload, download and deletion handle both files together; manual sharing must copy the pair. Save status updates only after verification, disk commit and the matching final server owner ACK. JSON `nativeBlueprint` uses format version 1, GTMB's independent semantic release version (current target: `0.1.0`) and DreamCore's exact `displayedModpackVersion`; unavailable pack versions are recorded as `unknown` with source `unavailable`. Old blueprint files are unsupported.
+Each blueprint uses a same-basename JSON and clean native 3D PNG. Save, overwrite, upload, download and deletion handle both files together; manual sharing must copy the pair. Save status updates only after verification, disk commit and the matching final server owner ACK. JSON `nativeBlueprint` uses format version 1, GTMB's independent semantic release version (current target: `0.1.2`) and DreamCore's exact `displayedModpackVersion`; unavailable pack versions are recorded as `unknown` with source `unavailable`. Old blueprint files are unsupported.
 
-每张蓝图使用同名 JSON 与无界面的原生结构 3D PNG。保存、覆盖、上传、下载和删除均处理这对文件，手动分享须同时复制两份。完成验证、双文件落盘并收到匹配的最终服务器 owner ACK 后才更新保存状态。JSON 的 `nativeBlueprint` 使用 `formatVersion: 1`、GTMB 独立语义发布版本（当前目标为 `0.1.0`）和 DreamCore 的准确 `displayedModpackVersion`；整包版本不可用时记为 `unknown`，来源为 `unavailable`。旧蓝图文件不兼容。
+每张蓝图使用同名 JSON 与无界面的原生结构 3D PNG。保存、覆盖、上传、下载和删除均处理这对文件，手动分享须同时复制两份。完成验证、双文件落盘并收到匹配的最终服务器 owner ACK 后才更新保存状态。JSON 的 `nativeBlueprint` 使用 `formatVersion: 1`、GTMB 独立语义发布版本（当前目标为 `0.1.2`）和 DreamCore 的准确 `displayedModpackVersion`；整包版本不可用时记为 `unknown`，来源为 `unavailable`。旧蓝图文件不兼容。
 
 GTSWN v1.8.64 previews use its native quantum-node renderer and link-node cover visuals in the workspace, world ghost and saved PNG. Supported appearances follow the captured state; rendering does not run a live node or network. See the guide for compatibility boundaries.
 

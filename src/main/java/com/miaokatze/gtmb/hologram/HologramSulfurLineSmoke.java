@@ -180,6 +180,17 @@ public final class HologramSulfurLineSmoke {
             "SOURCE_NATIVE_PREFLIGHT_OLD_ISSUES",
             "sulfur-source-old-issues-native.nbt",
             "nativeOldIssues");
+        nativeSourcePreflight(
+            "HologramGtswnCacheNativeSmoke",
+            "SOURCE_NATIVE_PREFLIGHT_EU_CACHE",
+            "sulfur-source-eu-cache-native.nbt",
+            "nativeEuCache");
+        nativeSourcePreflight(
+            "HologramGtswnNativeMaterialsSmoke",
+            "SOURCE_NATIVE_PREFLIGHT_NATIVE_MATERIALS",
+            "sulfur-source-native-materials.nbt",
+            "nativeMaterials",
+            false);
         prepareQuantumController(SOURCE_X - 16, SOURCE_Y, SOURCE_Z + 8);
         bank = bankStatic("create", world, actor, SOURCE_X - 16, SOURCE_Y, SOURCE_Z + 8);
         line = nativeStatic("create", world, actor, SOURCE_X, SOURCE_Y, SOURCE_Z);
@@ -199,8 +210,15 @@ public final class HologramSulfurLineSmoke {
         stage = 0;
     }
 
-    /** Independent service-only regressions use their own finite fixture actor, inventory and world coordinates. */
+    /**
+     * Independent native regressions use their own finite fixture actor and inventory without claiming GUI coverage.
+     */
     private void nativeSourcePreflight(String helper, String phase, String filename, String finding) throws Exception {
+        nativeSourcePreflight(helper, phase, filename, finding, true);
+    }
+
+    private void nativeSourcePreflight(String helper, String phase, String filename, String finding, boolean service)
+        throws Exception {
         NBTTagCompound proof = (NBTTagCompound) invoke(
             Class.forName("com.miaokatze.gtmb.hologram." + helper),
             null,
@@ -208,11 +226,16 @@ public final class HologramSulfurLineSmoke {
             world);
         require(
             proof.getBoolean("passed") && proof.getBoolean("actualNativeWorld")
-                && proof.getBoolean("actualService")
+                && proof.hasKey("actualService", 1)
+                && proof.getBoolean("actualService") == service
                 && proof.hasKey("actualGui", 1)
                 && !proof.getBoolean("actualGui")
                 && proof.getBoolean("fakeFixtureActor"),
             "independent native source preflight succeeded without claiming GUI coverage: " + helper);
+        if (!service) require(
+            proof.getBoolean("actualMaterials") && proof.getBoolean("actualNativeTransactions")
+                && proof.getBoolean("actualNativeProjection"),
+            "native material transaction/projection scope is explicit");
         NBTTagCompound receipt = base(phase);
         receipt.setTag("nativeProof", proof);
         receipt.setBoolean("passed", true);
@@ -406,6 +429,39 @@ public final class HologramSulfurLineSmoke {
             if (!bootstrapBound(TARGET_X, TARGET_Y, TARGET_Z, false)) return;
             targetReady();
         }
+        if (stage == 10 && "self".equals(System.getProperty("gtmb.hologram.sulfurLineIntent", "self"))
+            && read("sulfur-private-no-terminal-ack.nbt") == null) {
+            NBTTagCompound request = read("sulfur-private-no-terminal-request.nbt");
+            if (request == null) return;
+            require(
+                request.getBoolean("passed") && actor.getUniqueID()
+                    .toString()
+                    .equals(request.getString("actor"))
+                    && world.getWorldInfo()
+                        .getWorldName()
+                        .equals(request.getString("world"))
+                    && request.getInteger("dimension") == world.provider.dimensionId,
+                "private native drop request identity");
+            for (ItemStack stack : actor.inventory.mainInventory)
+                if (stack != null && stack.getItem() == quantumTerminal.getItem()) return;
+            NBTTagCompound proof = base("PRIVATE_NATIVE_NO_QUANTUM_TERMINAL_ACK");
+            proof.setBoolean("passed", true);
+            proof.setBoolean("noQuantumTerminal", true);
+            proof.setInteger("quantumTerminalItemId", Item.getIdFromItem(quantumTerminal.getItem()));
+            proof.setTag("actualInventory", inventory());
+            proof.setTag(
+                "nativeDrops",
+                request.getTagList("nativeDrops", 10)
+                    .copy());
+            placementPlayer(proof);
+            moveNear(TARGET_X - 4, TARGET_Y, TARGET_Z + 12);
+            proof.setBoolean("movedAwayFromDrops", true);
+            proof.setDouble("afterMoveX", actor.posX);
+            proof.setDouble("afterMoveY", actor.posY);
+            proof.setDouble("afterMoveZ", actor.posZ);
+            findings.setTag("privateNoTerminal", proof.copy());
+            write("sulfur-private-no-terminal-ack.nbt", proof);
+        }
         Object live = liveSession();
         if (stage == 10 && live != null && (Boolean) field(live, "virtualLocked")) {
             if (!(Boolean) call(bank, "ready")) return;
@@ -427,6 +483,13 @@ public final class HologramSulfurLineSmoke {
                         world.isAirBlock(px, py, pz),
                         "private foreign-world blueprint rejection left the entire paid-placement footprint air");
                 NBTTagCompound before = findings.getCompoundTag("constructionMeStockBefore");
+                require(
+                    findings.getCompoundTag("privateNoTerminal")
+                        .getBoolean("noQuantumTerminal"),
+                    "private original-world rejection was exercised without a carried quantum terminal");
+                for (ItemStack stack : actor.inventory.mainInventory) require(
+                    stack == null || stack.getItem() != quantumTerminal.getItem(),
+                    "private terminal remained absent through final rejection");
                 NBTTagCompound after = (NBTTagCompound) call(bank, "receipt");
                 require(
                     before.getCompoundTag("currentStock")

@@ -60,7 +60,7 @@ public final class HologramQuantumClearNativeSmoke {
         actor.inventory.mainInventory[0] = new ItemStack(
             (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector"));
         int x = 128, y = 85, z = 48;
-        for (int position : new int[] { x, x + 2, x + 4, x + 6, x + 8, x + 10, x + 12, x + 24, x + 40 }) {
+        for (int position : new int[] { x, x + 2, x + 4, x + 6, x + 8, x + 10, x + 12, x + 14, x + 24, x + 40 }) {
             world.getChunkFromBlockCoords(position, z);
             require(world.isAirBlock(position, y, z), "fresh auxiliary quantum coordinate");
         }
@@ -95,7 +95,6 @@ public final class HologramQuantumClearNativeSmoke {
         actualSource.getClass()
             .getMethod("setPlacer", net.minecraft.entity.player.EntityPlayer.class)
             .invoke(actualSource, author);
-        actualSource.updateEntity();
         require(owner(actualSource, author), "actual source AE identity belongs to a different author player");
         NBTTagCompound nativeSourceBefore = HologramNativeCapture.capture(actualSource);
         require(
@@ -107,7 +106,6 @@ public final class HologramQuantumClearNativeSmoke {
         ItemStack shell = HologramAeBlueprint.blockSample(node, 0);
         require(shell != null, "native node payment item");
         HologramPresets.Preset source = preset(node, shell, captured);
-        source = HologramQuantumGroups.configure(source, HologramQuantumGroups.groups(source));
         NBTTagCompound sourceBefore = (NBTTagCompound) captured.copy();
         HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 1);
         policy.quantum = "clear";
@@ -149,6 +147,11 @@ public final class HologramQuantumClearNativeSmoke {
         receipt.setBoolean("actualService", true);
         receipt.setBoolean("actualGui", false);
         receipt.setBoolean("fakeFixtureActor", true);
+        receipt.setBoolean("fixtureControllersInitializedByHelper", true);
+        receipt.setBoolean("fixtureControllersInitialized", true);
+        receipt.setBoolean("placedNodeManualTick", false);
+        receipt.setBoolean("placedNodeManualReady", false);
+        receipt.setBoolean("nodeLifecycleAdvancedByFixture", false);
         cpw.mods.fml.common.ModContainer gtswn = cpw.mods.fml.common.Loader.instance()
             .getIndexedModList()
             .get("gtswn");
@@ -217,13 +220,15 @@ public final class HologramQuantumClearNativeSmoke {
         TileEntity installed = world.getTileEntity(x, y, z);
         require(unbound(installed) && owner(installed, actor), "paid native node is truly unbound and actor-owned");
         require(
-            actor.inventory.mainInventory[1] == null && actor.inventory.mainInventory[2] == null,
-            "one real node and one real retained component item each consumed exactly once");
+            ItemStack.areItemStacksEqual(actor.inventory.mainInventory[1], shell)
+                && actor.inventory.mainInventory[2] == null,
+            "native free node preserves its sample while exactly one real retained ME component is consumed");
         require(
             ((appeng.api.parts.IPartHost) installed).getPart(net.minecraftforge.common.util.ForgeDirection.EAST)
                 != null,
             "network clearing retains the fully paid native component container");
-        receipt.setBoolean("nodePaymentConsumedOnce", true);
+        receipt.setBoolean("nodeShellFree", true);
+        receipt.setBoolean("nodeSamplePreserved", true);
         receipt.setBoolean("componentPaymentConsumedOnce", true);
         receipt.setBoolean("paidNativeComponentRetained", true);
         NBTTagCompound installedTag = HologramNativeCapture.capture(installed);
@@ -273,7 +278,7 @@ public final class HologramQuantumClearNativeSmoke {
         require(
             world.isAirBlock(x + 4, y, z) && world.getTileEntity(x + 4, y, z) == null
                 && ItemStack.areItemStacksEqual(actor.inventory.mainInventory[1], shell),
-            "rebind without a real authorized terminal preserves exact payment and world");
+            "rebind without a real bound terminal preserves exact payment and world");
         require(
             ItemStack.areItemStacksEqual(actor.inventory.mainInventory[2], component),
             "rebind denial preserves the exact native component payment");
@@ -312,6 +317,9 @@ public final class HologramQuantumClearNativeSmoke {
         receipt.setBoolean("existingBoundConflictPreserved", true);
         receipt.setTag("conflictPaymentAfter", actor.inventory.mainInventory[1].writeToNBT(new NBTTagCompound()));
         receipt.setTag(
+            "privateWithoutTerminal",
+            privateWithoutTerminal(world, actor, source, node, shell, component, sourceController, x + 14, y, z));
+        receipt.setTag(
             "defaultTerminalBinding",
             defaultTerminalBinding(
                 world,
@@ -333,12 +341,90 @@ public final class HologramQuantumClearNativeSmoke {
         receipt.setTag("fakeActorChatComponents", actor.chatReceipt());
         receipt.setBoolean("passed", true);
         System.out.println(
-            "[GTMB-QUANTUM-CLEAR-NATIVE] FINAL PASS clear=paid-unbound-owned refund=exact defaults="
+            "[GTMB-QUANTUM-CLEAR-NATIVE] FINAL PASS clear=free-node+paid-component-unbound-owned refund=exact private-no-terminal=placed share-default="
                 + (receipt.getCompoundTag("defaultTerminalBinding")
-                    .getBoolean("defaultPlacementDeferred") ? "deferred-native-startup-denial"
-                        : "private-original/share-selected-terminal")
+                    .getBoolean("defaultPlacementDeferred") ? "deferred-native-startup-denial" : "selected-terminal")
                 + " source=unchanged");
         return receipt;
+    }
+
+    /** Independent real same-world placement, completed before any auxiliary terminal click can be deferred. */
+    private static NBTTagCompound privateWithoutTerminal(WorldServer world, ChatSinkActor actor,
+        HologramPresets.Preset source, Block block, ItemStack shell, ItemStack component, TileEntity original, int x,
+        int y, int z) throws Exception {
+        for (int slot = 1; slot < actor.inventory.mainInventory.length; slot++)
+            actor.inventory.mainInventory[slot] = null;
+        actor.inventory.mainInventory[2] = component.copy();
+        require(
+            terminalCount(actor) == 0 && actor.inventory.mainInventory[1] == null,
+            "private same-world placement starts without any quantum terminal or payable node shell");
+        HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing
+            .defaults("self", HologramBlueprintProcessing.minimumLevel(source));
+        policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        HologramPresets.Preset processed = HologramBlueprintProcessing
+            .process(source, policy, world.provider.dimensionId, x, y, z);
+        processed = HologramBlueprintProcessing.enforcePolicy(HologramAePolicy.sanitize(processed).preset);
+        Object session = session(actor, processed, block, shell, x, y, z);
+        invoke("refreshPlan", session);
+        HologramCapture.Cell cell = ((HologramCapture) field(session, "capture")).cells.get(0);
+        if (!"pending".equals(cell.status) || !cell.resourceError.isEmpty())
+            quoteFailure(session, actor, cell, new NBTTagCompound());
+        require(
+            "pending".equals(cell.status) && cell.resourceError.isEmpty(),
+            "private original network is payable without terminal");
+        HologramNetworkBindings.State bindings = (HologramNetworkBindings.State) field(session, "networkBindings");
+        NBTTagCompound snapshot = HologramNetworkBindings.snapshot(processed, actor, bindings);
+        require(
+            !snapshot.getBoolean("terminalBinding") && !snapshot.getBoolean("terminalSecurityChecked")
+                && snapshot.getTagList("inventory", 10)
+                    .tagCount() == 0
+                && snapshot.getTagList("groups", 10)
+                    .getCompoundTagAt(0)
+                    .getBoolean("bound"),
+            "private network availability neither scans terminals nor invokes terminal security");
+        require((Boolean) invoke("operate", session, cell, 0), "private no-terminal installation uses actual Service");
+        TileEntity installed = world.getTileEntity(x, y, z);
+        require(installed != null, "private no-terminal installation produced a real native tile");
+        NBTTagCompound installedTag = HologramNativeCapture.capture(installed);
+        require(
+            owner(installed, actor) && installedTag.getInteger("anchorDim") == world.provider.dimensionId
+                && installedTag.getInteger("anchorX") == original.xCoord
+                && installedTag.getInteger("anchorY") == original.yCoord
+                && installedTag.getInteger("anchorZ") == original.zCoord,
+            "private no-terminal installation preserves original anchor and native current-actor attribution");
+        require(
+            actor.inventory.mainInventory[1] == null && actor.inventory.mainInventory[2] == null
+                && terminalCount(actor) == 0
+                && ((appeng.api.parts.IPartHost) installed).getPart(
+                    net.minecraftforge.common.util.ForgeDirection.EAST) instanceof appeng.helpers.IInterfaceHost,
+            "private no-terminal installation preserves the free node sample and consumes one retained native ME part");
+        NBTTagCompound result = new NBTTagCompound();
+        result.setBoolean("passed", true);
+        result.setBoolean("actualService", true);
+        result.setInteger("terminalCountBefore", 0);
+        result.setInteger("terminalCountAfter", terminalCount(actor));
+        result.setBoolean("originalAnchorPreserved", true);
+        result.setBoolean("nodeShellFree", true);
+        result.setBoolean("nodeSamplePreserved", true);
+        result.setInteger("nodeItemsBefore", 0);
+        result.setInteger("nodeItemsAfter", 0);
+        result.setBoolean("componentPaymentConsumedOnce", true);
+        result.setBoolean("nativeOwnerVerified", true);
+        result.setString("nativeOwnerMode", nativeOwnerMode(installed));
+        result.setBoolean("nodeLifecycleAdvancedByFixture", false);
+        result.setBoolean("terminalSecurityChecked", false);
+        result.setTag("networkSnapshot", snapshot);
+        result.setTag("installedTag", installedTag);
+        return result;
+    }
+
+    private static int terminalCount(EntityPlayerMP actor) {
+        int count = 0;
+        for (ItemStack stack : actor.inventory.mainInventory) if (stack != null && stack.getItem()
+            .getClass()
+            .getName()
+            .equals("com.miaokatze.gtswn.common.items.ItemNetworkQuantumTerminal")) count += stack.stackSize;
+        return count;
     }
 
     /** Real terminal item entry and Service placement for both unmodified recommendation policies. */
@@ -371,26 +457,20 @@ public final class HologramQuantumClearNativeSmoke {
         } finally {
             actor.inventory.currentItem = 0;
         }
-        if (HologramGtswnQuantumAccess.modern() && (!terminal.hasTagCompound() || !terminal.getTagCompound()
-            .getBoolean("QT_Bound"))) {
-            require(
-                !HologramGtswnQuantumAccess.canAccess(
-                    actor,
-                    terminal,
-                    world,
-                    targetController.xCoord,
-                    targetController.yCoord,
-                    targetController.zCoord),
-                "modern native terminal startup denial remains a denial in the compatibility bridge");
+        if (!terminal.hasTagCompound() || !terminal.getTagCompound()
+            .getBoolean("QT_Bound")) {
             require(actor.chat.size() > chatBefore, "native refusal is captured by the isolated fake actor chat sink");
             NBTTagCompound deferred = new NBTTagCompound();
             deferred.setBoolean("actualNativeTerminalUseFirst", true);
-            deferred.setBoolean("nativeAccessRejected", true);
+            deferred.setBoolean("nativeTerminalClickDeferred", true);
+            deferred.setBoolean("terminalSecurityChecked", false);
             deferred.setBoolean("defaultPlacementDeferred", true);
             deferred.setBoolean("privateSharePlacementCovered", false);
+            deferred.setBoolean("privatePlacementCovered", true);
+            deferred.setBoolean("sharePlacementCovered", false);
             deferred.setString(
                 "scope",
-                "native clear payment/owner/refund completed; fresh AE grid refused terminal access before bootstrap; private/share placement deferred to the real line after native ticks");
+                "clear and independent private-no-terminal Service placement completed; native terminal click did not bind the fresh target grid, so share placement is deferred to the main line after native ticks");
             deferred.setInteger("nativeTerminalChatComponentsCaptured", actor.chat.size() - chatBefore);
             deferred.setBoolean("passed", true);
             return deferred;
@@ -400,21 +480,13 @@ public final class HologramQuantumClearNativeSmoke {
                 .getBoolean("QT_Bound"),
             "native terminal entry writes a real bound terminal, without hand-written anchor NBT");
         require(actor.chat.size() > chatBefore, "native terminal binding chat reaches the isolated fake actor sink");
-        appeng.api.networking.security.ISecurityGrid security = ((IGridProxyable) targetController).getProxy()
-            .getGrid()
-            .getCache(appeng.api.networking.security.ISecurityGrid.class);
-        require(
-            security.hasPermission(actor, appeng.api.config.SecurityPermissions.BUILD)
-                && appeng.util.Platform.hasPermissions(new appeng.api.util.DimensionalCoord(targetController), actor),
-            "real target network grants both native placement authorization checks");
         NBTTagCompound receipt = new NBTTagCompound();
         receipt.setBoolean("actualNativeTerminalUseFirst", true);
         receipt.setInteger("nativeTerminalChatComponentsCaptured", actor.chat.size() - chatBefore);
-        receipt.setBoolean("nativeBuildPermissionGranted", true);
-        receipt.setBoolean("securityProviderAvailable", security.isAvailable());
+        receipt.setBoolean("terminalSecurityChecked", false);
         receipt.setString(
             "scope",
-            "native Service and terminal entry; secured-network denial and GUI are separate evidence");
+            "native Service and terminal entry; GTMB reads the bound target without an additional terminal security gate");
         NBTTagList workflows = new NBTTagList();
         for (int workflow = 0; workflow < 2; workflow++) {
             String tendency = workflow == 0 ? "self" : "share";
@@ -483,23 +555,23 @@ public final class HologramQuantumClearNativeSmoke {
             invoke("refreshPlan", session);
             require(
                 "pending".equals(cell.status) && cell.resourceError.isEmpty(),
-                tendency + " own authorized terminal makes the exact native ME node payable");
+                tendency + " available target network makes the exact native ME node payable");
             require((Boolean) invoke("operate", session, cell, 0), tendency + " installs through the actual Service");
             TileEntity installed = world.getTileEntity(targetX, y, z);
-            installed.updateEntity();
             NBTTagCompound nativeTag = HologramNativeCapture.capture(installed);
             TileEntity expectedController = workflow == 0 ? sourceController : targetController;
             require(
                 owner(installed, actor) && nativeTag.getInteger("anchorX") == expectedController.xCoord
                     && nativeTag.getInteger("anchorY") == expectedController.yCoord
                     && nativeTag.getInteger("anchorZ") == expectedController.zCoord
-                    && HologramNetworkBindings.matchesBinding(installed, payload, actor, bindings),
-                tendency + " honors its original-network or recipient-terminal policy with current actor permissions");
+                    && nativeTag.getInteger("anchorDim") == world.provider.dimensionId,
+                tendency + " honors its original-network or recipient-terminal policy and current actor attribution");
             require(
-                actor.inventory.mainInventory[1] == null && actor.inventory.mainInventory[2] == null
+                ItemStack.areItemStacksEqual(actor.inventory.mainInventory[1], shell)
+                    && actor.inventory.mainInventory[2] == null
                     && ((appeng.api.parts.IPartHost) installed).getPart(
                         net.minecraftforge.common.util.ForgeDirection.EAST) instanceof appeng.helpers.IInterfaceHost,
-                tendency + " pays exactly one node and one real ME interface part and retains the native part");
+                tendency + " preserves the free node sample and pays one real ME interface part retained in the node");
             NBTTagCompound row = new NBTTagCompound();
             row.setString("tendency", tendency);
             row.setString("group", group);
@@ -510,7 +582,11 @@ public final class HologramQuantumClearNativeSmoke {
             row.setBoolean("changedTerminalRejected", workflow == 1);
             row.setBoolean("privateOriginalNetworkPreserved", workflow == 0);
             row.setBoolean("recipientNetworkAndOwnerVerified", true);
+            row.setString("nativeOwnerMode", nativeOwnerMode(installed));
+            row.setBoolean("nodeLifecycleAdvancedByFixture", false);
             row.setBoolean("nativeMePartPaidExactlyOnce", true);
+            row.setBoolean("nodeShellFree", true);
+            row.setBoolean("nodeSamplePreserved", true);
             workflows.appendTag(row);
         }
         receipt.setTag("workflows", workflows);
@@ -572,7 +648,7 @@ public final class HologramQuantumClearNativeSmoke {
         NBTTagCompound receipt) {
         NBTTagCompound diagnostic = (NBTTagCompound) receipt.copy();
         diagnostic.setBoolean("passed", false);
-        diagnostic.setString("failureGuard", "cleared node has a payable native quote");
+        diagnostic.setString("failureGuard", "native node has a payable component quote");
         try {
             NBTTagCompound snapshot = new NBTTagCompound();
             for (String name : new String[] { "status", "mode", "scope", "dimension", "planRevision", "planMissing",
@@ -764,7 +840,7 @@ public final class HologramQuantumClearNativeSmoke {
 
     private static boolean owner(TileEntity tile, EntityPlayerMP actor) throws Exception {
         if (!(tile instanceof IGridProxyable)) return false;
-        if (HologramGtswnQuantumAccess.modern() && (!actor.getUniqueID()
+        if (HologramGtswnQuantumAccess.namedNode(tile) && (!actor.getUniqueID()
             .toString()
             .equals(
                 tile.getClass()
@@ -791,6 +867,11 @@ public final class HologramQuantumClearNativeSmoke {
         Object value = pendingOwner.get(proxy);
         return value instanceof net.minecraft.entity.player.EntityPlayer && actor.getUniqueID()
             .equals(((net.minecraft.entity.player.EntityPlayer) value).getUniqueID());
+    }
+
+    private static String nativeOwnerMode(TileEntity tile) {
+        return ((IGridProxyable) tile).getProxy()
+            .getNode() == null ? "pending-proxy-owner" : "native-grid-player-id";
     }
 
     public static final class Veto {

@@ -42,10 +42,18 @@ public final class HologramEnergyPayload {
 
         private Prepared(NBTTagCompound tile, NBTTagCompound item, CapBankSchema capBank, String creativeAe)
             throws IOException {
+            this(tile, item, capBank, creativeAe, null);
+        }
+
+        private Prepared(NBTTagCompound tile, NBTTagCompound item, CapBankSchema capBank, String creativeAe,
+            HologramGtswnCacheAdapter.Resolver coverResolver) throws IOException {
             tilePaid = copy(tile);
             tileEmpty = copy(tile);
             itemPaid = copy(item);
             itemEmpty = copy(item);
+            HologramGtswnCacheAdapter.Plan covers = coverResolver == null
+                ? HologramGtswnCacheAdapter.inspect(tile, item)
+                : HologramGtswnCacheAdapter.inspect(tile, item, coverResolver);
             intrinsicSource = capBank != null && capBank.creative ? "EnderIO native creative capacitor bank"
                 : creativeAe;
             if (!creativeAe.isEmpty()) {
@@ -60,13 +68,19 @@ public final class HologramEnergyPayload {
                 // The block item and tile serialize the same bank; either placement path must be funded once.
                 demand.rf = BigDecimal.valueOf(Math.max(tileRf, itemRf));
             }
-            scan(tilePaid, tileEmpty, demand, warnings, "tile", false, capBank != null, 0);
-            scan(itemPaid, itemEmpty, demand, warnings, "item", false, capBank != null, 0);
+            scan(tilePaid, tileEmpty, demand, warnings, "tile", false, capBank != null, covers, 0);
+            scan(itemPaid, itemEmpty, demand, warnings, "item", false, capBank != null, covers, 0);
+            covers.apply(tilePaid, tileEmpty, itemPaid, itemEmpty, demand, warnings);
         }
     }
 
     public static Prepared prepare(NBTTagCompound tile, NBTTagCompound item) throws IOException {
         return new Prepared(tile, item, null);
+    }
+
+    static Prepared prepare(NBTTagCompound tile, NBTTagCompound item, HologramGtswnCacheAdapter.Resolver resolver)
+        throws IOException {
+        return new Prepared(tile, item, null, "", resolver);
     }
 
     /** The actual chosen block and metadata, never copied NBT identities, authorize intrinsic defaults. */
@@ -131,7 +145,8 @@ public final class HologramEnergyPayload {
     }
 
     private static void scan(NBTTagCompound paid, NBTTagCompound empty, HologramEnergy.Demand demand,
-        List<String> warnings, String path, boolean conduit, boolean capBank, int depth) throws IOException {
+        List<String> warnings, String path, boolean conduit, boolean capBank, HologramGtswnCacheAdapter.Plan covers,
+        int depth) throws IOException {
         if (paid == null) return;
         if (depth > 64) throw new IOException("Energy buffer NBT nesting exceeds limit");
         // The exact tagged inventory item is already a material cost. Its nested charge is never an energy bank.
@@ -152,6 +167,7 @@ public final class HologramEnergyPayload {
             String lower = key.toLowerCase(Locale.ROOT);
             NBTBase tag = paid.getTag(key);
             String field = path + "." + key;
+            if (covers.owns(field)) continue;
             if (capBank && key.equals("storedEnergyRF")) continue;
             if (configuration(lower)) continue;
             if (cache(lower) && (tag instanceof NBTTagCompound || tag instanceof NBTTagList)) {
@@ -169,6 +185,7 @@ public final class HologramEnergyPayload {
                     field,
                     powerConduit && key.equals("conduit"),
                     false,
+                    covers,
                     depth + 1);
                 continue;
             }
@@ -184,6 +201,7 @@ public final class HologramEnergyPayload {
                         field + "[" + index + "]",
                         false,
                         false,
+                        covers,
                         depth + 1);
                 }
                 continue;

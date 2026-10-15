@@ -109,6 +109,9 @@ public final class HologramScreen extends GuiScreen {
     private NBTTagCompound capturedRenderSmokeAction;
     private List<String> tooltip;
     private String lastConfirmationTitle = "", lastConfirmationAction = "";
+    private String lastCacheReviewSummary = "";
+    private boolean lastEmptyCacheReview;
+    private NBTTagCompound reviewedCacheQuote;
     private String lastFooterScope = "", lastReviewedScope = "";
     private HologramProcessingFlow processingFlow;
     private boolean processingFullReview;
@@ -1642,8 +1645,6 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private int contextualAccent(int id) {
-        if (id == 263 && processingFlow != null && processingFlow.stage == 2 && !quantumGroupsConfirmed())
-            return 0x80efaa;
         if (id == 231 && processingFlow != null && processingFlow.optional()) return 0x80efaa;
         if (!state.data.getBoolean("virtual")) {
             boolean configured = basicConfigured || state.data.getBoolean("presetActive");
@@ -1722,10 +1723,6 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private boolean processingChoiceReady() {
-        processingFlow.quantumGroups(
-            processingState().getTagList("quantumNodes", 10)
-                .tagCount() > 0,
-            quantumGroupsConfirmed());
         return processingFlow.chosen();
     }
 
@@ -1830,7 +1827,7 @@ public final class HologramScreen extends GuiScreen {
             text("按已登记设备字段逐级处理；已清除的数据无法恢复", 42, 210, 588, 0x94afb4);
             text("当前最低等级 " + minimum + "；只有点击等级才确认本步骤", 42, 185, 588, 0x94afb4);
         } else if (stage == 2) {
-            text("自用保留原网络；分享使用自己的终端。每张图仍需明确确认节点分类。", 42, 103, 588, 0xb9d5d4);
+            text("自用保留原网络；分享使用终端改绑。节点分类可选，不设置时默认所有节点一组。", 42, 103, 588, 0xb9d5d4);
             button(
                 262,
                 42,
@@ -1847,7 +1844,7 @@ public final class HologramScreen extends GuiScreen {
                 149,
                 588,
                 22,
-                ("rebind".equals(policy.getString("quantum")) ? "✓ " : "") + "分享：去除源网络锚定，逐类群选择已绑定目标网络且你有权使用的量子终端",
+                ("rebind".equals(policy.getString("quantum")) ? "✓ " : "") + "分享：去除源网络锚定，逐类群选择已绑定目标网络的量子终端",
                 true,
                 mx,
                 my);
@@ -1867,12 +1864,12 @@ public final class HologramScreen extends GuiScreen {
                 208,
                 588,
                 23,
-                quantumGroupsConfirmed() ? "量子节点网络分类 · 本图已确认，可重新编辑" : "量子节点网络分类 · 请配置并确认本图",
+                quantumGroupsConfirmed() ? "量子节点网络分类 · 可选，编辑已有分类" : "量子节点网络分类 · 可选，默认一组直接继续",
                 editable() && processingState().getTagList("quantumNodes", 10)
                     .tagCount() > 0,
                 mx,
                 my);
-            text("所有节点默认属于“默认网络”；未分类节点会阻止保存及下一步。", 42, 235, 588, 0x94afb4);
+            text("可直接下一步；需要多个网络时再分类，自定义分类必须完整分配后保存。", 42, 235, 588, 0x94afb4);
         } else if (stage == 3) {
             text("每项坐标可清除、保留绝对位置、或随蓝图相对移动", 42, 103, 588, 0xb9d5d4);
             if (mx >= 42 && mx < 630 && my >= 100 && my < 140) tooltip = fontRendererObj.listFormattedStringToWidth(
@@ -3082,7 +3079,7 @@ public final class HologramScreen extends GuiScreen {
             .getBoolean("terminalBinding");
         text(terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原网络", 50, 64, 570, 0xffe59b);
         text(
-            terminalBinding ? "逐组选择已绑定目标网络、且你有权使用的量子终端；全部就绪才可放置。" : "保留原锚点与维度，系统按原网络的安全要求验证；换存档无法使用，请按原因核对。",
+            terminalBinding ? "逐组选择已绑定目标网络的量子终端；全部就绪才可放置。" : "自用保留原绑定，无需终端或重新绑定；原存档、原网络位置与维度仍需可访问。",
             50,
             81,
             570,
@@ -3106,16 +3103,7 @@ public final class HologramScreen extends GuiScreen {
             .getTagList("inventory", 10);
         boolean selectedTerminalBinding = groups.tagCount() > 0 && groups.getCompoundTagAt(networkGroupIndex)
             .getBoolean("terminalBinding");
-        boolean privateSecurityCheck = groups.tagCount() > 0 && !selectedTerminalBinding
-            && networkSecurityReason(
-                groups.getCompoundTagAt(networkGroupIndex)
-                    .getString("reason"));
-        text(
-            selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : privateSecurityCheck ? "原网安全校验 · 自动查验背包" : "保留原网络 · 此处不改绑",
-            405,
-            101,
-            216,
-            0xa9d6cf);
+        text(selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : "保留原绑定 · 无需量子终端", 405, 101, 216, 0xa9d6cf);
         for (int slot = 0; slot < 36; slot++) {
             int x = 405 + (slot % 9) * 23;
             int y = slot < 9 ? 194 : 121 + ((slot - 9) / 9) * 23;
@@ -3133,16 +3121,7 @@ public final class HologramScreen extends GuiScreen {
                     tooltip.add(
                         !selectedTerminalBinding ? "本类群保留原锚点，此处不能选择其他网络重新绑定"
                             : available ? "点击绑定所选网络类群" : HologramUiText.reason(row.getString("reason")));
-                    if (selectedTerminalBinding && networkSecurityReason(row.getString("reason"))
-                        || privateSecurityCheck) {
-                        tooltip.addAll(
-                            fontRendererObj.listFormattedStringToWidth(
-                                selectedTerminalBinding ? "请使用已在对应网络的 AE 原生安全终端完成配对、且你有 AE 建造权限的量子终端。"
-                                    : "已设安全配对的原网络：携带同网配对终端，系统自动验权；终端必须仍指向原网络。",
-                                290));
-                        tooltip.addAll(fontRendererObj.listFormattedStringToWidth("终端记名仅作描述；以原生安全配对和当前玩家权限为准。", 290));
-                    }
-                    if (!available) tooltip.add("技术诊断：" + row.getString("reason"));
+                    if (selectedTerminalBinding && !available) tooltip.add("技术诊断：" + row.getString("reason"));
                 }
             }
         }
@@ -3156,16 +3135,6 @@ public final class HologramScreen extends GuiScreen {
                     tooltip = new ArrayList<>(
                         fontRendererObj
                             .listFormattedStringToWidth(HologramUiText.reason(selectedGroup.getString("reason")), 380));
-                    if (networkSecurityReason(selectedGroup.getString("reason"))) {
-                        tooltip.addAll(
-                            fontRendererObj.listFormattedStringToWidth(
-                                selectedTerminalBinding ? "请完成对应网络的 AE 原生安全终端配对，并确认你有 AE 建造权限。"
-                                    : "已设安全配对的原网络：携带同网配对终端，系统自动验权；保留原网络，不改绑到其他网络。",
-                                380));
-                        tooltip.addAll(
-                            fontRendererObj
-                                .listFormattedStringToWidth("安全网络配对后，拆除安全站也不会解除安全锁定；请恢复可用的配对与权限。网络启动中时请稍后重试。", 380));
-                    }
                 }
             }
         } else text("此蓝图没有需要重新绑定的量子网络组", 50, 242, 570, 0x94afb4);
@@ -3179,18 +3148,10 @@ public final class HologramScreen extends GuiScreen {
             273,
             210,
             17,
-            "确认全部类群 · 返回放置",
+            terminalBinding ? "确认全部类群 · 返回放置" : "返回放置 · 保留原绑定",
             pendingSequence < 0 && HologramPlacementConfirmation.networksReady(state.data),
             mx,
             my);
-    }
-
-    private static boolean networkSecurityReason(String reason) {
-        String lower = reason.toLowerCase(java.util.Locale.ROOT);
-        return reason.contains("安全") || reason.contains("配对")
-            || reason.contains("权限")
-            || lower.contains("security")
-            || lower.contains("permission");
     }
 
     private void activateNetworkBinding(int id) {
@@ -3608,6 +3569,13 @@ public final class HologramScreen extends GuiScreen {
         result.setBoolean("hatchDrawer", hatchDrawer);
         result.setBoolean("drawer", drawer);
         result.setBoolean("confirmation", confirmation);
+        result.setString("cacheReviewSummary", lastCacheReviewSummary);
+        result.setBoolean("emptyCacheReview", lastEmptyCacheReview);
+        result.setBoolean(
+            "cacheQuoteReviewed",
+            HologramPlacementConfirmation.cacheReviewMatches(state.data, reviewedCacheQuote));
+        result.setString("confirmationAction", lastConfirmationAction);
+        result.setString("blueprintEnergyNotice", state.data.getString("blueprintEnergyNotice"));
         result.setBoolean("deleteReview", !deletePresetId.isEmpty());
         result.setString("deletePresetId", deletePresetId);
         result.setBoolean("promptDrawer", promptDrawer);
@@ -4214,6 +4182,11 @@ public final class HologramScreen extends GuiScreen {
     private void drawConfirmation(int mx, int my) {
         drawRect(40, 58, 376, 254, 0xff172f36);
         boolean placement = placementReviewActive();
+        NBTTagList cacheRows = HologramPlacementConfirmation.cacheResources(state.data);
+        lastCacheReviewSummary = HologramPlacementConfirmation.cacheSummary(state.data);
+        lastEmptyCacheReview = HologramPlacementConfirmation.emptyCacheFallback(state.data);
+        reviewedCacheQuote = HologramPlacementConfirmation.cacheReviewSnapshot(state.data);
+        int reviewRows = cacheRows.tagCount() > 0 ? 2 : 3;
         lastConfirmationTitle = HologramPlacementConfirmation.forceReview(state.data, confirmedRevision)
             ? "缺料 · 再次确认仅放已有"
             : placement ? "蓝图放置预检 · " + state.data.getString("virtualPresetName") : "材料与改动";
@@ -4252,7 +4225,7 @@ public final class HologramScreen extends GuiScreen {
             text(cellName(selected, true) + " → " + cellName(selected, false), 50, 100, 315, 0xe4d3a9);
         NBTTagList materialRows = state.data.getTagList("materials", 10);
         if (!resourceReview)
-            for (int i = materialOffset; i < Math.min(materialOffset + 3, state.materials.size()); i++) {
+            for (int i = materialOffset; i < Math.min(materialOffset + reviewRows, state.materials.size()); i++) {
                 HologramState.Material m = state.materials.get(i);
                 int y = 119 + (i - materialOffset) * 27;
                 String available = state.data.getBoolean("creativeMaterials") && !HologramRecovery.hasSeal(m.stack)
@@ -4281,7 +4254,7 @@ public final class HologramScreen extends GuiScreen {
             }
         if (resourceReview) {
             NBTTagList resources = state.data.getTagList("blueprintResources", 10);
-            for (int i = materialOffset; i < Math.min(materialOffset + 3, resources.tagCount()); i++) {
+            for (int i = materialOffset; i < Math.min(materialOffset + reviewRows, resources.tagCount()); i++) {
                 NBTTagCompound resource = resources.getCompoundTagAt(i);
                 String type = resource.getString("type");
                 String source = "energy".equals(type) ? "无线电网 EU" : "fluid".equals(type) ? "AE 流体 mB" : "背包 / AE 库存";
@@ -4298,10 +4271,39 @@ public final class HologramScreen extends GuiScreen {
                     tooltip.add("NBT 根条目：" + resource.getString("key"));
                     if (!HologramUiText.reason(resource.getString("reason"))
                         .isEmpty()) tooltip.add(HologramUiText.reason(resource.getString("reason")));
-                    tooltip.add("可在本次 NBT 匹配中取消对应条目降级；原蓝图保存选项保持不变。");
+                    tooltip.add(
+                        resource.getBoolean("optionalCache") ? "缓存余额不足时可明确确认以空缓存放置；不会凭空补充能量。"
+                            : "可在本次 NBT 匹配中取消对应条目降级；原蓝图保存选项保持不变。");
                 }
             }
             if (resources.tagCount() == 0) text("当前所选 NBT 没有额外设备资源需求", 50, 128, 315, 0x94afb4);
+        }
+        if (cacheRows.tagCount() > 0) {
+            drawRect(48, 172, 367, 199, lastEmptyCacheReview ? 0xff49362a : 0xff193b3d);
+            text(lastCacheReviewSummary, 50, 175, 315, lastEmptyCacheReview ? 0xffce86 : 0xa2e8b8);
+            text(
+                lastEmptyCacheReview ? "缓存不足或无法付取，将空缓存放置。" : "缓存将按设备资源清单扣取；悬停查看完整数值。",
+                50,
+                187,
+                315,
+                lastEmptyCacheReview ? 0xffce86 : 0x94afb4);
+            if (mx >= 48 && mx < 367 && my >= 172 && my < 199) {
+                tooltip = new ArrayList<>();
+                for (int i = 0; i < cacheRows.tagCount(); i++) {
+                    NBTTagCompound row = cacheRows.getCompoundTagAt(i);
+                    tooltip.addAll(
+                        fontRendererObj.listFormattedStringToWidth(
+                            row.getString("name") + "：需求 "
+                                + row.getString("required")
+                                + " / 可用 "
+                                + row.getString("available"),
+                            380));
+                    if (row.getBoolean("emptyFallback")) tooltip.add("余额不足或无法付取：本次将以空缓存放置。");
+                }
+                if (lastEmptyCacheReview) tooltip.addAll(
+                    fontRendererObj
+                        .listFormattedStringToWidth("点击“确认空缓存放置 / 施工”表示接受本次空缓存结果；需要保留缓存时，请先补足所选能源来源再核对。", 380));
+            }
         }
         boolean decorativeNotice = state.data.getBoolean("decorativeMaterialsNotice");
         text(
@@ -4332,8 +4334,8 @@ public final class HologramScreen extends GuiScreen {
         if (networkGroups().tagCount() > 0)
             button(196, 50, 253, 315, 17, "量子网络绑定 · " + networkGroups().tagCount() + " 组", editable(), mx, my);
         button(54, 50, 232, 146, 17, placement ? "取消放置" : "返回", true, mx, my);
-        lastConfirmationAction = HologramPlacementConfirmation.forceReview(state.data, confirmedRevision) ? "再次确认仅放已有"
-            : placement ? "确认放置" : "确认执行施工";
+        lastConfirmationAction = HologramPlacementConfirmation
+            .confirmationAction(state.data, confirmedRevision, placement);
         button(
             55,
             203,
@@ -4343,6 +4345,7 @@ public final class HologramScreen extends GuiScreen {
             lastConfirmationAction,
             editable() && (state.data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
                 && confirmedRevision == revision()
+                && HologramPlacementConfirmation.cacheReviewMatches(state.data, reviewedCacheQuote)
                 && HologramPlacementConfirmation.networksReady(state.data)
                 && (state.data.getBoolean("blueprintAwaitingConfirmation")
                     || HologramPlacementConfirmation.canBuild(state.data, confirmedRevision))
@@ -4360,8 +4363,8 @@ public final class HologramScreen extends GuiScreen {
             text("本次 NBT 与设备资源", x + 8, 160, 204, 0xf5e4b9);
             text("点击左侧“本次 NBT”调整", x + 8, 177, 204, 0x94afb4);
             text("取消 NBT 编辑保留位置和蓝图", x + 8, 193, 204, 0x94afb4);
-            text("材料核对后点击“确认放置”", x + 8, 232, 204, 0x9eedc1);
-            text("缺料时会要求再次明确确认", x + 8, 249, 204, 0xe4b85a);
+            text(lastEmptyCacheReview ? "点击“确认空缓存放置”接受" : "材料核对后点击“确认放置”", x + 8, 232, 204, 0x9eedc1);
+            text(lastEmptyCacheReview ? "或先补足能源，再重新核对" : "缺料时会要求再次明确确认", x + 8, 249, 204, 0xe4b85a);
             button(
                 211,
                 x + 8,
@@ -4418,15 +4421,17 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private String completionSummary() {
-        if (state.data.getBoolean("jobPartialPlacement") && state.data.getInteger("job") >= 3)
-            return "部分完成：放置 " + state.data.getInteger("completed")
+        String summary = state.data.getBoolean("jobPartialPlacement") && state.data.getInteger("job") >= 3
+            ? "部分完成：放置 " + state.data.getInteger("completed")
                 + " · 缺料 "
                 + state.data.getInteger("jobMissingCells")
                 + " · 保护 "
                 + state.data.getInteger("jobProtectedCells")
                 + " · 不支持 "
-                + state.data.getInteger("jobUnsupportedCells");
-        return HologramUiText.reason(state.data.getString("status"));
+                + state.data.getInteger("jobUnsupportedCells")
+            : HologramUiText.reason(state.data.getString("status"));
+        String energyNotice = state.data.getString("blueprintEnergyNotice");
+        return energyNotice.isEmpty() || summary.contains(energyNotice) ? summary : summary + " · " + energyNotice;
     }
 
     private boolean editable() {
@@ -4739,9 +4744,12 @@ public final class HologramScreen extends GuiScreen {
                         : versionsDrawer ? HologramGuidance.modalAccent(id, 160, 151)
                             : resetReview ? HologramGuidance.modalAccent(id, 137, 136)
                                 : HologramGuidance.accent(id, state, selected, libraryDrawer, confirmation);
-        if (processingFlow != null)
-            accent = id == 263 && processingFlow.stage == 2 && !quantumGroupsConfirmed() ? 0x80efaa
-                : HologramGuidance.modalAccent(id, 231, 234);
+        if (processingFlow != null) accent = HologramGuidance.modalAccent(id, 231, 234);
+        else if (confirmation && (id == 169 || id == 55)
+            && HologramPlacementConfirmation.cacheResources(state.data)
+                .tagCount() > 0)
+            accent = HologramPlacementConfirmation.emptyCacheFallback(state.data) ? 0xffce86
+                : id == 169 ? 0x68dded : accent;
         else if (discardReview || overwriteReview || processingPresetSaveReview)
             accent = HologramGuidance.modalAccent(id, 224, 225);
         else if (aeReview == null && !nbtDrawer && !promptDrawer && !versionsDrawer && !confirmation && !resetReview) {
@@ -4918,6 +4926,8 @@ public final class HologramScreen extends GuiScreen {
             case 52:
                 return "停止任务，保留已完成方块与材料消耗，不撤销施工。";
             case 55:
+                if (HologramPlacementConfirmation.emptyCacheFallback(state.data))
+                    return "缓存余额不足，本次将以空缓存放置；点击此按钮明确接受。若需要保留缓存，请返回补足能源来源后重新核对。";
                 return HologramPlacementConfirmation.forceReview(state.data, confirmedRevision)
                     ? "再次确认后仅放置现有材料能够满足的方块；缺口保持未放置，完成统计来自服务端。"
                     : HologramPlacementConfirmation.lockedBlueprint(state.data) && state.data.getInteger("missing") > 0
@@ -5402,13 +5412,15 @@ public final class HologramScreen extends GuiScreen {
             return;
         }
         if (confirmation) {
+            int reviewRows = HologramPlacementConfirmation.cacheResources(state.data)
+                .tagCount() > 0 ? 2 : 3;
             materialOffset = Math.max(
                 0,
                 Math.min(
                     Math.max(
                         0,
                         (resourceReview ? state.data.getTagList("blueprintResources", 10)
-                            .tagCount() : state.materials.size()) - 3),
+                            .tagCount() : state.materials.size()) - reviewRows),
                     materialOffset + (wheel > 0 ? -1 : 1)));
         } else if (inventory && sourceTargets && mx >= 157) {
             int count = state.data.getTagList("materialChoices", 10)
@@ -6353,12 +6365,17 @@ public final class HologramScreen extends GuiScreen {
                 break;
             case 54:
                 confirmation = false;
+                reviewedCacheQuote = null;
                 if (state.data.getBoolean("blueprintAwaitingConfirmation")) {
                     libraryDrawer = true;
                     send("cancelBlueprintPlacement", null, true);
                 }
                 break;
             case 55:
+                if (confirmation && !HologramPlacementConfirmation.cacheReviewMatches(state.data, reviewedCacheQuote)) {
+                    notice = "缓存报价已变化，请重新核对当前确认信息后再放置";
+                    break;
+                }
                 if (!initialStructureSetupRequired() && editable()
                     && confirmation
                     && confirmedRevision == revision()
@@ -6376,6 +6393,7 @@ public final class HologramScreen extends GuiScreen {
                         pendingBuildReviewRevision = confirmedRevision;
                     }
                     confirmation = false;
+                    reviewedCacheQuote = null;
                     send(
                         state.data.getBoolean("blueprintAwaitingConfirmation") ? "confirmBlueprintPlacement" : "build",
                         n,

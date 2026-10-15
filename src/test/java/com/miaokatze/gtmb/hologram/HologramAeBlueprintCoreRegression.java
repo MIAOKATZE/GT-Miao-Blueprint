@@ -7,6 +7,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.List;
 import java.util.zip.GZIPOutputStream;
 
 import net.minecraft.block.Block;
@@ -570,6 +571,17 @@ public final class HologramAeBlueprintCoreRegression {
             !placement.hasKey("gtmb.quantumSides") && placement.hasKey("partContainer", 10),
             "placement removes only presentation metadata and retains the payable native component container");
         HologramBlueprintResources.Plan bill = HologramAeBlueprint.resourcePlan(node, 0, reloaded, shell);
+        ItemStack nativeIdentity = HologramNativePlacement.sample(node, 0, reloaded);
+        check(
+            nativeIdentity != null && nativeIdentity.isItemEqual(shell)
+                && HologramNativePlacement.matchesSample(node, 0, reloaded, shell)
+                && !HologramNativePlacement.matchesSample(node, 0, reloaded, anchor),
+            "a free node retains its own placement identity instead of adopting its first payable ME part");
+        List<ItemStack> nativeCosts = HologramNativePlacement.materials(node, 0, reloaded);
+        check(
+            nativeCosts.size() == 1 && nativeCosts.get(0)
+                .isItemEqual(anchor) && HologramGtswnPlacementMaterials.freeShell(node, shell),
+            "native node generation is free while each attached ME part remains a physical cost");
         check(
             bill.items.size() == 1 && bill.items.get(0)
                 .isItemEqual(anchor) && bill.items.get(0).stackSize == 1,
@@ -679,15 +691,13 @@ public final class HologramAeBlueprintCoreRegression {
         reloaded.quantumGroupingNbt = null;
         HologramBlueprintProcessing.Policy rebind = HologramBlueprintProcessing.defaults("share", 1);
         rebind.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
-        try {
-            HologramBlueprintProcessing.process(reloaded, rebind, 0, 0, 64, 0);
-            throw new AssertionError("a later binding policy must not reuse the removed classification");
-        } catch (IOException expected) {
-            check(
-                expected.getMessage()
-                    .contains("分类"),
-                "reopening rebind requires this blueprint's classification");
-        }
+        HologramPresets.Preset automatic = HologramBlueprintProcessing.process(reloaded, rebind, 0, 0, 64, 0);
+        check(
+            HologramQuantumGroups.groups(automatic)
+                .tagCount() == 1
+                && "q1"
+                    .equals(HologramNetworkBindings.group(HologramBlueprintNbt.decode(automatic.cells.get(0).tileNbt))),
+            "reopening rebind defaults to one anonymous group without requiring the optional classification dialog");
         HologramPresets.Preset classifiedAgain = HologramQuantumGroups
             .configure(reloaded, HologramQuantumGroups.groups(reloaded));
         rebind.confirmedStages.remove(rebind.confirmedStages.size() - 1);

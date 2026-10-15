@@ -276,6 +276,29 @@ public final class HologramAeBlueprint {
         }
     }
 
+    static final class EmptyCellProjection {
+
+        final ItemStack stack;
+        final List<ItemStack> materials;
+
+        private EmptyCellProjection(ItemStack stack, List<ItemStack> materials) {
+            this.stack = stack.copy();
+            this.materials = new ArrayList<>();
+            for (ItemStack material : materials) this.materials.add(material.copy());
+        }
+    }
+
+    static EmptyCellProjection emptyCellProjection(ItemStack source) throws IOException {
+        if (source == null || source.getItem() == null || source.stackSize != 1)
+            throw new IOException("ME 仓室元件本体无效，不能投影配置");
+        Work work = new Work(new NBTTagCompound());
+        ItemStack projected = HologramAeBlueprintSchemas.emptyCell(work, source.copy(), new String[] { "Inventory" });
+        if (projected == null) throw new IOException("ME 仓室元件不属于已审阅的空元件配置格式");
+        for (Issue issue : work.issues)
+            if ("blocker".equals(issue.severity)) throw new IOException("ME 仓室元件配置无效：" + issue.message);
+        return new EmptyCellProjection(projected, work.materials);
+    }
+
     private static final class Work {
 
         NBTTagCompound data;
@@ -497,7 +520,7 @@ public final class HologramAeBlueprint {
             .equals("appeng.block.networking.BlockCableBus")) shellMaterials(data, result);
         else {
             ItemStack sample = blockSample(block, metadata);
-            if (sample != null) result.add(sample);
+            if (sample != null && !HologramGtswnPlacementMaterials.freeShell(block, sample)) result.add(sample);
             if (HologramNetworkBindings.node(block)) shellMaterials(data.getCompoundTag("partContainer"), result);
         }
         return result;
@@ -543,7 +566,7 @@ public final class HologramAeBlueprint {
             for (String root : analysis.handledRoots) canonical.removeTag(root);
             remainder = HologramBlueprintResources.plan(canonical);
         }
-        if (main != null) {
+        if (main != null && !HologramGtswnPlacementMaterials.freeShell(block, main)) {
             boolean matched = false;
             for (int i = 0; i < shells.size(); i++) {
                 ItemStack shell = shells.get(i);

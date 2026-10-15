@@ -228,7 +228,7 @@ public final class HologramV011InteractionFixture {
             .digest(Files.readAllBytes(launch));
         StringBuilder hex = new StringBuilder();
         for (byte value : hash) hex.append(String.format("%02x", value & 255));
-        data.setString("releaseVersion", "0.1.1");
+        data.setString("releaseVersion", "0.1.2");
         data.setString("sourceLaunchSha256", hex.toString());
         data.setString("sourceRole", role);
         data.setString("session", session);

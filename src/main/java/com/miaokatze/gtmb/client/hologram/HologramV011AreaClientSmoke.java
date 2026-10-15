@@ -470,7 +470,7 @@ public final class HologramV011AreaClientSmoke {
                     if (!(mc.currentScreen instanceof HologramScreen)) return;
                     HologramScreen editor = (HologramScreen) mc.currentScreen;
                     if (!enabled(editor, 140)) return;
-                    typeName(editor, "Area v0.1.1 native stones");
+                    typeName(editor, "Area v0.1.2 native stones");
                     nativeClick(editor, 140);
                     next(45);
                     break;

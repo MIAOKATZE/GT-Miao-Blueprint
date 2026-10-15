@@ -62,6 +62,7 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("device_buffers_require_paid_energy_and_keep_native_capacity", HologramEnergyPayloadRegression::run);
+        cases.put("gtswn_cover_buffers_pay_current_wireless_energy_and_refund_once", HologramGtswnCacheRegression::run);
         cases.put("blueprint_deidentification_levels_preserve_recipes_and_irregular_selection", () -> {
             try {
                 HologramDeidentificationRegression.run();

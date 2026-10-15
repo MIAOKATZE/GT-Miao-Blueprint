@@ -118,8 +118,23 @@ final class HologramQuantumGroups {
                 .equals(fingerprint(preset));
     }
 
-    static void requireConfirmed(HologramPresets.Preset preset) throws IOException {
-        if (!confirmed(preset)) throw new IOException("请打开量子节点网络分类，为本蓝图全部节点确认命名类群后保存");
+    static HologramPresets.Preset defaulted(HologramPresets.Preset preset) throws IOException {
+        if (confirmed(preset)) return HologramPresets.copy(preset);
+        // Defaults are optional author input, not permission to erase malformed descriptors.
+        for (HologramPresets.Cell cell : preset.cells) {
+            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
+            if (!member(cell, tag) || tag == null) continue;
+            if (tag.hasKey(HologramNetworkBindings.GROUP)) HologramNetworkBindings.group(tag);
+            if (tag.hasKey(HologramNetworkBindings.ROLE) && (!tag.hasKey(HologramNetworkBindings.ROLE, 8)
+                || !("node".equals(tag.getString(HologramNetworkBindings.ROLE))
+                    || "join".equals(tag.getString(HologramNetworkBindings.ROLE)))))
+                throw new IOException("量子网络节点类型无效，不能自动分类");
+            if (tag.hasKey(HologramNetworkBindings.HINT)) {
+                if (!tag.hasKey(HologramNetworkBindings.HINT, 8)) throw new IOException("量子网络类群名称类型无效，不能自动分类");
+                HologramNetworkBindings.checkedHint(tag.getString(HologramNetworkBindings.HINT));
+            }
+        }
+        return configure(preset, groups(preset));
     }
 
     private static NBTTagList assigned(HologramPresets.Preset preset) throws IOException {

@@ -3172,7 +3172,8 @@ public final class HologramService {
         if (HologramRecovery.hasSeal(targetFor(s, cell, cellIndex(s, cell)))) {
             sealedPlacementTarget(s, cell, cellIndex(s, cell));
             cell.resourceError = "";
-            return new HologramBlueprintResources.Plan();
+            return new HologramBlueprintResources.Plan().addNativeItems(
+                HologramGtswnPlacementMaterials.extraMaterials(cell.block, HologramBlueprintNbt.decode(cell.tileNbt)));
         }
         String fingerprint = cell.tileNbt + ":"
             + cell.itemNbt
@@ -3243,6 +3244,7 @@ public final class HologramService {
                                 targetFor(s, cell, cellIndex(s, cell))));
                     }
                 }
+                cell.resourcePlan.addNativeItems(HologramGtswnPlacementMaterials.extraMaterials(finalBlock, tile));
             } catch (java.io.IOException invalid) {
                 cell.resourceError = invalid.getMessage();
             }
@@ -3597,7 +3599,8 @@ public final class HologramService {
                 for (ItemStack item : resourcePlan(s, cell).items)
                     costs.merge(stackKey(item), (long) item.stackSize, Long::sum);
                 for (ItemStack cover : coverCosts(s, cell)) costs.merge(stackKey(cover), 1L, Long::sum);
-                if (!orientationOnly(s, cell, i) && decoration(s, cell) == null) {
+                if (!orientationOnly(s, cell, i) && decoration(s, cell) == null
+                    && !freeShell(s, cell, targetFor(s, cell, i))) {
                     ItemStack shell = HologramEssentia.shellMaterial(targetFor(s, cell, i));
                     if (shell != null) costs.merge(stackKey(shell), 1L, Long::sum);
                 }
@@ -3637,12 +3640,12 @@ public final class HologramService {
             if (s.mode != 2 && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(target))) {
                 try {
                     HologramDecorMaterials.Descriptor descriptor = decoration(s, c);
-                    if (descriptor == null) {
+                    if (descriptor == null && !freeShell(s, c, target)) {
                         ItemStack shell = HologramEssentia.shellMaterial(target);
                         String key = stackKey(shell);
                         stacks.put(key, shell);
                         counts.merge(key, 1, Integer::sum);
-                    } else {
+                    } else if (descriptor != null) {
                         HologramDecorMaterials.Quote quote = decorReport.quote(
                             descriptor,
                             (stack,
@@ -3917,6 +3920,7 @@ public final class HologramService {
         try {
             decorDescriptor = decoration(s, c);
             if (s.mode != 2 && decorDescriptor == null
+                && !freeShell(s, c, targetFor(s, c, index))
                 && (!empty || (s.virtual && s.virtualPreset.schema >= 2))
                 && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(targetFor(s, c, index)))) {
                 ItemStack required = HologramEssentia.shellMaterial(targetFor(s, c, index));
@@ -3957,6 +3961,7 @@ public final class HologramService {
                 }
             }
             if (s.mode != 2 && decorDescriptor == null
+                && !freeShell(s, c, targetFor(s, c, index))
                 && fuzzyBlueprintShells(s, targetFor(s, c, index))
                 && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(targetFor(s, c, index)))) {
                 ItemStack required = HologramEssentia.shellMaterial(targetFor(s, c, index));
@@ -4070,7 +4075,7 @@ public final class HologramService {
                     .open(w, s.player, c.x, c.y, c.z)) {
                     if (nativePlacement) {
                         // The complete component plan was reserved above, including the primary material.
-                        result = (decorDescriptor != null
+                        result = (decorDescriptor != null || freeShell(s, c, pin)
                             || s.player.capabilities.isCreativeMode && !HologramRecovery.hasSeal(pin)
                             || (reservation == null && fuzzyBlueprintShells(s, pin)
                                 ? transaction.takeOneFuzzy(pin, false)
@@ -6069,7 +6074,7 @@ public final class HologramService {
                 }
             if (ensureNetworkGroups(s)) {
                 s.networkBindingRequested = true;
-                s.status = "已按原网络生成量子设备分组；请选择背包内携带坐标的量子节点或终端，再确认材料";
+                s.status = "已生成量子设备分组；分享图请选择背包内已绑定目标网络的量子终端，再确认材料";
                 return false;
             }
             for (HologramAePolicy.Issue issue : s.virtualPreset.aeIssues) {
@@ -6128,6 +6133,12 @@ public final class HologramService {
 
     private static boolean fuzzyBlueprintShells(Session s) {
         return s.virtual && HologramDeidentification.level(s.virtualPreset) > 0;
+    }
+
+    private static boolean freeShell(Session s, HologramCapture.Cell cell, ItemStack sample) {
+        return s.virtual && s.virtualPreset != null
+            && s.virtualPreset.schema >= 2
+            && HologramGtswnPlacementMaterials.freeShell(cell.block, sample);
     }
 
     private static boolean fuzzyBlueprintShells(Session s, ItemStack target) {
@@ -6361,7 +6372,7 @@ public final class HologramService {
                 s.networkBindingRequested = true;
                 s.ae.invalidate();
                 refreshPlan(s);
-                s.status = "量子网络组 " + group.substring(1) + " 已绑定；施工前将再次核验背包物品与网络权限";
+                s.status = "量子网络组 " + group.substring(1) + " 已选择目标终端；施工前将再次核对背包物品与目标锚点";
             } else if ("editBlueprintNetworkHint".equals(op)) {
                 if (!s.virtual || s.virtualPreset == null || s.capture == null)
                     throw new java.io.IOException("Load an editable blueprint before editing a group hint");
@@ -7038,9 +7049,7 @@ public final class HologramService {
                 if (entry == null) throw new java.io.IOException("处理流程预设不存在");
                 NBTTagCompound selected = entry.policy.write();
                 selected.setTag("confirmedStages", new NBTTagList());
-                HologramPresets.Preset rawSource = processingSource(s);
                 s.processingPolicy = HologramBlueprintProcessing.Policy.read(selected);
-                rawSource.quantumGroupingNbt = null;
                 s.processingWorkflowStarted = true;
                 s.selectedProcessingPresetId = entry.id;
                 s.processingReviewed = false;
@@ -9426,6 +9435,7 @@ public final class HologramService {
                 && inScope(s, c, index)
                 && s.mode != 2
                 && !decorationTarget(s, c)
+                && !freeShell(s, c, pinned)
                 && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(pinned))) {
                 ItemStack stack = HologramEssentia.shellMaterial(pinned);
                 stack.stackSize = 1;

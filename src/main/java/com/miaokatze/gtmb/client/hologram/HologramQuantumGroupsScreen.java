@@ -30,6 +30,8 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     private double yaw = Math.PI / 4, pitch = Math.PI / 6, zoom = 1;
     private long pending = -1, renderGeneration;
     private String notice = "";
+    private NBTTagList renderedNodeMarkers = new NBTTagList();
+    private long markerRenderGeneration;
 
     private static final class Control {
 
@@ -110,7 +112,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
         try {
             drawRect(0, 0, WIDTH, HEIGHT, 0xff10232c);
             text("量子节点网络分类", 18, 13, 640, 0xffe59b);
-            text("点击真实节点选择；Ctrl 多选 / 再次点击取消。默认所有节点属于一个网络。", 18, 31, 642, 0xb9d5d4);
+            text("可选自定义分类；取消保留已有配置。点击节点选择，Ctrl 多选 / 再次点击取消。", 18, 31, 642, 0xb9d5d4);
             text("T 全选 · Ctrl+T 选择补集 · Ctrl+Z / Y 撤销重做 · 右键拖动旋转 · 滚轮缩放", 18, 47, 642, 0x91afb9);
             drawPreview(mx, my);
             text("类群 · " + model.groups.size() + " 组", 460, 68, 200, 0xffe59b);
@@ -164,7 +166,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
                 319,
                 118,
                 22,
-                pending >= 0 ? "等待服务器确认" : "保存并结束此步",
+                pending >= 0 ? "等待服务器确认" : "保存自定义分类",
                 editable() && model.complete() && HologramQuantumGroupsModel.validName(nameField.getText()),
                 mx,
                 my);
@@ -181,6 +183,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     }
 
     private void drawPreview(int mx, int my) {
+        renderedNodeMarkers = new NBTTagList();
         drawRect(VX, VY, VX + VW, VY + VH, 0xff0a1922);
         int[] selected = model.selected.stream()
             .mapToInt(index -> model.nodes.get(index).cell)
@@ -231,6 +234,19 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
                 int color = node.group.isEmpty() ? 0xff9292 : COLORS[group % COLORS.length];
                 if (model.selected.contains(i)) drawRect(x - 5, y - 5, x + 6, y + 6, 0xffffffff);
                 drawRect(x - 3, y - 3, x + 4, y + 4, 0xff000000 | color);
+                NBTTagCompound marker = new NBTTagCompound();
+                marker.setInteger("node", i);
+                marker.setInteger("cell", node.cell);
+                marker.setString("group", node.group);
+                marker.setDouble("projectedX", point[0]);
+                marker.setDouble("projectedY", point[1]);
+                marker.setInteger("drawX", x);
+                marker.setInteger("drawY", y);
+                marker.setBoolean("selected", model.selected.contains(i));
+                marker.setBoolean("drawSubmitted", true);
+                marker.setBoolean("centerInViewport", viewport(x, y));
+                marker.setBoolean("clipIntersects", x + 4 > VX && x - 3 < VX + VW && y + 4 > VY && y - 3 < VY + VH);
+                renderedNodeMarkers.appendTag(marker);
                 if (node.cell == hovered) {
                     HologramQuantumGroupsModel.Group entry = model.find(node.group);
                     text(
@@ -248,6 +264,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
             HologramRenderer.projectionLayer = previousLayer;
             GL11.glPopAttrib();
         }
+        markerRenderGeneration = renderGeneration + 1;
     }
 
     private void text(String text, int x, int y, int width, int color) {
@@ -465,6 +482,9 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
         result.setString("session", model.session);
         result.setLong("planRevision", model.revision);
         result.setLong("renderGeneration", renderGeneration);
+        result.setLong("markerRenderGeneration", markerRenderGeneration);
+        result.setIntArray("nodeMarkerViewport", new int[] { VX, VY, VW, VH });
+        result.setTag("renderedNodeMarkers", renderedNodeMarkers.copy());
         result.setLong("pendingSequence", pending);
         result.setBoolean("stale", stale);
         result.setBoolean(

@@ -80,7 +80,12 @@ public final class HologramQuantumGroupsRegression {
                 && !source.data.getCompoundTag("processing")
                     .getBoolean("quantumGroupsConfirmed"),
             "Discarding a local draft cannot mutate the canonical snapshot or confirm this blueprint");
+        HologramQuantumGroupsModel reopened = new HologramQuantumGroupsModel(source);
+        SimpleAssert.that(
+            reopened.groups.size() == 1 && reopened.count("q1") == 3 && reopened.complete(),
+            "Canceling optional custom classification leaves a complete default single group on reopening");
         placementGate();
+        cacheConfirmation();
     }
 
     private static HologramState source() {
@@ -113,7 +118,9 @@ public final class HologramQuantumGroupsRegression {
         NBTTagList groups = new NBTTagList();
         NBTTagCompound first = new NBTTagCompound(), second = new NBTTagCompound();
         first.setBoolean("bound", true);
+        first.setBoolean("terminalBinding", true);
         second.setBoolean("bound", false);
+        second.setBoolean("terminalBinding", true);
         groups.appendTag(first);
         groups.appendTag(second);
         bindings.setTag("groups", groups);
@@ -126,10 +133,86 @@ public final class HologramQuantumGroupsRegression {
         SimpleAssert.that(
             HologramPlacementConfirmation.networksReady(state) && HologramPlacementConfirmation.canBuild(state, 7),
             "All groups enable the existing reviewed placement gate");
-        second.setBoolean("bound", false);
+        first.setBoolean("terminalBinding", false);
         second.setBoolean("terminalBinding", false);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.networksReady(state) && HologramPlacementConfirmation.canBuild(state, 7)
+                && !bindings.hasKey("inventory"),
+            "Available original networks need no carried terminal or security proof for self-use");
+        second.setBoolean("bound", false);
+        second.setString("reason", "原存档或原网络锚点无法访问");
         SimpleAssert.that(
             !HologramPlacementConfirmation.networksReady(state),
             "An unavailable preserved network also blocks confirmation");
+    }
+
+    private static void cacheConfirmation() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setString("session", "cache-review");
+        state.setLong("planRevision", 9);
+        state.setLong("placementReviewNonce", 4);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.cacheResources(state)
+                .tagCount() == 0 && HologramPlacementConfirmation.cacheReviewMatches(state, null)
+                && "确认放置".equals(HologramPlacementConfirmation.confirmationAction(state, 9, true)),
+            "Ordinary blueprints retain their existing confirmation without a cache banner or extra gate");
+        NBTTagList resources = new NBTTagList();
+        NBTTagCompound row = new NBTTagCompound();
+        row.setString("key", "cache.EU");
+        row.setString("required", "123456789012345678901234567890");
+        row.setString("available", "123456789012345678901234567890");
+        row.setBoolean("optionalCache", true);
+        resources.appendTag(row);
+        state.setTag("blueprintResources", resources);
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.emptyCacheFallback(state)
+                && HologramPlacementConfirmation.cacheSummary(state)
+                    .contains("123456789012345678901234567890")
+                && HologramPlacementConfirmation.cacheReviewMatches(state, null),
+            "An affordable cache shows exact server String amounts without truncating the energy quantity");
+        row.setString("available", "7");
+        row.setBoolean("emptyFallback", true);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.emptyCacheFallback(state)
+                && !HologramPlacementConfirmation.cacheReviewMatches(state, null)
+                && "确认空缓存放置".equals(HologramPlacementConfirmation.confirmationAction(state, 9, true)),
+            "An insufficient cache needs the explicitly labeled confirmation to be displayed before acceptance");
+        NBTTagCompound reviewed = HologramPlacementConfirmation.cacheReviewSnapshot(state);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.cacheReviewMatches(state, reviewed),
+            "The displayed current review permits the existing final confirmation");
+        row.setString("available", "6");
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.cacheReviewMatches(state, reviewed),
+            "A changed balance cannot use the previous displayed cache confirmation");
+        row.setString("available", "7");
+        state.setLong("placementReviewNonce", 5);
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.cacheReviewMatches(state, reviewed),
+            "Another placement review cannot reuse the previous cache acceptance");
+        state.setLong("placementReviewNonce", 4);
+        state.setLong("planRevision", 10);
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.cacheReviewMatches(state, reviewed),
+            "An edited blueprint requires its own cache review");
+        state.setLong("planRevision", 9);
+        state.setString("session", "different-session");
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.cacheReviewMatches(state, reviewed),
+            "A different session cannot reuse a displayed cache confirmation");
+        state.setBoolean("virtual", true);
+        state.setBoolean("virtualPlacement", true);
+        state.setBoolean("virtualLocked", true);
+        state.setBoolean("forcePlacementReady", true);
+        String action = HologramPlacementConfirmation.confirmationAction(state, 9, true);
+        SimpleAssert.that(
+            action.contains("仅放已有") && action.contains("空缓存"),
+            "Existing partial-material confirmation still explains the empty cache result");
+        row.setString("key", "cache.warning");
+        row.setBoolean("emptyFallback", false);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.cacheResources(state)
+                .tagCount() == 0,
+            "Informational cache warnings do not add a permanent demand or confirmation gate");
     }
 }

@@ -14,7 +14,6 @@ final class HologramProcessingFlow {
     private final boolean[] explicit = new boolean[STAGES.length];
     private int requiredStages = 63;
     private boolean fullReview;
-    private boolean quantumGroupsRequired, quantumGroupsConfirmed;
     int stage, offset;
 
     HologramProcessingFlow(NBTTagCompound source) {
@@ -99,13 +98,7 @@ final class HologramProcessingFlow {
     }
 
     boolean chosen() {
-        if (stage == 2 && quantumGroupsRequired && !quantumGroupsConfirmed) return false;
         return chosen[stage] || optional();
-    }
-
-    void quantumGroups(boolean required, boolean confirmed) {
-        quantumGroupsRequired = required;
-        quantumGroupsConfirmed = confirmed;
     }
 
     void requirements(int stages) {

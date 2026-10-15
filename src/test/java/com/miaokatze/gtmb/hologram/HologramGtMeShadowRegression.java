@@ -22,7 +22,9 @@ public final class HologramGtMeShadowRegression {
 
     private static final String FLUID = "gregtech.common.tileentities.machines.MTEHatchInputME";
     private static final String ITEM = "gregtech.common.tileentities.machines.MTEHatchInputBusME";
-    private static final int FLUID_ID = 31001, ITEM_ID = 31002;
+    private static final String OUTPUT_ITEM = "gregtech.common.tileentities.machines.outputme.MTEHatchOutputBusME";
+    private static final String OUTPUT_FLUID = "gregtech.common.tileentities.machines.outputme.MTEHatchOutputME";
+    private static final int FLUID_ID = 31001, ITEM_ID = 31002, OUTPUT_ITEM_ID = 31003, OUTPUT_FLUID_ID = 31004;
 
     private HologramGtMeShadowRegression() {}
 
@@ -35,19 +37,26 @@ public final class HologramGtMeShadowRegression {
     public static void run() {
         IMetaTileEntity oldFluid = GregTechAPI.METATILEENTITIES[FLUID_ID];
         IMetaTileEntity oldItem = GregTechAPI.METATILEENTITIES[ITEM_ID];
+        IMetaTileEntity oldOutputItem = GregTechAPI.METATILEENTITIES[OUTPUT_ITEM_ID];
+        IMetaTileEntity oldOutputFluid = GregTechAPI.METATILEENTITIES[OUTPUT_FLUID_ID];
         try {
             // Constructor-free native registry fixtures: the tested owner is the real exact GT class,
             // while slots below invoke its actual writer. Source/native grid behavior is tested in FML.
             GregTechAPI.METATILEENTITIES[FLUID_ID] = (IMetaTileEntity) allocate(Class.forName(FLUID));
             GregTechAPI.METATILEENTITIES[ITEM_ID] = (IMetaTileEntity) allocate(Class.forName(ITEM));
+            GregTechAPI.METATILEENTITIES[OUTPUT_ITEM_ID] = (IMetaTileEntity) allocate(Class.forName(OUTPUT_ITEM));
+            GregTechAPI.METATILEENTITIES[OUTPUT_FLUID_ID] = (IMetaTileEntity) allocate(Class.forName(OUTPUT_FLUID));
             fluidProjection();
             itemProjection();
+            outputProjection();
             strictSchemas();
         } catch (Exception failure) {
             throw new AssertionError("native GT ME shadow projection", failure);
         } finally {
             GregTechAPI.METATILEENTITIES[FLUID_ID] = oldFluid;
             GregTechAPI.METATILEENTITIES[ITEM_ID] = oldItem;
+            GregTechAPI.METATILEENTITIES[OUTPUT_ITEM_ID] = oldOutputItem;
+            GregTechAPI.METATILEENTITIES[OUTPUT_FLUID_ID] = oldOutputFluid;
         }
     }
 
@@ -73,9 +82,8 @@ public final class HologramGtMeShadowRegression {
             "unpaid native fluid simulation and deferred extraction amount are absent from stored/placement payload");
         SimpleAssert.that(projected.equals(HologramGtMeShadow.project(projected)), "fluid projection is idempotent");
         HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(source);
-        SimpleAssert.eq(1, plan.fluids.size(), "only the independent physical tank is priced");
-        SimpleAssert
-            .eq(17L, plan.fluids.get(0).amount, "ghost config and 4096-point mirror cannot increase fluid demand");
+        SimpleAssert.eq(0, plan.fluids.size(), "ME hatch captures configuration without its residual tank contents");
+        SimpleAssert.that(!projected.hasKey("mFluid"), "residual physical fluid cannot reappear during placement");
         SimpleAssert.that(source.equals(before), "resource quotation cannot mutate the captured ME network mirror");
     }
 
@@ -96,11 +104,60 @@ public final class HologramGtMeShadowRegression {
             "item mirror is removed before a native bus can load its recipe view");
         SimpleAssert.that(source.equals(before), "native item mirror source and manual inventory stay untouched");
         HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(source);
-        SimpleAssert.eq(1, plan.items.size(), "real manual slot remains a required physical item");
-        SimpleAssert.that(
-            plan.items.get(0)
-                .getItem() == Items.emerald && plan.items.get(0).stackSize == 3,
-            "only three emeralds are charged; configured diamond and 64 shadow diamonds are not physical stock");
+        SimpleAssert
+            .eq(0, plan.items.size(), "manual cargo and network mirrors are omitted from the configuration blueprint");
+        SimpleAssert.eq(
+            0,
+            projected.getTagList("Inventory", 10)
+                .tagCount(),
+            "manual cargo is never loaded into a placed ME bus");
+        physical.getCompoundTagAt(0)
+            .setInteger("IntSlot", 0);
+        rejects(source, "Inventory");
+    }
+
+    private static void outputProjection() throws Exception {
+        for (boolean fluid : new boolean[] { false, true }) {
+            String type = fluid ? OUTPUT_FLUID : OUTPUT_ITEM;
+            Object nativeStack = fluid ? appeng.util.item.AEFluidStack.create(new FluidStack(liquid(), 7654))
+                : appeng.util.item.AEItemStack.create(new ItemStack(Items.diamond, 53));
+            Class<?> parameter = Class
+                .forName(fluid ? "appeng.api.storage.data.IAEFluidStack" : "appeng.api.storage.data.IAEItemStack");
+            NBTTagCompound cached = (NBTTagCompound) Class.forName(type)
+                .getMethod("saveStackToNBT", parameter)
+                .invoke(GregTechAPI.METATILEENTITIES[fluid ? OUTPUT_FLUID_ID : OUTPUT_ITEM_ID], nativeStack);
+            NBTTagCompound source = new NBTTagCompound();
+            source.setString("id", "BaseMetaTileEntity");
+            source.setInteger("mID", fluid ? OUTPUT_FLUID_ID : OUTPUT_ITEM_ID);
+            NBTTagList cache = new NBTTagList();
+            cache.appendTag(cached);
+            source.setTag("cache", cache);
+            source.setTag(fluid ? "cachedFluids" : "cachedItems", cache.copy());
+            source.setBoolean("cacheMode", true);
+            source.setInteger("myPriority", 71);
+            NBTTagCompound before = (NBTTagCompound) source.copy();
+            NBTTagCompound clean = HologramGtMeShadow.project(source);
+            SimpleAssert.that(
+                !clean.hasKey("cache") && !clean.hasKey(fluid ? "cachedFluids" : "cachedItems"),
+                "real native output cache records are omitted for both current and legacy readers");
+            SimpleAssert.that(
+                clean.getBoolean("cacheMode") && clean.getInteger("myPriority") == 71,
+                "native output connection/cache settings survive without stock");
+            HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(source);
+            SimpleAssert.that(
+                plan.items.isEmpty() && plan.fluids.isEmpty(),
+                "pending ME output cargo is neither copied nor charged");
+            SimpleAssert.eq(before, source, "native output source remains unchanged");
+            SimpleAssert.eq(clean, HologramGtMeShadow.project(clean), "native output projection is idempotent");
+            NBTTagCompound bad = (NBTTagCompound) source.copy();
+            bad.getTagList("cache", 10)
+                .getCompoundTagAt(0)
+                .setString("size", "7654");
+            rejects(bad, "cache");
+            bad = (NBTTagCompound) source.copy();
+            bad.setString("id", "fixture:unknown_me");
+            SimpleAssert.eq(bad, HologramGtMeShadow.project(bad), "unknown host never acquires the ME cache exemption");
+        }
     }
 
     private static void strictSchemas() throws Exception {

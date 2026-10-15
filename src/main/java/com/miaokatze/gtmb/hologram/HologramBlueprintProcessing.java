@@ -155,13 +155,12 @@ final class HologramBlueprintProcessing {
         if (source == null || requested == null) throw new IOException("没有可处理的蓝图来源");
         Policy policy = Policy.read(requested.write());
         if (!policy.complete()) throw new IOException("保存前必须明确完成全部处理阶段");
-        HologramQuantumGroups.requireConfirmed(source);
         int minimum = minimumLevel(source);
         if (policy.deidentificationLevel < minimum) throw new IOException("旧结果已清除的身份不能恢复，请选择至少等级 " + minimum);
         // Capture exact coordinate schemas before any identity projection removes a registered relation field.
         List<HologramCoordinatePolicies.Relation> relations = HologramCoordinatePolicies
             .inspect(source, dimension, originX, originY, originZ);
-        HologramPresets.Preset selected = HologramPresets.copy(source);
+        HologramPresets.Preset selected = HologramQuantumGroups.defaulted(source);
         removeGeneratedHints(selected);
         selected.processingNbt = null;
         for (HologramPresets.Cell cell : selected.cells) {
@@ -710,7 +709,7 @@ final class HologramBlueprintProcessing {
             }
             if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) hints.add(
                 "量子网络组 " + payload.getString(HologramNetworkBindings.GROUP)
-                    + ("preserve".equals(policy.quantum) ? "：保持原存档的原量子网络绑定；原网络不可用或无权限时无法施工"
+                    + ("preserve".equals(policy.quantum) ? "：保持原存档的原量子网络绑定；原存档或原网络不可用时无法施工，无需选择终端"
                         : "：放置前选择当前玩家自己的有效终端，按该终端重新绑定"));
             else if ("clear".equals(policy.quantum) && (HologramNetworkBindings.node(cell.block())
                 || before != null && (before.hasKey(HologramNetworkBindings.GROUP)

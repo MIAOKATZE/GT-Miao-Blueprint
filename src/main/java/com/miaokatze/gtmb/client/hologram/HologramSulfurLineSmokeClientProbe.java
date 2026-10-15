@@ -21,6 +21,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
+import net.minecraft.client.gui.inventory.GuiInventory;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
@@ -79,6 +80,8 @@ public final class HologramSulfurLineSmokeClientProbe {
     private final NBTTagList areaSelections = new NBTTagList();
     private final NBTTagList groupInteractions = new NBTTagList();
     private final NBTTagList groupNodeClicks = new NBTTagList();
+    private final NBTTagList privateTerminalDrops = new NBTTagList();
+    private NBTTagCompound privateNoTerminal;
     private final NBTTagList quantumPlacements = new NBTTagList();
     private NBTTagCompound quantumPlacement;
     private final HologramActualUsePress press = new HologramActualUsePress();
@@ -101,6 +104,7 @@ public final class HologramSulfurLineSmokeClientProbe {
     private Throwable importFailure;
     private boolean finished, newSave, overwriteSave, processingPresetSave, imported;
     private boolean saveReviewConfirmed;
+    private boolean enteredQuantumGroupingScreen;
     private String originalFileHash, originalPreviewHash;
     private long closeSequence = -1;
 
@@ -511,18 +515,17 @@ public final class HologramSulfurLineSmokeClientProbe {
                         ("share".equals(intent) ? "rebind" : "preserve").equals(
                             flow(screen).values()
                                 .getString("quantum"))
-                            && !after.getBoolean("flowQuantumGroupsConfirmed")
-                            && !after.getBoolean("flowChosen")
-                            && !enabled(after, 231)
+                            && after.getBoolean("flowChosen")
+                            && enabled(after, 231)
                             && enabled(after, 263),
-                        "native quantum choice is retained while unconfirmed classification visibly blocks Next");
+                        "native quantum default permits Next without entering optional grouping");
                 } else require(
                     after.getBoolean("flowChosen"),
                     "explicit non-quantum choice is ready for its unconfirmed Next");
                 return true;
             });
             shot("sulfur-processing-stage-" + stage + "-choice", "sulfur-server-ready.nbt");
-            if (stage == 2) quantumGrouping();
+            if (stage == 2 && "share".equals(intent)) quantumGrouping();
             click("native-next-" + stage, 231);
         }
         screen("processing-real-netty-ack", (mc, screen, ui) -> {
@@ -909,6 +912,50 @@ public final class HologramSulfurLineSmokeClientProbe {
     }
 
     private void placer() {
+        if ("self".equals(intent)) {
+            add("private-native-inventory-drops-bootstrap-terminals", (mc, screen, ui) -> {
+                NBTTagCompound target = HologramV011Evidence.read("sulfur-target-ready.nbt");
+                if (!connected(mc) || target == null) return false;
+                validateActor(mc, target);
+                mc.displayGuiScreen(new GuiInventory(mc.thePlayer));
+                require(
+                    mc.thePlayer.openContainer == mc.thePlayer.inventoryContainer,
+                    "native private inventory container");
+                for (int slot : new int[] { 1, 35 }) {
+                    net.minecraft.item.ItemStack stack = mc.thePlayer.inventory.mainInventory[slot];
+                    require(isQuantumTerminal(stack), "real bootstrap terminal precedes native inventory drop");
+                    NBTTagCompound drop = new NBTTagCompound();
+                    drop.setInteger("inventorySlot", slot);
+                    drop.setInteger("containerSlot", slot < 9 ? slot + 36 : slot);
+                    drop.setInteger("windowId", mc.thePlayer.inventoryContainer.windowId);
+                    drop.setInteger("mouseButton", 1);
+                    drop.setInteger("clickMode", 4);
+                    drop.setTag("before", stack.writeToNBT(new NBTTagCompound()));
+                    drop.setTag("clientState", placementClientState(mc));
+                    mc.playerController
+                        .windowClick(drop.getInteger("windowId"), drop.getInteger("containerSlot"), 1, 4, mc.thePlayer);
+                    nativeMouseEvents++;
+                    privateTerminalDrops.appendTag(drop);
+                }
+                NBTTagCompound request = (NBTTagCompound) target.copy();
+                request.setString("phase", "PRIVATE_NATIVE_TERMINALS_DROPPED");
+                request.setTag("nativeDrops", privateTerminalDrops.copy());
+                HologramV011Evidence.write("sulfur-private-no-terminal-request.nbt", request);
+                return true;
+            });
+            add("private-native-inventory-drop-server-ack", (mc, screen, ui) -> {
+                privateNoTerminal = HologramV011Evidence.read("sulfur-private-no-terminal-ack.nbt");
+                if (privateNoTerminal == null) return false;
+                validateActor(mc, privateNoTerminal);
+                require(
+                    privateNoTerminal.getBoolean("noQuantumTerminal") && privateTerminalDrops.tagCount() == 2,
+                    "server confirms both real C0E drops before private placement without terminal");
+                for (net.minecraft.item.ItemStack stack : mc.thePlayer.inventory.mainInventory)
+                    require(!isQuantumTerminal(stack), "actual client private inventory contains no quantum terminal");
+                mc.thePlayer.closeScreen();
+                return true;
+            });
+        }
         add("recipient-ready-import-actual-export", (mc, screen, ui) -> {
             ready = HologramV011Evidence.read("sulfur-target-ready.nbt");
             if (!connected(mc) || ready == null) return false;
@@ -1070,6 +1117,8 @@ public final class HologramSulfurLineSmokeClientProbe {
             add("write-private-rejection-final", (mc, screen, ui) -> {
                 NBTTagCompound result = finalReceipt(mc, ui);
                 result.setBoolean("preservedAnchorRejected", true);
+                result.setTag("privateNoTerminal", privateNoTerminal.copy());
+                result.setTag("privateNativeTerminalDrops", privateTerminalDrops.copy());
                 result.setBoolean("nativeImport", imported);
                 result.setString("intent", intent);
                 result.setString("localId", localId);
@@ -1260,6 +1309,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         if (finished) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
+            if (mc.currentScreen instanceof HologramQuantumGroupsScreen) enteredQuantumGroupingScreen = true;
             if (mc.theWorld != null && press.tick(event, mc)) return;
             if (event.phase != TickEvent.Phase.END) return;
             require(System.nanoTime() - installed < 900000000000L, "actual sulfur role exceeded fifteen minutes");
@@ -1638,6 +1688,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         result.setLong("nativeMouseEvents", nativeMouseEvents);
         result.setLong("nativeKeyEvents", nativeKeyEvents);
         result.setLong("nativeWheelEvents", nativeWheelEvents);
+        result.setBoolean("enteredQuantumGroupingScreen", enteredQuantumGroupingScreen);
         result.setTag("actualQuantumPlacements", quantumPlacements.copy());
         result.setTag("actualFrameReceipts", frames.copy());
         if (areaSelections.tagCount() > 0) result.setTag("actualAreaSelections", areaSelections.copy());
@@ -1860,6 +1911,13 @@ public final class HologramSulfurLineSmokeClientProbe {
             && ItemNekoHologramProjector.isProjector(mc.thePlayer.getHeldItem());
     }
 
+    private static boolean isQuantumTerminal(net.minecraft.item.ItemStack stack) {
+        return stack != null && stack.getItem()
+            .getClass()
+            .getName()
+            .equals("com.miaokatze.gtswn.common.items.ItemNetworkQuantumTerminal");
+    }
+
     private static void validateActor(Minecraft mc, NBTTagCompound receipt) {
         require(
             receipt.getBoolean("passed") && receipt.getString("actor")
@@ -1974,6 +2032,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             result.setTag("actualQuantumPlacements", quantumPlacements.copy());
             result.setTag("quantumGroupingInteractions", groupInteractions.copy());
             result.setTag("quantumGroupingNodeClicks", groupNodeClicks.copy());
+            result.setTag("privateNativeTerminalDrops", privateTerminalDrops.copy());
             if (mc.currentScreen instanceof HologramQuantumGroupsScreen) result
                 .setTag("actualQuantumGroupingUi", ((HologramQuantumGroupsScreen) mc.currentScreen).smokeUiState());
             result.setTag("nativePlacementClientState", placementClientState(mc));
