@@ -48,8 +48,6 @@ Manual sharing: copy the **same-basename JSON + PNG pair** into the recipient's 
 
 Detailed controls, private/shared processing and resource rules: [GTMB Guide / 完整操作、私用分享与资源规则](https://miaokatze.com/wiki?mod=gtmb). Find and share blueprints at the [Blueprint Library / 蓝图站](https://miaokatze.com/blueprints).
 
-<p align="center"><img alt="量子硫酸产线蓝图预览 / Quantum sulfuric-acid line blueprint preview" src="README/quantum-sulfur-line.png" width="480"><br><em>量子硫酸产线蓝图预览 / Quantum sulfuric-acid line blueprint preview</em></p>
-
 ## License & Origins / 许可与来源
 
 [AGPL-3.0](LICENSE) · Origin / 源自 GT-Interesting-Thing · Independently maintained as / 现独立维护为 GTMB · Development notes / 开发记录：[GT-Miao-Blueprint-plan](https://github.com/MIAOKATZE/GT-Miao-Blueprint-plan)。
