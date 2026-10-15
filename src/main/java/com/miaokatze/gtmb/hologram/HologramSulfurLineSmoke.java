@@ -70,6 +70,7 @@ public final class HologramSulfurLineSmoke {
     private long cutTick, stableTick;
 
     public static synchronized void install() {
+        HologramGuidanceNativeServerProbe.install();
         if (!enabled() || installed != null) return;
         installed = new HologramSulfurLineSmoke();
         FMLCommonHandler.instance()
