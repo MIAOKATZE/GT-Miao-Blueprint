@@ -58,7 +58,8 @@
     "post_migration_changes": [
       "Strictly consume both source native EU-cache Service receipts and native material transaction/projection receipts",
       "Require the 0.1.2 free-node/sample-preserved private placement proof instead of the historical paid-node assertion",
-      "Distinguish native pending proxy owner from a naturally initialized grid in auxiliary private placement; require explicit controller setup and no placed-node manual tick/ready"
+      "Distinguish native pending proxy owner from a naturally initialized grid in auxiliary private placement; require explicit controller setup and no placed-node manual tick/ready",
+      "Require the nativeOutputSerializers material case for both registered GT item/fluid output serializers"
     ],
     "historical_origin_preserved": true,
     "historical_evidence_reused": false,

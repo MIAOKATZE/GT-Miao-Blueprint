@@ -333,7 +333,8 @@ def validate_native_materials(run):
     expected = {'freeNodeShell', 'ordinaryEnergyCoverFree', 'ordinaryDynamoCoverFree', 'laserEnergyTubeOne',
                 'laserDynamoTubeOne', 'incorporationAnchorOne', 'anchorShortageUntouched', 'tubeShortageUntouched',
                 'anchorPrepaidPriority', 'tubePrepaidPriority', 'anchorRefundIdempotent', 'tubeRefundIdempotent',
-                'componentEmpty', 'componentPartitionPreserved', 'componentAndCardPriced', 'sourceUnchanged', 'meOutputCacheOmitted'}
+                'componentEmpty', 'componentPartitionPreserved', 'componentAndCardPriced', 'sourceUnchanged', 'meOutputCacheOmitted',
+                'nativeOutputSerializers'}
     typed = read_nbt(run['receipts'] / name, typed=True)
     require(set(native['cases']) == expected and all(native['cases'][key] for key in expected)
             and all(tag_at(typed, 'nativeProof', 'cases', key) == (1, 1) for key in expected)

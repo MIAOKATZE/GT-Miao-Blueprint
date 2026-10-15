@@ -18,7 +18,7 @@ import gregtech.api.GregTechAPI;
 import gregtech.api.enums.ItemList;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 
-/** Native GT Slot serializers and exact class registrations exercise projection; no live ME grid is claimed. */
+/** Pure projection: native GT input Slot writers plus audited output NBT fixtures; no AE/FML initialization. */
 public final class HologramGtMeShadowRegression {
 
     private static final String FLUID = "gregtech.common.tileentities.machines.MTEHatchInputME";
@@ -127,14 +127,15 @@ public final class HologramGtMeShadowRegression {
 
     private static void outputProjection() throws Exception {
         for (boolean fluid : new boolean[] { false, true }) {
-            String type = fluid ? OUTPUT_FLUID : OUTPUT_ITEM;
-            Object nativeStack = fluid ? appeng.util.item.AEFluidStack.create(new FluidStack(liquid(), 7654))
-                : appeng.util.item.AEItemStack.create(new ItemStack(Items.diamond, 53));
-            Class<?> parameter = Class
-                .forName(fluid ? "appeng.api.storage.data.IAEFluidStack" : "appeng.api.storage.data.IAEItemStack");
-            NBTTagCompound cached = (NBTTagCompound) Class.forName(type)
-                .getMethod("saveStackToNBT", parameter)
-                .invoke(GregTechAPI.METATILEENTITIES[fluid ? OUTPUT_FLUID_ID : OUTPUT_ITEM_ID], nativeStack);
+            // GT5-Unofficial 5.09.54.205 outputme/MTEHatchOutput{Bus,}ME.saveStackToNBT:
+            // itemStack/fluidStack holds the vanilla stack record, size is the real long quantity.
+            // Actual AE stack creation and both native writers are checked only by the FML materials smoke.
+            NBTTagCompound cached = new NBTTagCompound();
+            cached.setTag(
+                fluid ? "fluidStack" : "itemStack",
+                fluid ? new FluidStack(liquid(), 7654).writeToNBT(new NBTTagCompound())
+                    : new ItemStack(Items.diamond, 53).writeToNBT(new NBTTagCompound()));
+            cached.setLong("size", fluid ? 7654L : 53L);
             NBTTagCompound source = new NBTTagCompound();
             source.setString("id", "BaseMetaTileEntity");
             source.setInteger("mID", fluid ? OUTPUT_FLUID_ID : OUTPUT_ITEM_ID);
@@ -148,7 +149,7 @@ public final class HologramGtMeShadowRegression {
             NBTTagCompound clean = HologramGtMeShadow.project(source);
             SimpleAssert.that(
                 !clean.hasKey("cache") && !clean.hasKey(fluid ? "cachedFluids" : "cachedItems"),
-                "real native output cache records are omitted for both current and legacy readers");
+                "audited output cache fixtures are omitted for both current and legacy readers");
             SimpleAssert.that(
                 clean.getBoolean("cacheMode") && clean.getInteger("myPriority") == 71,
                 "native output connection/cache settings survive without stock");

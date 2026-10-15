@@ -14,6 +14,8 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.IChatComponent;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.FakePlayer;
+import net.minecraftforge.fluids.FluidRegistry;
+import net.minecraftforge.fluids.FluidStack;
 
 import com.mojang.authlib.GameProfile;
 
@@ -24,6 +26,7 @@ import appeng.api.storage.ICellWorkbenchItem;
 import appeng.api.storage.IMEInventoryHandler;
 import appeng.api.storage.StorageChannel;
 import appeng.api.storage.data.IAEItemStack;
+import appeng.util.item.AEFluidStack;
 import appeng.util.item.AEItemStack;
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
@@ -60,6 +63,7 @@ public final class HologramGtswnNativeMaterialsSmoke {
             nativeBills();
             supplies(actor);
             emptyMeCell(actor);
+            nativeOutputSerializers();
             NBTTagCompound receipt = new NBTTagCompound();
             receipt.setBoolean("passed", true);
             receipt.setInteger("assertions", checks);
@@ -301,6 +305,61 @@ public final class HologramGtswnNativeMaterialsSmoke {
                 && plan.fluids.isEmpty(),
             "only bare component and one installed card are payable, without embedded cargo or partition samples");
         fact("sourceUnchanged", payload.equals(before), "source component and inventory serialization stay unchanged");
+    }
+
+    /** FML owns AEStack/AEApi initialization; the pure projection regression uses the verified record contract. */
+    private static void nativeOutputSerializers() throws Exception {
+        for (boolean fluid : new boolean[] { false, true }) {
+            String type = "gregtech.common.tileentities.machines.outputme."
+                + (fluid ? "MTEHatchOutputME" : "MTEHatchOutputBusME");
+            int id = -1;
+            for (int candidate = 0; candidate < GregTechAPI.METATILEENTITIES.length; candidate++) {
+                IMetaTileEntity host = GregTechAPI.METATILEENTITIES[candidate];
+                if (host != null && host.getClass()
+                    .getName()
+                    .equals(type)) id = candidate;
+            }
+            require(id >= 0, "actual native ME output serializer owner " + type);
+            long amount = fluid ? 7654L : 37L;
+            ItemStack item = fluid ? null : new ItemStack(Items.emerald, (int) amount);
+            FluidStack liquid = fluid ? FluidRegistry.getFluidStack("water", (int) amount) : null;
+            require(!fluid || liquid != null, "actual registered fluid for native output writer");
+            Object stack = fluid ? AEFluidStack.create(liquid) : AEItemStack.create(item);
+            Class<?> parameter = Class
+                .forName(fluid ? "appeng.api.storage.data.IAEFluidStack" : "appeng.api.storage.data.IAEItemStack");
+            IMetaTileEntity host = GregTechAPI.METATILEENTITIES[id];
+            NBTTagCompound serialized = (NBTTagCompound) host.getClass()
+                .getMethod("saveStackToNBT", parameter)
+                .invoke(host, stack);
+            NBTTagCompound expectedRecord = new NBTTagCompound();
+            expectedRecord.setTag(
+                fluid ? "fluidStack" : "itemStack",
+                fluid ? liquid.writeToNBT(new NBTTagCompound()) : item.writeToNBT(new NBTTagCompound()));
+            expectedRecord.setLong("size", amount);
+            require(
+                expectedRecord.equals(serialized),
+                "actual native writer verifies the audited pure fixture contract " + type);
+            NBTTagCompound payload = new NBTTagCompound();
+            payload.setString("id", "BaseMetaTileEntity");
+            payload.setInteger("mID", id);
+            NBTTagList cache = new NBTTagList();
+            cache.appendTag(serialized);
+            payload.setTag("cache", cache);
+            payload.setBoolean("cacheMode", true);
+            payload.setInteger("myPriority", 71);
+            NBTTagCompound before = (NBTTagCompound) payload.copy();
+            NBTTagCompound expectedProjection = (NBTTagCompound) payload.copy();
+            expectedProjection.removeTag("cache");
+            require(
+                HologramGtMeShadow.project(payload)
+                    .equals(expectedProjection) && payload.equals(before),
+                "actual native output record is cleared while all settings and source remain intact " + type);
+            HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(payload);
+            require(
+                plan.items.isEmpty() && plan.fluids.isEmpty(),
+                "native pending output cannot enter the material plan " + type);
+        }
+        cases.setBoolean("nativeOutputSerializers", true);
     }
 
     private static NBTTagCompound coverPayload(int id, ItemStack cover) {
