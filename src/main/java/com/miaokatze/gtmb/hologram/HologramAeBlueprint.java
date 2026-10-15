@@ -617,16 +617,9 @@ public final class HologramAeBlueprint {
         for (String key : Arrays.asList("placerUUID", "placerName")) {
             if (!data.hasKey(key)) continue;
             work.roots.add(key);
-            if (!HologramNetworkBindings.validOwnerField(data, key, "placerUUID".equals(key))) work.issue(
-                "unreviewed_tile_field",
-                "blocker",
-                key,
-                "GTSWN placement attribution has an unreviewed type or invalid UUID; explicit review is required");
-            else work.issue(
-                "network_identity",
-                "warning",
-                key,
-                "Source placement attribution is omitted; native setPlacer records the current player");
+            if (!HologramNetworkBindings.validOwnerField(data, key, "placerUUID".equals(key)))
+                work.issue("unreviewed_tile_field", "blocker", key, "量子节点放置者信息的类型或 UUID 无效，请核验后再处理");
+            else work.issue("network_identity", "warning", key, "已移除来源放置者信息，放置时由 GTSWN 记录当前玩家");
             data.removeTag(key);
         }
         for (String key : Arrays.asList("anchorDim", "anchorX", "anchorY", "anchorZ", "linked"))
@@ -1438,12 +1431,9 @@ public final class HologramAeBlueprint {
                     "unreviewed_tile_field",
                     "blocker",
                     "GTSWN_ControllerIdentity",
-                    "Controller generation identity must be a native UUID string");
-                else work.issue(
-                    "network_identity",
-                    "warning",
-                    "GTSWN_ControllerIdentity",
-                    "Source controller generation is omitted; a new controller must obtain its own native identity");
+                    "量子控制器世代标识必须是原生 UUID 字符串，请核验来源数据");
+                else work
+                    .issue("network_identity", "warning", "GTSWN_ControllerIdentity", "已移除来源控制器世代标识，新控制器将生成自己的原生身份");
                 data.removeTag("GTSWN_ControllerIdentity");
             }
             if (host instanceof IGridProxyable) {
