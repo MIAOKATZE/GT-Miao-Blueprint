@@ -423,6 +423,13 @@ def validate_run(label, entry):
     require(datetime.fromisoformat(runs[0]['started_utc']) < datetime.fromisoformat(runs[1]['finished_utc'])
             and datetime.fromisoformat(runs[1]['started_utc']) < datetime.fromisoformat(runs[0]['finished_utc']),
             'Actual paired Netty server/client runs did not overlap')
+    properties = safe_file(fixture / 'server/server.properties', fixture / 'server')
+    recent(properties, [runs[0]])
+    dimension_ticks = [line.split('=', 1)[1].strip() for line in properties.read_text(encoding='ascii').splitlines()
+                       if line.strip().startswith('allow-nether=')]
+    require(len(dimension_ticks) == 1 and dimension_ticks[0] in ('true', 'false')
+            and (environment['sulfur_dimension'] == 0 or dimension_ticks[0] == 'true'),
+            'Actual nonzero native world ticking is disabled by server.properties allow-nether=false')
     receipts = fixture / 'receipts'
     require(not any('fail' in path.name.lower() for path in receipts.iterdir()), 'Failed evidence remains in selected candidate')
     final = read_nbt(safe_file(receipts / 'sulfur-server-final.nbt', receipts))
@@ -561,7 +568,8 @@ def collect(args):
     for label, run in runs.items():
         target = output / label
         target.mkdir()
-        selected = [(run['fixture'] / 'environment.json', 'environment.json')]
+        selected = [(run['fixture'] / 'environment.json', 'environment.json'),
+                    (run['fixture'] / 'server/server.properties', 'server/server.properties')]
         selected += [(path, 'receipts/' + path.name) for path in sorted(run['receipts'].iterdir()) if path.is_file()]
         for role in ['server', 'client']:
             selected += [(run['fixture'] / (role + '-launch.json'), role + '-launch.json'),

@@ -45,6 +45,8 @@ def prepare(args):
     for name, checksum in spec.get('reviewed_runtime_hashes', {}).items():
         require(digest(Path(name)) == checksum, 'Reviewed runtime dependency changed after export: ' + name)
     profile, role = spec['profile'], spec['role']
+    dimension = args.dimension if args.dimension is not None else (0 if args.phase == 'source'
+        else 777 if args.intent == 'self' else 778)
     require(profile in ('area', 'decor', 'essentia', 'workbench', 'sulfur') and role in ('client', 'server'), 'Unknown profile or role')
     require(profile in ('area', 'workbench', 'sulfur') or role == 'server', 'World-only profiles have no separate client')
     original = under(args.support_dir or Path(spec['workingDirectory']), ROOT / 'build')
@@ -95,7 +97,9 @@ def prepare(args):
             'level-name=' + environment['world'], 'level-type=FLAT', 'generator-settings=2;0;1;',
             'server-port=' + str(args.port), 'server-ip=127.0.0.1', 'online-mode=false',
             'spawn-protection=0', 'spawn-monsters=false', 'spawn-animals=false',
-            'generate-structures=false', 'allow-nether=false', 'view-distance=3',
+            'generate-structures=false',
+            # Forge 1.7.10 gates every nonzero world's native tick on this property, including custom dimensions.
+            'allow-nether=' + ('true' if profile == 'sulfur' and dimension != 0 else 'false'), 'view-distance=3',
             'max-players=1', 'enable-rcon=false', 'enable-query=false', 'snooper-enabled=false',
             'motd=GTMB v0.1.1 isolated follow-up fixture']
         (working / 'server.properties').write_text('\n'.join(properties) + '\n', encoding='ascii')
@@ -107,14 +111,12 @@ def prepare(args):
     if profile == 'sulfur':
         arguments[:0] = ['-Dgtmb.hologram.sulfurLinePhase=' + args.phase,
                         '-Dgtmb.hologram.sulfurLineIntent=' + args.intent,
-                        '-Dgtmb.hologram.sulfurLineDimension=' + str(args.dimension if args.dimension is not None else
-                            (0 if args.phase == 'source' else 777 if args.intent == 'self' else 778)),
+                        '-Dgtmb.hologram.sulfurLineDimension=' + str(dimension),
                         '-Dgtmb.hologram.sulfurLineRole=' + ('author' if args.phase == 'source' else 'placer'),
                         '-Dgtmb.hologram.sulfurLineAddress=127.0.0.1:' + str(args.port)]
         environment['sulfur_phase'] = args.phase
         environment['sulfur_intent'] = args.intent
-        environment['sulfur_dimension'] = args.dimension if args.dimension is not None else (0 if args.phase == 'source'
-            else 777 if args.intent == 'self' else 778)
+        environment['sulfur_dimension'] = dimension
         if args.phase == 'target':
             require(args.source_fixture is not None, 'Target must import an explicit actual v0.1.1 source fixture')
             source = under(args.source_fixture, FIXTURES)
