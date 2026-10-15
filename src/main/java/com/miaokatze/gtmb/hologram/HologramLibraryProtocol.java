@@ -11,9 +11,11 @@ import net.minecraft.nbt.NBTTagCompound;
 /** Independent, bounded public-library protocol. No blueprint payload is accepted in Action packets. */
 public final class HologramLibraryProtocol {
 
-    public static final int CHUNK_BYTES = 1024;
-    public static final int PACKET_BYTES = 8192;
-    public static final int EXPANDED_PACKET_BYTES = 16384;
+    public static final int VERSION = 2;
+    public static final int CHUNK_BYTES = 16 * 1024;
+    public static final int PACKET_BYTES = 24 * 1024;
+    public static final int EXPANDED_PACKET_BYTES = 32 * 1024;
+    static final int BURST_BYTES = 2 * CHUNK_BYTES;
     public static final int MAX_BYTES = HologramBlueprintArtifact.MAX_BYTES;
     public static final int PAGE_SIZE = 12;
     public static final long TIMEOUT_NANOS = 120L * 1000000000L;
@@ -76,7 +78,8 @@ public final class HologramLibraryProtocol {
         synchronized boolean take(int bytes, int bytesPerSecond, long now) {
             if (bytes <= 0 || bytes > CHUNK_BYTES || bytesPerSecond <= 0) return false;
             if (last == 0) last = now;
-            available = Math.min(CHUNK_BYTES, available + Math.max(0L, now - last) / 1.0e9 * bytesPerSecond);
+            // Keep the remainder between 50ms polls without allowing an unbounded idle burst.
+            available = Math.min(BURST_BYTES, available + Math.max(0L, now - last) / 1.0e9 * bytesPerSecond);
             last = now;
             if (available < bytes) return false;
             available -= bytes;

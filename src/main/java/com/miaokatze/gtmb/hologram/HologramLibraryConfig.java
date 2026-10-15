@@ -12,6 +12,7 @@ import net.minecraftforge.common.config.Configuration;
 /** The GUI and command share this single persistent Forge configuration and revision. */
 public final class HologramLibraryConfig {
 
+    public static final int DEFAULT_KIB_PER_SECOND = 128;
     private static final String CATEGORY = "serverBlueprintLibrary";
     private final Path file;
     private volatile View current;
@@ -29,15 +30,15 @@ public final class HologramLibraryConfig {
             Configuration loaded = new Configuration(source.toFile());
             loaded.load();
             View candidate = new View(
-                loaded.get(CATEGORY, "uploadKiBPerSecond", 16, "Global aggregate upload KiB/s.")
-                    .getInt(16),
-                loaded.get(CATEGORY, "downloadKiBPerSecond", 16, "Global aggregate download KiB/s.")
-                    .getInt(16),
+                loaded.get(CATEGORY, "uploadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate upload KiB/s.")
+                    .getInt(DEFAULT_KIB_PER_SECOND),
+                loaded.get(CATEGORY, "downloadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate download KiB/s.")
+                    .getInt(DEFAULT_KIB_PER_SECOND),
                 loaded.get(CATEGORY, "maxUploadsPerPlayer", 10, "Maximum published blueprints per player UUID.")
                     .getInt(10),
                 1);
             if (!valid(candidate.uploadKiB, candidate.downloadKiB, candidate.maxUploads))
-                candidate = new View(16, 16, 10, 1);
+                candidate = new View(DEFAULT_KIB_PER_SECOND, DEFAULT_KIB_PER_SECOND, 10, 1);
             persist(candidate);
             current = candidate;
         } finally {
@@ -92,9 +93,9 @@ public final class HologramLibraryConfig {
         Path temp = Files.createTempFile(file.getParent(), "hologram-library-config-write-", ".cfg");
         try {
             Configuration output = new Configuration(temp.toFile());
-            output.get(CATEGORY, "uploadKiBPerSecond", 16, "Global aggregate upload KiB/s.")
+            output.get(CATEGORY, "uploadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate upload KiB/s.")
                 .set(view.uploadKiB);
-            output.get(CATEGORY, "downloadKiBPerSecond", 16, "Global aggregate download KiB/s.")
+            output.get(CATEGORY, "downloadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate download KiB/s.")
                 .set(view.downloadKiB);
             output.get(CATEGORY, "maxUploadsPerPlayer", 10, "Maximum published blueprints per player UUID.")
                 .set(view.maxUploads);

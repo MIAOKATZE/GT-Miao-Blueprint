@@ -123,7 +123,7 @@ JSON 的 `nativeBlueprint` 使用 `formatVersion: 1`；`gtmbVersion` 为 GTMB �
 
 连接专用服务器后，蓝图库右上角的小切换可在「客户端」与「服务器」之间切换。客户端蓝图库保存在本机实际游戏目录的 `MiaoBlueprints/`（通常为 `.minecraft/MiaoBlueprints/`），文件为 `local_<UUID>.json` 与同名 `.png`，同一游戏目录下可跨服务器使用并保留原作者；服务器公库位于独立服务端运行目录的 `MiaoBlueprints/`，文件为 `public_<UUID>.json` 与同名 `.png`。集合文件和手动分享文件不会进入本地或公共蓝图列表。客户端上传映射与上次来源设置存放在 `config/gtmb/client-blueprint-library.properties`。服务端 profile UUID 用于上传权属、配额与临时私库 stage，不用于分隔客户端本地文件。上传者可以删除自己上传的公库蓝图，其他玩家可以放置；新蓝图作者信息自动记录，更新时保留原作者，上传者另行记录。
 
-上传和下载默认各为 16 KiB/s，由全服公平分配；每位玩家默认最多上传 10 份。OP 4 管理员可在顶部「等级 / 信道设置」左侧打开「管理员设置」，也可用 /gtmblibrary 查看设置，或按 /gtmblibrary set uploadKiB downloadKiB quota 修改。命令与 config/gtmb/server-blueprint-library.cfg 使用相同配置。
+新安装时上传和下载默认各为 128 KiB/s，由全服公平分配；已有配置中的限速保持不变，每位玩家默认最多上传 10 份。OP 4 管理员可在顶部「等级 / 信道设置」左侧打开「管理员设置」，也可用 /gtmblibrary 查看设置，或按 /gtmblibrary set uploadKiB downloadKiB quota 修改。例如，`/gtmblibrary set 128 128 10` 可调整仍保留旧限速的服务器。命令与 config/gtmb/server-blueprint-library.cfg 使用相同配置。
 
 专服中的 Alt 快捷放置会记住最近使用的本地蓝图，并在需要时从客户端私库为当前服务端会话重新暂存。世界 ghost 按 Esc 取消后留在世界中，不会重新打开工作台。打开保存审核等子界面或切换 editor revision 时，当前蓝图名称与作者保持不变；保存后的本地文件使用确认的名称，旧的快捷会话凭据不会覆盖新会话。
 

@@ -152,10 +152,12 @@ public final class HologramLibrarySocketServerProbe {
         if (!Files.isRegularFile(file)) throw new IllegalStateException("Native Forge library config missing");
         Configuration config = new Configuration(file.toFile());
         config.load();
-        int up = config.get("serverBlueprintLibrary", "uploadKiBPerSecond", 16)
-            .getInt(16);
-        int down = config.get("serverBlueprintLibrary", "downloadKiBPerSecond", 16)
-            .getInt(16);
+        int up = config
+            .get("serverBlueprintLibrary", "uploadKiBPerSecond", HologramLibraryConfig.DEFAULT_KIB_PER_SECOND)
+            .getInt(HologramLibraryConfig.DEFAULT_KIB_PER_SECOND);
+        int down = config
+            .get("serverBlueprintLibrary", "downloadKiBPerSecond", HologramLibraryConfig.DEFAULT_KIB_PER_SECOND)
+            .getInt(HologramLibraryConfig.DEFAULT_KIB_PER_SECOND);
         int quota = config.get("serverBlueprintLibrary", "maxUploadsPerPlayer", 10)
             .getInt(10);
         if (up != reply.getInteger("uploadKiB") || down != reply.getInteger("downloadKiB")

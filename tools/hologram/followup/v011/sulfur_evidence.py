@@ -180,15 +180,40 @@ def world_files(phase):
     require(re.fullmatch(r'[A-Za-z0-9_]{1,16}', own_name) and offline_uuid(own_name) == phase['actor'],
             'Saved world player/auxiliary inventory name is not this fixture offline actor')
     baubles = {own_name + '.baub', own_name + '.baubback'}
+    thaumcraft = {own_name + '.thaum', own_name + '.thaumback'}
     for player in (world / 'playerdata').glob('*'):
         if player.is_file():
-            require(player.name in {phase['actor'] + '.dat', phase['actor'] + '.dat_old'} | baubles,
+            require(player.name in {phase['actor'] + '.dat', phase['actor'] + '.dat_old'} | baubles | thaumcraft,
                     'World archive contains another player profile or unfinished player write')
             if player.name in baubles:
                 require('Baubles-Expanded-2.2.6-GTNH-dev.jar' in phase['environment']['roles']['server']['support_jars']
                         and player.stat().st_size == 45
                         and read_nbt(player, typed=True) == (10, {'Baubles.Inventory': (9, (0, []))}),
                         'Saved fixture Baubles file is not the registered native empty inventory for this exact actor')
+            if player.name in thaumcraft:
+                native = read_nbt(player, typed=True)
+                require(player.stat().st_size <= 1024 and native[0] == 10,
+                        'Unbounded native Thaumcraft auxiliary data')
+                fields = native[1]
+                scans = {'THAUMCRAFT.SCAN.PHENOMENA', 'THAUMCRAFT.SCAN.OBJECTS',
+                         'THAUMCRAFT.SCAN.ENTITIES', 'THAUMCRAFT.RESEARCH'}
+                counters = {'Thaumcraft.shielding', 'Thaumcraft.eldritch.counter',
+                            'Thaumcraft.eldritch.temp', 'Thaumcraft.eldritch.sticky', 'Thaumcraft.eldritch'}
+                require(set(fields) == scans | counters | {'THAUMCRAFT.ASPECTS'}
+                        and all(fields[key] == (9, (0, [])) for key in scans)
+                        and all(fields[key] == (3, 0) for key in counters),
+                        'Thaumcraft file is not the fresh fixture actor initial state')
+                aspect_list = fields['THAUMCRAFT.ASPECTS']
+                require(aspect_list[0] == 9 and aspect_list[1][0] == 10 and len(aspect_list[1][1]) == 6,
+                        'Native initial primal aspects list changed')
+                aspects = []
+                for kind, row in aspect_list[1][1]:
+                    require(kind == 10 and set(row) == {'key', 'amount'} and row['key'][0] == 8
+                            and row['amount'][0] == 2 and 0 < row['amount'][1] <= 64,
+                            'Unexpected native initial aspect entry')
+                    aspects.append(row['key'][1])
+                require(set(aspects) == {'aer', 'ignis', 'terra', 'aqua', 'ordo', 'perditio'},
+                        'Thaumcraft auxiliary file contains noninitial research or aspects')
     return world, files
 
 

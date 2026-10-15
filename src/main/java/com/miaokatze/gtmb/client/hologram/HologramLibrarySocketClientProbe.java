@@ -106,8 +106,8 @@ public final class HologramLibrarySocketClientProbe {
                 stage = 4;
             } else if (stage == 4 && "downloadChunk".equals(op) && downloadId.equals(reply.getString("transfer"))) {
                 byte[] bytes = reply.getByteArray("data");
-                if (reply.getInteger("index") != incomingIndex++ || bytes.length > 1024
-                    || incoming.size() + bytes.length > incomingTotal)
+                if (reply.getInteger("index") != incomingIndex++
+                    || bytes.length != Math.min(HologramLibraryProtocol.CHUNK_BYTES, incomingTotal - incoming.size()))
                     throw new IllegalStateException("Bad downloaded chunk");
                 incoming.write(bytes, 0, bytes.length);
             } else if (stage == 4 && "downloadDone".equals(op) && downloadId.equals(reply.getString("transfer"))) {
@@ -161,7 +161,7 @@ public final class HologramLibrarySocketClientProbe {
 
     private void sendChunk() {
         if (outgoingOffset >= fixture.length) return;
-        int end = Math.min(fixture.length, outgoingOffset + 1024);
+        int end = Math.min(fixture.length, outgoingOffset + HologramLibraryProtocol.CHUNK_BYTES);
         NBTTagCompound chunk = HologramLibraryProtocol.request("uploadChunk");
         chunk.setString("transfer", transfer);
         chunk.setInteger("index", outgoingIndex++);

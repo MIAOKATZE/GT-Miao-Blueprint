@@ -119,7 +119,9 @@ public final class HologramNetwork {
         }
 
         public void fromBytes(ByteBuf buf) {
-            if (buf.readableBytes() < 4) throw new IllegalArgumentException("library header");
+            if (buf.readableBytes() < 8) throw new IllegalArgumentException("library header");
+            if (buf.readInt() != HologramLibraryProtocol.VERSION)
+                throw new IllegalArgumentException("Unsupported library protocol version");
             int length = buf.readInt();
             if (length <= 0 || length > HologramLibraryProtocol.PACKET_BYTES || length != buf.readableBytes())
                 throw new IllegalArgumentException("library packet budget");
@@ -142,6 +144,7 @@ public final class HologramNetwork {
                 byte[] bytes = CompressedStreamTools.compress(tag);
                 if (bytes.length > HologramLibraryProtocol.PACKET_BYTES)
                     throw new IllegalArgumentException("library packet budget");
+                buf.writeInt(HologramLibraryProtocol.VERSION);
                 buf.writeInt(bytes.length);
                 buf.writeBytes(bytes);
             } catch (IOException failure) {
@@ -371,7 +374,7 @@ public final class HologramNetwork {
         }
     }
 
-    /** Dedicated library initialization uses 1 KiB slices while the legacy snapshot framing stays compatible. */
+    /** Dedicated library initialization uses the same versioned, bounded slices as file transfers. */
     public static final class LibrarySnapshotFragment implements IMessage {
 
         private long sequence;
@@ -389,7 +392,9 @@ public final class HologramNetwork {
         }
 
         public void fromBytes(ByteBuf buf) {
-            if (buf.readableBytes() < 52) throw new IllegalArgumentException("library snapshot header");
+            if (buf.readableBytes() < 56) throw new IllegalArgumentException("library snapshot header");
+            if (buf.readInt() != HologramLibraryProtocol.VERSION)
+                throw new IllegalArgumentException("Unsupported library snapshot protocol version");
             sequence = buf.readLong();
             total = buf.readInt();
             index = buf.readInt();
@@ -412,6 +417,7 @@ public final class HologramNetwork {
         }
 
         public void toBytes(ByteBuf buf) {
+            buf.writeInt(HologramLibraryProtocol.VERSION);
             buf.writeLong(sequence);
             buf.writeInt(total);
             buf.writeInt(index);
