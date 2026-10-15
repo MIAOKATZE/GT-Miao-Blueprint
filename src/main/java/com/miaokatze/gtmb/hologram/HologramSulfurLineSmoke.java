@@ -160,6 +160,7 @@ public final class HologramSulfurLineSmoke {
                 else startTarget();
             }
             retainChunks();
+            failIfClientMarker("source".equals(phase) ? "sulfur-author-fail.txt" : "sulfur-placer-fail.txt");
             if (line != null) call(line, "tick");
             if ("source".equals(phase)) sourceTick(server);
             else targetTick(server);
@@ -816,7 +817,7 @@ public final class HologramSulfurLineSmoke {
         NBTTagList a = before.getTagList("machines", 10), b = after.getTagList("machines", 10);
         for (int i = 0; i < 3; i++) {
             NBTTagCompound left = a.getCompoundTagAt(i), right = b.getCompoundTagAt(i);
-            for (String key : new String[] { "nativeRecipesDone", "progress", "maxProgress", "batteryRemainingEU" })
+            for (String key : new String[] { "nativeRecipesDone", "progress", "maxProgress" })
                 if (left.getLong(key) != right.getLong(key)) return false;
             if (!left.getTagList("outputCache", 10)
                 .equals(right.getTagList("outputCache", 10))) return false;
@@ -884,10 +885,13 @@ public final class HologramSulfurLineSmoke {
                     && machine.getInteger("observedProgress") > 0,
                 "each native reactor naturally progressed and completed recipe " + stage);
             require(
-                machine.getLong("batteryInitialEU") > 0 && machine.getLong("batteryInitialEU") <= 100000L
-                    && machine.getLong("batteryDebitedEU") > 0
+                machine.getInteger("nativeEnergyHatchId") == 11304 && machine.getBoolean("nativeDebugEnergyPresent")
+                    && machine.getInteger("debugVoltageTier") == 1
+                    && machine.getInteger("debugAmperage") == 1
+                    && machine.getInteger("debugRefillInterval") == 20
+                    && machine.getLong("storedEU") > 0
                     && machine.getLong("fixtureDirectHatchEuInjected") == 0,
-                "finite real battery naturally powered native energy hatch " + stage);
+                "authorized native debug energy hatch naturally powers the real LV recipe " + stage);
             require(
                 machine.getBoolean("automaticMaintenance") && machine.getInteger("repairStatus") == 6,
                 "real automatic maintenance hatch restored all six native repair flags " + stage);
@@ -1145,6 +1149,22 @@ public final class HologramSulfurLineSmoke {
         try {
             findings.setString("result", result);
             findings.setInteger("stage", stage);
+            findings.setBoolean("passed", false);
+            if (line != null) {
+                try {
+                    NBTTagCompound diagnostic = base("FAILURE_NATIVE_DIAGNOSTIC");
+                    diagnostic.setBoolean("passed", false);
+                    diagnostic.setInteger("stage", stage);
+                    diagnostic.setInteger("quantumCycle", quantumCycle);
+                    diagnostic.setString("failure", failure.toString());
+                    diagnostic.setTag("nativeLine", (NBTTagCompound) call(line, "diagnostic"));
+                    findings.setTag("failureNativeDiagnostic", diagnostic.copy());
+                    write("sulfur-native-failure-diagnostic.nbt", diagnostic);
+                } catch (Exception diagnosticFailure) {
+                    findings.setString("nativeDiagnosticFailure", diagnosticFailure.toString());
+                    failure.addSuppressed(diagnosticFailure);
+                }
+            }
             write("sulfur-server-final.nbt", findings);
             HologramV011Evidence.marker("sulfur-server-fail.txt", result);
         } catch (Exception evidenceFailure) {

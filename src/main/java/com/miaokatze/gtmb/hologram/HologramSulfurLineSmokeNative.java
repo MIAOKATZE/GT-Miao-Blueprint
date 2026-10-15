@@ -41,10 +41,8 @@ import gregtech.api.enums.Materials;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
-import gregtech.api.metatileentity.implementations.MTEBasicBatteryBuffer;
-import gregtech.api.metatileentity.implementations.MTEHatchEnergy;
+import gregtech.api.metatileentity.implementations.MTEHatchEnergyDebug;
 import gregtech.api.metatileentity.implementations.MTEHatchMaintenance;
-import gregtech.api.util.GTModHandler;
 import gregtech.api.util.GTUtility;
 import gregtech.common.blocks.ItemMachines;
 import gregtech.common.tileentities.machines.MTEHatchInputBusME;
@@ -52,11 +50,10 @@ import gregtech.common.tileentities.machines.MTEHatchInputME;
 import gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor;
 import gregtech.common.tileentities.machines.outputme.MTEHatchOutputME;
 
-/** Native, finite sulfur line fixture. Only ordinary world ticks produce its SO2, SO3 and acid. */
+/** Finite native ME chemistry with explicitly authorized native debug energy; only world ticks produce the fluids. */
 public final class HologramSulfurLineSmokeNative {
 
     private static final long SULFUR = 64, OXYGEN = 192_000, WATER = 64_000;
-    private static final int BATTERY_EU = 100_000;
 
     private HologramSulfurLineSmokeNative() {}
 
@@ -101,7 +98,13 @@ public final class HologramSulfurLineSmokeNative {
                 reactor.getControllerSlotIndex(),
                 GTUtility.getIntegratedCircuit(stage == 0 ? 3 : 1));
             controller.disableWorking();
-            placeGT(world, actor, ItemList.Hatch_Energy_LV.get(1), sx, y, z, ForgeDirection.NORTH);
+            MTEHatchEnergyDebug debug = cast(
+                placeGT(world, actor, ItemList.DebugEnergyHatch.get(1), sx, y, z, ForgeDirection.NORTH)
+                    .getMetaTileEntity(),
+                MTEHatchEnergyDebug.class);
+            debug.setVoltageTier(1);
+            debug.setAmperage(1);
+            debug.setRefillInterval(20);
             placeGT(world, actor, ItemList.Hatch_AutoMaintenance.get(1), sx + 2, y, z, ForgeDirection.NORTH);
             MTEHatchInputME input = cast(
                 placeGT(world, actor, ItemList.Hatch_Input_ME.get(1), sx, y + 1, z + 2, ForgeDirection.SOUTH)
@@ -160,16 +163,14 @@ public final class HologramSulfurLineSmokeNative {
         private final MTEHatchInputBusME sulfurBus;
         private final TileDrive drive;
         private final TileDenseEnergyCell power;
-        private final BaseMetaTileEntity[] batteryBases = new BaseMetaTileEntity[3];
-        private final MTEBasicBatteryBuffer[] batteries = new MTEBasicBatteryBuffer[3];
-        private final long[] batteryInitial = new long[3];
         private final int[] maxProgress = new int[3];
         private final long[] completionBaseline = new long[3];
         private final NBTTagCompound[] previousSamples = new NBTTagCompound[3];
         private final NBTTagList[] completionBoundaries = new NBTTagList[3];
         private final NBTTagCompound initial = new NBTTagCompound();
         private long lastTick = Long.MIN_VALUE;
-        private long suppliedTick = -1, stoppedTick = -1;
+        private long suppliedTick = -1, startedTick = -1, stoppedTick = -1;
+        private int startCount;
         private boolean supplied;
 
         private Line(WorldServer world, EntityPlayerMP actor, int x, int y, int z) {
@@ -182,7 +183,10 @@ public final class HologramSulfurLineSmokeNative {
                 int sx = x + stage * 5;
                 reactors[stage] = nativeMTE(world, sx + 1, y + 1, z, MTELargeChemicalReactor.class);
                 energy[stage] = nativeBase(world, sx, y, z);
-                require(energy[stage].getMetaTileEntity() instanceof MTEHatchEnergy, "native energy hatch required");
+                MTEHatchEnergyDebug debug = cast(energy[stage].getMetaTileEntity(), MTEHatchEnergyDebug.class);
+                require(
+                    debug.getVoltageTier() == 1 && debug.getAmperage() == 1 && debug.getRefillInterval() == 20,
+                    "native debug energy uses the reviewed LV/1A/20-tick configuration");
                 inputs[stage] = nativeMTE(world, sx, y + 1, z + 2, MTEHatchInputME.class);
                 outputs[stage] = nativeMTE(world, sx + 2, y + 1, z + 2, MTEHatchOutputME.class);
                 maintenance[stage] = nativeMTE(world, sx + 2, y, z, MTEHatchMaintenance.class);
@@ -267,32 +271,16 @@ public final class HologramSulfurLineSmokeNative {
             initial.setLong("oxygen", OXYGEN);
             initial.setLong("water", WATER);
             initial.setLong("acidSupplied", 0);
-            initial.setLong("batteryEuPerReactor", BATTERY_EU);
+            initial.setString("machinePowerMode", "native-debug-energy-hatch");
+            initial.setBoolean("debugEnergyExplicitlyAuthorized", true);
+            initial.setBoolean("fixtureDirectHatchEuWrites", false);
             initial.setLong("worldTick", suppliedTick);
             initial.setString(
                 "supplyMethod",
-                "once-only remote ME stock; independent once-charged native LV batteries naturally power energy hatches");
+                "once-only remote ME stock; native debug energy hatch onFirstTick/onPreTick supplies authorized machine EU");
             NBTTagList maintenanceSupply = new NBTTagList();
             ItemStack[] bundle = MTEHatchMaintenance.getAutoMaintenanceInputs();
             for (int stage = 0; stage < 3; stage++) {
-                int sx = x + stage * 5;
-                require(world.isAirBlock(sx, y, z - 1), "external battery fixture footprint is fresh air");
-                batteryBases[stage] = placeGT(
-                    world,
-                    actor,
-                    ItemList.Battery_Buffer_1by1_LV.get(1),
-                    sx,
-                    y,
-                    z - 1,
-                    ForgeDirection.SOUTH);
-                batteries[stage] = cast(batteryBases[stage].getMetaTileEntity(), MTEBasicBatteryBuffer.class);
-                ItemStack battery = ItemList.Battery_RE_LV_Lithium.get(1);
-                GTModHandler.chargeElectricItem(battery, BATTERY_EU, Integer.MAX_VALUE, true, false);
-                batteries[stage].setInventorySlotContents(0, battery);
-                batteryInitial[stage] = batteries[stage].getStoredEnergy()[0];
-                require(
-                    batteryInitial[stage] > 0 && batteryInitial[stage] <= BATTERY_EU,
-                    "once-only finite native battery charge");
                 NBTTagCompound suppliedBundle = new NBTTagCompound();
                 suppliedBundle.setInteger("stage", stage);
                 suppliedBundle.setInteger("repairStatusBefore", reactors[stage].getRepairStatus());
@@ -308,7 +296,7 @@ public final class HologramSulfurLineSmokeNative {
                 maintenance[stage].getBaseMetaTileEntity()
                     .markDirty();
                 reactors[stage].getBaseMetaTileEntity()
-                    .enableWorking();
+                    .disableWorking();
             }
             initial.setTag("automaticMaintenanceSupply", maintenanceSupply);
             // The driver's observation may have already run at this END tick before the explicit supply.
@@ -327,6 +315,33 @@ public final class HologramSulfurLineSmokeNative {
             long now = world.getTotalWorldTime();
             if (lastTick == now) return;
             lastTick = now;
+            if (supplied && startedTick < 0 && stoppedTick < 0) {
+                require(
+                    now - suppliedTick <= 200,
+                    "native debug hatches must naturally obtain EU before the startup deadline");
+                boolean powered = true;
+                for (BaseMetaTileEntity hatch : energy) powered &= hatch.getStoredEU() > 0;
+                if (powered) {
+                    NBTTagList ready = new NBTTagList();
+                    for (int stage = 0; stage < 3; stage++) {
+                        require(
+                            !reactors[stage].getBaseMetaTileEntity()
+                                .isAllowedToWork(),
+                            "reactors remain stopped until actual native debug power is available");
+                        NBTTagCompound row = new NBTTagCompound();
+                        row.setTag("nativeEnergyHatch", nativeTile(energy[stage]));
+                        row.setTag("beforeEnable", nativeSample(stage, now));
+                        ready.appendTag(row);
+                    }
+                    startedTick = now;
+                    startCount++;
+                    initial.setLong("nativePowerReadyTick", now);
+                    initial.setInteger("startupEnableCount", startCount);
+                    initial.setTag("nativePowerBeforeEnable", ready);
+                    for (MTELargeChemicalReactor reactor : reactors) reactor.getBaseMetaTileEntity()
+                        .enableWorking();
+                }
+            }
             for (int stage = 0; stage < 3; stage++) {
                 maxProgress[stage] = Math.max(maxProgress[stage], reactors[stage].mProgresstime);
                 if (supplied) {
@@ -427,6 +442,8 @@ public final class HologramSulfurLineSmokeNative {
             result.setBoolean("quiescent", quiescent());
             result.setLong("worldTick", world.getTotalWorldTime());
             result.setLong("suppliedTick", suppliedTick);
+            result.setLong("startedTick", startedTick);
+            result.setInteger("startupEnableCount", startCount);
             result.setLong("stoppedTick", stoppedTick);
             result.setLong("sulfurRemaining", itemCount(Materials.Sulfur.getDust(1)));
             result.setLong("oxygenRemaining", fluidCount(Materials.Oxygen.getGas(1)));
@@ -451,6 +468,10 @@ public final class HologramSulfurLineSmokeNative {
                     stage == 0 ? "S + 2000 O -> 1000 SO2"
                         : stage == 1 ? "1000 SO2 + 1000 O -> 1000 SO3" : "1000 SO3 + 1000 water -> 1000 sulfuric acid");
                 row.setBoolean("formed", reactor.mMachine);
+                row.setBoolean(
+                    "allowedToWork",
+                    reactor.getBaseMetaTileEntity()
+                        .isAllowedToWork());
                 row.setInteger("progress", reactor.mProgresstime);
                 row.setInteger("maxProgress", reactor.mMaxProgresstime);
                 row.setInteger("observedProgress", maxProgress[stage]);
@@ -458,10 +479,17 @@ public final class HologramSulfurLineSmokeNative {
                 row.setLong("nativeRecipesDone", reactor.recipesDone);
                 row.setLong("completionBaseline", completionBaseline[stage]);
                 row.setTag("nativeCompletionBoundaries", completionBoundaries[stage].copy());
-                long batteryRemaining = batteries[stage] == null ? 0 : batteries[stage].getStoredEnergy()[0];
-                row.setLong("batteryInitialEU", batteryInitial[stage]);
-                row.setLong("batteryRemainingEU", batteryRemaining);
-                row.setLong("batteryDebitedEU", batteryInitial[stage] - batteryRemaining);
+                MTEHatchEnergyDebug debug = cast(energy[stage].getMetaTileEntity(), MTEHatchEnergyDebug.class);
+                row.setString(
+                    "nativeEnergyHatchClass",
+                    debug.getClass()
+                        .getName());
+                row.setInteger("nativeEnergyHatchId", energy[stage].getMetaTileID());
+                row.setInteger("debugVoltageTier", debug.getVoltageTier());
+                row.setInteger("debugAmperage", debug.getAmperage());
+                row.setInteger("debugRefillInterval", debug.getRefillInterval());
+                row.setBoolean("nativeDebugEnergyPresent", reactor.isDebugEnergyPresent());
+                row.setTag("nativeEnergyHatch", nativeTile(energy[stage]));
                 row.setLong("fixtureDirectHatchEuInjected", 0);
                 row.setLong("storedEU", energy[stage].getStoredEU());
                 row.setInteger("eut", reactor.mEUt);
@@ -492,6 +520,50 @@ public final class HologramSulfurLineSmokeNative {
             drive.writeToNBT(nativeDrive);
             result.setTag("nativeDrive", nativeDrive);
             result.setTag("topology", topology());
+            return result;
+        }
+
+        /** Same-END failure evidence reads each native object independently, even when the grid is unavailable. */
+        public NBTTagCompound diagnostic() {
+            NBTTagCompound result = new NBTTagCompound();
+            long now = world.getTotalWorldTime();
+            result.setLong("worldTick", now);
+            result.setInteger("dimension", world.provider.dimensionId);
+            result.setString("samplePhase", "ServerTick.END");
+            result.setLong("suppliedTick", suppliedTick);
+            result.setLong("startedTick", startedTick);
+            result.setInteger("startupEnableCount", startCount);
+            NBTTagList rows = new NBTTagList();
+            for (int stage = 0; stage < 3; stage++) {
+                NBTTagCompound row = new NBTTagCompound();
+                row.setInteger("stage", stage);
+                row.setTag("sample", nativeSample(stage, now));
+                row.setTag("nativeReactor", nativeTile((TileEntity) reactors[stage].getBaseMetaTileEntity()));
+                row.setTag("nativeEnergyHatch", nativeTile(energy[stage]));
+                row.setTag("nativeInput", nativeTile((TileEntity) inputs[stage].getBaseMetaTileEntity()));
+                row.setTag("nativeOutput", nativeTile((TileEntity) outputs[stage].getBaseMetaTileEntity()));
+                row.setTag("nativeMaintenance", nativeTile((TileEntity) maintenance[stage].getBaseMetaTileEntity()));
+                rows.appendTag(row);
+            }
+            result.setTag("machines", rows);
+            result.setTag("nativeSulfurBus", nativeTile((TileEntity) sulfurBus.getBaseMetaTileEntity()));
+            result.setTag("nativeRemoteDrive", nativeTile(drive));
+            result.setTag("nativeRemoteAePower", nativeTile(power));
+            result.setLong("sulfurRemaining", itemCount(Materials.Sulfur.getDust(1)));
+            result.setLong("oxygenRemaining", fluidCount(Materials.Oxygen.getGas(1)));
+            result.setLong("waterRemaining", fluidCount(Materials.Water.getFluid(1)));
+            result.setLong("acid", acid());
+            try {
+                result.setTag("topology", topology());
+            } catch (RuntimeException unavailable) {
+                result.setString("topologyObservationFailure", unavailable.toString());
+            }
+            return result;
+        }
+
+        private static NBTTagCompound nativeTile(TileEntity tile) {
+            NBTTagCompound result = new NBTTagCompound();
+            tile.writeToNBT(result);
             return result;
         }
 

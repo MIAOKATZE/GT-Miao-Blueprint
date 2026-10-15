@@ -144,12 +144,26 @@ def validate_runtime(run, name):
             and line['acid'] <= min(line['sulfurConsumed'] * 1000, line['waterConsumed']), 'Native acid has no finite stoichiometric debit')
     initial = line['initialStock']
     require([initial[key] for key in ['sulfur', 'oxygen', 'water', 'acidSupplied']] == [64, 192000, 64000, 0]
-            and initial['batteryEuPerReactor'] == 100000, 'Unreviewed or infinite process supply')
+            and initial['machinePowerMode'] == 'native-debug-energy-hatch' and initial['debugEnergyExplicitlyAuthorized']
+            and not initial['fixtureDirectHatchEuWrites'], 'Unreviewed material supply or machine EU source')
+    require(line['startupEnableCount'] == initial['startupEnableCount'] == 1
+            and line['startedTick'] == initial['nativePowerReadyTick'] >= line['suppliedTick'],
+            'Reactors were repeatedly enabled or started before the native power observation')
+    warmup = initial['nativePowerBeforeEnable']
+    require(len(warmup) == 3 and all(row['nativeEnergyHatch']['mID'] == 11304
+            and row['nativeEnergyHatch']['mStoredEnergy'] > 0 and not row['beforeEnable']['allowedToWork']
+            and row['beforeEnable']['worldTick'] == line['startedTick'] for row in warmup),
+            'All three reactors must remain disabled until each actual native debug hatch has generated EU')
     require(len(line['machines']) == 3, 'Three real LCR stages required')
     for i, machine in enumerate(line['machines']):
         require(machine['stage'] == i and machine['automaticMaintenance'] and machine['repairStatus'] == 6
-                and 0 < machine['batteryDebitedEU'] <= machine['batteryInitialEU'] <= 100000
-                and machine['fixtureDirectHatchEuInjected'] == 0, 'Real finite battery/maintenance evidence failed')
+                and machine['nativeEnergyHatchId'] == machine['nativeEnergyHatch']['mID'] == 11304
+                and machine['nativeEnergyHatchClass'] == 'gregtech.api.metatileentity.implementations.MTEHatchEnergyDebug'
+                and machine['nativeDebugEnergyPresent'] and machine['debugVoltageTier'] == machine['nativeEnergyHatch']['debugVTier'] == 1
+                and machine['debugAmperage'] == machine['nativeEnergyHatch']['debugAmperage'] == 1
+                and machine['debugRefillInterval'] == machine['nativeEnergyHatch']['refillInterval'] == 20
+                and machine['storedEU'] > 0 and machine['fixtureDirectHatchEuInjected'] == 0,
+                'Actual authorized native Debug LV/1A/20-tick power or automatic maintenance evidence failed')
         native_completion(machine, tag_at(typed_line, 'machines')[1][1][i], line, typed_line)
     validate_topology(line, running=True)
     return line
@@ -157,7 +171,7 @@ def validate_runtime(run, name):
 
 def stable_state(line):
     return [line[key] for key in STOCK] + [[row[key] for key in ['nativeRecipesDone', 'progress', 'maxProgress',
-        'batteryRemainingEU', 'outputCache']] for row in line['machines']]
+        'outputCache']] for row in line['machines']]
 
 
 def validate_cycle(run):
@@ -260,8 +274,16 @@ def validate_target(run, client, frames):
     else:
         require(after['paid'] and not run['final']['targetStockFromBlueprint']
                 and all(run['final']['targetBeforeFixtureSupply'][key] == 0 for key in STOCK), 'Target received unpaid/source process inventory')
-        require(all(row['storedEU'] == row['batteryInitialEU'] == row['fixtureDirectHatchEuInjected'] == 0
-                    for row in run['final']['targetBeforeFixtureSupply']['machines']), 'Blueprint granted stored EU before the independent finite battery fixture')
+        pre_supply = run['final']['targetBeforeFixtureSupply']
+        require(pre_supply['startupEnableCount'] == 0 and pre_supply['startedTick'] == -1
+                and all(row['nativeEnergyHatchId'] == 11304 and row['fixtureDirectHatchEuInjected'] == 0
+                        and not row['allowedToWork'] for row in pre_supply['machines']),
+                'Target ran or received fixture-written EU before the independent authorized native Debug startup')
+        model = pair['model']
+        for cell in model['cells']:
+            if cell.get('tileNbt'):
+                payload = nbt_bytes(base64.b64decode(cell['tileNbt'], validate=True))
+                require('mStoredEnergy' not in payload, 'Target imported stored source EU; native Debug generation must supply its own EU')
         for kind in ['itemLedger', 'fluidLedger']:
             require(len(before[kind]) == len(after[kind]), 'Construction bill changed during payment')
             for a, b in zip(before[kind], after[kind]):
