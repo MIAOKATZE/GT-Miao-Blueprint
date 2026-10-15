@@ -642,9 +642,11 @@ public final class HologramSulfurLineSmoke {
             ready.setBoolean("passed", true);
             ready.setIntArray("drive", new int[] { x - 12, y, z + 11 });
             ready.setIntArray("storageGateway", new int[] { x - 13, y, z + 11 });
+            placementReady(ready, new int[] { x - 13, y, z + 11 }, new int[] { x - 12, y, z + 11, 4 }, anchor);
             write("sulfur-quantum-native-storage-place-ready.nbt", ready);
             findings.setBoolean("storageGatewayPlacementReady", true);
         }
+        if (!placementAck("sulfur-quantum-native-storage-place", x - 13, y, z + 11)) return false;
         if (!(Boolean) call(bank, "ready")) return false;
         if (source) {
             int[][] positions = gateways(x, y, z);
@@ -660,6 +662,7 @@ public final class HologramSulfurLineSmoke {
                         ready.setInteger("gatewayIndex", i);
                         ready.setIntArray("gatewaySupport", new int[] { point[0], point[1], point[2] - 1, 3 });
                         ready.setTag("terminal", quantumTerminal.writeToNBT(new NBTTagCompound()));
+                        placementReady(ready, point, new int[] { point[0], point[1], point[2] - 1, 3 }, anchor);
                         write(filename, ready);
                     }
                     return false;
@@ -669,6 +672,7 @@ public final class HologramSulfurLineSmoke {
                         node.getClass()
                             .getName()),
                     "actual native gateway at each location");
+                if (!placementAck("sulfur-quantum-native-place-" + i, point[0], point[1], point[2])) return false;
             }
             if (!(Boolean) call(line, "operational")) return false;
         }
@@ -682,6 +686,67 @@ public final class HologramSulfurLineSmoke {
         if (source) proof.setTag("topology", (NBTTagCompound) call(line, "topology"));
         findings.setTag("quantumBootstrap", proof);
         write("sulfur-quantum-bootstrap-complete.nbt", proof);
+        return true;
+    }
+
+    private void placementReady(NBTTagCompound ready, int[] point, int[] support, int[] anchor) {
+        ready.setIntArray("gateway", point);
+        ready.setIntArray("gatewaySupport", support);
+        ready.setIntArray("expectedAnchor", anchor);
+        placementPlayer(ready);
+    }
+
+    private void placementPlayer(NBTTagCompound tag) {
+        tag.setDouble("serverPlayerX", actor.posX);
+        tag.setDouble("serverPlayerY", actor.posY);
+        tag.setDouble("serverPlayerZ", actor.posZ);
+        tag.setInteger("serverSelectedSlot", actor.inventory.currentItem);
+        if (actor.getHeldItem() != null) tag.setTag(
+            "serverHeldItem",
+            actor.getHeldItem()
+                .writeToNBT(new NBTTagCompound()));
+    }
+
+    /** Receipt follows native terminal placement and reads the real tile; it never creates or binds a node. */
+    private boolean placementAck(String prefix, int x, int y, int z) throws Exception {
+        if (read(prefix + "-ack.nbt") != null) return true;
+        NBTTagCompound ready = read(prefix + "-ready.nbt");
+        TileEntity node = world.getTileEntity(x, y, z);
+        if (ready == null || node == null) return false;
+        require(
+            HologramNetworkBindings.NODE_TILE.equals(
+                node.getClass()
+                    .getName()),
+            "native placement ACK tile type");
+        NBTTagCompound nativeNode = new NBTTagCompound();
+        node.writeToNBT(nativeNode);
+        int[] actualAnchor = new int[] { nativeNode.getInteger("anchorDim"), nativeNode.getInteger("anchorX"),
+            nativeNode.getInteger("anchorY"), nativeNode.getInteger("anchorZ") };
+        require(Arrays.equals(actualAnchor, ready.getIntArray("expectedAnchor")), "native placement ACK anchor");
+        require(
+            actor.getUniqueID()
+                .toString()
+                .equals(nativeNode.getString("placerUUID"))
+                && actor.getCommandSenderName()
+                    .equals(nativeNode.getString("placerName")),
+            "native placement ACK current placer");
+        appeng.api.networking.IGridNode gridNode = ((IGridProxyable) node).getProxy()
+            .getNode();
+        if (gridNode == null) return false;
+        int owner = appeng.core.worlddata.WorldData.instance()
+            .playerData()
+            .getPlayerID(actor.getGameProfile());
+        require(gridNode.getPlayerID() == owner, "native placement ACK AE owner");
+        NBTTagCompound ack = base("QUANTUM_NATIVE_PLACEMENT_ACK");
+        ack.setBoolean("passed", true);
+        ack.setLong("readyWorldTick", ready.getLong("worldTick"));
+        ack.setIntArray("gateway", ready.getIntArray("gateway"));
+        ack.setIntArray("gatewaySupport", ready.getIntArray("gatewaySupport"));
+        ack.setIntArray("expectedAnchor", actualAnchor);
+        ack.setInteger("nativeOwnerPlayerId", owner);
+        ack.setTag("nativeNode", nativeNode);
+        placementPlayer(ack);
+        write(prefix + "-ack.nbt", ack);
         return true;
     }
 
@@ -1150,6 +1215,31 @@ public final class HologramSulfurLineSmoke {
             findings.setString("result", result);
             findings.setInteger("stage", stage);
             findings.setBoolean("passed", false);
+            if (actor != null && world != null) {
+                NBTTagCompound diagnostic = base("FAILURE_NATIVE_BOOTSTRAP_DIAGNOSTIC");
+                placementPlayer(diagnostic);
+                NBTTagList nodes = new NBTTagList();
+                int x = "source".equals(System.getProperty("gtmb.hologram.sulfurLinePhase", "source")) ? SOURCE_X
+                    : TARGET_X;
+                int y = SOURCE_Y, z = x == SOURCE_X ? SOURCE_Z : TARGET_Z;
+                int[][] points = gateways(x, y, z);
+                for (int i = -1; i < points.length; i++) {
+                    int[] point = i < 0 ? new int[] { x - 13, y, z + 11 } : points[i];
+                    NBTTagCompound row = new NBTTagCompound();
+                    row.setIntArray("gateway", point);
+                    TileEntity node = world.getTileEntity(point[0], point[1], point[2]);
+                    row.setBoolean("present", node != null);
+                    if (node != null) {
+                        NBTTagCompound nativeNode = new NBTTagCompound();
+                        node.writeToNBT(nativeNode);
+                        row.setTag("nativeNode", nativeNode);
+                    }
+                    nodes.appendTag(row);
+                }
+                diagnostic.setTag("actualNodes", nodes);
+                findings.setTag("nativeBootstrapFailureDiagnostic", diagnostic);
+                write("sulfur-native-bootstrap-failure-diagnostic.nbt", diagnostic);
+            }
             if (line != null) {
                 try {
                     NBTTagCompound diagnostic = base("FAILURE_NATIVE_DIAGNOSTIC");

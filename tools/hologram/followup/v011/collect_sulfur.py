@@ -69,6 +69,55 @@ def receipt(run, name, *, passed=True):
     return value
 
 
+def validate_quantum_placements(run, client, bootstrap):
+    cx, cy, cz = bootstrap['controller']
+    anchor = [run['dimension'], cx, cy, cz]
+    origin = [cx + 16, cy, cz - 8]
+    expected = [('sulfur-quantum-native-storage-place', [cx + 3, cy, cz + 3], [cx + 4, cy, cz + 3, 4])]
+    if run['phase'] == 'source':
+        for index, (dx, dy, dz) in enumerate(GATEWAY_OFFSETS):
+            point = [origin[0] + dx, origin[1] + dy, origin[2] + dz]
+            expected.append((f'sulfur-quantum-native-place-{index}', point, [point[0], point[1], point[2] - 1, 3]))
+    proofs = client['actualQuantumPlacements']
+    require(len(proofs) == len(expected), 'Every native storage/production placement needs its own actual server ACK')
+    progress = receipt(run, 'sulfur-quantum-native-placement-client-progress.nbt')
+    require(progress['actualQuantumPlacements'] == proofs and 'pendingQuantumPlacement' not in progress,
+            'Final native placement progress differs from completed client actions')
+    previous_ack_tick = -1
+    for proof, (prefix, point, support) in zip(proofs, expected):
+        ready = receipt(run, prefix + '-ready.nbt')
+        ack = receipt(run, prefix + '-ack.nbt')
+        require(proof['prefix'] == prefix and proof['ready'] == ready and proof['ack'] == ack,
+                'Native placement client did not observe the exact immutable server ready/ACK')
+        require(ready['gateway'] == ack['gateway'] == point and ready['gatewaySupport'] == ack['gatewaySupport'] == support
+                and ready['expectedAnchor'] == ack['expectedAnchor'] == anchor
+                and ready['world'] == ack['world'] == run['environment']['world']
+                and ready['session'] == ack['session'] and ready['dimension'] == ack['dimension'] == run['dimension']
+                and ack['readyWorldTick'] == ready['worldTick'] <= ack['worldTick']
+                and ready['worldTick'] >= previous_ack_tick, 'Native placement ACK has foreign/stale coordinates, world or tick')
+        node = ack['nativeNode']
+        require(node['id'] == 'gtswn.network_quantum_node' and [node[key] for key in ['x', 'y', 'z']] == point
+                and [node[key] for key in ['anchorDim', 'anchorX', 'anchorY', 'anchorZ']] == anchor
+                and node['placerUUID'] == run['actor'] and node['placerName'] == run['environment']['offline_fixture_username']
+                and node['proxy']['p'] == ack['nativeOwnerPlayerId'] and ack['serverSelectedSlot'] == 1,
+                'Native placement ACK lacks its actual tile anchor, current placer or AE owner')
+        attempts = proof['attempts']
+        require(1 <= len(attempts) <= 8 and proof['ackObservedClientTick'] >= attempts[-1]['clientWorldTick'],
+                'Native placement has no bounded real native input before ACK')
+        last_tick = proof['firstObservedClientTick']
+        for attempt in attempts:
+            held = attempt['clientHeldItem']['tag']
+            require(attempt['clientWorldTick'] - last_tick >= 20 and attempt['clientSelectedSlot'] == 1
+                    and attempt['dimension'] == run['dimension'] and attempt['gatewaySupport'] == support
+                    and attempt['nativeMouseEventsAfter'] == attempt['nativeMouseEventsBefore'] + 1
+                    and held['QT_Bound'] and held['QT_OwnerUUID'] == run['actor']
+                    and [held[key] for key in ['QT_AnchorDim', 'QT_AnchorX', 'QT_AnchorY', 'QT_AnchorZ']] == anchor
+                    and sum((attempt['clientPlayer' + axis] - ready['serverPlayer' + axis]) ** 2 for axis in 'XYZ') <= .01,
+                    'Native placement bypassed teleport/slot/terminal gates or natural-tick retry bounds')
+            last_tick = attempt['clientWorldTick']
+        previous_ack_tick = ack['worldTick']
+
+
 def validate_frames(run, client):
     names = frame_names(run['phase'], run['intent'])
     require(client['actualFrameReceipts'] == [name + '.nbt' for name in names], 'Missing, extra or reordered actual END frames')
@@ -401,6 +450,7 @@ def validate_run(label, entry):
     run['world'], run['world_files'] = world, files
     dim_world = world if run['dimension'] == 0 else world / ('DIM' + str(run['dimension']))
     bootstrap = receipt(run, 'sulfur-quantum-bootstrap-ready.nbt')
+    validate_quantum_placements(run, client, bootstrap)
     bank = receipt(run, 'sulfur-quantum-bootstrap-complete.nbt')['nativeBank']
     require(bank['initialAE'] == 1000000 and not bank['nativeCellInfinite'] and bank['nativeCellCapacityAE'] >= 1000000
             and not bank['ordinaryAeCablesPlaced'] and bank['nativeWapBooster']['Count'] == 4 and bank['wapRange'] >= 24,

@@ -78,6 +78,8 @@ public final class HologramSulfurLineSmokeClientProbe {
     private final NBTTagList saveProofs = new NBTTagList();
     private final NBTTagList areaSelections = new NBTTagList();
     private final NBTTagList groupInteractions = new NBTTagList();
+    private final NBTTagList quantumPlacements = new NBTTagList();
+    private NBTTagCompound quantumPlacement;
     private final HologramActualUsePress press = new HologramActualUsePress();
     private final String role = System.getProperty("gtmb.hologram.sulfurLineRole", "");
     private final String intent = System.getProperty("gtmb.hologram.sulfurLineIntent", "self");
@@ -184,38 +186,159 @@ public final class HologramSulfurLineSmokeClientProbe {
             requestFrame(mc, null, "sulfur-quantum-native-bind-frame", "sulfur-quantum-native-bound.nbt");
             return true;
         });
-        add("native-bound-terminal-places-storage-gateway", (mc, screen, ui) -> {
-            NBTTagCompound place = HologramV011Evidence.read("sulfur-quantum-native-storage-place-ready.nbt");
-            if (place == null) return false;
-            validateActor(mc, place);
-            int[] drive = place.getIntArray("drive");
-            if (mc.thePlayer.getDistanceSq(drive[0] - .5, drive[1], drive[2] + .5) > 36) return false;
-            mc.thePlayer.inventory.currentItem = 1;
-            aim(mc, drive[0], drive[1] + .5, drive[2] + .5);
-            useBlock(mc, drive[0], drive[1], drive[2], 4);
-            nativeMouseEvents++;
-            return true;
-        });
+        add(
+            "native-bound-terminal-places-storage-gateway",
+            (mc, screen, ui) -> { return nativeQuantumPlacement(mc, "sulfur-quantum-native-storage-place"); });
         if ("author".equals(role)) for (int i = 0; i < 7; i++) {
             final int index = i;
-            add("native-bound-terminal-places-gateway-" + index, (mc, screen, ui) -> {
-                NBTTagCompound place = HologramV011Evidence.read("sulfur-quantum-native-place-" + index + "-ready.nbt");
-                if (place == null) return false;
-                validateActor(mc, place);
-                int[] support = place.getIntArray("gatewaySupport");
-                if (mc.thePlayer.getDistanceSq(support[0] + .5, support[1], support[2] + .5) > 36) return false;
-                mc.thePlayer.inventory.currentItem = 1;
-                aim(mc, support[0] + .5, support[1] + .5, support[2] + 1);
-                useBlock(mc, support[0], support[1], support[2], support[3]);
-                nativeMouseEvents++;
-                return true;
-            });
+            add(
+                "native-bound-terminal-places-gateway-" + index,
+                (mc, screen, ui) -> { return nativeQuantumPlacement(mc, "sulfur-quantum-native-place-" + index); });
         }
         add("native-quantum-bootstrap-complete", (mc, screen, ui) -> {
             if (HologramV011Evidence.read("sulfur-quantum-bootstrap-complete.nbt") == null) return false;
             mc.thePlayer.inventory.currentItem = 0;
             return true;
         });
+    }
+
+    private boolean nativeQuantumPlacement(Minecraft mc, String prefix) throws Exception {
+        NBTTagCompound place = HologramV011Evidence.read(prefix + "-ready.nbt");
+        if (mc.thePlayer == null || mc.theWorld == null || place == null) return false;
+        validateActor(mc, place);
+        require(place.getInteger("dimension") == mc.thePlayer.dimension, "native placement ready dimension");
+        long tick = mc.theWorld.getTotalWorldTime();
+        if (quantumPlacement == null) {
+            quantumPlacement = new NBTTagCompound();
+            quantumPlacement.setString("prefix", prefix);
+            quantumPlacement.setTag("ready", place.copy());
+            quantumPlacement.setLong("firstObservedClientTick", tick);
+            quantumPlacement.setTag("attempts", new NBTTagList());
+        }
+        require(prefix.equals(quantumPlacement.getString("prefix")), "one native placement action awaits its own ACK");
+        NBTTagCompound ack = HologramV011Evidence.read(prefix + "-ack.nbt");
+        if (ack != null) {
+            validateActor(mc, ack);
+            require(
+                ack.getString("world")
+                    .equals(place.getString("world"))
+                    && ack.getString("session")
+                        .equals(place.getString("session"))
+                    && ack.getInteger("dimension") == place.getInteger("dimension")
+                    && ack.getLong("readyWorldTick") == place.getLong("worldTick")
+                    && ack.getLong("worldTick") >= place.getLong("worldTick")
+                    && Arrays.equals(ack.getIntArray("gateway"), place.getIntArray("gateway"))
+                    && Arrays.equals(ack.getIntArray("gatewaySupport"), place.getIntArray("gatewaySupport"))
+                    && Arrays.equals(ack.getIntArray("expectedAnchor"), place.getIntArray("expectedAnchor")),
+                "real server ACK matches this placement ready, world, actor, support and anchor");
+            NBTTagCompound node = ack.getCompoundTag("nativeNode");
+            int[] anchor = place.getIntArray("expectedAnchor");
+            require(
+                "gtswn.network_quantum_node".equals(node.getString("id"))
+                    && Arrays.equals(
+                        anchor,
+                        new int[] { node.getInteger("anchorDim"), node.getInteger("anchorX"),
+                            node.getInteger("anchorY"), node.getInteger("anchorZ") })
+                    && mc.thePlayer.getUniqueID()
+                        .toString()
+                        .equals(node.getString("placerUUID"))
+                    && mc.thePlayer.getCommandSenderName()
+                        .equals(node.getString("placerName"))
+                    && node.getCompoundTag("proxy")
+                        .getInteger("p") == ack.getInteger("nativeOwnerPlayerId"),
+                "real server node has the requested native anchor and current placer/AE owner");
+            require(
+                quantumPlacement.getTagList("attempts", 10)
+                    .tagCount() > 0,
+                "ACK follows actual native input");
+            quantumPlacement.setTag("ack", ack.copy());
+            quantumPlacement.setLong("ackObservedClientTick", tick);
+            quantumPlacements.appendTag(quantumPlacement);
+            quantumPlacement = null;
+            writePlacementProgress(mc);
+            return true;
+        }
+        NBTTagList attempts = quantumPlacement.getTagList("attempts", 10);
+        long last = attempts.tagCount() == 0 ? quantumPlacement.getLong("firstObservedClientTick")
+            : attempts.getCompoundTagAt(attempts.tagCount() - 1)
+                .getLong("clientWorldTick");
+        if (tick - last < 20) return false;
+        int[] point = place.getIntArray("gateway");
+        net.minecraft.tileentity.TileEntity observed = mc.theWorld.getTileEntity(point[0], point[1], point[2]);
+        if (observed != null) {
+            require(
+                "com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode".equals(
+                    observed.getClass()
+                        .getName()),
+                "native placement target contains the expected node, never retry into another tile");
+            if (!quantumPlacement.hasKey("clientObservedNativeNode")) {
+                NBTTagCompound nativeNode = new NBTTagCompound();
+                observed.writeToNBT(nativeNode);
+                quantumPlacement.setTag("clientObservedNativeNode", nativeNode);
+                quantumPlacement.setLong("nativeNodeObservedClientTick", tick);
+                writePlacementProgress(mc);
+            }
+            return false;
+        }
+        require(attempts.tagCount() < 8, "native quantum placement exhausted eight bounded attempts: " + prefix);
+        double dx = mc.thePlayer.posX - place.getDouble("serverPlayerX");
+        double dy = mc.thePlayer.boundingBox.minY - place.getDouble("serverPlayerY");
+        double dz = mc.thePlayer.posZ - place.getDouble("serverPlayerZ");
+        if (mc.currentScreen != null || dx * dx + dy * dy + dz * dz > .01) return false;
+        int[] support = place.getIntArray("gatewaySupport");
+        require(
+            mc.thePlayer.getDistanceSq(support[0] + .5, support[1] + .5, support[2] + .5) <= 36,
+            "native placement support remains in actual reach");
+        mc.thePlayer.inventory.currentItem = 1;
+        require(
+            mc.thePlayer.getHeldItem() != null && mc.thePlayer.getHeldItem()
+                .getItem()
+                .getClass()
+                .getName()
+                .equals("com.miaokatze.gtswn.common.items.ItemNetworkQuantumTerminal"),
+            "actual placement terminal in native slot");
+        NBTTagCompound attempt = placementClientState(mc);
+        attempt.setLong("nativeMouseEventsBefore", nativeMouseEvents);
+        attempt.setIntArray("gatewaySupport", support);
+        aim(mc, support[0] + .5, support[1] + .5, support[2] + .5);
+        useBlock(mc, support[0], support[1], support[2], support[3]);
+        nativeMouseEvents++;
+        attempt.setLong("nativeMouseEventsAfter", nativeMouseEvents);
+        attempts.appendTag(attempt);
+        writePlacementProgress(mc);
+        return false;
+    }
+
+    private NBTTagCompound placementClientState(Minecraft mc) {
+        NBTTagCompound state = new NBTTagCompound();
+        if (mc.thePlayer != null) {
+            state.setDouble("clientPlayerX", mc.thePlayer.posX);
+            state.setDouble("clientPlayerY", mc.thePlayer.boundingBox.minY);
+            state.setDouble("clientNativePosY", mc.thePlayer.posY);
+            state.setDouble("clientPlayerZ", mc.thePlayer.posZ);
+            state.setInteger("clientSelectedSlot", mc.thePlayer.inventory.currentItem);
+            state.setInteger("dimension", mc.thePlayer.dimension);
+            if (mc.thePlayer.getHeldItem() != null) state.setTag(
+                "clientHeldItem",
+                mc.thePlayer.getHeldItem()
+                    .writeToNBT(new NBTTagCompound()));
+        }
+        if (mc.theWorld != null) state.setLong("clientWorldTick", mc.theWorld.getTotalWorldTime());
+        return state;
+    }
+
+    private void writePlacementProgress(Minecraft mc) throws Exception {
+        NBTTagCompound progress = placementClientState(mc);
+        progress.setBoolean(
+            "passed",
+            quantumPlacement == null && quantumPlacements.tagCount() == ("author".equals(role) ? 8 : 1));
+        progress.setString(
+            "actor",
+            mc.thePlayer.getUniqueID()
+                .toString());
+        progress.setTag("actualQuantumPlacements", quantumPlacements.copy());
+        if (quantumPlacement != null) progress.setTag("pendingQuantumPlacement", quantumPlacement.copy());
+        HologramV011Evidence.write("sulfur-quantum-native-placement-client-progress.nbt", progress);
     }
 
     private void quantumCycleFrames(String label) {
@@ -1446,6 +1569,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         result.setLong("nativeMouseEvents", nativeMouseEvents);
         result.setLong("nativeKeyEvents", nativeKeyEvents);
         result.setLong("nativeWheelEvents", nativeWheelEvents);
+        result.setTag("actualQuantumPlacements", quantumPlacements.copy());
         result.setTag("actualFrameReceipts", frames.copy());
         if (areaSelections.tagCount() > 0) result.setTag("actualAreaSelections", areaSelections.copy());
         if (fullReviewEvidence != null) result.setTag("actualFullReviewSelection", fullReviewEvidence.copy());
@@ -1778,6 +1902,22 @@ public final class HologramSulfurLineSmokeClientProbe {
             result.setString("stepLabel", stepLabel());
             result.setString("failure", failure.toString());
             result.setString("expectedSession", session);
+            result.setTag("actualQuantumPlacements", quantumPlacements.copy());
+            result.setTag("nativePlacementClientState", placementClientState(mc));
+            if (quantumPlacement != null) {
+                result.setTag("pendingQuantumPlacement", quantumPlacement.copy());
+                int[] point = quantumPlacement.getCompoundTag("ready")
+                    .getIntArray("gateway");
+                if (mc.theWorld != null && point.length == 3) {
+                    net.minecraft.tileentity.TileEntity node = mc.theWorld.getTileEntity(point[0], point[1], point[2]);
+                    result.setBoolean("nativePlacementClientTilePresent", node != null);
+                    if (node != null) {
+                        NBTTagCompound tag = new NBTTagCompound();
+                        node.writeToNBT(tag);
+                        result.setTag("nativePlacementClientTile", tag);
+                    }
+                }
+            }
             result.setLong("nativeCloseSequence", closeSequence);
             result.setString(
                 "actualScreenClass",
