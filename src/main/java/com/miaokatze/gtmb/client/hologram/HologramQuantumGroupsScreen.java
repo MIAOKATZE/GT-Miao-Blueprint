@@ -224,7 +224,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
                 HologramQuantumGroupsModel.Node node = model.nodes.get(i);
                 if (node.cell < 0) continue;
                 HologramState.Cell cell = state.cells.get(node.cell);
-                double[] point = HologramRenderer.project(cell.x, cell.y, cell.z);
+                double[] point = HologramRenderer.project(cell.dx, cell.dy, cell.dz);
                 int x = (int) point[0], y = (int) point[1];
                 int group = 0;
                 while (group < model.groups.size() && !model.groups.get(group).id.equals(node.group)) group++;

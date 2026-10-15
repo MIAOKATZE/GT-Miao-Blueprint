@@ -78,6 +78,7 @@ public final class HologramSulfurLineSmokeClientProbe {
     private final NBTTagList saveProofs = new NBTTagList();
     private final NBTTagList areaSelections = new NBTTagList();
     private final NBTTagList groupInteractions = new NBTTagList();
+    private final NBTTagList groupNodeClicks = new NBTTagList();
     private final NBTTagList quantumPlacements = new NBTTagList();
     private NBTTagCompound quantumPlacement;
     private final HologramActualUsePress press = new HologramActualUsePress();
@@ -657,6 +658,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             require(saveProofs.tagCount() == 2, "both actual source artifact saves retain native packet/render proof");
             result.setTag("actualSaveProofs", saveProofs.copy());
             result.setTag("quantumGroupingInteractions", groupInteractions.copy());
+            result.setTag("quantumGroupingNodeClicks", groupNodeClicks.copy());
             result.setString("world", ready.getString("world"));
             result.setIntArray("bounds", bounds);
             HologramV011Evidence.write("sulfur-author-final.nbt", result);
@@ -709,7 +711,7 @@ public final class HologramSulfurLineSmokeClientProbe {
                 int selected = 0;
                 for (int index = 0; index < nodes.tagCount(); index++) if (nodes.getCompoundTagAt(index)
                     .getInteger("x") < 5) {
-                        group.smokeClickNode(index, selected > 0);
+                        nativeGroupNodeClick(group, index, selected > 0);
                         selected++;
                         nativeMouseEvents++;
                     }
@@ -758,12 +760,12 @@ public final class HologramSulfurLineSmokeClientProbe {
                     group.smokeUiState()
                         .getIntArray("selection").length == 4,
                     "final complement retains the four later-stage ME nodes");
-                group.smokeName("后段供料");
+                group.smokeName("前段供料");
                 group.smokeClickControl(10);
                 nativeMouseEvents += 2;
             });
             groupAction("native-new-back-stage-group", group -> {
-                group.smokeName("前段供料");
+                group.smokeName("后段供料");
                 group.smokeClickControl(5);
                 nativeMouseEvents += 2;
                 require(
@@ -814,14 +816,81 @@ public final class HologramSulfurLineSmokeClientProbe {
             NBTTagCompound proof = new NBTTagCompound();
             proof.setString("action", label);
             proof.setTag("before", before);
-            action.run(group);
-            proof.setTag("after", group.smokeUiState());
-            proof.setLong("nativeMouseEvents", nativeMouseEvents);
-            proof.setLong("nativeKeyEvents", nativeKeyEvents);
             groupInteractions.appendTag(proof);
+            try {
+                action.run(group);
+            } finally {
+                proof.setTag("after", group.smokeUiState());
+                proof.setLong("nativeMouseEvents", nativeMouseEvents);
+                proof.setLong("nativeKeyEvents", nativeKeyEvents);
+            }
             lastGroupGeneration = before.getLong("renderGeneration");
             return true;
         });
+    }
+
+    private void nativeGroupNodeClick(HologramQuantumGroupsScreen group, int index, boolean control) throws Exception {
+        NBTTagCompound before = group.smokeUiState();
+        int cell = before.getTagList("nodes", 10)
+            .getCompoundTagAt(index)
+            .getInteger("cell");
+        float scale = (Float) field(group, "scale");
+        int ox = (Integer) field(group, "originX"), oy = (Integer) field(group, "originY");
+        int vx = (Integer) field(group, "VX"), vy = (Integer) field(group, "VY");
+        int vw = (Integer) field(group, "VW"), vh = (Integer) field(group, "VH");
+        int[] legacy = group.smokeNodePoint(index);
+        int legacyX = (int) ((legacy[0] - ox) / scale), legacyY = (int) ((legacy[1] - oy) / scale);
+        int sx = -1, sy = -1;
+        for (int y = Math.max(0, oy + Math.round(vy * scale)); y < group.height && sy < 0; y++) {
+            int localY = (int) ((y - oy) / scale);
+            if (localY < vy || localY >= vy + vh) continue;
+            for (int x = Math.max(0, ox + Math.round(vx * scale)); x < group.width; x++) {
+                int localX = (int) ((x - ox) / scale);
+                if (localX < vx || localX >= vx + vw) continue;
+                if (HologramRenderer.pick(localX, localY) == cell) {
+                    sx = x;
+                    sy = y;
+                    break;
+                }
+            }
+        }
+        require(sx >= 0 && sy >= 0, "actual integer GUI pixels expose the requested 3D node");
+        int lx = (int) ((sx - ox) / scale), ly = (int) ((sy - oy) / scale);
+        NBTTagCompound proof = new NBTTagCompound();
+        proof.setInteger("nodeIndex", index);
+        proof.setInteger("requestedCell", cell);
+        proof.setInteger("actualPickedCell", HologramRenderer.pick(lx, ly));
+        proof.setIntArray("screenPoint", new int[] { sx, sy });
+        proof.setIntArray("localPoint", new int[] { lx, ly });
+        proof.setIntArray("legacyScreenPoint", legacy);
+        proof.setInteger("legacyRoundTripPick", HologramRenderer.pick(legacyX, legacyY));
+        proof.setFloat("guiScale", scale);
+        proof.setIntArray("guiOrigin", new int[] { ox, oy });
+        proof.setIntArray("guiSize", new int[] { group.width, group.height });
+        proof.setLong("renderGeneration", before.getLong("renderGeneration"));
+        proof.setBoolean("control", control);
+        proof.setIntArray("selectionBefore", before.getIntArray("selection"));
+        groupNodeClicks.appendTag(proof);
+        key(Keyboard.KEY_LCONTROL, control);
+        try {
+            group.mouseClicked(sx, sy, 0);
+        } finally {
+            key(Keyboard.KEY_LCONTROL, false);
+            proof.setIntArray(
+                "selectionAfter",
+                group.smokeUiState()
+                    .getIntArray("selection"));
+        }
+        int[] after = proof.getIntArray("selectionAfter");
+        require(
+            proof.getInteger("actualPickedCell") == cell && Arrays.stream(after)
+                .anyMatch(value -> value == index)
+                && after.length == (control ? before.getIntArray("selection").length + 1 : 1),
+            "actual scaled preview click selects its requested node and preserves native Ctrl selection");
+        if (control) for (int previous : before.getIntArray("selection")) require(
+            Arrays.stream(after)
+                .anyMatch(value -> value == previous),
+            "native Ctrl click retains each earlier selected node");
     }
 
     private void groupShot(String label) {
@@ -1903,6 +1972,10 @@ public final class HologramSulfurLineSmokeClientProbe {
             result.setString("failure", failure.toString());
             result.setString("expectedSession", session);
             result.setTag("actualQuantumPlacements", quantumPlacements.copy());
+            result.setTag("quantumGroupingInteractions", groupInteractions.copy());
+            result.setTag("quantumGroupingNodeClicks", groupNodeClicks.copy());
+            if (mc.currentScreen instanceof HologramQuantumGroupsScreen) result
+                .setTag("actualQuantumGroupingUi", ((HologramQuantumGroupsScreen) mc.currentScreen).smokeUiState());
             result.setTag("nativePlacementClientState", placementClientState(mc));
             if (quantumPlacement != null) {
                 result.setTag("pendingQuantumPlacement", quantumPlacement.copy());

@@ -310,6 +310,29 @@ def validate_author(run, client, frames):
             'native-preview-Ctrl-node-multiselect', 'native-unassigned-gates-save',
             'native-CtrlZ-restores-complete-grouping', 'native-CtrlY-restores-incomplete-gate']:
             require(action in actions, 'Missing real classification keyboard/selection evidence: ' + action)
+        nodes = frames['sulfur-quantum-groups-default-frame']['actualUi']['nodes']
+        expected_indices = {index for index, node in enumerate(nodes) if node['x'] < 5}
+        clicks = client['quantumGroupingNodeClicks']
+        require(len(expected_indices) == len(clicks) == 3
+                and len(actions['native-T-selects-all-seven']['after']['selection']) == 7
+                and not actions['native-CtrlT-complement-clears-all']['after']['selection'],
+                'Actual T/Ctrl+T/three-node 3D click coverage is incomplete')
+        selected = set()
+        for click in clicks:
+            index = click['nodeIndex']
+            require(index in expected_indices and index not in selected and click['control'] == bool(selected)
+                    and set(click['selectionBefore']) == selected
+                    and click['requestedCell'] == click['actualPickedCell'] == nodes[index]['cell']
+                    and click['renderGeneration'] > 0, 'Actual 3D Ctrl click picked another node or bypassed previous selection')
+            local = [int(struct.unpack('>f', struct.pack('>f', (pixel - origin) / click['guiScale']))[0])
+                     for pixel, origin in zip(click['screenPoint'], click['guiOrigin'])]
+            require(local == click['localPoint'] and all(0 <= pixel < size for pixel, size in zip(click['screenPoint'], click['guiSize'])),
+                    'Actual integer GUI pixel does not round-trip through the production preview input transform')
+            selected.add(index)
+            require(set(click['selectionAfter']) == selected, 'Native Ctrl click did not retain the exact earlier node set')
+        require(selected == expected_indices
+                and set(frames['sulfur-quantum-groups-multiselect-frame']['actualUi']['selection']) == selected,
+                'Actual multiselect END frame differs from the three real front-stage 3D clicks')
         require(not frames['sulfur-quantum-groups-unassigned-frame']['actualUi']['saveEnabled'], 'Incomplete grouping was saveable')
     saved = native_author_saves(run, frames, client, data, png)
     local = run['fixture'] / 'client/MiaoBlueprints' / (client['localId'] + '.json')
