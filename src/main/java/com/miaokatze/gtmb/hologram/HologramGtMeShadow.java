@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.fluids.FluidStack;
 
 import gregtech.api.GregTechAPI;
+import gregtech.api.enums.ItemList;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.util.GTUtility;
 
@@ -118,6 +119,8 @@ public final class HologramGtMeShadow {
             occupied |= 1 << slot;
             validateStack(row, false, "Inventory/" + i);
             if (!fluid && slot == 0) {
+                if (!ItemList.Circuit_Integrated.hasBeenSet())
+                    throw unsupported("Inventory/" + i, "原生集成电路物品尚未注册，无法核验配置电路");
                 ItemStack circuit = ItemStack.loadItemStackFromNBT(HologramBlueprintNbt.nativePayload(row));
                 if (!GTUtility.isAnyIntegratedCircuit(circuit)) throw unsupported("Inventory/" + i, "配置电路槽不是原生集成电路");
                 kept.appendTag(row.copy());

@@ -15,6 +15,7 @@ import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import gregtech.api.GregTechAPI;
+import gregtech.api.enums.ItemList;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 
 /** Native GT Slot serializers and exact class registrations exercise projection; no live ME grid is claimed. */
@@ -113,7 +114,15 @@ public final class HologramGtMeShadowRegression {
             "manual cargo is never loaded into a placed ME bus");
         physical.getCompoundTagAt(0)
             .setInteger("IntSlot", 0);
-        rejects(source, "Inventory");
+        boolean circuitRegistered = ItemList.Circuit_Integrated.hasBeenSet();
+        IOException rejected = rejects(source, "Inventory");
+        if (!circuitRegistered) SimpleAssert.that(
+            rejected.getMessage()
+                .contains("尚未注册"),
+            "an unavailable native circuit registry rejects configuration without invoking its uninitialized getter");
+        SimpleAssert.that(
+            circuitRegistered == ItemList.Circuit_Integrated.hasBeenSet(),
+            "circuit rejection never initializes or changes the global native item registration");
     }
 
     private static void outputProjection() throws Exception {
@@ -217,7 +226,7 @@ public final class HologramGtMeShadowRegression {
         SimpleAssert.that(!empty.hasKey("version"), "empty projection remains detached from raw source");
     }
 
-    private static void rejects(NBTTagCompound payload, String key) throws Exception {
+    private static IOException rejects(NBTTagCompound payload, String key) throws Exception {
         NBTTagCompound before = (NBTTagCompound) payload.copy();
         try {
             HologramGtMeShadow.project(payload);
@@ -228,6 +237,7 @@ public final class HologramGtMeShadowRegression {
                     .contains(key),
                 "rejection identifies exact native path " + key);
             SimpleAssert.that(payload.equals(before), "failed native projection preserves raw source");
+            return expected;
         }
     }
 
