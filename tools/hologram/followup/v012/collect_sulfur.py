@@ -134,15 +134,17 @@ def validate_frames(run, client):
         witness_path = safe_file(run['receipts'] / witness_name, run['receipts'])
         recent(witness_path, run['runs'])
         witness = read_nbt(witness_path)
+        typed = typed_compounds(run['receipts'] / (name + '.nbt'))
         require(frame['serverWitness'] == witness and witness.get('passed') and witness['actor'] == run['actor']
-                and frame['serverReceiptSha256'] == sha(witness_path) and frame['runtimePhase'] == witness['phase'],
+                and nbt_bytes(typed['serverWitness'], typed=True) == read_nbt(witness_path, typed=True)
+                and frame['serverReceiptSha256'] == java_gzip_hash(typed['serverWitness'])
+                and frame['runtimePhase'] == witness['phase'],
                 'END framebuffer detached from its exact immutable real server receipt')
         png = safe_file(run['receipts'] / (name + '.png'), run['receipts'])
         recent(png, run['runs'])
         raw = png.read_bytes()
         require(frame['png'] == png.name and frame['pngSha256'] == sha(png) and raw[:8] == b'\x89PNG\r\n\x1a\n'
                 and raw[12:16] == b'IHDR' and min(struct.unpack('>II', raw[16:24])) > 0, 'END PNG integrity failed')
-        typed = typed_compounds(run['receipts'] / (name + '.nbt'))
         require(java_gzip_hash(typed['actualUi']) == frame['actualUiSha256'], 'Native typed UI hash failed')
         if 'actualSnapshot' in frame:
             require(java_gzip_hash(typed['actualSnapshot']) == frame['snapshotSha256']
@@ -706,6 +708,9 @@ def collect(args):
                 'A recipient used the other tendency or historical author pair')
     summary = dict(release_version='0.1.2', profile='sulfur-four-fresh-worlds-real-quantum', status='PASS_FOR_LISTED_SCOPE',
         historical_pass_reused=False, games_started_by_collector=False,
+        frame_witness_hash_contract=dict(recorded_serverReceiptSha256='SHA256 of the Java-GZIP serialized embedded typed native NBT witness',
+            disk_receipt_match='Complete typed NBT equality; compound key serialization order is not state',
+            raw_disk_gzip_sha256='Independent original receipt file SHA256 in the archive files manifest; not the recorded serialized-witness digest'),
         collected_utc=datetime.now(timezone.utc).isoformat(),
         runs={label: dict(fixture=str(run['fixture']), actor=run['actor'], world=run['environment']['world'],
               dimension=run['dimension'], actual_java=run['runs'], native_pair=run['artifact']['pair']['metadata'],

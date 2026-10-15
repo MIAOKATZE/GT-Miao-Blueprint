@@ -59,7 +59,8 @@
       "Strictly consume both source native EU-cache Service receipts and native material transaction/projection receipts",
       "Require the 0.1.2 free-node/sample-preserved private placement proof instead of the historical paid-node assertion",
       "Distinguish native pending proxy owner from a naturally initialized grid in auxiliary private placement; require explicit controller setup and no placed-node manual tick/ready",
-      "Require the nativeOutputSerializers material case for both registered GT item/fluid output serializers"
+      "Require the nativeOutputSerializers material case for both registered GT item/fluid output serializers",
+      "Validate the recorded Java-serialized embedded witness digest and complete typed NBT equality separately from original disk GZIP hashes retained in the archive manifest"
     ],
     "historical_origin_preserved": true,
     "historical_evidence_reused": false,
