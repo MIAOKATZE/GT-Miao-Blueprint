@@ -1938,10 +1938,9 @@ public final class HologramV011WorkbenchClientSmoke {
     }
 
     private static Object read(Object target, String name) throws Exception {
-        Field field = target.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(target); // Observation only: no controller fields are written.
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(target, name)); // Observation only: no controller
+                                                                                   // fields are written.
     }
 
     private static boolean contains(NBTTagList values, String wanted) {

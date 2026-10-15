@@ -1031,6 +1031,7 @@ public final class HologramV011AreaClientSmoke {
     }
 
     private static Object read(Object owner, String name) throws Exception {
+        if (owner instanceof HologramScreen) return HologramUiDiagnostics.readDiagnosticField(owner, name);
         Field field = (owner instanceof Class ? (Class<?>) owner : owner.getClass()).getDeclaredField(name);
         field.setAccessible(true);
         return field.get(owner instanceof Class ? null : owner);

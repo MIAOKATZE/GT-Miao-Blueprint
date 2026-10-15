@@ -44,7 +44,7 @@ public final class HologramNudgeServiceRegression {
             player.posY = 64;
             player.inventory.mainInventory[0] = new ItemStack(new ItemNekoHologramProjector());
             player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 3);
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -68,11 +68,11 @@ public final class HologramNudgeServiceRegression {
             settings.main = true;
             settings.containers = settings.me = false;
             set(session, "materialContext", new HologramMaterials.Context(player, settings));
-            java.lang.reflect.Method populate = type.getEnclosingClass()
+            java.lang.reflect.Method populate = HologramBlueprintProjection.class
                 .getDeclaredMethod("populateVirtual", type);
             populate.setAccessible(true);
             populate.invoke(null, session);
-            Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+            Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
             sessionsField.setAccessible(true);
             @SuppressWarnings("unchecked")
             Map<UUID, Object> sessions = (Map<UUID, Object>) sessionsField.get(null);
@@ -158,7 +158,7 @@ public final class HologramNudgeServiceRegression {
                 SimpleAssert.eq(29999999, get(session, "x"), "horizontal world boundary rejects the entire step");
                 player.posX = 0;
                 set(session, "x", 1);
-                java.lang.reflect.Method blueprintAction = HologramService.class
+                java.lang.reflect.Method blueprintAction = HologramAuthoringWorkflow.class
                     .getDeclaredMethod("blueprintAction", type, NBTTagCompound.class, String.class);
                 blueprintAction.setAccessible(true);
                 blueprintAction.invoke(null, session, request(session, 0, 1, 0), "confirmBlueprintPlacement");

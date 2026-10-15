@@ -40,12 +40,15 @@ final class HologramAreaOverlay {
     }
 
     static void render(HologramState state, float partialTicks) {
+        render(state, partialTicks, HologramClient.areaProjectorWorld() ? HologramClient.areaSelectionAnchor() : null);
+    }
+
+    static void render(HologramState state, float partialTicks, int[] cursor) {
         Minecraft mc = Minecraft.getMinecraft();
         Entity camera = mc.renderViewEntity;
         int[] points = state.data.getIntArray("areaPoints");
         lastRenderWitness = null;
         if (camera == null) return;
-        int[] cursor = HologramClient.areaProjectorWorld() ? HologramClient.areaSelectionAnchor() : null;
         double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
         double py = camera.lastTickPosY + (camera.posY - camera.lastTickPosY) * partialTicks;
         double pz = camera.lastTickPosZ + (camera.posZ - camera.lastTickPosZ) * partialTicks;

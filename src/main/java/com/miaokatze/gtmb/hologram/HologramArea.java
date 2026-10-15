@@ -15,8 +15,6 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
-
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
@@ -228,8 +226,8 @@ final class HologramArea {
                     if (tile instanceof IGregTechTileEntity) {
                         IGregTechTileEntity gt = (IGregTechTileEntity) tile;
                         cell.facing = HologramBlockIdentity.front(gt);
-                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
-                            && gt.getMetaTileEntity() instanceof IConstructable) {
+                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase && HologramStructureDiscovery
+                            .captureSupported((MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity())) {
                             cell.controller = true;
                             Structure structure = new Structure(
                                 x,

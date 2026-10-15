@@ -1,0 +1,1297 @@
+package com.miaokatze.gtmb.client.hologram;
+
+import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
+import static net.minecraft.client.gui.Gui.*;
+import static net.minecraft.client.gui.GuiScreen.isCtrlKeyDown;
+import static net.minecraft.client.gui.GuiScreen.isShiftKeyDown;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
+import net.minecraftforge.common.util.ForgeDirection;
+
+import org.lwjgl.input.Keyboard;
+import org.lwjgl.opengl.GL11;
+
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
+
+/** Internal preview workflow; composed by the workstation, never part of the mod extension API. */
+final class HologramUiPreview {
+
+    private final HologramUiModules ui;
+
+    HologramUiPreview(HologramUiModules ui) {
+        this.ui = ui;
+    }
+
+    private int selected = -1;
+
+    private int layer;
+
+    private int view;
+
+    private int hovered = -1;
+
+    private final HologramEditQueue editQueue = new HologramEditQueue();
+
+    private final HologramSelection selection = new HologramSelection();
+
+    private final HologramGizmo gizmo = new HologramGizmo();
+
+    private boolean boxSelecting;
+
+    private boolean moveHandles = true;
+
+    private int boxStart = -1;
+
+    private int dragX;
+
+    private int dragY;
+
+    private double yaw = Math.PI / 4;
+
+    private double pitch = Math.PI / 6;
+
+    private double zoom = 1;
+
+    private final HologramPreviewCamera camera = new HologramPreviewCamera();
+
+    private long cameraFrame;
+
+    private boolean allLayers = true;
+
+    private boolean dragging;
+
+    private boolean moved;
+
+    private boolean inventory;
+
+    private int inventorySlot = -1;
+
+    private int sourceChoice = -1;
+
+    private int sourceOffset;
+
+    private boolean sourceTargets;
+
+    private boolean inventoryDragging;
+
+    private long queuedDispatchSequence = -1;
+
+    private boolean gizmoCopy;
+
+    private boolean boxAdditive;
+
+    private int[] emptyVoxelPreview;
+
+    private long pendingSelectionSequence = -1;
+
+    void drawPreview(int mx, int my) {
+        HologramRenderer.selection = this.selection;
+        HologramRenderer.showEmptyCells = this.inventory || ui.position.positionDrawer()
+            || ui.preview.airSelectionHeld();
+        HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
+        HologramRenderer.selectedStructureId = ui.config.selectedStructureId();
+        drawRect(
+            HologramUiCanvas.viewportX,
+            HologramUiCanvas.viewportY,
+            HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth,
+            HologramUiCanvas.viewportY + HologramUiCanvas.viewportHeight,
+            0xff0c1e28);
+        int factor = new net.minecraft.client.gui.ScaledResolution(
+            ui.host.minecraft(),
+            ui.host.minecraft().displayWidth,
+            ui.host.minecraft().displayHeight).getScaleFactor();
+        GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(
+            Math.round((ui.canvas.originX() + HologramUiCanvas.viewportX * ui.canvas.scale()) * factor),
+            ui.host.minecraft().displayHeight - Math.round(
+                (ui.canvas.originY()
+                    + (HologramUiCanvas.viewportY + HologramUiCanvas.viewportHeight) * ui.canvas.scale()) * factor),
+            Math.round(HologramUiCanvas.viewportWidth * ui.canvas.scale() * factor),
+            Math.round(HologramUiCanvas.viewportHeight * ui.canvas.scale() * factor));
+        try {
+            this.hovered = HologramRenderer.preview(
+                ui.session.state(),
+                HologramUiCanvas.viewportX,
+                HologramUiCanvas.viewportY,
+                HologramUiCanvas.viewportWidth,
+                HologramUiCanvas.viewportHeight,
+                this.yaw,
+                this.pitch,
+                this.zoom,
+                this.camera.x,
+                this.camera.z,
+                this.allLayers ? Integer.MAX_VALUE : this.layer,
+                this.view,
+                this.selected,
+                mx,
+                my,
+                -1);
+        } finally {
+            GL11.glPopAttrib();
+        }
+        ui.canvas.button(10, 38, 55, 44, 17, new String[] { "目标", "现场", "差分" }[this.view], true, mx, my);
+        ui.canvas.button(11, 84, 55, 50, 17, this.allLayers ? "全部层" : "层 " + this.layer, true, mx, my);
+        ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().minY, mx, my);
+        ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().maxY, mx, my);
+        if (this.selection.size() > 0) ui.canvas.text("选中 " + this.selection.size() + " 格", 186, 61, 100, 0xffe59b);
+        if (!ui.library.libraryDrawer()) {
+            ui.canvas.button(14, 38, 282, 66, 17, "复位视角", true, mx, my);
+            ui.canvas.button(15, 106, 282, 74, 17, HologramClient.worldPreview ? "世界投影 ✓" : "世界投影 ×", true, mx, my);
+        }
+        ui.canvas.button(
+            134,
+            184,
+            282,
+            120,
+            17,
+            ui.session.state().data.getBoolean("structureBuilt") ? "校准为当前" : "重置为默认",
+            ui.session.editable() && ui.preview.previewInteractive()
+                && ui.session.state().data.getBoolean("target")
+                && ui.session.state().data.getBoolean("supported"),
+            mx,
+            my);
+        if (this.moveHandles && ui.preview.canMoveSelection()
+            && !ui.library.libraryDrawer()
+            && ui.preview.previewInteractive()) ui.preview.drawGizmo(mx, my);
+        if (this.hovered >= 0 && this.hovered < ui.session.state().cells.size()) {
+            HologramState.Cell cell = ui.session.state().cells.get(this.hovered);
+            if (cell.missingBlock || cell.excluded || cell.sourceMissing) {
+                ui.canvas.tooltip(new ArrayList<>());
+                if (cell.missingBlock) ui.canvas.tooltip()
+                    .add("缺失方块：" + cell.wantId + "（点击查看来源版本）");
+                if (cell.sourceMissing) {
+                    ui.canvas.tooltip()
+                        .addAll(
+                            ui.host.font()
+                                .listFormattedStringToWidth("来源结构缺失：" + cell.sourceWarning, 260));
+                    if (!cell.sourceClass.isEmpty()) ui.canvas.tooltip()
+                        .addAll(
+                            ui.host.font()
+                                .listFormattedStringToWidth(cell.sourceClass, 260));
+                }
+                if (cell.excluded) ui.canvas.tooltip()
+                    .add("已排除施工");
+            }
+        }
+        String hint = HologramRenderer.hintAt(mx, my);
+        if (!hint.isEmpty()) {
+            if (ui.canvas.tooltip() == null) ui.canvas.tooltip(new ArrayList<>());
+            ui.canvas.tooltip()
+                .addAll(
+                    ui.host.font()
+                        .listFormattedStringToWidth("提示区 " + hint, 260));
+        }
+        String structure = HologramRenderer.pickStructure(mx, my);
+        if (!structure.isEmpty()) {
+            NBTTagList labels = ui.session.state().data.getTagList("structures", 10);
+            for (int i = 0; i < labels.tagCount(); i++) {
+                NBTTagCompound row = labels.getCompoundTagAt(i);
+                if (!structure.equals(row.getString("id"))) continue;
+                if (ui.canvas.tooltip() == null) ui.canvas.tooltip(new ArrayList<>());
+                ui.canvas.tooltip()
+                    .add(row.getString("name") + " · 点击边缘整选");
+                if (row.getBoolean("sourceMissing")) {
+                    ui.canvas.tooltip()
+                        .addAll(
+                            ui.host.font()
+                                .listFormattedStringToWidth("来源结构缺失：" + row.getString("sourceWarning"), 260));
+                    ui.canvas.tooltip()
+                        .addAll(
+                            ui.host.font()
+                                .listFormattedStringToWidth(row.getString("sourceClass"), 260));
+                }
+                break;
+            }
+        }
+    }
+
+    boolean canMoveSelection() {
+        return ui.session.state().data.getBoolean("geometryEditable") && ui.session.state().data.getBoolean("virtual")
+            && ui.session.state().data.getBoolean("supported")
+            && ui.session.editable()
+            && this.selection.movable(ui.session.state());
+    }
+
+    int[] emptyVoxelAt(int mx, int my) {
+        if (!ui.canvas.inViewport(mx, my) || ui.preview.previewBlockedAt(mx, my)) return null;
+        for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) return null;
+        HologramState.Cell cell = ui.session.selectedCell();
+        int planeY = !this.allLayers ? ui.session.state().data.getInteger("y") + this.layer
+            : cell == null
+                ? ui.session.state().data.getInteger("y") + (ui.session.state().minY + ui.session.state().maxY) / 2
+                : cell.y;
+        int[] voxel = HologramRenderer.pickEmptyVoxel(ui.session.state(), mx, my, planeY);
+        if (voxel == null) return null;
+        String structure = ui.config.selectedStructureId();
+        if (!structure.isEmpty()) {
+            int[] bounds = null;
+            for (HologramState.Cell member : ui.session.state().cells) if (member.belongsToStructure(structure)) {
+                if (bounds == null) bounds = new int[] { member.x, member.y, member.z, member.x, member.y, member.z };
+                else {
+                    bounds[0] = Math.min(bounds[0], member.x);
+                    bounds[1] = Math.min(bounds[1], member.y);
+                    bounds[2] = Math.min(bounds[2], member.z);
+                    bounds[3] = Math.max(bounds[3], member.x);
+                    bounds[4] = Math.max(bounds[4], member.y);
+                    bounds[5] = Math.max(bounds[5], member.z);
+                }
+            }
+            if (bounds != null && !HologramSelection.inside(
+                voxel[0],
+                voxel[1],
+                voxel[2],
+                bounds[0] - 1,
+                bounds[1] - 1,
+                bounds[2] - 1,
+                bounds[3] + 1,
+                bounds[4] + 1,
+                bounds[5] + 1)) return null;
+        }
+        return voxel;
+    }
+
+    void drawEmptyVoxelPreview(int mx, int my) {
+        this.emptyVoxelPreview = ui.preview.airSelectionHeld() && ui.preview.previewInteractive() && !this.inventory
+            ? ui.preview.emptyVoxelAt(mx, my)
+            : null;
+        if (this.emptyVoxelPreview == null) return;
+        int[] p = this.emptyVoxelPreview;
+        int dx = p[0] - ui.session.state().data.getInteger("x"), dy = p[1] - ui.session.state().data.getInteger("y"),
+            dz = p[2] - ui.session.state().data.getInteger("z");
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glLineWidth(2);
+        net.minecraft.client.renderer.Tessellator t = net.minecraft.client.renderer.Tessellator.instance;
+        t.startDrawing(GL11.GL_LINES);
+        t.setColorOpaque_I(0x9eedc1);
+        for (int axis = 0; axis < 3; axis++) for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) {
+            double[] from = { dx + a - .5, dy + b - .5, dz - .5 };
+            if (axis == 0) from = new double[] { dx - .5, dy + a - .5, dz + b - .5 };
+            if (axis == 1) from = new double[] { dx + a - .5, dy - .5, dz + b - .5 };
+            double[] to = from.clone();
+            to[axis] += 1;
+            double[] start = HologramRenderer.project(from[0], from[1], from[2]);
+            double[] end = HologramRenderer.project(to[0], to[1], to[2]);
+            t.addVertex(start[0], start[1], 8);
+            t.addVertex(end[0], end[1], 8);
+        }
+        t.draw();
+        GL11.glPopAttrib();
+        ui.canvas.text(
+            "空气 " + p[0] + "," + p[1] + "," + p[2] + " · 偏移 " + dx + "," + dy + "," + dz + " · Alt+点击选中",
+            HologramUiCanvas.viewportX + 8,
+            ui.annotations.pinnedAnnotation()
+                .isEmpty() ? 263 : 80,
+            HologramUiCanvas.viewportWidth - 16,
+            0x9eedc1);
+    }
+
+    boolean selectEmptyVoxel(int mx, int my) {
+        int[] voxel = ui.preview.emptyVoxelAt(mx, my);
+        if (voxel == null) {
+            ui.session.notice("此光标位置没有可编辑空气；调整视角或选择工作层");
+            return true;
+        }
+        for (HologramState.Cell cell : ui.session.state().cells)
+            if (cell.x == voxel[0] && cell.y == voxel[1] && cell.z == voxel[2]) {
+                this.selection.click(cell.index, ui.preview.controlSelectionHeld());
+                this.selected = this.selection.first();
+                ui.config.syncTargetSelectors();
+                return true;
+            }
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("dx", voxel[0] - ui.session.state().data.getInteger("x"));
+        request.setInteger("dy", voxel[1] - ui.session.state().data.getInteger("y"));
+        request.setInteger("dz", voxel[2] - ui.session.state().data.getInteger("z"));
+        request.setBoolean("airOnly", true);
+        request.setString("structureId", ui.config.selectedStructureId());
+        ui.session.send("addPosition", request, true);
+        return true;
+    }
+
+    void drawGizmo(int mx, int my) {
+        double x = 0, y = 0, z = 0;
+        for (int index : this.selection.indices()) {
+            HologramState.Cell cell = ui.session.state().cells.get(index);
+            x += cell.dx;
+            y += cell.dy;
+            z += cell.dz;
+        }
+        int count = this.selection.size();
+        if (count == 0) return;
+        double[] center = HologramRenderer.project(x / count, y / count, z / count);
+        this.gizmo.project(center[0], center[1], this.yaw, this.pitch);
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glLineWidth(3);
+        net.minecraft.client.renderer.Tessellator t = net.minecraft.client.renderer.Tessellator.instance;
+        t.startDrawing(GL11.GL_LINES);
+        for (int axis = 0; axis < 3; axis++) {
+            int color = HologramGizmo.COLORS[axis];
+            double[] end = this.gizmo.end(axis);
+            t.setColorOpaque_I(color & 0xffffff);
+            t.addVertex(center[0], center[1], 5);
+            t.addVertex(end[0], end[1], 5);
+        }
+        t.draw();
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        for (int axis = 0; axis < 3; axis++) {
+            double[] end = this.gizmo.end(axis);
+            drawRect(
+                (int) end[0] - 3,
+                (int) end[1] - 3,
+                (int) end[0] + 4,
+                (int) end[1] + 4,
+                HologramGizmo.COLORS[axis]);
+            ui.canvas.text(
+                new String[] { "X", "Y", "Z" }[axis],
+                (int) end[0] + 5,
+                (int) end[1] - 4,
+                14,
+                HologramGizmo.COLORS[axis]);
+        }
+        GL11.glPopAttrib();
+        if (this.gizmo.axis() >= 0) ui.canvas.text(
+            (this.gizmoCopy ? "复制移动 " : "移动 ") + new String[] { "X", "Y", "Z" }[this.gizmo.axis()]
+                + " "
+                + this.gizmo.delta()
+                + " 格",
+            38,
+            263,
+            180,
+            0xffffaa);
+        // Preview hint and structure overlays may append to the axis tooltip in this same frame.
+        else if (this.gizmo.pick(mx, my) >= 0)
+            ui.canvas.tooltip(new ArrayList<>(Collections.singletonList("拖动轴移动；按住 Ctrl 开始拖动即复制；松开提交规划")));
+    }
+
+    void drawInventory(int mx, int my) {
+        ui.canvas.tooltip(null);
+        drawRect(157, 59, 405, 257, 0xff172f36);
+        ui.canvas.text("选择方块 / 仓室 · 不消耗物品", 165, 65, 205, 0xf5e4b9);
+        ui.canvas.button(16, 165, 82, 74, 18, (this.sourceTargets ? "" : "› ") + "主背包", true, mx, my);
+        ui.canvas.button(17, 243, 82, 74, 18, (this.sourceTargets ? "› " : "") + "材料来源", true, mx, my);
+        ui.canvas.button(95, 321, 82, 75, 18, "可替换选项", ui.session.selectedCell() != null, mx, my);
+        ui.canvas.button(64, 373, 62, 23, 17, "×", true, mx, my);
+        HologramState.Cell cell = ui.session.selectedCell();
+        ui.canvas.button(
+            65,
+            165,
+            104,
+            231,
+            18,
+            cell == null ? "先点击左侧预览选择目标格" : "目标格：" + ui.preview.cellName(cell, false),
+            ui.session.editable() && ui.preview.canInventoryPin() && ui.preview.pickedTarget() != null,
+            mx,
+            my);
+        ui.canvas.text("点击物品再点目标槽，或拖到左侧预览格", 165, 126, 231, 0x94afb4);
+        NBTTagList choices = ui.session.state().data.getTagList("materialChoices", 10);
+        for (int row = 0; row < 4; row++) for (int col = 0; col < 9; col++) {
+            int slot = row == 3 ? col : 9 + row * 9 + col;
+            int choice = this.sourceOffset + row * 9 + col;
+            int x = 181 + col * 22, y = 139 + row * 20;
+            boolean chosen = this.sourceTargets ? this.sourceChoice == choice : this.inventorySlot == slot;
+            drawRect(x, y, x + 20, y + 18, chosen ? 0xff5f858a : 0xff0c1e28);
+            ItemStack stack = this.sourceTargets ? ui.preview.sourceStack(choice)
+                : ui.host.minecraft().thePlayer.inventory.mainInventory[slot];
+            ui.canvas.drawItem(stack, x + 2, y + 1);
+            if (mx >= x && mx < x + 20 && my >= y && my < y + 18 && stack != null)
+                ui.canvas.tooltip(Collections.singletonList(stack.getDisplayName() + " · 选为目标（不消耗）"));
+        }
+        if (this.sourceTargets && choices.tagCount() == 0) {
+            ui.canvas.text("开启来源并准备物品", 183, 160, 194, 0xe4d3a9);
+            ui.canvas.text("然后重新扫描或重新打开", 183, 180, 194, 0xe4d3a9);
+        }
+        ui.canvas.button(66, 165, 221, 105, 17, "恢复默认壳", ui.session.editable() && ui.preview.hasSelectedPin(), mx, my);
+        ItemStack picked = ui.preview.pickedTarget();
+        if (this.sourceTargets) ui.canvas.button(18, 277, 221, 119, 17, "刷新来源 · 滚轮翻页", ui.session.editable(), mx, my);
+        else ui.canvas.text(picked == null ? "未选物品" : picked.getDisplayName(), 277, 224, 119, 0xe4d3a9);
+        ui.canvas.text(
+            ui.session.pendingSequence() >= 0 ? "等待服务端校验目标…" : ui.session.state().data.getString("status"),
+            165,
+            243,
+            231,
+            0xffbd91);
+        if (mx >= 165 && mx < 396 && my >= 240 && my < 255) {
+            ui.canvas.tooltip(
+                new ArrayList<>(
+                    ui.host.font()
+                        .listFormattedStringToWidth(ui.session.state().data.getString("status"), 230)));
+            if (ui.session.pendingSequence() >= 0) ui.canvas.tooltip()
+                .add("等待服务端校验目标…");
+            if (cell != null) {
+                ui.canvas.tooltip()
+                    .add("选中格 #" + cell.index + " · 世界坐标 " + cell.x + "," + cell.y + "," + cell.z);
+                ui.canvas.tooltip()
+                    .addAll(
+                        ui.host.font()
+                            .listFormattedStringToWidth("当前目标：" + ui.preview.cellName(cell, false), 230));
+                ui.canvas.tooltip()
+                    .add(cell.wantId + " @ " + cell.wantMeta);
+            }
+            if (picked != null) ui.canvas.tooltip()
+                .addAll(
+                    ui.host.font()
+                        .listFormattedStringToWidth(
+                            (this.sourceTargets ? "来源选择：" : "背包选择：") + picked.getDisplayName(),
+                            230));
+        }
+        if (picked != null && this.inventoryDragging) ui.canvas.drawItem(picked, mx - 8, my - 8);
+    }
+
+    ItemStack sourceStack(int choice) {
+        NBTTagList choices = ui.session.state().data.getTagList("materialChoices", 10);
+        return choice >= 0 && choice < choices.tagCount()
+            ? ItemStack.loadItemStackFromNBT(choices.getCompoundTagAt(choice))
+            : null;
+    }
+
+    ItemStack pickedTarget() {
+        return this.sourceTargets ? ui.preview.sourceStack(this.sourceChoice)
+            : this.inventorySlot >= 0 ? ui.host.minecraft().thePlayer.inventory.mainInventory[this.inventorySlot]
+                : null;
+    }
+
+    int inventorySlotAt(int x, int y) {
+        int col = (x - 181) / 22, row = (y - 139) / 20;
+        if (x < 181 || y < 139 || col >= 9 || row >= 4 || (x - 181) % 22 >= 20 || (y - 139) % 20 >= 18) return -1;
+        return this.sourceTargets ? this.sourceOffset + row * 9 + col : row == 3 ? col : 9 + row * 9 + col;
+    }
+
+    void pinInventory(int target) {
+        if (!ui.session.editable() || target < 0 || ui.preview.pickedTarget() == null) return;
+        this.selection.click(target, false);
+        this.selected = target;
+        NBTTagCompound n = new NBTTagCompound();
+        n.setInteger("selected", target);
+        n.setInteger("index", target);
+        if (this.sourceTargets) n.setInteger("choice", this.sourceChoice);
+        else n.setInteger("inventorySlot", this.inventorySlot);
+        n.setInteger("scope", 2);
+        ui.session.send(this.sourceTargets ? "sourcePin" : "customPin", n, true);
+    }
+
+    boolean canInventoryPin() {
+        HologramState.Cell cell = ui.session.selectedCell();
+        return cell != null && !cell.anchor && ui.session.state().data.getInteger("mode") != 2;
+    }
+
+    boolean hasSelectedPin() {
+        return ui.session.selectedCell() != null && ui.session.cellTag()
+            .getBoolean("hasTargetOverride");
+    }
+
+    void clearSelection() {
+        if (this.selected < 0) return;
+        this.selection.clear();
+        this.pendingSelectionSequence = -1;
+        this.gizmo.cancel();
+        this.selected = -1;
+        ui.config.syncTargetSelectors();
+    }
+
+    boolean previewInteractive() {
+        return !ui.session.areaImporting() && ui.ae.aeReviewNavigation() == null
+            && ui.ae.aeReview() == null
+            && !ui.config.drawer()
+            && !ui.position.positionDrawer()
+            && !ui.config.sourceDrawer()
+            && !ui.config.hatchDrawer()
+            && !ui.config.presetDrawer()
+            && !ui.review.confirmation()
+            && !ui.shortcuts.shortcutsDrawer()
+            && ui.processing.processingFlow() == null
+            && !ui.library.discardReview()
+            && !ui.library.overwriteReview()
+            && !ui.processing.processingPresetSaveReview()
+            && !ui.annotations.promptDrawer()
+            && !ui.annotations.versionsDrawer()
+            && !ui.nbt.nbtDrawer()
+            && !ui.identity.deidentificationDrawer()
+            && !ui.config.resetReview()
+            && ui.library.deletePresetId()
+                .isEmpty()
+            && !ui.config.roleDropdown()
+            && ui.config.optionChannel()
+                .isEmpty();
+    }
+
+    String cellName(HologramState.Cell cell, boolean current) {
+        if (current && cell.actualStack != null) return cell.actualStack.getDisplayName();
+        if (!current && cell.targetStack != null) return cell.targetStack.getDisplayName();
+        if (!current && cell.chosenChoice >= 0 && cell.chosenChoice < cell.candidates.size())
+            return cell.candidates.get(cell.chosenChoice)
+                .getDisplayName();
+        if (!current && !cell.candidates.isEmpty()) return cell.candidates.get(0)
+            .getDisplayName();
+        net.minecraft.block.Block block = cell.block(current);
+        if (block != null) return block.getLocalizedName();
+        return current ? "空位 / 未知现场" : "固定接口 / 未知目标";
+    }
+
+    static String statusName(String status) {
+        switch (status) {
+            case "blocked":
+                return "被遮挡：请清空占位后补建";
+            case "protected":
+                return "受保护：控制器 / 未适配设备保留";
+            case "unsupported":
+                return "固定接口待手动补齐";
+            case "missing":
+                return "缺少材料";
+            case "satisfied":
+                return "目标已满足";
+            case "pending":
+                return "待施工";
+            case "placed":
+                return "已建造";
+            case "replaced":
+                return "已替换";
+            case "removed":
+                return "已拆除";
+            default:
+                return status;
+        }
+    }
+
+    ItemStack displayedStack(HologramState.Cell cell, boolean current) {
+        ItemStack stack = current ? cell.actualStack : cell.targetStack;
+        if (stack != null) return stack;
+        net.minecraft.block.Block block = cell.block(current);
+        if (block == null || block == net.minecraft.init.Blocks.air) return null;
+        net.minecraft.item.Item item = net.minecraft.item.Item.getItemFromBlock(block);
+        return item == null ? null : new ItemStack(item, 1, current ? cell.meta : cell.wantMeta);
+    }
+
+    boolean handleEditorShortcut(int key, int modifiers) {
+        if (!ui.preview.previewInteractive() || this.inventory
+            || ui.router.textFieldFocused()
+            || ui.shortcuts.captureBinding() >= 0) return false;
+        if (key == Keyboard.KEY_A && modifiers == 1) {
+            this.selection.all(ui.session.state());
+            this.selected = this.selection.first();
+            ui.config.syncTargetSelectors();
+            return true;
+        }
+        int binding = ui.shortcuts.keyBindings()
+            .match(key, modifiers);
+        if (binding >= 0) {
+            ui.preview.editAction(HologramKeyBindings.ACTIONS[binding]);
+            return true;
+        }
+        if (modifiers == 0 && (key == Keyboard.KEY_1 || key == Keyboard.KEY_2 || key == Keyboard.KEY_3)) {
+            ui.router.activate(70 + key - Keyboard.KEY_1);
+            return true;
+        }
+        return false;
+    }
+
+    boolean previewBlockedAt(int x, int y) {
+        if (!ui.annotations.pinnedAnnotation()
+            .isEmpty() && ui.canvas.inViewport(x, y) && y >= 219 && y < 279) return true;
+        if (this.inventory) return x >= 157 && x < 405 && y >= 59 && y < 257;
+        return ui.canvas.inPanel(x, y);
+    }
+
+    void editAction(String action) {
+        boolean history = "editUndo".equals(action) || "editRedo".equals(action);
+        HologramState.Cell cell = ui.session.selectedCell();
+        if (!history && cell == null) return;
+        if (ui.session.pendingSequence() >= 0 && !ui.session.state().data.getBoolean("capturePending")
+            && !ui.session.state().data.getBoolean("targetClosed")
+            && ui.session.state().data.getInteger("job") != 1
+            && ui.session.state().data.getInteger("job") != 2
+            && !ui.session.awaitingScan()) {
+            List<HologramState.Cell> frozenSelection = new ArrayList<>();
+            if (!history)
+                for (int index : this.selection.indices()) frozenSelection.add(ui.session.state().cells.get(index));
+            if (!this.editQueue.offer(action, ui.session.state().session, history ? null : cell, frozenSelection)) {
+                ui.session.notice("等待队列已满（8项），请等待校验后重试");
+                return;
+            }
+            ui.session.notice("已排队 " + this.editQueue.size() + " 项编辑，等待服务端校验");
+            return;
+        }
+        if (!ui.session.editable()) {
+            ui.session.notice(ui.session.pendingSequence() >= 0 ? "等待服务端校验，请稍后再操作" : ui.session.editingReason());
+            return;
+        }
+        ui.preview.dispatchEdit(action, this.selected);
+    }
+
+    void dispatchEdit(String action, int target) {
+        ui.preview.dispatchEdit(action, target, this.selection.indices());
+    }
+
+    void dispatchEdit(String action, int target, int[] indices) {
+        if ("editUndo".equals(action) && !ui.session.state().data.getBoolean("editCanUndo")
+            || "editRedo".equals(action) && !ui.session.state().data.getBoolean("editCanRedo")
+            || "editPaste".equals(action) && !ui.session.state().data.getBoolean("editCanPaste")) {
+            ui.session.notice("此编辑当前不可用，未执行");
+            return;
+        }
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("selected", target);
+        request.setIntArray("indices", indices);
+        request.setIntArray("selectedIndices", indices);
+        ui.session.send(action, request, true);
+    }
+
+    void cancelQueuedEdits(String reason) {
+        if (this.editQueue.isEmpty()) return;
+        this.editQueue.clear();
+        ui.session.notice(reason);
+    }
+
+    void drainQueuedEdits() {
+        if (ui.session.state().data.getBoolean("capturePending") || ui.session.awaitingScan()
+            || ui.session.state().data.getBoolean("targetClosed")
+            || ui.session.state().data.getInteger("job") == 1
+            || ui.session.state().data.getInteger("job") == 2) {
+            ui.preview.cancelQueuedEdits("结构正在采集或不可编辑，已取消等待中的编辑");
+            return;
+        }
+        while (ui.session.editable() && !this.editQueue.isEmpty()) {
+            HologramEditQueue.Entry edit = this.editQueue.removeFirst(ui.session.state());
+            if (edit == null) {
+                ui.session.notice("会话或目标格已变化，已取消等待中的编辑");
+                return;
+            }
+            ui.preview
+                .dispatchEdit(edit.action, edit.selectionIn(ui.session.state()), edit.indicesIn(ui.session.state()));
+            if (ui.session.pendingSequence() >= 0) {
+                this.queuedDispatchSequence = ui.session.pendingSequence();
+                ui.session
+                    .notice(this.editQueue.isEmpty() ? "正在执行排队编辑" : "正在执行排队编辑，剩余 " + this.editQueue.size() + " 项");
+            }
+        }
+    }
+
+    void resetCamera() {
+        this.yaw = ui.preview.frontCameraYaw();
+        this.pitch = Math.PI / 6;
+        this.zoom = 1;
+        this.camera.reset();
+        this.cameraFrame = 0;
+    }
+
+    void movePreviewCamera() {
+        long now = System.nanoTime(), previous = this.cameraFrame;
+        this.cameraFrame = now;
+        if (previous == 0 || !org.lwjgl.opengl.Display.isActive()
+            || !ui.preview.previewInteractive()
+            || ui.router.textFieldFocused()
+            || ui.library.libraryAdminDrawer()
+            || ui.bindings.networkDrawer()
+            || this.inventory
+            || ui.shortcuts.captureBinding() >= 0
+            || this.boxSelecting
+            || this.gizmo.axis() >= 0
+            || (HologramKeyBindings.modifiers() & 5) != 0) return;
+        int right = (Keyboard.isKeyDown(Keyboard.KEY_D) ? 1 : 0) - (Keyboard.isKeyDown(Keyboard.KEY_A) ? 1 : 0);
+        int forward = (Keyboard.isKeyDown(Keyboard.KEY_W) ? 1 : 0) - (Keyboard.isKeyDown(Keyboard.KEY_S) ? 1 : 0);
+        double speed = Math.max(2, HologramRenderer.previewExtent() * .6) / this.zoom;
+        this.camera.move(this.yaw, (now - previous) / 1_000_000_000.0, right, forward, speed);
+    }
+
+    double frontCameraYaw() {
+        int facing = ui.session.state().data.getInteger("facing");
+        if (facing < 0 || facing >= ExtendedFacing.values().length) return Math.PI / 4;
+        ForgeDirection direction = ExtendedFacing.values()[facing].getDirection();
+        if (direction.offsetX == 0 && direction.offsetZ == 0) return Math.PI / 4;
+        return Math.atan2(direction.offsetX, direction.offsetZ) + Math.PI / 4;
+    }
+
+    boolean sameTypeSelectionHeld() {
+        return ui.diagnostics.smokeSameTypeSelection() && ui.diagnostics.captureRenderSmokeAction()
+            || Keyboard.isKeyDown(Keyboard.KEY_T);
+    }
+
+    boolean airSelectionHeld() {
+        return ui.diagnostics.smokeAltSelection() && ui.diagnostics.captureRenderSmokeAction()
+            || Keyboard.isKeyDown(Keyboard.KEY_LMENU)
+            || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+    }
+
+    boolean controlSelectionHeld() {
+        return ui.diagnostics.smokeCtrlSelection() && ui.diagnostics.captureRenderSmokeAction() || isCtrlKeyDown();
+    }
+
+    boolean rotateCameraControl(int id) {
+        if (id == 223) {
+            this.yaw = this.yaw + (Math.PI / 2);
+            return true;
+        }
+        return false;
+    }
+
+    boolean consumeImportControl(int id) {
+        if (ui.session.areaImporting()) {
+            if (id == 193) ui.router.closeRoot();
+            return true;
+        }
+        return false;
+    }
+
+    boolean pinCandidateControl(int id) {
+        if (id >= 10000) {
+            if (!ui.session.editable() || !ui.preview.canInventoryPin()) return true;
+            NBTTagCompound n = new NBTTagCompound();
+            n.setInteger("selected", this.selected);
+            n.setInteger("choiceindex", id - 10000);
+            ui.session.send("pin", n, true);
+            return true;
+        }
+        return false;
+    }
+
+    boolean activateControl(int id) {
+        switch (id) {
+            case 178:
+                if (ui.session.editable()) HologramClient.beginAreaSelection();
+                return true;
+            case 147:
+                this.moveHandles = !this.moveHandles;
+                return true;
+            case 108:
+                ui.preview.editAction("editUndo");
+                return true;
+            case 109:
+                ui.preview.editAction("editRedo");
+                return true;
+            case 112:
+                ui.preview.editAction("editCopy");
+                return true;
+            case 113:
+                ui.preview.editAction("rotateCell");
+                return true;
+            case 10:
+                this.view = (this.view + 1) % 3;
+                return true;
+            case 11:
+                this.allLayers = !this.allLayers;
+                ui.config.configure("layer", this.layer);
+                return true;
+            case 12:
+                this.allLayers = false;
+                this.layer--;
+                ui.config.configure("layer", this.layer);
+                return true;
+            case 13:
+                this.allLayers = false;
+                this.layer++;
+                ui.config.configure("layer", this.layer);
+                return true;
+            case 14:
+                ui.preview.resetCamera();
+                return true;
+            case 15:
+                HologramClient.worldPreview = !HologramClient.worldPreview;
+                if (!HologramClient.worldPreview) HologramRenderer.release();
+                return true;
+            case 16:
+            case 17:
+                this.sourceTargets = id == 17;
+                this.inventorySlot = this.sourceChoice = -1;
+                this.inventoryDragging = false;
+                this.sourceOffset = 0;
+                return true;
+            case 18:
+                if (ui.session.editable()) {
+                    this.sourceChoice = -1;
+                    ui.session.send("scan", null, true);
+                }
+                return true;
+            case 23:
+                if (ui.session.editable()) ui.session.send("scan", null, true);
+                return true;
+            case 26:
+                if (ui.session.editable()) {
+                    ui.session.awaitingScan(true);
+                    ui.session.send("scan", null, true);
+                }
+                return true;
+            case 64:
+                this.inventory = false;
+                this.inventoryDragging = false;
+                this.inventorySlot = this.sourceChoice = -1;
+                return true;
+            case 65:
+                ui.preview.pinInventory(this.selected);
+                return true;
+            case 66:
+                ui.preview.editAction("restoreCell");
+                return true;
+            case 69:
+                ui.preview.clearSelection();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    boolean consumeImportMouse(int mx, int my, int button) {
+        if (ui.session.areaImporting()) {
+            if (button == 0) for (Control control : ui.canvas.controls())
+                if (control.id == 193 && control.enabled && control.contains(mx, my)) ui.router.closeRoot();
+            return true;
+        }
+        return false;
+    }
+
+    boolean consumeViewportRightMouse(int mx, int my, int button) {
+        if (button == 1 && ui.preview.previewInteractive()
+            && ui.canvas.inViewport(mx, my)
+            && !ui.preview.previewBlockedAt(mx, my)) {
+            if (this.inventoryDragging || this.inventorySlot >= 0 || this.sourceChoice >= 0) {
+                this.inventoryDragging = false;
+                this.inventorySlot = this.sourceChoice = -1;
+            } else ui.preview.clearSelection();
+            this.dragging = false;
+            return true;
+        }
+        return false;
+    }
+
+    boolean consumeViewportLeftMouse(int mx, int my, int button) {
+        if (button == 0) {
+            if (ui.preview.previewInteractive() && ui.canvas.inViewport(mx, my)
+                && !ui.preview.previewBlockedAt(mx, my)
+                && ui.session.editable()) {
+                int axis = !ui.preview.sameTypeSelectionHeld() && !ui.preview.airSelectionHeld()
+                    && this.moveHandles
+                    && ui.preview.canMoveSelection() ? this.gizmo.pick(mx, my) : -1;
+                if (axis >= 0) {
+                    this.gizmoCopy = ui.preview.controlSelectionHeld();
+                    this.gizmo.begin(axis, mx, my);
+                    return true;
+                }
+            }
+            if (this.inventory && !ui.review.confirmation()
+                && ui.config.optionChannel()
+                    .isEmpty()) {
+                int slot = ui.preview.inventorySlotAt(mx, my);
+                if (slot >= 0) {
+                    if ((this.sourceTargets ? ui.preview.sourceStack(slot)
+                        : ui.host.minecraft().thePlayer.inventory.mainInventory[slot]) != null
+                        && ui.session.editable()) {
+                        if (this.sourceTargets) this.sourceChoice = slot;
+                        else this.inventorySlot = slot;
+                        this.inventoryDragging = true;
+                    }
+                    return true;
+                }
+            }
+            for (int i = ui.canvas.controls()
+                .size() - 1; i >= 0; i--) {
+                Control c = ui.canvas.controls()
+                    .get(i);
+                if (c.contains(mx, my)) {
+                    if (ui.config.sourceDrawer() && (c.id < 84 || c.id > 88)) return true;
+                    if (ui.position.positionDrawer() && c.id != 76 && c.id != 77) return true;
+                    if (ui.review.confirmation() && c.id != 54
+                        && c.id != 55
+                        && c.id != 162
+                        && c.id != 168
+                        && c.id != 169) return true;
+                    if (!ui.config.optionChannel()
+                        .isEmpty() && c.id != 63 && c.id != 68 && c.id < 4000) return true;
+                    if (this.inventory && c.id != 64
+                        && c.id != 65
+                        && c.id != 66
+                        && c.id != 16
+                        && c.id != 17
+                        && c.id != 18
+                        && c.id != 95
+                        && !ui.canvas.inViewport(mx, my)) return true;
+                    if (ui.config.drawer() && !ui.review.confirmation()
+                        && ui.config.optionChannel()
+                            .isEmpty()
+                        && c.id < 1000
+                        && c.id != 62
+                        && c.id != 30
+                        && c.id != 23
+                        && c.id != 33
+                        && c.id != 83
+                        && c.id != 67
+                        && c.id != 68) return true;
+                    if (c.enabled) ui.router.activate(c.id);
+                    return true;
+                }
+            }
+            if (ui.preview.previewBlockedAt(mx, my)) return true;
+            if (ui.preview.previewInteractive() && ui.canvas.inViewport(mx, my)) {
+                if (!this.inventory && ui.preview.airSelectionHeld() && ui.session.editable()) {
+                    ui.preview.selectEmptyVoxel(mx, my);
+                    return true;
+                }
+                if (isShiftKeyDown() && !ui.preview.sameTypeSelectionHeld()) {
+                    int target = HologramRenderer.pick(mx, my);
+                    this.boxStart = target;
+                    this.boxAdditive = ui.preview.controlSelectionHeld();
+                    this.boxSelecting = this.boxStart >= 0;
+                    return true;
+                }
+                this.dragging = true;
+                this.moved = false;
+                this.dragX = mx;
+                this.dragY = my;
+            }
+        }
+        return false;
+    }
+
+    boolean consumeImportKey(char c, int key) {
+        if (ui.session.areaImporting()) {
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) ui.router.closeRoot();
+            return true;
+        }
+        return false;
+    }
+
+    boolean consumeGizmoKey(char c, int key) {
+        if (key == Keyboard.KEY_G && !ui.router.textFieldFocused()
+            && ui.preview.canMoveSelection()
+            && ui.preview.previewInteractive()) {
+            this.moveHandles = !this.moveHandles;
+            return true;
+        }
+        return false;
+    }
+
+    boolean consumeCameraKey(char c, int key) {
+        if (!ui.router.textFieldFocused() && ui.preview.previewInteractive()
+            && HologramKeyBindings.modifiers() == 0
+            && (key == Keyboard.KEY_W || key == Keyboard.KEY_A || key == Keyboard.KEY_S || key == Keyboard.KEY_D))
+            return true;
+        return false;
+    }
+
+    boolean consumeCompactCandidatesWheel(int wheel, int mx, int my) {
+        if (ui.preview.previewInteractive() && !this.inventory && ui.canvas.inPanel(mx, my)) {
+            ui.config.hatchOffset(
+                Math.max(
+                    0,
+                    Math.min(
+                        Math.max(
+                            0,
+                            ui.config.filteredHatches()
+                                .size() - 2),
+                        ui.config.hatchOffset() + (wheel > 0 ? -1 : 1))));
+            return true;
+        }
+        return false;
+    }
+
+    void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
+            return;
+        if (this.gizmo.axis() >= 0) {
+            this.gizmo.update(ui.canvas.localX(x), ui.canvas.localY(y));
+            return;
+        }
+        if (this.boxSelecting) {
+            this.selection.box(
+                ui.session.state(),
+                this.boxStart,
+                HologramRenderer.pick(ui.canvas.localX(x), ui.canvas.localY(y)),
+                this.boxAdditive);
+            return;
+        }
+        if (!this.dragging) return;
+        int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - this.dragX, dy = my - this.dragY;
+        if (Math.abs(dx) + Math.abs(dy) > 1) this.moved = true;
+        this.yaw = this.yaw - (dx * .012);
+        this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch + dy * .012));
+        this.dragX = mx;
+        this.dragY = my;
+    }
+
+    void mouseMovedOrUp(int x, int y, int button) {
+        if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
+            return;
+        if (ui.ae.aeReview() != null) return;
+        if (button == 0 && this.gizmo.axis() >= 0) {
+            int axis = this.gizmo.axis(), delta = this.gizmo.update(ui.canvas.localX(x), ui.canvas.localY(y));
+            this.gizmo.cancel();
+            if (delta != 0 && ui.session.editable() && ui.preview.canMoveSelection()) {
+                NBTTagCompound move = new NBTTagCompound();
+                move.setIntArray("indices", this.selection.indices());
+                move.setInteger(axis == 0 ? "dx" : axis == 1 ? "dy" : "dz", delta);
+                move.setBoolean("copy", this.gizmoCopy);
+                ui.session.send("editMove", move, true);
+            }
+            return;
+        }
+        if (button == 0 && this.boxSelecting) {
+            this.boxSelecting = false;
+            this.selection.box(
+                ui.session.state(),
+                this.boxStart,
+                HologramRenderer.pick(ui.canvas.localX(x), ui.canvas.localY(y)),
+                this.boxAdditive);
+            this.selected = this.selection.first();
+            ui.config.syncTargetSelectors();
+            return;
+        }
+        if (button == 0 && this.inventoryDragging) {
+            int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
+            this.inventoryDragging = false;
+            int target = HologramRenderer.pick(mx, my);
+            if (ui.canvas.inViewport(mx, my) && !ui.preview.previewBlockedAt(mx, my) && target >= 0)
+                ui.preview.pinInventory(target);
+            else if (mx >= 165 && mx < 396 && my >= 104 && my < 122) ui.preview.pinInventory(this.selected);
+            return;
+        }
+        if (button == 0 && this.dragging) {
+            int target = HologramRenderer.pick(ui.canvas.localX(x), ui.canvas.localY(y));
+            if (!this.moved && ui.canvas.inViewport(ui.canvas.localX(x), ui.canvas.localY(y))
+                && !ui.preview.previewBlockedAt(ui.canvas.localX(x), ui.canvas.localY(y))
+                && ui.session.editable()) {
+                String structure = HologramRenderer.pickStructure(ui.canvas.localX(x), ui.canvas.localY(y));
+                boolean whole = ui.preview.sameTypeSelectionHeld();
+                if (structure.isEmpty() && !whole && target < 0) {
+                    ui.preview.clearSelection();
+                    this.dragging = false;
+                    return;
+                }
+                this.selection
+                    .previewClick(ui.session.state(), target, structure, whole, ui.preview.controlSelectionHeld());
+                this.selected = this.selection.first();
+                ui.memory.cellEditHint(this.selected >= 0);
+                ui.config.syncTargetSelectors();
+                if (target >= 0 && (ui.session.state().cells.get(target).missingBlock
+                    || ui.session.state().cells.get(target).sourceMissing)) ui.annotations.versionsDrawer(true);
+            }
+            this.dragging = false;
+        }
+    }
+
+    void resetSession(HologramState next) {
+        gizmo.cancel();
+        selection.load(
+            next.data.getIntArray("selectedIndices"),
+            next.data.hasKey("selected") ? next.data.getInteger("selected") : -1,
+            next.cells.size());
+        pendingSelectionSequence = -1;
+        queuedDispatchSequence = -1;
+        cancelQueuedEdits("会话已变化，已取消等待中的编辑");
+    }
+
+    void pauseForImport() {
+        editQueue.clear();
+        queuedDispatchSequence = -1;
+        dragging = boxSelecting = inventoryDragging = false;
+        gizmo.cancel();
+    }
+
+    void retainSelection(HologramState next) {
+        selection.retain(next.cells.size());
+        selected = selection.first();
+    }
+
+    void acknowledgeSelection(HologramState next) {
+        if (pendingSelectionSequence >= 0 && next.data.getLong("uiSequence") >= pendingSelectionSequence) {
+            selection
+                .load(next.data.getIntArray("selectedIndices"), next.data.getInteger("selected"), next.cells.size());
+            pendingSelectionSequence = -1;
+        }
+    }
+
+    void acknowledgeEdits(HologramState next) {
+        if (queuedDispatchSequence >= 0 && next.data.getLong("uiSequence") >= queuedDispatchSequence) {
+            queuedDispatchSequence = -1;
+            ui.session.notice("");
+        }
+    }
+
+    void syncLayerAndSelection(HologramState next) {
+        if (allLayers) layer = next.maxY;
+        selected = selection.first();
+    }
+
+    boolean allLayers() {
+        return this.allLayers;
+    }
+
+    boolean boxSelecting(boolean value) {
+        this.boxSelecting = value;
+        return value;
+    }
+
+    boolean dragging(boolean value) {
+        this.dragging = value;
+        return value;
+    }
+
+    HologramEditQueue editQueue() {
+        return this.editQueue;
+    }
+
+    int[] emptyVoxelPreview() {
+        return this.emptyVoxelPreview;
+    }
+
+    HologramGizmo gizmo() {
+        return this.gizmo;
+    }
+
+    boolean inventory() {
+        return this.inventory;
+    }
+
+    boolean inventory(boolean value) {
+        this.inventory = value;
+        return value;
+    }
+
+    boolean inventoryDragging() {
+        return this.inventoryDragging;
+    }
+
+    boolean inventoryDragging(boolean value) {
+        this.inventoryDragging = value;
+        return value;
+    }
+
+    int inventorySlot() {
+        return this.inventorySlot;
+    }
+
+    int inventorySlot(int value) {
+        this.inventorySlot = value;
+        return value;
+    }
+
+    int layer() {
+        return this.layer;
+    }
+
+    int layer(int value) {
+        this.layer = value;
+        return value;
+    }
+
+    boolean moveHandles() {
+        return this.moveHandles;
+    }
+
+    boolean moveHandles(boolean value) {
+        this.moveHandles = value;
+        return value;
+    }
+
+    long pendingSelectionSequence(long value) {
+        this.pendingSelectionSequence = value;
+        return value;
+    }
+
+    double pitch() {
+        return this.pitch;
+    }
+
+    double pitch(double value) {
+        this.pitch = value;
+        return value;
+    }
+
+    long queuedDispatchSequence(long value) {
+        this.queuedDispatchSequence = value;
+        return value;
+    }
+
+    int selected() {
+        return this.selected;
+    }
+
+    int selected(int value) {
+        this.selected = value;
+        return value;
+    }
+
+    HologramSelection selection() {
+        return this.selection;
+    }
+
+    int sourceChoice() {
+        return this.sourceChoice;
+    }
+
+    int sourceChoice(int value) {
+        this.sourceChoice = value;
+        return value;
+    }
+
+    int sourceOffset() {
+        return this.sourceOffset;
+    }
+
+    int sourceOffset(int value) {
+        this.sourceOffset = value;
+        return value;
+    }
+
+    boolean sourceTargets() {
+        return this.sourceTargets;
+    }
+
+    int view(int value) {
+        this.view = value;
+        return value;
+    }
+
+    double yaw() {
+        return this.yaw;
+    }
+
+    double yaw(double value) {
+        this.yaw = value;
+        return value;
+    }
+
+    double zoom() {
+        return this.zoom;
+    }
+
+    double zoom(double value) {
+        this.zoom = value;
+        return value;
+    }
+
+    void prepareCommand(String op) {
+        if ("scan".equals(op)) cancelQueuedEdits("重新采集结构，已取消等待中的编辑");
+    }
+
+    void recordSelectionCommand(String op, long sequence) {
+        if ("addPosition".equals(op) || "editPaste".equals(op)
+            || "editMove".equals(op)
+            || "editUndo".equals(op)
+            || "editRedo".equals(op)
+            || "selectStructure".equals(op)) pendingSelectionSequence = sequence;
+    }
+
+    void initializeSelection(HologramState snapshot) {
+        selected = snapshot.data.hasKey("selected") ? snapshot.data.getInteger("selected") : -1;
+        selection.load(snapshot.data.getIntArray("selectedIndices"), selected, snapshot.cells.size());
+    }
+
+    void restoreInitialUi(UiMemory memory) {
+        int[] restored = ui.memory.rememberedSelection(memory);
+        if (restored != null) selection.load(restored, -1, ui.session.state().cells.size());
+    }
+
+    void initializeLayer(HologramState snapshot) {
+        selected = selection.first();
+        layer = snapshot.maxY;
+    }
+}

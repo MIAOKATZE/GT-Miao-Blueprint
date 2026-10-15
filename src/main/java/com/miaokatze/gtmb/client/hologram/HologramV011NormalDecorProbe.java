@@ -331,6 +331,7 @@ final class HologramV011NormalDecorProbe {
     }
 
     private static Object field(Object owner, String name) throws Exception {
+        if (owner instanceof HologramScreen) return HologramUiDiagnostics.readDiagnosticField(owner, name);
         Field value = (owner instanceof Class ? (Class<?>) owner : owner.getClass()).getDeclaredField(name);
         value.setAccessible(true);
         return value.get(owner instanceof Class ? null : owner);

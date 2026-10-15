@@ -44,7 +44,7 @@ public final class HologramWorldServiceRegression {
             player.capabilities.allowEdit = true;
             player.posY = 64;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -68,7 +68,7 @@ public final class HologramWorldServiceRegression {
             settings.containers = false;
             settings.me = false;
             set(session, "materialContext", new HologramMaterials.Context(player, settings));
-            Method populate = HologramService.class.getDeclaredMethod("populateVirtual", type);
+            Method populate = HologramBlueprintProjection.class.getDeclaredMethod("populateVirtual", type);
             populate.setAccessible(true);
             populate.invoke(null, session);
             unavailableQuickSelectionKeepsDraft(session, player);
@@ -76,7 +76,7 @@ public final class HologramWorldServiceRegression {
             cancelLockedPlacementKeepsDraft(session, player);
             controllerOpeningPurpose(session, player, world);
             replacementActorCannotReuseSession(unsafe, player, world, ctor);
-            Method action = HologramService.class
+            Method action = HologramAuthoringWorkflow.class
                 .getDeclaredMethod("blueprintAction", type, NBTTagCompound.class, String.class);
             action.setAccessible(true);
             NBTTagCompound request = new NBTTagCompound();
@@ -126,7 +126,7 @@ public final class HologramWorldServiceRegression {
     /** Exercise the actual block/air server entry points, retaining the intent during pending collection. */
     private static void controllerOpeningPurpose(Object session, EntityPlayerMP player,
         HologramServiceEditRegression.ReadOnlyWorld world) throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -184,7 +184,7 @@ public final class HologramWorldServiceRegression {
 
     private static void cancelLockedPlacementKeepsDraft(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -277,7 +277,7 @@ public final class HologramWorldServiceRegression {
     /** Pure guard coverage; full preset reload and fresh material contexts are exercised by the FML/socket suites. */
     private static void completedJobQuickPlacementGuards(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -364,7 +364,7 @@ public final class HologramWorldServiceRegression {
 
     private static void unavailableQuickSelectionKeepsDraft(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -428,7 +428,7 @@ public final class HologramWorldServiceRegression {
 
     private static void positionLockRequiresSeparateWorldReview(Object session, EntityPlayerMP player,
         NBTTagCompound request, Method action) throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -477,7 +477,8 @@ public final class HologramWorldServiceRegression {
             SimpleAssert
                 .that((Long) get(session, "placementReviewNonce") > nonce, "second right opens a fresh review nonce");
             SimpleAssert.eq(0, get(session, "job"), "opening material review never starts construction");
-            Method dismiss = HologramService.class.getDeclaredMethod("dismissPresetBrowse", session.getClass());
+            Method dismiss = HologramProjectorWorkflow.class
+                .getDeclaredMethod("dismissPresetBrowse", session.getClass());
             dismiss.setAccessible(true);
             dismiss.invoke(null, session);
             SimpleAssert.eq(
@@ -521,7 +522,7 @@ public final class HologramWorldServiceRegression {
             "replacement actor has the same nonnull player UUID");
         Object oldSession = constructor.newInstance(owner, 0, 64, 0, false, 2);
         set(oldSession, "open", true);
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -563,15 +564,15 @@ public final class HologramWorldServiceRegression {
         world.occupant = new TileEntityChest();
         TileEntityChest original = (TileEntityChest) world.occupant;
         Class<?> type = session.getClass();
-        Method populate = HologramService.class.getDeclaredMethod("populateVirtual", type);
+        Method populate = HologramBlueprintProjection.class.getDeclaredMethod("populateVirtual", type);
         populate.setAccessible(true);
         populate.invoke(null, session);
         HologramCapture.Cell cell = ((HologramCapture) get(session, "capture")).cells.get(0);
-        Method harvest = HologramService.class.getDeclaredMethod("recoverable", type, HologramCapture.Cell.class);
+        Method harvest = HologramCellPolicy.class.getDeclaredMethod("recoverable", type, HologramCapture.Cell.class);
         harvest.setAccessible(true);
         SimpleAssert
             .eq(false, harvest.invoke(null, session, cell), "ordinary chest has no destructive harvest authority");
-        Method classify = HologramService.class
+        Method classify = HologramPlanPolicy.class
             .getDeclaredMethod("classify", type, HologramCapture.Cell.class, int.class);
         classify.setAccessible(true);
         SimpleAssert.eq(
@@ -628,14 +629,14 @@ public final class HologramWorldServiceRegression {
         java.util.Set<Integer> selection = (java.util.Set<Integer>) get(session, "selectedIndices");
         selection.clear();
         selection.add(0);
-        Method scope = HologramService.class
+        Method scope = HologramSessionPolicy.class
             .getDeclaredMethod("inScope", session.getClass(), HologramCapture.Cell.class, int.class);
         scope.setAccessible(true);
         SimpleAssert.eq(
             true,
             scope.invoke(null, session, other, 1),
             "locked placement reviews the other structure even while inspecting one selected cell");
-        Method edit = HologramService.class
+        Method edit = HologramSessionPolicy.class
             .getDeclaredMethod("editableStructureCell", session.getClass(), HologramCapture.Cell.class);
         edit.setAccessible(true);
         SimpleAssert.eq(

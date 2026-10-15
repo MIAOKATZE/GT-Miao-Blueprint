@@ -1987,10 +1987,8 @@ public final class HologramSulfurLineSmokeClientProbe {
     }
 
     private static Object field(Object target, String name) throws Exception {
-        Field value = target.getClass()
-            .getDeclaredField(name);
-        value.setAccessible(true);
-        return value.get(target);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(target, name));
     }
 
     private static Path localPath(Minecraft mc, String id) {

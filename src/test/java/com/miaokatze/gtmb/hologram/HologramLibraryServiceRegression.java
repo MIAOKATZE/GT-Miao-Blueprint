@@ -47,7 +47,7 @@ final class HologramLibraryServiceRegression {
             authenticated.setAccessible(true);
             SimpleAssert
                 .that((Boolean) authenticated.invoke(null, owner), "connected server projector fixture authenticated");
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -59,14 +59,14 @@ final class HologramLibraryServiceRegression {
             Object session = ctor.newInstance(owner, 0, 64, 0, false, 2);
             set(session, "open", true);
             set(session, "planRevision", 42L);
-            Field map = HologramService.class.getDeclaredField("SESSIONS");
+            Field map = HologramWorkspace.class.getDeclaredField("SESSIONS");
             map.setAccessible(true);
             sessions = (Map<UUID, Object>) map.get(null);
             previous = sessions.put(ownerId, session);
             NBTTagCompound request = new NBTTagCompound();
             request.setString("session", (String) get(session, "id"));
             request.setLong("planRevision", 42L);
-            Method send = HologramService.class.getDeclaredMethod("send", type);
+            Method send = HologramSnapshots.class.getDeclaredMethod("send", type);
             send.setAccessible(true);
             send.invoke(null, session);
             SimpleAssert.that(!(Boolean) get(session, "open"), "real snapshot consumes one-shot UI open intent");
