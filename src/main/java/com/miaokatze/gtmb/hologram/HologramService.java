@@ -280,7 +280,7 @@ public final class HologramService {
             s.status = area.selecting ? "区域选择已开启：左键第一点，右键第二点；Alt 使用玩家坐标" : "区域选择已关闭";
             if (!area.selecting && area.first != null && area.second != null) startAreaImport(s, area);
         }
-        player.addChatMessage(new ChatComponentText("[猫猫投影仪] " + s.status));
+        player.addChatMessage(new ChatComponentText("[猫猫蓝图全息投影仪] " + s.status));
         send(s);
     }
 
@@ -404,7 +404,7 @@ public final class HologramService {
             return;
         }
         s.status = "区域点 " + point + " = " + x + ", " + y + ", " + z;
-        player.addChatMessage(new ChatComponentText("[猫猫投影仪] " + s.status));
+        player.addChatMessage(new ChatComponentText("[猫猫蓝图全息投影仪] " + s.status));
         send(s);
     }
 
