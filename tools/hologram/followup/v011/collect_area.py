@@ -117,7 +117,8 @@ def floating(aim):
         return aim['feet']
     look = [aim['look' + axis] for axis in 'XYZ']
     length = math.sqrt(sum(component * component for component in look))
-    require(abs(length - 1) < 1e-5, 'Actual camera look vector is not unit length')
+    # Minecraft 1.7.10 uses float sin/cos lookup tables; the observed look need not be exactly unit length.
+    require(math.isfinite(length) and length > 0, 'Actual camera look vector has no finite positive length')
     return [math.floor(aim['eye' + axis] + look[index] * distance / length)
             for index, axis in enumerate('XYZ')]
 

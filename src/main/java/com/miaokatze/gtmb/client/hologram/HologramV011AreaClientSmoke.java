@@ -707,7 +707,12 @@ public final class HologramV011AreaClientSmoke {
             if (hud != null) {
                 witness.setInteger("hudTop", hud.top);
                 witness.setInteger("hudCenterX", hud.centerX);
-                require(hud.top == 8, "conditional world guide is at the top");
+                boolean reserveBlockTooltip = cpw.mods.fml.common.Loader.isModLoaded("Waila")
+                    && mc.objectMouseOver != null
+                    && mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK;
+                require(
+                    hud.top == (reserveBlockTooltip ? 40 : 8),
+                    "conditional centered world guide reserves the block tooltip space");
             }
             HologramV011Evidence.write("area-client-step-" + sequence + ".nbt", witness);
             captured = true;
