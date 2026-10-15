@@ -28,6 +28,22 @@ final class HologramPlacementConfirmation {
         return true;
     }
 
+    static boolean needsTerminalBinding(NBTTagCompound state) {
+        NBTTagList groups = state.getCompoundTag("networkBindings")
+            .getTagList("groups", 10);
+        for (int i = 0; i < groups.tagCount(); i++) {
+            NBTTagCompound group = groups.getCompoundTagAt(i);
+            if (group.getBoolean("terminalBinding") && !group.getBoolean("bound")) return true;
+        }
+        return false;
+    }
+
+    static int[] modalBounds(NBTTagCompound state) {
+        return new int[] { 40, 58, 376, state.getCompoundTag("networkBindings")
+            .getTagList("groups", 10)
+            .tagCount() > 0 ? 280 : 254 };
+    }
+
     static boolean forceReview(NBTTagCompound state, long reviewedRevision) {
         return lockedBlueprint(state) && state.getBoolean("forcePlacementReady")
             && reviewedRevision == state.getLong("planRevision");

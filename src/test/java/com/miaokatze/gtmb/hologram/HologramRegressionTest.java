@@ -179,6 +179,9 @@ public final class HologramRegressionTest {
             "opened_placement_review_receives_background_job_updates_without_reopening_dismissed_UI",
             com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression::run);
         cases.put(
+            "guidance_follows_library_context_and_exact_network_binding_acknowledgements",
+            com.miaokatze.gtmb.client.hologram.HologramGuidanceRegression::run);
+        cases.put(
             "workspace_tab_survives_server_session_and_client_restart",
             com.miaokatze.gtmb.client.hologram.HologramUiTabMemoryRegression::run);
         cases.put(

@@ -109,6 +109,7 @@ public final class HologramSulfurLineSmokeClientProbe {
     private long closeSequence = -1;
 
     public static void install() {
+        HologramGuidanceNativeClientProbe.install();
         if (!Boolean.getBoolean("gtmb.hologram.sulfurLineClient")) return;
         FMLCommonHandler.instance()
             .bus()

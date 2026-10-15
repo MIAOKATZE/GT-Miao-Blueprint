@@ -61,6 +61,8 @@ public final class HologramScreen extends GuiScreen {
     private boolean aePreviewTransition, awaitingAePreview;
     private boolean networkDrawer;
     private int networkGroupIndex, networkGroupOffset;
+    private boolean networkRebindSelected;
+    private final HologramNetworkBindingNavigation networkBindingNavigation = new HologramNetworkBindingNavigation();
     private boolean compactControls, boxSelecting, moveHandles = true, promptDrawer, versionsDrawer;
     private int boxStart = -1, promptScope, versionsOffset;
     private boolean retainNbt = true, retainCovers = true;
@@ -109,6 +111,7 @@ public final class HologramScreen extends GuiScreen {
     private NBTTagCompound capturedRenderSmokeAction;
     private List<String> tooltip;
     private String lastConfirmationTitle = "", lastConfirmationAction = "";
+    private int[] lastConfirmationBounds = new int[0];
     private String lastCacheReviewSummary = "";
     private boolean lastEmptyCacheReview;
     private NBTTagCompound reviewedCacheQuote;
@@ -200,6 +203,7 @@ public final class HologramScreen extends GuiScreen {
     HologramScreen(HologramState state) {
         this.state = state;
         networkDrawer = state.data.getBoolean("networkBindingRequested");
+        revealPendingNetworkGroup();
         retainNbt = !state.data.hasKey("blueprintRetainNbt") || state.data.getBoolean("blueprintRetainNbt");
         retainCovers = !state.data.hasKey("blueprintRetainCovers") || state.data.getBoolean("blueprintRetainCovers");
         libraryDrawer = state.data.getBoolean("presetBrowseForPlacement") || state.data.getBoolean("blueprintPreview");
@@ -232,6 +236,11 @@ public final class HologramScreen extends GuiScreen {
     }
 
     void updateState(HologramState next) {
+        boolean wasNetworkDrawer = networkDrawer;
+        String previousNetworkGroup = networkGroupIndex >= 0 && networkGroupIndex < networkGroups().tagCount()
+            ? networkGroups().getCompoundTagAt(networkGroupIndex)
+                .getString("id")
+            : "";
         boolean libraryHandoff = acceptsLibraryNavigation(next);
         boolean waitingLibraryNavigation = libraryNavigation != null
             && libraryNavigation.source(state, mc.theWorld, publicLibrary)
@@ -308,6 +317,17 @@ public final class HologramScreen extends GuiScreen {
                 HologramDeidentificationMemory.source(next.data),
                 Math.max(previousDeidentificationChoice, HologramDeidentificationMemory.minimum(next.data)));
         networkDrawer = next.data.getBoolean("networkBindingRequested");
+        boolean bindingWasPending = networkBindingNavigation.pending();
+        int nextNetworkGroup = networkBindingNavigation.observe(next.data, previousNetworkGroup);
+        if (bindingWasPending && !networkBindingNavigation.pending()) networkRebindSelected = false;
+        if (networkDrawer && (!wasNetworkDrawer || draftSourceChanged)) revealPendingNetworkGroup();
+        else if (nextNetworkGroup >= 0) {
+            networkGroupIndex = nextNetworkGroup;
+            networkGroupOffset = nextNetworkGroup / 5 * 5;
+            networkRebindSelected = false;
+            loadNetworkHintField();
+        }
+        if (!networkDrawer) networkRebindSelected = false;
         if (areaImporting()) {
             editQueue.clear();
             queuedDispatchSequence = -1;
@@ -934,8 +954,8 @@ public final class HologramScreen extends GuiScreen {
                     : constructionScopeHint())
                 : guidance;
             if (!libraryDrawer && !confirmation
-                && state.data.getBoolean("virtual")
-                && !state.data.getBoolean("virtualPlacement"))
+                && HologramGuidance.authorWorkspace(state.data)
+                && state.data.getBoolean("virtual"))
                 footerGuide = initialEditHint ? "可微调蓝图结构；点击、选格或修改后前往蓝图设置" : "结构调整完成后，前往蓝图设置处理并保存";
             text(footerGuide, 35, 306, viewportWidth - 4, 0x8bdddf);
             if (mx >= 35 && mx < viewportX + viewportWidth && my >= 304 && my < 317) {
@@ -1645,6 +1665,7 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private int contextualAccent(int id) {
+        if (id == 141 && libraryDrawer) return selectedPresetExists() ? 0x80efaa : 0;
         if (id == 231 && processingFlow != null && processingFlow.optional()) return 0x80efaa;
         if (!state.data.getBoolean("virtual")) {
             boolean configured = basicConfigured || state.data.getBoolean("presetActive");
@@ -1656,7 +1677,7 @@ public final class HologramScreen extends GuiScreen {
         if (state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement")) {
             if ((id == 149 || id == 130) && !libraryDrawer && !initialEditHint) return 0x80efaa;
             if (id == 148 && libraryDrawer && savedEditHint && !structureVisited) return 0x68dded;
-            if (id == 220 && !processingReady()) return 0x80efaa;
+            if (id == 220 && HologramGuidance.authorWorkspace(state.data) && !processingReady()) return 0x80efaa;
             if ((id == 140 || id == 221) && libraryDrawer
                 && processingReady()
                 && state.data.getBoolean("blueprintDirty")) return 0x80efaa;
@@ -1678,6 +1699,12 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private void drawBlueprintWorkbench(int mx, int my) {
+        if (!HologramGuidance.authorWorkspace(state.data)) {
+            drawRect(35, 239, 442, 259, 0xf0172f36);
+            text(selectedPresetExists() ? "已保存蓝图 · 点击绿色“放置所选蓝图”进入世界定位" : "从右侧列表选择已保存蓝图", 41, 244, 395, 0xb9d5d4);
+            button(223, 41, 282, 120, 17, "旋转查看 ↻", true, mx, my);
+            return;
+        }
         drawRect(35, 219, 442, 259, 0xf0172f36);
         text(
             blueprintSaveState() + " · "
@@ -1998,6 +2025,7 @@ public final class HologramScreen extends GuiScreen {
 
     private boolean activateProcessing(int id) {
         if (id == 220) {
+            if (!HologramGuidance.authorWorkspace(state.data)) return true;
             NBTTagCompound policy = state.data.hasKey("processingPolicy")
                 ? state.data.getCompoundTag("processingPolicy")
                 : processingState().getCompoundTag("policy");
@@ -3071,6 +3099,14 @@ public final class HologramScreen extends GuiScreen {
                 : "");
     }
 
+    private void revealPendingNetworkGroup() {
+        int pending = HologramNetworkBindingNavigation.firstPending(state.data);
+        networkGroupIndex = pending >= 0 ? pending : 0;
+        networkGroupOffset = networkGroupIndex / 5 * 5;
+        networkRebindSelected = false;
+        loadNetworkHintField();
+    }
+
     private void drawNetworkBindings(int mx, int my) {
         controls.clear();
         tooltip = null;
@@ -3079,7 +3115,11 @@ public final class HologramScreen extends GuiScreen {
             .getBoolean("terminalBinding");
         text(terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原网络", 50, 64, 570, 0xffe59b);
         text(
-            terminalBinding ? "逐组选择已绑定目标网络的量子终端；全部就绪才可放置。" : "自用保留原绑定，无需终端或重新绑定；原存档、原网络位置与维度仍需可访问。",
+            !terminalBinding ? "自用保留原绑定，无需终端或重新绑定；原存档、原网络位置与维度仍需可访问。"
+                : pendingSequence >= 0 ? "正在绑定，请等待服务端确认；成功后自动选中下一个待绑定类群。"
+                    : HologramPlacementConfirmation.networksReady(state.data)
+                        ? "步骤 3/3 · 全部类群已就绪，点击绿色“确认全部类群”；也可选择已绑类群改绑。"
+                        : "步骤 1/3 · 选择左侧待绑定类群 → 步骤 2/3 · 点击右侧绿色量子终端；成功后自动下一组。",
             50,
             81,
             570,
@@ -3169,10 +3209,14 @@ public final class HologramScreen extends GuiScreen {
                     .getString("id"));
             action.setString("hint", networkHintField.getText());
             send("editBlueprintNetworkHint", action, true);
-        } else if (id >= 60000 && id < 61000) {
+        } else if (id >= 60000 && id < 61000 && id - 60000 < networkGroups().tagCount()) {
             networkGroupIndex = id - 60000;
+            networkRebindSelected = networkGroups().getCompoundTagAt(networkGroupIndex)
+                .getBoolean("bound");
+            networkBindingNavigation.cancel();
             loadNetworkHintField();
         } else if (id >= 61000 && id < 61036 && networkGroupIndex < networkGroups().tagCount()) {
+            if (pendingSequence >= 0 || networkBindingNavigation.pending()) return;
             if (!networkGroups().getCompoundTagAt(networkGroupIndex)
                 .getBoolean("terminalBinding")) return;
             NBTTagCompound action = new NBTTagCompound();
@@ -3181,6 +3225,12 @@ public final class HologramScreen extends GuiScreen {
                 networkGroups().getCompoundTagAt(networkGroupIndex)
                     .getString("id"));
             action.setInteger("slot", id - 61000);
+            networkBindingNavigation.begin(
+                state.data,
+                sequence + 1,
+                action.getString("group"),
+                networkGroups().getCompoundTagAt(networkGroupIndex)
+                    .getBoolean("bound"));
             send("bindBlueprintNetwork", action, true);
         }
     }
@@ -3494,16 +3544,12 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private boolean selectedPresetExists() {
-        if (HologramLibraryClient.dedicated()) return !HologramLibraryClient.INSTANCE.selectedRow(publicLibrary)
-            .getString("id")
-            .isEmpty();
-        NBTTagList presets = state.data.getTagList("presets", 10);
-        for (int i = 0; i < presets.tagCount(); i++) if (state.data.getString("selectedPresetId")
-            .equals(
-                presets.getCompoundTagAt(i)
-                    .getString("id")))
-            return true;
-        return false;
+        boolean dedicated = HologramLibraryClient.dedicated();
+        return HologramGuidance.selectedSavedBlueprint(
+            state.data,
+            dedicated,
+            dedicated ? HologramLibraryClient.INSTANCE.selectedRow(publicLibrary)
+                .getString("id") : "");
     }
 
     private void revealSelectedPreset() {
@@ -3569,6 +3615,9 @@ public final class HologramScreen extends GuiScreen {
         result.setBoolean("hatchDrawer", hatchDrawer);
         result.setBoolean("drawer", drawer);
         result.setBoolean("confirmation", confirmation);
+        result.setIntArray("confirmationBounds", confirmation ? lastConfirmationBounds : new int[0]);
+        result.setBoolean("authorWorkspace", HologramGuidance.authorWorkspace(state.data));
+        result.setBoolean("selectedSavedBlueprint", selectedPresetExists());
         result.setString("cacheReviewSummary", lastCacheReviewSummary);
         result.setBoolean("emptyCacheReview", lastEmptyCacheReview);
         result.setBoolean(
@@ -3588,6 +3637,9 @@ public final class HologramScreen extends GuiScreen {
         result.setBoolean("roleDropdown", roleDropdown);
         result.setBoolean("networkDrawer", networkDrawer);
         result.setInteger("networkGroupIndex", networkGroupIndex);
+        result.setInteger("networkGroupOffset", networkGroupOffset);
+        result.setBoolean("pendingNetworkBinding", networkBindingNavigation.pending());
+        result.setInteger("nextNetworkGroup", HologramNetworkBindingNavigation.firstPending(state.data));
         result.setBoolean("networkGroupsReady", HologramPlacementConfirmation.networksReady(state.data));
         result.setTag(
             "networkBindings",
@@ -3622,6 +3674,8 @@ public final class HologramScreen extends GuiScreen {
             row.setInteger("w", control.w);
             row.setInteger("h", control.h);
             row.setBoolean("enabled", control.enabled);
+            row.setString("label", control.label);
+            row.setInteger("accent", control.accent);
             row.setIntArray(
                 "screenPoint",
                 new int[] { originX + Math.round((control.x + control.w / 2F) * scale),
@@ -4180,7 +4234,13 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private void drawConfirmation(int mx, int my) {
-        drawRect(40, 58, 376, 254, 0xff172f36);
+        lastConfirmationBounds = HologramPlacementConfirmation.modalBounds(state.data);
+        drawRect(
+            lastConfirmationBounds[0],
+            lastConfirmationBounds[1],
+            lastConfirmationBounds[2],
+            lastConfirmationBounds[3],
+            0xff172f36);
         boolean placement = placementReviewActive();
         NBTTagList cacheRows = HologramPlacementConfirmation.cacheResources(state.data);
         lastCacheReviewSummary = HologramPlacementConfirmation.cacheSummary(state.data);
@@ -4726,16 +4786,15 @@ public final class HologramScreen extends GuiScreen {
 
     private void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
         Control c = new Control(id, x, y, w, h, enabled);
-        if (compactControls) controls.add(
-            new Control(
-                id,
-                HologramScreenLayout.COMPACT_PANEL_X
-                    + Math.round((x - panelX) * HologramScreenLayout.CONTROL_WIDTH_SCALE),
-                y,
-                Math.round(w * HologramScreenLayout.CONTROL_WIDTH_SCALE),
-                h,
-                enabled));
-        else controls.add(c);
+        Control drawn = c;
+        if (compactControls) drawn = new Control(
+            id,
+            HologramScreenLayout.COMPACT_PANEL_X + Math.round((x - panelX) * HologramScreenLayout.CONTROL_WIDTH_SCALE),
+            y,
+            Math.round(w * HologramScreenLayout.CONTROL_WIDTH_SCALE),
+            h,
+            enabled);
+        controls.add(drawn);
         skin(enabled && c.contains(mx, my) ? "btn_pressed" : "btn", x, y, w, h);
         int accent = aeReview != null ? HologramGuidance.modalAccent(id, 181, 182)
             : !deletePresetId.isEmpty() ? HologramGuidance.modalAccent(id, 176, 177)
@@ -4743,8 +4802,15 @@ public final class HologramScreen extends GuiScreen {
                     : promptDrawer ? HologramGuidance.modalAccent(id, 158, 151)
                         : versionsDrawer ? HologramGuidance.modalAccent(id, 160, 151)
                             : resetReview ? HologramGuidance.modalAccent(id, 137, 136)
-                                : HologramGuidance.accent(id, state, selected, libraryDrawer, confirmation);
-        if (processingFlow != null) accent = HologramGuidance.modalAccent(id, 231, 234);
+                                : HologramGuidance
+                                    .accent(state, id, selected, libraryDrawer, confirmation, selectedPresetExists());
+        if (networkDrawer) accent = HologramNetworkBindingNavigation.accent(
+            id,
+            state.data,
+            networkGroupIndex,
+            pendingSequence >= 0 || networkBindingNavigation.pending(),
+            networkRebindSelected);
+        else if (processingFlow != null) accent = HologramGuidance.modalAccent(id, 231, 234);
         else if (confirmation && (id == 169 || id == 55)
             && HologramPlacementConfirmation.cacheResources(state.data)
                 .tagCount() > 0)
@@ -4758,6 +4824,8 @@ public final class HologramScreen extends GuiScreen {
         }
         if (id == 150 && state.data.getBoolean("sourceMissing")
             || id == 163 && selectedCell() != null && selectedCell().sourceMissing) accent = 0xff7272;
+        drawn.label = label;
+        drawn.accent = enabled ? accent : 0;
         if (enabled && accent != 0) {
             int border = 0xff000000 | accent;
             drawRect(x, y, x + w, y + 1, border);
@@ -5743,6 +5811,7 @@ public final class HologramScreen extends GuiScreen {
             return;
         }
         if (id == 196) {
+            revealPendingNetworkGroup();
             send("openNetworkBindings", new NBTTagCompound(), true);
             networkDrawer = true;
             return;
@@ -7818,6 +7887,8 @@ public final class HologramScreen extends GuiScreen {
 
         final int id, x, y, w, h;
         final boolean enabled;
+        String label = "";
+        int accent;
 
         Control(int id, int x, int y, int w, int h, boolean enabled) {
             this.id = id;
