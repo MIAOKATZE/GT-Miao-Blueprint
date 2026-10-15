@@ -5,9 +5,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
 
-import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -18,19 +16,15 @@ import net.minecraftforge.fluids.FluidStack;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 
-import appeng.api.AEApi;
 import appeng.api.config.Actionable;
 import appeng.api.networking.IGridConnection;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.security.PlayerSource;
-import appeng.api.parts.IPartHost;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
-import appeng.api.util.AEColor;
 import appeng.api.util.DimensionalCoord;
 import appeng.me.helpers.IGridProxyable;
-import appeng.parts.PartPlacement;
 import appeng.tile.networking.TileDenseEnergyCell;
 import appeng.tile.storage.TileDrive;
 import appeng.util.item.AEFluidStack;
@@ -57,20 +51,19 @@ public final class HologramSulfurLineSmokeNative {
 
     private HologramSulfurLineSmokeNative() {}
 
+    public static int[][] gatewayPositions(int x, int y, int z) {
+        return new int[][] { { x, y + 1, z + 3 }, { x + 2, y + 1, z + 3 }, { x + 1, y + 2, z + 3 },
+            { x + 5, y + 1, z + 3 }, { x + 7, y + 1, z + 3 }, { x + 10, y + 1, z + 3 }, { x + 12, y + 1, z + 3 } };
+    }
+
     public static Line create(WorldServer world, EntityPlayerMP actor, int x, int y, int z) throws Exception {
         isolated(world, actor);
         int[] bounds = { x, y, z, x + 13, y + 2, z + 4 };
         for (int px = bounds[0]; px <= bounds[3]; px++) {
             for (int pz = bounds[2]; pz <= bounds[5]; pz++) {
                 world.getChunkFromBlockCoords(px, pz);
-                for (int py = bounds[1]; py <= bounds[4]; py++) require(
-                    world.isAirBlock(px, py, pz) || px == x + 13 && py == y + 1
-                        && pz == z + 3
-                        && HologramNetworkBindings.NODE_TILE.equals(
-                            world.getTileEntity(px, py, pz)
-                                .getClass()
-                                .getName()),
-                    "fresh native line footprint or the actual sole quantum gateway required");
+                for (int py = bounds[1]; py <= bounds[4]; py++)
+                    require(world.isAirBlock(px, py, pz), "fresh native direct-node line footprint required");
             }
         }
         for (int stage = 0; stage < 3; stage++) {
@@ -133,14 +126,7 @@ public final class HologramSulfurLineSmokeNative {
                 bus.setSlotConfig(0, Materials.Sulfur.getDust(1));
             }
         }
-        ItemStack cable = AEApi.instance()
-            .definitions()
-            .parts()
-            .cableGlass()
-            .stack(AEColor.Transparent, 1);
-        for (int dx = 0; dx <= 12; dx++) placeCable(world, actor, cable, x + dx, y + 1, z + 3);
-        placeCable(world, actor, cable, x + 1, y + 2, z + 3);
-        // The drive, controller and AE cell are outside this captured footprint. Only the GTSWN gateway reaches them.
+        // Every native ME hatch receives its own directly adjacent quantum node; no AE cable is placed.
         return discover(world, actor, x, y, z);
     }
 
@@ -570,14 +556,24 @@ public final class HologramSulfurLineSmokeNative {
         /** Reads live native graph edges. A route which omits the gateway is always a fixture failure. */
         public NBTTagCompound topology() {
             NBTTagCompound result = new NBTTagCompound();
-            result.setIntArray("gateway", new int[] { x + 13, y + 1, z + 3 });
+            result.setIntArray("gateway", new int[] { x, y + 1, z + 3 });
             result.setIntArray("remoteController", new int[] { x - 16, y, z + 8 });
             result.setIntArray("remoteDrive", new int[] { x - 12, y, z + 11 });
             result.setIntArray("storageGateway", new int[] { x - 13, y, z + 11 });
             result.setIntArray("remoteAePower", new int[] { x - 17, y, z + 8 });
-            result.setInteger("remoteControllerDistance", 35);
+            result.setInteger("remoteControllerDistance", 22);
             result.setBoolean("localStorageOrAePowerPlaced", false);
             result.setBoolean("directFixtureHatchEuWrites", false);
+            int ordinaryCableHosts = 0;
+            for (int px = x; px <= x + 13; px++)
+                for (int py = y; py <= y + 2; py++) for (int pz = z; pz <= z + 4; pz++) {
+                    TileEntity tile = world.getTileEntity(px, py, pz);
+                    if (tile != null && tile.getClass()
+                        .getName()
+                        .equals("appeng.tile.networking.TileCableBus")) ordinaryCableHosts++;
+                }
+            require(ordinaryCableHosts == 0, "no ordinary AE cable host may exist in the production footprint");
+            result.setInteger("ordinaryAeCableHostCount", ordinaryCableHosts);
             try {
                 IGridNode start = sulfurBus.getProxy()
                     .getNode(),
@@ -586,8 +582,7 @@ public final class HologramSulfurLineSmokeNative {
                 require(start != null && destination != null, "live native graph nodes required");
                 Set<IGridNode> omitted = Collections.newSetFromMap(new IdentityHashMap<IGridNode, Boolean>());
                 NBTTagList nativeGateways = new NBTTagList(), bridge = new NBTTagList();
-                for (int[] point : new int[][] { { x + 13, y + 1, z + 3 }, { x + 3, y + 1, z + 4 },
-                    { x + 8, y + 1, z + 4 } }) {
+                for (int[] point : gatewayPositions(x, y, z)) {
                     TileEntity gateway = world.getTileEntity(point[0], point[1], point[2]);
                     if (gateway instanceof IGridProxyable) {
                         IGridNode gatewayNode = ((IGridProxyable) gateway).getProxy()
@@ -613,6 +608,14 @@ public final class HologramSulfurLineSmokeNative {
                 ArrayDeque<IGridNode> pending = new ArrayDeque<>();
                 visited.add(start);
                 pending.add(start);
+                for (int stage = 0; stage < 3; stage++) {
+                    IGridNode inputNode = inputs[stage].getProxy()
+                        .getNode(),
+                        outputNode = outputs[stage].getProxy()
+                            .getNode();
+                    if (visited.add(inputNode)) pending.add(inputNode);
+                    if (visited.add(outputNode)) pending.add(outputNode);
+                }
                 boolean bypass = false;
                 while (!pending.isEmpty()) {
                     IGridNode node = pending.remove();
@@ -720,64 +723,6 @@ public final class HologramSulfurLineSmokeNative {
         base.setFrontFacing(facing);
         base.markDirty();
         return base;
-    }
-
-    private static void placeCable(WorldServer world, EntityPlayerMP actor, ItemStack definition, int x, int y, int z) {
-        int slot = actor.inventory.currentItem;
-        ItemStack original = actor.inventory.mainInventory[slot];
-        try {
-            ItemStack cable = definition.copy();
-            actor.inventory.mainInventory[slot] = cable;
-            require(
-                PartPlacement.placeItemPart(cable, actor, world, x, y, z, ForgeDirection.UP),
-                "official AE cable placement");
-            IPartHost host = PartPlacement.getExistingHost(world.getTileEntity(x, y, z));
-            require(host != null && host.getPart(ForgeDirection.UNKNOWN) != null, "native placed AE cable host");
-        } finally {
-            actor.inventory.mainInventory[slot] = original;
-        }
-    }
-
-    private static <T extends TileEntity> T placeAE(WorldServer world, EntityPlayerMP actor, Block block, int x, int y,
-        int z, Class<T> type) {
-        require(world.setBlock(x, y, z, block, 0, 3), "registered native AE block placement");
-        TileEntity tile = world.getTileEntity(x, y, z);
-        if (tile == null) {
-            tile = block.createTileEntity(world, 0);
-            if (tile == null && block instanceof appeng.block.AEBaseTileBlock)
-                tile = ((appeng.block.AEBaseTileBlock) block).createNewTileEntity(world, 0);
-            require(type.isInstance(tile), "registered native AE factory");
-            world.setTileEntity(x, y, z, tile);
-        }
-        T result = cast(tile, type);
-        require(result.getWorldObj() == world && !result.isInvalid(), "actual native AE world tile");
-        ((IGridProxyable) result).getProxy()
-            .setOwner(actor);
-        result.markDirty();
-        return result;
-    }
-
-    private static ItemStack fluidCell() throws Exception {
-        // AE2FC is runtime optional to the compiler. Its finite multi-fluid 64k cell holds all five native fluids.
-        Object registered = Class.forName("com.glodblock.github.loader.ItemAndBlockHolder")
-            .getField("CELL64KM")
-            .get(null);
-        require(registered instanceof Item, "registered finite AE2FC multi-fluid 64k storage cell");
-        ItemStack result = new ItemStack((Item) registered, 1, 0);
-        require(
-            AEApi.instance()
-                .registries()
-                .cell()
-                .getCellInventory(result, null, appeng.api.storage.StorageChannel.FLUIDS) != null,
-            "registered native finite fluid cell handler");
-        return result;
-    }
-
-    private static Block registeredBlock(String className) {
-        for (Object value : Block.blockRegistry) if (value != null && value.getClass()
-            .getName()
-            .equals(className)) return (Block) value;
-        throw new IllegalStateException("Native sulfur line block unavailable: " + className);
     }
 
     private static BaseMetaTileEntity nativeBase(WorldServer world, int x, int y, int z) {

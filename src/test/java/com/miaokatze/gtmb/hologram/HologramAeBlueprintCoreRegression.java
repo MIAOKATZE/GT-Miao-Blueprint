@@ -762,6 +762,23 @@ public final class HologramAeBlueprintCoreRegression {
         NBTTagCompound future = (NBTTagCompound) raw.copy();
         future.setLong("futureMigrationState", 0L);
         quantumFieldBlocked(node, future, "futureMigrationState", "new unknown persistence fields remain blocked");
+        NBTTagCompound named = (NBTTagCompound) raw.copy();
+        named.setString("placerUUID", "cdf90139-63c0-4e89-905e-20833e0683a2");
+        named.setString("placerName", "SourceAuthor");
+        HologramAeBlueprint.Analysis cleanNames = HologramAeBlueprint.analyze(node, 0, named);
+        check(
+            !cleanNames.blocking && !cleanNames.payload()
+                .hasKey("placerUUID")
+                && !cleanNames.payload()
+                    .hasKey("placerName"),
+            "native attribution is typed and removed before current-player reconstruction");
+        named.setString("placerUUID", "malformed-owner");
+        quantumFieldBlocked(node, named, "placerUUID", "invalid source UUID stays blocked across canonical reanalysis");
+        named.setTag("placerUUID", new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        quantumFieldBlocked(node, named, "placerUUID", "compound assets cannot borrow the placer UUID schema");
+        named.setString("placerUUID", "");
+        named.setInteger("placerName", 7);
+        quantumFieldBlocked(node, named, "placerName", "wrong-type source names stay blocked");
     }
 
     private static void quantumFieldBlocked(Block node, NBTTagCompound raw, String path, String message)

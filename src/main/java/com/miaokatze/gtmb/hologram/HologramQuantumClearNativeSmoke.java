@@ -333,7 +333,11 @@ public final class HologramQuantumClearNativeSmoke {
         receipt.setTag("fakeActorChatComponents", actor.chatReceipt());
         receipt.setBoolean("passed", true);
         System.out.println(
-            "[GTMB-QUANTUM-CLEAR-NATIVE] FINAL PASS clear=paid-unbound-owned refund=exact self/share=own-terminal-rebound source=unchanged");
+            "[GTMB-QUANTUM-CLEAR-NATIVE] FINAL PASS clear=paid-unbound-owned refund=exact defaults="
+                + (receipt.getCompoundTag("defaultTerminalBinding")
+                    .getBoolean("defaultPlacementDeferred") ? "deferred-native-startup-denial"
+                        : "private-original/share-selected-terminal")
+                + " source=unchanged");
         return receipt;
     }
 
@@ -366,6 +370,30 @@ public final class HologramQuantumClearNativeSmoke {
                 "native terminal onItemUseFirst handles the recipient's real target controller");
         } finally {
             actor.inventory.currentItem = 0;
+        }
+        if (HologramGtswnQuantumAccess.modern() && (!terminal.hasTagCompound() || !terminal.getTagCompound()
+            .getBoolean("QT_Bound"))) {
+            require(
+                !HologramGtswnQuantumAccess.canAccess(
+                    actor,
+                    terminal,
+                    world,
+                    targetController.xCoord,
+                    targetController.yCoord,
+                    targetController.zCoord),
+                "modern native terminal startup denial remains a denial in the compatibility bridge");
+            require(actor.chat.size() > chatBefore, "native refusal is captured by the isolated fake actor chat sink");
+            NBTTagCompound deferred = new NBTTagCompound();
+            deferred.setBoolean("actualNativeTerminalUseFirst", true);
+            deferred.setBoolean("nativeAccessRejected", true);
+            deferred.setBoolean("defaultPlacementDeferred", true);
+            deferred.setBoolean("privateSharePlacementCovered", false);
+            deferred.setString(
+                "scope",
+                "native clear payment/owner/refund completed; fresh AE grid refused terminal access before bootstrap; private/share placement deferred to the real line after native ticks");
+            deferred.setInteger("nativeTerminalChatComponentsCaptured", actor.chat.size() - chatBefore);
+            deferred.setBoolean("passed", true);
+            return deferred;
         }
         require(
             terminal.hasTagCompound() && terminal.getTagCompound()
@@ -736,6 +764,18 @@ public final class HologramQuantumClearNativeSmoke {
 
     private static boolean owner(TileEntity tile, EntityPlayerMP actor) throws Exception {
         if (!(tile instanceof IGridProxyable)) return false;
+        if (HologramGtswnQuantumAccess.modern() && (!actor.getUniqueID()
+            .toString()
+            .equals(
+                tile.getClass()
+                    .getMethod("getPlacerUUID")
+                    .invoke(tile))
+            || !actor.getCommandSenderName()
+                .equals(
+                    tile.getClass()
+                        .getMethod("getPlacerName")
+                        .invoke(tile))))
+            return false;
         appeng.me.helpers.AENetworkProxy proxy = ((IGridProxyable) tile).getProxy();
         appeng.api.networking.IGridNode grid = proxy.getNode();
         if (grid != null) return grid.getPlayerID() == appeng.core.worlddata.WorldData.instance()

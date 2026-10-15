@@ -73,6 +73,12 @@ final class HologramNetworkBindings {
                     NODE_ANCHOR[i],
                     type.getField(new String[] { "dim", "ax", "ay", "az" }[i])
                         .getInt(entry));
+                if (HologramGtswnQuantumAccess.modern()) {
+                    Field cursor = type.getDeclaredField("lastAppliedMigration");
+                    if (cursor.getType() != long.class) throw new NoSuchFieldException("incorporation cursor changed");
+                    cursor.setAccessible(true);
+                    anchor.setLong("lastAppliedMigration", cursor.getLong(entry));
+                }
                 tag.setTag(CAPTURE_ANCHOR, anchor);
                 captureOriginal(tile.getWorldObj(), tag, anchor);
                 tag.setString(ROLE, "join");
@@ -90,6 +96,23 @@ final class HologramNetworkBindings {
         NBTTagCompound original = new NBTTagCompound();
         original.setString("world", HologramQuantumWorldIdentity.get(world));
         for (String key : NODE_ANCHOR) original.setInteger(key, anchor.getInteger(key));
+        if (HologramGtswnQuantumAccess.modern()) {
+            if (!anchor.hasKey("lastAppliedMigration", 4) || anchor.getLong("lastAppliedMigration") < 0L)
+                throw new IOException("原量子网络迁移游标不可核验，请重新采集");
+            HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess
+                .follow(world, coordinates(anchor, NODE_ANCHOR), anchor.getLong("lastAppliedMigration"));
+            for (int i = 0; i < NODE_ANCHOR.length; i++) original.setInteger(NODE_ANCHOR[i], migrated.anchor[i]);
+            WorldServer target = DimensionManager.getWorld(migrated.anchor[0]);
+            TileEntity controller = target != null
+                && target.blockExists(migrated.anchor[1], migrated.anchor[2], migrated.anchor[3])
+                    ? target.getTileEntity(migrated.anchor[1], migrated.anchor[2], migrated.anchor[3])
+                    : null;
+            original.setInteger("version", 2);
+            original.setLong("migrationCursor", migrated.cursor);
+            original.setString(
+                "controllerIdentity",
+                controller instanceof TileController ? HologramGtswnQuantumAccess.controllerIdentity(controller) : "");
+        }
         tag.setTag(ORIGINAL, original);
     }
 
@@ -100,8 +123,13 @@ final class HologramNetworkBindings {
         if (!payload.hasKey(ORIGINAL)) return;
         if (!payload.hasKey(ORIGINAL, 10)) throw new IOException("量子原网络描述类型无效");
         NBTTagCompound original = payload.getCompoundTag(ORIGINAL);
-        if (original.func_150296_c()
-            .size() != 5 || !original.hasKey("world", 8)) throw new IOException("量子原网络描述字段无效");
+        int fields = original.func_150296_c()
+            .size();
+        if (!original.hasKey("world", 8) || (fields != 5 && fields != 8)) throw new IOException("量子原网络描述字段无效");
+        if (fields == 8 && (!original.hasKey("version", 3) || original.getInteger("version") != 2
+            || !original.hasKey("migrationCursor", 4)
+            || original.getLong("migrationCursor") < 0L
+            || !validOwnerField(original, "controllerIdentity", true))) throw new IOException("量子原网络世代或迁移描述无效");
         try {
             if (!java.util.UUID.fromString(original.getString("world"))
                 .toString()
@@ -122,9 +150,97 @@ final class HologramNetworkBindings {
         if (!HologramQuantumWorldIdentity.get(player.worldObj)
             .equals(original.getString("world"))) throw new IOException("私用蓝图的原量子网络属于其他存档，无法使用；请重新按分享流程处理并绑定自己的终端");
         try {
-            return checkedAnchor(player, original, NODE_ANCHOR);
+            NBTTagCompound target = original;
+            if (HologramGtswnQuantumAccess.modern()) {
+                if (!original.hasKey("version", 3) || original.getString("controllerIdentity")
+                    .isEmpty()) throw new IOException("原网络世代信息不可核验，请加载原控制器后重新采集；不能推断旧坐标上的新网络");
+                HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess
+                    .follow(player.worldObj, coordinates(original, NODE_ANCHOR), original.getLong("migrationCursor"));
+                target = (NBTTagCompound) original.copy();
+                for (int i = 0; i < NODE_ANCHOR.length; i++) target.setInteger(NODE_ANCHOR[i], migrated.anchor[i]);
+                if (java.util.Arrays.equals(coordinates(original, NODE_ANCHOR), migrated.anchor)) {
+                    WorldServer sourceWorld = DimensionManager.getWorld(migrated.anchor[0]);
+                    TileEntity source = sourceWorld != null
+                        && sourceWorld.blockExists(migrated.anchor[1], migrated.anchor[2], migrated.anchor[3])
+                            ? sourceWorld.getTileEntity(migrated.anchor[1], migrated.anchor[2], migrated.anchor[3])
+                            : null;
+                    if (source == null || !original.getString("controllerIdentity")
+                        .equals(HologramGtswnQuantumAccess.controllerIdentity(source)))
+                        throw new IOException("原量子控制器已更换，不能把私用蓝图绑定到旧坐标上的其他网络");
+                }
+            }
+            NBTTagCompound bound = checkedAnchor(player, target, NODE_ANCHOR);
+            if (HologramGtswnQuantumAccess.modern()) verifyPrivateCredential(player, bound);
+            return bound;
         } catch (IOException unavailable) {
             throw new IOException("私用蓝图的原量子网络不可用，无法使用：" + unavailable.getMessage(), unavailable);
+        }
+    }
+
+    static boolean validOwnerField(NBTTagCompound data, String key, boolean uuid) {
+        if (!data.hasKey(key, 8)) return false;
+        String value = data.getString(key);
+        if (value.isEmpty()) return true;
+        if (!uuid) return value.length() <= 64 && value.chars()
+            .noneMatch(Character::isISOControl);
+        try {
+            return java.util.UUID.fromString(value)
+                .toString()
+                .equals(value);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
+    private static int[] coordinates(NBTTagCompound tag, String[] fields) {
+        int[] result = new int[fields.length];
+        for (int i = 0; i < fields.length; i++) result[i] = tag.getInteger(fields[i]);
+        return result;
+    }
+
+    private static void verifyPrivateCredential(EntityPlayerMP player, NBTTagCompound bound) throws IOException {
+        int[] target = coordinates(bound, TERMINAL_ANCHOR);
+        WorldServer world = DimensionManager.getWorld(target[0]);
+        if (!HologramGtswnQuantumAccess.securityRequired(world, target[1], target[2], target[3])) return;
+        for (ItemStack stack : player.inventory.mainInventory) {
+            if (!terminal(stack)) continue;
+            try {
+                NBTTagCompound candidate = anchor(player, stack);
+                if (sameNetwork(candidate, bound)
+                    && HologramGtswnQuantumAccess.canAccess(player, stack, world, target[1], target[2], target[3]))
+                    return;
+            } catch (HologramGtswnQuantumAccess.Failure brokenAuthority) {
+                throw brokenAuthority;
+            } catch (IOException unavailableCredential) {
+                // Another actual backpack terminal may carry the correct original-network credential.
+            }
+        }
+        throw new IOException("请在背包携带同一原网络经安全终端配对的量子终端，并确认当前玩家拥有 AE 建造权限；安全站离线或网络启动时请稍后重试");
+    }
+
+    private static boolean sameNetwork(NBTTagCompound left, NBTTagCompound right) throws IOException {
+        if (java.util.Arrays.equals(coordinates(left, TERMINAL_ANCHOR), coordinates(right, TERMINAL_ANCHOR)))
+            return true;
+        WorldServer a = DimensionManager.getWorld(left.getInteger(TERMINAL_ANCHOR[0]));
+        WorldServer b = DimensionManager.getWorld(right.getInteger(TERMINAL_ANCHOR[0]));
+        TileEntity first = a == null ? null
+            : a.getTileEntity(
+                left.getInteger(TERMINAL_ANCHOR[1]),
+                left.getInteger(TERMINAL_ANCHOR[2]),
+                left.getInteger(TERMINAL_ANCHOR[3]));
+        TileEntity second = b == null ? null
+            : b.getTileEntity(
+                right.getInteger(TERMINAL_ANCHOR[1]),
+                right.getInteger(TERMINAL_ANCHOR[2]),
+                right.getInteger(TERMINAL_ANCHOR[3]));
+        if (!(first instanceof TileController) || !(second instanceof TileController)) return false;
+        try {
+            return ((IGridProxyable) first).getProxy()
+                .getGrid()
+                == ((IGridProxyable) second).getProxy()
+                    .getGrid();
+        } catch (Exception unavailable) {
+            throw new IOException("无法确认终端是否属于原量子网络，请等待网络就绪", unavailable);
         }
     }
 
@@ -209,6 +325,8 @@ final class HologramNetworkBindings {
                 for (String key : NODE_ANCHOR) tag.removeTag(key);
                 tag.removeTag("proxy");
                 tag.removeTag("linked");
+                for (String key : new String[] { "placerUUID", "placerName" })
+                    if (validOwnerField(tag, key, "placerUUID".equals(key))) tag.removeTag(key);
                 // The native migration journal belongs to a world, never to the portable local group.
                 // Leave malformed values intact for the AE analyzer's durable unresolved-data blocker.
                 if (HologramAeBlueprint.validQuantumMigrationCursor(tag)) {
@@ -318,6 +436,12 @@ final class HologramNetworkBindings {
             Selection selection = selected.get(group);
             if (selection == null) throw new IOException("量子类群 " + group + " 尚未绑定，请选择背包中已绑定真实网络的量子终端");
             ItemStack live = player.inventory.mainInventory[selection.slot];
+            if (HologramGtswnQuantumAccess.modern() && terminal(live) && terminal(selection.stack)) {
+                validateTerminalFields(live);
+                validateTerminalFields(selection.stack);
+                HologramGtswnQuantumAccess.synchronize(player, live);
+                HologramGtswnQuantumAccess.synchronize(player, selection.stack);
+            }
             if (live == null || !live.isItemEqual(selection.stack)
                 || !ItemStack.areItemStackTagsEqual(live, selection.stack))
                 throw new IOException("所选背包槽位中的量子终端已变化，请重新为该类群选择终端");
@@ -358,19 +482,53 @@ final class HologramNetworkBindings {
                 || node(Block.getBlockFromItem(stack.getItem())));
     }
 
+    private static boolean terminal(ItemStack stack) {
+        return stack != null && stack.getItem() != null
+            && TERMINAL.equals(
+                stack.getItem()
+                    .getClass()
+                    .getName());
+    }
+
+    static void validateTerminalFields(ItemStack stack) throws IOException {
+        NBTTagCompound tag = stack.getTagCompound();
+        if (tag == null) return;
+        for (String key : new String[] { "QT_OwnerUUID", "QT_OwnerName", "QT_EncryptionKey" }) {
+            if (!tag.hasKey(key)) continue;
+            if (!tag.hasKey(key, 8) || ("QT_OwnerUUID".equals(key) && !validOwnerField(tag, key, true)))
+                throw new IOException("量子终端记名或原生配对字段类型无效，请重新取得有效终端");
+        }
+        if (tag.hasKey("QT_LastAppliedMigration")
+            && (!tag.hasKey("QT_LastAppliedMigration", 4) || tag.getLong("QT_LastAppliedMigration") < 0L))
+            throw new IOException("量子终端迁移游标无效，请核对原生终端");
+        if (tag.hasKey("QT_Bound") && !tag.hasKey("QT_Bound", 1)) throw new IOException("量子终端绑定标记类型无效");
+        if (tag.getBoolean("QT_Bound")) anchorKey(tag, TERMINAL_ANCHOR);
+    }
+
     /** A real node item may carry the terminal coordinate attributes, or the native node anchor schema. */
     private static NBTTagCompound anchor(EntityPlayerMP player, ItemStack stack) throws IOException {
         if (!carrier(stack) || stack.stackSize <= 0 || !stack.hasTagCompound())
             throw new IOException("请选择携带有效网络坐标的真实量子终端或量子节点物品");
+        boolean terminal = terminal(stack);
+        if (HologramGtswnQuantumAccess.modern()) {
+            if (!terminal) throw new IOException("记名量子网络只能使用原生量子终端验权，量子节点物品不能作为配对凭证");
+            validateTerminalFields(stack);
+            if (!HologramGtswnQuantumAccess.validate(player, stack))
+                throw new IOException("原生量子安全校验拒绝：终端须与安全网络原生配对，且当前玩家拥有 AE 建造权限；拆除安全站不会解除锁定，网络启动时请稍后重试");
+        }
         NBTTagCompound tag = stack.getTagCompound();
-        boolean terminal = TERMINAL.equals(
-            stack.getItem()
-                .getClass()
-                .getName());
         String[] fields = !terminal && tag.hasKey("anchorDim", 3) ? NODE_ANCHOR : TERMINAL_ANCHOR;
         if (terminal && (!tag.hasKey("QT_Bound", 1) || !tag.getBoolean("QT_Bound")))
             throw new IOException("该量子终端尚未绑定网络，请先在世界中绑定自己的量子网络控制器");
-        return checkedAnchor(player, tag, fields);
+        NBTTagCompound bound = checkedAnchor(player, tag, fields);
+        if (HologramGtswnQuantumAccess.modern() && !HologramGtswnQuantumAccess.canAccess(
+            player,
+            stack,
+            DimensionManager.getWorld(bound.getInteger(TERMINAL_ANCHOR[0])),
+            bound.getInteger(TERMINAL_ANCHOR[1]),
+            bound.getInteger(TERMINAL_ANCHOR[2]),
+            bound.getInteger(TERMINAL_ANCHOR[3]))) throw new IOException("原生量子网络拒绝该终端访问；请检查安全终端配对与当前玩家建造权限");
+        return bound;
     }
 
     private static NBTTagCompound checkedAnchor(EntityPlayerMP player, NBTTagCompound tag, String[] fields)
@@ -389,6 +547,8 @@ final class HologramNetworkBindings {
                 .invoke(null, world);
             if (!(Boolean) registry.getMethod("isQuantized", int.class, int.class, int.class)
                 .invoke(instance, x, y, z)) throw new IOException("锚点控制器尚未量子化，请先建立量子网络再绑定终端");
+            if (!HologramGtswnQuantumAccess.currentController(world, x, y, z))
+                throw new IOException("量子控制器世代已变化，不能沿用被替换控制器的登记状态");
             ISecurityGrid security = ((IGridProxyable) tile).getProxy()
                 .getGrid()
                 .getCache(ISecurityGrid.class);
@@ -410,6 +570,7 @@ final class HologramNetworkBindings {
     static NBTTagCompound snapshot(HologramPresets.Preset preset, EntityPlayerMP player, State bindings)
         throws IOException {
         NBTTagCompound result = new NBTTagCompound();
+        result.setBoolean("nativeAuthority", HologramGtswnQuantumAccess.modern());
         Map<String, NBTTagCompound> groups = new LinkedHashMap<>();
         if (preset != null) for (HologramPresets.Cell cell : preset.cells) {
             if (cell.excluded) continue;
@@ -491,6 +652,18 @@ final class HologramNetworkBindings {
                     .invoke(actual) != bound.getInteger(TERMINAL_ANCHOR[i])) return false;
                 appeng.api.networking.IGridNode node = ((IGridProxyable) actual).getProxy()
                     .getNode();
+                if (HologramGtswnQuantumAccess.modern() && (!player.getUniqueID()
+                    .toString()
+                    .equals(
+                        actual.getClass()
+                            .getMethod("getPlacerUUID")
+                            .invoke(actual))
+                    || !player.getCommandSenderName()
+                        .equals(
+                            actual.getClass()
+                                .getMethod("getPlacerName")
+                                .invoke(actual))))
+                    return false;
                 return node != null && node.getPlayerID() == appeng.core.worlddata.WorldData.instance()
                     .playerData()
                     .getPlayerID(player.getGameProfile());

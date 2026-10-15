@@ -1847,7 +1847,7 @@ public final class HologramScreen extends GuiScreen {
                 149,
                 588,
                 22,
-                ("rebind".equals(policy.getString("quantum")) ? "✓ " : "") + "分享：去除源网络锚定，逐类群选择自己的终端重新绑定",
+                ("rebind".equals(policy.getString("quantum")) ? "✓ " : "") + "分享：去除源网络锚定，逐类群选择已绑定目标网络且你有权使用的量子终端",
                 true,
                 mx,
                 my);
@@ -3080,9 +3080,9 @@ public final class HologramScreen extends GuiScreen {
         drawRect(35, 50, 645, 299, 0xfc172f36);
         boolean terminalBinding = state.data.getCompoundTag("networkBindings")
             .getBoolean("terminalBinding");
-        text(terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原绑定", 50, 64, 570, 0xffe59b);
+        text(terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原网络", 50, 64, 570, 0xffe59b);
         text(
-            terminalBinding ? "逐组点击名称，再选择背包中自己的量子终端；所有类群完成后才可确认放置。" : "自用蓝图保留原网络；换存档、原锚点位置或维度不符时无法使用，请按原因核对。",
+            terminalBinding ? "逐组选择已绑定目标网络、且你有权使用的量子终端；全部就绪才可放置。" : "保留原锚点与维度，系统按原网络的安全要求验证；换存档无法使用，请按原因核对。",
             50,
             81,
             570,
@@ -3106,7 +3106,16 @@ public final class HologramScreen extends GuiScreen {
             .getTagList("inventory", 10);
         boolean selectedTerminalBinding = groups.tagCount() > 0 && groups.getCompoundTagAt(networkGroupIndex)
             .getBoolean("terminalBinding");
-        text(selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : "原网络绑定 · 无需选择终端", 405, 101, 216, 0xa9d6cf);
+        boolean privateSecurityCheck = groups.tagCount() > 0 && !selectedTerminalBinding
+            && networkSecurityReason(
+                groups.getCompoundTagAt(networkGroupIndex)
+                    .getString("reason"));
+        text(
+            selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : privateSecurityCheck ? "原网安全校验 · 自动查验背包" : "保留原网络 · 此处不改绑",
+            405,
+            101,
+            216,
+            0xa9d6cf);
         for (int slot = 0; slot < 36; slot++) {
             int x = 405 + (slot % 9) * 23;
             int y = slot < 9 ? 194 : 121 + ((slot - 9) / 9) * 23;
@@ -3122,8 +3131,17 @@ public final class HologramScreen extends GuiScreen {
                     tooltip = new ArrayList<>();
                     tooltip.add(row.getString("name"));
                     tooltip.add(
-                        !selectedTerminalBinding ? "本类群保留原绑定，请核对原网络可用性"
+                        !selectedTerminalBinding ? "本类群保留原锚点，此处不能选择其他网络重新绑定"
                             : available ? "点击绑定所选网络类群" : HologramUiText.reason(row.getString("reason")));
+                    if (selectedTerminalBinding && networkSecurityReason(row.getString("reason"))
+                        || privateSecurityCheck) {
+                        tooltip.addAll(
+                            fontRendererObj.listFormattedStringToWidth(
+                                selectedTerminalBinding ? "请使用已在对应网络的 AE 原生安全终端完成配对、且你有 AE 建造权限的量子终端。"
+                                    : "已设安全配对的原网络：携带同网配对终端，系统自动验权；终端必须仍指向原网络。",
+                                290));
+                        tooltip.addAll(fontRendererObj.listFormattedStringToWidth("终端记名仅作描述；以原生安全配对和当前玩家权限为准。", 290));
+                    }
                     if (!available) tooltip.add("技术诊断：" + row.getString("reason"));
                 }
             }
@@ -3132,8 +3150,24 @@ public final class HologramScreen extends GuiScreen {
             if (networkHintField != null) networkHintField.drawTextBox();
             NBTTagCompound selectedGroup = groups.getCompoundTagAt(networkGroupIndex);
             text(selectedGroup.getString("name") + " · " + selectedGroup.getString("hint"), 50, 242, 570, 0xffe59b);
-            if (!selectedGroup.getBoolean("bound"))
+            if (!selectedGroup.getBoolean("bound")) {
                 text(HologramUiText.reason(selectedGroup.getString("reason")), 50, 257, 570, 0xff9292);
+                if (mx >= 50 && mx < 620 && my >= 253 && my < 269) {
+                    tooltip = new ArrayList<>(
+                        fontRendererObj
+                            .listFormattedStringToWidth(HologramUiText.reason(selectedGroup.getString("reason")), 380));
+                    if (networkSecurityReason(selectedGroup.getString("reason"))) {
+                        tooltip.addAll(
+                            fontRendererObj.listFormattedStringToWidth(
+                                selectedTerminalBinding ? "请完成对应网络的 AE 原生安全终端配对，并确认你有 AE 建造权限。"
+                                    : "已设安全配对的原网络：携带同网配对终端，系统自动验权；保留原网络，不改绑到其他网络。",
+                                380));
+                        tooltip.addAll(
+                            fontRendererObj
+                                .listFormattedStringToWidth("安全网络配对后，拆除安全站也不会解除安全锁定；请恢复可用的配对与权限。网络启动中时请稍后重试。", 380));
+                    }
+                }
+            }
         } else text("此蓝图没有需要重新绑定的量子网络组", 50, 242, 570, 0x94afb4);
         button(198, 50, 273, 95, 17, "上一组页", networkGroupOffset > 0, mx, my);
         button(199, 151, 273, 95, 17, "下一组页", networkGroupOffset + 5 < groups.tagCount(), mx, my);
@@ -3149,6 +3183,14 @@ public final class HologramScreen extends GuiScreen {
             pendingSequence < 0 && HologramPlacementConfirmation.networksReady(state.data),
             mx,
             my);
+    }
+
+    private static boolean networkSecurityReason(String reason) {
+        String lower = reason.toLowerCase(java.util.Locale.ROOT);
+        return reason.contains("安全") || reason.contains("配对")
+            || reason.contains("权限")
+            || lower.contains("security")
+            || lower.contains("permission");
     }
 
     private void activateNetworkBinding(int id) {

@@ -41,6 +41,6 @@ dependencies {
     if (providers.gradleProperty("hologramSulfurLineSmoke").isPresent()) {
         // Exact AE2FC version from the real GTNH RC-2 instance; finite native fluid cells are required by this fixture.
         runtimeOnlyNonPublishable("com.github.GTNewHorizons:AE2FluidCraft-Rework:1.5.113-gtnh:dev") { transitive = false }
-        runtimeOnlyNonPublishable(files("build/hologram-support/server/mods/gtswn-v1.8.66-dev.jar"))
+        runtimeOnlyNonPublishable(files("build/hologram-support/server/mods/gtswn-v1.8.67-dev.jar"))
     }
 }

@@ -23,6 +23,8 @@ from workbench_validation import verify_blueprint_pair
 STAGES = ['preset', 'identity', 'quantum', 'coordinates', 'nbt', 'hints']
 STOCK = ['sulfurRemaining', 'oxygenRemaining', 'waterRemaining', 'sulfurDioxide', 'sulfurTrioxide', 'acid']
 LABELS = ['source-self', 'target-self', 'source-share', 'target-share']
+GATEWAY_OFFSETS = [(0, 1, 3), (2, 1, 3), (1, 2, 3), (5, 1, 3), (7, 1, 3), (10, 1, 3), (12, 1, 3)]
+GTSWN_SHA256 = '6f377dc7be30d7ce3df712762a4851a54e1c0e981a09148e27a166ebc4c223ac'
 
 
 def json_file(path):
@@ -114,12 +116,13 @@ def validate_frames(run, client):
 def validate_topology(line, *, running):
     topology = line['topology']
     require(topology.get('nativeGraphObserved') and not topology['ordinaryBypassRoute']
-            and not topology['localStorageOrAePowerPlaced'] and not topology['directFixtureHatchEuWrites'],
+            and not topology['localStorageOrAePowerPlaced'] and not topology['directFixtureHatchEuWrites']
+            and topology['ordinaryAeCableHostCount'] == 0,
             'Actual native graph permits an ordinary bypass or local source')
     require(bool(topology['allInputsOnRemoteGrid']) == running, 'Actual input/storage grid identity contradicts phase')
     if running:
-        require(topology['productionGatewayCount'] == len(topology['nativeGateways']) == 3
-                and topology['localGridIdentity'] == topology['remoteGridIdentity'], 'Three real production gateways must reach remote grid')
+        require(topology['productionGatewayCount'] == len(topology['nativeGateways']) == 7
+                and topology['localGridIdentity'] == topology['remoteGridIdentity'], 'Seven direct production gateways must reach remote grid')
         controller = [line.get('dimension', 0)] + topology['remoteController']
         for gateway in topology['nativeGateways']:
             anchor = [gateway[key] for key in ['anchorDim', 'anchorX', 'anchorY', 'anchorZ']]
@@ -130,6 +133,13 @@ def validate_topology(line, *, running):
                     and matching[0]['to']['hostClass'] == 'appeng.tile.networking.TileController'
                     and matching[0]['from']['playerId'] == topology['remoteOwnerPlayerId'],
                     'Gateway has no actual UNKNOWN bridge edge to its own native controller/owner')
+            attached = [edge for edge in topology['actualGatewayEdges'] if edge['from']['position'][1:]
+                        == [gateway['x'], gateway['y'], gateway['z']] and edge['directional']]
+            require(len(attached) == 1 and attached[0]['to']['position'][1:] == [gateway['x'], gateway['y'], gateway['z'] - 1]
+                    and attached[0]['to']['hostClass'] in {'gregtech.common.tileentities.machines.MTEHatchInputME',
+                        'gregtech.common.tileentities.machines.MTEHatchInputBusME',
+                        'gregtech.common.tileentities.machines.outputme.MTEHatchOutputME'},
+                    'Production node is not directly adjacent to its one real ME hatch front')
     else:
         require(topology['productionGatewayCount'] == 0 and topology['localGridIdentity'] != topology['remoteGridIdentity'],
                 'Disconnected stop still has a real production gateway or remote grid route')
@@ -179,8 +189,8 @@ def validate_cycle(run):
     cut = receipt(run, f'sulfur-{label}-quantum-cut.nbt')
     stop = receipt(run, f'sulfur-{label}-quantum-stopped.nbt')
     restored = receipt(run, f'sulfur-{label}-quantum-restored.nbt')
-    require(len(cut['removedNativeTiles']) == 3 and len({(node['x'], node['y'], node['z'])
-            for node in cut['removedNativeTiles']}) == 3, 'Fault injection omitted a production gateway')
+    require(len(cut['removedNativeTiles']) == 7 and len({(node['x'], node['y'], node['z'])
+            for node in cut['removedNativeTiles']}) == 7, 'Fault injection omitted a production gateway')
     require(stop['gatewayPhysicallyAbsent'] and stop['consecutiveStableTicks'] >= 200
             and stop['stableStartTick'] - stop['cutTick'] >= 200
             and stop['worldTick'] - stop['stableStartTick'] >= 200
@@ -221,12 +231,16 @@ def validate_author(run, client, frames):
                 and before['actualLocalPolicy']['confirmedStages'] == chosen['actualLocalPolicy']['confirmedStages'] == STAGES[:stage]
                 and chosen['nativeMouseEvents'] > before['nativeMouseEvents'], 'A real stage choice/Next was bypassed or reordered')
     groups = frames['sulfur-quantum-groups-save-ack-frame']['actualSnapshot']['processing']['quantumGroups']
-    require(sum(len(group['cells']) for group in groups) == 3 and len(groups) == (1 if run['intent'] == 'self' else 2),
+    require(sum(len(group['cells']) for group in groups) == 7 and len(groups) == (1 if run['intent'] == 'self' else 2),
             'Server classification omitted or duplicated a physical gateway')
     if run['intent'] == 'share':
         require({group['name'] for group in groups} == {'前段供料', '后段供料'}, 'Actual Chinese group names were not retained')
+        named = {group['name']: group['cells'] for group in groups}
+        require(len(named['前段供料']) == 3 and len(named['后段供料']) == 4
+                and all(cell['x'] < 5 for cell in named['前段供料'])
+                and all(cell['x'] >= 5 for cell in named['后段供料']), 'Actual front/back grouping does not match the first reactor and later two reactors')
         actions = {item['action']: item for item in client['quantumGroupingInteractions']}
-        for action in ['native-T-selects-all-three', 'native-CtrlT-complement-clears-all',
+        for action in ['native-T-selects-all-seven', 'native-CtrlT-complement-clears-all',
             'native-preview-Ctrl-node-multiselect', 'native-unassigned-gates-save',
             'native-CtrlZ-restores-complete-grouping', 'native-CtrlY-restores-incomplete-gate']:
             require(action in actions, 'Missing real classification keyboard/selection evidence: ' + action)
@@ -248,7 +262,7 @@ def validate_author(run, client, frames):
             if tag.get('id') == 'gtswn.network_quantum_node':
                 nodes.append(tag)
             require('mStoredEnergy' not in tag, 'Portable blueprint granted source GT stored EU')
-    require(len(nodes) == 3, 'Actual native pair lacks the three captured quantum gateways')
+    require(len(nodes) == 7, 'Actual native pair lacks the seven captured directly attached quantum gateways')
     return dict(pair=pair, transfer=transfer, save_transactions=saved)
 
 
@@ -268,6 +282,7 @@ def validate_target(run, client, frames):
                 and run['final']['allTargetFootprintAir'] and not run['final']['targetRuntimeExpected']
                 and before['currentStock'] == after['currentStock'], 'Private original-world rejection consumed stock or placed free machinery')
         snapshot = frames['sulfur-recipient-preserved-anchor-blocked-frame']['actualSnapshot']
+        require(snapshot['networkBindings']['nativeAuthority'], 'Private review did not load the native GTSWN named authority')
         groups = snapshot['networkBindings']['groups']
         require(groups and all(not group['bound'] and not group['terminalBinding'] and '其他存档' in group['reason'] for group in groups),
                 'Private original anchor was silently rebound or lacked explicit foreign-world feedback')
@@ -289,6 +304,9 @@ def validate_target(run, client, frames):
             for a, b in zip(before[kind], after[kind]):
                 require(a['supplied'] > 0 and a['remaining'] == a['supplied'] and a['nativeDebited'] == 0
                         and b['remaining'] == 0 and b['nativeDebited'] == a['supplied'], 'Construction was not actually paid once')
+        for index in range(2):
+            require(frames[f'sulfur-recipient-quantum-binding-group-{index}-ack-frame']['actualSnapshot']['networkBindings']['nativeAuthority'],
+                    'Named group binding did not load the native GTSWN terminal authority')
         first = frames['sulfur-recipient-quantum-binding-group-0-ack-frame']['actualSnapshot']['networkBindings']['groups']
         second = frames['sulfur-recipient-quantum-binding-group-1-ack-frame']['actualSnapshot']['networkBindings']['groups']
         require(len(first) == len(second) == 2 and first[0]['bound'] and not first[1]['bound']
@@ -319,13 +337,15 @@ def validate_run(label, entry):
                      f'-Dgtmb.hologram.sulfurLineDimension={environment["sulfur_dimension"]}']:
             require(launch['arguments'].count(flag) == 1, 'Actual launch did not freeze a unique current phase/tendency/dimension')
         cp = launch['arguments'][launch['arguments'].index('-cp') + 1]
-        require('gtswn-v1.8.66-dev.jar' in cp and 'AE2FluidCraft-Rework-1.5.113-gtnh-dev.jar' in cp,
-                'Actual runtime lacks reviewed GTSWN 1.8.66/AE2FC 1.5.113')
+        require('gtswn-v1.8.67-dev.jar' in cp and 'AE2FluidCraft-Rework-1.5.113-gtnh-dev.jar' in cp,
+                'Actual runtime lacks reviewed GTSWN 1.8.67/AE2FC 1.5.113')
         dependencies = launch.get('reviewed_runtime_hashes', {})
         require(len(dependencies) == 2 and {Path(path).name for path in dependencies}
-                == {'gtswn-v1.8.66-dev.jar', 'AE2FluidCraft-Rework-1.5.113-gtnh-dev.jar'}, 'Reviewed native runtime SHA256 set is incomplete')
+                == {'gtswn-v1.8.67-dev.jar', 'AE2FluidCraft-Rework-1.5.113-gtnh-dev.jar'}, 'Reviewed native runtime SHA256 set is incomplete')
         for path, checksum in dependencies.items():
             require(sha(Path(path)) == checksum, 'Actual reviewed native runtime jar changed')
+            if Path(path).name == 'gtswn-v1.8.67-dev.jar':
+                require(checksum == GTSWN_SHA256, 'Actual GTSWN 1.8.67 bytes differ from the reviewed clean native candidate')
         descriptor = environment['roles'][role]
         require(descriptor['launch_sha256'] == sha(fixture / (role + '-launch.json')), 'Environment launch digest differs')
         for jar, checksum in descriptor['support_jars'].items():
@@ -364,12 +384,23 @@ def validate_run(label, entry):
     run['world'], run['world_files'] = world, files
     dim_world = world if run['dimension'] == 0 else world / ('DIM' + str(run['dimension']))
     bootstrap = receipt(run, 'sulfur-quantum-bootstrap-ready.nbt')
+    bank = receipt(run, 'sulfur-quantum-bootstrap-complete.nbt')['nativeBank']
+    require(bank['initialAE'] == 1000000 and not bank['nativeCellInfinite'] and bank['nativeCellCapacityAE'] >= 1000000
+            and not bank['ordinaryAeCablesPlaced'] and bank['nativeWapBooster']['Count'] == 4 and bank['wapRange'] >= 24,
+            'External native bank lacks its finite once-only AE supply, four physical boosters, or direct cell/WAP layout')
     cx, cy, cz = bootstrap['controller']
     storage = saved_tile(run, dim_world, cx + 3, cy, cz + 3)
     require(storage.get('id') == 'gtswn.network_quantum_node' and [storage[key] for key in ['anchorDim', 'anchorX', 'anchorY', 'anchorZ']]
-            == [run['dimension'], cx, cy, cz], 'Saved external drive has no real own-controller quantum gateway')
+            == [run['dimension'], cx, cy, cz] and storage.get('placerUUID') == run['actor']
+            and storage.get('placerName') == run['environment']['offline_fixture_username'],
+            'Saved external drive has no real own-controller quantum gateway/current native placer identity')
     drive = saved_tile(run, dim_world, cx + 4, cy, cz + 3)
     require(drive.get('id') == 'BlockDrive', 'External native drive is missing in saved actual world')
+    wap = saved_tile(run, dim_world, cx - 1, cy + 1, cz)
+    require(wap.get('id') == bank['nativeWap']['id'] and wap.get('inv') == bank['nativeWap']['inv']
+            and wap.get('inv', {}).get('item0') == bank['nativeWapBooster']
+            and wap.get('orientation_forward') == 'UP' and wap.get('orientation_up') == 'NORTH',
+            'Saved native WAP lacks its four physical boosters or direct DOWN connection into the finite AE cell')
     owner = (run['final']['constructionMeStockBefore']['nativeControllerOwner'] if phase == 'target' else
              receipt(run, 'sulfur-source-running.nbt')['nativeLine']['topology']['remoteOwnerPlayerId'])
     require(storage.get('proxy', {}).get('p') == drive.get('proxy', {}).get('p') == owner,
@@ -400,11 +431,24 @@ def validate_run(label, entry):
     else:
         origin = [64, 80, 64] if phase == 'source' else receipt(run, 'sulfur-target-ready.nbt')['targetOrigin']
         x, y, z = origin
-        for px, py, pz in [(x + 13, y + 1, z + 3), (x + 3, y + 1, z + 4), (x + 8, y + 1, z + 4)]:
+        for dx, dy, dz in GATEWAY_OFFSETS:
+            px, py, pz = x + dx, y + dy, z + dz
             node = saved_tile(run, dim_world, px, py, pz)
             require(node.get('id') == 'gtswn.network_quantum_node' and node.get('proxy', {}).get('p') == owner
+                    and node.get('placerUUID') == run['actor']
+                    and node.get('placerName') == run['environment']['offline_fixture_username']
                     and [node[key] for key in ['anchorDim', 'anchorX', 'anchorY', 'anchorZ']] == [run['dimension'], cx, cy, cz],
                     'Saved production gateway inherited a foreign anchor or AE owner')
+        chunks = {}
+        for px in range(x, x + 14):
+            for pz in range(z, z + 5):
+                key = px >> 4, pz >> 4
+                if key not in chunks:
+                    chunks[key] = saved_chunk(run, dim_world, px, pz)
+        for chunk in chunks.values():
+            require(not any(tile.get('id') == 'BlockCableBus' and x <= tile['x'] <= x + 13
+                            and y <= tile['y'] <= y + 2 and z <= tile['z'] <= z + 4
+                            for tile in chunk.get('TileEntities', [])), 'Actual saved production footprint contains an ordinary ME cable bus')
     return run
 
 

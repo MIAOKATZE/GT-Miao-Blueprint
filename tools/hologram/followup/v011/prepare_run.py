@@ -12,6 +12,7 @@ from nbt_reader import read_nbt
 ROOT = next(parent for parent in Path(__file__).resolve().parents
             if (parent / 'gradle.properties').is_file() and (parent / 'src').is_dir())
 FIXTURES = ROOT / 'build/hologram-followup'
+GTSWN_SHA256 = '6f377dc7be30d7ce3df712762a4851a54e1c0e981a09148e27a166ebc4c223ac'
 
 
 def digest(path):
@@ -71,11 +72,14 @@ def prepare(args):
     jars = sorted((original / 'mods').glob('*.jar'))
     if profile == 'sulfur':
         require(len(spec.get('reviewed_runtime_hashes', {})) == 2, 'Sulfur descriptor must bind both reviewed runtime dependency SHA256 values')
+        require([checksum for path, checksum in spec['reviewed_runtime_hashes'].items()
+                 if Path(path).name == 'gtswn-v1.8.67-dev.jar'] == [GTSWN_SHA256],
+                'GTSWN 1.8.67 dev bytes differ from the explicitly reviewed clean JAR')
         classpath = spec['arguments'][spec['arguments'].index('-cp') + 1]
         require('AE2FluidCraft-Rework-1.5.113-gtnh-dev.jar' in classpath,
                 'Sulfur launch requires the reviewed native AE2FC 1.5.113 runtime')
-        require('gtswn-v1.8.66-dev.jar' in classpath,
-                'Sulfur launch requires the reviewed GTSWN 1.8.66 runtime')
+        require('gtswn-v1.8.67-dev.jar' in classpath,
+                'Sulfur launch requires the reviewed GTSWN 1.8.67 runtime')
         jars = [jar for jar in jars if not jar.name.startswith(('AE2FluidCraft-Rework-', 'gtswn-'))]
     require(jars, 'Prepared support fixture has no mod jars')
     require(all(not jar.is_symlink() for jar in jars), 'Support jar symlinks are not allowed')

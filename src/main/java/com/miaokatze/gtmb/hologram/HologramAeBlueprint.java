@@ -614,6 +614,21 @@ public final class HologramAeBlueprint {
                 .getName()))
             throw new IOException("GTSWN quantum node factory/schema changed");
         cleanHost(work, data, host, new String[0]);
+        for (String key : Arrays.asList("placerUUID", "placerName")) {
+            if (!data.hasKey(key)) continue;
+            work.roots.add(key);
+            if (!HologramNetworkBindings.validOwnerField(data, key, "placerUUID".equals(key))) work.issue(
+                "unreviewed_tile_field",
+                "blocker",
+                key,
+                "GTSWN placement attribution has an unreviewed type or invalid UUID; explicit review is required");
+            else work.issue(
+                "network_identity",
+                "warning",
+                key,
+                "Source placement attribution is omitted; native setPlacer records the current player");
+            data.removeTag(key);
+        }
         for (String key : Arrays.asList("anchorDim", "anchorX", "anchorY", "anchorZ", "linked"))
             HologramAeBlueprintSchemas.remove(
                 work,
@@ -1416,6 +1431,21 @@ public final class HologramAeBlueprint {
             String type = host.getClass()
                 .getName();
             if (prefix.length == 0) data.removeTag("GTSWN_IncorporationIdentity");
+            if (prefix.length == 0 && type.equals("appeng.tile.networking.TileController")
+                && data.hasKey("GTSWN_ControllerIdentity")) {
+                root(work, prefix, "GTSWN_ControllerIdentity");
+                if (!HologramNetworkBindings.validOwnerField(data, "GTSWN_ControllerIdentity", true)) work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    "GTSWN_ControllerIdentity",
+                    "Controller generation identity must be a native UUID string");
+                else work.issue(
+                    "network_identity",
+                    "warning",
+                    "GTSWN_ControllerIdentity",
+                    "Source controller generation is omitted; a new controller must obtain its own native identity");
+                data.removeTag("GTSWN_ControllerIdentity");
+            }
             if (host instanceof IGridProxyable) {
                 // GTSWN's exact persistence adapter writes "proxy". Its lazy getProxy() requires
                 // a live world, so schema inspection must remove that key without constructing

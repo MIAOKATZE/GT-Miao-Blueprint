@@ -48,11 +48,14 @@ gradle.projectsEvaluated {
             if (!engineHashes) throw new GradleException('Current engine jar must be present in exported runtime classpath')
             def reviewedRuntimeHashes = [:]
             if (profile == 'sulfur') {
-                launch.classpath.files.findAll { it.isFile() && (it.name == 'gtswn-v1.8.66-dev.jar' ||
+                launch.classpath.files.findAll { it.isFile() && (it.name == 'gtswn-v1.8.67-dev.jar' ||
                     it.name == 'AE2FluidCraft-Rework-1.5.113-gtnh-dev.jar') }.each { file ->
                     reviewedRuntimeHashes[file.canonicalPath] = checksum(file)
                 }
                 if (reviewedRuntimeHashes.size() != 2) throw new GradleException('Sulfur needs exactly the reviewed GTSWN and AE2FC runtime jars')
+                def quantumRuntime = reviewedRuntimeHashes.findAll { path, hash -> path.endsWith('gtswn-v1.8.67-dev.jar') }
+                if (quantumRuntime.values().toList() != ['6f377dc7be30d7ce3df712762a4851a54e1c0e981a09148e27a166ebc4c223ac'])
+                    throw new GradleException('GTSWN 1.8.67 runtime differs from the reviewed clean native JAR')
             }
             def destination = new File(project.projectDir, 'plan/tmp/v0.1.1/' + profile + '-' + role + '-launch.json')
             destination.parentFile.mkdirs()

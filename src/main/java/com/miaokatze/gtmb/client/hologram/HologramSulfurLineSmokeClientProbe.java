@@ -32,6 +32,7 @@ import net.minecraft.util.Vec3;
 import net.minecraftforge.client.event.MouseEvent;
 import net.minecraftforge.common.DimensionManager;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.ForgeDirection;
 
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
@@ -195,7 +196,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             nativeMouseEvents++;
             return true;
         });
-        if ("author".equals(role)) for (int i = 0; i < 3; i++) {
+        if ("author".equals(role)) for (int i = 0; i < 7; i++) {
             final int index = i;
             add("native-bound-terminal-places-gateway-" + index, (mc, screen, ui) -> {
                 NBTTagCompound place = HologramV011Evidence.read("sulfur-quantum-native-place-" + index + "-ready.nbt");
@@ -204,7 +205,7 @@ public final class HologramSulfurLineSmokeClientProbe {
                 int[] support = place.getIntArray("gatewaySupport");
                 if (mc.thePlayer.getDistanceSq(support[0] + .5, support[1], support[2] + .5) > 36) return false;
                 mc.thePlayer.inventory.currentItem = 1;
-                aim(mc, support[0] + 1, support[1] + .5, support[2] + .5);
+                aim(mc, support[0] + .5, support[1] + .5, support[2] + 1);
                 useBlock(mc, support[0], support[1], support[2], support[3]);
                 nativeMouseEvents++;
                 return true;
@@ -545,19 +546,19 @@ public final class HologramSulfurLineSmokeClientProbe {
         groupAction("default-one-group-real-preview", group -> {
             NBTTagCompound ui = group.smokeUiState();
             require(
-                ui.getInteger("nodeCount") == 3 && ui.getInteger("groupCount") == 1
+                ui.getInteger("nodeCount") == 7 && ui.getInteger("groupCount") == 1
                     && ui.getInteger("unassigned") == 0
                     && ui.getBoolean("saveEnabled"),
-                "default actual preview assigns all three physical gateways to one named network");
+                "default actual preview assigns all seven directly attached physical gateways to one named network");
         });
         groupShot("sulfur-quantum-groups-default-frame");
         if ("share".equals(intent)) {
-            groupAction("native-T-selects-all-three", group -> {
+            groupAction("native-T-selects-all-seven", group -> {
                 group.smokeKey(Keyboard.KEY_T, false);
                 nativeKeyEvents++;
                 require(
                     group.smokeUiState()
-                        .getIntArray("selection").length == 3,
+                        .getIntArray("selection").length == 7,
                     "native T selects all actual nodes");
             });
             groupAction("native-CtrlT-complement-clears-all", group -> {
@@ -569,13 +570,20 @@ public final class HologramSulfurLineSmokeClientProbe {
                     "native Ctrl T chooses the complement");
             });
             groupAction("native-preview-Ctrl-node-multiselect", group -> {
-                group.smokeClickNode(0, false);
-                group.smokeClickNode(1, true);
-                nativeMouseEvents += 2;
+                NBTTagList nodes = group.smokeUiState()
+                    .getTagList("nodes", 10);
+                int selected = 0;
+                for (int index = 0; index < nodes.tagCount(); index++) if (nodes.getCompoundTagAt(index)
+                    .getInteger("x") < 5) {
+                        group.smokeClickNode(index, selected > 0);
+                        selected++;
+                        nativeMouseEvents++;
+                    }
+                require(selected == 3, "actual preview exposes all three first-reactor ME nodes");
                 require(
                     group.smokeUiState()
-                        .getIntArray("selection").length == 2,
-                    "actual preview hit regions and Ctrl select two nodes");
+                        .getIntArray("selection").length == 3,
+                    "actual preview hit regions and Ctrl select the three front-stage nodes");
             });
             groupShot("sulfur-quantum-groups-multiselect-frame");
             groupAction("native-unassigned-gates-save", group -> {
@@ -583,10 +591,10 @@ public final class HologramSulfurLineSmokeClientProbe {
                 nativeMouseEvents++;
                 require(
                     group.smokeUiState()
-                        .getInteger("unassigned") == 2
+                        .getInteger("unassigned") == 3
                         && !group.smokeUiState()
                             .getBoolean("saveEnabled"),
-                    "two unclassified nodes visibly block the real Save control");
+                    "three unclassified nodes visibly block the real Save control");
             });
             groupShot("sulfur-quantum-groups-unassigned-frame");
             groupAction("native-CtrlZ-restores-complete-grouping", group -> {
@@ -603,7 +611,7 @@ public final class HologramSulfurLineSmokeClientProbe {
                 nativeKeyEvents++;
                 require(
                     group.smokeUiState()
-                        .getInteger("unassigned") == 2
+                        .getInteger("unassigned") == 3
                         && !group.smokeUiState()
                             .getBoolean("saveEnabled"),
                     "native redo restores the actual incomplete classification gate");
@@ -614,13 +622,13 @@ public final class HologramSulfurLineSmokeClientProbe {
                 nativeKeyEvents += 2;
                 require(
                     group.smokeUiState()
-                        .getIntArray("selection").length == 1,
-                    "final complement retains one front-stage node");
+                        .getIntArray("selection").length == 4,
+                    "final complement retains the four later-stage ME nodes");
                 group.smokeName("后段供料");
                 group.smokeClickControl(10);
                 nativeMouseEvents += 2;
             });
-            groupAction("native-new-front-stage-group", group -> {
+            groupAction("native-new-back-stage-group", group -> {
                 group.smokeName("前段供料");
                 group.smokeClickControl(5);
                 nativeMouseEvents += 2;
@@ -1607,7 +1615,16 @@ public final class HologramSulfurLineSmokeClientProbe {
     }
 
     private static void useBlock(Minecraft mc, int x, int y, int z, int side) {
-        mc.objectMouseOver = new MovingObjectPosition(x, y, z, side, Vec3.createVectorHelper(x + .5, y + 1, z + .5));
+        ForgeDirection face = ForgeDirection.getOrientation(side);
+        mc.objectMouseOver = new MovingObjectPosition(
+            x,
+            y,
+            z,
+            side,
+            Vec3.createVectorHelper(
+                x + .5 + face.offsetX * .5,
+                y + .5 + face.offsetY * .5,
+                z + .5 + face.offsetZ * .5));
         mc.playerController.onPlayerRightClick(
             mc.thePlayer,
             mc.theWorld,

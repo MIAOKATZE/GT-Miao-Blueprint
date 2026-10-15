@@ -29,6 +29,108 @@ public final class HologramNetworkBindingsRegression {
         bindingSurvivesDisabledPayload();
         completeNamedClassification();
         privateOriginsAndShareProjection();
+        nativeAuthorityContractAndTypedAttribution();
+    }
+
+    private static void nativeAuthorityContractAndTypedAttribution() throws Exception {
+        java.lang.reflect.Method reject = HologramGtswnQuantumAccess.requireStatic(
+            AuthorityFixture.class,
+            "reject",
+            boolean.class,
+            net.minecraft.entity.player.EntityPlayer.class,
+            ItemStack.class);
+        SimpleAssert.that(
+            !HologramGtswnQuantumAccess.decision(reject, null, null),
+            "native authority false remains a denial instead of falling back to legacy permission checks");
+        java.lang.reflect.Method broken = HologramGtswnQuantumAccess.requireStatic(
+            AuthorityFixture.class,
+            "broken",
+            boolean.class,
+            net.minecraft.entity.player.EntityPlayer.class,
+            ItemStack.class);
+        try {
+            HologramGtswnQuantumAccess.decision(broken, null, null);
+            throw new AssertionError("broken native authority must block");
+        } catch (HologramGtswnQuantumAccess.Failure expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("不会按旧权限规则放行"),
+                "native invocation failure is an explicit compatibility blocker");
+        }
+        for (String method : new String[] { "wrongType", "instance" }) try {
+            HologramGtswnQuantumAccess.requireStatic(AuthorityFixture.class, method, boolean.class);
+            throw new AssertionError("changed authority contract must reject " + method);
+        } catch (NoSuchMethodException expected) {
+            SimpleAssert.that(true, "native method return type and static contract are checked");
+        }
+        NBTTagCompound data = new NBTTagCompound();
+        data.setString("placerUUID", "cdf90139-63c0-4e89-905e-20833e0683a2");
+        SimpleAssert.that(
+            HologramNetworkBindings.validOwnerField(data, "placerUUID", true),
+            "canonical native placer UUID is reviewed");
+        data.setString("placerUUID", "not-a-uuid");
+        SimpleAssert.that(
+            !HologramNetworkBindings.validOwnerField(data, "placerUUID", true),
+            "malformed UUID is never silently cleaned as attribution");
+        data.setTag("placerUUID", new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        SimpleAssert.that(
+            !HologramNetworkBindings.validOwnerField(data, "placerUUID", true),
+            "an attribution key cannot hide a physical item");
+        ItemStack terminalPayload = new ItemStack(Items.stick);
+        NBTTagCompound invalid = new NBTTagCompound();
+        invalid.setTag("QT_EncryptionKey", new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
+        terminalPayload.setTagCompound(invalid);
+        try {
+            HologramNetworkBindings.validateTerminalFields(terminalPayload);
+            throw new AssertionError("a compound must not be accepted as native security key");
+        } catch (IOException expected) {
+            SimpleAssert.that(true, "terminal credentials are validated before native getters can coerce their types");
+        }
+        NBTTagCompound origin = new NBTTagCompound(), payload = new NBTTagCompound();
+        origin.setString("world", "cdf90139-63c0-4e89-905e-20833e0683a2");
+        origin.setInteger("anchorDim", 0);
+        origin.setInteger("anchorX", 20);
+        origin.setInteger("anchorY", 64);
+        origin.setInteger("anchorZ", 40);
+        origin.setInteger("version", 2);
+        origin.setLong("migrationCursor", 0L);
+        origin.setString("controllerIdentity", "39efead7-a1d5-4ef2-af4b-94c71e338794");
+        payload.setTag(HologramNetworkBindings.ORIGINAL, origin);
+        HologramNetworkBindings.validateOriginal(payload);
+        origin.setInteger("migrationCursor", 0);
+        try {
+            HologramNetworkBindings.validateOriginal(payload);
+            throw new AssertionError("private migration cursor must preserve its native long type");
+        } catch (IOException expected) {
+            SimpleAssert.that(true, "a wrong-type private cursor cannot silently bind a coordinate replacement");
+        }
+        origin.setLong("migrationCursor", 0L);
+        origin.setString("controllerIdentity", "not-a-controller-uuid");
+        try {
+            HologramNetworkBindings.validateOriginal(payload);
+            throw new AssertionError("private controller generation must be a canonical UUID");
+        } catch (IOException expected) {
+            SimpleAssert.that(true, "invalid private controller generations remain blocked");
+        }
+    }
+
+    public static final class AuthorityFixture {
+
+        public static boolean reject(net.minecraft.entity.player.EntityPlayer actor, ItemStack terminal) {
+            return false;
+        }
+
+        public static boolean broken(net.minecraft.entity.player.EntityPlayer actor, ItemStack terminal) {
+            throw new IllegalStateException("native failure");
+        }
+
+        public static String wrongType() {
+            return "false";
+        }
+
+        public boolean instance() {
+            return false;
+        }
     }
 
     private static void completeNamedClassification() throws Exception {

@@ -62,9 +62,9 @@ public final class HologramSulfurLineSmoke {
     private boolean finished;
     private String session = "", result = "PENDING";
     private ItemStack quantumTerminal;
-    private final NBTTagCompound[] disconnectedNodes = new NBTTagCompound[3];
-    private final Block[] gatewayBlocks = new Block[3];
-    private final int[] gatewayMetas = new int[3];
+    private final NBTTagCompound[] disconnectedNodes = new NBTTagCompound[7];
+    private final Block[] gatewayBlocks = new Block[7];
+    private final int[] gatewayMetas = new int[7];
     private NBTTagCompound cutBaseline, restoredBaseline;
     private int quantumCycle, stableTicks;
     private long cutTick, stableTick;
@@ -606,8 +606,8 @@ public final class HologramSulfurLineSmoke {
         moveNear(x - 16, y, z + 10);
         NBTTagCompound ready = base("QUANTUM_BOOTSTRAP_READY");
         ready.setIntArray("controller", new int[] { x - 16, y, z + 8 });
-        ready.setIntArray("gateway", new int[] { x + 13, y + 1, z + 3 });
-        ready.setIntArray("gatewaySupport", new int[] { x + 12, y + 1, z + 3 });
+        ready.setIntArray("gateway", new int[] { x, y + 1, z + 3 });
+        ready.setIntArray("gatewaySupport", new int[] { x, y + 1, z + 2 });
         ready.setBoolean("source", source);
         ready.setInteger("terminalHotbarSlot", 1);
         ready.setBoolean("passed", true);
@@ -648,7 +648,6 @@ public final class HologramSulfurLineSmoke {
         if (!(Boolean) call(bank, "ready")) return false;
         if (source) {
             int[][] positions = gateways(x, y, z);
-            int[][] supports = { { x + 12, y + 1, z + 3, 5 }, { x + 3, y + 1, z + 3, 3 }, { x + 8, y + 1, z + 3, 3 } };
             for (int i = 0; i < positions.length; i++) {
                 int[] point = positions[i];
                 TileEntity node = world.getTileEntity(point[0], point[1], point[2]);
@@ -659,7 +658,7 @@ public final class HologramSulfurLineSmoke {
                         NBTTagCompound ready = base("QUANTUM_NATIVE_GATEWAY_PLACEMENT");
                         ready.setBoolean("passed", true);
                         ready.setInteger("gatewayIndex", i);
-                        ready.setIntArray("gatewaySupport", supports[i]);
+                        ready.setIntArray("gatewaySupport", new int[] { point[0], point[1], point[2] - 1, 3 });
                         ready.setTag("terminal", quantumTerminal.writeToNBT(new NBTTagCompound()));
                         write(filename, ready);
                     }
@@ -679,6 +678,7 @@ public final class HologramSulfurLineSmoke {
         proof.setBoolean("passed", true);
         proof.setTag("terminal", quantumTerminal.writeToNBT(new NBTTagCompound()));
         proof.setString("bindingMethod", "real Netty client C08 native terminal click on its own active controller");
+        proof.setTag("nativeBank", (NBTTagCompound) call(bank, "receipt"));
         if (source) proof.setTag("topology", (NBTTagCompound) call(line, "topology"));
         findings.setTag("quantumBootstrap", proof);
         write("sulfur-quantum-bootstrap-complete.nbt", proof);
@@ -808,7 +808,7 @@ public final class HologramSulfurLineSmoke {
     }
 
     private static int[][] gateways(int x, int y, int z) {
-        return new int[][] { { x + 13, y + 1, z + 3 }, { x + 3, y + 1, z + 4 }, { x + 8, y + 1, z + 4 } };
+        return HologramSulfurLineSmokeNative.gatewayPositions(x, y, z);
     }
 
     private static boolean sameRuntime(NBTTagCompound before, NBTTagCompound after) {

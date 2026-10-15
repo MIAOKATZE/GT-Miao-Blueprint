@@ -21,16 +21,13 @@ import appeng.api.features.IWirelessTermHandler;
 import appeng.api.implementations.items.IAEItemPowerStorage;
 import appeng.api.networking.security.ISecurityGrid;
 import appeng.api.networking.security.PlayerSource;
-import appeng.api.parts.IPartHost;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.StorageChannel;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
-import appeng.api.util.AEColor;
 import appeng.helpers.WirelessTerminalGuiObject;
 import appeng.me.helpers.AENetworkProxy;
 import appeng.me.helpers.IGridProxyable;
-import appeng.parts.PartPlacement;
 import appeng.tile.networking.TileDenseEnergyCell;
 import appeng.tile.networking.TileWireless;
 import appeng.tile.storage.TileDrive;
@@ -40,7 +37,7 @@ import appeng.util.item.AEItemStack;
 /** A finite native payment network outside the blueprint footprint, attached to the placer's existing controller. */
 public final class HologramSulfurLineSmokeBank {
 
-    private static final double INITIAL_AE = 500_000;
+    private static final double INITIAL_AE = 1_000_000;
     private static final double TERMINAL_AE_LIMIT = 100_000;
     private static final int TERMINAL_SLOT = 34;
 
@@ -60,8 +57,8 @@ public final class HologramSulfurLineSmokeBank {
                 .equals("appeng.tile.networking.TileController"),
             "existing registered native AE controller required");
         require(controller.getWorldObj() == world && !controller.isInvalid(), "existing native controller required");
-        int[][] positions = { { controllerX - 1, y, z }, { controllerX - 1, y + 1, z }, { controllerX, y + 1, z },
-            { controllerX + 4, y, z + 3 }, { controllerX + 3, y, z + 3 } };
+        int[][] positions = { { controllerX - 1, y, z }, { controllerX - 1, y + 1, z }, { controllerX + 4, y, z + 3 },
+            { controllerX + 3, y, z + 3 } };
         for (int[] position : positions) {
             world.getChunkFromBlockCoords(position[0], position[2]);
             require(world.isAirBlock(position[0], position[1], position[2]), "fresh payment bank footprint required");
@@ -93,13 +90,23 @@ public final class HologramSulfurLineSmokeBank {
                 .wireless()
                 .maybeBlock()
                 .get(),
-            controllerX,
+            controllerX - 1,
             y + 1,
             z,
             TileWireless.class);
-        // Native TileWireless connects only opposite its forward side. The west cable connects downward to the cell.
-        wap.setOrientation(ForgeDirection.EAST, ForgeDirection.UP);
-        placeCable(world, actor, controllerX - 1, y + 1, z);
+        // The WAP connects directly DOWN into the real finite cell; no bank AE cable is placed.
+        wap.setOrientation(ForgeDirection.UP, ForgeDirection.NORTH);
+        wap.getInternalInventory()
+            .setInventorySlotContents(
+                0,
+                AEApi.instance()
+                    .definitions()
+                    .materials()
+                    .wirelessBooster()
+                    .maybeStack(4)
+                    .get());
+        wap.markDirty();
+        require(wap.getRange() >= 24, "four real native boosters cover the actual placement camera");
         // This drive has no physical route to the controller or AE power. A real terminal places its adjacent gateway.
         TileDrive drive = place(
             world,
@@ -178,7 +185,7 @@ public final class HologramSulfurLineSmokeBank {
         public boolean ready() {
             try {
                 return live(controller, x, y, z) && live(power, x - 1, y, z)
-                    && live(wap, x, y + 1, z)
+                    && live(wap, x - 1, y + 1, z)
                     && live(drive, x + 4, y, z + 3)
                     && controllerProxy().isActive()
                     && drive.getProxy()
@@ -317,6 +324,15 @@ public final class HologramSulfurLineSmokeBank {
             result.setBoolean("terminalCarried", actor.inventory.mainInventory[TERMINAL_SLOT] == terminal);
             result.setLong("wapSerial", wap.getLocatableSerial());
             result.setDouble("wapRange", wap.getRange());
+            NBTTagCompound nativeWap = new NBTTagCompound();
+            wap.writeToNBT(nativeWap);
+            result.setTag("nativeWap", nativeWap);
+            result.setTag(
+                "nativeWapBooster",
+                wap.getInternalInventory()
+                    .getStackInSlot(0)
+                    .writeToNBT(new NBTTagCompound()));
+            result.setBoolean("ordinaryAeCablesPlaced", false);
             result.setString(
                 "nativePowerTile",
                 power.getClass()
@@ -457,26 +473,6 @@ public final class HologramSulfurLineSmokeBank {
             .setOwner(actor);
         result.markDirty();
         return result;
-    }
-
-    private static void placeCable(WorldServer world, EntityPlayerMP actor, int x, int y, int z) {
-        ItemStack cable = AEApi.instance()
-            .definitions()
-            .parts()
-            .cableGlass()
-            .stack(AEColor.Transparent, 1);
-        int heldSlot = actor.inventory.currentItem;
-        ItemStack original = actor.inventory.mainInventory[heldSlot];
-        try {
-            actor.inventory.mainInventory[heldSlot] = cable;
-            require(
-                PartPlacement.placeItemPart(cable, actor, world, x, y, z, ForgeDirection.UP),
-                "official native bank cable placement");
-            IPartHost host = PartPlacement.getExistingHost(world.getTileEntity(x, y, z));
-            require(host != null && host.getPart(ForgeDirection.UNKNOWN) != null, "actual native bank cable host");
-        } finally {
-            actor.inventory.mainInventory[heldSlot] = original;
-        }
     }
 
     private static ItemStack fluidCell() throws Exception {
