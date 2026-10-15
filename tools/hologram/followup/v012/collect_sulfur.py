@@ -294,6 +294,7 @@ def validate_native_eu_cache(run):
         require(math.isfinite(loss) and loss >= 0, 'Native cover loss is invalid')
         bill = int((Decimal(100) * (Decimal(1) + Decimal(str(loss)))).to_integral_value(rounding=ROUND_CEILING))
         require(row['nativeBill'] == str(bill) and bill > 0 and row['cancelledPaidNativeEvents'] == 2
+                and type(row['nativeShellEvents']) is int and row['nativeShellEvents'] == 2
                 and all(row[key] for key in ['refundOncePerCancelledAttempt', 'currentActorDebited', 'sourceAndAuthorUnchanged',
                     'repeatDoesNotDebit', 'insufficientQuoteVisible'])
                 and row['nativeCapacity'] >= 100,

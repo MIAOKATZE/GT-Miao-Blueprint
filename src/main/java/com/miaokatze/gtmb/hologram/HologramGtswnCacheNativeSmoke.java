@@ -154,8 +154,8 @@ public final class HologramGtswnCacheNativeSmoke {
                     MinecraftForge.EVENT_BUS.unregister(veto);
                 }
                 require(
-                    veto.events == 2 && veto.fundedEvents == 2,
-                    "both cancelled events observed paid native covers");
+                    veto.shellEvents == 2 && veto.events == 2 && veto.fundedEvents == 2,
+                    "both native shell events precede cancelled events with complete paid covers");
                 invoke("refreshPlan", session);
                 invoke("operate", session, cell, 0);
                 NBTTagCompound paid = HologramNativeCapture.capture(world.getTileEntity(sourceX + 2, Y, Z));
@@ -230,6 +230,7 @@ public final class HologramGtswnCacheNativeSmoke {
                 row.setTag("emptyNative", empty);
                 row.setTag("insufficientResources", resourceRows);
                 row.setInteger("cancelledPaidNativeEvents", veto.fundedEvents);
+                row.setInteger("nativeShellEvents", veto.shellEvents);
                 row.setBoolean("refundOncePerCancelledAttempt", true);
                 row.setBoolean("currentActorDebited", true);
                 row.setBoolean("sourceAndAuthorUnchanged", true);
@@ -426,7 +427,7 @@ public final class HologramGtswnCacheNativeSmoke {
         private final int x;
         private final EntityPlayerMP actor;
         private final BigInteger bill, initial;
-        int events, fundedEvents;
+        int shellEvents, events, fundedEvents;
         final NBTTagList balances = new NBTTagList();
 
         Veto(int x, EntityPlayerMP actor, BigInteger bill, BigInteger initial) {
@@ -438,10 +439,29 @@ public final class HologramGtswnCacheNativeSmoke {
 
         @SubscribeEvent
         public void placed(BlockEvent.PlaceEvent event) {
-            if (event.x != x || event.y != Y || event.z != Z || event.world != actor.worldObj) return;
+            if (event.x != x || event.y != Y || event.z != Z || event.world != actor.worldObj || event.player != actor)
+                return;
+            NBTTagCompound nativeTile;
+            try {
+                nativeTile = HologramNativeCapture.capture(event.world.getTileEntity(x, Y, Z));
+            } catch (Exception failure) {
+                throw new IllegalStateException("native cache place capture failed", failure);
+            }
+            // ForgeHooks posts the item placement event before Service applies the paid cover NBT.
+            // Observe that real shell without cancelling it; veto the later complete Service event below.
+            if (!nativeTile.hasKey("gt.covers")
+                || nativeTile.hasKey("gt.covers", 9) && nativeTile.getTagList("gt.covers", 10)
+                    .tagCount() == 0) {
+                require(
+                    event.world.getTileEntity(x, Y, Z) instanceof BaseMetaTileEntity
+                        && WirelessNetworkManager.getUserEU(ACTOR)
+                            .equals(initial.subtract(bill)),
+                    "native shell event follows actual actor EU reservation before cover restoration");
+                shellEvents++;
+                return;
+            }
             events++;
             try {
-                NBTTagCompound nativeTile = HologramNativeCapture.capture(event.world.getTileEntity(x, Y, Z));
                 require(
                     stored(nativeTile) == 100 && WirelessNetworkManager.getUserEU(ACTOR)
                         .equals(initial.subtract(bill)),
