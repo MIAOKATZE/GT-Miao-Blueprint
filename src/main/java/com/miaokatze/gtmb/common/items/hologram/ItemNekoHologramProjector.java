@@ -11,12 +11,13 @@ import net.minecraft.world.World;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.item.ItemConstructableTrigger;
+import com.miaokatze.gtmb.common.util.ProjectorTooltip;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 import com.miaokatze.gtmb.register.CreativeTabManager;
 
-/** 猫猫全息投影仪；扫描与会话状态统一由服务端管理。 */
+/** 猫猫蓝图全息投影仪；扫描与会话状态统一由服务端管理。 */
 public class ItemNekoHologramProjector extends ItemConstructableTrigger {
 
     private static final String ID = "neko_hologram_projector";
@@ -74,12 +75,7 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
 
     @Override
     public void addInformation(ItemStack stack, EntityPlayer player, List<String> tooltip, boolean showAdvanced) {
-        for (int i = 0;; i++) {
-            String key = "item." + ID + ".tooltip." + i;
-            String line = StatCollector.translateToLocal(key);
-            if (line.equals(key)) break;
-            tooltip.add(EnumChatFormatting.AQUA + line);
-        }
+        ProjectorTooltip.state(tooltip);
         int main = stack.hasTagCompound() ? Math.max(
             1,
             stack.getTagCompound()
@@ -89,6 +85,18 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
         ChannelDataAccessor.iterateChannelData(stack)
             .limit(8)
             .forEach(entry -> tooltip.add(EnumChatFormatting.GRAY + entry.getKey() + ": " + entry.getValue()));
-        tooltip.add(EnumChatFormatting.DARK_GRAY + StatCollector.translateToLocal("gtmb.added_by"));
+        ProjectorTooltip.description(
+            tooltip,
+            "item." + ID + ".description.0",
+            "item." + ID + ".description.1",
+            "item." + ID + ".description.2");
+        ProjectorTooltip.controls(tooltip);
+        for (int i = 0;; i++) {
+            String key = "item." + ID + ".tooltip." + i;
+            String line = StatCollector.translateToLocal(key);
+            if (line.equals(key)) break;
+            tooltip.add(line);
+        }
+        ProjectorTooltip.finish(tooltip);
     }
 }

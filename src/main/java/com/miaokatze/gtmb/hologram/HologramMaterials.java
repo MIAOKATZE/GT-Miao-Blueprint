@@ -70,6 +70,7 @@ public final class HologramMaterials {
     }
 
     private static Predicate<ItemStack> paymentPredicate(ItemStack expected) {
+        if (HologramGtswnPlacementMaterials.supplyKind(expected) >= 0) return shellPredicate(expected);
         return coordinatePayment(expected)
             ? candidate -> HologramCoordinatePolicies.paymentEquivalent(expected, candidate)
             : ItemStackPredicate.from(expected, ItemStackPredicate.NBTMode.EXACT);
@@ -180,7 +181,9 @@ public final class HologramMaterials {
 
         public int count(ItemStack stack, int limit) {
             if (stack == null || stack.getItem() == null || limit <= 0) return 0;
-            return amount(take(paymentPredicate(stack), stack, true, limit, null));
+            int kind = HologramGtswnPlacementMaterials.supplyKind(stack);
+            int prepaid = kind < 0 ? 0 : Math.min(limit, HologramGtswnPlacementMaterials.supplyCount(player, kind));
+            return prepaid + amount(take(paymentPredicate(stack), stack, true, limit - prepaid, null));
         }
 
         /** Construction shell only: retain item/damage identity, and enumerate real tagged variants in ME. */
@@ -544,8 +547,21 @@ public final class HologramMaterials {
         private boolean exact(ItemStack stack, boolean simulate, Transaction transaction) {
             if (stack == null || stack.getItem() == null || stack.stackSize < 1) return false;
             Predicate<ItemStack> predicate = paymentPredicate(stack);
-            if (amount(take(predicate, stack, true, stack.stackSize, null)) < stack.stackSize) return false;
-            return simulate || amount(take(predicate, stack, false, stack.stackSize, transaction)) == stack.stackSize;
+            if (count(stack, stack.stackSize) < stack.stackSize) return false;
+            if (simulate) return true;
+            int kind = HologramGtswnPlacementMaterials.supplyKind(stack);
+            int prepaid = kind < 0 ? 0
+                : Math.min(stack.stackSize, HologramGtswnPlacementMaterials.supplyCount(player, kind));
+            if (prepaid > 0) {
+                HologramGtswnPlacementMaterials
+                    .setSupply(player, kind, HologramGtswnPlacementMaterials.supplyCount(player, kind) - prepaid);
+                if (transaction != null) {
+                    transaction.terminalSupplies[kind] += prepaid;
+                    transaction.terminalSupplyReferences[kind] = stack.copy();
+                }
+            }
+            int remaining = stack.stackSize - prepaid;
+            return remaining == 0 || amount(take(predicate, stack, false, remaining, transaction)) == remaining;
         }
 
         private boolean fuzzyOne(ItemStack stack, boolean simulate, Transaction transaction) {
@@ -566,7 +582,9 @@ public final class HologramMaterials {
             if (predicate == null || count < 1 || !simulate && exact == null && count > 4096) return result;
             // A reviewed relocated card keeps its exact item/meta and other NBT, but must enumerate the
             // actual coordinate variant. Never send a synthetic payment marker to an AE exact extractor.
-            ItemStack nativeExact = coordinatePayment(exact) ? null : exact;
+            ItemStack nativeExact = coordinatePayment(exact) || HologramGtswnPlacementMaterials.supplyKind(exact) >= 0
+                ? null
+                : exact;
             int[] order = settings.priority == 1 ? new int[] { 1, 0, 2 }
                 : settings.priority == 2 ? new int[] { 2, 0, 1 } : new int[] { 0, 1, 2 };
             for (int type : order) {
@@ -862,6 +880,8 @@ public final class HologramMaterials {
         private final List<NBTTagCompound> meEssentia = new ArrayList<>();
         private BigInteger energyTaken = BigInteger.ZERO;
         private final List<HologramEnergy.Receipt> cachedEnergyReceipts = new ArrayList<>();
+        private final int[] terminalSupplies = new int[2];
+        private final ItemStack[] terminalSupplyReferences = new ItemStack[2];
         private final Map<Integer, ItemStack> containerStates = new LinkedHashMap<>();
         private int terminalSlot = -1;
         private ItemStack terminalState;
@@ -927,6 +947,8 @@ public final class HologramMaterials {
         public void commit() {
             for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) receipt.commit();
             cachedEnergyReceipts.clear();
+            java.util.Arrays.fill(terminalSupplies, 0);
+            java.util.Arrays.fill(terminalSupplyReferences, null);
             closed = true;
             containerItems.clear();
             containerStates.clear();
@@ -941,6 +963,20 @@ public final class HologramMaterials {
         public void rollbackExternal() {
             if (closed) return;
             closed = true;
+            for (int kind = 0; kind < terminalSupplies.length; kind++) {
+                int paid = terminalSupplies[kind];
+                if (paid <= 0) continue;
+                int current = HologramGtswnPlacementMaterials.supplyCount(context.player, kind);
+                int returned = HologramGtswnPlacementMaterials.supplyRefundRoom(current, paid);
+                HologramGtswnPlacementMaterials.setSupply(context.player, kind, current + returned);
+                terminalSupplies[kind] = 0;
+                if (returned < paid) {
+                    ItemStack overflow = terminalSupplyReferences[kind].copy();
+                    overflow.stackSize = paid - returned;
+                    context.recover(overflow);
+                }
+                terminalSupplyReferences[kind] = null;
+            }
             for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) receipt.refund();
             cachedEnergyReceipts.clear();
             for (NBTTagCompound receipt : meEssentia) {

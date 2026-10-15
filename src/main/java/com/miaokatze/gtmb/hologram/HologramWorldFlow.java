@@ -252,7 +252,7 @@ public final class HologramWorldFlow {
             return Intent.NONE;
         }
         if (stage == Stage.MOVING) {
-            if (gesture == Gesture.RIGHT) return Intent.CONFIRM_POSITION;
+            if (gesture == Gesture.RIGHT || gesture == Gesture.ALT_RIGHT) return Intent.CONFIRM_POSITION;
             if (gesture == Gesture.ESCAPE) return Intent.CANCEL_PLACEMENT;
             if (gesture == Gesture.ROTATE) return Intent.ROTATE;
             return Intent.NONE;

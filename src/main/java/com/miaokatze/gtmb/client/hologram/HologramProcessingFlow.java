@@ -68,7 +68,7 @@ final class HologramProcessingFlow {
     private void recommendations(boolean share) {
         policy.setString("tendency", share ? "share" : "self");
         if (!explicit[1]) policy.setInteger("deidentificationLevel", share ? 6 : 0);
-        if (!explicit[2]) policy.setString("quantum", share ? "clear" : "rebind");
+        if (!explicit[2]) policy.setString("quantum", share ? "rebind" : "preserve");
         if (!explicit[3]) policy.setString("coordinateDefault", "auto");
         if (!explicit[5]) policy.setString("autoHints", share ? "full" : "light");
     }

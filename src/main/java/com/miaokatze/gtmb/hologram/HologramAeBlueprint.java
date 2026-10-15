@@ -276,6 +276,29 @@ public final class HologramAeBlueprint {
         }
     }
 
+    static final class EmptyCellProjection {
+
+        final ItemStack stack;
+        final List<ItemStack> materials;
+
+        private EmptyCellProjection(ItemStack stack, List<ItemStack> materials) {
+            this.stack = stack.copy();
+            this.materials = new ArrayList<>();
+            for (ItemStack material : materials) this.materials.add(material.copy());
+        }
+    }
+
+    static EmptyCellProjection emptyCellProjection(ItemStack source) throws IOException {
+        if (source == null || source.getItem() == null || source.stackSize != 1)
+            throw new IOException("ME 仓室元件本体无效，不能投影配置");
+        Work work = new Work(new NBTTagCompound());
+        ItemStack projected = HologramAeBlueprintSchemas.emptyCell(work, source.copy(), new String[] { "Inventory" });
+        if (projected == null) throw new IOException("ME 仓室元件不属于已审阅的空元件配置格式");
+        for (Issue issue : work.issues)
+            if ("blocker".equals(issue.severity)) throw new IOException("ME 仓室元件配置无效：" + issue.message);
+        return new EmptyCellProjection(projected, work.materials);
+    }
+
     private static final class Work {
 
         NBTTagCompound data;
@@ -497,7 +520,7 @@ public final class HologramAeBlueprint {
             .equals("appeng.block.networking.BlockCableBus")) shellMaterials(data, result);
         else {
             ItemStack sample = blockSample(block, metadata);
-            if (sample != null) result.add(sample);
+            if (sample != null && !HologramGtswnPlacementMaterials.freeShell(block, sample)) result.add(sample);
             if (HologramNetworkBindings.node(block)) shellMaterials(data.getCompoundTag("partContainer"), result);
         }
         return result;
@@ -543,7 +566,7 @@ public final class HologramAeBlueprint {
             for (String root : analysis.handledRoots) canonical.removeTag(root);
             remainder = HologramBlueprintResources.plan(canonical);
         }
-        if (main != null) {
+        if (main != null && !HologramGtswnPlacementMaterials.freeShell(block, main)) {
             boolean matched = false;
             for (int i = 0; i < shells.size(); i++) {
                 ItemStack shell = shells.get(i);
@@ -575,8 +598,12 @@ public final class HologramAeBlueprint {
                 canonicalActual.removeTag(key);
                 canonicalExpected.removeTag(key);
             }
-            for (String key : Arrays
-                .asList(HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE, HologramNetworkBindings.HINT)) {
+            for (String key : Arrays.asList(
+                HologramNetworkBindings.GROUP,
+                HologramNetworkBindings.ROLE,
+                HologramNetworkBindings.HINT,
+                HologramNetworkBindings.ORIGINAL,
+                HologramNetworkBindings.MODE)) {
                 canonicalActual.removeTag(key);
                 canonicalExpected.removeTag(key);
             }
@@ -610,6 +637,14 @@ public final class HologramAeBlueprint {
                 .getName()))
             throw new IOException("GTSWN quantum node factory/schema changed");
         cleanHost(work, data, host, new String[0]);
+        for (String key : Arrays.asList("placerUUID", "placerName")) {
+            if (!data.hasKey(key)) continue;
+            work.roots.add(key);
+            if (!HologramNetworkBindings.validOwnerField(data, key, "placerUUID".equals(key)))
+                work.issue("unreviewed_tile_field", "blocker", key, "量子节点放置者信息的类型或 UUID 无效，请核验后再处理");
+            else work.issue("network_identity", "warning", key, "已移除来源放置者信息，放置时由 GTSWN 记录当前玩家");
+            data.removeTag(key);
+        }
         for (String key : Arrays.asList("anchorDim", "anchorX", "anchorY", "anchorZ", "linked"))
             HologramAeBlueprintSchemas.remove(
                 work,
@@ -619,12 +654,33 @@ public final class HologramAeBlueprint {
                 "quantum_rebind",
                 "Original quantum coordinates are removed; bind the local group before placement");
         if (data.hasKey(HologramNetworkBindings.GROUP)) HologramNetworkBindings.group(data);
+        HologramNetworkBindings.validateOriginal(data);
         if (data.hasKey("color")
             && (!data.hasKey("color", 3) || data.getInteger("color") < 0 || data.getInteger("color") > 15))
             throw new IOException("Invalid GTSWN quantum color");
         // This palette belongs to the selected network; setAnchor rebuilds it from the new controller.
         data.removeTag("color");
         work.roots.add("color");
+        if (data.hasKey("lastAppliedMigration")) {
+            work.roots.add("lastAppliedMigration");
+            // GTSWN 1.8.66 persists the cursor of its world's QuantumMigrationJournal on every node.
+            // It is neither configuration nor portable identity: setAnchor starts at the target world's
+            // current sequence. Validate before omission so a lookalike field cannot hide arbitrary data.
+            if (!validQuantumMigrationCursor(data)) {
+                work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    "lastAppliedMigration",
+                    "GTSWN migration cursor must be a nonnegative long; malformed data requires explicit review");
+            } else {
+                work.issue(
+                    "quantum_migration_reset",
+                    "warning",
+                    "lastAppliedMigration",
+                    "Source-world migration cursor is omitted; the selected target network starts its own cursor");
+            }
+            data.removeTag("lastAppliedMigration");
+        }
         if (data.hasKey("partContainer")) {
             if (!data.hasKey("partContainer", 10)) throw new IOException("Malformed GTSWN part container");
             cable(work, data.getCompoundTag("partContainer"), new String[] { "partContainer" });
@@ -653,6 +709,8 @@ public final class HologramAeBlueprint {
                 HologramNetworkBindings.GROUP,
                 HologramNetworkBindings.ROLE,
                 HologramNetworkBindings.HINT,
+                HologramNetworkBindings.ORIGINAL,
+                HologramNetworkBindings.MODE,
                 UNRESOLVED));
         for (Object raw : new HashSet<Object>(data.func_150296_c())) {
             String key = (String) raw;
@@ -666,6 +724,11 @@ public final class HologramAeBlueprint {
                 data.removeTag(key);
             }
         }
+    }
+
+    /** GTSWN 1.8.66 QuantumMigrationJournal sequences start at zero and are stored as native longs. */
+    static boolean validQuantumMigrationCursor(NBTTagCompound data) {
+        return data != null && data.hasKey("lastAppliedMigration", 4) && data.getLong("lastAppliedMigration") >= 0L;
     }
 
     public static Analysis analyze(Block block, int metadata, NBTTagCompound payload) throws IOException {
@@ -854,6 +917,9 @@ public final class HologramAeBlueprint {
             loadingInventory.setTileEntity(null);
         }
         try {
+            // Private-blueprint provenance is consumed only by the verified binding adapter, never GTSWN's reader.
+            tag.removeTag(HologramNetworkBindings.ORIGINAL);
+            tag.removeTag(HologramNetworkBindings.MODE);
             tile.readFromNBT(tag);
         } finally {
             if (loadingInventory != null) loadingInventory.setTileEntity((IAEAppEngInventory) tile);
@@ -1381,6 +1447,18 @@ public final class HologramAeBlueprint {
             String type = host.getClass()
                 .getName();
             if (prefix.length == 0) data.removeTag("GTSWN_IncorporationIdentity");
+            if (prefix.length == 0 && type.equals("appeng.tile.networking.TileController")
+                && data.hasKey("GTSWN_ControllerIdentity")) {
+                root(work, prefix, "GTSWN_ControllerIdentity");
+                if (!HologramNetworkBindings.validOwnerField(data, "GTSWN_ControllerIdentity", true)) work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    "GTSWN_ControllerIdentity",
+                    "量子控制器世代标识必须是原生 UUID 字符串，请核验来源数据");
+                else work
+                    .issue("network_identity", "warning", "GTSWN_ControllerIdentity", "已移除来源控制器世代标识，新控制器将生成自己的原生身份");
+                data.removeTag("GTSWN_ControllerIdentity");
+            }
             if (host instanceof IGridProxyable) {
                 // GTSWN's exact persistence adapter writes "proxy". Its lazy getProxy() requires
                 // a live world, so schema inspection must remove that key without constructing

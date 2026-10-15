@@ -52,6 +52,11 @@ public final class HologramProcessingFlowRegression {
         check(!flow.chosen() && !flow.next() && flow.stage == 0, "Opening a policy cannot advance it");
         flow.tendency(true);
         check(
+            "rebind".equals(
+                flow.values()
+                    .getString("quantum")),
+            "Sharing preserves groups for a selected target-network terminal");
+        check(
             flow.chosen() && !flow.complete()
                 && flow.policy()
                     .getTagList("confirmedStages", 8)
@@ -136,6 +141,44 @@ public final class HologramProcessingFlowRegression {
         flow.clearChoice();
         check(!flow.complete() && !flow.next(), "A server-rejected choice must be reviewed again");
         check(saved.getInteger("deidentificationLevel") == 4, "Client flow never mutates the saved preset");
+        HologramProcessingFlow explicitlyCleared = new HologramProcessingFlow(new NBTTagCompound());
+        explicitlyCleared.tendency(false);
+        explicitlyCleared.next();
+        explicitlyCleared.next();
+        explicitlyCleared.values()
+            .setString("quantum", "clear");
+        explicitlyCleared.choose();
+        explicitlyCleared.tendency(true);
+        check(
+            "clear".equals(
+                explicitlyCleared.values()
+                    .getString("quantum")),
+            "Sharing recommendation preserves a deliberately chosen complete group clear");
+        HologramProcessingFlow groups = new HologramProcessingFlow(new NBTTagCompound());
+        groups.tendency(true);
+        groups.next();
+        groups.next();
+        check(
+            groups.chosen() && groups.next(),
+            "A recommended quantum policy continues with the default single group without opening classification");
+        HologramProcessingFlow presetGroups = new HologramProcessingFlow(new NBTTagCompound());
+        presetGroups.preset(groups.values());
+        presetGroups.next();
+        presetGroups.next();
+        check(
+            presetGroups.stage == 2 && presetGroups.chosen() && presetGroups.next(),
+            "A reusable preset never requires a separate per-blueprint group confirmation");
+        HologramProcessingFlow selfGroups = new HologramProcessingFlow(new NBTTagCompound());
+        selfGroups.tendency(false);
+        selfGroups.next();
+        selfGroups.next();
+        check(
+            selfGroups.stage == 2 && "preserve".equals(
+                selfGroups.values()
+                    .getString("quantum"))
+                && selfGroups.chosen()
+                && selfGroups.next(),
+            "Self-use keeps the original binding and advances without custom classification");
         HologramProcessingFlow changed = new HologramProcessingFlow(new NBTTagCompound());
         changed.tendency(false);
         for (int i = 0; i < 5; i++) changed.next();

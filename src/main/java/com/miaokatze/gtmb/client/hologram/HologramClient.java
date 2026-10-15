@@ -231,8 +231,9 @@ public final class HologramClient {
         request.setInteger("point", event.button == 0 ? 1 : 2);
         request.setString("mode", areaSelectionMode(control, shift));
         syncPreviewDistance();
-        int[] anchor = areaSelectionAnchor();
-        request.setBoolean("atPlayer", previewDistance.distance() == 0);
+        HologramWorldTarget.Target target = worldTarget(false);
+        int[] anchor = target.anchor;
+        request.setBoolean("atPlayer", target.atPlayer);
         request.setInteger("x", anchor[0]);
         request.setInteger("y", anchor[1]);
         request.setInteger("z", anchor[2]);
@@ -480,24 +481,7 @@ public final class HologramClient {
 
     /** Only a render translation; no moving-preview world mutation packets are emitted. */
     static int[] movingAnchor(HologramState snapshot) {
-        Minecraft mc = Minecraft.getMinecraft();
-        syncPreviewDistance();
-        if (previewDistance.distance() == 0) return playerAnchor(mc);
-        MovingObjectPosition hit = mc.objectMouseOver;
-        if (hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
-            ForgeDirection face = ForgeDirection.getOrientation(hit.sideHit);
-            return new int[] { hit.blockX + face.offsetX, hit.blockY + face.offsetY, hit.blockZ + face.offsetZ };
-        }
-        net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
-        net.minecraft.util.Vec3 look = camera.getLookVec();
-        return HologramWorldFlow.airAnchor(
-            camera.posX,
-            camera.posY + camera.getEyeHeight(),
-            camera.posZ,
-            look.xCoord,
-            look.yCoord,
-            look.zCoord,
-            previewDistance.distance());
+        return worldTarget(true).anchor;
     }
 
     private static boolean altHeld() {
@@ -525,26 +509,23 @@ public final class HologramClient {
             net.minecraft.util.MathHelper.floor_double(mc.thePlayer.posZ) };
     }
 
-    static int[] airSelectionAnchor() {
+    private static HologramWorldTarget.Target worldTarget(boolean adjacent) {
         Minecraft mc = Minecraft.getMinecraft();
         syncPreviewDistance();
-        if (previewDistance.distance() == 0) return playerAnchor(mc);
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
-        net.minecraft.util.Vec3 look = camera.getLookVec();
-        return HologramWorldFlow.airAnchor(
-            camera.posX,
-            camera.posY + camera.getEyeHeight(),
-            camera.posZ,
-            look.xCoord,
-            look.yCoord,
-            look.zCoord,
-            previewDistance.distance());
+        return HologramWorldTarget.resolve(
+            mc.objectMouseOver,
+            altHeld(),
+            adjacent,
+            previewDistance.distance(),
+            playerAnchor(mc),
+            net.minecraft.util.Vec3.createVectorHelper(camera.posX, camera.posY + camera.getEyeHeight(), camera.posZ),
+            camera.getLookVec());
     }
 
-    /** The floating cursor and point packets share one target; Alt only changes its distance. */
+    /** The red cursor and point packets use the same block or floating target. */
     static int[] areaSelectionAnchor() {
-        syncPreviewDistance();
-        return airSelectionAnchor();
+        return worldTarget(false).anchor;
     }
 
     private static void receive(NBTTagCompound nbt) {

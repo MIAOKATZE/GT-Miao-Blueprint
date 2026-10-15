@@ -9,8 +9,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.util.MovingObjectPosition;
 
 import org.lwjgl.opengl.GL11;
+
+import cpw.mods.fml.common.Loader;
 
 /** Contextual world guidance shares one centered, width-bounded top panel. */
 final class HologramWorldGuide {
@@ -48,7 +51,8 @@ final class HologramWorldGuide {
 
     static void draw(List<String> messages, ScaledResolution resolution) {
         if (messages.isEmpty()) return;
-        FontRenderer font = Minecraft.getMinecraft().fontRenderer;
+        Minecraft mc = Minecraft.getMinecraft();
+        FontRenderer font = mc.fontRenderer;
         int available = Math.max(40, resolution.getScaledWidth() - 24);
         List<String> rows = new ArrayList<>();
         for (int i = 0; i < messages.size(); i++) {
@@ -57,7 +61,11 @@ final class HologramWorldGuide {
         }
         int width = 0;
         for (String row : rows) width = Math.max(width, font.getStringWidth(row));
-        int x = (resolution.getScaledWidth() - width) / 2, y = 8;
+        // Leave room for Waila's standard top block tooltip without linking its optional renderer.
+        boolean blockTooltip = Loader.isModLoaded("Waila") && mc.objectMouseOver != null
+            && mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK;
+        int top = blockTooltip ? 40 : 8;
+        int x = (resolution.getScaledWidth() - width) / 2, y = top;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             Gui.drawRect(x - 5, y - 4, x + width + 5, y + rows.size() * (font.FONT_HEIGHT + 2), 0x99000000);
@@ -74,7 +82,7 @@ final class HologramWorldGuide {
         }
         lastRenderWitness = new RenderWitness(
             resolution.getScaledWidth() / 2,
-            8,
+            top,
             width,
             rows.size() * (font.FONT_HEIGHT + 2),
             rows);

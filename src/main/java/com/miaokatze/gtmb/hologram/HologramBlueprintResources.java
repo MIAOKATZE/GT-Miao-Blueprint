@@ -311,6 +311,7 @@ public final class HologramBlueprintResources {
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         HologramEssentia.validateNonJarContents(selectedPayload);
         Inspection inspection = new Inspection(selectedPayload, nativeComponents);
+        result.addNativeItems(HologramGtMeShadow.componentMaterials(selectedPayload));
         HologramEssentia.Cost jar = HologramEssentia.jarCost(selectedPayload);
         if (jar != null) {
             result.addEssentia(jar.aspect, jar.amount);

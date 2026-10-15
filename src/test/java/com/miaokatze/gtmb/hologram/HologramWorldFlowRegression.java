@@ -57,9 +57,9 @@ public final class HologramWorldFlowRegression {
             HologramWorldFlow.intent(moving, Gesture.SHIFT_RIGHT),
             "moving placement never starts a conflicting area selection");
         SimpleAssert.eq(
-            Intent.NONE,
+            Intent.CONFIRM_POSITION,
             HologramWorldFlow.intent(moving, Gesture.ALT_RIGHT),
-            "moving placement never replaces its blueprint with a shortcut request");
+            "Alt right locks the forced floating target of the current blueprint");
         Stage locked = HologramWorldFlow.stage(false, true, true, true, 0);
         SimpleAssert.eq(
             Intent.OPEN,

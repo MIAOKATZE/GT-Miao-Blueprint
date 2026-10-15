@@ -8,6 +8,7 @@ public final class HologramInputContextRegression {
     private HologramInputContextRegression() {}
 
     public static void run() {
+        HologramWorldTargetRegression.run();
         Object world = new Object(), item = new Object(), stack = new Object();
         HologramInputContext context = new HologramInputContext();
         HologramWorldFlow.UsePressFence fence = new HologramWorldFlow.UsePressFence();

@@ -63,6 +63,7 @@ public final class HologramNativePlacement {
     }
 
     public static ItemStack sample(Block block, int metadata, TileEntity tile) throws IOException {
+        if (HologramNetworkBindings.node(block)) return HologramAeBlueprint.blockSample(block, metadata);
         if (tile instanceof appeng.tile.AEBaseTile && HologramAeBlueprint.supports(block)
             && !block.getClass()
                 .getName()
@@ -75,6 +76,7 @@ public final class HologramNativePlacement {
 
     /** A native placement identity is distinct from its bill, which may legitimately be empty. */
     public static ItemStack sample(Block block, int metadata, NBTTagCompound payload) throws IOException {
+        if (HologramNetworkBindings.node(block)) return HologramAeBlueprint.blockSample(block, metadata);
         List<ItemStack> costs = materials(block, metadata, payload);
         if (costs.isEmpty()) {
             Item item = Item.getItemFromBlock(block);
@@ -139,6 +141,7 @@ public final class HologramNativePlacement {
     public static List<ItemStack> additionalMaterials(Block block, int metadata, NBTTagCompound payload, ItemStack main)
         throws IOException {
         List<ItemStack> costs = materials(block, metadata, payload);
+        if (HologramGtswnPlacementMaterials.freeShell(block, main)) return costs;
         if (costs.isEmpty()) return costs;
         for (int i = 0; i < costs.size(); i++) {
             ItemStack cost = costs.get(i);
@@ -153,6 +156,13 @@ public final class HologramNativePlacement {
 
     public static boolean matchesSample(Block block, int metadata, NBTTagCompound payload, ItemStack sample) {
         try {
+            if (HologramNetworkBindings.node(block)) {
+                if (HologramAeBlueprint.analyze(block, metadata, payload).blocking) return false;
+                ItemStack identity = HologramAeBlueprint.blockSample(block, metadata);
+                return sample != null && identity != null
+                    && identity.isItemEqual(sample)
+                    && ItemStack.areItemStackTagsEqual(identity, sample);
+            }
             List<ItemStack> costs = materials(block, metadata, payload);
             if (costs.isEmpty()) {
                 ItemStack identity = sample(block, metadata, payload);

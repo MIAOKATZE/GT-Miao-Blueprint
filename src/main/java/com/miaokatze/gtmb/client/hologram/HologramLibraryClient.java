@@ -17,9 +17,10 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramLibraryProtocol;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 
-/** One bounded disk worker and acknowledged 1 KiB chunks; no JSON or file IO runs on the render/tick thread. */
+/** One bounded disk worker and acknowledged chunks; no JSON or file IO runs on the render/tick thread. */
 final class HologramLibraryClient {
 
     static final HologramLibraryClient INSTANCE = new HologramLibraryClient();
@@ -340,12 +341,19 @@ final class HologramLibraryClient {
             cancel();
             status = "传输超时，请重试";
         }
-        if (outgoing != null && ready && !inFlight && nextChunk * 1024 < outgoing.length) {
-            int offset = nextChunk * 1024;
+        if (outgoing != null && ready
+            && !inFlight
+            && nextChunk * HologramLibraryProtocol.CHUNK_BYTES < outgoing.length) {
+            int offset = nextChunk * HologramLibraryProtocol.CHUNK_BYTES;
             NBTTagCompound chunk = request(outgoingOp + "Chunk");
             chunk.setString("transfer", outgoingId);
             chunk.setInteger("index", nextChunk);
-            chunk.setByteArray("data", Arrays.copyOfRange(outgoing, offset, Math.min(offset + 1024, outgoing.length)));
+            chunk.setByteArray(
+                "data",
+                Arrays.copyOfRange(
+                    outgoing,
+                    offset,
+                    Math.min(offset + HologramLibraryProtocol.CHUNK_BYTES, outgoing.length)));
             inFlight = true;
             HologramNetwork.sendLibrary(chunk);
         }
@@ -900,7 +908,7 @@ final class HologramLibraryClient {
             if (!matchesOutgoing(reply)) return;
             int previousBytes = sentBytes;
             nextChunk = reply.getInteger("nextIndex");
-            sentBytes = Math.min(outgoing.length, nextChunk * 1024);
+            sentBytes = Math.min(outgoing.length, nextChunk * HologramLibraryProtocol.CHUNK_BYTES);
             if (pendingSaveAck != null && sentBytes > previousBytes) {
                 saveProgress.progress(System.nanoTime());
                 int marker = (int) ((long) sentBytes * 4 / outgoing.length);
@@ -983,7 +991,7 @@ final class HologramLibraryClient {
             if (incoming == null || !incomingId.equals(reply.getString("transfer"))) return;
             byte[] bytes = reply.getByteArray("data");
             if (reply.getInteger("index") != incomingIndex
-                || bytes.length != Math.min(1024, incomingTotal - incoming.size())) {
+                || bytes.length != Math.min(HologramLibraryProtocol.CHUNK_BYTES, incomingTotal - incoming.size())) {
                 cancel();
                 status = "下载分片无效，请重试";
                 return;
@@ -1277,9 +1285,7 @@ final class HologramLibraryClient {
     }
 
     private static NBTTagCompound request(String op) {
-        NBTTagCompound nbt = new NBTTagCompound();
-        nbt.setString("op", op);
-        return nbt;
+        return HologramLibraryProtocol.request(op);
     }
 
     private static String actionLabel(String action) {

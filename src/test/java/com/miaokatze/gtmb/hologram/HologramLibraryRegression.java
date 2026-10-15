@@ -16,6 +16,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
@@ -53,30 +54,49 @@ public final class HologramLibraryRegression {
     }
 
     private static void protocolAndThrottle() throws Exception {
+        int slice = HologramLibraryProtocol.CHUNK_BYTES;
+        int rate = 128 * 1024;
         String id = UUID.randomUUID()
             .toString();
         HologramLibraryProtocol.header(
             id,
-            1025,
+            slice + 1,
             HologramLibraryProtocol.hex(
                 HologramLibraryProtocol.digest()
-                    .digest(new byte[1025])));
+                    .digest(new byte[slice + 1])));
         denied(() -> HologramLibraryProtocol.header("../../escape", 1, repeat('a', 64)), "path-like transfer rejected");
         denied(
             () -> HologramLibraryProtocol.header(id, HologramLibraryProtocol.MAX_BYTES + 1, repeat('a', 64)),
             "declared size bounded");
         denied(() -> HologramLibraryProtocol.header(id, 1, "bad"), "hash header bounded");
-        HologramLibraryProtocol.chunk(1025, 1024, 1, 1, 1);
-        denied(() -> HologramLibraryProtocol.chunk(1025, 0, 0, 1, 1024), "out-of-order chunk rejected");
-        denied(() -> HologramLibraryProtocol.chunk(1025, 0, 0, 0, 1025), "oversize chunk rejected");
-        denied(() -> HologramLibraryProtocol.chunk(1025, 1024, 1, 1, 2), "last length must match remaining bytes");
+        HologramLibraryProtocol.chunk(slice + 1, 0, 0, 0, slice);
+        HologramLibraryProtocol.chunk(slice + 1, slice, 1, 1, 1);
+        denied(() -> HologramLibraryProtocol.chunk(slice + 1, 0, 0, 1, slice), "out-of-order chunk rejected");
+        denied(() -> HologramLibraryProtocol.chunk(slice + 1, 0, 0, 0, slice + 1), "oversize chunk rejected");
+        denied(() -> HologramLibraryProtocol.chunk(slice + 1, 0, 0, 0, 1024), "legacy short chunk rejected");
+        denied(() -> HologramLibraryProtocol.chunk(slice + 1, slice, 1, 1, 2), "last length matches remaining bytes");
         HologramLibraryProtocol.Budget budget = new HologramLibraryProtocol.Budget();
-        SimpleAssert.that(!budget.take(1024, 16384, 1), "bucket starts empty");
+        SimpleAssert.that(!budget.take(slice, rate, 1), "bucket starts empty");
         int accepted = 0;
-        for (int i = 0; i < 64; i++) if (budget.take(1024, 16384, 1000000001L)) accepted++;
-        SimpleAssert.eq(1, accepted, "sixty-four players cannot multiply the aggregate bucket");
-        SimpleAssert.that(budget.take(1024, 16384, 1062500001L), "16KiB/s replenishes one 1KiB slice in 62.5ms");
-        SimpleAssert.that(!budget.take(1024, 16384, 1062500001L), "same instant cannot consume twice");
+        for (int i = 0; i < 64; i++) if (budget.take(slice, rate, 1000000001L)) accepted++;
+        SimpleAssert.eq(2, accepted, "sixty-four players share one bounded 32KiB aggregate burst");
+        SimpleAssert.that(budget.take(slice, rate, 1125000001L), "128KiB/s replenishes 16KiB in 125ms");
+        SimpleAssert.that(!budget.take(slice, rate, 1125000001L), "same instant cannot consume twice");
+        HologramLibraryProtocol.Budget sustained = new HologramLibraryProtocol.Budget();
+        sustained.take(slice, rate, 1);
+        int transferred = 0;
+        for (int tick = 1; tick <= 400; tick++) {
+            if (sustained.take(slice, rate, 1L + tick * 50000000L)) transferred += slice;
+            SimpleAssert.that(
+                transferred <= (long) rate * tick / 20,
+                "50ms polling never exceeds the empty-start aggregate allowance");
+        }
+        SimpleAssert.eq(rate * 20, transferred, "50ms polling preserves the remainder and sustains 128KiB/s");
+        HologramLibraryProtocol.Budget explicitSlow = new HologramLibraryProtocol.Budget();
+        explicitSlow.take(slice, 16 * 1024, 1);
+        SimpleAssert.that(!explicitSlow.take(slice, 16 * 1024, 950000001L), "explicit 16KiB/s is not accelerated");
+        SimpleAssert
+            .that(explicitSlow.take(slice, 16 * 1024, 1000000001L), "explicit 16KiB/s serves one slice per second");
         HologramLibraryProtocol.FairBudget fair = new HologramLibraryProtocol.FairBudget();
         UUID[] players = { UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID() };
         int[] served = new int[players.length];
@@ -85,21 +105,88 @@ public final class HologramLibraryRegression {
             for (int player = 0; player < players.length; player++) {
                 // Changing which player polls first cannot lock successful every-other ticks to the same parity.
                 int index = (tick + player) % players.length;
-                if (fair.take(players[index], 1024, 16384, now)) served[index]++;
+                if (fair.take(players[index], slice, rate, now)) served[index]++;
             }
         }
         for (int count : served)
             SimpleAssert.that(count >= 8, "every player is served despite tick/bucket phase alignment");
+        HologramLibraryProtocol.FairBudget fifo = new HologramLibraryProtocol.FairBudget();
+        for (UUID player : players) SimpleAssert.that(!fifo.take(player, slice, rate, 1), "owners join the empty FIFO");
+        SimpleAssert.that(!fifo.take(players[3], slice, rate, 125000001L), "later owner cannot jump the FIFO");
+        SimpleAssert.that(fifo.take(players[0], slice, rate, 125000001L), "first waiting UUID receives the allowance");
+        SimpleAssert
+            .that(!fifo.take(players[2], slice, rate, 250000001L), "poll order cannot displace the second UUID");
+        SimpleAssert.that(fifo.take(players[1], slice, rate, 250000001L), "second waiting UUID retains its position");
+        fifo.cancel(players[2]);
+        SimpleAssert.that(fifo.take(players[3], slice, rate, 375000001L), "cancelled UUID releases its FIFO position");
         denied(
             () -> new HologramNetwork.LibraryRequest().fromBytes(
                 Unpooled.buffer()
-                    .writeInt(8193)),
+                    .writeInt(HologramLibraryProtocol.VERSION)
+                    .writeInt(HologramLibraryProtocol.PACKET_BYTES + 1)),
             "wire length checked before allocation");
+        byte[] random = new byte[slice];
+        new java.util.Random(731719L).nextBytes(random);
+        NBTTagCompound valid = HologramLibraryProtocol.request("uploadChunk");
+        valid.setString("transfer", id);
+        valid.setInteger("index", 0);
+        valid.setByteArray("data", random);
+        io.netty.buffer.ByteBuf requestWire = Unpooled.buffer();
+        new HologramNetwork.LibraryRequest(valid).toBytes(requestWire);
+        SimpleAssert.eq(2, requestWire.getInt(0), "library requests carry explicit protocol version 2");
+        SimpleAssert
+            .that(requestWire.readableBytes() + 1 < 32767, "incompressible request plus FML discriminator fits C17");
+        HologramNetwork.LibraryRequest decoded = new HologramNetwork.LibraryRequest();
+        decoded.fromBytes(requestWire.duplicate());
+        SimpleAssert.that(
+            Arrays.equals(random, ((NBTTagCompound) get(decoded, "tag")).getByteArray("data")),
+            "16KiB request survives bounded NBT decode");
+        NBTTagCompound reply = HologramLibraryProtocol.reply("downloadChunk");
+        reply.setString("transfer", id);
+        reply.setInteger("index", 0);
+        reply.setByteArray("data", random);
+        io.netty.buffer.ByteBuf replyWire = Unpooled.buffer();
+        new HologramNetwork.LibraryReply(reply).toBytes(replyWire);
+        HologramNetwork.LibraryReply decodedReply = new HologramNetwork.LibraryReply();
+        decodedReply.fromBytes(replyWire.duplicate());
+        SimpleAssert.that(
+            Arrays.equals(random, ((NBTTagCompound) get(decodedReply, "tag")).getByteArray("data")),
+            "16KiB reply survives bounded NBT decode");
+        byte[] legacy = CompressedStreamTools.compress(HologramLibraryProtocol.request("configGet"));
+        denied(
+            () -> new HologramNetwork.LibraryRequest().fromBytes(
+                Unpooled.buffer()
+                    .writeInt(legacy.length)
+                    .writeBytes(legacy)),
+            "legacy request without a protocol version is rejected");
+        denied(
+            () -> new HologramNetwork.LibraryReply().fromBytes(
+                Unpooled.buffer()
+                    .writeInt(legacy.length)
+                    .writeBytes(legacy)),
+            "legacy reply without a protocol version is rejected");
+        io.netty.buffer.ByteBuf wrongVersion = requestWire.copy();
+        wrongVersion.setInt(0, 1);
+        denied(
+            () -> new HologramNetwork.LibraryRequest().fromBytes(wrongVersion),
+            "old request protocol version rejected");
+        io.netty.buffer.ByteBuf wrongReplyVersion = replyWire.copy();
+        wrongReplyVersion.setInt(0, 1);
+        denied(
+            () -> new HologramNetwork.LibraryReply().fromBytes(wrongReplyVersion),
+            "old reply protocol version rejected");
         NBTTagCompound bad = HologramLibraryProtocol.request("uploadChunk");
-        bad.setByteArray("data", new byte[2048]);
+        bad.setByteArray("data", new byte[slice + 1]);
         io.netty.buffer.ByteBuf wire = Unpooled.buffer();
         new HologramNetwork.LibraryRequest(bad).toBytes(wire);
         denied(() -> new HologramNetwork.LibraryRequest().fromBytes(wire), "compressed large chunk rejected");
+        NBTTagCompound expanded = HologramLibraryProtocol.request("uploadChunk");
+        expanded.setByteArray("padding", new byte[HologramLibraryProtocol.EXPANDED_PACKET_BYTES]);
+        io.netty.buffer.ByteBuf expandedWire = Unpooled.buffer();
+        new HologramNetwork.LibraryRequest(expanded).toBytes(expandedWire);
+        denied(
+            () -> new HologramNetwork.LibraryRequest().fromBytes(expandedWire),
+            "compressed expanded-NBT bomb rejected");
         NBTTagCompound drop = new NBTTagCompound();
         drop.setString("dropItem", "counterfeit");
         NBTTagList inner = new NBTTagList();
@@ -113,9 +200,22 @@ public final class HologramLibraryRegression {
         Path file = Files.createTempDirectory("gtmb-library-config-")
             .resolve("library.cfg");
         HologramLibraryConfig config = new HologramLibraryConfig(file.toFile());
-        SimpleAssert.eq(16, config.view().uploadKiB, "default aggregate upload");
-        SimpleAssert.eq(16, config.view().downloadKiB, "default aggregate download");
+        SimpleAssert.eq(128, config.view().uploadKiB, "fresh default aggregate upload");
+        SimpleAssert.eq(128, config.view().downloadKiB, "fresh default aggregate download");
         SimpleAssert.eq(10, config.view().maxUploads, "default UUID quota");
+        Path legacyFile = file.resolveSibling("existing-16.cfg");
+        Files.write(
+            legacyFile,
+            ("serverblueprintlibrary {\n I:uploadKiBPerSecond=16\n I:downloadKiBPerSecond=16\n I:maxUploadsPerPlayer=7\n}\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        HologramLibraryConfig legacyConfig = new HologramLibraryConfig(legacyFile.toFile());
+        SimpleAssert.eq(16, legacyConfig.view().uploadKiB, "existing explicit upload 16 is retained");
+        SimpleAssert.eq(16, legacyConfig.view().downloadKiB, "existing explicit download 16 is retained");
+        HologramLibraryConfig legacyReopened = new HologramLibraryConfig(legacyFile.toFile());
+        SimpleAssert.eq(16, legacyReopened.view().uploadKiB, "persisting existing config does not migrate its upload");
+        SimpleAssert
+            .eq(16, legacyReopened.view().downloadKiB, "persisting existing config does not migrate its download");
+        SimpleAssert.eq(7, legacyReopened.view().maxUploads, "existing quota remains unchanged");
         denied(() -> config.update(false, 1, 20, 30, 2), "OP3/read-only cannot change config");
         config.update(true, 1, 20, 30, 2);
         denied(() -> config.update(true, 1, 16, 16, 10), "stale GUI revision cannot overwrite command changes");
@@ -145,34 +245,66 @@ public final class HologramLibraryRegression {
     }
 
     private static void hydration() throws Exception {
-        byte[] bytes = new byte[4097];
+        int slice = HologramLibraryProtocol.CHUNK_BYTES;
+        byte[] bytes = new byte[4 * slice + 1];
         Arrays.fill(bytes, (byte) 42);
         byte[] hash = HologramLibraryProtocol.digest()
             .digest(bytes);
         HologramLibrarySnapshotAssembly assembly = new HologramLibrarySnapshotAssembly();
         byte[] complete = null;
         // Total duration exceeds vanilla's 30s whole-transfer deadline, but every slice is active.
-        for (int offset = 0, index = 0; offset < bytes.length; offset += 1024, index++) complete = assembly.accept(
-            1,
-            bytes.length,
-            index,
-            Arrays.copyOfRange(bytes, offset, Math.min(bytes.length, offset + 1024)),
-            hash,
-            1L + index * 20000000000L);
+        for (int offset = 0, index = 0; offset < bytes.length; offset += slice, index++) {
+            byte[] chunk = Arrays.copyOfRange(bytes, offset, Math.min(bytes.length, offset + slice));
+            io.netty.buffer.ByteBuf wire = Unpooled.buffer();
+            new HologramNetwork.LibrarySnapshotFragment(1, bytes.length, index, hash, chunk).toBytes(wire);
+            SimpleAssert.eq(2, wire.getInt(0), "hydration carries explicit protocol version 2");
+            SimpleAssert
+                .that(wire.readableBytes() + 1 < 32767, "bounded hydration fragment fits the smaller C17 limit too");
+            HologramNetwork.LibrarySnapshotFragment decoded = new HologramNetwork.LibrarySnapshotFragment();
+            decoded.fromBytes(wire);
+            complete = assembly.accept(
+                1,
+                (Integer) get(decoded, "total"),
+                (Integer) get(decoded, "index"),
+                (byte[]) get(decoded, "bytes"),
+                (byte[]) get(decoded, "hash"),
+                1L + index * 20000000000L);
+        }
         SimpleAssert.that(Arrays.equals(bytes, complete), "slow hydration uses inactivity timeout and verifies hash");
+        io.netty.buffer.ByteBuf legacyWire = Unpooled.buffer()
+            .writeLong(1L)
+            .writeInt(slice)
+            .writeInt(0)
+            .writeBytes(hash)
+            .writeInt(slice)
+            .writeBytes(new byte[slice]);
+        denied(
+            () -> new HologramNetwork.LibrarySnapshotFragment().fromBytes(legacyWire),
+            "legacy hydration without a protocol version is rejected");
+        io.netty.buffer.ByteBuf oldVersion = Unpooled.buffer();
+        new HologramNetwork.LibrarySnapshotFragment(1, slice, 0, hash, new byte[slice]).toBytes(oldVersion);
+        oldVersion.setInt(0, 1);
+        denied(
+            () -> new HologramNetwork.LibrarySnapshotFragment().fromBytes(oldVersion),
+            "old hydration protocol version is rejected");
+        io.netty.buffer.ByteBuf oversized = Unpooled.buffer();
+        new HologramNetwork.LibrarySnapshotFragment(1, slice + 1, 0, hash, new byte[slice + 1]).toBytes(oversized);
+        denied(
+            () -> new HologramNetwork.LibrarySnapshotFragment().fromBytes(oversized),
+            "hydration chunk remains bounded before payload allocation");
         byte[] wrong = hash.clone();
         wrong[0] ^= 1;
         SimpleAssert.that(
             assembly.accept(2, 1, 0, new byte[] { 42 }, wrong, 1) == null,
             "bad final snapshot hash never published");
         int large = 9 * 1024 * 1024;
-        assembly.accept(3, large, 0, new byte[1024], hash, 1);
-        assembly.accept(3, large, 1, new byte[1024], hash, 2);
+        assembly.accept(3, large, 0, new byte[slice], hash, 1);
+        assembly.accept(3, large, 1, new byte[slice], hash, 2);
         SimpleAssert.eq(
-            2048,
+            2 * slice,
             ((Integer) get(assembly, "offset")).intValue(),
             "snapshot budget is independent of 8MiB file budget");
-        assembly.accept(3, large, 2, new byte[1024], hash, HologramLibraryProtocol.TIMEOUT_NANOS + 3);
+        assembly.accept(3, large, 2, new byte[slice], hash, HologramLibraryProtocol.TIMEOUT_NANOS + 3);
         SimpleAssert.eq(0, ((Integer) get(assembly, "offset")).intValue(), "inactive hydration releases its assembly");
         assembly.reset();
     }
@@ -430,11 +562,17 @@ public final class HologramLibraryRegression {
         begin.setString("replaceId", replace);
         runWorker(store, () -> handle(store, peer, begin));
         try {
-            for (int offset = 0, index = 0; offset < bytes.length; offset += 1024, index++) {
+            for (int offset = 0, index = 0; offset
+                < bytes.length; offset += HologramLibraryProtocol.CHUNK_BYTES, index++) {
                 NBTTagCompound chunk = HologramLibraryProtocol.request("uploadChunk");
                 chunk.setString("transfer", transfer);
                 chunk.setInteger("index", index);
-                chunk.setByteArray("data", Arrays.copyOfRange(bytes, offset, Math.min(bytes.length, offset + 1024)));
+                chunk.setByteArray(
+                    "data",
+                    Arrays.copyOfRange(
+                        bytes,
+                        offset,
+                        Math.min(bytes.length, offset + HologramLibraryProtocol.CHUNK_BYTES)));
                 runWorker(store, () -> handle(store, peer, chunk));
             }
         } catch (Exception failure) {
@@ -501,10 +639,14 @@ public final class HologramLibraryRegression {
     }
 
     private static Object get(Object object, String name) throws Exception {
-        Field field = object.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(object);
+        for (Class<?> type = object.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(object);
+            } catch (NoSuchFieldException absent) {}
+        }
+        throw new NoSuchFieldException(name);
     }
 
     private static void set(Object object, String name, Object value) throws Exception {
