@@ -6887,7 +6887,8 @@ public final class HologramScreen extends GuiScreen {
     }
 
     private static void requireInteractionSmoke() {
-        if (!Boolean.getBoolean("gtmb.hologram.realInteractionSmoke"))
+        if (!Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")
+            && !Boolean.getBoolean("gtmb.hologram.followupAreaClient"))
             throw new IllegalStateException("Real interaction smoke is disabled");
     }
 
