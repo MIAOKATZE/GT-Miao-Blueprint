@@ -1336,7 +1336,7 @@ public final class HologramCutNativeClientProbe {
         osPending = true;
         osOperation = operation;
         osKey = key;
-        osAckDeadline = System.nanoTime() + 5000000000L;
+        osAckDeadline = System.nanoTime() + ("focus".equals(operation) ? 15000000000L : 5000000000L);
     }
 
     private boolean pollOsInput(long now) throws Exception {

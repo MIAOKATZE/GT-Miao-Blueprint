@@ -240,6 +240,37 @@ class Win32:
                     ):
                         raise RuntimeError("Input is held; refusing focus queue changes")
 
+                # Startup can coincide with a user's transient key/button press. Wait
+                # without releasing it or changing queues; subsequent races stay fail-closed.
+                if self.keys or self.physical or self.buttons:
+                    raise RuntimeError("Bridge-owned input is held; refusing focus queue changes")
+                idle_started = time.monotonic()
+                idle_since = None
+                observed_held = set()
+                try:
+                    while True:
+                        self.target.validate()
+                        if not self.owned(self.hwnd):
+                            raise RuntimeError("Owned focus target changed while awaiting idle input")
+                        stop_file = getattr(self, "stop_file", None)
+                        if stop_file is not None and stop_file.exists():
+                            raise RuntimeError("Owned paired launcher requested shutdown while awaiting idle input")
+                        held = [key for key in range(1, 256) if self.user.GetAsyncKeyState(key) & 0x8000]
+                        observed_held.update(held)
+                        self.focus_evidence["focus_held_vks"] = ",".join(map(str, sorted(observed_held)))
+                        self.focus_evidence["focus_last_held_vks"] = ",".join(map(str, held))
+                        now = time.monotonic()
+                        if held:
+                            idle_since = None
+                        elif idle_since is None:
+                            idle_since = now
+                        elif now - idle_since >= .15:
+                            break
+                        if now - idle_started >= 10:
+                            raise RuntimeError("Input is held or not stably idle after 10 seconds; refusing focus queue changes")
+                        time.sleep(.02)
+                finally:
+                    self.focus_evidence["focus_idle_wait_ms"] = round((time.monotonic() - idle_started) * 1000)
                 require_idle_input()
                 self.user.ShowWindow(self.hwnd, 9 if self.user.IsIconic(self.hwnd) else 5)
                 self.user.BringWindowToTop(self.hwnd)
@@ -500,6 +531,7 @@ def main():
     fixture = within(args.fixture, ROOT)
     receipts = within(args.receipts, fixture)
     bridge = Win32(Target(args.pid, fixture))
+    bridge.stop_file = receipts / "cut-os-input-bridge-stop.txt"
     lock = receipts / "cut-os-input-bridge.lock"
     token = f"bridge_pid={os.getpid()}\ntarget_pid={args.pid}\ntoken={uuid.uuid4()}\n"
     with lock.open("x", encoding="ascii") as stream:
