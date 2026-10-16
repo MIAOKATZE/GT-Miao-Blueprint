@@ -61,7 +61,10 @@ public final class HologramRuntimeMetrics {
         RUNNING_JOB_FULL_BUILDS("runningJobFullBuilds"),
         JOB_DELTA_PACKETS("jobDeltaPackets"),
         JOB_DELTA_CELLS("jobDeltaCells"),
-        JOB_DELTA_ENCODED_BYTES("jobDeltaEncodedBytes");
+        JOB_DELTA_ENCODED_BYTES("jobDeltaEncodedBytes"),
+        LIBRARY_CALLBACK_DEPTH("libraryCallbackDepth"),
+        LIBRARY_CALLBACK_HIGH_WATER("libraryCallbackHighWater"),
+        LIBRARY_CALLBACK_REJECTED("libraryCallbackRejected");
 
         final String key;
 

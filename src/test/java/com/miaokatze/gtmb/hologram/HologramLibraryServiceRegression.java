@@ -349,6 +349,13 @@ final class HologramLibraryServiceRegression {
                 "local pair receipt commits through actual dispatcher");
             SimpleAssert.eq(pngHash, get(session, "blueprintSavePreviewSha256"), "owner PNG digest is bound once");
             Object committed = results.get(owner.getUniqueID());
+            HologramBusyReplies.rejectLibraryCallback(owner, ack);
+            HologramBusyReplies.flush();
+            SimpleAssert.that(
+                !(Boolean) get(session, "blueprintDirty"),
+                "callback congestion cannot dirty an already committed save");
+            SimpleAssert
+                .eq("saveCommitted", get(committed, "outcome"), "busy callback cannot rewrite committed outcome");
             SimpleAssert
                 .eq("saveCommitted", get(committed, "outcome"), "result preserves committed outcome for lost replies");
             NBTTagCompound differentPng = (NBTTagCompound) ack.copy();
@@ -409,6 +416,38 @@ final class HologramLibraryServiceRegression {
                 tasks.clear();
                 tasks.addAll(previousTasks);
             }
+            proof.setString(
+                "saveReceipt",
+                UUID.randomUUID()
+                    .toString());
+            set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
+            set(session, "blueprintSaveJsonSha256", jsonHash);
+            remember.invoke(null, owner, proof);
+            NBTTagCompound wrongCallback = (NBTTagCompound) proof.copy();
+            wrongCallback.setString("session", "old-session");
+            HologramBusyReplies.rejectLibraryCallback(owner, wrongCallback);
+            HologramBusyReplies.flush();
+            SimpleAssert.eq(
+                proof.getString("saveReceipt"),
+                get(session, "blueprintSaveReceipt"),
+                "rejected stale callback cannot revoke the current save source");
+            HologramBusyReplies.rejectLibraryCallback(owner, proof);
+            NBTTagCompound listRejection = new NBTTagCompound();
+            listRejection.setString("op", "list");
+            HologramBusyReplies.reject(owner, listRejection, HologramBusyReplies.Kind.LIBRARY);
+            HologramBusyReplies.flush();
+            SimpleAssert.eq(
+                "",
+                get(session, "blueprintSaveReceipt"),
+                "exact callback rejection retires its save even when a later busy notice is coalesced");
+            SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "callback rejection retains unsaved workspace");
+            Method prune = HologramLibraryFacade.class.getDeclaredMethod("pruneSavedResults");
+            prune.setAccessible(true);
+            prune.invoke(null);
+            SimpleAssert.eq(
+                "saveRejected",
+                get(results.get(owner.getUniqueID()), "outcome"),
+                "rejected callback resolves prepublished save rather than leaving it pending");
         } finally {
             if (previous == null) results.remove(owner.getUniqueID());
             else results.put(owner.getUniqueID(), previous);

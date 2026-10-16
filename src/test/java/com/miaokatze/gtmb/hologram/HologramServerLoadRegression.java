@@ -31,6 +31,7 @@ public final class HologramServerLoadRegression {
             productionJobDeltas();
             fairRounds();
             taskScheduling();
+            callbackPendingCapacity();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Server load regression", failure);
         } finally {
@@ -352,6 +353,110 @@ public final class HologramServerLoadRegression {
         } finally {
             queue.clear();
             queue.addAll(previous);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void callbackPendingCapacity() throws ReflectiveOperationException {
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+            .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+        java.lang.reflect.Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod(
+            "player",
+            sun.misc.Unsafe.class,
+            HologramServiceEditRegression.ReadOnlyWorld.class,
+            java.util.UUID.class,
+            String.class);
+        factory.setAccessible(true);
+        List<net.minecraft.entity.player.EntityPlayerMP> peers = new ArrayList<>();
+        Field queueField = ServerTaskScheduler.class.getDeclaredField("SERVER_TASKS");
+        queueField.setAccessible(true);
+        Queue<Runnable> queue = (Queue<Runnable>) queueField.get(null);
+        List<Runnable> saved = new ArrayList<>();
+        Runnable pending;
+        while ((pending = queue.poll()) != null) saved.add(pending);
+        Field gateField = HologramLibraryFacade.class.getDeclaredField("callbacks");
+        gateField.setAccessible(true);
+        HologramRequestGate gate = (HologramRequestGate) gateField.get(null);
+        Field busyField = HologramBusyReplies.class.getDeclaredField("pending");
+        busyField.setAccessible(true);
+        java.util.Map<Object, Object> busy = (java.util.Map<Object, Object>) busyField.get(null);
+        java.util.Map<Object, Object> savedBusy = new java.util.IdentityHashMap<>(busy);
+        try {
+            SimpleAssert.eq(0, gate.size(), "isolated callback regression starts without other producers");
+            busy.clear();
+            for (int i = 0; i < 9; i++) peers.add(
+                (net.minecraft.entity.player.EntityPlayerMP) factory
+                    .invoke(null, unsafe, world, java.util.UUID.randomUUID(), "CallbackFixture" + i));
+            NBTTagCompound request = new NBTTagCompound();
+            request.setString("session", "callback-capacity");
+            request.setLong("planRevision", 7);
+            java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger();
+            int admitted = 0, rejected = 0;
+            // Producer remains faster than consumer across rounds: no per-tick reset may grow the pending queue.
+            for (int round = 0; round < 1000; round++) {
+                for (net.minecraft.entity.player.EntityPlayerMP peer : peers)
+                    for (int attempt = 0; attempt < 3; attempt++) {
+                        if (HologramLibraryFacade.scheduleLibraryCallback(peer, request, completed::incrementAndGet))
+                            admitted++;
+                        else rejected++;
+                    }
+                SimpleAssert.that(
+                    gate.size() <= 16 && queue.size() <= 16,
+                    "continuous producer backlog remains within pending capacity across scheduler rounds");
+                queue.remove()
+                    .run();
+            }
+            while ((pending = queue.poll()) != null) pending.run();
+            SimpleAssert.eq(admitted, completed.get(), "every admitted callback executes exactly once");
+            SimpleAssert
+                .that(rejected > 0 && gate.size() == 0, "overflow is rejected rather than retained in another queue");
+            boolean submission = HologramLibraryFacade.scheduleLibraryCallback(
+                peers.get(0),
+                request,
+                () -> {},
+                task -> { throw new java.util.concurrent.RejectedExecutionException("injected submission failure"); });
+            SimpleAssert.that(!submission && gate.size() == 0, "failed scheduler submission releases its lease");
+            HologramLibraryFacade.scheduleLibraryCallback(
+                peers.get(0),
+                request,
+                () -> { throw new IllegalStateException("injected callback failure"); });
+            try {
+                queue.remove()
+                    .run();
+                throw new AssertionError("Callback failure was hidden");
+            } catch (IllegalStateException expected) {}
+            SimpleAssert.eq(0, gate.size(), "throwing callback releases pending capacity in finally");
+            int beforeDisconnect = completed.get();
+            HologramLibraryFacade.scheduleLibraryCallback(peers.get(1), request, completed::incrementAndGet);
+            peers.get(1).playerNetServerHandler.netManager.channel()
+                .close();
+            queue.remove()
+                .run();
+            SimpleAssert.eq(beforeDisconnect, completed.get(), "disconnected callback cannot mutate a retired session");
+            SimpleAssert.eq(0, gate.size(), "disconnect still releases its queued slot");
+            java.util.concurrent.atomic.AtomicInteger retired = new java.util.concurrent.atomic.AtomicInteger();
+            HologramLibraryFacade.scheduleLibraryCallback(peers.get(0), request, retired::incrementAndGet);
+            Runnable oldEpoch = queue.remove();
+            gate.clear();
+            HologramLibraryFacade.scheduleLibraryCallback(peers.get(0), request, completed::incrementAndGet);
+            oldEpoch.run();
+            SimpleAssert.eq(0, retired.get(), "old lifecycle callback cannot run after clear");
+            SimpleAssert.eq(1, gate.size(), "old lifecycle release cannot decrement the new lease for the same actor");
+            queue.remove()
+                .run();
+            SimpleAssert.eq(0, gate.size(), "new lifecycle callback owns and releases its own capacity");
+        } finally {
+            while ((pending = queue.poll()) != null) pending.run();
+            gate.clear();
+            queue.addAll(saved);
+            busy.clear();
+            busy.putAll(savedBusy);
+            for (net.minecraft.entity.player.EntityPlayerMP peer : peers)
+                peer.playerNetServerHandler.netManager.channel()
+                    .close();
         }
     }
 }
