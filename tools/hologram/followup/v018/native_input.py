@@ -29,6 +29,13 @@ MODIFIERS = {16, 17, 18}
 OPERATIONS = {"focus", "key-down", "key-up", "mouse-move", "mouse-down", "mouse-up", "release-all"}
 
 
+class WindowPlacement(ctypes.Structure):
+    # WinUser.h: rcDevice is _MAC-only and is not part of the Windows ABI.
+    _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT), ("showCmd", wintypes.UINT),
+                ("ptMinPosition", wintypes.POINT), ("ptMaxPosition", wintypes.POINT),
+                ("rcNormalPosition", wintypes.RECT)]
+
+
 def within(path: Path, parent: Path) -> Path:
     resolved = path.resolve(strict=True)
     resolved.relative_to(parent)
@@ -121,6 +128,7 @@ class Win32:
         self.target = target
         self.user = ctypes.WinDLL("user32", use_last_error=True)
         self.hwnd = None
+        self.bind_evidence = {}
         self.focus_evidence = {}
         self.mouse_evidence = {}
         self.pending_pointer = None
@@ -134,6 +142,7 @@ class Win32:
             "IsWindowVisible": ([wintypes.HWND], wintypes.BOOL),
             "GetClassNameW": ([wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
             "GetClientRect": ([wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+            "GetWindowPlacement": ([wintypes.HWND, ctypes.POINTER(WindowPlacement)], wintypes.BOOL),
             "ClientToScreen": ([wintypes.HWND, ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
             "GetPhysicalCursorPos": ([ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
             "WindowFromPhysicalPoint": ([wintypes.POINT], wintypes.HWND),
@@ -159,6 +168,8 @@ class Win32:
         for name, (arguments, result) in signatures.items():
             function = getattr(u, name)
             function.argtypes, function.restype = arguments, result
+        if ctypes.sizeof(wintypes.RECT) != 16 or ctypes.sizeof(WindowPlacement) != 44:
+            raise RuntimeError("Unexpected Win32 RECT/WINDOWPLACEMENT ABI layout")
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         self.kernel.GetCurrentThreadId.argtypes = []
         self.kernel.GetCurrentThreadId.restype = wintypes.DWORD
@@ -194,6 +205,7 @@ class Win32:
                     and pid.value == self.target.pid)
 
     def bind(self, request):
+        self.bind_evidence = {}
         self.target.validate()
         found = []
 
@@ -214,11 +226,63 @@ class Win32:
         if self.hwnd and hwnd != self.hwnd:
             raise RuntimeError("Target HWND changed during this bridge session")
         self.hwnd = hwnd
-        rect = wintypes.RECT()
-        if not self.user.GetClientRect(hwnd, ctypes.byref(rect)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        size = (rect.right - rect.left, rect.bottom - rect.top)
-        if size != (request["width"], request["height"]):
+        self.bind_evidence.update(pid=self.target.pid, hwnd=hex(hwnd), window_class=window_class,
+                                  bind_expected_width=request["width"], bind_expected_height=request["height"],
+                                  bind_restore_requested="false")
+
+        def client_size(prefix):
+            rect = wintypes.RECT()
+            if not self.user.GetClientRect(hwnd, ctypes.byref(rect)):
+                self.bind_evidence[prefix + "_getclientrect_error"] = ctypes.get_last_error()
+                raise ctypes.WinError(ctypes.get_last_error())
+            size = (rect.right - rect.left, rect.bottom - rect.top)
+            self.bind_evidence.update({prefix + "_width": size[0], prefix + "_height": size[1]})
+            return size
+
+        def placement(prefix):
+            iconic = bool(self.user.IsIconic(hwnd))
+            self.bind_evidence[prefix + "_iconic"] = str(iconic).lower()
+            state = WindowPlacement()
+            state.length = ctypes.sizeof(state)
+            if not self.user.GetWindowPlacement(hwnd, ctypes.byref(state)):
+                self.bind_evidence[prefix + "_placement_error"] = ctypes.get_last_error()
+                raise ctypes.WinError(ctypes.get_last_error())
+            normal = state.rcNormalPosition
+            self.bind_evidence.update({prefix + "_show_cmd": state.showCmd,
+                                      prefix + "_placement_flags": state.flags,
+                                      prefix + "_normal_rect": f"{normal.left},{normal.top},{normal.right},{normal.bottom}"})
+            return iconic, state.showCmd
+
+        initial_iconic, initial_show = placement("bind_initial") if request["operation"] == "focus" else (False, 0)
+        size = client_size("bind_initial_client")
+        expected = (request["width"], request["height"])
+        if request["operation"] == "focus" and (initial_iconic or initial_show in (2, 6, 7, 11) or 0 in size):
+            started = time.monotonic()
+            try:
+                self.target.validate()
+                if not self.owned(hwnd):
+                    raise RuntimeError("Owned HWND changed before focus-bind restore")
+                self.bind_evidence["bind_restore_requested"] = "true"
+                self.bind_evidence["bind_restore_show_cmd"] = 9  # SW_RESTORE, verified owned HWND only.
+                self.bind_evidence["bind_restore_return_was_visible"] = str(bool(self.user.ShowWindow(hwnd, 9))).lower()
+                while True:
+                    self.target.validate()
+                    if not self.owned(hwnd) or not self.user.IsWindowVisible(hwnd):
+                        raise RuntimeError("Owned visible HWND changed while awaiting restored client area")
+                    stop_file = getattr(self, "stop_file", None)
+                    if stop_file is not None and stop_file.exists():
+                        raise RuntimeError("Owned launcher requested shutdown while awaiting restored client area")
+                    size = client_size("bind_restored_client")
+                    if size == expected or time.monotonic() - started >= 1:
+                        break
+                    time.sleep(.02)
+            finally:
+                self.bind_evidence["bind_restore_wait_ms"] = round((time.monotonic() - started) * 1000)
+                self.bind_evidence.update(bind_final_client_width=size[0], bind_final_client_height=size[1])
+        if request["operation"] == "focus":
+            placement("bind_final")
+        self.bind_evidence.update(bind_final_client_width=size[0], bind_final_client_height=size[1])
+        if size != expected:
             raise RuntimeError(f"Client pixel dimensions {size} differ from request")
         self.request_width, self.request_height = request["width"], request["height"]
         return {"pid": self.target.pid, "hwnd": hex(hwnd), "window_class": window_class,
@@ -685,6 +749,7 @@ class Win32:
             raise RuntimeError("Input release incomplete: " + "; ".join(errors))
 
     def execute(self, request):
+        self.bind_evidence = {}
         self.focus_evidence = {}
         self.mouse_evidence = {}
         operation = request["operation"]
@@ -715,7 +780,7 @@ class Win32:
             elif operation == "release-all":
                 self.release()
             raise
-        return {**evidence, **self.focus_evidence, **self.mouse_evidence}
+        return {**self.bind_evidence, **evidence, **self.focus_evidence, **self.mouse_evidence}
 
 
 def main():
@@ -757,7 +822,8 @@ def main():
                     print(f"ACK {sequence} {request['operation']}", flush=True)
                 except Exception as error:
                     acknowledge(receipts, sequence, {"success": "false", "input_method": METHOD,
-                                                      "failure": str(error), **bridge.focus_evidence, **bridge.mouse_evidence})
+                                                      "failure": str(error), **bridge.bind_evidence,
+                                                      **bridge.focus_evidence, **bridge.mouse_evidence})
                     raise
                 sequence += 1
                 continue
