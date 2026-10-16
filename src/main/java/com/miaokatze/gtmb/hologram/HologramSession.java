@@ -168,6 +168,8 @@ final class HologramSession {
     final List<ItemStack> planTargets = new ArrayList<>();
     long actionTick = -1;
     long positionNudgeTick = Long.MIN_VALUE;
+    long positionNudgeRefillTick = Long.MIN_VALUE;
+    int positionNudgeCredits = 2;
     int actionCount;
 
     HologramSession(EntityPlayerMP p, int x, int y, int z) {

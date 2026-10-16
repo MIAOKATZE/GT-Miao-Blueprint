@@ -67,8 +67,12 @@ final class HologramUiText {
             return "蓝图保存队列繁忙，请稍候重试";
         if (lower.contains("png") || lower.contains("artifact")
             || lower.contains("saved json")
-            || lower.contains("blueprint preview source"))
+            || lower.contains("blueprint preview source")) {
+            // Product progress and completion messages also name PNG. Preserve their existing meaning.
+            for (int i = 0; i < value.length(); i++)
+                if (value.charAt(i) >= '\u4e00' && value.charAt(i) <= '\u9fff') return value;
             return lower.contains("rollback") ? "蓝图文件回退尚未完成，请核对 JSON 与预览图后重试" : "蓝图与预览图的保存校验未完成，请保持当前蓝图并重试";
+        }
         if (lower.contains("native tile id does not match the registered block factory"))
             return "方块 NBT 的设备类型与实际方块不一致，请重新采集该方块或移除这条错误记录";
         if (lower.contains("native tile id must be a nonempty registered string"))

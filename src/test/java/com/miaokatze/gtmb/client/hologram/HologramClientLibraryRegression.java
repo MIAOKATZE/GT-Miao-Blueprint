@@ -26,6 +26,7 @@ public final class HologramClientLibraryRegression {
         try {
             exercise();
             exerciseSaveReadbackReuse();
+            exerciseSaveMessages();
             exerciseQuickFence();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
@@ -332,6 +333,30 @@ public final class HologramClientLibraryRegression {
             HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(path);
             if (afterRead != null) afterRead.run();
             return actual;
+        }
+    }
+
+    private static void exerciseSaveMessages() throws ReflectiveOperationException {
+        HologramLibraryClient client = HologramLibraryClient.INSTANCE;
+        java.lang.reflect.Field status = HologramLibraryClient.class.getDeclaredField("status");
+        status.setAccessible(true);
+        String previous = (String) status.get(client);
+        try {
+            for (String message : new String[] { "正在生成真实结构预览 PNG", "JSON 与 PNG 已写入，正在确认蓝图库索引", "JSON 与结构预览 PNG 已校验保存",
+                "蓝图保存未提交，原 JSON 与 PNG 已恢复：保存已取消" }) {
+                status.set(client, message);
+                SimpleAssert.eq(message, client.status(), "actual status getter preserves localized save outcome");
+            }
+            status.set(client, "Invalid blueprint PNG size");
+            SimpleAssert
+                .eq("蓝图与预览图的保存校验未完成，请保持当前蓝图并重试", client.status(), "real English PNG diagnostic remains actionable");
+            status.set(client, "Pending blueprint artifact rollback failed");
+            SimpleAssert.eq(
+                "蓝图文件回退尚未完成，请核对 JSON 与预览图后重试",
+                client.status(),
+                "real English artifact rollback failure remains visible");
+        } finally {
+            status.set(client, previous);
         }
     }
 

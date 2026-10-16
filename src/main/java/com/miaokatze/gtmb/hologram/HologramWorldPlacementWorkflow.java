@@ -251,6 +251,25 @@ final class HologramWorldPlacementWorkflow {
         HologramSnapshots.send(s);
     }
 
+    /** Allow two adjacent presses without assuming client and server ticks share a phase. */
+    static boolean acceptNudgeRate(HologramSession s, long tick) {
+        if (s.positionNudgeRefillTick == Long.MIN_VALUE || tick < s.positionNudgeTick) {
+            s.positionNudgeRefillTick = tick;
+            s.positionNudgeCredits = 2;
+        } else {
+            long elapsed = tick - s.positionNudgeRefillTick;
+            if (elapsed >= HologramWorldFlow.NUDGE_REPEAT_INTERVAL) {
+                long refill = elapsed / HologramWorldFlow.NUDGE_REPEAT_INTERVAL;
+                s.positionNudgeCredits = Math.min(2, s.positionNudgeCredits + (int) Math.min(2, refill));
+                s.positionNudgeRefillTick = tick - elapsed % HologramWorldFlow.NUDGE_REPEAT_INTERVAL;
+            }
+        }
+        if (s.positionNudgeCredits == 0) return false;
+        s.positionNudgeCredits--;
+        s.positionNudgeTick = tick;
+        return true;
+    }
+
     /** Adjust only a locked, unpaid preview; every previous construction and AE review capability expires. */
     static void nudgeWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
@@ -277,9 +296,7 @@ final class HologramWorldPlacementWorkflow {
         int dx = request.getInteger("dx"), dy = request.getInteger("dy"), dz = request.getInteger("dz");
         if (!HologramWorldFlow.unitNudge(dx, dy, dz)) return;
         long tick = player.worldObj.getTotalWorldTime();
-        if (s.positionNudgeTick != Long.MIN_VALUE && tick >= s.positionNudgeTick
-            && tick - s.positionNudgeTick < HologramWorldFlow.NUDGE_REPEAT_INTERVAL) return;
-        s.positionNudgeTick = tick;
+        if (!acceptNudgeRate(s, tick)) return;
         int x = s.x + dx, y = s.y + dy, z = s.z + dz;
         boolean allowed = HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
             && HologramSessionPolicy.previewReach(player, x, y, z)

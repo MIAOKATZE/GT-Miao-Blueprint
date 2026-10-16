@@ -117,7 +117,8 @@ public final class HologramNudgeServiceRegression {
                 ae.review = (HologramAeProtocol.Review) unsafe.allocateInstance(HologramAeProtocol.Review.class);
                 long nonce = (Long) get(session, "placementReviewNonce"),
                     revision = (Long) get(session, "planRevision");
-                HologramService.nudgeWorldPosition(player, request(session, 1, 0, 0));
+                NBTTagCompound firstNudge = request(session, 1, 0, 0);
+                HologramService.nudgeWorldPosition(player, firstNudge);
                 SimpleAssert.eq(1, get(session, "x"), "a valid offset moves the real capture exactly one voxel");
                 SimpleAssert.eq(true, get(session, "virtualLocked"), "nudge preserves cyan locked state");
                 SimpleAssert.eq(false, get(session, "placementReviewIssued"), "old placement review is revoked");
@@ -129,11 +130,17 @@ public final class HologramNudgeServiceRegression {
                     .that((Long) get(session, "placementReviewNonce") > nonce, "nudge replaces the review nonce");
                 SimpleAssert.that((Long) get(session, "planRevision") > revision, "position changes the material plan");
                 SimpleAssert.eq(false, get(session, "open"), "nudge stays in the world until another right click");
-                HologramService.nudgeWorldPosition(player, request(session, 1, 0, 0));
-                SimpleAssert.eq(1, get(session, "x"), "server throttles a repeated packet within four ticks");
-                world.tick = 4;
+                HologramService.nudgeWorldPosition(player, firstNudge);
+                SimpleAssert
+                    .eq(1, get(session, "x"), "old-revision replay cannot consume a burst credit or move twice");
+                world.tick = 3;
                 HologramService.nudgeWorldPosition(player, request(session, 0, 1, 0));
-                SimpleAssert.eq(65, get(session, "y"), "vertical nudge is exactly one voxel");
+                SimpleAssert.eq(
+                    65,
+                    get(session, "y"),
+                    "a different valid press moves one voxel despite one tick of client/server phase skew");
+                HologramService.nudgeWorldPosition(player, request(session, 1, 0, 0));
+                SimpleAssert.eq(1, get(session, "x"), "a third burst request is rejected without changing the preview");
                 world.tick = 8;
                 world.rejectX = 2;
                 capture = get(session, "capture");
@@ -175,6 +182,7 @@ public final class HologramNudgeServiceRegression {
                 SimpleAssert.eq(0, get(session, "planMissing"), "matching destination removes its material deficit");
                 SimpleAssert.eq(3, materials.stackSize, "material review and every nudge consume nothing");
                 player.inventory.mainInventory[1] = materials;
+                boundedRate((HologramSession) session, (HologramSession) ctor.newInstance(player, 0, 64, 0, false, 1));
             } finally {
                 if (prior == null) sessions.remove(player.getUniqueID());
                 else sessions.put(player.getUniqueID(), prior);
@@ -182,6 +190,46 @@ public final class HologramNudgeServiceRegression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
         }
+    }
+
+    private static void boundedRate(HologramSession session, HologramSession fresh) {
+        session.positionNudgeTick = session.positionNudgeRefillTick = Long.MIN_VALUE;
+        session.positionNudgeCredits = 2;
+        SimpleAssert
+            .that(HologramWorldPlacementWorkflow.acceptNudgeRate(session, 200), "first short press is immediate");
+        SimpleAssert.that(
+            HologramWorldPlacementWorkflow.acceptNudgeRate(session, 203),
+            "client ticks100/104 arriving at server ticks200/203 preserve both deliberate presses");
+        SimpleAssert.that(
+            !HologramWorldPlacementWorkflow.acceptNudgeRate(session, 203),
+            "the two-credit burst rejects a third same-tick request");
+        SimpleAssert.that(
+            HologramWorldPlacementWorkflow.acceptNudgeRate(session, 204),
+            "four server ticks restore one credit without discarding the fractional refill interval");
+        SimpleAssert.that(
+            !HologramWorldPlacementWorkflow.acceptNudgeRate(session, 204),
+            "four ticks restore one credit, not the whole burst");
+        SimpleAssert.that(
+            HologramWorldPlacementWorkflow.acceptNudgeRate(session, 1000)
+                && HologramWorldPlacementWorkflow.acceptNudgeRate(session, 1000),
+            "an idle interval restores the bounded two-credit burst");
+        SimpleAssert.that(
+            !HologramWorldPlacementWorkflow.acceptNudgeRate(session, 1000),
+            "idle time never accumulates an unbounded movement budget");
+        SimpleAssert.that(
+            HologramWorldPlacementWorkflow.acceptNudgeRate(session, 10)
+                && HologramWorldPlacementWorkflow.acceptNudgeRate(session, 10),
+            "a backwards server clock resets the local rate epoch");
+        SimpleAssert.that(
+            !HologramWorldPlacementWorkflow.acceptNudgeRate(session, 10),
+            "clock reset still permits only the bounded burst");
+        SimpleAssert.that(
+            HologramWorldPlacementWorkflow.acceptNudgeRate(fresh, 10)
+                && HologramWorldPlacementWorkflow.acceptNudgeRate(fresh, 10),
+            "a new session has its own credits despite the prior session exhausting its budget");
+        SimpleAssert.that(
+            !HologramWorldPlacementWorkflow.acceptNudgeRate(fresh, 10),
+            "a new session retains the same flood bound");
     }
 
     private static NBTTagCompound request(Object session, int dx, int dy, int dz) throws ReflectiveOperationException {
