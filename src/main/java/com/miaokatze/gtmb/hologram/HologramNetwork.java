@@ -36,6 +36,22 @@ public final class HologramNetwork {
     private static volatile Consumer<NBTTagCompound> interactionSender;
     private static volatile Consumer<NBTTagCompound> libraryReceiver;
     private static volatile Consumer<NBTTagCompound> libraryProbeReceiver;
+    private static volatile Consumer<NBTTagCompound> cutReceiver;
+    private static final Object cutTransportLock = new Object();
+    private static HologramSnapshotAssembly cutAssembly = new HologramSnapshotAssembly();
+    private static final AtomicLong cutClientGeneration = new AtomicLong();
+    private static final java.util.concurrent.ThreadPoolExecutor cutDecoder = new java.util.concurrent.ThreadPoolExecutor(
+        1,
+        1,
+        0,
+        java.util.concurrent.TimeUnit.MILLISECONDS,
+        new java.util.concurrent.ArrayBlockingQueue<>(4),
+        task -> {
+            Thread thread = new Thread(task, "GTMB cut snapshot decoder");
+            thread.setDaemon(true);
+            return thread;
+        });
+    private static final Map<UUID, CutOutbox> cutOutgoing = new LinkedHashMap<>();
     private static final int MAX_BYTES = 1048576;
     private static final AtomicLong snapshotSequence = new AtomicLong();
     private static final Map<UUID, Outbox> outgoing = new LinkedHashMap<>();
@@ -53,6 +69,8 @@ public final class HologramNetwork {
         channel.registerMessage(LibraryServerHandler.class, LibraryRequest.class, 3, Side.SERVER);
         channel.registerMessage(LibraryClientHandler.class, LibraryReply.class, 4, Side.CLIENT);
         channel.registerMessage(LibrarySnapshotHandler.class, LibrarySnapshotFragment.class, 5, Side.CLIENT);
+        channel.registerMessage(CutServerHandler.class, CutAction.class, 6, Side.SERVER);
+        channel.registerMessage(CutFragmentHandler.class, CutFragment.class, 7, Side.CLIENT);
         HologramLibraryFacade.init();
         FMLCommonHandler.instance()
             .bus()
@@ -87,6 +105,167 @@ public final class HologramNetwork {
 
     public static void sendAction(NBTTagCompound tag) {
         if (channel != null) channel.sendToServer(new Action(tag));
+    }
+
+    public static void setCutReceiver(Consumer<NBTTagCompound> value) {
+        synchronized (cutTransportLock) {
+            cutReceiver = value;
+            cutAssembly = new HologramSnapshotAssembly();
+            cutClientGeneration.incrementAndGet();
+            cutDecoder.getQueue()
+                .clear();
+        }
+    }
+
+    public static void clearCutClientTransport() {
+        synchronized (cutTransportLock) {
+            cutAssembly = new HologramSnapshotAssembly();
+            cutClientGeneration.incrementAndGet();
+            cutDecoder.getQueue()
+                .clear();
+        }
+    }
+
+    public static void sendCutAction(NBTTagCompound tag) {
+        if (channel != null) channel.sendToServer(new CutAction(tag));
+    }
+
+    static void sendCutState(EntityPlayerMP player, NBTTagCompound tag) {
+        if (channel == null) return;
+        try {
+            byte[] bytes = HologramSnapshotCodec.compress(tag);
+            CutOutbox box = cutOutgoing.get(player.getUniqueID());
+            if (box == null || box.player != player) {
+                box = new CutOutbox(player);
+                cutOutgoing.put(player.getUniqueID(), box);
+            }
+            if (box.pendingBytes + bytes.length > HologramSnapshotAssembly.MAX_BYTES)
+                throw new IOException("cut transport queue full");
+            box.snapshots.addLast(new CutSnapshot(snapshotSequence.incrementAndGet(), bytes));
+            box.pendingBytes += bytes.length;
+        } catch (IOException failure) {
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut snapshot could not be queued", failure);
+        }
+    }
+
+    private static final class CutOutbox {
+
+        final EntityPlayerMP player;
+        final Deque<CutSnapshot> snapshots = new ArrayDeque<>();
+        long pendingBytes;
+
+        CutOutbox(EntityPlayerMP player) {
+            this.player = player;
+        }
+    }
+
+    private static final class CutSnapshot {
+
+        final long sequence;
+        final byte[] bytes;
+        int offset, index;
+
+        CutSnapshot(long sequence, byte[] bytes) {
+            this.sequence = sequence;
+            this.bytes = bytes;
+        }
+    }
+
+    /** A small, versioned request budget, separate from blueprint uploads and snapshots. */
+    public static final class CutAction implements IMessage {
+
+        NBTTagCompound tag = new NBTTagCompound();
+
+        public CutAction() {}
+
+        CutAction(NBTTagCompound tag) {
+            this.tag = (NBTTagCompound) tag.copy();
+        }
+
+        public void fromBytes(ByteBuf buf) {
+            if (buf.readableBytes() < 8 || buf.readInt() != HologramCutProtocol.VERSION)
+                throw new IllegalArgumentException("cut request version");
+            int length = buf.readInt();
+            if (length <= 0 || length > HologramCutProtocol.REQUEST_BYTES || length != buf.readableBytes())
+                throw new IllegalArgumentException("cut request budget");
+            byte[] bytes = new byte[length];
+            buf.readBytes(bytes);
+            try {
+                tag = HologramSnapshotCodec
+                    .decode(bytes, HologramCutProtocol.REQUEST_BYTES, 4L * HologramCutProtocol.REQUEST_BYTES);
+            } catch (IOException failure) {
+                throw new IllegalArgumentException("cut NBT", failure);
+            }
+        }
+
+        public void toBytes(ByteBuf buf) {
+            try {
+                byte[] bytes = CompressedStreamTools.compress(tag);
+                if (bytes.length > HologramCutProtocol.REQUEST_BYTES)
+                    throw new IllegalArgumentException("cut request budget");
+                buf.writeInt(HologramCutProtocol.VERSION);
+                buf.writeInt(bytes.length);
+                buf.writeBytes(bytes);
+            } catch (IOException failure) {
+                throw new IllegalArgumentException("cut NBT", failure);
+            }
+        }
+    }
+
+    public static final class CutServerHandler implements IMessageHandler<CutAction, IMessage> {
+
+        public IMessage onMessage(CutAction message, MessageContext context) {
+            HologramCutService.receive(context.getServerHandler().playerEntity, message.tag);
+            return null;
+        }
+    }
+
+    public static final class CutFragment implements IMessage {
+
+        private Fragment fragment = new Fragment();
+
+        public CutFragment() {}
+
+        CutFragment(long sequence, int total, int index, byte[] bytes) {
+            fragment = new Fragment(sequence, total, index, bytes);
+        }
+
+        public void fromBytes(ByteBuf buf) {
+            fragment.fromBytes(buf);
+        }
+
+        public void toBytes(ByteBuf buf) {
+            fragment.toBytes(buf);
+        }
+    }
+
+    public static final class CutFragmentHandler implements IMessageHandler<CutFragment, IMessage> {
+
+        public IMessage onMessage(CutFragment message, MessageContext context) {
+            synchronized (cutTransportLock) {
+                Fragment fragment = message.fragment;
+                byte[] bytes = cutAssembly
+                    .accept(fragment.sequence, fragment.total, fragment.index, fragment.bytes, System.nanoTime());
+                Consumer<NBTTagCompound> current = cutReceiver;
+                long generation = cutClientGeneration.get();
+                if (bytes != null && current != null) try {
+                    cutDecoder.execute(() -> {
+                        try {
+                            NBTTagCompound state = HologramSnapshotCodec.decode(bytes);
+                            synchronized (cutTransportLock) {
+                                if (generation == cutClientGeneration.get() && current == cutReceiver)
+                                    current.accept(state);
+                            }
+                        } catch (IOException failure) {
+                            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut snapshot decode failed", failure);
+                        }
+                    });
+                } catch (java.util.concurrent.RejectedExecutionException full) {
+                    com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut decoder queue is full", full);
+                }
+            }
+            return null;
+        }
     }
 
     public static void setLibraryReceiver(Consumer<NBTTagCompound> value) {
@@ -288,6 +467,35 @@ public final class HologramNetwork {
         @SubscribeEvent
         public void tick(TickEvent.ServerTickEvent event) {
             if (event.phase != TickEvent.Phase.END) return;
+            Iterator<CutOutbox> cuts = cutOutgoing.values()
+                .iterator();
+            while (cuts.hasNext()) {
+                CutOutbox box = cuts.next();
+                if (box.player.playerNetServerHandler == null || box.player.playerNetServerHandler.netManager == null
+                    || !box.player.playerNetServerHandler.netManager.isChannelOpen()) {
+                    cuts.remove();
+                    continue;
+                }
+                CutSnapshot snapshot = box.snapshots.peekFirst();
+                if (snapshot == null) {
+                    cuts.remove();
+                    continue;
+                }
+                int end = Math.min(snapshot.bytes.length, snapshot.offset + HologramSnapshotAssembly.CHUNK_BYTES);
+                channel.sendTo(
+                    new CutFragment(
+                        snapshot.sequence,
+                        snapshot.bytes.length,
+                        snapshot.index++,
+                        Arrays.copyOfRange(snapshot.bytes, snapshot.offset, end)),
+                    box.player);
+                snapshot.offset = end;
+                if (end == snapshot.bytes.length) {
+                    box.pendingBytes -= snapshot.bytes.length;
+                    box.snapshots.removeFirst();
+                    if (box.snapshots.isEmpty()) cuts.remove();
+                }
+            }
             // Rotate only the initial file-like hydration queues; normal interaction snapshots retain their FIFO.
             java.util.List<Outbox> initial = new java.util.ArrayList<>();
             for (Outbox box : outgoing.values()) {

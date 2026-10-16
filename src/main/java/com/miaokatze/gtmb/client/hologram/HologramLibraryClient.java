@@ -60,6 +60,7 @@ final class HologramLibraryClient {
     private String quickHash = "";
     private boolean outgoingQuick, downloadExpected, configWritePending, draftPending;
     private boolean incomingCapturePreview;
+    private boolean incomingLocalSaveReceipt;
     private NBTTagCompound pendingSaveAck;
     private HologramBlueprintPreview.Request previewCapture;
     private Runnable pendingPreviewStart;
@@ -143,6 +144,7 @@ final class HologramLibraryClient {
         observed.setInteger("incomingIndex", incomingIndex);
         observed.setString("incomingSha256", incomingHash);
         observed.setBoolean("capturePreview", incomingCapturePreview);
+        observed.setBoolean("localSaveReceipt", incomingLocalSaveReceipt);
         observed.setBoolean("downloadExpected", downloadExpected);
         observed.setBoolean("draftPending", draftPending);
         observed.setBoolean("preparing", preparing);
@@ -863,46 +865,24 @@ final class HologramLibraryClient {
                 HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.decode(verifiedArtifact);
                 String session = acknowledgement.getString("session");
                 long revision = acknowledgement.getLong("planRevision");
-                HologramBlueprintArtifact.PairWrite written = store
-                    .savePending(artifact.json, artifact.png, saved, () -> saveBytesCurrent(token, session, revision));
-                String savedName, path;
+                HologramClientLibrary.LocalSave local = store.prepareLocalSave(
+                    artifact.json,
+                    artifact.png,
+                    saved,
+                    () -> saveBytesCurrent(token, session, revision));
                 try {
-                    HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.decode(store.artifact(saved));
-                    if (!actual.jsonSha256.equals(acknowledgement.getString("jsonSha256"))
-                        || !actual.pngSha256.equals(acknowledgement.getString("previewSha256")))
+                    if (!local.jsonHash.equals(acknowledgement.getString("jsonSha256"))
+                        || !local.pngHash.equals(acknowledgement.getString("previewSha256")))
                         throw new java.io.IOException("Actual saved artifact differs from verified bytes");
-                    savedName = store.savedName(saved);
-                    path = store.savedPath(saved)
-                        .toString();
                 } catch (Exception failure) {
                     try {
-                        written.rollback();
+                        local.write.rollback();
                     } catch (Exception rollback) {
                         failure.addSuppressed(rollback);
                     }
                     throw failure;
                 }
-                main(() -> {
-                    if (!saveSourceCurrent(token, session, revision)) {
-                        work(() -> {
-                            try {
-                                written.rollback();
-                            } catch (Exception failure) {
-                                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
-                                    .warn("Cancelled blueprint pair rollback failed", failure);
-                            }
-                        });
-                        if (token == generation) cancel();
-                        return;
-                    }
-                    pendingDiskSave = new PendingDiskSave(written, acknowledgement, serverKey, savedName, path);
-                    preparing = true;
-                    lastSaveStatus = System.nanoTime();
-                    HologramNetwork.sendAction(acknowledgement);
-                    recordSaveWitness("ownerDiskAck", acknowledgement);
-                    traceSave("owner_disk_ack");
-                    status = "JSON 与 PNG 已写入，正在确认蓝图库索引";
-                });
+                publishDiskSave(local, acknowledgement, serverKey, token);
             });
         } else if ("chunkAck".equals(op)) {
             if (!matchesOutgoing(reply)) return;
@@ -977,12 +957,14 @@ final class HologramLibraryClient {
             incomingSaveSession = reply.getString("session");
             incomingSaveRevision = reply.getLong("planRevision");
             incomingCapturePreview = reply.getBoolean("capturePreview");
+            incomingLocalSaveReceipt = incomingCapturePreview && reply.getBoolean("localSaveReceipt");
             if (incomingCapturePreview) {
                 saveProgress.begin(
                     System.nanoTime(),
                     HologramClient.state.data.getLong("planRevision") != incomingSaveRevision);
                 saveTransitions = new NBTTagList();
                 saveWitness = new NBTTagCompound();
+                recordSaveWitness("downloadBeginReply", reply);
                 saveTraceEvents = downloadProgressMarker = uploadProgressMarker = 0;
                 traceSave("download_begin");
             } else saveProgress.clear();
@@ -1014,6 +996,7 @@ final class HologramLibraryClient {
             String replace = "draft".equals(incomingPurpose) ? incomingLocal : "";
             String saveReceipt = incomingSaveReceipt, saveSession = incomingSaveSession;
             boolean capturePreview = incomingCapturePreview;
+            boolean localSaveReceipt = incomingLocalSaveReceipt;
             long saveRevision = incomingSaveRevision;
             long token = generation;
             String serverKey = connection;
@@ -1051,7 +1034,8 @@ final class HologramLibraryClient {
                                     saveSession,
                                     saveRevision,
                                     token,
-                                    serverKey),
+                                    serverKey,
+                                    localSaveReceipt),
                                 failure -> {
                                     if (token != generation) return;
                                     failSave("结构预览保存失败：" + HologramUiText.reason(failure.getMessage()), failure);
@@ -1159,21 +1143,69 @@ final class HologramLibraryClient {
     }
 
     private void persistPreview(byte[] json, BufferedImage image, String replace, String receipt, String session,
-        long revision, long token, String serverKey) {
+        long revision, long token, String serverKey, boolean localSaveReceipt) {
         previewCapture = null;
         if (!saveSourceCurrent(token, session, revision)) return;
         saveProgress.progress(System.nanoTime());
         traceSave("preview_rendered");
         if (Boolean.getBoolean("gtmb.hologram.previewCaptureWitness")) {
             NBTTagCompound capture = HologramBlueprintPreview.lastCaptureWitness();
-            saveWitness = new NBTTagCompound();
             recordSaveWitness("nativePreviewWitness", capture);
         }
         work(() -> {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             if (!ImageIO.write(image, "png", output)) throw new java.io.IOException("PNG encoder unavailable");
-            byte[] preview = HologramBlueprintArtifact.bindPreview(json, output.toByteArray());
-            persistArtifact(json, preview, replace, receipt, session, revision, token, serverKey);
+            byte[] preview = output.toByteArray();
+            if (localSaveReceipt && !receipt.isEmpty()) {
+                if (!saveBytesCurrent(token, session, revision)) return;
+                HologramClientLibrary.LocalSave local = store
+                    .prepareLocalSave(json, preview, replace, () -> saveBytesCurrent(token, session, revision));
+                NBTTagCompound acknowledgement = request("ackBlueprintSaved");
+                acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                acknowledgement.setString("session", session);
+                acknowledgement.setLong("planRevision", revision);
+                acknowledgement.setString("localId", replace);
+                acknowledgement.setString("saveReceipt", receipt);
+                acknowledgement.setString("jsonSha256", local.jsonHash);
+                acknowledgement.setString("previewSha256", local.pngHash);
+                acknowledgement.setBoolean("localSaveReceipt", true);
+                publishDiskSave(local, acknowledgement, serverKey, token);
+            } else persistArtifact(json, preview, replace, receipt, session, revision, token, serverKey);
+        });
+    }
+
+    private void publishDiskSave(HologramClientLibrary.LocalSave local, NBTTagCompound acknowledgement,
+        String serverKey, long token) {
+        String session = acknowledgement.getString("session");
+        long revision = acknowledgement.getLong("planRevision");
+        main(() -> {
+            if (!saveSourceCurrent(token, session, revision)) {
+                work(() -> {
+                    try {
+                        local.write.rollback();
+                    } catch (Exception failure) {
+                        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                            .warn("Cancelled blueprint pair rollback failed", failure);
+                    }
+                });
+                if (token == generation) cancel();
+                return;
+            }
+            pendingDiskSave = new PendingDiskSave(local.write, acknowledgement, serverKey, local.name, local.path);
+            preparing = true;
+            lastSaveStatus = System.nanoTime();
+            if (acknowledgement.getBoolean("localSaveReceipt")) {
+                NBTTagCompound readback = (NBTTagCompound) acknowledgement.copy();
+                readback.setString("path", local.path);
+                readback.setInteger("jsonBytes", local.jsonBytes);
+                readback.setInteger("pngBytes", local.pngBytes);
+                recordSaveWitness("localPairReadback", readback);
+                traceSave("local_pair_readback");
+            }
+            HologramNetwork.sendAction(acknowledgement);
+            recordSaveWitness("ownerDiskAck", acknowledgement);
+            traceSave("owner_disk_ack");
+            status = "JSON 与 PNG 已写入，正在确认蓝图库索引";
         });
     }
 

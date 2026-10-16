@@ -21,14 +21,73 @@ final class HologramClientLibrary {
     static final int MAX_BYTES = 8 * 1024 * 1024, MAX_ENTRIES = 128;
     private final Path directory;
     private final Path metadataFile;
+    private final PairIo pairIo;
+    private final java.util.Map<String, CachedEntry> entryCache = new java.util.HashMap<>();
+
+    interface PairIo {
+
+        HologramBlueprintArtifact.PairWrite write(Path path, byte[] json, byte[] png,
+            java.util.function.BooleanSupplier current) throws IOException;
+
+        HologramBlueprintArtifact.Artifact read(Path path) throws IOException;
+    }
+
+    private static final PairIo FILE_PAIRS = new PairIo() {
+
+        @Override
+        public HologramBlueprintArtifact.PairWrite write(Path path, byte[] json, byte[] png,
+            java.util.function.BooleanSupplier current) throws IOException {
+            return HologramBlueprintArtifact.writePairPending(path, json, png, current);
+        }
+
+        @Override
+        public HologramBlueprintArtifact.Artifact read(Path path) throws IOException {
+            return HologramBlueprintArtifact.readPair(path);
+        }
+    };
 
     HologramClientLibrary(Path gameDirectory) {
+        this(gameDirectory, FILE_PAIRS);
+    }
+
+    HologramClientLibrary(Path gameDirectory, PairIo pairIo) {
+        this.pairIo = pairIo;
         directory = gameDirectory.resolve("MiaoBlueprints")
             .toAbsolutePath()
             .normalize();
         metadataFile = gameDirectory.resolve("config/gtmb/client-blueprint-library.properties")
             .toAbsolutePath()
             .normalize();
+    }
+
+    private static final class CachedEntry {
+
+        final Entry entry;
+        final String jsonHash, pngHash;
+
+        CachedEntry(Entry entry, HologramBlueprintArtifact.Artifact actual) {
+            this.entry = entry;
+            jsonHash = actual.jsonSha256;
+            pngHash = actual.pngSha256;
+        }
+    }
+
+    static final class LocalSave {
+
+        final HologramBlueprintArtifact.PairWrite write;
+        final String name, path, jsonHash, pngHash;
+        final int jsonBytes, pngBytes;
+
+        LocalSave(HologramBlueprintArtifact.PairWrite write, String name, Path path,
+            HologramBlueprintArtifact.Artifact readback) {
+            this.write = write;
+            this.name = name;
+            this.path = path.toString();
+            jsonHash = write.jsonSha256;
+            pngHash = write.pngSha256;
+            jsonBytes = readback.json.length;
+            pngBytes = readback.png.length;
+        }
     }
 
     static final class Entry {
@@ -53,6 +112,7 @@ final class HologramClientLibrary {
 
     List<Entry> list() throws IOException {
         List<Entry> entries = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
         try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*.json")) {
             for (Path file : files) {
@@ -60,20 +120,67 @@ final class HologramClientLibrary {
                     .toString()
                     .replaceFirst("\\.json$", "");
                 if (!id.matches("local_[a-fA-F0-9-]{36}")) continue;
+                seen.add(id);
                 try {
-                    byte[] data = read(id);
-                    entries.add(new Entry(id, blueprint(data), data.length));
+                    CachedEntry cached = entryCache.get(id);
+                    if (cached == null || !cached.jsonHash.equals(memberHash(file, MAX_BYTES))
+                        || !cached.pngHash.equals(
+                            memberHash(
+                                HologramBlueprintArtifact.previewPath(file),
+                                HologramBlueprintArtifact.MAX_PNG_BYTES))) {
+                        HologramBlueprintArtifact.Artifact actual = pairIo.read(file);
+                        cached = new CachedEntry(new Entry(id, blueprint(actual.json), actual.json.length), actual);
+                        entryCache.put(id, cached);
+                    }
+                    entries.add(cached.entry);
                 } catch (IOException | RuntimeException invalid) {
+                    entryCache.remove(id);
                     // A damaged individual file must not hide every other portable blueprint.
                 }
                 if (entries.size() >= MAX_ENTRIES) break;
             }
         }
+        entryCache.keySet()
+            .retainAll(seen);
         entries.sort((a, b) -> {
             int time = Long.compare(b.createdAt, a.createdAt);
             return time == 0 ? a.id.compareTo(b.id) : time;
         });
         return entries;
+    }
+
+    private static String memberHash(Path path, int maximum) throws IOException {
+        if (!Files.isRegularFile(path) || Files.size(path) > maximum)
+            throw new IOException("Invalid local artifact member");
+        byte[] bytes = Files.readAllBytes(path);
+        if (bytes.length > maximum) throw new IOException("Invalid local artifact member");
+        return HologramBlueprintArtifact.hash(bytes);
+    }
+
+    /** One validation before writing and one actual readback; later catalog refreshes reuse these exact hashes. */
+    LocalSave prepareLocalSave(byte[] data, byte[] preview, String id, java.util.function.BooleanSupplier stillCurrent)
+        throws IOException {
+        JsonObject blueprint = blueprint(data);
+        Path target = file(id);
+        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
+            throw new IOException("蓝图缺少服务器确认的作者信息");
+        HologramBlueprintArtifact.PairWrite written = pairIo.write(target, data, preview, stillCurrent);
+        try {
+            HologramBlueprintArtifact.Artifact actual = pairIo.read(target);
+            if (!written.jsonSha256.equals(actual.jsonSha256) || !written.pngSha256.equals(actual.pngSha256))
+                throw new IOException("Actual saved artifact differs from written bytes");
+            if (!stillCurrent.getAsBoolean()) throw new IOException("Blueprint save source changed");
+            entryCache.put(id, new CachedEntry(new Entry(id, blueprint, actual.json.length), actual));
+            return new LocalSave(written, string(blueprint, "name"), target, actual);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                written.rollback();
+            } catch (IOException rollback) {
+                failure.addSuppressed(rollback);
+            }
+            throw failure;
+        }
     }
 
     String save(byte[] data, byte[] preview, String replaceId) throws IOException {

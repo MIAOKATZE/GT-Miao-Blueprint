@@ -7,6 +7,8 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.util.Properties;
 
+import net.minecraft.nbt.NBTTagCompound;
+
 /** Only the workspace tab persists; placement authority and blueprint identity remain server state. */
 final class HologramUiTabMemory {
 
@@ -29,6 +31,23 @@ final class HologramUiTabMemory {
 
     boolean blueprints(boolean fallback) {
         return blueprints == null ? fallback : blueprints;
+    }
+
+    /** A server opening intent wins; its sticky workspace default cannot replace a remembered user tab. */
+    static Boolean openingTab(NBTTagCompound state, boolean sessionRemembered) {
+        String purpose = state.getString("openPurpose");
+        if ("controllerStructure".equals(purpose)) return false;
+        if ("blueprintBrowse".equals(purpose) || "blueprintEdit".equals(purpose)
+            || "blueprintPlacement".equals(purpose)) return true;
+        if (sessionRemembered) return null;
+        String workspace = state.getString("workspaceTab");
+        if ("blueprint".equals(workspace) && !state.getBoolean("virtualPlacement")) return true;
+        if ("structure".equals(workspace) || workspace.isEmpty() && state.getBoolean("virtual")
+            && purpose.isEmpty()
+            && !state.getBoolean("blueprintSaved")
+            && !state.getBoolean("virtualPlacement")
+            && !state.getBoolean("presetBrowseForPlacement")) return false;
+        return null;
     }
 
     void remember(boolean selected) {

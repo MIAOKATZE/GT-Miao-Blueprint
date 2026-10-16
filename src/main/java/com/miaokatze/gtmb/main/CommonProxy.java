@@ -34,6 +34,8 @@ public class CommonProxy {
             .register(new HologramLifecycle());
         HologramSmokeTest.registerIfEnabled();
         HologramInteractionSmoke.registerIfEnabled();
+        com.miaokatze.gtmb.hologram.HologramCutNativeSmoke.install();
+        com.miaokatze.gtmb.hologram.HologramCutNativeServerProbe.install();
         com.miaokatze.gtmb.hologram.HologramV011InteractionFixture.install();
         com.miaokatze.gtmb.hologram.HologramV011WorldSmoke.install();
         com.miaokatze.gtmb.hologram.HologramV011WorkbenchFixture.install();
@@ -42,6 +44,7 @@ public class CommonProxy {
     }
 
     public void serverStopping() {
+        com.miaokatze.gtmb.hologram.HologramCutService.clear();
         HologramService.clear();
         ServerTaskScheduler.clear();
     }

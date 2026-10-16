@@ -43,7 +43,7 @@ final class HologramBlueprintAnnotationRegression {
             player.capabilities = new PlayerCapabilities();
             player.capabilities.isCreativeMode = true;
             player.capabilities.allowEdit = true;
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -95,7 +95,7 @@ final class HologramBlueprintAnnotationRegression {
             NBTTagCompound processing = new NBTTagCompound();
             processing.setLong("planRevision", (Long) get(session, "planRevision"));
             processing.setTag("policy", reviewed.write());
-            Method process = HologramService.class
+            Method process = HologramAuthoringWorkflow.class
                 .getDeclaredMethod("processingAction", type, NBTTagCompound.class, String.class);
             process.setAccessible(true);
             process.invoke(null, session, processing, "processBlueprint");
@@ -126,8 +126,8 @@ final class HologramBlueprintAnnotationRegression {
     @SuppressWarnings("unchecked")
     private static void areaSaveOwnership(Object session, EntityPlayerMP player, HologramPresets.Preset preset,
         Class<?> type) throws Exception {
-        Field areasField = HologramService.class.getDeclaredField("AREAS");
-        Field editorsField = HologramService.class.getDeclaredField("AREA_EDITORS");
+        Field areasField = HologramWorkspace.class.getDeclaredField("AREAS");
+        Field editorsField = HologramWorkspace.class.getDeclaredField("AREA_EDITORS");
         areasField.setAccessible(true);
         editorsField.setAccessible(true);
         Map<UUID, HologramArea> areas = (Map<UUID, HologramArea>) areasField.get(null);
@@ -182,7 +182,7 @@ final class HologramBlueprintAnnotationRegression {
     }
 
     private static Method method(String name, Class<?>... arguments) throws Exception {
-        Method method = HologramService.class.getDeclaredMethod(name, arguments);
+        Method method = HologramEngineInspection.declaredMethod(name, arguments);
         method.setAccessible(true);
         return method;
     }

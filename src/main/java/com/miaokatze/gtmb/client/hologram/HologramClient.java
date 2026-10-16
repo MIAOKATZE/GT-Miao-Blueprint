@@ -67,6 +67,7 @@ public final class HologramClient {
         if (installed) return;
         installed = true;
         HologramLibraryClient.INSTANCE.install();
+        HologramCutClient.INSTANCE.install();
         HologramNetwork.setClientReceiver(
             nbt -> Minecraft.getMinecraft()
                 .func_152344_a(() -> receive(nbt)));
@@ -77,6 +78,7 @@ public final class HologramClient {
             .bus()
             .register(listener);
         HologramClientSmoke.install();
+        HologramCutNativeClientProbe.install();
     }
 
     private static long lastUseTick = Long.MIN_VALUE;
@@ -96,8 +98,9 @@ public final class HologramClient {
                     .getString("gtitHologramToolId"),
             tool);
         previewDistance.sync(
-            worldStage() == HologramWorldFlow.Stage.AREA ? areaProjectorWorld()
-                : projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
+            HologramCutClient.INSTANCE.aiming() ? projectorWorld()
+                : worldStage() == HologramWorldFlow.Stage.AREA ? areaProjectorWorld()
+                    : projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
             mc.theWorld,
             state == null ? "" : state.session);
     }
@@ -142,6 +145,7 @@ public final class HologramClient {
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!projectorWorld()) return;
+        if (HologramCutClient.INSTANCE.interceptsUse()) return;
         if (worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()) return;
         boolean air = input.getBoolean("air");
         long tick = mc.theWorld.getTotalWorldTime();
@@ -197,10 +201,16 @@ public final class HologramClient {
     private boolean inputScreenChanged;
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void cutMouse(MouseEvent event) {
+        HologramCutClient.INSTANCE.mouse(event);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
         if (event.dwheel == 0 || !projectorWorld()
-            || worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
-            || worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()
+            || !HologramCutClient.INSTANCE.aiming()
+                && (worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
+                    || worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld())
             || !altHeld()) return;
         syncPreviewDistance();
         previewDistance.scroll(event.dwheel);
@@ -251,6 +261,10 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null) return;
         java.util.List<String> lines = new java.util.ArrayList<>();
+        if (HologramCutClient.INSTANCE.guide(lines)) {
+            HologramWorldGuide.draw(lines, event.resolution);
+            return;
+        }
         if (projectorWorld() && HologramLibraryClient.INSTANCE.quickInProgress()) lines.add(
             HologramLibraryClient.INSTANCE.status() + " · "
                 + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.progressBytes())
@@ -333,6 +347,7 @@ public final class HologramClient {
         syncSnapshotWorld();
         installDecoded(snapshotInbox.poll());
         HologramLibraryClient.INSTANCE.tick();
+        HologramCutClient.INSTANCE.tick();
         Minecraft mc = Minecraft.getMinecraft();
         ItemStack tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
         boolean changed = inputContext.observe(
@@ -349,6 +364,7 @@ public final class HologramClient {
         inputScreenChanged = false;
         usePressFence.observe(mc.gameSettings.keyBindUseItem.getIsKeyPressed(), changed);
         syncPreviewDistance();
+        if (HologramCutClient.INSTANCE.active()) return;
         lockedNudge(mc, changed);
         boolean rotate = rotationKey.sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed);
         boolean undoArea = areaUndoKey.sample(
@@ -437,6 +453,7 @@ public final class HologramClient {
     public void worldEscape(GuiOpenEvent event) {
         inputScreenChanged = true;
         previewDistance.sync(false, null, "");
+        if (HologramCutClient.INSTANCE.escape(event)) return;
         if (event.gui instanceof GuiIngameMenu && projectorWorld()
             && HologramLibraryClient.INSTANCE.cancelQuickPlacement()) {
             HologramWorldFlow.Intent pendingIntent = HologramWorldFlow
@@ -473,6 +490,19 @@ public final class HologramClient {
         worldAction("beginAreaSelection");
     }
 
+    static void resumeProjectorUse(boolean alt, NBTTagCompound input) {
+        if (alt) {
+            int[] anchor = movingAnchor(state);
+            input.setString("action", "quickPlaceLastBlueprint");
+            input.setInteger("x", anchor[0]);
+            input.setInteger("y", anchor[1]);
+            input.setInteger("z", anchor[2]);
+            if (input.getBoolean("air")) input.setInteger("side", ForgeDirection.UP.ordinal());
+            if (HologramLibraryClient.INSTANCE.quickPlaceLast(input)) return;
+        } else input.setString("action", input.getBoolean("air") ? "useAir" : "useBlock");
+        HologramNetwork.sendAction(input);
+    }
+
     public static void openSettings() {
         NBTTagCompound request = new NBTTagCompound();
         request.setString("action", "openSettings");
@@ -481,7 +511,12 @@ public final class HologramClient {
 
     /** Only a render translation; no moving-preview world mutation packets are emitted. */
     static int[] movingAnchor(HologramState snapshot) {
+        if (snapshot != null && snapshot.data.getBoolean("cutPreview")) return HologramCutClient.INSTANCE.anchor();
         return worldTarget(true).anchor;
+    }
+
+    static int[] cutAnchor(boolean adjacent) {
+        return worldTarget(adjacent).anchor;
     }
 
     private static boolean altHeld() {
@@ -757,6 +792,7 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();
+        if (HologramCutClient.INSTANCE.render(event.partialTicks)) return;
         if (state == null) return;
         if (mc.theWorld == null || mc.theWorld != snapshotWorld
             || mc.thePlayer == null
