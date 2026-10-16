@@ -1,9 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.io.FileOutputStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,7 +8,6 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -267,43 +263,25 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static void typeHint(HologramScreen screen, String text) throws Exception {
-        Method project = HologramScreen.class.getDeclaredMethod("smokePreviewPoint", int.class, int.class);
-        project.setAccessible(true);
-        int[] point = (int[]) project.invoke(screen, 120, 229);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
-        GuiTextField editor = (GuiTextField) field(screen, "networkHintField");
+
+        int[] point = (int[]) HologramUiDiagnostics
+            .invokeDiagnostic(screen, "smokePreviewPoint", new Class<?>[] { int.class, int.class }, 120, 229);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
+        HologramMuiTextField editor = (HologramMuiTextField) field(screen, "networkHintField");
         require(editor.isFocused(), "actual_mouse_focused_group_hint_field");
         String before = editor.getText();
-        // The ordinary GuiScreen Ctrl+A event carries character 1 and KEY_A. GuiTextField
-        // handles that event directly on both LWJGL2 and LWJGL3; no private key-state buffer.
-        screen.keyTyped((char) 1, Keyboard.KEY_A);
+        // Stage the ordinary Ctrl+A input through MUI2, including its native modifier check.
+        HologramMuiProbeInput.key(screen, (char) 1, Keyboard.KEY_A);
         require(before.equals(editor.getSelectedText()), "actual_ctrl_a_selects_existing_group_hint");
-        Method injectText = null;
-        Constructor<?> textEvent = null;
-        Class<?> nativeInput = null;
-        try {
-            nativeInput = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents");
-        } catch (ClassNotFoundException vanillaInput) {
-            // The vanilla GuiTextField consumes its character event directly.
-        }
-        if (nativeInput != null) {
-            Class<?> eventType = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents$TextEvent");
-            injectText = nativeInput.getMethod("injectTextEvent", eventType);
-            textEvent = eventType.getConstructor(String.class);
-        }
         for (char c : text.toCharArray()) {
-            // Native LWJGL3 IME input queues text separately. Its GuiTextField mixin consumes
-            // that queue during the same keyboard route rather than the key event's character.
-            if (injectText != null) injectText.invoke(null, textEvent.newInstance(String.valueOf(c)));
-            screen.keyTyped(c, 0);
+            HologramMuiProbeInput.key(screen, c, 0);
         }
         String actual = editor.getText();
         NBTTagCompound typed = new NBTTagCompound();
         typed.setString("expected", text);
         typed.setString("actual", actual);
         typed.setString("before", before);
-        typed.setString("driver", injectText == null ? "vanilla character events" : "LWJGL3 native text + key events");
+        typed.setString("driver", "MUI2 screen key and text events");
         typed.setBoolean("focused", editor.isFocused());
         typed.setString("selectedText", editor.getSelectedText());
         receipt.setTag("hintTypingStage" + stage, typed);
@@ -316,10 +294,9 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static void click(HologramScreen screen, int id) throws Exception {
-        screen.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
     }
 
     private static void next(int value, long tick) {
@@ -331,9 +308,8 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static Object field(HologramScreen screen, String name) throws Exception {
-        Field field = HologramScreen.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(screen);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(screen, name));
     }
 
     private static void observe(Minecraft mc, long frame) throws Exception {
@@ -402,9 +378,8 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static void set(HologramScreen screen, String name, Object value) throws Exception {
-        Field field = HologramScreen.class.getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(screen, value);
+
+        HologramUiDiagnostics.writeDiagnosticField(screen, name, value);
     }
 
     private static void screenshot(Minecraft mc, String name) throws Exception {

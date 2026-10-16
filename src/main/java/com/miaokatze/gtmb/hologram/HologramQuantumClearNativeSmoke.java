@@ -801,7 +801,7 @@ public final class HologramQuantumClearNativeSmoke {
 
     private static Object session(EntityPlayerMP actor, HologramPresets.Preset preset, Block block, ItemStack shell,
         int x, int y, int z) throws Exception {
-        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramService$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Constructor<?> constructor = type.getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class);
         constructor.setAccessible(true);
         Object session = constructor.newInstance(actor, x, y, z);
@@ -940,7 +940,7 @@ public final class HologramQuantumClearNativeSmoke {
             types[i + 1] = args[i] instanceof Integer ? int.class : args[i].getClass();
             values[i + 1] = args[i];
         }
-        Method method = HologramService.class.getDeclaredMethod(name, types);
+        Method method = HologramEngineInspection.declaredMethod(name, types);
         method.setAccessible(true);
         try {
             return method.invoke(null, values);

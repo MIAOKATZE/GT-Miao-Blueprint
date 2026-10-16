@@ -13,6 +13,11 @@ public final class GTMBApi {
     /** v1：GTMB ready 后提供唯一投影仪身份并承担 hologram engine，旧模组只处理旧物品映射。 */
     public static final int LEGACY_MAPPING_CONTRACT_VERSION = 1;
 
+    /** Version of the community extension contracts in this package. */
+    public static int getExtensionContractVersion() {
+        return GTMBExtensions.CONTRACT_VERSION;
+    }
+
     private GTMBApi() {}
 
     public static int getLegacyMappingContractVersion() {
