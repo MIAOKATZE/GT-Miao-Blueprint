@@ -19,7 +19,7 @@ import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
 /** One bounded job, owned zones and one transient lease. Disabled configurations never instantiate this handler. */
-final class TestLabRuntime {
+public final class TestLabRuntime {
 
     private final TestLabConfig config;
     private TestLabOwnership ownership;
