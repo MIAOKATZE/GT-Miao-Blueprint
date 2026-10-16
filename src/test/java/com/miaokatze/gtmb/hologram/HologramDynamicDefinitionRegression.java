@@ -138,7 +138,19 @@ final class HologramDynamicDefinitionRegression {
             capture = HologramCapture.collect(controller, trigger, ExtendedFacing.DEFAULT, capture);
             batches++;
         } while (capture.pending && batches < 128);
-        SimpleAssert.that(!capture.pending && !capture.incomplete, "capture completed: " + capture.failure);
+        SimpleAssert.that(
+            !capture.pending && !capture.incomplete,
+            "capture completed: " + capture.failure
+                + "; pending="
+                + capture.pending
+                + "; incomplete="
+                + capture.incomplete
+                + "; batches="
+                + batches
+                + "; cells="
+                + capture.cells.size()
+                + "; origin="
+                + capture.failureOrigin);
         if (capture.cells.size() > 4096)
             SimpleAssert.that(batches > 1, "real collect continuation spans server batches");
         return capture;

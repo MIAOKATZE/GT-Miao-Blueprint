@@ -21,6 +21,19 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
+        cases.put(
+            "client_progress_is_factual_session_bound_and_render_only",
+            com.miaokatze.gtmb.client.hologram.HologramProgressRegression::run);
+        cases.put(
+            "client_job_deltas_are_ordered_bounded_and_display_only",
+            com.miaokatze.gtmb.client.hologram.HologramJobVisualRegression::run);
+        cases.put(
+            "configured_testlab_is_inert_by_default_and_owns_bounded_facilities",
+            com.miaokatze.gtmb.testlab.TestLabRegression::run);
+        cases.put(
+            "testlab_blueprint_bridge_requires_owned_loaded_survival_fixtures",
+            HologramTestLabBlueprintRegression::run);
         cases.put(
             "dynamic_structure_definitions_are_frozen_per_capture_and_resumed_across_pieces",
             HologramDynamicDefinitionRegression::run);

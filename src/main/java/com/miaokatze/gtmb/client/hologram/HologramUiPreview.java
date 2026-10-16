@@ -653,6 +653,12 @@ final class HologramUiPreview {
         ui.session.notice(reason);
     }
 
+    void rejectCommand(long sequence, String reason) {
+        if (queuedDispatchSequence == sequence) queuedDispatchSequence = -1;
+        if (pendingSelectionSequence == sequence) pendingSelectionSequence = -1;
+        cancelQueuedEdits(reason);
+    }
+
     void drainQueuedEdits() {
         if (ui.session.state().data.getBoolean("capturePending") || ui.session.awaitingScan()
             || ui.session.state().data.getBoolean("targetClosed")

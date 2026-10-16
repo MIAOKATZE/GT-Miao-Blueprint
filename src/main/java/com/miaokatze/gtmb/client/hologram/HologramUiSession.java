@@ -27,6 +27,8 @@ final class HologramUiSession {
     private long sequence;
 
     private final HologramUiTicket pendingTicket = new HologramUiTicket();
+    private final HologramProgress.Tracker commandProgress = new HologramProgress.Tracker();
+    private String pendingOperation = "";
 
     private String openedPurpose = "";
 
@@ -68,6 +70,7 @@ final class HologramUiSession {
             ui.annotations.resetSession();
             ui.preview.resetSession(next);
             pendingTicket.clear();
+            commandProgress.clear();
         }
         state = next;
         ui.library.acceptSourceSwitchProposal();
@@ -86,7 +89,8 @@ final class HologramUiSession {
         ui.library.applyOpeningPurpose();
         ui.preview.acknowledgeSelection(next);
         ui.library.acknowledgeSnapshot(next, library, newSession);
-        pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence"));
+        if (pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence")))
+            commandProgress.finish(System.nanoTime());
         ui.preview.acknowledgeEdits(next);
         ui.review.acknowledgeReview(next);
         ui.preview.syncLayerAndSelection(next);
@@ -177,11 +181,40 @@ final class HologramUiSession {
         ui.preview.recordSelectionCommand(op, sequence);
         if (pending) {
             pendingSequence(sequence);
+            pendingOperation = op;
+            String phase = "scan".equals(op) || "processBlueprint".equals(op) ? "analysis"
+                : "configure".equals(op) || "settings".equals(op) ? "settings"
+                    : op.startsWith("saveBlueprint") ? "library.prepare" : "ack";
+            commandProgress.update(state.session + ":" + sequence, phase, 0, 0, "", false, System.nanoTime());
             ui.review.commandPending();
         }
         if (ui.diagnostics.captureRenderSmokeAction())
             ui.diagnostics.capturedRenderSmokeAction((NBTTagCompound) n.copy());
         else HologramNetwork.sendAction(n);
+    }
+
+    HologramProgress progress() {
+        HologramProgress server = HologramClientProgress.view("server", state.session);
+        if (server != null && !server.complete) return server;
+        HologramProgress transport = HologramClientProgress.view("snapshot", "");
+        if (pendingTicket.sequence() >= 0 && transport != null && !transport.complete) return transport;
+        HologramProgress command = commandProgress.view(System.nanoTime());
+        return command != null ? command : server;
+    }
+
+    void transportRejected(NBTTagCompound event) {
+        long rejected = event.getLong("uiSequence");
+        if (!pendingTicket.rejectExact(event.getString("session"), rejected)) return;
+        commandProgress.clear();
+        String message = HologramProgressView.phase("busy");
+        ui.preview.rejectCommand(rejected, message);
+        ui.config.rejectCommand(rejected);
+        ui.processing.rejectCommand(rejected);
+        ui.library.rejectCommand(rejected);
+        ui.review.pendingBuildReview(false);
+        awaitingScan = false;
+        if (pendingOperation.startsWith("saveBlueprint")) HologramLibraryClient.INSTANCE.cancelDraftReview();
+        notice = message;
     }
 
     boolean awaitingScan() {

@@ -41,7 +41,7 @@ final class HologramPlacementJobs {
         s.materialContext.flushRecovery();
         s.ackIndices.clear();
         s.ackSuccesses.clear();
-        long deadline = System.nanoTime() + 100000000L;
+        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS);
         int attempted = 0;
         while (s.cursor < s.work.size() && attempted < HologramPlacementJobs.BUDGET
             && (attempted == 0 || System.nanoTime() < deadline)) {
@@ -73,6 +73,12 @@ final class HologramPlacementJobs {
             else if (!success && "pending".equals(cell.status)) cell.status = "unsupported";
             s.ackIndices.add(index);
             s.ackSuccesses.add(changed ? 1 : 0);
+            s.jobPublication.indices.add(index);
+            s.jobPublication.successes.add(changed ? 1 : 0);
+            s.jobPublication.statuses.add(cell.status);
+            if ("missing".equals(cell.status)) s.jobMissingCells++;
+            else if ("protected".equals(cell.status) || "blocked".equals(cell.status)) s.jobProtectedCells++;
+            else if ("unsupported".equals(cell.status)) s.jobUnsupportedCells++;
             s.ackIndex = index;
             s.ackSuccess = changed;
             if (s.stopTick) {
@@ -82,7 +88,7 @@ final class HologramPlacementJobs {
         }
         s.phase = "ACK";
         s.batchSeq++;
-        HologramPlacementJobs.updateJobCounts(s);
+        s.jobSkippedCells = Math.max(0, s.cursor - s.completed);
         if (s.cursor >= s.work.size()) {
             int unresolved = 0;
             for (int i = 0; i < s.capture.cells.size(); i++)
@@ -110,8 +116,8 @@ final class HologramPlacementJobs {
                         + (unresolved - s.jobMissingCells)
                         + " 格";
         }
-        // One full result per batch, never one packet per block.
-        HologramSnapshots.send(s);
+        // Final states and explicit action ACKs remain immediate; retain every per-cell batch result.
+        HologramSnapshots.sendJob(s);
 
     }
 

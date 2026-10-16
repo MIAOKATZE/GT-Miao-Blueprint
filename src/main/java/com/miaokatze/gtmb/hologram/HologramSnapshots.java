@@ -412,9 +412,128 @@ final class HologramSnapshots {
                 .toArray());
     }
 
+    static void sendJob(HologramSession s) {
+        if (s.job == 1 && !s.open && !s.cancelled) {
+            if (s.jobPublication.indices.size() < 8192
+                && !s.jobPublication.due(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence)) {
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_DEFERRED, 1);
+                return;
+            }
+            NBTTagCompound state = new NBTTagCompound();
+            state.setBoolean("progressOnly", true);
+            state.setTag("progress", jobDelta(s));
+            HologramWorkspace.snapshotSink()
+                .send(s.player, state);
+            s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
+            s.progressTick = s.player.worldObj.getTotalWorldTime();
+            s.progressPhase = "job";
+            return;
+        }
+        send(s);
+    }
+
+    /**
+     * Per-result visual facts only. No cells, native payloads, quotes, editable controls or authorization are emitted.
+     */
+    static NBTTagCompound jobDelta(HologramSession s) {
+        NBTTagCompound delta = progress(s);
+        delta.setBoolean("jobDelta", true);
+        delta.setLong("batchSeq", s.batchSeq);
+        delta.setLong("placementReviewNonce", s.placementReviewNonce);
+        delta.setInteger("job", s.job);
+        delta.setInteger("cursor", s.cursor);
+        delta.setInteger("completed", s.completed);
+        delta.setString("status", s.status);
+        delta.setInteger("jobMissingCells", s.jobMissingCells);
+        delta.setInteger("jobProtectedCells", s.jobProtectedCells);
+        delta.setInteger("jobUnsupportedCells", s.jobUnsupportedCells);
+        delta.setInteger("jobSkippedCells", s.jobSkippedCells);
+        delta.setIntArray(
+            "ackIndices",
+            s.jobPublication.indices.stream()
+                .mapToInt(Integer::intValue)
+                .toArray());
+        delta.setIntArray(
+            "ackSuccesses",
+            s.jobPublication.successes.stream()
+                .mapToInt(Integer::intValue)
+                .toArray());
+        NBTTagList statuses = new NBTTagList();
+        for (String status : s.jobPublication.statuses) statuses.appendTag(new NBTTagString(status));
+        delta.setTag("ackStatuses", statuses);
+        return delta;
+    }
+
+    /** Only detached cursors and counters, never cell payloads or an editable state/authority replacement. */
+    static NBTTagCompound progress(HologramSession s) {
+        NBTTagCompound progress = new NBTTagCompound();
+        progress.setString("scope", "server");
+        progress.setString("session", s.id);
+        progress.setLong("planRevision", s.planRevision);
+        progress.setLong("uiSequence", s.uiSequence);
+        progress.setString("outcome", "running");
+        HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+        if (area != null && area.importing) {
+            progress.setString("phase", "area." + area.importStage());
+            boolean blocks = area.y <= area.maxY;
+            long width = (long) area.maxX - area.minX + 1, depth = (long) area.maxZ - area.minZ + 1;
+            progress
+                .setLong("total", blocks ? width * depth * ((long) area.maxY - area.minY + 1) : area.discovery.size());
+            progress.setLong(
+                "done",
+                blocks ? (((long) area.y - area.minY) * depth + area.z - area.minZ) * width + area.x - area.minX
+                    : area.discoveryIndex);
+            progress.setString("unit", blocks ? "cells" : "structures");
+        } else if (s.capturePending) {
+            progress.setString("phase", "capture");
+            progress.setLong("done", s.capture == null ? 0 : s.capture.cells.size());
+            progress.setLong("total", 0); // Native definitions need not expose a total before traversal finishes.
+            progress.setString("unit", "cells");
+        } else {
+            progress.setString("phase", s.job == 1 || s.job >= 3 ? "job" : "ready");
+            progress.setLong("done", s.cursor);
+            progress.setLong("total", s.work.size());
+            progress.setString("unit", "cells");
+            progress.setBoolean("complete", s.job != 1 && s.job != 2);
+            progress.setString(
+                "outcome",
+                s.job == 3 ? "completed"
+                    : s.job == 5 ? "partial" : s.job == 4 ? "stopped" : s.job == 1 || s.job == 2 ? "running" : "ready");
+        }
+        return progress;
+    }
+
+    static void sendProgress(HologramSession s) {
+        long tick = s.player.worldObj.getTotalWorldTime();
+        NBTTagCompound progress = progress(s);
+        String phase = progress.getString("phase");
+        if (s.progressTick != Long.MIN_VALUE && tick >= s.progressTick
+            && tick - s.progressTick < 5
+            && phase.equals(s.progressPhase)) return;
+        s.progressTick = tick;
+        s.progressPhase = phase;
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("progressOnly", true);
+        state.setTag("progress", progress);
+        HologramWorkspace.snapshotSink()
+            .send(s.player, state);
+    }
+
     static void send(HologramSession s) {
         // Partial batches are server-only. Keep the original open intent until a complete snapshot exists.
-        if (s.capturePending) return;
+        if (s.capturePending) {
+            sendProgress(s);
+            return;
+        }
+        long measured = HologramRuntimeMetrics.start();
+        try {
+            sendComplete(s);
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SNAPSHOT_BUILD, measured);
+        }
+    }
+
+    private static void sendComplete(HologramSession s) {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
@@ -446,6 +565,13 @@ final class HologramSnapshots {
         state.setInteger("captureAttempts", s.captureAttempts);
         state.setLong("captureRetryDue", s.captureRetryDue);
         state.setLong("planRevision", s.planRevision);
+        state.setTag("progress", progress(s));
+        if (!s.jobPublication.indices.isEmpty()) {
+            s.ackIndices.clear();
+            s.ackIndices.addAll(s.jobPublication.indices);
+            s.ackSuccesses.clear();
+            s.ackSuccesses.addAll(s.jobPublication.successes);
+        }
         aeSnapshot(s, state);
         state.setLong("uiSequence", s.uiSequence);
         state.setString("phase", s.phase);
@@ -874,8 +1000,15 @@ final class HologramSnapshots {
         state.setInteger("total", total);
         state.setInteger("workTotal", workTotal);
         state.setString("description", "控制器始终保留；直接施工会重新扫描并逐格重验。手选目标覆盖对应位置，不保证结构成型；差分可供查看材料与改动。");
+        HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.FULL_CELLS_BUILDS, 1);
+        HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.FULL_CELLS_VISITED, cells.tagCount());
+        if (s.job == 1) HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.RUNNING_JOB_FULL_BUILDS, 1);
         HologramWorkspace.snapshotSink()
             .send(s.player, state);
+        s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
+        s.progressTick = s.player.worldObj.getTotalWorldTime();
+        s.progressPhase = state.getCompoundTag("progress")
+            .getString("phase");
     }
 
     static NBTTagCompound recoverySummary(ItemStack drop, boolean estimated) {

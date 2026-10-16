@@ -25,4 +25,10 @@ final class HologramUiTicket {
         clear();
         return true;
     }
+
+    boolean rejectExact(String session, long sequence) {
+        if (this.sequence < 0 || !this.session.equals(session) || this.sequence != sequence) return false;
+        clear();
+        return true;
+    }
 }

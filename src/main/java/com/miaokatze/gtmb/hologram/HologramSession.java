@@ -149,6 +149,9 @@ final class HologramSession {
     final List<Integer> work = new ArrayList<>();
     final List<ItemStack> recovered = new ArrayList<>();
     final List<Integer> ackIndices = new ArrayList<>(), ackSuccesses = new ArrayList<>();
+    final HologramJobPublication jobPublication = new HologramJobPublication();
+    long progressTick = Long.MIN_VALUE;
+    String progressPhase = "";
     int deferAttempts, deferredIndex = -1;
     boolean open;
     long planRevision, uiSequence, batchSeq;
@@ -233,6 +236,7 @@ final class HologramSession {
     }
 
     static void resetJobCounts(HologramSession s, boolean partial) {
+        s.jobPublication.clear();
         s.jobPartialPlacement = partial;
         s.jobMissingCells = s.jobProtectedCells = s.jobUnsupportedCells = s.jobSkippedCells = 0;
     }

@@ -55,6 +55,7 @@ public final class HologramCapture {
     net.minecraft.nbt.NBTTagCompound extensionReports = new net.minecraft.nbt.NBTTagCompound();
     boolean incomplete;
     String failure = "";
+    String failureOrigin = "";
     final long started = System.nanoTime();
     long deadline = started + CAPTURE_TIME_NS;
     boolean pending;
@@ -181,10 +182,13 @@ public final class HologramCapture {
                     .getYCoord(),
                 z = machine.getBaseMetaTileEntity()
                     .getZCoord();
+            // Native definition discovery is atomic; resumable element walking shares the server tick budget.
+            capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
             walkPieces(capture, definition, world, machine.getExtendedFacing(), x, y, z);
         } catch (CaptureYieldException yielded) {
             // Resume on a later server tick, retaining captured cells and declaration caches.
         } catch (RuntimeException | LinkageError e) {
+            capture.noteFailure(e);
             capture.incomplete = true;
             if (capture.failure.isEmpty()) capture.failure = e.getClass()
                 .getSimpleName();
@@ -286,6 +290,7 @@ public final class HologramCapture {
                         }
                         if (cell.unknown && "block".equals(cell.role)) cell.role = "interface";
                     } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                        capture.noteFailure(e);
                         cell.unknown = true;
                         capture.failure = e.getClass()
                             .getSimpleName();
@@ -325,6 +330,13 @@ public final class HologramCapture {
         incomplete = true;
         if (failure.isEmpty()) failure = reason;
         else if ("TIME_LIMIT".equals(reason) && !failure.startsWith("TIME_LIMIT")) failure = reason + ": " + failure;
+    }
+
+    private void noteFailure(Throwable failure) {
+        if (!failureOrigin.isEmpty()) return;
+        StackTraceElement[] trace = failure.getStackTrace();
+        failureOrigin = failure.getClass()
+            .getSimpleName() + (trace.length == 0 ? "" : " at " + trace[0]);
     }
 
     /** Delegate hints through reviewed wrappers without evaluating a deferred controller factory. */

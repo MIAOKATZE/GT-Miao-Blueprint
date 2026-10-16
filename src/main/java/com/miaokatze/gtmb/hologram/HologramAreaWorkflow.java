@@ -497,7 +497,7 @@ final class HologramAreaWorkflow {
                 HologramSnapshots.send(s);
             } else if (s.player.worldObj.getTotalWorldTime() % 10 == 0) {
                 // Progress snapshots keep the existing editor read-only and never request reopening.
-                HologramSnapshots.send(s);
+                HologramSnapshots.sendProgress(s);
             }
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
             area.importing = false;

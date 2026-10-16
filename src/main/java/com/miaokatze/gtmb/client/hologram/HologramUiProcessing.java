@@ -662,6 +662,10 @@ final class HologramUiProcessing {
         }
     }
 
+    void rejectCommand(long sequence) {
+        if (processingPresetLoadSequence == sequence) processingPresetLoadSequence = -1;
+    }
+
     HologramProcessingFlow processingFlow() {
         return this.processingFlow;
     }

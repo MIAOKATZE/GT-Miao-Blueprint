@@ -7,12 +7,14 @@ import com.miaokatze.gtmb.Tags;
 import com.miaokatze.gtmb.hologram.HologramLibraryCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 import com.miaokatze.gtmb.hologram.HologramLibrarySocketServerProbe;
+import com.miaokatze.gtmb.testlab.TestLab;
 
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.event.FMLServerStartingEvent;
+import cpw.mods.fml.common.event.FMLServerStoppedEvent;
 import cpw.mods.fml.common.event.FMLServerStoppingEvent;
 
 /** 猫猫蓝图：独立的结构规划、蓝图编辑与生存施工工具。 */
@@ -34,23 +36,32 @@ public final class GTMiaoBlueprint {
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
+        TestLab.preInit(event.getModConfigurationDirectory());
         proxy.preInit();
     }
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         proxy.init();
+        TestLab.init();
     }
 
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
         event.registerServerCommand(new HologramLibraryCommand());
+        TestLab.serverStarting(event);
     }
 
     @Mod.EventHandler
     public void serverStopping(FMLServerStoppingEvent event) {
+        TestLab.serverStopping();
         HologramLibrarySocketServerProbe.stop();
         HologramLibraryFacade.stop();
         proxy.serverStopping();
+    }
+
+    @Mod.EventHandler
+    public void serverStopped(FMLServerStoppedEvent event) {
+        TestLab.serverStopped();
     }
 }

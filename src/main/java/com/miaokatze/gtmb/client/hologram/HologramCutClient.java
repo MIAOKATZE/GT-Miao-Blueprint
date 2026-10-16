@@ -27,6 +27,7 @@ final class HologramCutClient {
     static final HologramCutClient INSTANCE = new HologramCutClient();
     private final List<NBTTagCompound> entries = new ArrayList<>();
     private final HologramCutRequests requests = new HologramCutRequests();
+    private final HologramProgress.Tracker operationProgress = new HologramProgress.Tracker();
     private final HologramWorldFlow.KeyEdge previousKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge nextKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge rotateKey = new HologramWorldFlow.KeyEdge();
@@ -109,6 +110,7 @@ final class HologramCutClient {
             dimension = mc.thePlayer == null ? 0 : mc.thePlayer.dimension;
             entries.clear();
             requests.clear();
+            operationProgress.clear();
             loaded = false;
             status.show("");
             selected = "";
@@ -118,6 +120,7 @@ final class HologramCutClient {
             closeScreen();
         }
         for (HologramCutRequests.Request expired : requests.expire(System.nanoTime())) {
+            if (operationProgress.matches(expired.id)) operationProgress.clear();
             if (expired.writesWorld()) {
                 status.show(text("checkingResult"));
                 request("list", expired.id);
@@ -286,6 +289,29 @@ final class HologramCutClient {
         return status.message();
     }
 
+    HologramProgress progress(boolean includeDirectory) {
+        HologramCutRequests.Request current = requests.current(includeDirectory);
+        if (current == null) return operationProgress.view(System.nanoTime());
+        HologramProgress transport = HologramClientProgress.view("cut", "");
+        if (transport != null && !transport.complete) return transport;
+        String phase = "list".equals(current.action) && !current.target.isEmpty() ? "cut.verify"
+            : "cut." + current.action;
+        if (!operationProgress.matches(current.id))
+            operationProgress.update(current.id, phase, 0, 0, "", false, current.sentAt);
+        return operationProgress.update(current.id, phase, 0, 0, "", false, System.nanoTime());
+    }
+
+    void transportRejected(NBTTagCompound event) {
+        HologramCutRequests.Request rejected = requests.acknowledge(event.getString("requestId"));
+        if (rejected == null) return;
+        if (operationProgress.matches(rejected.id)) operationProgress.clear();
+        boolean visible = !"list".equals(rejected.action) || !rejected.target.isEmpty()
+            || deferredUse
+            || mc().currentScreen instanceof HologramCutStorageScreen;
+        deferredUse = false;
+        if (visible) status.show(HologramProgressView.phase("busy"));
+    }
+
     boolean busy() {
         return requests.busy();
     }
@@ -408,7 +434,19 @@ final class HologramCutClient {
     }
 
     private void send(NBTTagCompound n) {
-        requests.begin(n.getString("requestId"), n.getString("action"), n.getString("id"), System.nanoTime());
+        long now = System.nanoTime();
+        requests.begin(n.getString("requestId"), n.getString("action"), n.getString("id"), now);
+        if (!"list".equals(n.getString("action")) || !n.getString("id")
+            .isEmpty() || mc().currentScreen instanceof HologramCutStorageScreen)
+            operationProgress.update(
+                n.getString("requestId"),
+                "list".equals(n.getString("action")) && !n.getString("id")
+                    .isEmpty() ? "cut.verify" : "cut." + n.getString("action"),
+                0,
+                0,
+                "",
+                false,
+                now);
         if (!"list".equals(n.getString("action"))) status.show(text("waiting"));
         HologramNetwork.sendCutAction(n);
     }
@@ -418,6 +456,9 @@ final class HologramCutClient {
         HologramCutRequests.Request reply = requests.acknowledge(n.getString("requestId"));
         if (reply == null) return; // old world/connection ACK cannot revive a preview
         String op = reply.action;
+        if (n.getBoolean("success")) {
+            operationProgress.finish(reply.id, System.nanoTime());
+        } else if (operationProgress.matches(reply.id)) operationProgress.clear();
         if (n.hasKey("entries", 9)) {
             loaded = true;
             entries.clear();
@@ -504,6 +545,8 @@ final class HologramCutClient {
             if (!diagnostics.isEmpty()) lines.add(diagnostics.get(0) + " (" + diagnostics.size() + ")");
         }
         if (!status().isEmpty() && !lines.contains(status())) lines.add(status());
+        HologramProgress progress = progress(false);
+        if (progress != null) lines.add(HologramProgressView.summary(progress, System.nanoTime()));
         return true;
     }
 

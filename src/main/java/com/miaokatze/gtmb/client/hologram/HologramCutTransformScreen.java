@@ -70,6 +70,14 @@ final class HologramCutTransformScreen extends GuiScreen {
         drawDefaultBackground();
         drawCenteredString(fontRendererObj, HologramCutClient.text("transform"), width / 2, height / 2 - 102, 0xffdb83);
         drawCenteredString(fontRendererObj, cut.poseSummary(), width / 2, height / 2 - 86, 0xd1dee6);
+        HologramProgress progress = cut.progress(false);
+        if (progress != null) HologramProgressView.draw(
+            fontRendererObj,
+            progress,
+            width / 2 - 132,
+            height >= 244 ? height / 2 + 103 : height / 2 - 74,
+            264,
+            height >= 244 ? 3 : 0);
         super.drawScreen(x, y, ticks);
     }
 

@@ -14,6 +14,8 @@ import org.lwjgl.opengl.GL11;
 /** Internal router workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiRouter {
 
+    private final HologramProgress.Tracker importProgress = new HologramProgress.Tracker();
+
     private final HologramUiModules ui;
 
     HologramUiRouter(HologramUiModules ui) {
@@ -75,10 +77,18 @@ final class HologramUiRouter {
         ui.canvas.text(stage, 50, 105, 580, 0x8bdddf);
         ui.canvas.text("导入完成前，暂不能编辑、保存或放置蓝图。", 50, 123, 580, 0xe5c28d);
         ui.canvas.text("取消后保留导入前的蓝图。", 50, 141, 580, 0xa9d6cf);
-        int progress = Math.max(0, Math.min(100, ui.session.state().data.getInteger("areaImportProgress")));
-        drawRect(50, 165, 630, 178, 0xff0c1e28);
-        drawRect(50, 165, 50 + progress * 580 / 100, 178, 0xff608c91);
-        ui.canvas.text(progress + "%", 50, 187, 580, 0xf2dca5);
+        HologramProgress progress = ui.session.progress();
+        if (progress == null || !progress.phase.startsWith("area.")) progress = importProgress.update(
+            ui.session.state().session,
+            "declarations".equals(ui.session.state().data.getString("areaImportStage")) ? "area.declarations"
+                : "area.blocks",
+            ui.session.state().data.getInteger("areaImportProgress"),
+            100,
+            "steps",
+            false,
+            System.nanoTime());
+        HologramProgressView.draw(ui.host.font(), progress, 50, 165, 580, 9);
+        ui.canvas.text(HologramProgressView.detail(progress), 50, 192, 580, 0x8bdddf);
         ui.canvas.text(ui.session.state().data.getString("status"), 50, 204, 580, 0xe5c28d);
         ui.canvas.button(193, 218, 239, 244, 20, "取消导入并返回世界 · Esc / E", true, mx, my);
     }
@@ -317,12 +327,16 @@ final class HologramUiRouter {
                 ui.nbt.drawNbtEditor(mx, my);
             }
             if (!ui.review.confirmation()) {
-                String status = ui.session.pendingSequence() >= 0 ? "等待服务端校验…" : ui.review.completionSummary();
+                HologramProgress progress = ui.session.progress();
+                String status = progress != null ? HologramProgressView.summary(progress, System.nanoTime())
+                    : ui.session.pendingSequence() >= 0 ? "等待服务端校验…" : ui.review.completionSummary();
                 int statusX = ui.library.libraryDrawer() ? 12 : 35;
                 int statusWidth = ui.library.libraryDrawer() ? HologramUiCanvas.DESIGN_W - 24
                     : HologramUiCanvas.viewportWidth - 12;
                 drawRect(statusX - 3, 318, statusX + statusWidth + 3, 333, 0xff142a32);
-                ui.canvas.text(
+                if (progress != null && ui.session.notice()
+                    .isEmpty()) HologramProgressView.draw(ui.host.font(), progress, statusX, 321, statusWidth, 0);
+                else ui.canvas.text(
                     ui.session.notice()
                         .isEmpty() ? status : ui.session.notice(),
                     statusX,
@@ -348,6 +362,11 @@ final class HologramUiRouter {
                                 + " · 保护 "
                                 + ui.session.state().data.getInteger("protected"));
                 }
+            }
+            if (ui.review.confirmation() && ui.session.progress() != null) {
+                drawRect(32, 318, HologramUiCanvas.viewportWidth + 26, 333, 0xff142a32);
+                HologramProgressView
+                    .draw(ui.host.font(), ui.session.progress(), 35, 321, HologramUiCanvas.viewportWidth - 12, 0);
             }
             ui.preview.drawEmptyVoxelPreview(mx, my);
             if (ui.annotations.annotationInteractive()) ui.annotations.drawAnnotations(mx, my);

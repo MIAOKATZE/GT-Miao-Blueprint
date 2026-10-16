@@ -330,7 +330,10 @@ final class HologramUiLibrary {
         ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", ui.session.editable(), mx, my);
         ui.library.drawBlueprintWorkbench(mx, my);
         drawRect(35, 261, 442, 279, 0xe8172f36);
-        if (selectedRow == null) {
+        HologramProgress waiting = HologramLibraryClient.INSTANCE.progress();
+        if (waiting == null) waiting = ui.session.progress();
+        if (waiting != null) HologramProgressView.draw(ui.host.font(), waiting, 41, 263, 395, 3);
+        else if (selectedRow == null) {
             ui.canvas.text("蓝图来源：" + ui.session.state().data.getString("blueprintSource"), 41, 263, 395, 0x8ba7ad);
         } else {
             ui.canvas.text(
@@ -359,6 +362,10 @@ final class HologramUiLibrary {
                     ui.host.font()
                         .listFormattedStringToWidth(result, 350));
         }
+    }
+
+    void rejectCommand(long sequence) {
+        if (presetSaveSequence == sequence) presetSaveSequence = -1;
     }
 
     void drawClientServerLibrary(int mx, int my) {
@@ -457,20 +464,21 @@ final class HologramUiLibrary {
         ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", ui.session.editable(), mx, my);
         ui.library.drawBlueprintWorkbench(mx, my);
         drawRect(35, 261, 442, 279, 0xe8172f36);
-        ui.canvas.text(library.status(), 41, 258, 395, 0xb9d5d4);
-        if (library.busy() && library.totalBytes() > 0) {
-            drawRect(41, 273, 436, 276, 0xff29424b);
-            drawRect(
-                41,
-                273,
-                41 + (int) (395L * library.progressBytes() / Math.max(1, library.totalBytes())),
-                276,
-                0xff81dce9);
-        }
+        HologramProgress progress = library.progress();
+        if (progress == null) ui.canvas.text(library.status(), 41, 258, 395, 0xb9d5d4);
+        else HologramProgressView.draw(ui.host.font(), progress, 41, 258, 395, 4);
         if (mx >= 35 && mx < 442 && my >= 239 && my < 279) {
             ui.canvas.tooltip(new ArrayList<>());
             ui.canvas.tooltip()
                 .add(library.status());
+            if (progress != null) {
+                ui.canvas.tooltip()
+                    .add(HologramProgressView.summary(progress, System.nanoTime()));
+                if (!HologramProgressView.detail(progress)
+                    .isEmpty())
+                    ui.canvas.tooltip()
+                        .add(HologramProgressView.detail(progress));
+            }
             if (library.busy()) ui.canvas.tooltip()
                 .add(
                     HologramLibraryClient.bytes(library.progressBytes()) + " / "
@@ -626,7 +634,9 @@ final class HologramUiLibrary {
         this.libraryQuotaField.drawTextBox();
         ui.canvas.button(210, 76, 247, 166, 19, "保存并等待服务器确认", true, mx, my);
         ui.canvas.button(211, 254, 247, 164, 19, "关闭", true, mx, my);
-        ui.canvas.text(HologramLibraryClient.INSTANCE.status(), 76, 274, 342, 0x8ba7ad);
+        HologramProgress progress = HologramLibraryClient.INSTANCE.progress();
+        if (progress != null) HologramProgressView.draw(ui.host.font(), progress, 76, 274, 342, 3);
+        else ui.canvas.text(HologramLibraryClient.INSTANCE.status(), 76, 274, 342, 0x8ba7ad);
     }
 
     boolean activateClientLibrary(int id) {

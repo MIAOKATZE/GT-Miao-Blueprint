@@ -133,7 +133,7 @@ public final class HologramLibraryFacade {
             AtomicInteger count = pending.get(owner);
             if (count == null) {
                 if (pending.size() >= 64) {
-                    error(player, "服务器蓝图库请求繁忙，请稍后重试");
+                    HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
                     return;
                 }
                 count = new AtomicInteger();
@@ -141,11 +141,12 @@ public final class HologramLibraryFacade {
             }
             if (count.incrementAndGet() > 4) {
                 count.decrementAndGet();
+                HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
                 return;
             }
             if (!inbound.offer(new Inbound(player, (NBTTagCompound) request.copy(), count))) {
                 if (count.decrementAndGet() == 0) pending.remove(owner, count);
-                error(player, "服务器蓝图库请求繁忙，请稍后重试");
+                HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
             }
         }
     }

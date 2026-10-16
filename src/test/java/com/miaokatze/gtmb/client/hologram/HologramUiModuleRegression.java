@@ -51,6 +51,11 @@ public final class HologramUiModuleRegression {
             "a late response cannot complete the next workspace's reused sequence");
         ticket.clear();
         SimpleAssert.that(!ticket.acknowledge("workspace-b", 2), "explicit close/reset retires the ticket");
+        ticket.begin("workspace-b", 3);
+        SimpleAssert.that(!ticket.rejectExact("workspace-a", 3), "a busy result from another session is unrelated");
+        SimpleAssert.that(!ticket.rejectExact("workspace-b", 2), "an old denial cannot cancel a newer command");
+        SimpleAssert.that(!ticket.rejectExact("workspace-b", 4), "a higher denial sequence is not an ACK");
+        SimpleAssert.that(ticket.rejectExact("workspace-b", 3), "only the exact denied command releases its ticket");
 
         NBTTagCompound opening = new NBTTagCompound();
         opening.setString("workspaceTab", "structure");

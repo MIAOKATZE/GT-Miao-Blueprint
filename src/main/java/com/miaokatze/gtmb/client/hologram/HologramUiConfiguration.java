@@ -1404,6 +1404,10 @@ final class HologramUiConfiguration {
         }
     }
 
+    void rejectCommand(long sequence) {
+        if (basicConfigurationSequence == sequence) basicConfigurationSequence = -1;
+    }
+
     void acknowledgeSelection(HologramState next, int previousSelection, HologramState.Cell previousTarget) {
         if (ui.preview.selected() != previousSelection) {
             roleDropdown = false;

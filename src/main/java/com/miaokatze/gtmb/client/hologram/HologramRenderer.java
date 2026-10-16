@@ -875,6 +875,40 @@ final class HologramRenderer {
         worldIndex = 0;
     }
 
+    /** Rebuild only affected cached groups; visual receipts never replace snapshot cells. */
+    static void jobVisualChanged(HologramState state, int[] indices) {
+        if (worldState != state || indices.length == 0) return;
+        Set<Coordinate> touched = new HashSet<>();
+        for (int index : indices) {
+            HologramState.Cell cell = state.cells.get(index);
+            int gx = cell.x >> 4, gy = cell.y >> 4, gz = cell.z >> 4;
+            touched.add(coordinate(gx, gy, gz));
+            if ((cell.x & 15) == 0) touched.add(coordinate(gx - 1, gy, gz));
+            if ((cell.x & 15) == 15) touched.add(coordinate(gx + 1, gy, gz));
+            if ((cell.y & 15) == 0) touched.add(coordinate(gx, gy - 1, gz));
+            if ((cell.y & 15) == 15) touched.add(coordinate(gx, gy + 1, gz));
+            if ((cell.z & 15) == 0) touched.add(coordinate(gx, gy, gz - 1));
+            if ((cell.z & 15) == 15) touched.add(coordinate(gx, gy, gz + 1));
+            if (HologramJobVisuals.completed(state, cell)) {
+                Coordinate position = coordinate(cell.x, cell.y, cell.z);
+                worldGhosts.remove(position);
+                worldOccluders.remove(position);
+            }
+        }
+        for (Coordinate key : touched) {
+            WorldGroup group = worldGroups.get(key);
+            if (group == null) continue;
+            for (int list : group.lists) GL11.glDeleteLists(list, 1);
+            group.lists.clear();
+            group.built = 0;
+            lastWorldGeometry -= group.geometry;
+            lastWorldGTGeometry -= group.gt;
+            lastWorldFallback -= group.fallback;
+            lastWorldGhosts -= group.ghosts;
+            group.geometry = group.gt = group.fallback = group.ghosts = 0;
+        }
+    }
+
     /** Group lists refer to native lists, so discard them before releasing their native snapshot. */
     static void nativeSnapshotChanged() {
         clearWorldGroups();
@@ -889,7 +923,7 @@ final class HologramRenderer {
         int count = 0;
         while (worldIndex < state.cells.size() && count++ < WORLD_INDEX_BATCH && System.nanoTime() < deadline) {
             HologramState.Cell c = state.cells.get(worldIndex++);
-            if (c.status.equals("removed") || c.completed()) continue;
+            if (HologramJobVisuals.completed(state, c)) continue;
             if (!c.anchor && worldLayer != Integer.MAX_VALUE && c.dy != worldLayer) continue;
             if (!c.anchor && c.id.equals("minecraft:air")
                 && c.wantId.equals("minecraft:air")
@@ -914,8 +948,12 @@ final class HologramRenderer {
     private static boolean compileWorldGroup(WorldGroup group, boolean removal) {
         int list = GL11.glGenLists(1);
         if (list == 0) return false;
+        int beforeGeometry = lastWorldGeometry, beforeGT = lastWorldGTGeometry, beforeFallback = lastWorldFallback,
+            beforeGhosts = lastWorldGhosts;
         int end = Math.min(group.built + WORLD_MESH_BATCH, group.cells.size());
-        List<HologramState.Cell> cells = group.cells.subList(group.built, end);
+        List<HologramState.Cell> cells = new ArrayList<>();
+        for (HologramState.Cell cell : group.cells.subList(group.built, end))
+            if (!HologramJobVisuals.completed(worldState, cell)) cells.add(cell);
         // Native lists must be built before opening the group's list and its tessellator.
         for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
             HologramBlockRender.ready(c, false);
@@ -979,12 +1017,13 @@ final class HologramRenderer {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         t.startDrawing(GL11.GL_LINES);
         for (HologramState.Cell c : cells) {
-            int color = c.anchor ? 0xffffbd : c.color();
+            int color = c.anchor ? 0xffffbd : HologramJobVisuals.color(worldState, c);
             if (worldState != null && worldState.data.getBoolean("virtualPlacement") && !removal) {
                 color = worldState.data.getBoolean("virtualLocked") ? 0x66d9ef : 0x70e69a;
                 lastWorldPlacementOutlineColor = color;
             }
-            if (removal && c.status.equals("pending")) color = 0xf08b83;
+            if (removal && HologramJobVisuals.status(worldState, c)
+                .equals("pending")) color = 0xf08b83;
             t.setColorRGBA_F(
                 ((color >> 16) & 255) / 255f,
                 ((color >> 8) & 255) / 255f,
@@ -1000,6 +1039,10 @@ final class HologramRenderer {
         GL11.glEndList();
         group.lists.add(list);
         group.built = end;
+        group.geometry += lastWorldGeometry - beforeGeometry;
+        group.gt += lastWorldGTGeometry - beforeGT;
+        group.fallback += lastWorldFallback - beforeFallback;
+        group.ghosts += lastWorldGhosts - beforeGhosts;
         return true;
     }
 
@@ -1009,6 +1052,7 @@ final class HologramRenderer {
         final List<HologramState.Cell> cells = new ArrayList<>();
         final List<Integer> lists = new ArrayList<>();
         int built;
+        int geometry, gt, fallback, ghosts;
 
         WorldGroup(int x, int y, int z) {
             this.x = x;

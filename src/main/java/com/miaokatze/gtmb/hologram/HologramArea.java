@@ -196,7 +196,9 @@ final class HologramArea {
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
         World world = player.worldObj;
+        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS);
         for (int budget = 4096; y <= maxY && budget > 0; budget--) {
+            if (budget < 4096 && System.nanoTime() >= deadline) break;
             if (contains(x, y, z)) {
                 if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
                 Block block = world.getBlock(x, y, z);

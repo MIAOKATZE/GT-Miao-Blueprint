@@ -3,10 +3,42 @@ package com.miaokatze.gtmb.hologram;
 /** Tick orchestration over connected server-owned sessions. Each workflow owns its continuation. */
 final class HologramWorkspaceScheduler {
 
+    private static int nextSession;
+
     private HologramWorkspaceScheduler() {}
 
     static void tick() {
-        HologramWorkspace.forEachConnected(HologramWorkspaceScheduler::tickSession);
+        long started = HologramRuntimeMetrics.start();
+        java.util.List<HologramSession> sessions = new java.util.ArrayList<>();
+        HologramWorkspace.forEachConnected(sessions::add);
+        try {
+            runRound(
+                sessions,
+                HologramWorkspaceScheduler::tickSession,
+                System::nanoTime,
+                HologramWorkBudget.TICK_NANOS);
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKSPACE_TICK, started);
+        }
+    }
+
+    /** Clock/operation ports keep fairness independently testable without fake world transactions. */
+    static <T> void runRound(java.util.List<T> sessions, java.util.function.Consumer<T> operation,
+        java.util.function.LongSupplier clock, long budget) {
+        if (sessions.isEmpty()) return;
+        int start = Math.floorMod(nextSession, sessions.size()), visited = 0;
+        long deadline = clock.getAsLong() + budget;
+        HologramWorkBudget.begin(deadline);
+        try {
+            while (visited < sessions.size() && (visited == 0 || clock.getAsLong() < deadline)) {
+                T session = sessions.get((start + visited) % sessions.size());
+                visited++;
+                operation.accept(session);
+            }
+        } finally {
+            nextSession = (start + visited) % sessions.size();
+            HologramWorkBudget.end();
+        }
     }
 
     private static void tickSession(HologramSession s) {

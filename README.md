@@ -65,6 +65,14 @@ Detailed controls, private/shared processing and resource rules: [GTMB Guide / �
 
 Community integrations / 社区扩展：[Public API & module contracts / 公共 API 与模块契约](API.md).
 
+Waiting views show measured progress and percentages when a total is available, or an activity indicator and elapsed time otherwise. Background placement sends compact cell results; the client updates its display locally.
+
+等待界面在总量已知时显示实际进度与百分比；未知时显示动态等待与耗时。后台放置发送单元结果增量，由客户端更新显示。
+
+Administrators can opt into the default-disabled, save-local agent laboratory through `config/gtmb-testlab.cfg`. See [TESTLAB.md](TESTLAB.md) for `/gtmbtestlab`, fixture isolation, stress tests and report boundaries. Ordinary players do not need to enter its dimension.
+
+管理员可通过 `config/gtmb-testlab.cfg` 开启默认关闭的存档内 agent 测试区；配置、`/gtmbtestlab` 指令、隔离设施、压力测试及报告说明见 [TESTLAB.md](TESTLAB.md)。测试无需玩家进入该维度。
+
 ## License & Origins / 许可与来源
 
 [AGPL-3.0](LICENSE) · Origin / 源自 GT-Interesting-Thing · Independently maintained as / 现独立维护为 GTMB · Development notes / 开发记录：[GT-Miao-Blueprint-plan](https://github.com/MIAOKATZE/GT-Miao-Blueprint-plan)。

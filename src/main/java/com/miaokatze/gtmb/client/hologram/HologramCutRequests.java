@@ -59,6 +59,16 @@ final class HologramCutRequests {
         return false;
     }
 
+    Request current(boolean includeDirectory) {
+        Request directory = null;
+        for (Request request : requests.values()) {
+            if (request.expired) continue;
+            if (!"list".equals(request.action)) return request;
+            if (includeDirectory || !request.target.isEmpty()) directory = request;
+        }
+        return directory;
+    }
+
     List<Request> expire(long now) {
         List<Request> expired = new ArrayList<>();
         for (Request request : requests.values()) {

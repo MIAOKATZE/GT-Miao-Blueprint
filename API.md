@@ -1,4 +1,4 @@
-# GTMB 社区 API（0.1.4 / contract 1）
+# GTMB 社区 API（0.1.5 / contract 1）
 
 新集成应依赖 `com.miaokatze.gtmb.api`。`GTMBApi.getExtensionContractVersion()` 返回扩展契约版本；原有投影仪身份和 legacy mapping 契约保持兼容。API 使用宿主的 Minecraft、GTNH 和 StructureLib 类型。
 

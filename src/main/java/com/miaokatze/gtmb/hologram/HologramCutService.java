@@ -3,8 +3,6 @@ package com.miaokatze.gtmb.hologram;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.nbt.NBTTagCompound;
@@ -19,7 +17,7 @@ import com.miaokatze.gtmb.util.ServerTaskScheduler;
 /** Move-only server clipboard. The durable redo journal remains authoritative until world bytes are verified. */
 public final class HologramCutService {
 
-    private static final ConcurrentHashMap<UUID, AtomicInteger> queued = new ConcurrentHashMap<>();
+    private static final HologramRequestGate queued = new HologramRequestGate(8, 128);
     private static MinecraftServer recoveredServer;
 
     private HologramCutService() {}
@@ -55,10 +53,8 @@ public final class HologramCutService {
 
     public static void receive(EntityPlayerMP player, NBTTagCompound request) {
         if (player == null || request == null) return;
-        UUID actor = player.getUniqueID();
-        AtomicInteger count = queued.computeIfAbsent(actor, id -> new AtomicInteger());
-        if (count.incrementAndGet() > 8) {
-            count.decrementAndGet();
+        if (!queued.enter(player)) {
+            HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.CUT);
             return;
         }
         net.minecraft.world.World identity = player.worldObj;
@@ -82,7 +78,7 @@ public final class HologramCutService {
                 }
                 HologramNetwork.sendCutState(player, execute(player, copy));
             } finally {
-                count.decrementAndGet();
+                queued.leave(player);
             }
         });
     }

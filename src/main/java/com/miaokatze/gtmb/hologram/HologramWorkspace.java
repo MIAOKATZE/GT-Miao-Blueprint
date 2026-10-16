@@ -95,6 +95,7 @@ final class HologramWorkspace {
     }
 
     static void clear() {
+        HologramNetwork.clearServerQueues();
         for (HologramSession s : SESSIONS.values()) clearAreaSelection(s);
         SESSIONS.clear();
         AREAS.clear();

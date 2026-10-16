@@ -135,7 +135,12 @@ final class HologramCutStorageScreen extends GuiScreen {
             width / 2,
             height - 91,
             0xaabbcc);
-        drawCenteredString(
+        HologramProgress progress = client().progress(true);
+        if (progress != null) {
+            int progressWidth = Math.min(400, width - 24);
+            HologramProgressView
+                .draw(fontRendererObj, progress, (width - progressWidth) / 2, height - 34, progressWidth, 3);
+        } else drawCenteredString(
             fontRendererObj,
             fontRendererObj.trimStringToWidth(client().status(), width - 24),
             width / 2,
