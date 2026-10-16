@@ -13,7 +13,7 @@ import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
 /** Opt-in observer of an actual save: it never substitutes a mocked transfer or IO completion. */
-final class HologramBackgroundNativeProbe {
+public final class HologramBackgroundNativeProbe {
 
     private final NBTTagCompound receipt = new NBTTagCompound();
     private int stage, ticks;

@@ -24,9 +24,9 @@ import psutil
 
 ROOT = Path(__file__).resolve().parents[4]
 METHOD = "target HWND verified SendInput mouse; PostMessage keys + SendInput modifiers"
-KEYS = {16, 17, 18, 27, 65, 68, 82}  # The probe sends AWT virtual-key codes.
+KEYS = {16, 17, 18, 27, 37, 38, 39, 40, 65, 68, 82, 83, 87}  # AWT keys used by this probe only.
 MODIFIERS = {16, 17, 18}
-OPERATIONS = {"focus", "key-down", "key-up", "mouse-move", "mouse-down", "mouse-up", "release-all"}
+OPERATIONS = {"focus", "key-down", "key-up", "mouse-move", "mouse-down", "mouse-up", "mouse-wheel", "release-all"}
 
 
 class WindowPlacement(ctypes.Structure):
@@ -58,6 +58,8 @@ def read_request(path: Path, sequence: int, pid: int) -> dict:
             raise ValueError("Malformed or duplicate request property")
         values[key] = value
     expected = {"version", "sequence", "pid", "operation", "key", "x", "y", "width", "height"}
+    if values.get("operation") == "mouse-wheel":
+        expected.add("dwheel")
     if set(values) != expected:
         raise ValueError("Unexpected request property set")
     result = {key: int(value) if key != "operation" else value for key, value in values.items()}
@@ -69,9 +71,12 @@ def read_request(path: Path, sequence: int, pid: int) -> dict:
         raise ValueError("Invalid client dimensions")
     if result["operation"].startswith("key-") and result["key"] not in KEYS:
         raise ValueError("Key is outside the probe's explicit virtual-key allowlist")
-    if result["operation"].startswith("mouse-") and result["key"] not in (0, 1):
+    if result["operation"] == "mouse-wheel":
+        if result["key"] != 0 or result["dwheel"] not in (-480, -360, -240, -120, 120, 240, 360, 480):
+            raise ValueError("Wheel requires key=0 and one to four signed 120-unit notches")
+    elif result["operation"].startswith("mouse-") and result["key"] not in (0, 1):
         raise ValueError("Only left/right mouse buttons are supported")
-    if result["operation"] in ("focus", "mouse-move", "mouse-down") and not (
+    if result["operation"] in ("focus", "mouse-move", "mouse-down", "mouse-wheel") and not (
         0 <= result["x"] < result["width"] and 0 <= result["y"] < result["height"]
     ):
         raise ValueError("Pointer is outside the requested client area")
@@ -545,6 +550,8 @@ class Win32:
         scan = self.user.MapVirtualKeyW(key, 0)
         alt = key == 18 or 18 in self.keys
         parameter = 1 | (scan << 16) | ((1 << 29) if alt else 0)
+        if key in (37, 38, 39, 40):
+            parameter |= 1 << 24  # Win32 extended arrow keys, not the numeric keypad aliases.
         if not down:
             parameter |= (1 << 30) | (1 << 31)
         if key in MODIFIERS:
@@ -621,9 +628,9 @@ class Win32:
             raise ctypes.WinError(ctypes.get_last_error())
         return point
 
-    def send_mouse(self, flags, dx=0, dy=0, down_hold=None, release_button=None, cleanup_only=False):
+    def send_mouse(self, flags, dx=0, dy=0, down_hold=None, release_button=None, cleanup_only=False, mouse_data=0):
         if cleanup_only:
-            if release_button not in self.buttons or dx or dy or flags != (0x0004 if release_button == 0 else 0x0010):
+            if release_button not in self.buttons or dx or dy or mouse_data or flags != (0x0004 if release_button == 0 else 0x0010):
                 raise RuntimeError("Cleanup may only release a mouse button successfully injected by this bridge")
         else:
             self.target.validate()
@@ -632,7 +639,7 @@ class Win32:
             self.foreground()
         event = self.Input()
         event.type = 0  # INPUT_MOUSE
-        event.value.mouse = self.MouseInput(dx, dy, 0, flags, 0, 0)
+        event.value.mouse = self.MouseInput(dx, dy, mouse_data, flags, 0, 0)
         if self.user.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) != 1:
             raise ctypes.WinError(ctypes.get_last_error())
         # Update ownership immediately after insertion, before evidence or any further checks.
@@ -643,6 +650,22 @@ class Win32:
             del self.buttons[release_button]
         self.mouse_evidence["mouse_sendinput_flags"] = hex(flags)
         self.mouse_evidence["mouse_cleanup_only"] = str(cleanup_only).lower()
+
+    def mouse_wheel(self, dwheel, x, y):
+        if dwheel not in (-480, -360, -240, -120, 120, 240, 360, 480):
+            raise ValueError("Wheel delta is outside the explicit notch allowlist")
+        if self.keys != {18} or self.physical != {18} or not (self.user.GetAsyncKeyState(18) & 0x8000):
+            raise RuntimeError("World distance wheel requires only this bridge's physically held Alt")
+        if self.buttons or any(self.user.GetAsyncKeyState(key) & 0x8000 for key in (1, 2, 4, 5, 6)):
+            raise RuntimeError("Wheel refuses held mouse buttons")
+        if (x, y) != (self.request_width // 2, self.request_height // 2):
+            raise RuntimeError("World distance wheel requires the owned client centre")
+        _, geometry = self.physical_geometry(x, y)
+        self.verify_physical_hit(self.physical_cursor(), geometry)
+        self.mouse_evidence.update(mouse_route="world-centre wheel-only SendInput; no pointer movement",
+                                   mouse_wheel_delta=dwheel, mouse_wheel_alt_owned="true")
+        self.send_mouse(0x0800, mouse_data=dwheel & 0xffffffff)  # MOUSEEVENTF_WHEEL, signed DWORD payload.
+        self.pending_pointer = None
 
     def cleanup_mouse(self, button, reason, context_changed=True):
         self.mouse_evidence.update(mouse_cleanup_only="true", mouse_context_changed=str(context_changed).lower(),
@@ -770,6 +793,8 @@ class Win32:
                     self.keyboard(request["key"], operation == "key-down")
                 elif operation == "mouse-move":
                     self.mouse_move(request["x"], request["y"])
+                elif operation == "mouse-wheel":
+                    self.mouse_wheel(request["dwheel"], request["x"], request["y"])
                 elif operation.startswith("mouse-"):
                     self.mouse(request["key"], operation == "mouse-down", request["x"], request["y"])
         except Exception as context_error:

@@ -38,6 +38,7 @@ import com.cleanroommc.modularui.api.IMuiScreen;
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
+import com.miaokatze.gtmb.Tags;
 import com.miaokatze.gtmb.api.CutTransforms.Transform;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramV011Evidence;
@@ -114,6 +115,10 @@ public final class HologramCutNativeClientProbe {
     private int[] nudgeExpected, nudgeOriginal;
     private NBTTagCompound nudgeRaw;
     private long nudgePackets;
+    private long nativeWheelSerial, wheelBefore;
+    private int wheelExpectedDistance, wheelDelta;
+    private boolean wheelAwaiting;
+    private NBTTagCompound lastNativeWheel;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.cutNativeClient")) return;
@@ -141,7 +146,9 @@ public final class HologramCutNativeClientProbe {
             cpw.mods.fml.client.FMLClientHandler.instance()
                 .setupServerList();
             cpw.mods.fml.client.FMLClientHandler.instance()
-                .connectToServer(mc.currentScreen, new ServerData("GTMB v0.1.4 native cut", address));
+                .connectToServer(
+                    mc.currentScreen,
+                    new ServerData("GTMB v" + Tags.RELEASE_VERSION + " native cut", address));
             return true;
         });
         add("real-player-equipped-and-empty-directory-ack", mc -> {
@@ -234,7 +241,7 @@ public final class HologramCutNativeClientProbe {
         mark("first-cut-left-first-corner", 48, 80, 64, 0);
         shot("cut-first-corner-selection");
         hold("first-cut-second-corner-Alt-down", KeyEvent.VK_ALT, true);
-        mark("first-cut-Alt-right-second-corner-real-marker", 49, 81, 64, 1);
+        mark("first-cut-Alt-right-second-corner-real-marker", 49, 81, 64, 1, 3);
         hold("first-cut-second-corner-Alt-up", KeyEvent.VK_ALT, false);
         waitScreen("first-cut-name-required", HologramCutNameScreen.class);
         add("first-cut-native-Alt-right-recorded-second-corner", mc -> {
@@ -317,7 +324,7 @@ public final class HologramCutNativeClientProbe {
         });
         mark("continuous-second-cut-left-first-corner", 52, 80, 64, 0);
         hold("continuous-second-cut-second-corner-Alt-down", KeyEvent.VK_ALT, true);
-        mark("continuous-second-cut-Alt-right-second-corner-real-marker", 53, 81, 64, 1);
+        mark("continuous-second-cut-Alt-right-second-corner-real-marker", 53, 81, 64, 1, 4);
         hold("continuous-second-cut-second-corner-Alt-up", KeyEvent.VK_ALT, false);
         waitScreen("ordinary-save-keeps-second-name-prompt", HologramCutNameScreen.class);
         button("save-second-cut-and-explicitly-disable-name-prompt", 2);
@@ -571,6 +578,9 @@ public final class HologramCutNativeClientProbe {
 
     private void nudge(String label, int awtKey, HologramWorldFlow.Nudge direction) {
         add(label + "-expected-client-step", mc -> {
+            require(
+                mc.currentScreen == null && field(client(), "stage") == HologramCutInput.Stage.LOCKED,
+                "native nudge starts only in the locked world draft with no GUI or text field focused");
             int[] at = client().anchor();
             net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer
                 : mc.renderViewEntity;
@@ -1194,6 +1204,10 @@ public final class HologramCutNativeClientProbe {
         return field.get(null);
     }
 
+    private static int previewDistance() throws Exception {
+        return ((HologramWorldFlow.PreviewDistance) staticField(HologramClient.class, "previewDistance")).distance();
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
@@ -1410,16 +1424,23 @@ public final class HologramCutNativeClientProbe {
 
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public void nativeMouse(MouseEvent event) {
-        if (done || event.button < 0) return;
+        if (done || event.button < 0 && event.dwheel == 0) return;
         try {
             if (awaitWorldMouse && event.button == awaitedMouseButton && event.buttonstate) awaitWorldMouse = false;
             NBTTagCompound input = snapshot(Minecraft.getMinecraft());
             input.setString("eventKind", "native Forge MouseEvent after production handlers");
             input.setInteger("button", event.button);
+            input.setInteger("dwheel", event.dwheel);
             input.setBoolean("buttonState", event.buttonstate);
             input.setBoolean("canceled", event.isCanceled());
             input.setInteger("eventX", event.x);
             input.setInteger("eventY", event.y);
+            if (event.dwheel != 0) {
+                input.setLong("nativeWheelSerial", ++nativeWheelSerial);
+                lastNativeWheel = (NBTTagCompound) input.copy();
+                lastNativeWheel.removeTag("lastNativeWheel");
+                HologramV011Evidence.write("cut-client-native-wheel-" + nativeWheelSerial + ".nbt", input);
+            }
             lastNativeMouse = new NBTTagCompound();
             lastNativeMouse.setInteger("button", event.button);
             lastNativeMouse.setBoolean("buttonState", event.buttonstate);
@@ -1522,6 +1543,10 @@ public final class HologramCutNativeClientProbe {
     }
 
     private void mark(String label, int x, int y, int z, int button) {
+        mark(label, x, y, z, button, -1);
+    }
+
+    private void mark(String label, int x, int y, int z, int button, int floatingDistance) {
         add(label + "-actual-client-block-arrived", mc -> {
             if (mc.currentScreen != null) return false;
             aim = new int[] { x, y, z };
@@ -1545,12 +1570,60 @@ public final class HologramCutNativeClientProbe {
                 && hit.blockY == y
                 && hit.blockZ == z;
         });
+        if (floatingDistance >= 0) {
+            setFloatingDistance(label, floatingDistance);
+            add(label + "-actual-floating-red-cursor-and-source-box", mc -> {
+                require(
+                    mc.currentScreen == null && client().selecting()
+                        && HologramCutClient.alt()
+                        && previewDistance() == floatingDistance
+                        && java.util.Arrays.equals(HologramClient.cutAnchor(false), new int[] { x, y, z }),
+                    "real Alt-wheel places the actual red selection cursor at the fixture's second corner");
+                int[] first = (int[]) field(client(), "first"), at = HologramClient.cutAnchor(false);
+                require(
+                    first != null && field(client(), "second") == null,
+                    "floating corner 2 previews the existing first corner without changing either source mark");
+                List<String> guide = new ArrayList<>();
+                require(
+                    client().guide(guide) && guide.stream()
+                        .anyMatch(line -> line.contains(HologramCutClient.coordinates(at))),
+                    "the actual cut HUD reports the same floating cursor used by the source box");
+                NBTTagCompound proof = snapshot(mc);
+                proof.setIntArray(
+                    "selectionSourcePoints",
+                    new int[] { first[0], first[1], first[2], at[0], at[1], at[2] });
+                NBTTagList guideProof = new NBTTagList();
+                for (String line : guide) guideProof.appendTag(new NBTTagString(line));
+                proof.setTag("actualCutHud", guideProof);
+                proof.setTag("actualNativeWheel", lastNativeWheel.copy());
+                HologramV011Evidence.write(label + "-floating-source-box.nbt", proof);
+                return true;
+            });
+            shot(label + "-floating-source-box");
+            add(label + "-actual-END-rendered-source-box", mc -> {
+                HologramAreaOverlay.RenderWitness rendered = HologramAreaOverlay.lastRenderWitness();
+                int[] first = (int[]) field(client(), "first");
+                require(
+                    rendered != null && java.util.Arrays.equals(rendered.cursor(), new int[] { x, y, z })
+                        && java.util.Arrays.equals(rendered.state.data.getIntArray("areaPoints"), first),
+                    "the natural END frame rendered the real first corner and the verified floating red cursor");
+                NBTTagCompound proof = snapshot(mc);
+                proof.setIntArray("actualRenderedSelectionPoints", rendered.state.data.getIntArray("areaPoints"));
+                proof.setIntArray("actualRenderedRedCursor", rendered.cursor());
+                HologramV011Evidence.write(label + "-rendered-source-box.nbt", proof);
+                return true;
+            });
+        }
         add(label, mc -> {
             if (mc.currentScreen != null) return false;
             aim = new int[] { x, y, z };
             aim(mc);
             MovingObjectPosition hit = mc.objectMouseOver;
             HologramV011Evidence.write("cut-raycast-last.nbt", snapshot(mc));
+            if (floatingDistance >= 0) require(
+                HologramCutClient.alt() && previewDistance() == floatingDistance
+                    && java.util.Arrays.equals(HologramClient.cutAnchor(false), new int[] { x, y, z }),
+                "native Alt-right consumes the verified floating cursor after the actual END frame");
             require(
                 hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK
                     && hit.blockX == x
@@ -1571,6 +1644,36 @@ public final class HologramCutNativeClientProbe {
                     + (hit == null ? "null" : hit.typeOfHit + ":" + hit.blockX + "," + hit.blockY + "," + hit.blockZ));
             click(mc, 0, 0, button);
             return true;
+        });
+    }
+
+    private void setFloatingDistance(String label, int distance) {
+        add(label + "-real-Alt-wheel-distance-" + distance, mc -> {
+            require(
+                mc.currentScreen == null && client().selecting() && HologramCutClient.alt(),
+                "native wheel adjusts only the active world selection with physical Alt held");
+            if (wheelAwaiting) {
+                if (nativeWheelSerial == wheelBefore) return false;
+                require(
+                    lastNativeWheel.getInteger("dwheel") == wheelDelta && lastNativeWheel.getBoolean("alt")
+                        && lastNativeWheel.getBoolean("canceled")
+                        && previewDistance() == wheelExpectedDistance,
+                    "real Forge wheel event is consumed by the distance handler and moves exactly one notch");
+                wheelAwaiting = false;
+            }
+            int current = previewDistance();
+            if (current == distance) {
+                require(lastNativeWheel != null, "floating source proof includes an actual wheel event");
+                return true;
+            }
+            require(Math.abs(current - distance) <= 4, "distance adjustment is bounded to four physical wheel notches");
+            wheelDelta = current > distance ? -120 : 120;
+            wheelExpectedDistance = current + Integer.signum(wheelDelta);
+            wheelBefore = nativeWheelSerial;
+            wheelAwaiting = true;
+            osInput("mouse-wheel", 0, mc.displayWidth / 2, mc.displayHeight / 2, wheelDelta);
+            pointerActions++;
+            return false;
         });
     }
 
@@ -1720,6 +1823,10 @@ public final class HologramCutNativeClientProbe {
     }
 
     private void osInput(String operation, int key, int x, int y) throws Exception {
+        osInput(operation, key, x, y, 0);
+    }
+
+    private void osInput(String operation, int key, int x, int y, int dwheel) throws Exception {
         require(!osPending, "only one OS handshake may be outstanding");
         long pid = Long.parseLong(
             java.lang.management.ManagementFactory.getRuntimeMXBean()
@@ -1741,6 +1848,7 @@ public final class HologramCutNativeClientProbe {
             + "\nheight="
             + Minecraft.getMinecraft().displayHeight
             + "\n";
+        if ("mouse-wheel".equals(operation)) text += "dwheel=" + dwheel + "\n";
         Path root = HologramV011Evidence.directory();
         Path target = root.resolve("cut-os-input-request-" + osSequence + ".properties");
         Path temporary = root.resolve("cut-os-input-request-" + osSequence + ".writing");
@@ -1939,13 +2047,21 @@ public final class HologramCutNativeClientProbe {
 
     private NBTTagCompound snapshot(Minecraft mc) throws Exception {
         NBTTagCompound n = new NBTTagCompound();
-        n.setString("releaseVersion", "0.1.4");
+        n.setString("releaseVersion", Tags.RELEASE_VERSION);
         n.setString(
             "screen",
             mc.currentScreen == null ? "world"
                 : mc.currentScreen.getClass()
                     .getName());
         n.setString("stage", field(client(), "stage").toString());
+        int[] first = (int[]) field(client(), "first"), second = (int[]) field(client(), "second");
+        if (first != null) n.setIntArray("first", first.clone());
+        if (second != null) n.setIntArray("second", second.clone());
+        n.setInteger("previewDistance", previewDistance());
+        n.setLong("nativeWheelSerial", nativeWheelSerial);
+        if (lastNativeWheel != null) n.setTag("lastNativeWheel", lastNativeWheel.copy());
+        if (mc.theWorld != null && mc.thePlayer != null && mc.currentScreen == null && client().aiming())
+            n.setIntArray("cutCursorAnchor", HologramClient.cutAnchor(!client().selecting()));
         n.setString("selected", client().selected());
         n.setString("status", client().status());
         if (!connectionFailure.isEmpty()) n.setString("actualConnectionReason", diagnosticText(connectionFailure));

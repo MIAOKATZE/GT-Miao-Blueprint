@@ -21,6 +21,8 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraftforge.common.util.ForgeDirection;
 
+import com.miaokatze.gtmb.Tags;
+
 import appeng.api.AEApi;
 import appeng.api.config.Actionable;
 import appeng.api.networking.security.PlayerSource;
@@ -839,7 +841,7 @@ public final class HologramCutNativeServerProbe {
     private NBTTagCompound base() {
         NBTTagCompound n = new NBTTagCompound();
         n.setBoolean("passed", true);
-        n.setString("releaseVersion", "0.1.4");
+        n.setString("releaseVersion", Tags.RELEASE_VERSION);
         n.setString(
             "actor",
             actor.getUniqueID()
