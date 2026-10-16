@@ -19,6 +19,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 public final class HologramDeclarationAdapters {
 
     private static final Map<IStructureElement<?>, Declaration> DECLARATIONS = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, Declaration> RESOLVED = new WeakHashMap<>();
     private static final Map<Class<?>, Function<IStructureElement<?>, Declaration>> READERS = new ConcurrentHashMap<>();
     private static final java.util.concurrent.atomic.AtomicLong GENERATION = new java.util.concurrent.atomic.AtomicLong();
 
@@ -67,8 +68,32 @@ public final class HologramDeclarationAdapters {
      */
     public static <E extends IStructureElement<?>> void registerReader(Class<E> type, Function<E, Declaration> reader) {
         if (type == null || reader == null) throw new IllegalArgumentException("Missing declaration reader");
-        READERS.put(type, element -> reader.apply(type.cast(element)));
-        GENERATION.incrementAndGet();
+        synchronized (DECLARATIONS) {
+            READERS.put(type, element -> reader.apply(type.cast(element)));
+            RESOLVED.clear();
+            GENERATION.incrementAndGet();
+        }
+    }
+
+    /** Scoped exact-class reader for the public API. Removal invalidates all derived declaration caches. */
+    public static <E extends IStructureElement<?>> AutoCloseable registerScopedReader(Class<E> type,
+        Function<E, Declaration> reader) {
+        if (type == null || reader == null) throw new IllegalArgumentException("Missing declaration reader");
+        Function<IStructureElement<?>, Declaration> bridge = element -> reader.apply(type.cast(element));
+        synchronized (DECLARATIONS) {
+            if (READERS.putIfAbsent(type, bridge) != null)
+                throw new IllegalArgumentException("Reader already registered");
+            RESOLVED.clear();
+            GENERATION.incrementAndGet();
+        }
+        return () -> {
+            synchronized (DECLARATIONS) {
+                if (READERS.remove(type, bridge)) {
+                    RESOLVED.clear();
+                    GENERATION.incrementAndGet();
+                }
+            }
+        };
     }
 
     static long generation() {
@@ -80,10 +105,12 @@ public final class HologramDeclarationAdapters {
         synchronized (DECLARATIONS) {
             Declaration known = DECLARATIONS.get(element);
             if (known != null) return known;
+            known = RESOLVED.get(element);
+            if (known != null) return known;
             Function<IStructureElement<?>, Declaration> reader = READERS.get(element.getClass());
             if (reader == null) return null;
             known = reader.apply(element);
-            if (known != null) DECLARATIONS.put(element, known);
+            if (known != null) RESOLVED.put(element, known);
             return known;
         }
     }

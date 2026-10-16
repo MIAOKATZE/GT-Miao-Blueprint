@@ -50,6 +50,11 @@ public final class HologramNativePlacement {
         ADAPTERS.put(id, adapter);
     }
 
+    /** Remove only the expected registration; legacy replacement/other adapters remain untouched. */
+    public static synchronized boolean unregister(String id, Adapter expected) {
+        return ADAPTERS.remove(id, expected);
+    }
+
     public static synchronized Adapter adapter(Block block) {
         if (block == null) return null;
         List<Adapter> snapshot = new ArrayList<>(ADAPTERS.values());

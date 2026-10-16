@@ -42,7 +42,7 @@ final class HologramServiceEditRegression {
             player.capabilities.isCreativeMode = true;
             player.capabilities.allowEdit = true;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
-            Class<?> sessionType = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> sessionType = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> constructor = sessionType.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -79,12 +79,12 @@ final class HologramServiceEditRegression {
             targets.add(new ItemStack(Blocks.cobblestone));
             targets.add(new ItemStack(Blocks.stone));
             targets.add(new ItemStack(Blocks.stone));
-            Method edit = HologramService.class
+            Method edit = HologramBlueprintEditor.class
                 .getDeclaredMethod("edit", sessionType, NBTTagCompound.class, String.class);
             edit.setAccessible(true);
-            Method refresh = HologramService.class.getDeclaredMethod("refreshPlan", sessionType);
+            Method refresh = HologramResourcePlanner.class.getDeclaredMethod("refreshPlan", sessionType);
             refresh.setAccessible(true);
-            Class<?> stateType = Class.forName(HologramService.class.getName() + "$EditState");
+            Class<?> stateType = Class.forName("com.miaokatze.gtmb.hologram.HologramEditState");
             Constructor<?> snapshot = stateType.getDeclaredConstructor(sessionType);
             snapshot.setAccessible(true);
             Object original = snapshot.newInstance(session);
@@ -113,7 +113,8 @@ final class HologramServiceEditRegression {
             assertTarget(session, 1, Blocks.cobblestone);
             assertTarget(session, 2, Blocks.dirt);
             SimpleAssert.eq(2, map(session, "pins").size(), "cut only restores source shell");
-            Method configure = HologramService.class.getDeclaredMethod("configure", sessionType, NBTTagCompound.class);
+            Method configure = HologramActionDispatcher.class
+                .getDeclaredMethod("configure", sessionType, NBTTagCompound.class);
             configure.setAccessible(true);
             NBTTagCompound selection = new NBTTagCompound();
             selection.setInteger("main", 1);
@@ -122,7 +123,40 @@ final class HologramServiceEditRegression {
             selection.setInteger("scope", 2);
             selection.setInteger("selected", 3);
             selection.setInteger("layer", 1);
+            selection.setLong("uiSequence", 41);
             SimpleAssert.that((Boolean) configure.invoke(null, session, selection), "selection configure accepted");
+            SimpleAssert.eq(
+                41L,
+                get(session, "configurationAcceptedSequence"),
+                "successful real configure records its exact sequence");
+            NBTTagCompound invalidCombination = (NBTTagCompound) selection.copy();
+            invalidCombination.setLong("uiSequence", 42);
+            invalidCombination.setBoolean("applyHatchPreset", true);
+            invalidCombination.setInteger("hatchTier", 1);
+            invalidCombination.setBoolean("materialMain", true);
+            NBTTagCompound malformedProfile = new NBTTagCompound();
+            NBTTagList malformedEntries = new NBTTagList();
+            NBTTagCompound malformedEntry = new NBTTagCompound();
+            malformedEntry.setString("role", "InputHatch");
+            malformedEntry.setString("item", "minecraft:stone");
+            malformedEntry.setInteger("count", 1);
+            malformedEntries.appendTag(malformedEntry);
+            malformedProfile.setTag("entries", malformedEntries);
+            invalidCombination.setTag("hatchProfile", malformedProfile);
+            int previousPinCount = map(session, "pins").size();
+            SimpleAssert.that(
+                !(Boolean) configure.invoke(null, session, invalidCombination),
+                "a non-hatch identity cannot be configured as a hatch profile");
+            SimpleAssert.eq(
+                previousPinCount,
+                map(session, "pins").size(),
+                "failed whole-profile validation leaves manual targets intact");
+            SimpleAssert
+                .that(!settings.main, "failed whole-profile validation cannot partially apply material sources");
+            SimpleAssert.eq(
+                41L,
+                get(session, "configurationAcceptedSequence"),
+                "a rejected configure does not fabricate a successful receipt");
             SimpleAssert.that(
                 (Boolean) get(session, "allocationsFrozen"),
                 "changing selection/scope/layer keeps allocations frozen");
@@ -156,13 +190,13 @@ final class HologramServiceEditRegression {
             action(edit, session, "editCut", 0);
             assertTarget(session, 0, Blocks.dirt);
             SimpleAssert.eq(1, get(session, "job"), "active construction rejects clipboard edits");
-            Method classify = HologramService.class
+            Method classify = HologramPlanPolicy.class
                 .getDeclaredMethod("classify", sessionType, HologramCapture.Cell.class, int.class);
-            Method operate = HologramService.class
+            Method operate = HologramWorldTransactions.class
                 .getDeclaredMethod("operateChecked", sessionType, HologramCapture.Cell.class, int.class);
-            Method build = HologramService.class.getDeclaredMethod("directBuild", sessionType, boolean.class);
-            Method nativeBuild = HologramService.class.getDeclaredMethod("nativeBuild", sessionType);
-            Method member = HologramService.class
+            Method build = HologramBuildPreparation.class.getDeclaredMethod("directBuild", sessionType, boolean.class);
+            Method nativeBuild = HologramBuildPreparation.class.getDeclaredMethod("nativeBuild", sessionType);
+            Method member = HologramCellPolicy.class
                 .getDeclaredMethod("originalMember", sessionType, HologramCapture.Cell.class);
             for (Method method : new Method[] { classify, operate, build, nativeBuild, member })
                 method.setAccessible(true);
@@ -325,7 +359,8 @@ final class HologramServiceEditRegression {
         set(session, "mode", 1);
         Object preset = get(session, "virtualPreset");
         Map<Integer, ItemStack> before = new HashMap<>(map(session, "pins"));
-        Method select = HologramService.class.getDeclaredMethod("selectPreset", session.getClass(), String.class);
+        Method select = HologramPresetWorkflow.class
+            .getDeclaredMethod("selectPreset", session.getClass(), String.class);
         select.setAccessible(true);
         select.invoke(null, session, "another-template");
         SimpleAssert.that(get(session, "capture") == capture, "selection preserves the live editing capture");
@@ -336,7 +371,7 @@ final class HologramServiceEditRegression {
         SimpleAssert.eq(false, get(session, "virtualPlacement"), "selection cannot authorize placement");
         set(session, "virtualLocked", true);
         Object jobBefore = get(session, "job");
-        Method build = HologramService.class.getDeclaredMethod("directBuild", session.getClass());
+        Method build = HologramBuildPreparation.class.getDeclaredMethod("directBuild", session.getClass());
         build.setAccessible(true);
         build.invoke(null, session);
         SimpleAssert.that(
@@ -347,13 +382,13 @@ final class HologramServiceEditRegression {
         SimpleAssert.eq(before, map(session, "pins"), "refused build preserves all target overrides");
         SimpleAssert.eq(false, get(session, "virtualPlacement"), "stale lock cannot authorize placement");
         SimpleAssert.eq(true, get(session, "virtualLocked"), "refusal does not reinterpret a stale lock as placement");
-        Method allowed = HologramService.class.getDeclaredMethod("constructionAllowed", session.getClass());
+        Method allowed = HologramPlanPolicy.class.getDeclaredMethod("constructionAllowed", session.getClass());
         allowed.setAccessible(true);
         SimpleAssert.eq(false, allowed.invoke(null, session), "all construction paths require placement authority");
-        Method moving = HologramService.class.getDeclaredMethod("virtualMoving", session.getClass());
+        Method moving = HologramSessionPolicy.class.getDeclaredMethod("virtualMoving", session.getClass());
         moving.setAccessible(true);
         SimpleAssert.eq(false, moving.invoke(null, session), "pure editing never emits a moving snapshot");
-        Method begin = HologramService.class
+        Method begin = HologramWorldPlacementWorkflow.class
             .getDeclaredMethod("beginVirtualPlacement", session.getClass(), int.class, int.class, int.class, int.class);
         begin.setAccessible(true);
         set(session, "mode", 0);
@@ -380,7 +415,7 @@ final class HologramServiceEditRegression {
         select.invoke(null, session, "ordinary-selected");
         SimpleAssert
             .eq(false, moving.invoke(null, session), "ordinary selection in a browse session cannot start placement");
-        Method dismiss = HologramService.class.getDeclaredMethod("dismissPresetBrowse", session.getClass());
+        Method dismiss = HologramProjectorWorkflow.class.getDeclaredMethod("dismissPresetBrowse", session.getClass());
         dismiss.setAccessible(true);
         dismiss.invoke(null, session);
         SimpleAssert
@@ -578,7 +613,7 @@ final class HologramServiceEditRegression {
         @SuppressWarnings("unchecked")
         java.util.Set<String> edited = (java.util.Set<String>) get(session, "virtualEdited");
         edited.add(calibrationPosition(capture.cells.get(1)));
-        Method serialize = HologramService.class
+        Method serialize = HologramBlueprintProjection.class
             .getDeclaredMethod("editedVirtualPreset", session.getClass(), String.class);
         serialize.setAccessible(true);
         HologramPresets.Preset result = (HologramPresets.Preset) serialize.invoke(null, session, "Edited");

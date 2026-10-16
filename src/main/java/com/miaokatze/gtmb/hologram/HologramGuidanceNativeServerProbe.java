@@ -27,6 +27,9 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 public final class HologramGuidanceNativeServerProbe {
 
     private EntityPlayerMP actor;
+    private final long startupBudgetNanos = Math
+        .max(60L, Math.min(3600L, Long.getLong("gtmb.hologram.nativeStartupSeconds", 1800L))) * 1000000000L;
+    private long startupStarted;
     private WorldServer world;
     private TileEntity controller;
     private Item terminalItem;
@@ -49,7 +52,16 @@ public final class HologramGuidanceNativeServerProbe {
         MinecraftServer server = MinecraftServer.getServer();
         try {
             require(!Boolean.getBoolean("gtmb.hologram.sulfurLineServer"), "exclusive guidance fixture");
-            require(++ticks < 12000, "guidance server exceeded ten minutes");
+            long now = System.nanoTime();
+            if (actor == null) {
+                if (startupStarted == 0) startupStarted = now;
+                require(now - startupStarted < startupBudgetNanos, "native fixture real-client startup timeout");
+            } else require(++ticks < 12000, "guidance server exceeded ten minutes");
+            require(
+                !Files.exists(
+                    HologramV011Evidence.directory()
+                        .resolve("guidance-client-fail.txt")),
+                "paired client failed during startup or active validation");
             world = server.worldServerForDimension(0);
             require(
                 world.getWorldInfo()
@@ -195,7 +207,7 @@ public final class HologramGuidanceNativeServerProbe {
     }
 
     private void observeSession() throws Exception {
-        Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         Object live = ((Map<?, ?>) sessions.get(null)).get(actor.getUniqueID());
         if (live == null) return;

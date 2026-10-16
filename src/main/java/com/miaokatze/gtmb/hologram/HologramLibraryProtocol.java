@@ -11,7 +11,7 @@ import net.minecraft.nbt.NBTTagCompound;
 /** Independent, bounded public-library protocol. No blueprint payload is accepted in Action packets. */
 public final class HologramLibraryProtocol {
 
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
     public static final int CHUNK_BYTES = 16 * 1024;
     public static final int PACKET_BYTES = 24 * 1024;
     public static final int EXPANDED_PACKET_BYTES = 32 * 1024;

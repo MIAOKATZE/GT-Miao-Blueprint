@@ -45,6 +45,9 @@ public final class HologramLibraryRegression {
 
     public static void run() throws Exception {
         protocolAndThrottle();
+        downloads();
+        downloadReservations();
+        taskCorrelation();
         configuration();
         hydration();
         ownershipAndPublishing();
@@ -133,7 +136,7 @@ public final class HologramLibraryRegression {
         valid.setByteArray("data", random);
         io.netty.buffer.ByteBuf requestWire = Unpooled.buffer();
         new HologramNetwork.LibraryRequest(valid).toBytes(requestWire);
-        SimpleAssert.eq(2, requestWire.getInt(0), "library requests carry explicit protocol version 2");
+        SimpleAssert.eq(3, requestWire.getInt(0), "library requests carry explicit protocol version 3");
         SimpleAssert
             .that(requestWire.readableBytes() + 1 < 32767, "incompressible request plus FML discriminator fits C17");
         HologramNetwork.LibraryRequest decoded = new HologramNetwork.LibraryRequest();
@@ -166,12 +169,12 @@ public final class HologramLibraryRegression {
                     .writeBytes(legacy)),
             "legacy reply without a protocol version is rejected");
         io.netty.buffer.ByteBuf wrongVersion = requestWire.copy();
-        wrongVersion.setInt(0, 1);
+        wrongVersion.setInt(0, 2);
         denied(
             () -> new HologramNetwork.LibraryRequest().fromBytes(wrongVersion),
             "old request protocol version rejected");
         io.netty.buffer.ByteBuf wrongReplyVersion = replyWire.copy();
-        wrongReplyVersion.setInt(0, 1);
+        wrongReplyVersion.setInt(0, 2);
         denied(
             () -> new HologramNetwork.LibraryReply().fromBytes(wrongReplyVersion),
             "old reply protocol version rejected");
@@ -194,6 +197,189 @@ public final class HologramLibraryRegression {
         NBTTagList outer = new NBTTagList();
         outer.appendTag(inner);
         denied(() -> HologramServerLibrary.rejectDropPayload(outer), "dropItem rejected inside list-of-list");
+    }
+
+    private static void downloads() throws Exception {
+        int slice = HologramLibraryProtocol.CHUNK_BYTES;
+        byte[] source = new byte[slice * 6 + 731];
+        new java.util.Random(190731L).nextBytes(source);
+        // Real whole-file compression can reuse data across packet boundaries.
+        System.arraycopy(source, 0, source, slice, slice);
+        System.arraycopy(source, 0, source, slice * 3, slice);
+        HologramLibraryDownload.Encoded payload = HologramLibraryDownload.encode(source);
+        SimpleAssert.eq("gzip", payload.encoding, "whole-file compression saves cross-packet repetitions");
+        SimpleAssert.that(payload.bytes.length > slice * 2, "fixture exercises multiple complete wire chunks");
+        HologramLibraryDownload.Assembly assembly = new HologramLibraryDownload.Assembly(payload.bytes.length);
+        byte[] first = Arrays.copyOfRange(payload.bytes, 0, slice);
+        denied(() -> assembly.append(1, first), "download gap/out-of-order chunk rejected");
+        assembly.append(0, first);
+        denied(() -> assembly.append(0, first), "duplicate download chunk rejected");
+        denied(assembly::finish, "premature download done rejected");
+        int index = 1;
+        for (int offset = slice; offset < payload.bytes.length; offset += slice) assembly
+            .append(index++, Arrays.copyOfRange(payload.bytes, offset, Math.min(offset + slice, payload.bytes.length)));
+        byte[] wire = assembly.finish();
+        byte[] decoded = HologramLibraryDownload.decode(wire, payload.encoding, source.length, payload.hash);
+        SimpleAssert.that(Arrays.equals(source, decoded), "compressed multi-chunk download preserves exact source");
+        denied(assembly::finish, "completed buffer ownership can only be transferred once");
+        Path directory = Files.createTempDirectory("gtmb-download-exact-");
+        Path file = directory.resolve("download.json");
+        try {
+            HologramBlueprintSharing.atomicWrite(file, decoded);
+            SimpleAssert.that(Arrays.equals(source, Files.readAllBytes(file)), "downloaded file is byte-identical");
+        } finally {
+            Files.deleteIfExists(file);
+            Files.deleteIfExists(directory);
+        }
+        denied(
+            () -> HologramLibraryDownload.decode(wire, "gzip", source.length, repeat('0', 64)),
+            "final original SHA mismatch rejected");
+        denied(
+            () -> HologramLibraryDownload.decode(wire, "gzip", source.length - 1, payload.hash),
+            "decoded expansion past declared bound rejected");
+        denied(
+            () -> HologramLibraryDownload.decode(wire, "gzip", source.length + 1, payload.hash),
+            "truncated decoded size rejected");
+        byte[] broken = wire.clone();
+        broken[broken.length - 5] ^= 1;
+        denied(
+            () -> HologramLibraryDownload.decode(broken, "gzip", source.length, payload.hash),
+            "corrupt gzip trailer rejected");
+        denied(
+            () -> HologramLibraryDownload
+                .decode(Arrays.copyOf(wire, wire.length - 4), "gzip", source.length, payload.hash),
+            "truncated gzip rejected");
+        String transfer = UUID.randomUUID()
+            .toString();
+        denied(
+            () -> HologramLibraryDownload
+                .header(transfer, wire.length, "gzip", HologramLibraryProtocol.MAX_BYTES + 1, payload.hash),
+            "decoded allocation bounded before decompression");
+        denied(
+            () -> HologramLibraryDownload.header(transfer, wire.length, "unknown", source.length, payload.hash),
+            "unknown transfer encoding rejected");
+        HologramLibraryDownload.Assembly cancelled = new HologramLibraryDownload.Assembly(slice + 1);
+        cancelled.append(0, new byte[slice]);
+        cancelled.cancel();
+        denied(() -> cancelled.append(1, new byte[1]), "cancelled transfer cannot receive later bytes");
+        denied(cancelled::finish, "cancelled transfer cannot finish");
+        byte[] random = new byte[slice * 2 + 1];
+        new java.util.Random(1984L).nextBytes(random);
+        HologramLibraryDownload.Encoded identity = HologramLibraryDownload.encode(random);
+        SimpleAssert.eq("identity", identity.encoding, "incompressible downloads avoid expansion");
+        SimpleAssert.that(
+            Arrays.equals(
+                random,
+                HologramLibraryDownload.decode(identity.bytes, identity.encoding, random.length, identity.hash)),
+            "identity fallback preserves bytes and final SHA");
+    }
+
+    private static void downloadReservations() throws Exception {
+        Path directory = Files.createTempDirectory("gtmb-download-reservation-");
+        HologramServerLibrary store = new HologramServerLibrary(
+            directory.resolve("entries"),
+            directory.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            Object[] peers = new Object[5];
+            for (int i = 0; i < peers.length; i++) peers[i] = peer(player(UUID.randomUUID(), "Download" + i));
+            byte[] large = new byte[6 * 1024 * 1024];
+            runWorker(store, () -> {
+                queueDownload(store, peers[0], large);
+                queueDownload(store, peers[1], large);
+            });
+            SimpleAssert.eq(
+                12L * 1024 * 1024,
+                get(store, "downloadBytes"),
+                "compressed downloads reserve their full original byte footprint");
+            denied(
+                () -> runWorker(store, () -> queueDownload(store, peers[2], large)),
+                "compression cannot bypass the aggregate original-byte reservation");
+            runWorker(store, () -> {
+                invoke(store, "clearDownload", peers[0]);
+                invoke(store, "clearDownload", peers[1]);
+            });
+            SimpleAssert.eq(0L, get(store, "downloadBytes"), "cancellation releases original-byte reservation");
+            byte[] small = new byte[1024 * 1024];
+            runWorker(store, () -> { for (int i = 0; i < 4; i++) queueDownload(store, peers[i], small); });
+            denied(
+                () -> runWorker(store, () -> queueDownload(store, peers[4], small)),
+                "compressed downloads retain the four-active-transfer bound");
+            runWorker(store, () -> { for (int i = 0; i < 4; i++) invoke(store, "clearDownload", peers[i]); });
+            SimpleAssert.eq(0, get(store, "activeDownloads"), "cancelled transfers release active admission");
+            runWorker(store, () -> queueDownload(store, peers[0], small, 92L));
+            NBTTagCompound staleCancel = HologramLibraryProtocol.request("cancel");
+            staleCancel.setLong("clientTaskToken", 91L);
+            runWorker(store, () -> handle(store, peers[0], staleCancel));
+            SimpleAssert.that(
+                get(peers[0], "download") != null,
+                "late empty-transfer cancel cannot abort a successor's real server download");
+            staleCancel.setLong("clientTaskToken", 92L);
+            runWorker(store, () -> handle(store, peers[0], staleCancel));
+            SimpleAssert.that(get(peers[0], "download") == null, "matching task cancel stops its server download");
+            SimpleAssert.eq(0L, get(store, "downloadBytes"), "matching task cancel releases original-byte allowance");
+        } finally {
+            store.stop();
+        }
+    }
+
+    private static void queueDownload(HologramServerLibrary store, Object peer, byte[] bytes) throws Exception {
+        queueDownload(store, peer, bytes, 0L);
+    }
+
+    private static void queueDownload(HologramServerLibrary store, Object peer, byte[] bytes, long taskToken)
+        throws Exception {
+        Method method = HologramServerLibrary.class.getDeclaredMethod(
+            "queueDownload",
+            peer.getClass(),
+            byte[].class,
+            String.class,
+            NBTTagCompound.class,
+            String.class);
+        method.setAccessible(true);
+        try {
+            NBTTagCompound request = HologramLibraryProtocol.request("download");
+            request.setLong("clientTaskToken", taskToken);
+            method.invoke(store, peer, bytes, "Bounded fixture", request, "");
+        } catch (InvocationTargetException failure) {
+            throw (Exception) failure.getCause();
+        }
+    }
+
+    private static void taskCorrelation() throws Exception {
+        NBTTagCompound oldHead = HologramLibraryProtocol.reply("downloadBegin");
+        oldHead.setString("session", "same-session");
+        oldHead.setLong("planRevision", 42);
+        oldHead.setLong("clientTaskToken", 91);
+        SimpleAssert.that(HologramLibraryDownload.taskMatches(91, oldHead), "current download head is accepted");
+        SimpleAssert
+            .that(!HologramLibraryDownload.taskMatches(0, oldHead), "cancel rejects a late head before allocation");
+        NBTTagCompound newHead = (NBTTagCompound) oldHead.copy();
+        newHead.setLong("clientTaskToken", 92);
+        SimpleAssert.that(
+            !HologramLibraryDownload.taskMatches(92, oldHead),
+            "immediate successor in the same session/revision rejects the cancelled task head");
+        SimpleAssert.that(HologramLibraryDownload.taskMatches(92, newHead), "successor accepts its own exact head");
+        for (String op : new String[] { "error", "downloadDone", "saveCommitted", "saveRejected" }) {
+            NBTTagCompound oldReply = (NBTTagCompound) oldHead.copy();
+            oldReply.setString("op", op);
+            SimpleAssert.that(
+                !HologramLibraryDownload.taskMatches(92, oldReply),
+                "cancelled task " + op + " cannot occupy or finish its successor");
+        }
+        HologramSession session = (HologramSession) unsafe().allocateInstance(HologramSession.class);
+        NBTTagCompound save = HologramLibraryProtocol.request("saveBlueprintAs");
+        save.setLong("clientTaskToken", 91);
+        HologramLibraryWorkflow.captureClientTaskToken(session, save);
+        SimpleAssert.eq(91L, session.blueprintClientTaskToken, "initial save captures its correlation token");
+        NBTTagCompound lateConfirm = HologramLibraryProtocol.request("confirmAeSave");
+        lateConfirm.setLong("clientTaskToken", 90);
+        HologramLibraryWorkflow.captureClientTaskToken(session, lateConfirm);
+        SimpleAssert
+            .eq(91L, session.blueprintClientTaskToken, "late AE confirmation cannot replace the reviewed task token");
+        save.setLong("clientTaskToken", 92);
+        HologramLibraryWorkflow.captureClientTaskToken(session, save);
+        SimpleAssert.eq(92L, session.blueprintClientTaskToken, "new save replaces the old task correlation");
     }
 
     private static void configuration() throws Exception {
@@ -257,7 +443,7 @@ public final class HologramLibraryRegression {
             byte[] chunk = Arrays.copyOfRange(bytes, offset, Math.min(bytes.length, offset + slice));
             io.netty.buffer.ByteBuf wire = Unpooled.buffer();
             new HologramNetwork.LibrarySnapshotFragment(1, bytes.length, index, hash, chunk).toBytes(wire);
-            SimpleAssert.eq(2, wire.getInt(0), "hydration carries explicit protocol version 2");
+            SimpleAssert.eq(3, wire.getInt(0), "hydration carries explicit protocol version 3");
             SimpleAssert
                 .that(wire.readableBytes() + 1 < 32767, "bounded hydration fragment fits the smaller C17 limit too");
             HologramNetwork.LibrarySnapshotFragment decoded = new HologramNetwork.LibrarySnapshotFragment();

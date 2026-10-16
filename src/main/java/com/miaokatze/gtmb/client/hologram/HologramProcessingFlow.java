@@ -101,6 +101,16 @@ final class HologramProcessingFlow {
         return chosen[stage] || optional();
     }
 
+    boolean explicitChoice() {
+        return chosen[stage];
+    }
+
+    int guidanceAccent(int id) {
+        if (id == 234) return 0xef7b7b;
+        if (!chosen() && (id == 232 || id == 233)) return 0x80efaa;
+        return chosen() && id == 231 ? 0x80efaa : 0;
+    }
+
     void requirements(int stages) {
         requiredStages = stages & 63;
     }

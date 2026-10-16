@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.awt.image.BufferedImage;
-import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -53,6 +52,9 @@ public final class HologramGuidanceNativeClientProbe {
     private final NBTTagList actions = new NBTTagList(), frames = new NBTTagList();
     private final HologramActualUsePress press = new HologramActualUsePress();
     private final long started = System.nanoTime();
+    private final long startupBudgetNanos = Math
+        .max(60L, Math.min(3600L, Long.getLong("gtmb.hologram.nativeStartupSeconds", 1800L))) * 1000000000L;
+    private long executionStarted;
     private long stepStarted = started, renderedGeneration = -1, rejectedAfterSequence;
     private HologramScreen renderedScreen, captureScreen;
     private HologramState renderedState;
@@ -101,6 +103,7 @@ public final class HologramGuidanceNativeClientProbe {
                             .toString()),
                 "actual server player");
             if (mc.thePlayer.inventory.mainInventory[1] == null) return false;
+            executionStarted = System.nanoTime();
             mc.thePlayer.inventory.currentItem = 1;
             useBlock(mc, 48, 80, 72, 3);
             return true;
@@ -375,8 +378,13 @@ public final class HologramGuidanceNativeClientProbe {
         try {
             if (mc.theWorld != null && press.tick(event, mc)) return;
             if (event.phase != TickEvent.Phase.END || capture != null) return;
-            require(System.nanoTime() - started < 600000000000L, "guidance native client exceeded ten minutes");
-            require(System.nanoTime() - stepStarted < 90000000000L, "native step timeout: " + steps.get(step).label);
+            long now = System.nanoTime();
+            if (step <= 1) {
+                require(now - started < startupBudgetNanos, "guidance menu/world startup timeout");
+            } else {
+                require(now - executionStarted < 600000000000L, "guidance native client exceeded ten minutes");
+                require(now - stepStarted < 90000000000L, "native step timeout: " + steps.get(step).label);
+            }
             require(
                 !Files.exists(
                     HologramV011Evidence.directory()
@@ -536,8 +544,7 @@ public final class HologramGuidanceNativeClientProbe {
 
     private void pointer(HologramScreen screen, int id) {
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
         pointerActions++;
     }
 
@@ -607,10 +614,8 @@ public final class HologramGuidanceNativeClientProbe {
     }
 
     private static Object field(Object object, String name) throws Exception {
-        Field field = object.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(object);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(object, name));
     }
 
     private static String hash(byte[] bytes) throws Exception {

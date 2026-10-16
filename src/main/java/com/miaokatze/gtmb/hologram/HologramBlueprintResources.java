@@ -15,6 +15,8 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fluids.FluidStack;
 
+import com.miaokatze.gtmb.api.ResourceContainers;
+
 /** Costs of the selected, final payload. Inspection never edits the captured or placement NBT. */
 public final class HologramBlueprintResources {
 
@@ -362,6 +364,36 @@ public final class HologramBlueprintResources {
         if (value instanceof NBTTagCompound) {
             NBTTagCompound compound = (NBTTagCompound) value;
             HologramNativeResources.inspect(compound, name, rootKey);
+            if (!physicalItem && !itemRecord(compound)
+                && (ResourceContainers.hasCodecs() || fluidContext
+                    || lower.contains("fluid")
+                    || lower.contains("tank"))) {
+                List<ResourceContainers.FluidAmount> decoded;
+                try {
+                    decoded = ResourceContainers.decode(
+                        new ResourceContainers.Context(
+                            inspection.nativeTileId,
+                            inspection.machineId,
+                            rootKey,
+                            path,
+                            name,
+                            fluidContext,
+                            compound));
+                } catch (IOException invalid) {
+                    throw unsupported(rootKey, invalid.getMessage());
+                }
+                if (decoded != null) {
+                    for (ResourceContainers.FluidAmount fluid : decoded) {
+                        if (fluid.amount == 0) continue;
+                        FluidStack identity = fluid.identity();
+                        if (!HologramMaterials.supportsFluidNbt(identity))
+                            throw unsupported(rootKey, "当前AE流体接口不能保留此流体NBT");
+                        plan.addFluid(identity, fluid.amount, rootKey);
+                        plan.addEntry(new Entry(rootKey, null, identity, BigInteger.valueOf(fluid.amount)));
+                    }
+                    return;
+                }
+            }
             if (physicalItem || itemRecord(compound)) {
                 if (!compound.hasKey("id", 99) || !compound.hasKey("Count", 99)
                     || compound.getTag("id")
@@ -482,10 +514,14 @@ public final class HologramBlueprintResources {
 
     private static final class Inspection {
 
+        final String nativeTileId;
+        final int machineId;
         final Set<String> configuration = new HashSet<>(), physical = new HashSet<>();
         final List<ItemStack> nativeCredits = new ArrayList<>();
 
         Inspection(NBTTagCompound root, List<ItemStack> nativeComponents) throws IOException {
+            nativeTileId = root.getString("id");
+            machineId = root.hasKey("mID", 99) ? root.getInteger("mID") : -1;
             configuration.addAll(HologramGtMeShadow.configurationPaths(root));
             if (nativeComponents != null) for (ItemStack item : nativeComponents)
                 if (item != null && item.getItem() != null && item.stackSize > 0) nativeCredits.add(item.copy());

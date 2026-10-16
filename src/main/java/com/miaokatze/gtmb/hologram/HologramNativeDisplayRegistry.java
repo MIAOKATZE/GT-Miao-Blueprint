@@ -19,6 +19,10 @@ public final class HologramNativeDisplayRegistry {
         FAMILIES.add(family);
     }
 
+    public static boolean unregister(Predicate<TileEntity> family) {
+        return FAMILIES.remove(family);
+    }
+
     static boolean supports(TileEntity tile) {
         for (Predicate<TileEntity> family : FAMILIES) if (family.test(tile)) return true;
         return false;

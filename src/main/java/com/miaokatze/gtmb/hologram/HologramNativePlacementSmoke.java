@@ -311,7 +311,8 @@ public final class HologramNativePlacementSmoke {
                 z);
             Object session = session(player, placeholder, primary);
             set(session, "virtualPreset", area.blueprint);
-            Method populate = HologramService.class.getDeclaredMethod("populateVirtual", session.getClass());
+            Method populate = HologramBlueprintProjection.class
+                .getDeclaredMethod("populateVirtual", session.getClass());
             populate.setAccessible(true);
             populate.invoke(null, session);
             HologramCapture capture = (HologramCapture) get(session, "capture");
@@ -323,7 +324,7 @@ public final class HologramNativePlacementSmoke {
             if (kind == 3) {
                 ((java.util.Map<?, ?>) get(session, "pins")).clear();
                 ((java.util.Map<?, ?>) get(session, "coordinatePins")).clear();
-                Method refresh = HologramService.class.getDeclaredMethod("refreshPlan", session.getClass());
+                Method refresh = HologramResourcePlanner.class.getDeclaredMethod("refreshPlan", session.getClass());
                 refresh.setAccessible(true);
                 refresh.invoke(null, session);
                 @SuppressWarnings("unchecked")
@@ -333,7 +334,7 @@ public final class HologramNativePlacementSmoke {
                         .getItemDamage() == reactorId && "pending".equals(target.status),
                     "cleared_reactor_pin_keeps_registered_default_target_and_pending_cost");
                 target.sourceWarning = "fixture invalid controller source";
-                Method classify = HologramService.class
+                Method classify = HologramPlanPolicy.class
                     .getDeclaredMethod("classify", session.getClass(), HologramCapture.Cell.class, int.class);
                 classify.setAccessible(true);
                 require(
@@ -734,7 +735,7 @@ public final class HologramNativePlacementSmoke {
     @SuppressWarnings("unchecked")
     private static Object session(EntityPlayerMP player, HologramCapture.Cell cell, ItemStack primary)
         throws Exception {
-        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramService$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Constructor<?> constructor = type.getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class);
         constructor.setAccessible(true);
         Object session = constructor.newInstance(player, cell.x, cell.y, cell.z);
@@ -767,7 +768,7 @@ public final class HologramNativePlacementSmoke {
     }
 
     private static boolean transform(Object session, int x, int y, int z) throws Exception {
-        Method method = HologramService.class.getDeclaredMethod(
+        Method method = HologramWorldPlacementWorkflow.class.getDeclaredMethod(
             "transformVirtual",
             session.getClass(),
             int.class,
@@ -805,7 +806,7 @@ public final class HologramNativePlacementSmoke {
     }
 
     private static boolean operate(Object session, HologramCapture.Cell cell) throws Exception {
-        Method method = HologramService.class
+        Method method = HologramWorldTransactions.class
             .getDeclaredMethod("operate", session.getClass(), HologramCapture.Cell.class, int.class);
         method.setAccessible(true);
         return (Boolean) method.invoke(null, session, cell, 0);

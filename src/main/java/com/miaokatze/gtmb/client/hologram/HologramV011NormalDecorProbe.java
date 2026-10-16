@@ -49,7 +49,6 @@ final class HologramV011NormalDecorProbe {
             require(expectedCells == 60 && state.cells.size() == 60, "complete sixty-cell normal world source");
         NBTTagCompound transaction = HologramLibraryClient.actualSaveWitness();
         require(transaction != null, "actual library save transaction witness exists");
-        NBTTagCompound verified = transaction.getCompoundTag("previewVerifiedReply");
         NBTTagCompound ack = transaction.getCompoundTag("ownerDiskAck");
         NBTTagCompound outcome = transaction.getCompoundTag("saveCommittedReply");
         String localId = ack.getString("localId");
@@ -117,25 +116,12 @@ final class HologramV011NormalDecorProbe {
         nativeMetadata.setInteger("formatVersion", 1);
         for (String key : new String[] { "gtmbVersion", "gtnhVersion", "gtnhVersionSource" })
             nativeMetadata.setString(key, string(metadata, key));
-        require("previewVerified".equals(verified.getString("op")), "actual server previewVerified packet");
-        require("ackBlueprintSaved".equals(ack.getString("op")), "actual pair owner disk acknowledgement packet");
-        require("saveCommitted".equals(outcome.getString("op")), "actual final server save commit packet");
-        require(
-            !ack.getString("saveReceipt")
-                .isEmpty(),
-            "actual save transaction nonce exists");
-        for (NBTTagCompound packet : new NBTTagCompound[] { verified, ack, outcome }) {
-            require(
-                state.session.equals(packet.getString("session"))
-                    && state.data.getLong("planRevision") == packet.getLong("planRevision")
-                    && ack.getString("saveReceipt")
-                        .equals(packet.getString("saveReceipt"))
-                    && localId.equals(packet.getString("localId"))
-                    && artifact.jsonSha256.equals(packet.getString("jsonSha256"))
-                    && artifact.pngSha256.equals(packet.getString("previewSha256"))
-                    && packet.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION,
-                "native save packets bind exact disk pair, nonce, session and revision");
-        }
+        String saveFlow = verifySaveTransaction(
+            transaction,
+            artifact,
+            localId,
+            state.session,
+            state.data.getLong("planRevision"));
         NBTTagCompound nativeWitness = transaction.getCompoundTag("nativePreviewWitness");
         require(
             nativeWitness != null && nativeWitness.getBoolean("renderTickEnd")
@@ -206,11 +192,110 @@ final class HologramV011NormalDecorProbe {
         receipt.setTag("actualNativeBlueprint", nativeMetadata);
         receipt.setTag("actualNativePreviewWitness", nativeWitness.copy());
         receipt.setTag("actualSaveWitness", transaction.copy());
-        receipt.setTag("previewVerifiedReply", verified.copy());
+        receipt.setString("saveReceiptFlow", saveFlow);
+        if (transaction.hasKey("previewVerifiedReply", 10)) receipt.setTag(
+            "previewVerifiedReply",
+            transaction.getCompoundTag("previewVerifiedReply")
+                .copy());
         receipt.setTag("ownerDiskAck", ack.copy());
         receipt.setTag("finalSaveOutcome", outcome.copy());
         receipt.setTag("actualSnapshot", state.data.copy());
         return receipt;
+    }
+
+    /** Check observed packets/readback only. Neither branch fabricates a server preview verification. */
+    static String verifySaveTransaction(NBTTagCompound transaction, HologramBlueprintArtifact.Artifact artifact,
+        String localId, String session, long revision) {
+        require(
+            transaction.hasKey("nativePreviewWitness", 10) && transaction.hasKey("ownerDiskAck", 10)
+                && transaction.hasKey("saveCommittedReply", 10)
+                && !transaction.hasKey("saveRejectedReply"),
+            "actual save retains native capture, owner disk ACK and final server commit without rejection");
+        NBTTagCompound ack = transaction.getCompoundTag("ownerDiskAck");
+        String receipt = ack.getString("saveReceipt");
+        require(canonicalUuid(receipt), "actual owner disk ACK retains a canonical server save receipt nonce");
+        boolean local = ack.getBoolean("localSaveReceipt");
+        if (local) {
+            require(
+                transaction.hasKey("downloadBeginReply", 10) && transaction.hasKey("localPairReadback", 10)
+                    && !transaction.hasKey("previewVerifiedReply")
+                    && !transaction.hasKey("previewVerified"),
+                "local receipt flow has actual server capability and pair readback without an invented preview ACK");
+            NBTTagCompound begin = transaction.getCompoundTag("downloadBeginReply");
+            require(
+                "downloadBegin".equals(begin.getString("op")) && "draft".equals(begin.getString("purpose"))
+                    && begin.hasKey("capturePreview", 1)
+                    && begin.getBoolean("capturePreview")
+                    && begin.hasKey("localSaveReceipt", 1)
+                    && begin.getBoolean("localSaveReceipt")
+                    && canonicalUuid(begin.getString("transfer"))
+                    && begin.hasKey("planRevision", 4)
+                    && revision == begin.getLong("planRevision")
+                    && session.equals(begin.getString("session"))
+                    && localId.equals(begin.getString("localId"))
+                    && receipt.equals(begin.getString("saveReceipt"))
+                    && artifact.jsonSha256.equals(begin.getString("hash"))
+                    && begin.hasKey("total", 3)
+                    && begin.getInteger("total") > 0
+                    && begin.getInteger("total") <= artifact.json.length
+                    && artifact.json.length == begin.getInteger("decodedTotal")
+                    && ("gzip".equals(begin.getString("encoding")) || "identity".equals(begin.getString("encoding")))
+                    && begin.hasKey("artifactVersion", 3)
+                    && begin.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION,
+                "actual server download capability binds this exact JSON source, owner session, revision and receipt");
+            NBTTagCompound readback = transaction.getCompoundTag("localPairReadback");
+            String path = Minecraft.getMinecraft().mcDataDir.toPath()
+                .resolve("MiaoBlueprints")
+                .resolve(localId + ".json")
+                .toAbsolutePath()
+                .normalize()
+                .toString();
+            require(
+                path.equals(readback.getString("path")) && readback.hasKey("jsonBytes", 3)
+                    && readback.getInteger("jsonBytes") == artifact.json.length
+                    && readback.hasKey("pngBytes", 3)
+                    && readback.getInteger("pngBytes") == artifact.png.length,
+                "actual pre-ACK pair readback names this exact local disk pair and both actual member lengths");
+        } else {
+            require(
+                transaction.hasKey("previewVerifiedReply", 10) && !transaction.hasKey("localPairReadback"),
+                "legacy upload flow retains its actual server preview verification");
+            if (transaction.hasKey("downloadBeginReply", 10)) require(
+                !transaction.getCompoundTag("downloadBeginReply")
+                    .getBoolean("localSaveReceipt"),
+                "legacy upload does not borrow an advertised local receipt capability");
+        }
+        String[] keys = local ? new String[] { "localPairReadback", "ownerDiskAck", "saveCommittedReply" }
+            : new String[] { "previewVerifiedReply", "ownerDiskAck", "saveCommittedReply" };
+        String[] operations = local ? new String[] { "ackBlueprintSaved", "ackBlueprintSaved", "saveCommitted" }
+            : new String[] { "previewVerified", "ackBlueprintSaved", "saveCommitted" };
+        for (int index = 0; index < keys.length; index++) {
+            NBTTagCompound packet = transaction.getCompoundTag(keys[index]);
+            require(
+                operations[index].equals(packet.getString("op")) && packet.hasKey("planRevision", 4)
+                    && revision == packet.getLong("planRevision")
+                    && session.equals(packet.getString("session"))
+                    && localId.equals(packet.getString("localId"))
+                    && receipt.equals(packet.getString("saveReceipt"))
+                    && artifact.jsonSha256.equals(packet.getString("jsonSha256"))
+                    && artifact.pngSha256.equals(packet.getString("previewSha256"))
+                    && packet.hasKey("artifactVersion", 3)
+                    && packet.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION
+                    && (!local || packet.hasKey("localSaveReceipt", 1))
+                    && packet.getBoolean("localSaveReceipt") == local,
+                "actual " + keys[index] + " binds the current source pair, session, revision, receipt and save flow");
+        }
+        return local ? "local-owner-disk-receipt" : "legacy-preview-upload";
+    }
+
+    private static boolean canonicalUuid(String value) {
+        try {
+            return java.util.UUID.fromString(value)
+                .toString()
+                .equals(value);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
     }
 
     private static String string(JsonObject object, String key) {
@@ -331,6 +416,7 @@ final class HologramV011NormalDecorProbe {
     }
 
     private static Object field(Object owner, String name) throws Exception {
+        if (owner instanceof HologramScreen) return HologramUiDiagnostics.readDiagnosticField(owner, name);
         Field value = (owner instanceof Class ? (Class<?>) owner : owner.getClass()).getDeclaredField(name);
         value.setAccessible(true);
         return value.get(owner instanceof Class ? null : owner);

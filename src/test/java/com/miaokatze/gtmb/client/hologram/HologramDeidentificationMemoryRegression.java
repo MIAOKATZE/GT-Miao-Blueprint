@@ -13,6 +13,7 @@ public final class HologramDeidentificationMemoryRegression {
     private HologramDeidentificationMemoryRegression() {}
 
     public static void run() {
+        placementRestoreDoesNotReplayAcrossSnapshots();
         Path directory = null;
         try {
             directory = Files.createTempDirectory("gtmb-deidentification-");
@@ -98,5 +99,54 @@ public final class HologramDeidentificationMemoryRegression {
                 throw new AssertionError(failure);
             }
         }
+    }
+
+    private static void placementRestoreDoesNotReplayAcrossSnapshots() {
+        HologramPlacementDeidentificationSync sync = new HologramPlacementDeidentificationSync();
+        NBTTagCompound snapshot = new NBTTagCompound();
+        snapshot.setString("session", "placement-a");
+        snapshot.setBoolean("virtualPlacement", true);
+        snapshot.setLong("planRevision", 10);
+        snapshot.setLong("placementReviewNonce", 4);
+        SimpleAssert.that(sync.shouldRestore(snapshot, 1), "remembered choice requests one authoritative application");
+        for (int i = 0; i < 100; i++) {
+            snapshot.setLong("uiSequence", i);
+            SimpleAssert.that(
+                !sync.shouldRestore(snapshot, 1),
+                "background ACK snapshots cannot replay the same revision/level");
+        }
+        // A manual click owns its existing UI ticket; an older snapshot must not add an automatic command.
+        snapshot.setLong("planRevision", 11);
+        sync.requested(snapshot, 3);
+        SimpleAssert
+            .that(!sync.shouldRestore(snapshot, 3), "manual application fences automatic restore before its ACK");
+        snapshot.setLong("planRevision", 12);
+        snapshot.setLong("placementReviewNonce", 5);
+        snapshot.setBoolean("placementDeidentificationChosen", true);
+        snapshot.setInteger("placementDeidentificationLevel", 3);
+        for (int job : new int[] { 0, 1, 2, 3, 5 }) {
+            snapshot.setInteger("job", job);
+            SimpleAssert.that(
+                !sync.shouldRestore(snapshot, 3),
+                "applied policy and job snapshots never request another round trip");
+        }
+        snapshot.setBoolean("placementDeidentificationChosen", false);
+        snapshot.setLong("planRevision", 13);
+        for (int job : new int[] { 1, 2, 3, 5 }) {
+            snapshot.setInteger("job", job);
+            SimpleAssert
+                .that(!sync.shouldRestore(snapshot, 4), "restoring preferences must not reset an active/completed job");
+        }
+        snapshot.setInteger("job", 0);
+        SimpleAssert.that(
+            sync.shouldRestore(snapshot, 4),
+            "a new editable revision can explicitly restore its new choice once");
+        SimpleAssert.that(!sync.shouldRestore(snapshot, 4), "new revision is also fenced after its first request");
+        snapshot.setString("session", "placement-b");
+        SimpleAssert.that(
+            sync.shouldRestore(snapshot, 4),
+            "another placement session has independent preference synchronization");
+        sync.clear();
+        SimpleAssert.that(sync.shouldRestore(snapshot, 4), "disconnect/reset retires the old network lifetime");
     }
 }

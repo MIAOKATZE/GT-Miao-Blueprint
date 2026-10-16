@@ -3,8 +3,6 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.ArrayList;
 import java.util.List;
 
-import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -13,7 +11,7 @@ import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
 /** A separate real-model viewport for this blueprint's transactional quantum grouping draft. */
-public final class HologramQuantumGroupsScreen extends GuiScreen {
+public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
 
     private static final int WIDTH = 680, HEIGHT = 360, VX = 18, VY = 65, VW = 424, VH = 218;
     private static final int[] COLORS = { 0x75d7d3, 0xffcf78, 0xbda2ef, 0x8bd998, 0xed9cb3, 0x92baff };
@@ -23,7 +21,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     private final List<Control> controls = new ArrayList<>();
     private final Object world;
     private HologramState state;
-    private GuiTextField nameField;
+    private HologramMuiTextField nameField;
     private float scale;
     private int originX, originY, offset, hovered = -1, dragX, dragY;
     private boolean dragging, stale;
@@ -37,6 +35,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
 
         final int id, x, y, width, height;
         final boolean enabled;
+        String label;
 
         Control(int id, int x, int y, int width, int height, boolean enabled) {
             this.id = id;
@@ -53,6 +52,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     }
 
     HologramQuantumGroupsScreen(HologramScreen editor, HologramState state) {
+        super("quantum_groups");
         this.editor = editor;
         this.state = state;
         model = new HologramQuantumGroupsModel(state);
@@ -61,11 +61,13 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
 
     @Override
     public void initGui() {
+        super.initGui();
+        resetNativeFields();
         scale = Math.min(width / (float) WIDTH, height / (float) HEIGHT);
         originX = Math.round((width - WIDTH * scale) / 2);
         originY = Math.round((height - HEIGHT * scale) / 2);
         String previous = nameField == null ? "" : nameField.getText();
-        nameField = new GuiTextField(fontRendererObj, 460, 220, 200, 19);
+        nameField = new HologramMuiTextField(this, 460, 220, 200, 19);
         nameField.setMaxStringLength(64);
         if (previous.isEmpty()) loadName();
         else nameField.setText(previous);
@@ -101,7 +103,8 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     }
 
     @Override
-    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+    protected void renderScene(int mouseX, int mouseY, float partialTicks) {
+        canvasTransform(originX, originY, scale);
         drawDefaultBackground();
         int mx = localX(mouseX), my = localY(mouseY);
         controls.clear();
@@ -110,7 +113,8 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
         GL11.glTranslatef(originX, originY, 0);
         GL11.glScalef(scale, scale, 1);
         try {
-            drawRect(0, 0, WIDTH, HEIGHT, 0xff10232c);
+            GL11.glColor4f(1, 1, 1, 1);
+            HologramMuiTheme.CLOTH.draw(0f, 0f, WIDTH, HEIGHT);
             text("量子节点网络分类", 18, 13, 640, 0xffe59b);
             text("可选自定义分类；取消保留已有配置。点击节点选择，Ctrl 多选 / 再次点击取消。", 18, 31, 642, 0xb9d5d4);
             text("T 全选 · Ctrl+T 选择补集 · Ctrl+Z / Y 撤销重做 · 右键拖动旋转 · 滚轮缩放", 18, 47, 642, 0x91afb9);
@@ -131,6 +135,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
                     my);
             }
             text("类群名称（最多 64 字，可输入中文）", 460, 205, 200, 0x91afb9);
+            nameField.setEnabled(editable());
             nameField.drawTextBox();
             button(
                 5,
@@ -179,6 +184,15 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
             GL11.glPopMatrix();
             GL11.glPopAttrib();
         }
+        for (Control control : controls) nativeButton(
+            control.id,
+            control.x,
+            control.y,
+            control.width,
+            control.height,
+            control.label,
+            control.enabled,
+            control.id == 1 ? 0x80efaa : 0);
         renderGeneration++;
     }
 
@@ -268,20 +282,18 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     }
 
     private void text(String text, int x, int y, int width, int color) {
-        fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(text, width), x, y, color);
+        boolean paper = x < VX || x >= VX + VW || y < VY || y >= VY + VH;
+        fontRendererObj.drawString(
+            fontRendererObj.trimStringToWidth(text, width),
+            x,
+            y,
+            paper ? color == 0xff9292 ? HologramMuiTheme.ERROR : HologramMuiTheme.TEXT : color);
     }
 
     private void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
         Control control = new Control(id, x, y, w, h, enabled);
         controls.add(control);
-        drawRect(x, y, x + w, y + h, enabled && control.contains(mx, my) ? 0xff3d666d : 0xff29444d);
-        if (id == 1 && enabled) drawRect(x, y, x + w, y + 1, 0xff80efaa);
-        drawCenteredString(
-            fontRendererObj,
-            fontRendererObj.trimStringToWidth(label, w - 8),
-            x + w / 2,
-            y + (h - 8) / 2,
-            enabled ? 0xe2efea : 0x71848c);
+        control.label = label;
     }
 
     private boolean editable() {
@@ -349,12 +361,22 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     @Override
     public void handleMouseInput() {
         super.handleMouseInput();
+        sceneScroll();
+    }
+
+    @Override
+    protected void sceneScroll() {
         int wheel = Mouse.getEventDWheel();
         if (wheel == 0) return;
         int mx = localX(Mouse.getEventX() * width / mc.displayWidth);
         int my = localY(height - Mouse.getEventY() * height / mc.displayHeight - 1);
         if (viewport(mx, my)) zoom = Math.max(.25, Math.min(4, zoom * (wheel > 0 ? 1.1 : 1 / 1.1)));
         else if (mx >= 460 && my >= 85 && my < 202) offset += wheel > 0 ? -1 : 1;
+    }
+
+    @Override
+    protected void activateNative(int id) {
+        activate(id);
     }
 
     private void activate(int id) {
@@ -393,6 +415,21 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
         key(character, key, isCtrlKeyDown());
     }
 
+    @Override
+    protected boolean muiKeyBefore(char character, int key) {
+        if (key != Keyboard.KEY_ESCAPE && key != Keyboard.KEY_RETURN
+            && key != Keyboard.KEY_NUMPADENTER
+            && !(isCtrlKeyDown() && (key == Keyboard.KEY_Z || key == Keyboard.KEY_Y))) return false;
+        key(character, key, isCtrlKeyDown());
+        return true;
+    }
+
+    @Override
+    protected boolean muiKey(char character, int key) {
+        key(character, key, isCtrlKeyDown());
+        return true;
+    }
+
     private void key(char character, int key, boolean control) {
         if (key == Keyboard.KEY_ESCAPE) {
             activate(2);
@@ -416,7 +453,7 @@ public final class HologramQuantumGroupsScreen extends GuiScreen {
     }
 
     @Override
-    public void onGuiClosed() {
+    protected void onMuiClose() {
         Keyboard.enableRepeatEvents(false);
     }
 
