@@ -141,6 +141,7 @@ final class HologramLibraryServiceRegression {
             SimpleAssert.that(
                 !(Boolean) get(session, "blueprintDirty") && ((String) get(session, "blueprintSaveReceipt")).isEmpty(),
                 "only exact JSON and verified PNG disk ACK retires the nonce");
+            exerciseLocalReceipt(owner, other, reconnect, session, request, savedLocal, jsonSha, previewSha);
             NBTTagCompound close = (NBTTagCompound) request.copy();
             close.setString("op", "close");
             HologramService.handle(owner, close);
@@ -292,6 +293,125 @@ final class HologramLibraryServiceRegression {
                 if (previous == null) sessions.remove(ownerId);
                 else sessions.put(ownerId, previous);
             }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void exerciseLocalReceipt(EntityPlayerMP owner, EntityPlayerMP other, EntityPlayerMP reconnect,
+        Object session, NBTTagCompound base, String local, String jsonHash, String pngHash)
+        throws ReflectiveOperationException {
+        Field resultsField = HologramLibraryFacade.class.getDeclaredField("savedResults");
+        resultsField.setAccessible(true);
+        Map<UUID, Object> results = (Map<UUID, Object>) resultsField.get(null);
+        Object previous = results.remove(owner.getUniqueID());
+        try {
+            NBTTagCompound proof = (NBTTagCompound) base.copy();
+            proof.setString(
+                "saveReceipt",
+                UUID.randomUUID()
+                    .toString());
+            proof.setString("localId", local);
+            proof.setString("jsonSha256", jsonHash);
+            proof.setString("previewSha256", "");
+            proof.setBoolean("localSaveReceipt", true);
+            proof.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
+            set(session, "blueprintSaveLocalId", local);
+            set(session, "blueprintSaveRevision", 42L);
+            set(session, "blueprintSaveJsonSha256", jsonHash);
+            set(session, "blueprintSavePreviewSha256", "");
+            set(session, "blueprintDirty", true);
+            Method remember = HologramLibraryFacade.class
+                .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class);
+            remember.setAccessible(true);
+            remember.invoke(null, owner, proof);
+            NBTTagCompound ack = (NBTTagCompound) proof.copy();
+            ack.setString("op", "ackBlueprintSaved");
+            ack.setString("previewSha256", pngHash);
+            SimpleAssert.that(!HologramLibraryFacade.localSaveWritten(other, ack), "local receipt is actor bound");
+            SimpleAssert
+                .that(!HologramLibraryFacade.localSaveWritten(reconnect, ack), "reconnection cannot reuse receipt");
+            for (String field : new String[] { "session", "saveReceipt", "localId", "jsonSha256", "previewSha256" }) {
+                NBTTagCompound stale = (NBTTagCompound) ack.copy();
+                stale.setString(field, "wrong");
+                HologramService.handle(owner, stale);
+                SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "wrong " + field + " keeps dirty draft");
+                SimpleAssert.eq("", get(session, "blueprintSavePreviewSha256"), "rejected receipt cannot bind PNG");
+            }
+            NBTTagCompound stale = (NBTTagCompound) ack.copy();
+            stale.setLong("planRevision", 41L);
+            HologramService.handle(owner, stale);
+            SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "old revision cannot commit local receipt");
+            // No preview upload has armed a PNG hash: only this exact owner disk receipt binds it.
+            HologramService.handle(owner, ack);
+            SimpleAssert.that(
+                !(Boolean) get(session, "blueprintDirty"),
+                "local pair receipt commits through actual dispatcher");
+            SimpleAssert.eq(pngHash, get(session, "blueprintSavePreviewSha256"), "owner PNG digest is bound once");
+            Object committed = results.get(owner.getUniqueID());
+            SimpleAssert
+                .eq("saveCommitted", get(committed, "outcome"), "result preserves committed outcome for lost replies");
+            NBTTagCompound differentPng = (NBTTagCompound) ack.copy();
+            differentPng.setString("previewSha256", jsonHash);
+            SimpleAssert.that(
+                !HologramLibraryFacade.localSaveWritten(owner, differentPng),
+                "terminal receipt cannot rebind PNG");
+            proof.setString(
+                "saveReceipt",
+                UUID.randomUUID()
+                    .toString());
+            set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
+            set(session, "blueprintSavePreviewSha256", "");
+            set(session, "blueprintDirty", true);
+            remember.invoke(null, owner, proof);
+            NBTTagCompound canceled = (NBTTagCompound) proof.copy();
+            canceled.setString("previewSha256", pngHash);
+            HologramLibraryFacade.resolveSavedResult(owner, canceled, true);
+            SimpleAssert.eq(
+                "saveRejected",
+                get(results.get(owner.getUniqueID()), "outcome"),
+                "cancel before disk ACK resolves the pre-download result");
+            canceled.setString("op", "ackBlueprintSaved");
+            HologramService.handle(owner, canceled);
+            SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "late canceled ACK retains unsaved workspace");
+            proof.setString(
+                "saveReceipt",
+                UUID.randomUUID()
+                    .toString());
+            set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
+            remember.invoke(null, owner, proof);
+            Field queueField = com.miaokatze.gtmb.util.ServerTaskScheduler.class.getDeclaredField("SERVER_TASKS");
+            queueField.setAccessible(true);
+            java.util.Queue<Runnable> tasks = (java.util.Queue<Runnable>) queueField.get(null);
+            java.util.List<Runnable> previousTasks = new java.util.ArrayList<>();
+            Runnable task;
+            while ((task = tasks.poll()) != null) previousTasks.add(task);
+            try {
+                HologramLibraryFacade.draftPreparationFailed(owner, proof, "download admission failed");
+                SimpleAssert.eq(
+                    proof.getString("saveReceipt"),
+                    get(session, "blueprintSaveReceipt"),
+                    "worker admission failure waits for server-thread source revocation");
+                tasks.remove()
+                    .run();
+                SimpleAssert
+                    .eq("", get(session, "blueprintSaveReceipt"), "failed admission revokes exact owner source");
+                Method prune = HologramLibraryFacade.class.getDeclaredMethod("pruneSavedResults");
+                prune.setAccessible(true);
+                prune.invoke(null);
+                SimpleAssert.eq(
+                    "saveRejected",
+                    get(results.get(owner.getUniqueID()), "outcome"),
+                    "same-owner prune retires prepublished result instead of leaking pending state");
+                SimpleAssert
+                    .that((Boolean) get(session, "blueprintDirty"), "admission failure retains workspace edits");
+            } finally {
+                tasks.clear();
+                tasks.addAll(previousTasks);
+            }
+        } finally {
+            if (previous == null) results.remove(owner.getUniqueID());
+            else results.put(owner.getUniqueID(), previous);
         }
     }
 

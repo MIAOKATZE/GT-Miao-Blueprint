@@ -25,6 +25,7 @@ public final class HologramClientLibraryRegression {
     public static void run() {
         try {
             exercise();
+            exerciseSaveReadbackReuse();
             exerciseQuickFence();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
@@ -221,6 +222,116 @@ public final class HologramClientLibraryRegression {
                         }
                     });
             }
+        }
+    }
+
+    private static void exerciseSaveReadbackReuse() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-local-save-reuse-");
+        CountingPairs pairs = new CountingPairs();
+        HologramClientLibrary library = new HologramClientLibrary(game, pairs);
+        String id = "local_11111111-1111-1111-1111-111111111111";
+        try {
+            byte[] original = json("Original", null);
+            byte[] preview = png(0xff224466);
+            HologramClientLibrary.LocalSave saved = library.prepareLocalSave(original, preview, id, () -> true);
+            SimpleAssert.eq(1, pairs.writes, "private save performs one actual pair write");
+            SimpleAssert.eq(1, pairs.reads, "private save performs one actual pair readback");
+            SimpleAssert
+                .eq(HologramBlueprintArtifact.hash(original), saved.jsonHash, "receipt retains exact JSON digest");
+            SimpleAssert.eq(
+                HologramBlueprintArtifact
+                    .hash(Files.readAllBytes(HologramBlueprintArtifact.previewPath(library.savedPath(id)))),
+                saved.pngHash,
+                "receipt hashes the actual bound PNG on disk");
+            saved.write.commit();
+            library.list();
+            library.list();
+            SimpleAssert.eq(1, pairs.reads, "unchanged catalog refreshes reuse validated readback metadata");
+            Path path = library.savedPath(id);
+            java.nio.file.attribute.FileTime time = Files.getLastModifiedTime(path);
+            byte[] changed = original.clone();
+            String text = new String(changed, StandardCharsets.UTF_8).replace("Original", "Modified");
+            changed = text.getBytes(StandardCharsets.UTF_8);
+            SimpleAssert.eq(original.length, changed.length, "mutation preserves byte length");
+            Files.write(path, changed);
+            Files.setLastModifiedTime(path, time);
+            SimpleAssert.eq(
+                0,
+                library.list()
+                    .size(),
+                "same-size same-mtime JSON change invalidates PNG binding");
+            SimpleAssert.eq(2, pairs.reads, "changed content is actually revalidated");
+            Files.write(path, original);
+            library.list();
+            SimpleAssert.eq(3, pairs.reads, "restored pair is validated after invalidation");
+            Path pngPath = HologramBlueprintArtifact.previewPath(path);
+            byte[] originalPng = Files.readAllBytes(pngPath);
+            java.nio.file.attribute.FileTime pngTime = Files.getLastModifiedTime(pngPath);
+            byte[] corrupt = originalPng.clone();
+            corrupt[corrupt.length - 1] ^= 1;
+            Files.write(pngPath, corrupt);
+            Files.setLastModifiedTime(pngPath, pngTime);
+            SimpleAssert.eq(
+                0,
+                library.list()
+                    .size(),
+                "same-size same-mtime PNG damage invalidates metadata");
+            SimpleAssert.eq(4, pairs.reads, "changed PNG receives full validation");
+            Files.write(pngPath, originalPng);
+            library.list();
+            pairs.failRead = true;
+            reject(
+                () -> library.prepareLocalSave(json("Replaced", null), preview, id, () -> true),
+                "readback failure cannot acknowledge a save");
+            pairs.failRead = false;
+            SimpleAssert.that(
+                java.util.Arrays.equals(original, Files.readAllBytes(path)),
+                "failed readback restores the previous exact JSON");
+            SimpleAssert.that(
+                java.util.Arrays.equals(originalPng, Files.readAllBytes(pngPath)),
+                "failed readback restores the previous exact PNG");
+            java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
+            pairs.afterRead = () -> current.set(false);
+            reject(
+                () -> library.prepareLocalSave(json("Canceled", null), preview, id, current::get),
+                "source change after actual readback rejects the receipt");
+            SimpleAssert.that(
+                java.util.Arrays.equals(original, Files.readAllBytes(path)),
+                "source-change cancellation restores the old pair");
+            pairs.afterRead = null;
+            SimpleAssert.eq(
+                "Original",
+                library.list()
+                    .get(0).name,
+                "rollback does not leave cached replacement metadata");
+        } finally {
+            try (java.util.stream.Stream<Path> files = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) files.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static final class CountingPairs implements HologramClientLibrary.PairIo {
+
+        int writes, reads;
+        boolean failRead;
+        Runnable afterRead;
+
+        @Override
+        public HologramBlueprintArtifact.PairWrite write(Path path, byte[] json, byte[] png,
+            java.util.function.BooleanSupplier current) throws IOException {
+            writes++;
+            return HologramBlueprintArtifact.writePairPending(path, json, png, current);
+        }
+
+        @Override
+        public HologramBlueprintArtifact.Artifact read(Path path) throws IOException {
+            reads++;
+            if (failRead) throw new IOException("Injected readback failure");
+            HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(path);
+            if (afterRead != null) afterRead.run();
+            return actual;
         }
     }
 

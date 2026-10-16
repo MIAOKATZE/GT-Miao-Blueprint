@@ -36,6 +36,7 @@ import net.minecraftforge.client.MinecraftForgeClient;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL14;
 
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;
@@ -61,6 +62,9 @@ public final class HologramCutRawPreview {
     private static int observedActiveTexture, observedClientTexture, observedTexture, expectedTexture,
         observedMatrixMode;
     private static int nonAir, tilePayloads, pending;
+    private static HologramCutRawPreviewGhost ghost = new HologramCutRawPreviewGhost();
+    private static String ghostFailure = "";
+    private static long outlineCells, stateChecks, stateMismatches;
     private static final Field DRAWING = ReflectionHelper.findField(Tessellator.class, "isDrawing", "field_78415_z");
     private static final Field VERTICES = ReflectionHelper.findField(Tessellator.class, "vertexCount", "field_78406_i");
     private static final Field WORLD_PASS = ReflectionHelper.findField(ForgeHooksClient.class, "worldRenderPass");
@@ -126,6 +130,9 @@ public final class HologramCutRawPreview {
                     visible.add(region);
                     pinned.add(region.key);
                 }
+        HologramCutRawPreviewScope.StateWitness witness = Boolean.getBoolean("gtmb.hologram.cutNativeClient")
+            ? new HologramCutRawPreviewScope.StateWitness()
+            : null;
         HologramCutRawPreviewScope.RenderState frame = new HologramCutRawPreviewScope.RenderState();
         frame.push();
         int budget = COMPILE_PER_FRAME;
@@ -134,12 +141,19 @@ public final class HologramCutRawPreview {
         try {
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
             GL11.glTranslated(anchorX - cx, anchorY - cy, anchorZ - cz);
+            if (witness != null) frame.prepareReadback();
+            if (!ghost.begin()) {
+                outlines(visible, frame);
+                return;
+            }
             GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthFunc(GL11.GL_LEQUAL);
             GL11.glDepthMask(true);
             GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glEnable(GL11.GL_ALPHA_TEST);
             GL11.glAlphaFunc(GL11.GL_GREATER, .1f);
             GL11.glEnable(GL11.GL_BLEND);
+            GL14.glBlendEquation(GL14.GL_FUNC_ADD);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             RenderHelper.disableStandardItemLighting();
             // RenderWorldLast can follow the particle pass with the lightmap disabled. Use Minecraft's own
@@ -168,9 +182,62 @@ public final class HologramCutRawPreview {
                     else if (model.vertices == 0 && !model.hasTesr) placeholder(cell, false);
                 }
             }
+            ghost.composite(frame);
+            outlines(visible, frame);
+            ghost.finishFrame();
+        } catch (Throwable failure) {
+            requireRecoverable(failure);
+            ghostFailure = failure.getClass()
+                .getSimpleName() + ": "
+                + String.valueOf(failure.getMessage());
+            ghost.bindDestination();
+            outlines(visible, frame);
         } finally {
             frame.restore();
+            if (witness != null) {
+                stateChecks++;
+                if (!witness.matches()) stateMismatches++;
+            }
         }
+    }
+
+    /** Cell edges remain independent of native mesh colors, opacity, alpha tests and TESR state changes. */
+    private static void outlines(List<Region> visible, HologramCutRawPreviewScope.RenderState scope) {
+        scope.useProgram(0);
+        scope.cleanTextureUnits();
+        OpenGlHelper.setClientActiveTexture(OpenGlHelper.defaultTexUnit);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_FOG);
+        GL11.glColorMask(true, true, true, false);
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDepthFunc(GL11.GL_LEQUAL);
+        GL11.glDepthMask(false);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL14.glBlendEquation(GL14.GL_FUNC_ADD);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glLineWidth(1);
+        GL11.glColor4f(.40f, .85f, .94f, .80f);
+        GL11.glBegin(GL11.GL_LINES);
+        for (Region region : visible) for (HologramCutRawPreviewWorld.Cell cell : region.cells) {
+            if (cell.block == Blocks.air) continue;
+            outlineCells++;
+            double x = cell.x - .003, y = cell.y - .003, z = cell.z - .003, d = 1.006;
+            for (int axis = 0; axis < 3; axis++) for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) {
+                if (axis == 0) {
+                    GL11.glVertex3d(x, y + a * d, z + b * d);
+                    GL11.glVertex3d(x + d, y + a * d, z + b * d);
+                } else if (axis == 1) {
+                    GL11.glVertex3d(x + a * d, y, z + b * d);
+                    GL11.glVertex3d(x + a * d, y + d, z + b * d);
+                } else {
+                    GL11.glVertex3d(x + a * d, y + b * d, z);
+                    GL11.glVertex3d(x + a * d, y + b * d, z + d);
+                }
+            }
+        }
+        GL11.glEnd();
     }
 
     private static void touch(Region region, Set<String> pinned) {
@@ -437,6 +504,9 @@ public final class HologramCutRawPreview {
 
     public static List<String> diagnostics() {
         List<String> result = new ArrayList<>(FAILURES.values());
+        if (!ghost.failure()
+            .isEmpty()) result.add(ghost.failure());
+        if (!ghostFailure.isEmpty()) result.add("Cut ghost layer: " + ghostFailure);
         if (pending > 0) result.add("Raw native preview loading: " + pending + " visible cells");
         return Collections.unmodifiableList(result);
     }
@@ -479,6 +549,11 @@ public final class HologramCutRawPreview {
         out.setInteger("boundBlockAtlas", observedTexture);
         out.setInteger("expectedBlockAtlas", expectedTexture);
         out.setInteger("matrixMode", observedMatrixMode);
+        ghost.inspect(out);
+        out.setString("ghostRenderFailure", ghostFailure);
+        out.setLong("ghostOutlineCells", outlineCells);
+        out.setLong("ghostStateChecks", stateChecks);
+        out.setLong("ghostStateMismatches", stateMismatches);
         out.setInteger("pendingVisibleCells", pending);
         out.setInteger("failureCount", FAILURES.size());
         NBTTagList failures = new NBTTagList();
@@ -583,6 +658,10 @@ public final class HologramCutRawPreview {
     }
 
     public static void release() {
+        ghost.release();
+        ghost = new HologramCutRawPreviewGhost();
+        ghostFailure = "";
+        outlineCells = stateChecks = stateMismatches = 0;
         for (Region region : REGIONS.values()) region.clear();
         RESIDENT.clear();
         REGIONS.clear();

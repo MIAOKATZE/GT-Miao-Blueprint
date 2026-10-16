@@ -1478,7 +1478,11 @@ public final class HologramV011WorkbenchClientSmoke {
         assertSaveWitness(saveWitness, artifact, local, nativePreview);
         proof.setTag("actualSaveWitness", saveWitness);
         findings.setBoolean("actualNativeFboReadbackMatchesDiskPreview", true);
-        findings.setBoolean("actualNativePreviewVerificationAndOwnerCommitPackets", true);
+        findings.setBoolean("actualNativePreviewDiskAndOwnerCommitPackets", true);
+        findings.setBoolean(
+            "actualNativePreviewVerificationAndOwnerCommitPackets",
+            !saveWitness.getCompoundTag("ownerDiskAck")
+                .getBoolean("localSaveReceipt"));
         proof.setBoolean("passed", true);
         proof.setBoolean("actualNettyClient", true);
         proof.setString("localId", local);
@@ -2156,11 +2160,10 @@ public final class HologramV011WorkbenchClientSmoke {
     private void assertSaveWitness(NBTTagCompound observed, HologramBlueprintArtifact.Artifact artifact, String localId,
         NBTTagCompound nativePreview) {
         require(
-            observed.hasKey("nativePreviewWitness", 10) && observed.hasKey("previewVerifiedReply", 10)
-                && observed.hasKey("ownerDiskAck", 10)
+            observed.hasKey("nativePreviewWitness", 10) && observed.hasKey("ownerDiskAck", 10)
                 && observed.hasKey("saveCommittedReply", 10)
                 && !observed.hasKey("saveRejectedReply"),
-            "actual current save records native capture, preview verification, disk owner ACK and final server commit");
+            "actual current save records native capture, disk owner ACK and final server commit");
         NBTTagCompound captureWitness = observed.getCompoundTag("nativePreviewWitness");
         require(
             artifact.jsonSha256.equals(captureWitness.getString("sourceJsonSha256"))
@@ -2168,27 +2171,8 @@ public final class HologramV011WorkbenchClientSmoke {
                     .equals(captureWitness.getString("rgbSha256"))
                 && nativePreview.getLong("captureGeneration") == captureWitness.getLong("captureGeneration"),
             "actual library save freezes this request's real source-bound native capture witness");
-        String receipt = observed.getCompoundTag("ownerDiskAck")
-            .getString("saveReceipt");
-        require(!receipt.isEmpty(), "actual owner disk ACK retains its server-issued save receipt nonce");
-        String[] keys = { "previewVerifiedReply", "ownerDiskAck", "saveCommittedReply" };
-        String[] ops = { "previewVerified", "ackBlueprintSaved", "saveCommitted" };
-        for (int i = 0; i < keys.length; i++) {
-            NBTTagCompound packet = observed.getCompoundTag(keys[i]);
-            require(
-                ops[i].equals(packet.getString("op")) && packet.hasKey("planRevision", 4)
-                    && saveRequestRevision == packet.getLong("planRevision")
-                    && saveRequestSession.equals(packet.getString("session"))
-                    && localId.equals(packet.getString("localId"))
-                    && receipt.equals(packet.getString("saveReceipt"))
-                    && artifact.jsonSha256.equals(packet.getString("jsonSha256"))
-                    && artifact.pngSha256.equals(packet.getString("previewSha256")),
-                "actual " + keys[i]
-                    + " matches this owner save's exact session, revision, nonce, local ID and disk hashes");
-            require(
-                packet.hasKey("artifactVersion", 3) && packet.getInteger("artifactVersion") == 1,
-                "actual preview verification, owner ACK and final commit identify artifact version 1");
-        }
+        HologramV011NormalDecorProbe
+            .verifySaveTransaction(observed, artifact, localId, saveRequestSession, saveRequestRevision);
     }
 
     private void assertLocalPairs(Minecraft mc, String removedId) throws Exception {

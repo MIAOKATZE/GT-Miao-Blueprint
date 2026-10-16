@@ -44,6 +44,10 @@ public final class HologramRegressionTest {
             "cut_input_switcher_queue_priority_and_cancel",
             com.miaokatze.gtmb.client.hologram.HologramCutInputRegression::run);
         cases.put(
+            "cut_idle_sync_and_lost_ack_recovery_never_replay_world_edits",
+            com.miaokatze.gtmb.client.hologram.HologramCutRequestRegression::run);
+        cases.put("cut_directory_reads_survive_tool_context_races", HologramCutContextRegression::run);
+        cases.put(
             "workstation_modal_input_and_session_bound_ack_tickets",
             com.miaokatze.gtmb.client.hologram.HologramUiModuleRegression::run);
         cases.put(

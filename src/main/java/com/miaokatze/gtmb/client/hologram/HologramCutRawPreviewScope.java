@@ -4,6 +4,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.Buffer;
 import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,16 +43,20 @@ final class HologramCutRawPreviewScope {
         private final ContextCapabilities caps = GLContext.getCapabilities();
         private final boolean pixelTransferAvailable = legacyPixelTransferAvailable(caps);
         private final int[] pixelStoreNames = { GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH, GL11.GL_PACK_SKIP_ROWS,
-            GL11.GL_PACK_SKIP_PIXELS, GL11.GL_UNPACK_ALIGNMENT, GL11.GL_UNPACK_ROW_LENGTH, GL11.GL_UNPACK_SKIP_ROWS,
-            GL11.GL_UNPACK_SKIP_PIXELS };
+            GL11.GL_PACK_SKIP_PIXELS, GL11.GL_PACK_SWAP_BYTES, GL11.GL_PACK_LSB_FIRST, GL11.GL_UNPACK_ALIGNMENT,
+            GL11.GL_UNPACK_ROW_LENGTH, GL11.GL_UNPACK_SKIP_ROWS, GL11.GL_UNPACK_SKIP_PIXELS, GL11.GL_UNPACK_SWAP_BYTES,
+            GL11.GL_UNPACK_LSB_FIRST };
         private final int[] pixelStoreValues = new int[pixelStoreNames.length];
-        private final boolean splitFramebuffer = caps.OpenGL30 || caps.GL_ARB_framebuffer_object;
+        private final boolean splitFramebuffer = caps.OpenGL30 || caps.GL_ARB_framebuffer_object
+            || caps.GL_EXT_framebuffer_blit;
+        private final boolean framebuffers = caps.OpenGL30 || caps.GL_ARB_framebuffer_object
+            || caps.GL_EXT_framebuffer_object;
         private final boolean buffers = caps.OpenGL15 || caps.GL_ARB_vertex_buffer_object;
         private final boolean pixelBuffers = caps.OpenGL21 || caps.GL_ARB_pixel_buffer_object;
         private final boolean vertexArrays = caps.OpenGL30 || caps.GL_ARB_vertex_array_object;
-        private final int drawFramebuffer = GL11.glGetInteger(0x8ca6);
+        private final int drawFramebuffer = framebuffers ? GL11.glGetInteger(0x8ca6) : 0;
         private final int readFramebuffer = splitFramebuffer ? GL11.glGetInteger(0x8caa) : drawFramebuffer;
-        private final int renderbuffer = GL11.glGetInteger(0x8ca7);
+        private final int renderbuffer = framebuffers ? GL11.glGetInteger(0x8ca7) : 0;
         private final int activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
         private final int clientTexture = GL11.glGetInteger(GL13.GL_CLIENT_ACTIVE_TEXTURE);
         private final int matrixMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
@@ -154,6 +160,16 @@ final class HologramCutRawPreviewScope {
             }
         }
 
+        void prepareReadback() {
+            unbindPixelBuffers();
+            if (!pixelTransferAvailable) return;
+            GL11.glPixelTransferi(GL11.GL_MAP_COLOR, GL11.GL_FALSE);
+            for (int channel : new int[] { GL11.GL_RED_SCALE, GL11.GL_GREEN_SCALE, GL11.GL_BLUE_SCALE,
+                GL11.GL_ALPHA_SCALE, GL11.GL_DEPTH_SCALE }) GL11.glPixelTransferf(channel, 1);
+            for (int channel : new int[] { GL11.GL_RED_BIAS, GL11.GL_GREEN_BIAS, GL11.GL_BLUE_BIAS, GL11.GL_ALPHA_BIAS,
+                GL11.GL_DEPTH_BIAS }) GL11.glPixelTransferf(channel, 0);
+        }
+
         void restore() {
             for (Matrix matrix : matrices) matrix.restore();
             if (vertexArrays) {
@@ -164,8 +180,8 @@ final class HologramCutRawPreviewScope {
             if (splitFramebuffer) {
                 OpenGlHelper.func_153171_g(0x8ca8, readFramebuffer);
                 OpenGlHelper.func_153171_g(0x8ca9, drawFramebuffer);
-            } else OpenGlHelper.func_153171_g(FRAMEBUFFER, drawFramebuffer);
-            OpenGlHelper.func_153176_h(RENDERBUFFER, renderbuffer);
+            } else if (framebuffers) OpenGlHelper.func_153171_g(FRAMEBUFFER, drawFramebuffer);
+            if (framebuffers) OpenGlHelper.func_153176_h(RENDERBUFFER, renderbuffer);
             if (clientAttributes) GL11.glPopClientAttrib();
             if (attributes) GL11.glPopAttrib();
             // Angelica's client attribute stack stores vertex state, not pixel-store parameters.
@@ -184,6 +200,76 @@ final class HologramCutRawPreviewScope {
             OpenGlHelper.setClientActiveTexture(clientTexture);
             OpenGlHelper.setActiveTexture(activeTexture);
             GL11.glMatrixMode(matrixMode);
+        }
+    }
+
+    /** Opt-in native evidence compares actual caller GL state before/after the complete preview, including failures. */
+    static final class StateWitness {
+
+        private final List<Number> before = read();
+
+        boolean matches() {
+            return before.equals(read());
+        }
+
+        private static List<Number> read() {
+            List<Number> state = new ArrayList<>();
+            int active = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+            int client = GL11.glGetInteger(GL13.GL_CLIENT_ACTIVE_TEXTURE);
+            int mode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
+            for (int name : new int[] { GL13.GL_ACTIVE_TEXTURE, GL13.GL_CLIENT_ACTIVE_TEXTURE, GL11.GL_MATRIX_MODE,
+                GL11.GL_DEPTH_WRITEMASK, GL11.GL_DEPTH_FUNC, GL11.GL_BLEND_SRC, GL11.GL_BLEND_DST,
+                GL11.GL_ALPHA_TEST_FUNC, GL11.GL_VIEWPORT, GL11.GL_SCISSOR_BOX, GL11.GL_COLOR_WRITEMASK }) {
+                int count = name == GL11.GL_VIEWPORT || name == GL11.GL_SCISSOR_BOX || name == GL11.GL_COLOR_WRITEMASK
+                    ? 4
+                    : 1;
+                IntBuffer values = BufferUtils.createIntBuffer(16);
+                GL11.glGetInteger(name, values);
+                for (int index = 0; index < count; index++) state.add(values.get(index));
+            }
+            if (GLContext.getCapabilities().OpenGL20) {
+                for (int name : new int[] { GL20.GL_CURRENT_PROGRAM, 0x8009, 0x883d, 0x80cb, 0x80ca, 0x80c9, 0x80c8 })
+                    state.add(GL11.glGetInteger(name));
+            }
+            if (GLContext.getCapabilities().OpenGL30 || GLContext.getCapabilities().GL_ARB_framebuffer_object
+                || GLContext.getCapabilities().GL_EXT_framebuffer_object) {
+                state.add(GL11.glGetInteger(0x8ca6));
+                state.add(GL11.glGetInteger(0x8ca7));
+            }
+            if (GLContext.getCapabilities().OpenGL30 || GLContext.getCapabilities().GL_ARB_framebuffer_object
+                || GLContext.getCapabilities().GL_EXT_framebuffer_blit) state.add(GL11.glGetInteger(0x8caa));
+            for (int name : new int[] { GL11.GL_BLEND, GL11.GL_ALPHA_TEST, GL11.GL_DEPTH_TEST, GL11.GL_CULL_FACE,
+                GL11.GL_LIGHTING, GL11.GL_FOG, GL11.GL_SCISSOR_TEST }) state.add(GL11.glIsEnabled(name) ? 1 : 0);
+            floats(state, GL11.GL_CURRENT_COLOR, 4);
+            floats(state, GL11.GL_ALPHA_TEST_REF, 1);
+            floats(state, GL11.GL_MODELVIEW_MATRIX, 16);
+            floats(state, GL11.GL_PROJECTION_MATRIX, 16);
+            floats(state, GL11.GL_DEPTH_RANGE, 2);
+            state.add(OpenGlHelper.lastBrightnessX);
+            state.add(OpenGlHelper.lastBrightnessY);
+            for (int name : new int[] { GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH, GL11.GL_PACK_SKIP_ROWS,
+                GL11.GL_PACK_SKIP_PIXELS, GL11.GL_PACK_SWAP_BYTES, GL11.GL_PACK_LSB_FIRST, GL11.GL_UNPACK_ALIGNMENT,
+                GL11.GL_UNPACK_ROW_LENGTH, GL11.GL_UNPACK_SKIP_ROWS, GL11.GL_UNPACK_SKIP_PIXELS,
+                GL11.GL_UNPACK_SWAP_BYTES, GL11.GL_UNPACK_LSB_FIRST }) state.add(GL11.glGetInteger(name));
+            try {
+                for (int unit = 0; unit < GL11.glGetInteger(GL13.GL_MAX_TEXTURE_UNITS); unit++) {
+                    OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0 + unit);
+                    state.add(GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D));
+                    state.add(GL11.glIsEnabled(GL11.GL_TEXTURE_2D) ? 1 : 0);
+                    floats(state, GL11.GL_TEXTURE_MATRIX, 16);
+                }
+            } finally {
+                OpenGlHelper.setActiveTexture(active);
+                OpenGlHelper.setClientActiveTexture(client);
+                GL11.glMatrixMode(mode);
+            }
+            return state;
+        }
+
+        private static void floats(List<Number> state, int name, int count) {
+            FloatBuffer values = BufferUtils.createFloatBuffer(16);
+            GL11.glGetFloat(name, values);
+            for (int index = 0; index < count; index++) state.add(values.get(index));
         }
     }
 

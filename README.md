@@ -51,7 +51,11 @@ Shapeless recipe: **1 StructureLib Hologram Projector → 1 Neko Blueprint Holog
 
 Cut storage belongs only to the current save and player; it stays outside the blueprint library and sharing workflow.
 
+Cut placement previews show translucent native models with block outlines.
+
 剪切暂存仅属于当前存档与玩家，不进入蓝图库或分享流程。
+
+剪切放置使用带方块边框的半透明原生模型预览。
 
 Manual sharing: copy the **same-basename JSON + PNG pair** into the recipient's game-directory `MiaoBlueprints/`; use the Client/Server library switch for uploads and downloads.
 

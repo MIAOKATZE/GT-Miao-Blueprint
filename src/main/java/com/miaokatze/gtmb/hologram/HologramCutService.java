@@ -65,15 +65,30 @@ public final class HologramCutService {
         NBTTagCompound copy = (NBTTagCompound) request.copy();
         ServerTaskScheduler.scheduleServerTask(() -> {
             try {
-                if (player.worldObj != identity || player.playerNetServerHandler == null
-                    || player.playerNetServerHandler.netManager == null
-                    || !player.playerNetServerHandler.netManager.isChannelOpen()
-                    || !ItemNekoHologramProjector.isProjector(player.getHeldItem())) return;
+                if (player.playerNetServerHandler == null || player.playerNetServerHandler.netManager == null
+                    || !player.playerNetServerHandler.netManager.isChannelOpen()) return;
+                if (!acceptsContext(
+                    copy.getString("action"),
+                    player.worldObj == identity,
+                    ItemNekoHologramProjector.isProjector(player.getHeldItem()))) {
+                    NBTTagCompound rejected = new NBTTagCompound();
+                    rejected.setString("action", "state");
+                    rejected.setString("requestId", copy.getString("requestId"));
+                    rejected.setBoolean("success", false);
+                    rejected.setString("code", "context_changed");
+                    rejected.setString("message", "操作未执行：请在原维度持有投影仪后重试");
+                    HologramNetwork.sendCutState(player, rejected);
+                    return;
+                }
                 HologramNetwork.sendCutState(player, execute(player, copy));
             } finally {
                 count.decrementAndGet();
             }
         });
+    }
+
+    static boolean acceptsContext(String action, boolean sameWorld, boolean heldProjector) {
+        return "list".equals(action) || sameWorld && heldProjector;
     }
 
     static NBTTagCompound execute(EntityPlayerMP player, NBTTagCompound request) {
@@ -114,6 +129,8 @@ public final class HologramCutService {
             String action = request.getString("action");
             if ("list".equals(action)) {
                 response.setString("message", "剪切暂存已同步");
+                String reconcile = request.getString("id");
+                if (!reconcile.isEmpty()) reportRequestResult(response, state, reconcile);
             } else if ("preview".equals(action)) {
                 NBTTagCompound entry = find(state, request.getString("id"));
                 if (entry == null) throw new IOException("剪切暂存不存在");
@@ -259,6 +276,14 @@ public final class HologramCutService {
                 .getString("id")))
             return true;
         return false;
+    }
+
+    static void reportRequestResult(NBTTagCompound response, NBTTagCompound state, String id) throws IOException {
+        if (!UUID.fromString(id)
+            .toString()
+            .equals(id)) throw new IOException("无效剪切请求编号");
+        response.setString("reconciledRequestId", id);
+        response.setBoolean("requestCompleted", seen(state, id));
     }
 
     private static NBTTagCompound find(NBTTagCompound state, String id) {

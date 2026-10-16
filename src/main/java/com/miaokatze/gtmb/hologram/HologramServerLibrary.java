@@ -628,6 +628,10 @@ final class HologramServerLibrary {
         begin.setString("purpose", "exportDraft".equals(request.getString("op")) ? "draft" : "public");
         begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
         begin.setBoolean("capturePreview", "exportDraft".equals(request.getString("op")));
+        begin.setBoolean(
+            "localSaveReceipt",
+            "exportDraft".equals(request.getString("op")) && !request.getString("saveReceipt")
+                .isEmpty());
         begin.setString("localId", request.getString("replaceLocalId"));
         if ("exportDraft".equals(request.getString("op")))
             begin.setString("saveReceipt", request.getString("saveReceipt"));

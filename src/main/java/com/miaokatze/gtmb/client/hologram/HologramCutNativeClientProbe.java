@@ -504,6 +504,35 @@ public final class HologramCutNativeClientProbe {
             stats.getInteger("failureCount") == 0 && stats.getInteger("pendingVisibleCells") == 0,
             "composite native preview has no placeholder failures or pending visible cells");
         require(
+            "native-offscreen-depth-copy-tinted-alpha-composite".equals(stats.getString("ghostMethod"))
+                && stats.getFloat("ghostOpacity") > 0
+                && stats.getFloat("ghostOpacity") < .5f
+                && stats.getLong("ghostComposites") > 0
+                && stats.getLong("ghostDepthCopies") > 0
+                && stats.getLong("ghostOutlineCells") > 0
+                && stats.getString("ghostFailure")
+                    .isEmpty()
+                && stats.getString("ghostRenderFailure")
+                    .isEmpty()
+                && stats.getLong("ghostInheritedGlErrors") == 0
+                && stats.getLong("ghostDepthCopyGlErrors") == 0,
+            "complete native models use a separate tinted translucent layer and independent world outlines");
+        require(
+            stats.getLong("ghostPixelChecks") > 0 && stats.getLong("ghostPixelMismatches") == 0
+                && stats.getLong("ghostVisibleBackgroundPixels") > 0
+                && stats.getLong("ghostSceneDepthChecks") > 0
+                && stats.getLong("ghostSceneDepthMismatches") == 0
+                && stats.getLong("ghostDepthCopyChecks") > 0
+                && stats.getLong("ghostDepthCopyMismatches") == 0
+                && stats.getString("ghostSceneDepthBeforeSha256")
+                    .equals(stats.getString("ghostCopiedSceneDepthSha256"))
+                && stats.getString("ghostSceneDepthBeforeSha256")
+                    .equals(stats.getString("ghostSceneDepthAfterSha256")),
+            "actual before/native/after pixels match alpha blend with visible background and unchanged full scene depth");
+        require(
+            stats.getLong("ghostStateChecks") > 0 && stats.getLong("ghostStateMismatches") == 0,
+            "actual complete preview restores caller GL blend/depth/color/matrices/textures/lightmap/FBO state");
+        require(
             HologramCutRawPreview.digest(raw)
                 .equals(stats.getString("rawEntrySha256")),
             "renderer original canonical typed digest remains exact");

@@ -1,9 +1,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import net.minecraft.client.Minecraft;
@@ -28,7 +26,7 @@ final class HologramCutClient {
 
     static final HologramCutClient INSTANCE = new HologramCutClient();
     private final List<NBTTagCompound> entries = new ArrayList<>();
-    private final Map<String, String> pending = new LinkedHashMap<>();
+    private final HologramCutRequests requests = new HologramCutRequests();
     private final HologramWorldFlow.KeyEdge previousKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge nextKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge rotateKey = new HologramWorldFlow.KeyEdge();
@@ -37,7 +35,8 @@ final class HologramCutClient {
     private boolean loaded, rightDown;
     private boolean deferredShift, deferredAlt, deferredUse;
     private NBTTagCompound deferredInput;
-    private String selected = "", previewId = "", status = "";
+    private String selected = "", previewId = "";
+    private final HologramCutNotice status = new HologramCutNotice();
     private HologramState preview;
     private NBTTagCompound rawPreview;
     private Transform pose = new Transform(0, 0, 0, 0);
@@ -96,7 +95,9 @@ final class HologramCutClient {
     }
 
     boolean interceptsUse() {
-        return active() || deferredUse || !blueprintBusy() && (!loaded || !entries.isEmpty() || shift());
+        return active() || deferredUse
+            || !blueprintBusy() && (!entries.isEmpty() || !requests.unresolvedWrite()
+                .isEmpty() || shift());
     }
 
     void tick() {
@@ -107,24 +108,33 @@ final class HologramCutClient {
             world = mc.theWorld;
             dimension = mc.thePlayer == null ? 0 : mc.thePlayer.dimension;
             entries.clear();
-            pending.clear();
+            requests.clear();
             loaded = false;
+            status.show("");
             selected = "";
             deferredUse = false;
             rightDown = false;
             cancel();
             closeScreen();
         }
+        for (HologramCutRequests.Request expired : requests.expire(System.nanoTime())) {
+            if (expired.writesWorld()) {
+                status.show(text("checkingResult"));
+                request("list", expired.id);
+            } else if ("preview".equals(expired.action)) status.show(text("requestTimeout"));
+            else if (deferredUse || !expired.target.isEmpty()) {
+                status.directoryFailed(text("syncTimeout"));
+                deferredUse = false;
+            }
+        }
         if (!held()) {
             if (active()) cancel();
             closeScreen();
-            // A server-side held-tool check may drop an in-flight request. Re-sync when the tool returns.
-            pending.clear();
-            loaded = false;
+            requests.observeHeld(false);
             deferredUse = false;
             return;
         }
-        if (!loaded && pending.isEmpty()) request("list", "");
+        if (requests.observeHeld(true)) refreshDirectory();
         boolean enabled = mc.currentScreen == null && !entries.isEmpty()
             && !blueprintBusy()
             && stage != HologramCutInput.Stage.SELECTING;
@@ -164,6 +174,12 @@ final class HologramCutClient {
         }
         if (rightDown) return true;
         rightDown = true;
+        if (!requests.unresolvedWrite()
+            .isEmpty()) {
+            refreshDirectory();
+            mc().displayGuiScreen(new HologramCutStorageScreen());
+            return true;
+        }
         if (!loaded && !active() && !blueprintBusy()) {
             deferredUse = true;
             deferredShift = shift();
@@ -179,7 +195,7 @@ final class HologramCutClient {
                 deferredInput.setInteger("z", hit.blockZ);
                 deferredInput.setInteger("side", hit.sideHit);
             }
-            if (pending.isEmpty()) request("list", "");
+            refreshDirectory();
             return true;
         }
         right(shift(), alt());
@@ -196,6 +212,7 @@ final class HologramCutClient {
                 beginSelection();
                 break;
             case STORAGE:
+                refreshDirectory();
                 mc().displayGuiScreen(new HologramCutStorageScreen());
                 break;
             case PREVIEW:
@@ -211,7 +228,7 @@ final class HologramCutClient {
                 locked = HologramClient.cutAnchor(true);
                 stage = HologramCutInput.Stage.LOCKED;
                 lockPreview(true);
-                status = text("locked");
+                status.show(text("locked"));
                 break;
             case CONFIRM:
                 confirmPaste();
@@ -222,6 +239,7 @@ final class HologramCutClient {
     }
 
     void beginSelection() {
+        if (busy()) return;
         HologramCutRawPreview.release();
         rawPreview = null;
         pose = new Transform(0, 0, 0, 0);
@@ -229,7 +247,7 @@ final class HologramCutClient {
         first = second = locked = null;
         preview = null;
         previewId = "";
-        status = text("selection");
+        status.show(text("selection"));
         mc().displayGuiScreen(null);
     }
 
@@ -265,11 +283,15 @@ final class HologramCutClient {
     }
 
     String status() {
-        return status;
+        return status.message();
     }
 
     boolean busy() {
-        return !pending.isEmpty();
+        return requests.busy();
+    }
+
+    private void refreshDirectory() {
+        if (!requests.active("list")) request("list", requests.unresolvedWrite());
     }
 
     void select(String id) {
@@ -305,7 +327,7 @@ final class HologramCutClient {
         lockPreview(false);
         mc().displayGuiScreen(null);
         if (preview == null || !previewId.equals(selected)) request("preview", selected);
-        status = text("moving");
+        status.show(text("moving"));
     }
 
     void undo() {
@@ -386,28 +408,47 @@ final class HologramCutClient {
     }
 
     private void send(NBTTagCompound n) {
-        pending.put(n.getString("requestId"), n.getString("action"));
-        status = text("waiting");
+        requests.begin(n.getString("requestId"), n.getString("action"), n.getString("id"), System.nanoTime());
+        if (!"list".equals(n.getString("action"))) status.show(text("waiting"));
         HologramNetwork.sendCutAction(n);
     }
 
     private void receive(NBTTagCompound n) {
         if (mc().theWorld != world || mc().thePlayer == null) return;
-        String op = pending.remove(n.getString("requestId"));
-        if (op == null) return; // old world/connection ACK cannot revive a preview
-        loaded = true;
-        entries.clear();
-        NBTTagList list = n.getTagList("entries", 10);
-        for (int i = 0; i < list.tagCount(); i++) entries.add(
-            (NBTTagCompound) list.getCompoundTagAt(i)
-                .copy());
-        entries.sort((a, b) -> Long.compare(a.getLong("sequence"), b.getLong("sequence")));
+        HologramCutRequests.Request reply = requests.acknowledge(n.getString("requestId"));
+        if (reply == null) return; // old world/connection ACK cannot revive a preview
+        String op = reply.action;
+        if (n.hasKey("entries", 9)) {
+            loaded = true;
+            entries.clear();
+            NBTTagList list = n.getTagList("entries", 10);
+            for (int i = 0; i < list.tagCount(); i++) entries.add(
+                (NBTTagCompound) list.getCompoundTagAt(i)
+                    .copy());
+            entries.sort((a, b) -> Long.compare(a.getLong("sequence"), b.getLong("sequence")));
+            if (n.getBoolean("success")) status.directoryRecovered();
+        }
         boolean found = false;
         for (NBTTagCompound entry : entries) if (selected.equals(entry.getString("id"))) found = true;
         if (!found) selected = entries.isEmpty() ? ""
             : entries.get(0)
                 .getString("id");
-        status = n.getString("message");
+        if (!"list".equals(op)) status.show(n.getString("message"));
+        if ("list".equals(op) && !reply.target.isEmpty()
+            && reply.target.equals(n.getString("reconciledRequestId"))
+            && n.getBoolean("success")
+            && n.hasKey("entries", 9)) {
+            HologramCutRequests.Request resolved = requests.reconcile(reply.target);
+            if (resolved != null) {
+                boolean completed = n.getBoolean("requestCompleted");
+                status.show(text(completed ? "resultConfirmed" : "notExecuted"));
+                if (completed && ("paste".equals(resolved.action) || "undo".equals(resolved.action))) cancel();
+            }
+        }
+        if ("list".equals(op) && !reply.target.isEmpty()
+            && !requests.unresolvedWrite()
+                .isEmpty())
+            status.directoryFailed(n.getBoolean("success") ? text("syncTimeout") : n.getString("message"));
         if (n.getBoolean("success")) {
             if ("paste".equals(op) || "undo".equals(op)) cancel();
             if (n.hasKey("preview") && selected.equals(n.getString("id"))) {
@@ -419,13 +460,13 @@ final class HologramCutClient {
             }
         }
         if (!"list".equals(op) && !"preview".equals(op) && mc().thePlayer != null)
-            mc().thePlayer.addChatMessage(new ChatComponentText(status));
-        if (deferredUse) {
+            mc().thePlayer.addChatMessage(new ChatComponentText(status()));
+        if (deferredUse && "list".equals(op)) {
             deferredUse = false;
-            if (mc().currentScreen == null && held()) {
+            if (n.getBoolean("success") && n.hasKey("entries", 9) && mc().currentScreen == null && held()) {
                 if (!entries.isEmpty() || deferredShift) right(deferredShift, deferredAlt);
                 else HologramClient.resumeProjectorUse(deferredAlt, deferredInput);
-            }
+            } else if (!n.getBoolean("success")) status.directoryFailed(n.getString("message"));
         }
     }
 
@@ -462,7 +503,7 @@ final class HologramCutClient {
             List<String> diagnostics = HologramCutRawPreview.diagnostics();
             if (!diagnostics.isEmpty()) lines.add(diagnostics.get(0) + " (" + diagnostics.size() + ")");
         }
-        if (!status.isEmpty() && !lines.contains(status)) lines.add(status);
+        if (!status().isEmpty() && !lines.contains(status())) lines.add(status());
         return true;
     }
 
