@@ -58,6 +58,46 @@ tasks.register<JavaExec>("runIndustrialConstraintsTest") {
 
 tasks.named("check") { dependsOn("runIndustrialConstraintsTest") }
 
+// Exercise the shipped SRG ABI: development classpaths cannot witness inherited MCP-name gaps.
+abstract class ReleaseGuiBridgeArguments : CommandLineArgumentProvider {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val normalJar: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val srgRuntime: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val forgeRuntime: RegularFileProperty
+
+    override fun asArguments(): Iterable<String> = listOf(
+        normalJar.get().asFile.absolutePath,
+        srgRuntime.get().asFile.absolutePath,
+        forgeRuntime.get().asFile.absolutePath
+    )
+}
+
+val releaseGuiBridgeAsm = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8"))
+val releaseGuiNormalJar = tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfJar").flatMap { it.archiveFile }
+val releaseGuiSrgRuntime = layout.buildDirectory.file("rfg/srg_merged_minecraft.jar")
+val releaseGuiForgeRuntime = layout.buildDirectory.file("rfg/recompiled_minecraft-1.7.10.jar")
+tasks.register<JavaExec>("runReleaseGuiBridgeTest") {
+    group = "verification"
+    description = "Dispatches every UI host method from the unchanged normal reobfuscated JAR against an SRG ABI fixture."
+    dependsOn("reobfJar", "compileTestJava")
+    mainClass = "com.miaokatze.gtmb.client.hologram.HologramV016ReleaseGuiBridgeProbe"
+    // No main output/development engine is available to the isolated target loader.
+    classpath = sourceSets.getByName("test").output + releaseGuiBridgeAsm
+    argumentProviders.add(objects.newInstance(ReleaseGuiBridgeArguments::class.java).apply {
+        normalJar.set(releaseGuiNormalJar)
+        srgRuntime.set(releaseGuiSrgRuntime)
+        forgeRuntime.set(releaseGuiForgeRuntime)
+    })
+}
+tasks.named("check") { dependsOn("runReleaseGuiBridgeTest") }
+
 val hologramCoexistence = providers.gradleProperty("hologramCoexistence").isPresent
 val hologramExtendedCompatibility = providers.gradleProperty("hologramExtendedCompatibility").isPresent
 val hologramAeDeepCompatibility = providers.gradleProperty("hologramAeDeepCompatibility").isPresent

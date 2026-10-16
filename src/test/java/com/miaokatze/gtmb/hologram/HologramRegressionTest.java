@@ -64,6 +64,9 @@ public final class HologramRegressionTest {
             "workstation_modal_input_and_session_bound_ack_tickets",
             com.miaokatze.gtmb.client.hologram.HologramUiModuleRegression::run);
         cases.put(
+            "workstation_host_ports_are_explicit_and_do_not_share_minecraft_method_names",
+            com.miaokatze.gtmb.client.hologram.HologramUiHostRegression::run);
+        cases.put(
             "preview_camera_wasd_follows_orientation_and_normalizes_motion",
             com.miaokatze.gtmb.client.hologram.HologramPreviewCameraRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);

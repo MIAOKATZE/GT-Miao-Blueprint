@@ -225,8 +225,23 @@ public final class HologramScreen extends GuiScreen implements HologramUiHost {
         return this;
     }
 
-    public void drawHoveringText(java.util.List<String> rows, int x, int y,
-        net.minecraft.client.gui.FontRenderer font) {
+    @Override
+    public void renderBackground() {
+        super.drawDefaultBackground();
+    }
+
+    @Override
+    public void renderText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y, int color) {
+        super.drawString(font, text, x, y, color);
+    }
+
+    @Override
+    public void renderCenteredText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y, int color) {
+        super.drawCenteredString(font, text, x, y, color);
+    }
+
+    @Override
+    public void renderTooltip(java.util.List<String> rows, int x, int y, net.minecraft.client.gui.FontRenderer font) {
         super.drawHoveringText(rows, x, y, font);
     }
 }

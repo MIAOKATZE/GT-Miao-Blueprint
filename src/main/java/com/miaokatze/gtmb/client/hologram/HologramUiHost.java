@@ -5,6 +5,7 @@ import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 
+/** Own-named ports must not inherit Minecraft method names: reobf remaps the screen's superclass methods. */
 interface HologramUiHost {
 
     Minecraft minecraft();
@@ -17,11 +18,11 @@ interface HologramUiHost {
 
     HologramScreen parent();
 
-    void drawDefaultBackground();
+    void renderBackground();
 
-    void drawString(FontRenderer font, String text, int x, int y, int color);
+    void renderText(FontRenderer font, String text, int x, int y, int color);
 
-    void drawCenteredString(FontRenderer font, String text, int x, int y, int color);
+    void renderCenteredText(FontRenderer font, String text, int x, int y, int color);
 
-    void drawHoveringText(List<String> rows, int x, int y, FontRenderer font);
+    void renderTooltip(List<String> rows, int x, int y, FontRenderer font);
 }

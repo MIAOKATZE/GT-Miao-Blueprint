@@ -107,7 +107,7 @@ final class HologramUiRouter {
 
     void drawScreen(int mouseX, int mouseY, float ticks) {
         ui.preview.movePreviewCamera();
-        ui.host.drawDefaultBackground();
+        ui.host.renderBackground();
         int mx = ui.canvas.localX(mouseX), my = ui.canvas.localY(mouseY);
         ui.canvas.controls()
             .clear();
@@ -420,7 +420,7 @@ final class HologramUiRouter {
                 ui.canvas.tooltip(null);
                 ui.library.drawBlueprintSwitchReview(mx, my);
             }
-            if (ui.canvas.tooltip() != null) ui.host.drawHoveringText(ui.canvas.tooltip(), mx, my, ui.host.font());
+            if (ui.canvas.tooltip() != null) ui.host.renderTooltip(ui.canvas.tooltip(), mx, my, ui.host.font());
         } finally {
             GL11.glPopMatrix();
             GL11.glPopAttrib();
@@ -438,7 +438,7 @@ final class HologramUiRouter {
             drawRect(x, 9, x + 58, 26, active ? 0xff274c56 : tab.contains(mx, my) ? 0xff213d46 : 0xff17333c);
             int accent = ui.memory.contextualAccent(148 + i);
             if (active || accent != 0) drawRect(x, 24, x + 58, 26, 0xff000000 | (accent != 0 ? accent : 0x81dce9));
-            ui.host.drawCenteredString(
+            ui.host.renderCenteredText(
                 ui.host.font(),
                 i == 0 ? "结构调整" : "蓝图设置",
                 x + 29,

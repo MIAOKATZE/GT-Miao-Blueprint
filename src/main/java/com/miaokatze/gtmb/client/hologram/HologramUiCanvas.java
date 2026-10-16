@@ -88,7 +88,7 @@ final class HologramUiCanvas {
             GL11.glTranslatef(-x, 0, 0);
         }
         try {
-            ui.host.drawString(
+            ui.host.renderText(
                 ui.host.font(),
                 ui.host.font()
                     .trimStringToWidth(
@@ -185,7 +185,7 @@ final class HologramUiCanvas {
             GL11.glTranslatef(-x - w / 2F, 0, 0);
         }
         try {
-            ui.host.drawCenteredString(
+            ui.host.renderCenteredText(
                 ui.host.font(),
                 ui.host.font()
                     .trimStringToWidth(
