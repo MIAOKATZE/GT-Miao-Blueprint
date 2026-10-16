@@ -66,14 +66,16 @@ final class HologramCutStorageScreen extends GuiScreen {
                     22,
                     fontRendererObj.trimStringToWidth(label, w - 12)));
         }
-        int bw = Math.min(110, (width - 32) / 3), x = width / 2 - (bw * 3 + 16) / 2;
+        int bw = Math.min(100, (width - 40) / 4), x = width / 2 - (bw * 4 + 24) / 2;
         buttonList.add(new GuiButton(1, x, height - 65, bw, 20, HologramCutClient.text("place")));
         buttonList.add(new GuiButton(2, x + bw + 8, height - 65, bw, 20, HologramCutClient.text("undo")));
-        buttonList.add(new GuiButton(0, x + bw * 2 + 16, height - 65, bw, 20, HologramCutClient.text("close")));
+        buttonList.add(new GuiButton(3, x + bw * 2 + 16, height - 65, bw, 20, HologramCutClient.text("sync")));
+        buttonList.add(new GuiButton(0, x + bw * 3 + 24, height - 65, bw, 20, HologramCutClient.text("close")));
         for (Object raw : buttonList) {
             GuiButton button = (GuiButton) raw;
             if (button.id == 1 || button.id == 2) button.enabled = !client().selected()
                 .isEmpty() && !client().busy();
+            if (button.id == 3) button.enabled = !client().syncingDirectory();
         }
     }
 
@@ -90,6 +92,7 @@ final class HologramCutStorageScreen extends GuiScreen {
                 .getString("id"));
         else if (button.id == 1) client().beginPreview();
         else if (button.id == 2) client().undo();
+        else if (button.id == 3) client().refreshDirectory();
         else mc.displayGuiScreen(null);
         rebuild();
     }

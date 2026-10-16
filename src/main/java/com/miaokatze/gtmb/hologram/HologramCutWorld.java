@@ -229,49 +229,19 @@ final class HologramCutWorld {
         }
         for (Chunk chunk : chunks) loader.saveChunk(world, chunk);
         ThreadedFileIOBase.threadedIOInstance.waitForFinish();
-        Map<Long, NBTTagCompound> disk = new LinkedHashMap<>();
-        Map<Long, NBTTagCompound> diskTiles = new LinkedHashMap<>();
+        Map<Long, SavedChunk> disk = new LinkedHashMap<>();
         Set<String> regions = new LinkedHashSet<>();
+        DiskReader reader = new DiskReader(loader.chunkSaveLocation);
         for (Chunk chunk : chunks) {
-            try (DataInputStream input = RegionFileCache
-                .getChunkInputStream(loader.chunkSaveLocation, chunk.xPosition, chunk.zPosition)) {
-                if (input == null) throw new IOException("剪切世界存盘失败");
-                disk.put(
-                    key(chunk.xPosition, chunk.zPosition),
-                    CompressedStreamTools.read(input)
-                        .getCompoundTag("Level"));
-            }
+            SavedChunk saved = reader.read(world, chunk.xPosition, chunk.zPosition);
+            disk.put(key(chunk.xPosition, chunk.zPosition), saved);
             regions.add("r." + (chunk.xPosition >> 5) + "." + (chunk.zPosition >> 5) + ".mca");
-        }
-        for (NBTTagCompound level : disk.values()) {
-            NBTTagList savedTiles = level.getTagList("TileEntities", 10);
-            for (int t = 0; t < savedTiles.tagCount(); t++) {
-                NBTTagCompound tile = savedTiles.getCompoundTagAt(t);
-                diskTiles.put(tileKey(tile.getInteger("x"), tile.getInteger("y"), tile.getInteger("z")), tile);
-            }
         }
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
-            NBTTagCompound level = disk.get(key(x >> 4, z >> 4));
-            int expectedId = air ? 0 : Block.getIdFromBlock(Block.getBlockFromName(cell.getString("block")));
-            int actualId = 0, actualMeta = 0;
-            NBTTagList sections = level.getTagList("Sections", 10);
-            for (int s = 0; s < sections.tagCount(); s++) {
-                NBTTagCompound section = sections.getCompoundTagAt(s);
-                if ((section.getByte("Y") & 255) != y >> 4) continue;
-                int index = ((y & 15) << 8) | ((z & 15) << 4) | (x & 15);
-                actualId = (section.getByteArray("Blocks")[index] & 255)
-                    | nibble(section.getByteArray("Add"), index) << 8;
-                actualMeta = nibble(section.getByteArray("Data"), index);
-            }
-            if (actualId != expectedId || actualMeta != (air ? 0 : cell.getInteger("meta")))
-                throw new IOException("剪切世界方块未完整存盘");
-            NBTTagCompound tile = diskTiles.get(tileKey(x, y, z));
-            NBTTagCompound expectedTile = expectedTiles.get(tileKey(x, y, z));
-            if (expectedTile == null) {
-                if (tile != null) throw new IOException("剪切世界实体未完整存盘");
-            } else if (!sameNbt(expectedTile, tile)) throw new IOException("方块实体存盘读回与本次世界快照不一致，记录已保留");
+            disk.get(key(x >> 4, z >> 4))
+                .verifyCell(x, y, z, cell, air, expectedTiles.get(tileKey(x, y, z)));
         }
         for (String name : regions) try (RandomAccessFile region = new RandomAccessFile(
             new java.io.File(new java.io.File(loader.chunkSaveLocation, "region"), name),
@@ -309,8 +279,65 @@ final class HologramCutWorld {
         return first.equals(second);
     }
 
-    private static int nibble(byte[] values, int index) {
-        return values.length == 0 ? 0 : (values[index >> 1] >> ((index & 1) * 4)) & 15;
+    /** Raw tile bytes and native block decoding must describe the same on-disk chunk. */
+    static final class SavedChunk {
+
+        final Chunk blocks;
+        final NBTTagCompound level;
+        private final Map<Long, NBTTagCompound> tiles = new LinkedHashMap<>();
+
+        SavedChunk(Chunk blocks, NBTTagCompound level) {
+            this.blocks = blocks;
+            this.level = level;
+            NBTTagList savedTiles = level.getTagList("TileEntities", 10);
+            for (int t = 0; t < savedTiles.tagCount(); t++) {
+                NBTTagCompound tile = savedTiles.getCompoundTagAt(t);
+                tiles.put(tileKey(tile.getInteger("x"), tile.getInteger("y"), tile.getInteger("z")), tile);
+            }
+        }
+
+        void verifyCell(int x, int y, int z, NBTTagCompound cell, boolean air, NBTTagCompound expectedTile)
+            throws IOException {
+            Block expectedBlock = air ? Blocks.air : Block.getBlockFromName(cell.getString("block"));
+            if (blocks.getBlock(x & 15, y, z & 15) != expectedBlock
+                || blocks.getBlockMetadata(x & 15, y, z & 15) != (air ? 0 : cell.getInteger("meta")))
+                throw new IOException("剪切世界方块未完整存盘");
+            NBTTagCompound tile = tiles.get(tileKey(x, y, z));
+            if (expectedTile == null) {
+                if (tile != null) throw new IOException("剪切世界实体未完整存盘");
+            } else if (!sameNbt(expectedTile, tile)) throw new IOException("方块实体存盘读回与本次世界快照不一致，记录已保留");
+        }
+    }
+
+    /**
+     * Read real region bytes, then use Forge's block-only native decoder. A fresh loader has no queued save NBT to
+     * mistake for disk. The inherited decoder includes installed storage codecs (for example extended IDs/metadata),
+     * but does not call loadEntities, fire ChunkDataEvent.Load, or attach this detached chunk to the world.
+     */
+    static final class DiskReader extends AnvilChunkLoader {
+
+        DiskReader(java.io.File directory) {
+            super(directory);
+        }
+
+        SavedChunk read(WorldServer world, int x, int z) throws IOException {
+            NBTTagCompound root;
+            try (DataInputStream input = RegionFileCache.getChunkInputStream(chunkSaveLocation, x, z)) {
+                if (input == null) throw new IOException("剪切世界存盘失败");
+                root = CompressedStreamTools.read(input);
+            }
+            NBTTagCompound level = root.getCompoundTag("Level");
+            // Reject relocation before the native loader can repair a mismatched chunk in memory.
+            if (!root.hasKey("Level", 10) || !level.hasKey("Sections", 9)
+                || !level.hasKey("xPos", 3)
+                || !level.hasKey("zPos", 3)
+                || level.getInteger("xPos") != x
+                || level.getInteger("zPos") != z) throw new IOException("剪切世界存盘区块坐标或数据无效，记录已保留");
+            // Native data-fixers may edit their input. Preserve the exact raw disk tile NBT for comparison.
+            Chunk blocks = super.checkedReadChunkFromNBT(world, x, z, (NBTTagCompound) root.copy());
+            if (blocks == null || !blocks.isAtLocation(x, z)) throw new IOException("剪切世界存盘区块无法原生读回，记录已保留");
+            return new SavedChunk(blocks, level);
+        }
     }
 
     private static long key(int x, int z) {

@@ -14,7 +14,10 @@ final class HologramCutModeScreen extends GuiScreen {
         if (!choice.release(HologramCutClient.shift())) return;
         mc.displayGuiScreen(null);
         if (choice.cut()) HologramCutClient.INSTANCE.beginSelection();
-        else HologramClient.beginAreaSelection();
+        else {
+            HologramCutClient.INSTANCE.cancel();
+            HologramClient.beginAreaSelection();
+        }
     }
 
     @Override

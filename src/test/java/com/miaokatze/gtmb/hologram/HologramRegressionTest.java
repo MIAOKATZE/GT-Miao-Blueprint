@@ -45,6 +45,9 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("cut_clipboard_preserves_raw_data_atomic_storage_and_packet_budgets", HologramCutRegression::run);
+        cases.put(
+            "cut_native_disk_readback_rejects_stale_blocks_tiles_and_relocated_chunks",
+            HologramCutDiskRegression::run);
         cases.put("cut_pose_geometry_raw_directions_and_extension_lifecycle", HologramCutTransformRegression::run);
         cases.put("cut_raw_preview_preserves_payload_in_detached_world", () -> {
             try {

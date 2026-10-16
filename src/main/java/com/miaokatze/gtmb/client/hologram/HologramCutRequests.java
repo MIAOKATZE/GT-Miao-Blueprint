@@ -59,6 +59,11 @@ final class HologramCutRequests {
         return false;
     }
 
+    boolean writing() {
+        for (Request request : requests.values()) if (request.writesWorld()) return true;
+        return false;
+    }
+
     Request current(boolean includeDirectory) {
         Request directory = null;
         for (Request request : requests.values()) {

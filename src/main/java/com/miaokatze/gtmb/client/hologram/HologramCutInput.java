@@ -40,6 +40,13 @@ final class HologramCutInput {
     }
 
     static Intent right(Stage stage, boolean queued, boolean shift, boolean alt, boolean blueprintBusy) {
+        return right(stage, queued, shift, alt, blueprintBusy, false);
+    }
+
+    /** A failed directory or pending write cannot prevent choosing the ordinary blueprint mode. */
+    static Intent right(Stage stage, boolean queued, boolean shift, boolean alt, boolean blueprintBusy,
+        boolean cutUnavailable) {
+        if (cutUnavailable && shift && !alt && !blueprintBusy) return Intent.SWITCHER;
         if (stage == Stage.SELECTING) return Intent.MARK;
         if (stage == Stage.MOVING) return Intent.LOCK;
         if (stage == Stage.LOCKED) return Intent.CONFIRM;
@@ -50,6 +57,17 @@ final class HologramCutInput {
             return shift ? Intent.PREVIEW : Intent.STORAGE;
         }
         return shift ? Intent.SWITCHER : Intent.NONE;
+    }
+
+    static boolean interceptsUse(Stage stage, boolean queued, boolean shift, boolean blueprintBusy) {
+        return stage != Stage.IDLE || !blueprintBusy && (queued || shift);
+    }
+
+    static boolean requiresCutReady(Intent intent) {
+        return intent == Intent.SELECT || intent == Intent.PREVIEW
+            || intent == Intent.UNDO
+            || intent == Intent.MARK
+            || intent == Intent.CONFIRM;
     }
 
     static final class Switcher {

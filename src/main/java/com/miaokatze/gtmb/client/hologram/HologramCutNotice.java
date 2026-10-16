@@ -16,6 +16,11 @@ final class HologramCutNotice {
         directoryError = true;
     }
 
+    void operationResult(String value, String code) {
+        if ("recovery_pending".equals(code)) directoryFailed(value);
+        else show(value);
+    }
+
     void directoryRecovered() {
         if (directoryError) show("");
     }

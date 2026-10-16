@@ -13,6 +13,7 @@ public final class HologramCutInputRegression {
     private HologramCutInputRegression() {}
 
     public static void run() {
+        recoveryIsolation();
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         check(HologramCutInput.Intent.SWITCHER, idle, false, true, false, false);
         check(HologramCutInput.Intent.NONE, idle, false, false, true, false);
@@ -129,6 +130,84 @@ public final class HologramCutInputRegression {
             "complete owner-private payload",
             raw.getString("secretInventory"),
             "raw renderer input is detached from authenticated payload");
+    }
+
+    private static void recoveryIsolation() {
+        HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
+        HologramCutRequests requests = new HologramCutRequests();
+        requests.observeHeld(true);
+        requests.begin("directory", "list", "", 0);
+        SimpleAssert.that(!requests.writing(), "initial directory sync is not a cut write");
+        checkRecoveryRouting(false, "initial directory has not loaded");
+        requests.expire(HologramCutRequests.READ_TIMEOUT_NS);
+        checkRecoveryRouting(false, "directory sync timed out");
+        for (int tick = 0; tick < 100; tick++)
+            SimpleAssert.that(!requests.observeHeld(true), "a failed sync does not poll while the tool stays held");
+        SimpleAssert.that(!requests.active("list"), "opening a local switcher cannot restart a directory request");
+
+        // The failed ACK removes the network request, but its directory failure must still gate cut actions.
+        requests.begin("failed", "paste", "cached-entry", HologramCutRequests.READ_TIMEOUT_NS);
+        SimpleAssert.that(requests.writing(), "in-flight paste retains the world-write safety gate");
+        requests.acknowledge("failed");
+        SimpleAssert.that(!requests.writing(), "a failure ACK need not leave an unresolved request id");
+        checkRecoveryRouting(true, "failed write ACK with cached entries and no unresolved id");
+
+        for (String operation : new String[] { "cut", "paste", "undo" }) {
+            requests.clear();
+            requests.begin("pending", operation, "cached-entry", 0);
+            checkRecoveryRouting(true, "in-flight " + operation);
+            requests.expire(HologramCutRequests.WRITE_TIMEOUT_NS);
+            requests.begin("verify", "list", requests.unresolvedWrite(), HologramCutRequests.WRITE_TIMEOUT_NS);
+            for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
+                SimpleAssert.eq(
+                    HologramCutInput.Intent.SWITCHER,
+                    HologramCutInput.right(stage, true, true, false, false, requests.writing()),
+                    "an unresolved " + operation + " allows local mode selection even from " + stage);
+            }
+            HologramCutInput.Switcher mode = new HologramCutInput.Switcher();
+            SimpleAssert.that(mode.release(false) && !mode.cut(), "Shift release chooses ordinary blueprint");
+            SimpleAssert.eq("pending", requests.unresolvedWrite(), "choosing blueprint keeps the original write id");
+            SimpleAssert.that(requests.writing() && requests.busy(), "choosing blueprint cannot unlock cut writes");
+            requests.acknowledge("verify");
+            SimpleAssert.that(requests.writing(), "a directory ACK alone does not resolve a world write");
+            requests.reconcile("pending");
+            SimpleAssert.eq(
+                HologramCutInput.Intent.PREVIEW,
+                HologramCutInput.right(idle, true, true, false, false, requests.writing()),
+                "confirmed recovery restores the usual queued Shift-right placement gesture");
+            SimpleAssert.eq(
+                HologramCutInput.Intent.SELECT,
+                HologramCutInput.right(idle, true, true, true, false, requests.writing()),
+                "confirmed recovery preserves Shift-Alt batch cutting");
+        }
+        for (HologramCutInput.Intent intent : new HologramCutInput.Intent[] { HologramCutInput.Intent.SELECT,
+            HologramCutInput.Intent.PREVIEW, HologramCutInput.Intent.UNDO, HologramCutInput.Intent.MARK,
+            HologramCutInput.Intent.CONFIRM })
+            SimpleAssert.that(HologramCutInput.requiresCutReady(intent), "cut readiness is required for " + intent);
+        SimpleAssert.that(
+            !HologramCutInput.requiresCutReady(HologramCutInput.Intent.SWITCHER),
+            "the local switcher never requires a successful cut-directory sync");
+    }
+
+    private static void checkRecoveryRouting(boolean queued, String situation) {
+        HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
+        SimpleAssert.eq(
+            HologramCutInput.Intent.SWITCHER,
+            HologramCutInput.right(idle, queued, true, false, false, true),
+            situation + ": Shift-right opens the local mode selector immediately");
+        SimpleAssert.eq(
+            queued,
+            HologramCutInput.interceptsUse(idle, queued, false, false),
+            situation + ": ordinary blueprint use has no dependency on a missing cut directory or write ACK");
+        for (boolean shift : new boolean[] { false, true }) {
+            SimpleAssert.that(
+                !HologramCutInput.interceptsUse(idle, queued, shift, true),
+                situation + ": active blueprint input keeps priority, including Shift-right finish");
+            SimpleAssert.eq(
+                HologramCutInput.Intent.NONE,
+                HologramCutInput.right(idle, queued, shift, false, true, true),
+                situation + ": cut recovery cannot redirect an active blueprint gesture");
+        }
     }
 
     private static void check(HologramCutInput.Intent expected, HologramCutInput.Stage stage, boolean queued,

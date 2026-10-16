@@ -33,9 +33,7 @@ final class HologramCutClient {
     private final HologramWorldFlow.KeyEdge rotateKey = new HologramWorldFlow.KeyEdge();
     private Object world;
     private int dimension;
-    private boolean loaded, rightDown;
-    private boolean deferredShift, deferredAlt, deferredUse;
-    private NBTTagCompound deferredInput;
+    private boolean loaded, directoryUnavailable, rightDown;
     private String selected = "", previewId = "";
     private final HologramCutNotice status = new HologramCutNotice();
     private HologramState preview;
@@ -96,9 +94,7 @@ final class HologramCutClient {
     }
 
     boolean interceptsUse() {
-        return active() || deferredUse
-            || !blueprintBusy() && (!entries.isEmpty() || !requests.unresolvedWrite()
-                .isEmpty() || shift());
+        return HologramCutInput.interceptsUse(stage, !entries.isEmpty(), shift(), blueprintBusy());
     }
 
     void tick() {
@@ -112,9 +108,9 @@ final class HologramCutClient {
             requests.clear();
             operationProgress.clear();
             loaded = false;
+            directoryUnavailable = false;
             status.show("");
             selected = "";
-            deferredUse = false;
             rightDown = false;
             cancel();
             closeScreen();
@@ -125,16 +121,15 @@ final class HologramCutClient {
                 status.show(text("checkingResult"));
                 request("list", expired.id);
             } else if ("preview".equals(expired.action)) status.show(text("requestTimeout"));
-            else if (deferredUse || !expired.target.isEmpty()) {
+            else if ("list".equals(expired.action)) {
+                directoryUnavailable = true;
                 status.directoryFailed(text("syncTimeout"));
-                deferredUse = false;
             }
         }
         if (!held()) {
             if (active()) cancel();
             closeScreen();
             requests.observeHeld(false);
-            deferredUse = false;
             return;
         }
         if (requests.observeHeld(true)) refreshDirectory();
@@ -177,36 +172,17 @@ final class HologramCutClient {
         }
         if (rightDown) return true;
         rightDown = true;
-        if (!requests.unresolvedWrite()
-            .isEmpty()) {
-            refreshDirectory();
-            mc().displayGuiScreen(new HologramCutStorageScreen());
-            return true;
-        }
-        if (!loaded && !active() && !blueprintBusy()) {
-            deferredUse = true;
-            deferredShift = shift();
-            deferredAlt = alt();
-            net.minecraft.util.MovingObjectPosition hit = mc().objectMouseOver;
-            deferredInput = new NBTTagCompound();
-            boolean block = hit != null
-                && hit.typeOfHit == net.minecraft.util.MovingObjectPosition.MovingObjectType.BLOCK;
-            deferredInput.setBoolean("air", !block);
-            if (block) {
-                deferredInput.setInteger("x", hit.blockX);
-                deferredInput.setInteger("y", hit.blockY);
-                deferredInput.setInteger("z", hit.blockZ);
-                deferredInput.setInteger("side", hit.sideHit);
-            }
-            refreshDirectory();
-            return true;
-        }
         right(shift(), alt());
         return true;
     }
 
     private void right(boolean shift, boolean alt) {
-        HologramCutInput.Intent intent = HologramCutInput.right(stage, !entries.isEmpty(), shift, alt, blueprintBusy());
+        HologramCutInput.Intent intent = HologramCutInput
+            .right(stage, !entries.isEmpty(), shift, alt, blueprintBusy(), cutUnavailable());
+        if (HologramCutInput.requiresCutReady(intent) && busy()) {
+            retryCutStorage();
+            return;
+        }
         switch (intent) {
             case SWITCHER:
                 mc().displayGuiScreen(new HologramCutModeScreen());
@@ -242,7 +218,10 @@ final class HologramCutClient {
     }
 
     void beginSelection() {
-        if (busy()) return;
+        if (busy()) {
+            retryCutStorage();
+            return;
+        }
         HologramCutRawPreview.release();
         rawPreview = null;
         pose = new Transform(0, 0, 0, 0);
@@ -255,6 +234,10 @@ final class HologramCutClient {
     }
 
     private void mark(boolean firstCorner) {
+        if (busy()) {
+            retryCutStorage();
+            return;
+        }
         int[] point = HologramClient.cutAnchor(false);
         if (firstCorner) first = point;
         else second = point;
@@ -265,6 +248,10 @@ final class HologramCutClient {
                 text("confirmCut"),
                 text("confirmCutDetail") + " " + coordinates(a) + " → " + coordinates(b),
                 () -> {
+                    if (busy()) {
+                        retryCutStorage();
+                        return;
+                    }
                     NBTTagCompound n = action("cut", "");
                     for (int i = 0; i < 3; i++) {
                         n.setInteger(new String[] { "x1", "y1", "z1" }[i], a[i]);
@@ -306,18 +293,35 @@ final class HologramCutClient {
         if (rejected == null) return;
         if (operationProgress.matches(rejected.id)) operationProgress.clear();
         boolean visible = !"list".equals(rejected.action) || !rejected.target.isEmpty()
-            || deferredUse
             || mc().currentScreen instanceof HologramCutStorageScreen;
-        deferredUse = false;
-        if (visible) status.show(HologramProgressView.phase("busy"));
+        if ("list".equals(rejected.action)) {
+            directoryUnavailable = true;
+            status.directoryFailed(HologramProgressView.phase("busy"));
+        } else if (visible) status.show(HologramProgressView.phase("busy"));
     }
 
     boolean busy() {
-        return requests.busy();
+        return cutUnavailable() || requests.busy();
     }
 
-    private void refreshDirectory() {
+    private boolean cutUnavailable() {
+        return !loaded || directoryUnavailable || requests.writing();
+    }
+
+    boolean syncingDirectory() {
+        return requests.active("list");
+    }
+
+    void refreshDirectory() {
         if (!requests.active("list")) request("list", requests.unresolvedWrite());
+    }
+
+    private void retryCutStorage() {
+        status.directoryFailed(text("syncRequired"));
+        // An in-flight write keeps its original timeout and identity; never resend it.
+        if (!requests.busy() || !requests.unresolvedWrite()
+            .isEmpty()) refreshDirectory();
+        mc().displayGuiScreen(new HologramCutStorageScreen());
     }
 
     void select(String id) {
@@ -359,12 +363,10 @@ final class HologramCutClient {
     void undo() {
         if (selected.isEmpty() || busy()) return;
         final String id = selected;
-        mc().displayGuiScreen(
-            new HologramCutConfirmScreen(
-                text("confirmUndo"),
-                text("confirmUndoDetail"),
-                () -> request("undo", id),
-                () -> {}));
+        mc().displayGuiScreen(new HologramCutConfirmScreen(text("confirmUndo"), text("confirmUndoDetail"), () -> {
+            if (busy()) retryCutStorage();
+            else request("undo", id);
+        }, () -> {}));
     }
 
     private void confirmPaste() {
@@ -376,6 +378,10 @@ final class HologramCutClient {
                 text("confirmPaste"),
                 text("confirmPasteDetail") + " " + coordinates(at) + " | " + poseSummary(),
                 () -> {
+                    if (busy()) {
+                        retryCutStorage();
+                        return;
+                    }
                     NBTTagCompound n = action("paste", id);
                     n.setInteger("originX", at[0]);
                     n.setInteger("originY", at[1]);
@@ -402,7 +408,6 @@ final class HologramCutClient {
         first = second = locked = null;
         preview = null;
         previewId = "";
-        deferredUse = false;
     }
 
     int[] anchor() {
@@ -456,29 +461,38 @@ final class HologramCutClient {
         HologramCutRequests.Request reply = requests.acknowledge(n.getString("requestId"));
         if (reply == null) return; // old world/connection ACK cannot revive a preview
         String op = reply.action;
+        boolean recoveryPending = "recovery_pending".equals(n.getString("code"));
+        boolean acceptedDirectory = n.getBoolean("success") && n.hasKey("entries", 9) && !recoveryPending;
+        if (recoveryPending || !n.getBoolean("success") && reply.writesWorld()) directoryUnavailable = true;
         if (n.getBoolean("success")) {
             operationProgress.finish(reply.id, System.nanoTime());
         } else if (operationProgress.matches(reply.id)) operationProgress.clear();
-        if (n.hasKey("entries", 9)) {
+        if (acceptedDirectory) {
             loaded = true;
+            directoryUnavailable = false;
             entries.clear();
             NBTTagList list = n.getTagList("entries", 10);
             for (int i = 0; i < list.tagCount(); i++) entries.add(
                 (NBTTagCompound) list.getCompoundTagAt(i)
                     .copy());
             entries.sort((a, b) -> Long.compare(a.getLong("sequence"), b.getLong("sequence")));
-            if (n.getBoolean("success")) status.directoryRecovered();
+            status.directoryRecovered();
+        }
+        if ("list".equals(op) && !acceptedDirectory) {
+            directoryUnavailable = true;
+            status.directoryFailed(
+                n.getString("message")
+                    .isEmpty() ? text("syncTimeout") : n.getString("message"));
         }
         boolean found = false;
         for (NBTTagCompound entry : entries) if (selected.equals(entry.getString("id"))) found = true;
         if (!found) selected = entries.isEmpty() ? ""
             : entries.get(0)
                 .getString("id");
-        if (!"list".equals(op)) status.show(n.getString("message"));
+        if (!"list".equals(op)) status.operationResult(n.getString("message"), n.getString("code"));
         if ("list".equals(op) && !reply.target.isEmpty()
             && reply.target.equals(n.getString("reconciledRequestId"))
-            && n.getBoolean("success")
-            && n.hasKey("entries", 9)) {
+            && acceptedDirectory) {
             HologramCutRequests.Request resolved = requests.reconcile(reply.target);
             if (resolved != null) {
                 boolean completed = n.getBoolean("requestCompleted");
@@ -502,13 +516,6 @@ final class HologramCutClient {
         }
         if (!"list".equals(op) && !"preview".equals(op) && mc().thePlayer != null)
             mc().thePlayer.addChatMessage(new ChatComponentText(status()));
-        if (deferredUse && "list".equals(op)) {
-            deferredUse = false;
-            if (n.getBoolean("success") && n.hasKey("entries", 9) && mc().currentScreen == null && held()) {
-                if (!entries.isEmpty() || deferredShift) right(deferredShift, deferredAlt);
-                else HologramClient.resumeProjectorUse(deferredAlt, deferredInput);
-            } else if (!n.getBoolean("success")) status.directoryFailed(n.getString("message"));
-        }
     }
 
     static NBTTagCompound detachedPreview(NBTTagCompound source) {
@@ -521,7 +528,7 @@ final class HologramCutClient {
             text(
                 stage == HologramCutInput.Stage.SELECTING ? "selection"
                     : stage == HologramCutInput.Stage.MOVING ? "moving" : "locked"));
-        else lines.add(text(entries.isEmpty() ? "idle" : "queued"));
+        else lines.add(text(entries.isEmpty() ? "idle" : busy() ? "recoveryGuide" : "queued"));
         if (!entries.isEmpty()) {
             int index = 0;
             for (int i = 0; i < entries.size(); i++) if (selected.equals(

@@ -71,6 +71,15 @@ public final class HologramCutRequestRegression {
         SimpleAssert.that(requests.acknowledge("preview") == null, "old-world ACK cannot restore cleared state");
 
         HologramCutNotice notice = new HologramCutNotice();
+        for (String message : new String[] { "Original cut retained; save recovery pending", "剪切操作待恢复" }) {
+            notice.operationResult(message, "recovery_pending");
+            SimpleAssert.eq(message, notice.message(), "structured pending-recovery ACK displays its actual message");
+            notice.directoryRecovered();
+            SimpleAssert.eq("", notice.message(), "authoritative directory recovery clears a pending-recovery notice");
+        }
+        notice.operationResult("剪切操作待恢复", "ordinary_failure");
+        notice.directoryRecovered();
+        SimpleAssert.eq("剪切操作待恢复", notice.message(), "notice recovery uses a protocol code, not localized text");
         notice.directoryFailed("directory timed out");
         notice.directoryRecovered();
         SimpleAssert.eq("", notice.message(), "a successful directory retry clears its stale timeout notice");

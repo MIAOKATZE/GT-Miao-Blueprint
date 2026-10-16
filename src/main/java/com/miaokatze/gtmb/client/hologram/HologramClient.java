@@ -529,19 +529,6 @@ public final class HologramClient {
         worldAction("beginAreaSelection");
     }
 
-    static void resumeProjectorUse(boolean alt, NBTTagCompound input) {
-        if (alt) {
-            int[] anchor = movingAnchor(state);
-            input.setString("action", "quickPlaceLastBlueprint");
-            input.setInteger("x", anchor[0]);
-            input.setInteger("y", anchor[1]);
-            input.setInteger("z", anchor[2]);
-            if (input.getBoolean("air")) input.setInteger("side", ForgeDirection.UP.ordinal());
-            if (HologramLibraryClient.INSTANCE.quickPlaceLast(input)) return;
-        } else input.setString("action", input.getBoolean("air") ? "useAir" : "useBlock");
-        HologramNetwork.sendAction(input);
-    }
-
     public static void openSettings() {
         NBTTagCompound request = new NBTTagCompound();
         request.setString("action", "openSettings");
