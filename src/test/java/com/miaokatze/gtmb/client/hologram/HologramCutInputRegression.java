@@ -15,11 +15,12 @@ public final class HologramCutInputRegression {
     public static void run() {
         recoveryIsolation();
         selectedModeRouting();
+        continuousAndNudge();
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         check(HologramCutInput.Intent.SWITCHER, idle, false, true, false, false);
         check(HologramCutInput.Intent.NONE, idle, false, false, true, false);
         check(HologramCutInput.Intent.STORAGE, idle, true, false, false, false);
-        check(HologramCutInput.Intent.PREVIEW, idle, true, true, false, false);
+        check(HologramCutInput.Intent.STORAGE, idle, true, true, false, false);
         check(HologramCutInput.Intent.UNDO, idle, true, false, true, false);
         check(HologramCutInput.Intent.SELECT, idle, true, true, true, false);
         NBTTagCompound blueprint = new NBTTagCompound();
@@ -78,7 +79,7 @@ public final class HologramCutInputRegression {
             check(HologramCutInput.Intent.NONE, idle, true, shift, alt, true);
             check(
                 shift && alt ? HologramCutInput.Intent.SELECT
-                    : alt ? HologramCutInput.Intent.UNDO : HologramCutInput.Intent.MARK,
+                    : shift ? HologramCutInput.Intent.STORAGE : HologramCutInput.Intent.MARK,
                 HologramCutInput.Stage.SELECTING,
                 true,
                 shift,
@@ -86,7 +87,8 @@ public final class HologramCutInputRegression {
                 false);
             check(
                 shift && alt ? HologramCutInput.Intent.SELECT
-                    : alt ? HologramCutInput.Intent.UNDO : HologramCutInput.Intent.LOCK,
+                    : alt ? HologramCutInput.Intent.UNDO
+                        : shift ? HologramCutInput.Intent.STORAGE : HologramCutInput.Intent.LOCK,
                 HologramCutInput.Stage.MOVING,
                 true,
                 shift,
@@ -94,7 +96,8 @@ public final class HologramCutInputRegression {
                 false);
             check(
                 shift && alt ? HologramCutInput.Intent.SELECT
-                    : alt ? HologramCutInput.Intent.UNDO : HologramCutInput.Intent.CONFIRM,
+                    : alt ? HologramCutInput.Intent.UNDO
+                        : shift ? HologramCutInput.Intent.STORAGE : HologramCutInput.Intent.CONFIRM,
                 HologramCutInput.Stage.LOCKED,
                 true,
                 shift,
@@ -194,13 +197,13 @@ public final class HologramCutInputRegression {
             SimpleAssert.that(requests.writing(), "a directory ACK alone does not resolve a world write");
             requests.reconcile("pending");
             SimpleAssert.eq(
-                HologramCutInput.Intent.PREVIEW,
+                HologramCutInput.Intent.STORAGE,
                 HologramCutInput.right(idle, true, false, false, true, false),
-                "confirmed recovery restores the usual queued Shift-right placement gesture");
+                "confirmed recovery restores Shift-right storage browsing");
             SimpleAssert.eq(
                 HologramCutInput.Intent.SELECT,
                 HologramCutInput.right(idle, true, true, false, true, false),
-                "confirmed recovery preserves Shift-Alt batch cutting");
+                "confirmed recovery preserves optional Shift-Alt selection reset");
         }
         for (HologramCutInput.Intent intent : new HologramCutInput.Intent[] { HologramCutInput.Intent.SELECT,
             HologramCutInput.Intent.PREVIEW, HologramCutInput.Intent.UNDO, HologramCutInput.Intent.MARK,
@@ -214,9 +217,9 @@ public final class HologramCutInputRegression {
     private static void selectedModeRouting() {
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         SimpleAssert.eq(
-            HologramCutInput.Intent.PREVIEW,
+            HologramCutInput.Intent.STORAGE,
             HologramCutInput.right(idle, true, false, false, true, false),
-            "remembered CUT mode routes Shift-right directly to preview, including the empty-cache notice");
+            "remembered CUT mode routes Shift-right to storage, including an empty cache");
         SimpleAssert.eq(
             HologramCutInput.Intent.STORAGE,
             HologramCutInput.right(idle, false, false, false, true, false),
@@ -252,9 +255,9 @@ public final class HologramCutInputRegression {
                 HologramCutInput.right(stage, true, true, false, true, false),
                 "Shift-Alt-right starts a fresh local selection before mark/lock/confirm from " + stage);
             SimpleAssert.eq(
-                HologramCutInput.Intent.UNDO,
+                stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MARK : HologramCutInput.Intent.UNDO,
                 HologramCutInput.right(stage, false, true, false, true, false),
-                "explicit Alt-right undo takes priority over ordinary stage gestures from " + stage);
+                "Alt-right marks corner 2 during selection and retains undo outside selection: " + stage);
             SimpleAssert.eq(
                 stage != idle,
                 HologramCutInput.cancelsActivity(stage, false, false),
@@ -268,6 +271,92 @@ public final class HologramCutInputRegression {
         SimpleAssert.that(
             !HologramCutInput.cancelsActivity(idle, false, false),
             "after cancelling once another Escape can open the normal pause menu");
+    }
+
+    private static void continuousAndNudge() {
+        HologramCutContinuous flow = new HologramCutContinuous();
+        HologramCutRequests requests = new HologramCutRequests();
+        flow.enter();
+        for (int i = 0; i < 3; i++) {
+            flow.submitted("continuous-" + i);
+            SimpleAssert.that(flow.completed("continuous-" + i, true), "each saved cut continues empty selection");
+            SimpleAssert.that(!flow.completed("continuous-" + i, true), "duplicate ACK cannot restart selection");
+        }
+        flow.submitted("late");
+        requests.begin("late", "cut", "", 0);
+        flow.exit();
+        SimpleAssert.that(requests.writing(), "Escape only records exit intent; server transaction remains owned");
+        SimpleAssert.that(!flow.completed(requests.acknowledge("late").id, true), "late success cannot undo Escape");
+        SimpleAssert.that(!requests.writing(), "authoritative ACK still releases the transaction after Escape");
+        flow.enter();
+        flow.submitted("old-generation");
+        flow.exit();
+        flow.enter();
+        SimpleAssert.that(!flow.completed("old-generation", true), "a new mode session cannot inherit an old cut");
+        flow.submitted("failed");
+        SimpleAssert.that(!flow.completed("failed", false), "failed write never reports another completed cut");
+        flow.submitted("reconciled");
+        requests.begin("reconciled", "cut", "", 0);
+        requests.expire(HologramCutRequests.WRITE_TIMEOUT_NS);
+        SimpleAssert.that(
+            flow.completed(requests.reconcile("reconciled").id, true),
+            "authoritative reconciliation resumes the same continuous selection");
+
+        for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
+            SimpleAssert.eq(
+                HologramCutInput.Intent.STORAGE,
+                HologramCutInput.right(stage, true, false, false, true, false),
+                "Shift-right opens even an empty list from " + stage);
+        }
+        for (boolean cutMode : new boolean[] { false, true }) {
+            SimpleAssert.eq(
+                HologramCutInput.Intent.MARK,
+                HologramCutInput.right(HologramCutInput.Stage.SELECTING, false, true, false, cutMode, false),
+                "holding Alt to adjust selection distance never replaces the second corner with undo");
+            SimpleAssert.eq(
+                HologramCutInput.Intent.SELECT,
+                HologramCutInput.right(HologramCutInput.Stage.SELECTING, true, true, false, cutMode, false),
+                "explicit Shift-Alt selection reset remains available");
+        }
+        for (HologramCutInput.Intent intent : HologramCutInput.Intent.values()) {
+            SimpleAssert.eq(
+                intent == HologramCutInput.Intent.NONE || intent == HologramCutInput.Intent.STORAGE
+                    || intent == HologramCutInput.Intent.SWITCHER,
+                HologramCutInput.allowsWorldAction(intent, true),
+                "background task owns world operations while allowing local UI: " + intent);
+        }
+        for (int yaw : new int[] { 0, 90, 180, 270 }) for (int index = 0; index < 6; index++) {
+            HologramCutNudge nudge = new HologramCutNudge();
+            int[] anchor = { 8, 80, 16 };
+            boolean[] keys = new boolean[6];
+            nudge.sample(anchor, true, 1, keys, false, yaw, 0, 256);
+            keys[index] = true;
+            boolean alt = index >= 4;
+            int[] expected = HologramWorldFlow.nudgeOffset(yaw, HologramCutInput.nudgeDirection(index, alt));
+            int[] moved = nudge.sample(anchor, true, 1, keys, alt, yaw, 1, 256);
+            for (int axis = 0; axis < 3; axis++)
+                SimpleAssert.eq(anchor[axis] + expected[axis], moved[axis], "local nudge shares blueprint direction");
+            SimpleAssert.eq(80, anchor[1], "nudge detaches the anchor rather than mutating confirmation snapshots");
+            SimpleAssert.that(
+                nudge.sample(moved, true, 1, keys, alt, yaw, 8, 256) == moved,
+                "held nudge waits the normal repeat delay");
+            int[] repeated = nudge.sample(moved, true, 1, keys, alt, yaw, 9, 256);
+            SimpleAssert.that(repeated != moved, "held nudge repeats after eight ticks");
+            SimpleAssert.that(
+                nudge.sample(repeated, false, 1, keys, alt, yaw, 10, 256) == repeated,
+                "background or open screen suppresses local movement");
+            SimpleAssert.that(
+                nudge.sample(repeated, true, 1, keys, alt, yaw, 30, 256) == repeated,
+                "returning with a held key cannot leak a nudge");
+        }
+        SimpleAssert.eq(
+            HologramWorldFlow.Nudge.UP,
+            HologramCutInput.nudgeDirection(0, true),
+            "Alt-Up is the same height step as Alt-W");
+        SimpleAssert.eq(
+            HologramWorldFlow.Nudge.DOWN,
+            HologramCutInput.nudgeDirection(1, true),
+            "Alt-Down is the same height step as Alt-S");
     }
 
     private static void checkRecoveryRouting(boolean queued, String situation) {

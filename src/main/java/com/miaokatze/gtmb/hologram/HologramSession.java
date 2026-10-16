@@ -113,6 +113,8 @@ final class HologramSession {
     String libraryQuickToken = "";
     boolean libraryQuickPending, libraryUiActive;
     long libraryQuickBootstrapTick = Long.MIN_VALUE;
+    long blueprintClientTaskToken;
+    long libraryQuickClientTaskToken;
     boolean libraryInitialSnapshot;
     final java.util.Set<String> virtualEdited = new java.util.HashSet<>();
     final Map<String, List<ItemStack>> virtualGroups = new HashMap<>();
@@ -155,6 +157,7 @@ final class HologramSession {
     int deferAttempts, deferredIndex = -1;
     boolean open;
     long planRevision, uiSequence, batchSeq;
+    long configurationAcceptedSequence = -1;
     final HologramAeProtocol.State ae = new HologramAeProtocol.State();
     int ackIndex = -1, planMissing;
     String phase = "IDLE";

@@ -21,6 +21,15 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put(
+            "coordinate_free_hatch_profiles_match_complete_role_combinations",
+            HologramHatchProfilesRegression::run);
+        cases.put(
+            "configuration_presets_persist_detached_combinations_and_exact_successful_receipts",
+            com.miaokatze.gtmb.client.hologram.HologramConfigurationPresetsRegression::run);
+        cases.put(
+            "background_tasks_survive_ui_close_and_fence_late_results",
+            com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression::run);
         cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
         cases.put(
             "client_progress_is_factual_session_bound_and_render_only",

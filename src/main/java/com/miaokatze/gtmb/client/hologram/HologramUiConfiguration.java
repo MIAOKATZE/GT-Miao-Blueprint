@@ -55,6 +55,13 @@ final class HologramUiConfiguration {
 
     private boolean presetDowngrade;
 
+    private HologramMuiTextField hatchPresetNameField;
+    private static HologramConfigurationPresets presetStore;
+    private static final HologramConfigurationPresets.Pending presetPending = new HologramConfigurationPresets.Pending();
+    private boolean customPresets;
+    private int presetOffset;
+    private String selectedHatchPreset = "";
+
     private int drawerOffset;
 
     private boolean resetReview;
@@ -273,9 +280,7 @@ final class HologramUiConfiguration {
 
     void drawFooter(int mx, int my) {
         int job = ui.session.state().data.getInteger("job");
-        if (ui.memory.initialStructureSetupRequired()) {
-            ui.canvas.text("先完成仓室预设或手动配置", 452, 319, 138, 0x80efaa);
-        } else ui.canvas.button(
+        ui.canvas.button(
             50,
             452,
             315,
@@ -651,49 +656,105 @@ final class HologramUiConfiguration {
     }
 
     void drawPreset(int mx, int my) {
-        drawRect(157, 59, 405, 257, 0xff172f36);
-        ui.canvas.text("声明仓室一键预设", 165, 65, 205, 0xf5e4b9);
+        drawRect(157, 59, 405, 291, 0xff172f36);
+        ui.canvas.text(customPresets ? "仓室预设 · 保留手选及实体仓室" : "仓室预设 · 可选快捷搭配", 165, 65, 205, 0xf5e4b9);
         ui.canvas.button(96, 373, 62, 23, 17, "×", true, mx, my);
-        ui.canvas.text("按结构声明配额配置空位，不改已有仓室", 165, 90, 231, 0xb9d5d4);
-        ui.canvas.button(103, 165, 113, 28, 21, "−", this.presetTier > 0, mx, my);
-        ui.canvas.text("仓室等级：" + ui.config.tierName(this.presetTier), 201, 120, 153, 0xe4d3a9);
-        ui.canvas.button(
-            104,
-            368,
-            113,
-            28,
-            21,
-            "+",
-            this.presetTier < ui.session.state().data.getInteger("hatchTierMax"),
-            mx,
-            my);
-        ui.canvas.button(105, 165, 143, 231, 21, this.presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
-        String reason = HologramUiText.reason(ui.session.state().data.getString("presetReason"));
-        List<String> lines = ui.host.font()
-            .listFormattedStringToWidth(reason.isEmpty() ? "生成目标后检查差分，再点击底部施工按钮。" : reason, 230);
-        for (int i = 0; i < Math.min(4, lines.size()); i++)
-            ui.canvas.text(lines.get(i), 165, 174 + i * 12, 231, 0xe4b85a);
+        ui.canvas.button(1710, 165, 85, 95, 18, customPresets ? "基础预设" : "✓ 基础预设", true, mx, my);
+        ui.canvas.button(1711, 264, 85, 94, 18, customPresets ? "✓ 自定义" : "自定义搭配", true, mx, my);
+        ui.canvas.button(1717, 362, 85, 16, 18, "‹", presetOffset > 0, mx, my);
+        int count = customPresets ? presetStore.names()
+            .size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+        presetOffset = Math.max(0, Math.min(presetOffset, Math.max(0, count - 4)));
+        ui.canvas.button(1718, 380, 85, 16, 18, "›", presetOffset + 4 < count, mx, my);
+        List<String> names = presetStore.names();
+        for (int row = 0; row < 4 && presetOffset + row < count; row++) {
+            int index = presetOffset + row;
+            String name = customPresets ? names.get(index) : tierName(index) + " · 按结构声明配额";
+            boolean selected = customPresets ? names.get(index)
+                .equals(selectedHatchPreset) : index == presetTier;
+            ui.canvas.button(1700 + row, 165, 108 + row * 18, 231, 17, (selected ? "✓ " : "") + name, true, mx, my);
+        }
+        if (customPresets) {
+            if (names.isEmpty()) ui.canvas.text("尚无搭配；可命名保存当前仓室目标", 165, 124, 231, 0x94afb4);
+            ui.canvas.text("名称", 165, 191, 34, 0x94afb4);
+            hatchPresetNameField.drawTextBox();
+            ui.canvas.button(1712, 165, 208, 75, 19, "命名保存", ui.session.editable(), mx, my);
+            ui.canvas.button(
+                1713,
+                244,
+                208,
+                74,
+                19,
+                "覆盖所选",
+                ui.session.editable() && presetStore.get(selectedHatchPreset) != null,
+                mx,
+                my);
+            ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", presetStore.get(selectedHatchPreset) != null, mx, my);
+        } else {
+            ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
+            ui.canvas.text("保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
+        }
+        ui.canvas
+            .button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && presetStore.last(true) != null, mx, my);
         ui.canvas.button(
             106,
             165,
-            232,
+            260,
             142,
             20,
-            "生成预设目标",
+            customPresets ? "应用所选搭配" : "生成预设目标",
             ui.session.editable() && ui.session.state().data.getBoolean("supported")
-                && ui.session.state().data.getBoolean("presetAvailable"),
+                && (customPresets ? presetStore.get(selectedHatchPreset) != null
+                    : ui.session.state().data.getBoolean("presetAvailable")),
             mx,
             my);
         ui.canvas.button(
             107,
             312,
-            232,
+            260,
             84,
             20,
             "撤销预设",
             ui.session.editable() && ui.session.state().data.getBoolean("presetActive"),
             mx,
             my);
+    }
+
+    private void applyHatchProfile(NBTTagCompound profile, boolean basic) {
+        if (!ui.session.editable() || profile == null) return;
+        NBTTagCompound config = configuration();
+        config.setInteger("hatchTier", profile.getInteger("tier"));
+        config.setBoolean("hatchDowngrade", profile.getBoolean("downgrade"));
+        config.setBoolean("applyHatchPreset", true);
+        if (!basic) config.setTag("hatchProfile", profile.copy());
+        presetDrawer = false;
+        ui.session.send("configure", config, true);
+    }
+
+    private void manageHatchPreset(int id) {
+        try {
+            if (id == 1714) {
+                presetStore.delete(selectedHatchPreset);
+                selectedHatchPreset = "";
+                hatchPresetNameField.setText("");
+                ui.session.notice("本机仓室搭配已删除");
+                return;
+            }
+            if (!ui.session.editable()) return;
+            String name = id == 1713 ? selectedHatchPreset
+                : hatchPresetNameField.getText()
+                    .trim();
+            presetStore.save(name, ui.session.state().data.getCompoundTag("hatchProfile"), id == 1713);
+            selectedHatchPreset = name;
+            customPresets = true;
+            presetOffset = Math.max(
+                0,
+                presetStore.names()
+                    .indexOf(name) - 3);
+            ui.session.notice("已保存当前服务端仓室搭配到本机：" + name);
+        } catch (java.io.IOException invalid) {
+            ui.session.notice(invalid.getMessage());
+        }
     }
 
     void drawSources(int mx, int my) {
@@ -727,11 +788,20 @@ final class HologramUiConfiguration {
         ui.canvas.text(
             new String[] { "主背包 → 容器 → ME", "容器 → 主背包 → ME", "ME → 主背包 → 容器" }[priority],
             166,
-            209,
+            203,
             230,
             0xb9d5d4);
-        ui.canvas.text("仅使用已开启的来源（包括饰品终端）", 166, 226, 230, 0x94afb4);
-        ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 241, 230, 0x94afb4);
+        ui.canvas.button(
+            1716,
+            166,
+            220,
+            230,
+            19,
+            "使用上次预设",
+            ui.session.editable() && presetStore.last(false) != null,
+            mx,
+            my);
+        ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 
     String facingName() {
@@ -1128,6 +1198,17 @@ final class HologramUiConfiguration {
     }
 
     boolean activateControl(int id) {
+        if (id >= 1700 && id < 1704) {
+            int index = presetOffset + id - 1700;
+            if (customPresets) {
+                List<String> names = presetStore.names();
+                if (index < names.size()) {
+                    selectedHatchPreset = names.get(index);
+                    hatchPresetNameField.setText(selectedHatchPreset);
+                }
+            } else if (index <= ui.session.state().data.getInteger("hatchTierMax")) presetTier = index;
+            return true;
+        }
         switch (id) {
             case 163:
             case 165:
@@ -1188,6 +1269,7 @@ final class HologramUiConfiguration {
                 this.presetTier = ui.session.state().data.getInteger("hatchTier");
                 this.presetDowngrade = ui.session.state().data.getBoolean("hatchDowngrade");
                 this.presetDrawer = true;
+                this.presetOffset = customPresets ? 0 : Math.max(0, this.presetTier - 2);
                 return true;
             case 95:
                 if (ui.session.selectedCell() == null) return true;
@@ -1251,13 +1333,43 @@ final class HologramUiConfiguration {
                 this.presetDowngrade = !this.presetDowngrade;
                 return true;
             case 106:
-                if (!ui.session.editable() || !ui.session.state().data.getBoolean("supported")
-                    || !ui.session.state().data.getBoolean("presetAvailable")) return true;
-                NBTTagCompound preset = new NBTTagCompound();
-                preset.setInteger("tier", this.presetTier);
-                preset.setBoolean("downgrade", this.presetDowngrade);
-                this.presetDrawer = false;
-                ui.session.send("hatchPreset", preset, true);
+                if (customPresets) applyHatchProfile(presetStore.get(selectedHatchPreset), false);
+                else {
+                    NBTTagCompound profile = new NBTTagCompound();
+                    profile.setInteger("tier", presetTier);
+                    profile.setBoolean("downgrade", presetDowngrade);
+                    applyHatchProfile(profile, true);
+                }
+                return true;
+            case 1710:
+            case 1711:
+                customPresets = id == 1711;
+                presetOffset = 0;
+                return true;
+            case 1712:
+            case 1713:
+            case 1714:
+                manageHatchPreset(id);
+                return true;
+            case 1715:
+                NBTTagCompound previous = presetStore.last(true);
+                if (previous != null) applyHatchProfile(previous, previous.getBoolean("basic"));
+                return true;
+            case 1716:
+                if (ui.session.editable()) {
+                    NBTTagCompound previousSources = presetStore.last(false);
+                    if (previousSources != null) {
+                        NBTTagCompound sources = configuration();
+                        for (String key : new String[] { "materialMain", "materialContainers", "materialMe" })
+                            sources.setBoolean(key, previousSources.getBoolean(key));
+                        sources.setInteger("materialPriority", previousSources.getInteger("materialPriority"));
+                        ui.session.send("configure", sources, true);
+                    }
+                }
+                return true;
+            case 1717:
+            case 1718:
+                presetOffset = Math.max(0, presetOffset + (id == 1717 ? -4 : 4));
                 return true;
             case 107:
                 if (!ui.session.editable() || !ui.session.state().data.getBoolean("presetActive")) return true;
@@ -1378,6 +1490,12 @@ final class HologramUiConfiguration {
     }
 
     boolean consumeHatchWheel(int wheel) {
+        if (presetDrawer) {
+            int count = customPresets ? presetStore.names()
+                .size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+            presetOffset = Math.max(0, Math.min(Math.max(0, count - 4), presetOffset + (wheel > 0 ? -1 : 1)));
+            return true;
+        }
         if (this.hatchDrawer) {
             this.hatchOffset = Math.max(
                 0,
@@ -1393,6 +1511,7 @@ final class HologramUiConfiguration {
     }
 
     void acknowledgeConfiguration(HologramState next) {
+        observePresetSnapshot(next);
         if (basicConfigurationSequence >= 0 && next.data.getLong("uiSequence") >= basicConfigurationSequence) {
             basicConfigurationSequence = -1;
             if (next.data.getLong("planRevision") != basicConfigurationRevision
@@ -1403,7 +1522,18 @@ final class HologramUiConfiguration {
         }
     }
 
+    /** Called for accepted snapshots even while the workspace is closed; never sends an action. */
+    static void observePresetSnapshot(HologramState next) {
+        if (presetStore == null) return;
+        try {
+            presetPending.acknowledge(next.session, next.data, presetStore);
+        } catch (java.io.IOException ignored) {
+            // The accepted shortcut remains available in memory when the local preference file is unwritable.
+        }
+    }
+
     void rejectCommand(long sequence) {
+        presetPending.reject(sequence);
         if (basicConfigurationSequence == sequence) basicConfigurationSequence = -1;
     }
 
@@ -1556,6 +1686,11 @@ final class HologramUiConfiguration {
     }
 
     void initializeFields() {
+        if (presetStore == null) presetStore = new HologramConfigurationPresets(
+            new java.io.File(ui.host.minecraft().mcDataDir, "config/gtmb-hologram-presets.nbt"));
+        hatchPresetNameField = new HologramMuiTextField(ui.host.parent(), 203, 186, 193, 17);
+        hatchPresetNameField.setMaxStringLength(32);
+        hatchPresetNameField.setText(selectedHatchPreset);
         ui.config.mainField(new HologramMuiTextField(ui.host.parent(), 271, 213, 55, 16));
         ui.config.mainField()
             .setMaxStringLength(10);
@@ -1589,6 +1724,28 @@ final class HologramUiConfiguration {
     }
 
     void prepareCommand(String op, NBTTagCompound request, long sequence) {
+        if ("configure".equals(op)) {
+            if (request.getBoolean("applyHatchPreset")) {
+                boolean basic = !request.hasKey("hatchProfile", 10);
+                NBTTagCompound profile = basic ? new NBTTagCompound()
+                    : (NBTTagCompound) request.getCompoundTag("hatchProfile")
+                        .copy();
+                profile.setInteger("tier", request.getInteger("hatchTier"));
+                profile.setBoolean("downgrade", request.getBoolean("hatchDowngrade"));
+                profile.setBoolean("basic", basic);
+                presetPending.begin(ui.session.state().session, sequence, true, profile);
+            } else {
+                boolean changed = request.getInteger("materialPriority")
+                    != ui.session.state().data.getInteger("materialPriority");
+                NBTTagCompound sources = new NBTTagCompound();
+                for (String key : new String[] { "materialMain", "materialContainers", "materialMe" }) {
+                    changed |= request.getBoolean(key) != sourceEnabled(key);
+                    sources.setBoolean(key, request.getBoolean(key));
+                }
+                sources.setInteger("materialPriority", request.getInteger("materialPriority"));
+                if (changed) presetPending.begin(ui.session.state().session, sequence, false, sources);
+            }
+        }
         if ("hatchPreset".equals(op) || "pin".equals(op)
             || "customPin".equals(op)
             || "sourcePin".equals(op)

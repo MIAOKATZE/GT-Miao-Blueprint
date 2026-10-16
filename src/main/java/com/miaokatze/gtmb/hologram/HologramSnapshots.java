@@ -30,7 +30,11 @@ final class HologramSnapshots {
             if (s.ae.ack != null) state.setTag("aeEditAck", s.ae.ack.copy());
             if (s.ae.review != null) {
                 if (s.ae.review.revision != s.planRevision) s.ae.review = null;
-                else state.setTag("aeSaveReview", s.ae.review.snapshot(s.x, s.y, s.z, s.blueprintActiveStructure));
+                else {
+                    NBTTagCompound review = s.ae.review.snapshot(s.x, s.y, s.z, s.blueprintActiveStructure);
+                    review.setLong("clientTaskToken", s.blueprintClientTaskToken);
+                    state.setTag("aeSaveReview", review);
+                }
             }
             HologramAeProtocol.Preview preview = s.ae.preview;
             if (preview != null && s.capture != null) {
@@ -538,6 +542,8 @@ final class HologramSnapshots {
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
         state.setBoolean("open", s.open);
+        state.setString("quickToken", s.libraryQuickToken);
+        state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
         state.setString("openPurpose", s.openPurpose);
         if ("controllerStructure".equals(s.openPurpose)) s.workspaceTab = "structure";
         else if ("blueprintEdit".equals(s.openPurpose) || "blueprintBrowse".equals(s.openPurpose)
@@ -552,6 +558,8 @@ final class HologramSnapshots {
         state.setBoolean("presetSupported", s.presetSupported);
         state.setBoolean("presetAvailable", s.presetAvailable);
         state.setBoolean("presetActive", s.presetEnabled || !s.autoTargets.isEmpty());
+        state.setTag("hatchProfile", HologramHatchProfiles.capture(s));
+        state.setLong("configurationAcceptedSequence", s.configurationAcceptedSequence);
         boolean editable = s.job != 1 && s.job != 2 && !s.capturePending && s.capture != null && !s.capture.incomplete;
         state.setBoolean("editCanUndo", editable && !s.undoEdits.isEmpty());
         state.setBoolean("editCanRedo", editable && !s.redoEdits.isEmpty());

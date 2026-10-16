@@ -29,6 +29,9 @@ final class HologramCutClient {
     static final HologramCutClient INSTANCE = new HologramCutClient();
     private final List<NBTTagCompound> entries = new ArrayList<>();
     private final HologramCutRequests requests = new HologramCutRequests();
+    private final HologramCutContinuous continuous = new HologramCutContinuous();
+    private final HologramCutNudge nudge = new HologramCutNudge();
+    private long nudgeContext;
     private final HologramProgress.Tracker operationProgress = new HologramProgress.Tracker();
     private final HologramWorldFlow.KeyEdge previousKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge nextKey = new HologramWorldFlow.KeyEdge();
@@ -145,6 +148,7 @@ final class HologramCutClient {
         boolean enabled = mc.currentScreen == null && cutMode
             && !entries.isEmpty()
             && !blueprintBusy()
+            && !HologramBackgroundTasks.busy()
             && stage != HologramCutInput.Stage.SELECTING;
         boolean previous = previousKey.sample(alt() && key(Keyboard.KEY_A), !enabled);
         boolean next = nextKey.sample(alt() && key(Keyboard.KEY_D), !enabled);
@@ -156,6 +160,31 @@ final class HologramCutClient {
             if (alt()) openTransform();
             else rotate(key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL) ? 0 : 1, 1);
         }
+        lockedNudge();
+    }
+
+    private void lockedNudge() {
+        Minecraft mc = mc();
+        boolean enabled = mc.currentScreen == null && held()
+            && stage == HologramCutInput.Stage.LOCKED
+            && locked != null
+            && preview != null
+            && !busy()
+            && !blueprintBusy();
+        int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT, Keyboard.KEY_W,
+            Keyboard.KEY_S };
+        boolean[] pressed = new boolean[keys.length];
+        for (int i = 0; i < keys.length; i++) pressed[i] = key(keys[i]);
+        net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
+        locked = nudge.sample(
+            locked,
+            enabled,
+            nudgeContext,
+            pressed,
+            alt(),
+            camera == null ? 0 : camera.rotationYaw,
+            mc.theWorld == null ? 0 : mc.theWorld.getTotalWorldTime(),
+            mc.theWorld == null ? 256 : mc.theWorld.getHeight());
     }
 
     private void closeScreen() {
@@ -195,6 +224,7 @@ final class HologramCutClient {
             blueprintBusy(),
             cutMode,
             key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL));
+        if (!HologramCutInput.allowsWorldAction(intent, HologramBackgroundTasks.busy())) return;
         if (HologramCutInput.requiresCutReady(intent)
             && (intent == HologramCutInput.Intent.SELECT ? cutUnavailable() : busy())) {
             retryCutStorage();
@@ -222,6 +252,7 @@ final class HologramCutClient {
                 break;
             case LOCK:
                 locked = HologramClient.cutAnchor(true);
+                nudgeContext++;
                 stage = HologramCutInput.Stage.LOCKED;
                 lockPreview(true);
                 status.show(text("locked"));
@@ -235,11 +266,14 @@ final class HologramCutClient {
     }
 
     void beginSelection() {
+        if (HologramBackgroundTasks.busy() || blueprintBusy()) return;
         cutMode = true;
-        if (cutUnavailable()) {
-            retryCutStorage();
-            return;
-        }
+        continuous.enter();
+        resetSelection();
+        mc().displayGuiScreen(null);
+    }
+
+    private void resetSelection() {
         HologramCutRawPreview.release();
         rawPreview = null;
         pose = new Transform(0, 0, 0, 0);
@@ -248,8 +282,8 @@ final class HologramCutClient {
         first = second = locked = null;
         preview = null;
         previewId = "";
+        nudgeContext++;
         status.show(text("selection"));
-        mc().displayGuiScreen(null);
     }
 
     private void mark(boolean firstCorner) {
@@ -283,6 +317,7 @@ final class HologramCutClient {
             n.setInteger(new String[] { "x1", "y1", "z1" }[i], a[i]);
             n.setInteger(new String[] { "x2", "y2", "z2" }[i], b[i]);
         }
+        continuous.submitted(n.getString("requestId"));
         send(n);
         stage = HologramCutInput.Stage.IDLE;
         first = second = null;
@@ -316,6 +351,7 @@ final class HologramCutClient {
         if (HologramCutStoragePreview.receive(event)) return;
         HologramCutRequests.Request rejected = requests.acknowledge(event.getString("requestId"));
         if (rejected == null) return;
+        if ("cut".equals(rejected.action)) continuous.completed(rejected.id, false);
         if (operationProgress.matches(rejected.id)) operationProgress.clear();
         boolean visible = !"list".equals(rejected.action) || !rejected.target.isEmpty()
             || mc().currentScreen instanceof HologramCutStorageScreen;
@@ -326,7 +362,7 @@ final class HologramCutClient {
     }
 
     boolean busy() {
-        return cutUnavailable() || requests.busy();
+        return HologramBackgroundTasks.busy() || cutUnavailable() || requests.busy();
     }
 
     private boolean cutUnavailable() {
@@ -358,6 +394,7 @@ final class HologramCutClient {
         preview = null;
         previewId = "";
         locked = null;
+        nudgeContext++;
         if (stage == HologramCutInput.Stage.MOVING || stage == HologramCutInput.Stage.LOCKED) {
             stage = HologramCutInput.Stage.MOVING;
             request("preview", selected);
@@ -382,6 +419,7 @@ final class HologramCutClient {
             return;
         }
         cutMode = true;
+        continuous.exit();
         cutSession = true;
         stage = HologramCutInput.Stage.MOVING;
         locked = null;
@@ -489,7 +527,7 @@ final class HologramCutClient {
     void chooseCutMode() {
         cancel();
         cutMode = true;
-        status.show(text("cutModeHint"));
+        beginSelection();
     }
 
     void chooseBlueprintMode() {
@@ -498,6 +536,8 @@ final class HologramCutClient {
     }
 
     void cancel() {
+        continuous.exit();
+        nudgeContext++;
         HologramCutRawPreview.release();
         rawPreview = null;
         pose = new Transform(0, 0, 0, 0);
@@ -600,6 +640,7 @@ final class HologramCutClient {
             if (resolved != null) {
                 boolean completed = n.getBoolean("requestCompleted");
                 status.show(text(completed ? "resultConfirmed" : "notExecuted"));
+                if ("cut".equals(resolved.action)) finishCut(resolved.id, completed);
                 if (completed && ("paste".equals(resolved.action) || "undo".equals(resolved.action))) cancel();
             }
         }
@@ -619,8 +660,19 @@ final class HologramCutClient {
                 lockPreview(stage == HologramCutInput.Stage.LOCKED);
             }
         }
-        if (!"list".equals(op) && !"preview".equals(op) && mc().thePlayer != null)
-            mc().thePlayer.addChatMessage(new ChatComponentText(status()));
+        if ("cut".equals(op)) finishCut(reply.id, n.getBoolean("success"));
+        if (!"list".equals(op) && !"preview".equals(op)
+            && (!"cut".equals(op) || !n.getBoolean("success"))
+            && mc().thePlayer != null) mc().thePlayer.addChatMessage(new ChatComponentText(status()));
+    }
+
+    private void finishCut(String requestId, boolean success) {
+        boolean resume = continuous.completed(requestId, success);
+        if (!success) return;
+        String result = status();
+        if (resume && held() && cutMode && !blueprintBusy() && !HologramBackgroundTasks.busy()) resetSelection();
+        status.show((result.isEmpty() ? "" : result + " · ") + text("savedHint"));
+        if (mc().thePlayer != null) mc().thePlayer.addChatMessage(new ChatComponentText(status()));
     }
 
     static NBTTagCompound detachedPreview(NBTTagCompound source) {

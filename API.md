@@ -68,6 +68,8 @@ piece 名、main/channel、负数 offset 和 Controller 坐标规则仍由原生
 
 显示 predicate 只检查类型。client renderer 只读独立 access/tile，禁止 tick、事件、放置钩子、网络注册和任意 TESR。原 registry 的内置特殊渲染优先级不变。
 
+剪切预览直接复用 Forge 正式注册的 `ISimpleBlockRenderingHandler`，不通过反射构造通用 renderer 副本。构造器可能分配或改写全局 render ID；未注册的新 ID 会同时破坏世界几何和物品的 3D 判定。renderer 应在 Mod 客户端初始化阶段注册，渲染回调中不得注册或替换全局 handler。
+
 ## 流体容器材料解码
 
 ```java

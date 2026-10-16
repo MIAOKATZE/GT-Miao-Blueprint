@@ -76,6 +76,11 @@ final class HologramAreaWorkflow {
             || s.job == 2
             || area == null
             || !area.selecting) return;
+        if (request.hasKey("uiSequence", 4)) {
+            long sequence = request.getLong("uiSequence");
+            if (sequence <= s.uiSequence) return;
+            s.uiSequence = sequence;
+        }
         if (area.regions.isEmpty() && (area.first == null || area.second == null)) {
             s.status = "请先设置两个角点，再次 Shift + 右键完成";
             HologramSnapshots.send(s);

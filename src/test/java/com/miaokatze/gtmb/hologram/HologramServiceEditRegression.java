@@ -123,7 +123,40 @@ final class HologramServiceEditRegression {
             selection.setInteger("scope", 2);
             selection.setInteger("selected", 3);
             selection.setInteger("layer", 1);
+            selection.setLong("uiSequence", 41);
             SimpleAssert.that((Boolean) configure.invoke(null, session, selection), "selection configure accepted");
+            SimpleAssert.eq(
+                41L,
+                get(session, "configurationAcceptedSequence"),
+                "successful real configure records its exact sequence");
+            NBTTagCompound invalidCombination = (NBTTagCompound) selection.copy();
+            invalidCombination.setLong("uiSequence", 42);
+            invalidCombination.setBoolean("applyHatchPreset", true);
+            invalidCombination.setInteger("hatchTier", 1);
+            invalidCombination.setBoolean("materialMain", true);
+            NBTTagCompound malformedProfile = new NBTTagCompound();
+            NBTTagList malformedEntries = new NBTTagList();
+            NBTTagCompound malformedEntry = new NBTTagCompound();
+            malformedEntry.setString("role", "InputHatch");
+            malformedEntry.setString("item", "minecraft:stone");
+            malformedEntry.setInteger("count", 1);
+            malformedEntries.appendTag(malformedEntry);
+            malformedProfile.setTag("entries", malformedEntries);
+            invalidCombination.setTag("hatchProfile", malformedProfile);
+            int previousPinCount = map(session, "pins").size();
+            SimpleAssert.that(
+                !(Boolean) configure.invoke(null, session, invalidCombination),
+                "a non-hatch identity cannot be configured as a hatch profile");
+            SimpleAssert.eq(
+                previousPinCount,
+                map(session, "pins").size(),
+                "failed whole-profile validation leaves manual targets intact");
+            SimpleAssert
+                .that(!settings.main, "failed whole-profile validation cannot partially apply material sources");
+            SimpleAssert.eq(
+                41L,
+                get(session, "configurationAcceptedSequence"),
+                "a rejected configure does not fabricate a successful receipt");
             SimpleAssert.that(
                 (Boolean) get(session, "allocationsFrozen"),
                 "changing selection/scope/layer keeps allocations frozen");

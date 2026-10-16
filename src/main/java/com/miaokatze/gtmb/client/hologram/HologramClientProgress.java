@@ -111,6 +111,11 @@ final class HologramClientProgress {
         return entry == null ? -1 : entry.sequence;
     }
 
+    static boolean commandMatches(String scope, String session, long command) {
+        Entry entry = views.get(scope);
+        return entry != null && entry.session.equals(session) && entry.command == command;
+    }
+
     static void decoding(long sequence) {
         Entry entry = views.get("snapshot");
         if (entry == null || sequence != entry.sequence) return;

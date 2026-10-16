@@ -13,6 +13,11 @@ import cpw.mods.fml.common.FMLCommonHandler;
 /** 专用服务器入口；客户端类只由客户端代理加载。 */
 public class CommonProxy {
 
+    /** Common item rendering never links the client task owner on a dedicated server. */
+    public boolean hologramTaskBusy() {
+        return false;
+    }
+
     private static volatile boolean engineReady;
 
     public static boolean isEngineReady() {

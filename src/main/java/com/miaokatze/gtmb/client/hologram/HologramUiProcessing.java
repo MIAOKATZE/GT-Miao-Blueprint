@@ -100,7 +100,8 @@ final class HologramUiProcessing {
             76,
             126,
             17,
-            "倾向自用" + ("self".equals(policy.getString("tendency")) ? " ✓" : ""),
+            "倾向自用" + ("self".equals(policy.getString("tendency")) ? this.processingFlow.explicitChoice() ? " ✓" : "（默认）"
+                : ""),
             true,
             mx,
             my);
@@ -110,12 +111,19 @@ final class HologramUiProcessing {
             76,
             126,
             17,
-            "倾向分享" + ("share".equals(policy.getString("tendency")) ? " ✓" : ""),
+            "倾向分享"
+                + ("share".equals(policy.getString("tendency")) ? this.processingFlow.explicitChoice() ? " ✓" : "（推荐）"
+                    : ""),
             true,
             mx,
             my);
-        ui.canvas
-            .text(this.processingFlow.fullReview() ? "倾向自动预选；每一步仍需下一步确认" : "按实际内容处理；空阶段可跳过", 312, 81, 318, 0x94afb4);
+        ui.canvas.text(
+            !this.processingFlow.chosen() ? "默认仅作推荐；请点击倾向或本步选项确认"
+                : !this.processingFlow.explicitChoice() ? "本阶段无必选内容；可点击下一步" : "已明确选择；点击下一步继续核对",
+            312,
+            81,
+            318,
+            0x94afb4);
         if (stage == 0) {
             ui.canvas.text("选择已保存的流程，或明确不使用预设；应用后仍逐步核对", 42, 103, 588, 0xb9d5d4);
             ui.canvas.button(

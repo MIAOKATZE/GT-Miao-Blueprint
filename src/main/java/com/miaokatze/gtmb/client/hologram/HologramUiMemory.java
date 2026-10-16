@@ -157,11 +157,8 @@ final class HologramUiMemory {
             && ui.processing.processingFlow()
                 .optional())
             return 0x80efaa;
-        if (!ui.session.state().data.getBoolean("virtual")) {
-            boolean configured = this.basicConfigured || ui.session.state().data.getBoolean("presetActive");
-            if (id == 94 && !configured && ui.session.state().data.getBoolean("presetAvailable")) return 0x80efaa;
-            if (id == 50 && configured) return 0x80efaa;
-        }
+        int structureAccent = HologramGuidance.structureAccent(ui.session.state().data, id);
+        if (structureAccent != 0) return structureAccent;
         if (id == 97 && ui.session.selectedCell() != null
             && ui.session.selectedCell().candidates.size() > 1
             && ui.config.hatchRoles()
@@ -182,10 +179,8 @@ final class HologramUiMemory {
     }
 
     boolean initialStructureSetupRequired() {
-        return !ui.session.state().data.getBoolean("virtual") && ui.session.state().data.getBoolean("presetAvailable")
-            && ui.session.state().data.getInteger("mode") == 0
-            && !this.basicConfigured
-            && !ui.session.state().data.getBoolean("presetActive");
+        // A preset is an optional shortcut. Construction review validates the current server plan.
+        return false;
     }
 
     static java.util.Map<String, boolean[]> GUIDANCE_MEMORY() {

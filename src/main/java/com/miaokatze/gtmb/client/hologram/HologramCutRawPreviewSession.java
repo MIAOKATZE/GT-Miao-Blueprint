@@ -54,7 +54,6 @@ final class HologramCutRawPreviewSession {
     private final Map<String, Region> REGIONS = new LinkedHashMap<>();
     private final Map<String, Region> RESIDENT = new LinkedHashMap<>(16, .75f, true);
     private final Map<String, String> FAILURES = new LinkedHashMap<>();
-    private final Map<ISimpleBlockRenderingHandler, ISimpleBlockRenderingHandler> HANDLER_COPIES = new java.util.IdentityHashMap<>();
     private NBTTagCompound source;
     private HologramCutRawPreviewWorld world;
     private String digest = "";
@@ -243,7 +242,7 @@ final class HologramCutRawPreviewSession {
         GL14.glBlendEquation(GL14.GL_FUNC_ADD);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glLineWidth(1);
-        GL11.glColor4f(.40f, .85f, .94f, .80f);
+        GL11.glColor4f(.30f, .65f, .72f, .38f);
         GL11.glBegin(GL11.GL_LINES);
         for (Region region : visible) for (HologramCutRawPreviewWorld.Cell cell : region.cells) {
             if (cell.block == Blocks.air) continue;
@@ -510,21 +509,10 @@ final class HologramCutRawPreviewSession {
 
     @SuppressWarnings("unchecked")
     private ISimpleBlockRenderingHandler handler(Block block) throws ReflectiveOperationException {
-        ISimpleBlockRenderingHandler registered = ((Map<Integer, ISimpleBlockRenderingHandler>) HANDLERS
-            .get(RenderingRegistry.instance())).get(block.getRenderType());
-        if (registered == null) return null;
-        if (HANDLER_COPIES.containsKey(registered)) return HANDLER_COPIES.get(registered);
-        ISimpleBlockRenderingHandler isolated = registered;
-        try {
-            isolated = registered.getClass()
-                .getConstructor()
-                .newInstance();
-        } catch (ReflectiveOperationException noIndependentConstructor) {
-            // Singleton native handlers (including FMP) retain their official identity; scoped public caches are
-            // cleared.
-        }
-        HANDLER_COPIES.put(registered, isolated);
-        return isolated;
+        // Native handler constructors may allocate render IDs and replace mod-wide static routing (e.g. Chisel).
+        // Match the world's registry dispatch; the RenderBlocks and preview world remain private to this call.
+        return ((Map<Integer, ISimpleBlockRenderingHandler>) HANDLERS.get(RenderingRegistry.instance()))
+            .get(block.getRenderType());
     }
 
     public List<String> diagnostics() {
@@ -691,7 +679,6 @@ final class HologramCutRawPreviewSession {
         RESIDENT.clear();
         REGIONS.clear();
         FAILURES.clear();
-        HANDLER_COPIES.clear();
         if (world != null) world.release();
         world = null;
         source = null;

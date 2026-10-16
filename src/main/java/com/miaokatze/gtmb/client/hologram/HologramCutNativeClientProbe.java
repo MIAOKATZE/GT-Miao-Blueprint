@@ -41,6 +41,7 @@ import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.miaokatze.gtmb.api.CutTransforms.Transform;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramV011Evidence;
+import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
@@ -110,6 +111,9 @@ public final class HologramCutNativeClientProbe {
     private boolean ordinaryPolicyOpenNeeded, ordinaryLibrarySwitchNeeded;
     private long ordinaryPolicyTx, ordinaryAppliedTx;
     private long markAimRender, raycastEvidenceAt;
+    private int[] nudgeExpected, nudgeOriginal;
+    private NBTTagCompound nudgeRaw;
+    private long nudgePackets;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.cutNativeClient")) return;
@@ -185,63 +189,73 @@ public final class HologramCutNativeClientProbe {
         });
         shot("cut-mode-switcher-cut-selected");
         hold("physical-shift-release-commits-cut", KeyEvent.VK_SHIFT, false);
-        add("release-remembers-cut-mode-without-starting-selection", mc -> {
+        add("release-enters-continuous-empty-cut-selection", mc -> {
             if (mc.currentScreen != null) return false;
             require(
-                client().cutMode() && field(client(), "stage") == HologramCutInput.Stage.IDLE
-                    && !client().selecting()
-                    && !(Boolean) field(client(), "cutSession")
+                client().cutMode() && client().selecting()
+                    && (Boolean) field(client(), "cutSession")
+                    && field(client(), "first") == null
+                    && field(client(), "second") == null
                     && field(client(), "preview") == null
                     && field(client(), "rawPreview") == null
                     && client().entries()
                         .isEmpty(),
-                "choosing CUT enters the remembered idle mode with an empty cache");
+                "choosing CUT immediately starts an empty selection");
             return true;
         });
-        clickWorld("initial-cut-mode-ordinary-right-opens-empty-storage", 1);
+        openStorage("initial-selecting-shift-right-opens-empty-storage");
         waitScreen("initial-cut-mode-real-empty-storage", HologramCutStorageScreen.class);
         add("initial-empty-storage-has-no-fabricated-preview", mc -> {
             require(
                 client().entries()
                     .isEmpty() && browser(mc).renderer() == null,
-                "ordinary right exposes the actual empty cache without a fabricated raw structure");
+                "Shift-right exposes the actual empty cache without a fabricated raw structure");
             return true;
         });
         shot("cut-mode-initial-empty-cache-native-list");
         tap("initial-empty-storage-Escape", KeyEvent.VK_ESCAPE);
-        add("initial-empty-storage-Escape-keeps-idle-cut-mode", mc -> {
+        add("initial-empty-storage-Escape-returns-to-selection", mc -> {
             if (mc.currentScreen != null || client().syncingDirectory()) return false;
             require(
-                client().cutMode() && field(client(), "stage") == HologramCutInput.Stage.IDLE
+                client().cutMode() && client().selecting()
                     && client().entries()
                         .isEmpty(),
-                "Escape closes the empty list while retaining CUT mode");
-            cancellationPackets = cutPacketsSent();
+                "closing an empty list returns to the continuous selection");
             return true;
         });
-        hold("cut-mode-empty-cache-hold-shift", KeyEvent.VK_SHIFT, true);
-        clickWorld("cut-mode-empty-cache-shift-right-only-notice", 1);
-        add("cut-mode-empty-cache-never-enters-selection-or-dialog", mc -> {
-            require(
-                mc.currentScreen == null && client().cutMode()
-                    && field(client(), "stage") == HologramCutInput.Stage.IDLE
-                    && !client().selecting()
-                    && field(client(), "preview") == null
-                    && field(client(), "rawPreview") == null
-                    && client().entries()
-                        .isEmpty()
-                    && cutPacketsSent() == cancellationPackets
-                    && HologramCutClient.text("emptyPreview")
-                        .equals(client().status()),
-                "CUT Shift-right with an empty cache only displays the actual empty-cache notice and emits no CutAction");
-            return true;
-        });
-        hold("cut-mode-empty-cache-release-shift", KeyEvent.VK_SHIFT, false);
+        tap("initial-selection-Escape-exits", KeyEvent.VK_ESCAPE);
+        add(
+            "initial-selection-Escape-leaves-idle-cache-intact",
+            mc -> mc.currentScreen == null && !client().active()
+                && client().cutMode()
+                && client().entries()
+                    .isEmpty());
         beginCutSelection("first-cut-explicit");
         mark("first-cut-left-first-corner", 48, 80, 64, 0);
         shot("cut-first-corner-selection");
-        mark("first-cut-right-second-corner-real-marker", 49, 81, 64, 1);
+        hold("first-cut-second-corner-Alt-down", KeyEvent.VK_ALT, true);
+        mark("first-cut-Alt-right-second-corner-real-marker", 49, 81, 64, 1);
+        hold("first-cut-second-corner-Alt-up", KeyEvent.VK_ALT, false);
         waitScreen("first-cut-name-required", HologramCutNameScreen.class);
+        add("first-cut-native-Alt-right-recorded-second-corner", mc -> {
+            boolean actualAltRight = false;
+            for (int i = 0; i < nativeInputs.tagCount(); i++) {
+                NBTTagCompound input = nativeInputs.getCompoundTagAt(i);
+                if ("native Forge MouseEvent after production handlers".equals(input.getString("eventKind"))
+                    && input.getInteger("button") == 1
+                    && input.getBoolean("buttonState")
+                    && input.getBoolean("alt")
+                    && input.getBoolean("canceled")) actualAltRight = true;
+            }
+            require(
+                actualAltRight && client().selecting()
+                    && java.util.Arrays.equals((int[]) field(client(), "second"), new int[] { 49, 81, 64 })
+                    && client().entries()
+                        .isEmpty(),
+                "native Alt-right marks the real second corner and opens naming rather than intercepting undo");
+            HologramV011Evidence.write("cut-selection-Alt-right-corner2-client.nbt", snapshot(mc));
+            return true;
+        });
         add("capture-name-cancel-codec-baseline", mc -> {
             cancellationPackets = cutPacketsSent();
             return true;
@@ -290,47 +304,24 @@ public final class HologramCutNativeClientProbe {
             require(firstId.equals(client().selected()), "first FIFO item selected");
             return true;
         });
-        tap("cut-success-first-Escape-returns-to-world", KeyEvent.VK_ESCAPE);
-        add("cut-success-Escape-preserves-cached-entry", mc -> {
+        add("first-success-keeps-empty-continuous-selection", mc -> {
             require(
-                mc.currentScreen == null && !client().active()
-                    && client().entries()
-                        .size() == 1
-                    && firstId.equals(client().selected()),
-                "first post-cut Escape leaves the real cached entry available");
+                mc.currentScreen == null && client().selecting()
+                    && field(client(), "first") == null
+                    && field(client(), "second") == null
+                    && field(client(), "rawPreview") == null
+                    && client().status()
+                        .contains(HologramCutClient.text("savedHint")),
+                "cut completion keeps selection active, clears corners, and tells the user how to open storage");
             return true;
         });
-        hold("cut-mode-cached-place-hold-shift", KeyEvent.VK_SHIFT, true);
-        clickWorld("cut-mode-cached-shift-right-starts-placement", 1);
-        hold("cut-mode-cached-place-release-shift", KeyEvent.VK_SHIFT, false);
-        moving("cut-mode-cached-placement-actual-preview-ack");
-        add("cut-mode-cached-placement-preserves-entry", mc -> {
-            require(
-                firstId.equals(client().selected()) && client().entries()
-                    .size() == 1,
-                "CUT Shift-right starts preview of the actual cached ID without consuming it");
-            return true;
-        });
-        tap("cut-mode-cached-placement-Escape", KeyEvent.VK_ESCAPE);
-        add(
-            "cut-mode-cached-placement-Escape-keeps-cache",
-            mc -> mc.currentScreen == null && !client().active()
-                && client().entries()
-                    .size() == 1);
-        clickWorld("cut-mode-ordinary-right-keeps-list-entry", 1);
-        waitScreen("cut-mode-explicit-cache-list", HologramCutStorageScreen.class);
-        button("cut-mode-explicit-cache-list-close", 0);
-        hold("hold-shift-for-second-cut", KeyEvent.VK_SHIFT, true);
-        hold("hold-alt-for-second-cut", KeyEvent.VK_ALT, true);
-        clickWorld("queued-shift-alt-right-new-selection", 1);
-        hold("release-alt-after-selection", KeyEvent.VK_ALT, false);
-        hold("release-shift-after-selection", KeyEvent.VK_SHIFT, false);
-        add("queued-new-cut-selection-active", mc -> mc.currentScreen == null && client().selecting());
-        mark("second-cut-left-first-corner", 52, 80, 64, 0);
-        mark("second-cut-right-second-corner-real-marker", 53, 81, 64, 1);
+        mark("continuous-second-cut-left-first-corner", 52, 80, 64, 0);
+        hold("continuous-second-cut-second-corner-Alt-down", KeyEvent.VK_ALT, true);
+        mark("continuous-second-cut-Alt-right-second-corner-real-marker", 53, 81, 64, 1);
+        hold("continuous-second-cut-second-corner-Alt-up", KeyEvent.VK_ALT, false);
         waitScreen("ordinary-save-keeps-second-name-prompt", HologramCutNameScreen.class);
         button("save-second-cut-and-explicitly-disable-name-prompt", 2);
-        add("two-genuine-server-entries-fifo", mc -> {
+        add("two-genuine-continuous-server-entries-fifo", mc -> {
             if (client().busy() || client().entries()
                 .size() != 2 || HologramV011Evidence.read("cut-second-cut-fifo-disk-and-air.nbt") == null) return false;
             secondId = client().entries()
@@ -346,11 +337,35 @@ public final class HologramCutNativeClientProbe {
                         .getLong("sequence")
                         < client().entries()
                             .get(1)
-                            .getLong("sequence"),
-                "real FIFO ordering");
+                            .getLong("sequence")
+                    && client().selecting()
+                    && field(client(), "first") == null
+                    && field(client(), "second") == null,
+                "two real cuts complete consecutively without any restart gesture and preserve FIFO");
+            HologramV011Evidence.write("cut-continuous-two-cuts-client.nbt", snapshot(mc));
             return true;
         });
-        clickWorld("ordinary-right-opens-server-directory", 1);
+        tap("continuous-success-Escape-returns-to-world", KeyEvent.VK_ESCAPE);
+        add("continuous-Escape-preserves-both-cached-entries", mc -> {
+            require(
+                mc.currentScreen == null && !client().active()
+                    && client().entries()
+                        .size() == 2
+                    && firstId.equals(client().selected()),
+                "Escape stops continuous selection and keeps both cuts");
+            return true;
+        });
+        openStorage("cut-mode-cached-shift-right-opens-placement-list");
+        waitScreen("cut-mode-cached-real-placement-list", HologramCutStorageScreen.class);
+        button("cut-mode-cached-place-first-row", 1);
+        moving("cut-mode-cached-placement-actual-preview-ack");
+        tap("cut-mode-cached-placement-Escape", KeyEvent.VK_ESCAPE);
+        add(
+            "cut-mode-cached-placement-Escape-keeps-cache",
+            mc -> mc.currentScreen == null && !client().active()
+                && client().entries()
+                    .size() == 2);
+        openStorage("shift-right-opens-server-directory");
         waitScreen("directory-with-two-server-entries", HologramCutStorageScreen.class);
         add("capture-world-preview-before-readonly-browser", mc -> {
             browserWorldBefore = HologramCutRawPreview.snapshot();
@@ -395,7 +410,7 @@ public final class HologramCutNativeClientProbe {
                 "Escape does not consume entry");
             return true;
         });
-        clickWorld("reopen-directory-after-escape", 1);
+        openStorage("reopen-directory-after-escape");
         waitScreen("directory-preserved-after-escape", HologramCutStorageScreen.class);
         shot("cut-storage-escape-preserved");
         button("place-first-again-after-cancel", 1);
@@ -412,6 +427,7 @@ public final class HologramCutNativeClientProbe {
                 "lock does not consume");
             return true;
         });
+        lockedNudgeSteps();
         shot("cut-locked-preview");
         clickWorld("separate-second-right-opens-paste-confirmation", 1);
         waitScreen("paste-confirmation-before-world-write", HologramCutConfirmScreen.class);
@@ -437,7 +453,7 @@ public final class HologramCutNativeClientProbe {
                 "placement Cancel writes no CutAction and preserves both cached entries");
             return true;
         });
-        clickWorld("reopen-directory-after-placement-cancel", 1);
+        openStorage("reopen-directory-after-placement-cancel");
         waitScreen("directory-after-placement-cancel", HologramCutStorageScreen.class);
         button("restart-first-placement-after-review-cancel", 1);
         moving("placement-review-retry-raw-ack");
@@ -456,7 +472,7 @@ public final class HologramCutNativeClientProbe {
                 "ordinary confirmation retains the future placement prompt");
             return true;
         });
-        clickWorld("directory-for-original-position-undo", 1);
+        openStorage("directory-for-original-position-undo");
         waitScreen("directory-one-remaining", HologramCutStorageScreen.class);
         button("native-open-undo-confirmation", 2);
         waitScreen("undo-confirmation-required", HologramCutConfirmScreen.class);
@@ -470,7 +486,7 @@ public final class HologramCutNativeClientProbe {
                 "cancel undo does not consume");
             return true;
         });
-        clickWorld("reopen-directory-to-confirm-undo", 1);
+        openStorage("reopen-directory-to-confirm-undo");
         waitScreen("directory-after-undo-cancel", HologramCutStorageScreen.class);
         button("open-undo-again", 2);
         waitScreen("undo-confirmation-again", HologramCutConfirmScreen.class);
@@ -515,6 +531,65 @@ public final class HologramCutNativeClientProbe {
         });
     }
 
+    private void lockedNudgeSteps() {
+        add("locked-cut-nudge-baseline", mc -> {
+            nudgeOriginal = client().anchor();
+            nudgeRaw = HologramCutRawPreview.snapshot();
+            nudgePackets = cutPacketsSent();
+            return true;
+        });
+        nudge("locked-cut-arrow-up", KeyEvent.VK_UP, HologramWorldFlow.Nudge.FORWARD);
+        nudge("locked-cut-arrow-down", KeyEvent.VK_DOWN, HologramWorldFlow.Nudge.BACKWARD);
+        nudge("locked-cut-arrow-left", KeyEvent.VK_LEFT, HologramWorldFlow.Nudge.LEFT);
+        nudge("locked-cut-arrow-right", KeyEvent.VK_RIGHT, HologramWorldFlow.Nudge.RIGHT);
+        hold("locked-cut-height-alt-down", KeyEvent.VK_ALT, true);
+        nudge("locked-cut-Alt-W", KeyEvent.VK_W, HologramWorldFlow.Nudge.UP);
+        nudge("locked-cut-Alt-S", KeyEvent.VK_S, HologramWorldFlow.Nudge.DOWN);
+        nudge("locked-cut-Alt-Up", KeyEvent.VK_UP, HologramWorldFlow.Nudge.UP);
+        nudge("locked-cut-Alt-Down", KeyEvent.VK_DOWN, HologramWorldFlow.Nudge.DOWN);
+        hold("locked-cut-height-alt-up", KeyEvent.VK_ALT, false);
+        add("locked-cut-nudge-preserves-raw-source-and-zero-packets", mc -> {
+            require(
+                java.util.Arrays.equals(nudgeOriginal, client().anchor()) && nudgePackets == cutPacketsSent()
+                    && nudgeRaw.equals(HologramCutRawPreview.snapshot()),
+                "opposite local nudges return to the original anchor without any packet or raw data change");
+            HologramV011Evidence.write("cut-locked-local-nudge-client.nbt", snapshot(mc));
+            return true;
+        });
+        openStorage("locked-cut-shift-right-opens-storage");
+        waitScreen("locked-cut-real-storage-with-persistent-anchor", HologramCutStorageScreen.class);
+        button("locked-cut-close-storage-retains-draft", 0);
+        add("locked-cut-storage-return-keeps-placement-draft", mc -> {
+            require(
+                mc.currentScreen == null && field(client(), "stage") == HologramCutInput.Stage.LOCKED
+                    && java.util.Arrays.equals(nudgeOriginal, client().anchor())
+                    && nudgeRaw.equals(HologramCutRawPreview.snapshot()),
+                "Shift-right browsing and Close preserve the locked cut draft");
+            return true;
+        });
+    }
+
+    private void nudge(String label, int awtKey, HologramWorldFlow.Nudge direction) {
+        add(label + "-expected-client-step", mc -> {
+            int[] at = client().anchor();
+            net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer
+                : mc.renderViewEntity;
+            int[] offset = HologramWorldFlow.nudgeOffset(camera.rotationYaw, direction);
+            nudgeExpected = new int[] { at[0] + offset[0], at[1] + offset[1], at[2] + offset[2] };
+            return true;
+        });
+        tap(label, awtKey);
+        add(label + "-actual-locked-client-anchor", mc -> {
+            require(
+                field(client(), "stage") == HologramCutInput.Stage.LOCKED
+                    && java.util.Arrays.equals(nudgeExpected, client().anchor())
+                    && cutPacketsSent() == nudgePackets
+                    && nudgeRaw.equals(HologramCutRawPreview.snapshot()),
+                "real native key nudges exactly one local block and preserves every raw source field");
+            return true;
+        });
+    }
+
     private void compositeSteps() {
         add(
             "actual-native-composite-fixture-ready",
@@ -531,7 +606,7 @@ public final class HologramCutNativeClientProbe {
             compositeId = client().selected();
             return true;
         });
-        clickWorld("composite-open-storage", 1);
+        openStorage("composite-open-storage");
         waitScreen("composite-storage", HologramCutStorageScreen.class);
         button("composite-preview-original", 1);
         moving("composite-fullraw-ack");
@@ -624,7 +699,7 @@ public final class HologramCutNativeClientProbe {
             "recut-nondefault-source-disk-ack",
             mc -> !client().busy() && client().entries()
                 .size() == 1 && HologramV011Evidence.read("cut-composite-recut-nondefault-pose.nbt") != null);
-        clickWorld("recut-open-storage", 1);
+        openStorage("recut-open-storage");
         waitScreen("recut-storage", HologramCutStorageScreen.class);
         button("recut-preview-other-pose", 1);
         moving("recut-preview-ack");
@@ -663,7 +738,7 @@ public final class HologramCutNativeClientProbe {
             "placement-skip-real-cut-ack",
             mc -> !client().busy() && client().entries()
                 .size() == 1 && HologramV011Evidence.read("cut-placement-skip-source-cut.nbt") != null);
-        clickWorld("placement-skip-open-storage", 1);
+        openStorage("placement-skip-open-storage");
         waitScreen("placement-skip-storage", HologramCutStorageScreen.class);
         button("placement-skip-start-world-preview", 1);
         moving("placement-skip-world-preview-ack");
@@ -1352,6 +1427,7 @@ public final class HologramCutNativeClientProbe {
             lastNativeMouse.setInteger("eventX", event.x);
             lastNativeMouse.setInteger("eventY", event.y);
             lastNativeMouse.setBoolean("shift", HologramCutClient.shift());
+            lastNativeMouse.setBoolean("alt", HologramCutClient.alt());
             lastNativeMouse.setString("screen", input.getString("screen"));
             if (nativeInputs.tagCount() < 256) nativeInputs.appendTag(input.copy());
             HologramV011Evidence.write("cut-client-native-input.nbt", input);
@@ -1409,6 +1485,18 @@ public final class HologramCutNativeClientProbe {
                 return Keyboard.isKeyDown(Keyboard.KEY_R);
             case KeyEvent.VK_CONTROL:
                 return Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
+            case KeyEvent.VK_UP:
+                return Keyboard.isKeyDown(Keyboard.KEY_UP);
+            case KeyEvent.VK_DOWN:
+                return Keyboard.isKeyDown(Keyboard.KEY_DOWN);
+            case KeyEvent.VK_LEFT:
+                return Keyboard.isKeyDown(Keyboard.KEY_LEFT);
+            case KeyEvent.VK_RIGHT:
+                return Keyboard.isKeyDown(Keyboard.KEY_RIGHT);
+            case KeyEvent.VK_W:
+                return Keyboard.isKeyDown(Keyboard.KEY_W);
+            case KeyEvent.VK_S:
+                return Keyboard.isKeyDown(Keyboard.KEY_S);
             default:
                 throw new IllegalArgumentException("Unmapped native sample key " + awtKey);
         }
@@ -1762,7 +1850,13 @@ public final class HologramCutNativeClientProbe {
         waitScreen(label + "-name", HologramCutNameScreen.class);
     }
 
-    /** CUT mode's explicit new-selection gesture remains distinct from cached Shift-right placement. */
+    /** Compatibility shortcut for restarting after Escape; entering CUT itself starts selection. */
+    private void openStorage(String label) {
+        hold(label + "-hold-shift", KeyEvent.VK_SHIFT, true);
+        clickWorld(label, 1);
+        hold(label + "-release-shift", KeyEvent.VK_SHIFT, false);
+    }
+
     private void beginCutSelection(String label) {
         hold(label + "-hold-shift", KeyEvent.VK_SHIFT, true);
         hold(label + "-hold-alt", KeyEvent.VK_ALT, true);

@@ -17,6 +17,36 @@ public final class HologramGuidanceRegression {
         exactBindingAcknowledgement();
         bindingFailuresAndUserSelection();
         completedAndPreservedNetworks();
+        optionalHatchPresetsKeepCurrentPlanReviewable();
+    }
+
+    private static void optionalHatchPresetsKeepCurrentPlanReviewable() {
+        NBTTagCompound state = state();
+        state.setBoolean("target", true);
+        state.setBoolean("presetAvailable", true);
+        state.setBoolean("presetActive", false);
+        state.setInteger("missing", 0);
+        check(
+            HologramGuidance.structureAccent(state, 94) == 0x80efaa
+                && HologramGuidance.structureAccent(state, 50) == 0x80efaa,
+            "a fresh controller offers both the optional preset shortcut and direct construction review");
+        check(HologramPlacementConfirmation.canBuild(state, 5), "a reviewed default plan needs no preset selection");
+        state.setInteger("missing", 1);
+        check(
+            !HologramPlacementConfirmation.canBuild(state, 5),
+            "optional presets cannot bypass material requirements");
+        state.setInteger("missing", 0);
+        check(
+            !HologramPlacementConfirmation.canBuild(state, 4),
+            "optional presets cannot bypass a stale review revision");
+        state.setBoolean("presetActive", true);
+        check(
+            HologramGuidance.structureAccent(state, 50) == 0x80efaa,
+            "applying a preset retains direct construction guidance");
+        state.setBoolean("virtual", true);
+        check(
+            HologramGuidance.structureAccent(state, 94) == 0 && HologramGuidance.structureAccent(state, 50) == 0,
+            "controller shortcuts do not override the virtual blueprint placement lifecycle");
     }
 
     private static void savedLibraryAndAuthorWorkspace() {

@@ -12,6 +12,14 @@ final class HologramLibraryWorkflow {
 
     private HologramLibraryWorkflow() {}
 
+    /** Correlates a disposable client task; owner/session/receipt checks remain the authorization boundary. */
+    static void captureClientTaskToken(HologramSession s, NBTTagCompound request) {
+        String op = request.getString("op");
+        if (op.startsWith("saveBlueprint") || "savePreset".equals(op)
+            || "updatePreset".equals(op)
+            || "exportDraft".equals(op)) s.blueprintClientTaskToken = Math.max(0L, request.getLong("clientTaskToken"));
+    }
+
     /** Admission is checked at begin and again after the bounded worker finishes decoding. */
     static boolean librarySessionCurrent(EntityPlayerMP player, NBTTagCompound request) {
         if (player == null || request == null) return false;
@@ -72,11 +80,13 @@ final class HologramLibraryWorkflow {
         session.virtual = true;
         session.open = false;
         session.libraryQuickToken = token;
+        session.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
         session.libraryQuickPending = true;
         session.libraryQuickBootstrapTick = tick;
         HologramWorkspace.activate(player.getUniqueID(), session);
         NBTTagCompound result = HologramLibraryProtocol.reply("quickBootstrap");
         result.setString("quickToken", token);
+        result.setLong("clientTaskToken", session.libraryQuickClientTaskToken);
         result.setString("session", session.id);
         result.setLong("planRevision", session.planRevision);
         return result;
@@ -92,7 +102,9 @@ final class HologramLibraryWorkflow {
             HologramProjectorWorkflow.libraryCloseUi(s);
             // Escape can race the final chunk. Revoke both the pending upload and an already-created
             // unlocked placement, using the new server session/revision rather than stale client state.
-            if (!pending && s.virtual && s.virtualPlacement && !s.virtualLocked) {
+            if (!pending && s.virtual
+                && s.virtualPlacement
+                && (!s.virtualLocked || s.libraryQuickClientTaskToken > 0)) {
                 NBTTagCompound cancel = new NBTTagCompound();
                 cancel.setString("session", s.id);
                 cancel.setLong("planRevision", s.planRevision);
@@ -153,7 +165,15 @@ final class HologramLibraryWorkflow {
         activation.setString("presetId", staged.id);
         activation.setBoolean("confirmDiscard", request.getBoolean("confirmDiscard"));
         HologramActionDispatcher.handle(player, activation);
-        if (request.getBoolean("quickPlace")) s.libraryQuickPending = false;
+        if (request.getBoolean("quickPlace")) {
+            s.libraryQuickPending = false;
+            s.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
+            if (s.libraryQuickClientTaskToken > 0) {
+                HologramWorldPlacementWorkflow.lockVirtual(player, s.x, s.y, s.z, s.side);
+                if (!s.virtualLocked)
+                    throw new java.io.IOException("Quick placement could not lock its original anchor");
+            }
+        }
         return staged.id;
     }
 
@@ -179,6 +199,7 @@ final class HologramLibraryWorkflow {
             s.deidentificationChosen = true;
         }
         s.libraryReplaceLocalId = HologramLibraryService.localId(request.getString("replaceLocalId"), true);
+        captureClientTaskToken(s, request);
         HologramAuthoringWorkflow.beginAeSaveReview(s, preset, "exportDraft", !s.libraryReplaceLocalId.isEmpty());
         HologramSnapshots.send(s);
     }
@@ -230,7 +251,8 @@ final class HologramLibraryWorkflow {
         s.blueprintSaveRevision = s.planRevision;
         s.blueprintSaveJsonSha256 = s.blueprintSavePreviewSha256 = "";
         try {
-            HologramLibraryFacade.downloadDraft(s.player, exported, s.id, s.planRevision, localId, receipt);
+            HologramLibraryFacade
+                .downloadDraft(s.player, exported, s.id, s.planRevision, localId, receipt, s.blueprintClientTaskToken);
         } catch (java.io.IOException | RuntimeException failure) {
             s.blueprintSaveReceipt = "";
             s.blueprintSaveJsonSha256 = s.blueprintSavePreviewSha256 = "";

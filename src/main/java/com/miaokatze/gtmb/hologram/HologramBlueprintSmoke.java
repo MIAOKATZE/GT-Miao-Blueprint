@@ -1382,7 +1382,11 @@ public final class HologramBlueprintSmoke {
             } else if ("downloadDone".equals(op)) {
                 if (download == null || !transfer.equals(packet.getString("transfer")) || download.size() != total)
                     throw new java.io.IOException("Fixture download incomplete");
-                byte[] bytes = download.toByteArray();
+                byte[] bytes = HologramLibraryDownload.decode(
+                    download.toByteArray(),
+                    downloadProof.getString("encoding"),
+                    downloadProof.getInteger("decodedTotal"),
+                    downloadHash);
                 if (!downloadHash.equals(
                     HologramLibraryProtocol.hex(
                         HologramLibraryProtocol.digest()

@@ -28,6 +28,7 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        HologramLibraryWorkflow.captureClientTaskToken(s, action);
         if ("cancelSourceSwitch".equals(op)) {
             if (HologramWorkspace.areaSessionOwned(s)) HologramAuthoringWorkflow.cancelSourceSwitch(s, action);
             HologramSnapshots.send(s);
@@ -492,6 +493,34 @@ final class HologramActionDispatcher {
             s.status = "参数无效，配置未修改";
             return false;
         }
+        java.util.Map<Integer, ItemStack> hatchTargets = null;
+        if (action.hasKey("hatchProfile", 10) || action.hasKey("applyHatchPreset", 1)) {
+            if (action.getInteger("main") != s.main || !action.getCompoundTag("channels")
+                .equals(s.channels)
+                || action.getInteger("mode") != s.mode
+                || s.capture == null
+                || s.capture.incomplete
+                || s.capturePending) {
+                s.status = "结构参数已变化，请重新打开仓室预设后应用";
+                return false;
+            }
+            int tier = action.getInteger("hatchTier");
+            if (tier < 0 || tier >= gregtech.api.enums.GTValues.VN.length || s.virtual || s.mode == 2) {
+                s.status = "此模式或仓室等级不能应用预设";
+                return false;
+            }
+            if (action.hasKey("hatchProfile", 10)) {
+                try {
+                    hatchTargets = HologramHatchProfiles.plan(s, action.getCompoundTag("hatchProfile"));
+                } catch (java.io.IOException invalid) {
+                    s.status = "仓室搭配未应用：" + invalid.getMessage();
+                    return false;
+                }
+            } else if (!s.presetAvailable) {
+                s.status = "此结构没有完整声明的仓室配额，不能生成基础预设";
+                return false;
+            }
+        }
         boolean geometryChanged = s.main != action.getInteger("main")
             || !s.channels.equals(action.getCompoundTag("channels"))
             || s.noHatches != action.getBoolean("noHatches")
@@ -519,6 +548,24 @@ final class HologramActionDispatcher {
         s.scope = HologramValues.clamp(action.getInteger("scope"), 0, 3);
         s.layer = HologramValues.clamp(action.getInteger("layer"), -128, 128);
         s.selected = action.getInteger("selected");
+        if (action.hasKey("hatchProfile", 10) || action.getBoolean("applyHatchPreset")) {
+            s.hatchTier = action.getInteger("hatchTier");
+            s.hatchDowngrade = action.getBoolean("hatchDowngrade");
+            s.presetEnabled = true;
+            s.presetPaused = false;
+            s.noHatches = false;
+            s.scope = 0;
+            s.suppressedAuto.clear();
+            s.autoTargets.clear();
+            s.frozenAutoTargets.clear();
+            s.allocationsFrozen = hatchTargets != null;
+            for (HologramCapture.Cell cell : s.capture.cells) cell.candidates = null;
+            if (hatchTargets != null) {
+                hatchTargets.forEach(
+                    (index, target) -> s.frozenAutoTargets
+                        .put(HologramValues.position(s.capture.cells.get(index)), target.copy()));
+            }
+        }
         if (action.hasKey("selectedIndices", 11)) {
             s.selectedIndices.clear();
             for (int index : action.getIntArray("selectedIndices"))
@@ -530,6 +577,14 @@ final class HologramActionDispatcher {
             HologramResourcePlanner.refreshPlan(s);
         }
         HologramDraftPersistence.persist(s);
+        if (hatchTargets != null) {
+            s.presetSupported = true;
+            s.presetReason = "自定义仓室搭配已应用；施工时仍核对权限、材料与现场";
+            s.status = s.presetReason;
+        }
+        if (!action.getBoolean("applyHatchPreset") || s.presetSupported)
+            s.configurationAcceptedSequence = action.getLong("uiSequence");
+        if (action.getBoolean("applyHatchPreset")) s.status = s.presetReason;
         return true;
     }
 

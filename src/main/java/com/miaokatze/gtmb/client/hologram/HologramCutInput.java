@@ -7,8 +7,8 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 /**
  * Input priority shared by the world controller and regression tests.
  * CUT mode survives local cancellation; the server-owned queue is independent of every local stage.
- * Choosing CUT enters IDLE; IDLE -> SELECTING (Shift-Alt-right) -> IDLE (saved cut).
- * IDLE -> MOVING (Shift-right with a stored cut) -> LOCKED (right) -> confirmation/submission (right).
+ * Choosing CUT enters SELECTING; a saved cut starts a fresh empty selection until Escape.
+ * Shift-right opens storage from every cut stage; an explicit row action starts MOVING -> LOCKED -> paste.
  * Escape returns any local activity to IDLE; only a confirmed server paste/undo consumes a stored cut.
  */
 final class HologramCutInput {
@@ -50,14 +50,16 @@ final class HologramCutInput {
         boolean control) {
         if (control && shift && !alt && !blueprintBusy) return Intent.SWITCHER;
         if (shift && alt && !blueprintBusy) return Intent.SELECT;
-        if (cutMode && alt && !shift && !blueprintBusy) return Intent.UNDO;
+        // Alt is also held while adjusting selection distance; corner 2 must keep priority over undo.
+        if (stage != Stage.SELECTING && cutMode && alt && !shift && !blueprintBusy) return Intent.UNDO;
+        if (cutMode && shift && !blueprintBusy) return Intent.STORAGE;
         if (stage == Stage.SELECTING) return Intent.MARK;
         if (stage == Stage.MOVING) return Intent.LOCK;
         if (stage == Stage.LOCKED) return Intent.CONFIRM;
         if (blueprintBusy) return Intent.NONE;
         if (cutMode) {
             if (alt) return Intent.UNDO;
-            return shift ? Intent.PREVIEW : Intent.STORAGE;
+            return Intent.STORAGE;
         }
         return shift ? Intent.SWITCHER : Intent.NONE;
     }
@@ -75,6 +77,19 @@ final class HologramCutInput {
             || intent == Intent.UNDO
             || intent == Intent.MARK
             || intent == Intent.CONFIRM;
+    }
+
+    static boolean allowsWorldAction(Intent intent, boolean backgroundBusy) {
+        return !backgroundBusy || intent == Intent.NONE || intent == Intent.STORAGE || intent == Intent.SWITCHER;
+    }
+
+    static HologramWorldFlow.Nudge nudgeDirection(int index, boolean alt) {
+        if (index < 0 || index > 5) throw new IllegalArgumentException("cut nudge key");
+        if (index == 0) return alt ? HologramWorldFlow.Nudge.UP : HologramWorldFlow.Nudge.FORWARD;
+        if (index == 1) return alt ? HologramWorldFlow.Nudge.DOWN : HologramWorldFlow.Nudge.BACKWARD;
+        if (index == 2) return HologramWorldFlow.Nudge.LEFT;
+        if (index == 3) return HologramWorldFlow.Nudge.RIGHT;
+        return index == 4 ? HologramWorldFlow.Nudge.UP : HologramWorldFlow.Nudge.DOWN;
     }
 
     static final class Switcher {

@@ -40,6 +40,12 @@ final class HologramUiRouter {
     }
 
     void onGuiClosed() {
+        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            ui.memory.rememberUi();
+            HologramBackgroundTasks.detach();
+            Keyboard.enableRepeatEvents(false);
+            return;
+        }
         ui.library.cancelLibraryNavigation();
         ui.memory.rememberUi();
         if (ui.ae.aeReview() != null && ui.ae.aeReview().review) ui.ae.activateAeReview(182);
@@ -57,6 +63,13 @@ final class HologramUiRouter {
     }
 
     void closeRoot() {
+        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            ui.memory.rememberUi();
+            HologramBackgroundTasks.detach();
+            ui.host.minecraft()
+                .displayGuiScreen(null);
+            return;
+        }
         if (!ui.diagnostics.captureRenderSmokeAction()) HologramLibraryClient.INSTANCE.cancelQuickPlacement();
         if (!ui.diagnostics.captureRenderSmokeAction()) HologramLibraryClient.INSTANCE.cancel();
         ui.memory.rememberUi();
@@ -121,6 +134,39 @@ final class HologramUiRouter {
             ui.canvas.skin("cloth", 0, 0, HologramUiCanvas.DESIGN_W, HologramUiCanvas.DESIGN_H);
             drawRect(6, 29, HologramUiCanvas.DESIGN_W - 6, HologramUiCanvas.DESIGN_H - 8, 0xed142a32);
             ui.canvas.skin("panel", 6, 6, HologramUiCanvas.DESIGN_W - 12, 22);
+            if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+                if (HologramBackgroundTasks.awaitingSourceReview() && ui.library.discardReview()) {
+                    ui.library.drawBlueprintSwitchReview(mx, my);
+                    ui.canvas.button(990, 470, 310, 170, 22, "后台继续 · Esc / E", true, mx, my);
+                    ui.canvas.incrementRenderGeneration(1, true);
+                    return;
+                }
+                if (HologramBackgroundTasks.awaitingReview() && ui.ae.aeReview() != null) {
+                    ui.ae.drawAeReview(mx, my);
+                    ui.canvas.button(990, 470, 310, 170, 22, "后台继续 · Esc / E", true, mx, my);
+                    ui.canvas.incrementRenderGeneration(1, true);
+                    return;
+                }
+                ui.canvas.text(HologramBackgroundTasks.label(), 142, 13, 450, 0xf5e4b9);
+                ui.canvas.text(HologramBackgroundTasks.status(), 40, 110, 590, 0xe5c488);
+                HologramProgress taskProgress = HologramBackgroundTasks.progress();
+                if (taskProgress != null) HologramProgressView.draw(ui.host.font(), taskProgress, 40, 174, 590, 8);
+                ui.canvas.text("关闭界面后任务继续；右键投影仪返回此任务", 40, 150, 590, 0xbacbd1);
+                ui.canvas.button(990, 40, 220, 185, 24, "后台继续 · Esc / E", true, mx, my);
+                ui.canvas.button(
+                    992,
+                    240,
+                    220,
+                    185,
+                    24,
+                    HologramBackgroundTasks.pauseLabel(),
+                    HologramBackgroundTasks.pauseAvailable(),
+                    mx,
+                    my);
+                ui.canvas.button(991, 440, 220, 185, 24, "主动取消任务", HologramBackgroundTasks.canCancel(), mx, my);
+                ui.canvas.incrementRenderGeneration(1, true);
+                return;
+            }
             if (ui.session.areaImporting()) {
                 ui.router.drawImportBusy(mx, my);
                 ui.canvas.incrementRenderGeneration(1, true);
@@ -456,6 +502,11 @@ final class HologramUiRouter {
 
     void mouseClicked(int x, int y, int button) {
         int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
+        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            if (button == 0) for (Control control : ui.canvas.controls())
+                if (control.enabled && control.contains(mx, my)) activate(control.id);
+            return;
+        }
         if (ui.processing.consumeAuthoringModalMouse(mx, my, button)) return;
         if (button >= 0 && (ui.canvas.inViewport(mx, my) || ui.canvas.controls()
             .stream()
@@ -509,14 +560,17 @@ final class HologramUiRouter {
     }
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (HologramBackgroundTasks.busy()) return;
         ui.preview.mouseClickMove(x, y, button, elapsed);
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
+        if (HologramBackgroundTasks.busy()) return;
         ui.preview.mouseMovedOrUp(x, y, button);
     }
 
     void handleMouseInput() {
+        if (HologramBackgroundTasks.busy()) return;
 
         if (ui.bindings.networkDrawer()) return;
         if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
@@ -588,6 +642,10 @@ final class HologramUiRouter {
     }
 
     void keyTyped(char c, int key) {
+        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) closeRoot();
+            return;
+        }
         if (ui.processing.consumeProcessingKey(c, key)) return;
         if (ui.library.consumeSwitchReviewKey(c, key)) return;
         ui.memory.initialEditHint(ui.memory.savedEditHint(false));
@@ -684,6 +742,17 @@ final class HologramUiRouter {
     }
 
     void activate(int id) {
+        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            if (id == 990) closeRoot();
+            else if (id == 991) HologramBackgroundTasks.cancel();
+            else if (id == 992) HologramBackgroundTasks.togglePause();
+            else if (HologramBackgroundTasks.awaitingSourceReview()) {
+                if (id == 224) ui.library.confirmDiscard(id);
+                else if (id == 225) ui.library.cancelSwitchReview(id);
+            } else if (HologramBackgroundTasks.awaitingReview() && HologramBackgroundTasks.reviewControl(id))
+                ui.ae.activateAeReview(id);
+            return;
+        }
         if (id == 166 || id == 146) ui.memory.cellEditHint(false);
         if (ui.library.cancelSwitchReview(id)) return;
         if (ui.processing.confirmPresetSave(id)) return;

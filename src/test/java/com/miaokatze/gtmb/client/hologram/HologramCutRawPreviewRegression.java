@@ -1,15 +1,23 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockContainer;
 import net.minecraft.block.material.Material;
+import net.minecraft.client.renderer.RenderBlocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
+
+import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
+import cpw.mods.fml.client.registry.RenderingRegistry;
 
 /** Native reader boundary without an FML provider or GL context; the native client probe covers actual drawing. */
 public final class HologramCutRawPreviewRegression {
@@ -17,6 +25,7 @@ public final class HologramCutRawPreviewRegression {
     private HologramCutRawPreviewRegression() {}
 
     public static void run() throws ReflectiveOperationException {
+        registeredHandlerRouting();
         AtomicInteger failures = new AtomicInteger();
         HologramCutRawPreviewWorld world = shell((cell, error) -> failures.incrementAndGet());
         NBTTagCompound row = new NBTTagCompound();
@@ -92,6 +101,52 @@ public final class HologramCutRawPreviewRegression {
         world.release();
     }
 
+    /** Chisel-like constructors change the render type shared by every block in their family. */
+    @SuppressWarnings("unchecked")
+    private static void registeredHandlerRouting() throws ReflectiveOperationException {
+        RenderingRegistry registry = RenderingRegistry.instance();
+        Field handlersField = RenderingRegistry.class.getDeclaredField("blockRenderers");
+        Field nextIdField = RenderingRegistry.class.getDeclaredField("nextRenderId");
+        handlersField.setAccessible(true);
+        nextIdField.setAccessible(true);
+        Map<Integer, ISimpleBlockRenderingHandler> handlers = (Map<Integer, ISimpleBlockRenderingHandler>) handlersField
+            .get(registry);
+        int previousNextId = nextIdField.getInt(registry);
+        RoutingHandler.constructions = RoutingHandler.draws = 0;
+        RoutingHandler official = new RoutingHandler();
+        int registeredId = RoutingHandler.renderId;
+        RenderingRegistry.registerBlockHandler(official);
+        try {
+            Block block = new RoutingBlock();
+            Method choose = HologramCutRawPreviewSession.class.getDeclaredMethod("handler", Block.class);
+            choose.setAccessible(true);
+            HologramCutRawPreviewSession preview = new HologramCutRawPreviewSession();
+            for (int pass = 0; pass < 2; pass++) {
+                Object selected = choose.invoke(preview, block);
+                check(selected == official, "raw preview selects the same native handler as world dispatch");
+                check(
+                    RoutingHandler.constructions == 1 && block.getRenderType() == registeredId,
+                    "preview lookup cannot rerun a constructor that changes the family render ID");
+                check(
+                    registry.renderWorldBlock(null, null, 0, 0, 0, block, block.getRenderType()),
+                    "ordinary world geometry still reaches the registered handler after preview lookup");
+                check(
+                    registry.renderItemAsFull3DBlock(block.getRenderType()),
+                    "ordinary inventory blocks retain their registered 3D rendering after preview lookup");
+            }
+            preview.release();
+            check(
+                choose.invoke(new HologramCutRawPreviewSession(), block) == official
+                    && block.getRenderType() == registeredId
+                    && RoutingHandler.constructions == 1
+                    && RoutingHandler.draws == 2,
+                "releasing and reopening a preview preserves process-wide native routing");
+        } finally {
+            handlers.remove(registeredId);
+            nextIdField.setInt(registry, previousNextId);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static HologramCutRawPreviewWorld shell(BiConsumer<HologramCutRawPreviewWorld.Cell, Throwable> failure)
         throws ReflectiveOperationException {
@@ -124,6 +179,44 @@ public final class HologramCutRawPreviewRegression {
         @Override
         public TileEntity createNewTileEntity(World world, int meta) {
             return new ProbeTile();
+        }
+    }
+
+    private static final class RoutingBlock extends Block {
+
+        RoutingBlock() {
+            super(Material.rock);
+        }
+
+        @Override
+        public int getRenderType() {
+            return RoutingHandler.renderId;
+        }
+    }
+
+    public static final class RoutingHandler implements ISimpleBlockRenderingHandler {
+
+        static int renderId, constructions, draws;
+
+        public RoutingHandler() {
+            constructions++;
+            renderId = RenderingRegistry.getNextAvailableRenderId();
+        }
+
+        public boolean renderWorldBlock(IBlockAccess world, int x, int y, int z, Block block, int modelId,
+            RenderBlocks renderer) {
+            draws++;
+            return true;
+        }
+
+        public void renderInventoryBlock(Block block, int metadata, int modelId, RenderBlocks renderer) {}
+
+        public boolean shouldRender3DInInventory(int modelId) {
+            return true;
+        }
+
+        public int getRenderId() {
+            return renderId;
         }
     }
 

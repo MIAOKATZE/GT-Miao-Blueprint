@@ -236,7 +236,10 @@ final class HologramV011NormalDecorProbe {
                     && receipt.equals(begin.getString("saveReceipt"))
                     && artifact.jsonSha256.equals(begin.getString("hash"))
                     && begin.hasKey("total", 3)
-                    && artifact.json.length == begin.getInteger("total")
+                    && begin.getInteger("total") > 0
+                    && begin.getInteger("total") <= artifact.json.length
+                    && artifact.json.length == begin.getInteger("decodedTotal")
+                    && ("gzip".equals(begin.getString("encoding")) || "identity".equals(begin.getString("encoding")))
                     && begin.hasKey("artifactVersion", 3)
                     && begin.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION,
                 "actual server download capability binds this exact JSON source, owner session, revision and receipt");

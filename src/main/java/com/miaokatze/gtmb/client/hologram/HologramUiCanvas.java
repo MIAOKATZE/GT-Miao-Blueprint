@@ -158,7 +158,8 @@ final class HologramUiCanvas {
             ui.session.pendingSequence() >= 0 || ui.bindings.networkBindingNavigation()
                 .pending(),
             ui.bindings.networkRebindSelected());
-        else if (ui.processing.processingFlow() != null) accent = HologramGuidance.modalAccent(id, 231, 234);
+        else if (ui.processing.processingFlow() != null) accent = ui.processing.processingFlow()
+            .guidanceAccent(id);
         else if (ui.review.confirmation() && (id == 169 || id == 55)
             && HologramPlacementConfirmation.cacheResources(ui.session.state().data)
                 .tagCount() > 0)
@@ -214,6 +215,7 @@ final class HologramUiCanvas {
         if (id == 102) return "本格没有单独指定的朝向，无需恢复。";
         if (id == 106) return HologramUiText.reason(ui.session.state().data.getString("presetReason"));
         if (id == 107) return "当前没有启用整机仓室预设，无需撤销。";
+        if (id == 1715 || id == 1716) return "本机尚无经服务端成功确认的上次预设。";
         if (id == 103 || id == 104) return "已到达合法仓室等级边界。";
         if (id == 93 && ui.session.selectedCell() != null && ui.session.selectedCell().family.isEmpty())
             return "本格没有可安全识别的同类部件，请使用单格范围。";
@@ -349,7 +351,16 @@ final class HologramUiCanvas {
             case 93:
                 return "施工范围：与选中格属于同一已识别部件家族的格；未知部件仍保留保护。";
             case 94:
-                return "按结构声明的仓室种类和数量生成空位目标，可选等级及缺料降级策略。保留手动目标和已有仓室。";
+                return "可选快捷方案：选择基础预设或本机保存的整套仓室搭配。也可直接按当前规划确认构建。";
+            case 1712:
+                return "命名保存服务端当前整套仓室目标：角色、具体机器、等级与数量；不保存坐标，也不执行施工。";
+            case 1713:
+                return "用服务端当前整套仓室目标覆盖所选本机搭配；名称保留。";
+            case 1714:
+                return "删除所选本机仓室搭配；当前服务端规划保留。";
+            case 1715:
+            case 1716:
+                return "应用本机上次经服务端成功确认的预设；仍由服务端校验，不直接施工。";
             case 95:
                 return "主动查看本格可替换的方块或仓室；等级按钮始终保留当前部件和选区。";
             case 97:
@@ -369,7 +380,7 @@ final class HologramUiCanvas {
             case 105:
                 return "严格等级：缺料时保留缺料目标；允许降级：按已启用来源选择较低等级。";
             case 106:
-                return "按声明配额生成预设目标，不执行施工；随后检查差分与材料并点击施工按钮。";
+                return "仅生成规划目标，保留手选及实体仓室；自定义搭配与它们冲突时整套不应用。施工仍需核对材料并确认。";
             case 107:
                 return "撤销整机预设目标；保留手选目标、已有仓室与实际施工结果。";
             default:

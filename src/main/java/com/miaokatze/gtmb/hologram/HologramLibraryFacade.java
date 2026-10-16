@@ -162,11 +162,12 @@ public final class HologramLibraryFacade {
                     result.setString("id", id == null ? "" : id);
                     result.setString("session", request.getString("session"));
                     result.setString("transfer", request.getString("transfer"));
+                    result.setLong("clientTaskToken", request.getLong("clientTaskToken"));
                     HologramNetwork.sendLibraryReply(player, result);
                 } catch (IOException | RuntimeException failure) {
-                    error(player, failure.getMessage());
+                    error(player, failure.getMessage(), request.getLong("clientTaskToken"));
                 }
-            } else error(player, "Blueprint session changed; reopen and retry");
+            } else error(player, "Blueprint session changed; reopen and retry", request.getLong("clientTaskToken"));
         });
     }
 
@@ -175,7 +176,7 @@ public final class HologramLibraryFacade {
             BiConsumer<EntityPlayerMP, NBTTagCompound> receiver = draftReceiver;
             if (enabled() && receiver != null && HologramLibraryService.sessionCurrent(player, request))
                 receiver.accept(player, request);
-            else error(player, "Blueprint session changed; reopen and retry");
+            else error(player, "Blueprint session changed; reopen and retry", request.getLong("clientTaskToken"));
         });
     }
 
@@ -215,7 +216,7 @@ public final class HologramLibraryFacade {
             if (!HologramLibraryService.draftCurrent(player, proof)) return;
             if (!proof.getString("saveReceipt")
                 .isEmpty()) HologramService.librarySaveCancelled(player, proof);
-            error(player, message);
+            error(player, message, proof.getLong("clientTaskToken"));
         });
     }
 
@@ -231,6 +232,7 @@ public final class HologramLibraryFacade {
                     throw new IOException("Blueprint preview source or receipt changed");
                 NBTTagCompound verified = HologramLibraryProtocol.reply("previewVerified");
                 verified.setString("transfer", request.getString("transfer"));
+                verified.setLong("clientTaskToken", request.getLong("clientTaskToken"));
                 verified.setString("saveReceipt", request.getString("saveReceipt"));
                 verified.setString("jsonSha256", HologramBlueprintArtifact.hash(artifact.json));
                 verified.setString("previewSha256", HologramBlueprintArtifact.hash(artifact.png));
@@ -241,7 +243,7 @@ public final class HologramLibraryFacade {
                 rememberSavedResult(player, verified);
                 HologramNetwork.sendLibraryReply(player, verified);
             } catch (IOException | RuntimeException failure) {
-                error(player, failure.getMessage());
+                error(player, failure.getMessage(), request.getLong("clientTaskToken"));
             }
         });
     }
@@ -359,6 +361,7 @@ public final class HologramLibraryFacade {
                 : request.getString("replaceLocalId");
             return actor == player && proof.getString("saveReceipt")
                 .equals(request.getString("saveReceipt"))
+                && proof.getLong("clientTaskToken") == request.getLong("clientTaskToken")
                 && request.hasKey("planRevision", 4)
                 && proof.getString("session")
                     .equals(request.getString("session"))
@@ -427,11 +430,17 @@ public final class HologramLibraryFacade {
 
     public static void downloadDraft(EntityPlayerMP player, HologramPresets.Preset preset, String session,
         long revision, String replaceLocalId, String saveReceipt) throws IOException {
+        downloadDraft(player, preset, session, revision, replaceLocalId, saveReceipt, 0L);
+    }
+
+    public static void downloadDraft(EntityPlayerMP player, HologramPresets.Preset preset, String session,
+        long revision, String replaceLocalId, String saveReceipt, long clientTaskToken) throws IOException {
         NBTTagCompound request = HologramLibraryProtocol.request("exportDraft");
         request.setString("session", session);
         request.setLong("planRevision", revision);
         request.setString("replaceLocalId", replaceLocalId == null ? "" : replaceLocalId);
         request.setString("saveReceipt", saveReceipt == null ? "" : saveReceipt);
+        request.setLong("clientTaskToken", Math.max(0L, clientTaskToken));
         HologramServerLibrary current = library;
         if (current == null) throw new IOException("Server library is still loading");
         current.prepareDraft(player, request, preset);
@@ -457,8 +466,13 @@ public final class HologramLibraryFacade {
     }
 
     public static void error(EntityPlayerMP player, String message) {
+        error(player, message, 0L);
+    }
+
+    public static void error(EntityPlayerMP player, String message, long clientTaskToken) {
         NBTTagCompound tag = HologramLibraryProtocol.reply("error");
         tag.setString("message", message);
+        tag.setLong("clientTaskToken", clientTaskToken);
         HologramNetwork.sendLibraryReply(player, tag);
     }
 
@@ -505,18 +519,20 @@ public final class HologramLibraryFacade {
                     resolveSavedResult(next.player, next.request, "cancel".equals(op));
                     if ("saveStatus".equals(op)) continue;
                 }
-                if ("quickBootstrap".equals(op) || "quickCancel".equals(op)) {
+                if ("quickBootstrap".equals(op) || "quickCancel".equals(op) || "quickFallback".equals(op)) {
                     if ("quickBootstrap".equals(op)) HologramLibraryService.quickBootstrap(next.player, next.request);
+                    else if ("quickFallback".equals(op))
+                        HologramLibraryService.quickFallback(next.player, next.request);
                     else HologramLibraryService.quickCancel(next.player, next.request);
                     continue;
                 }
                 if (("privateBegin".equals(op) || "exportDraft".equals(op))
                     && !HologramLibraryService.sessionCurrent(next.player, next.request)) {
-                    error(next.player, "蓝图会话已变更，请重新打开后重试");
+                    error(next.player, "蓝图会话已变更，请重新打开后重试", next.request.getLong("clientTaskToken"));
                     continue;
                 }
                 if ("previewBegin".equals(op) && !HologramLibraryService.saveCurrent(next.player, next.request)) {
-                    error(next.player, "蓝图保存来源已变更，请重新保存");
+                    error(next.player, "蓝图保存来源已变更，请重新保存", next.request.getLong("clientTaskToken"));
                     continue;
                 }
                 current.submit(next.player, next.request, isAdmin(next.player));

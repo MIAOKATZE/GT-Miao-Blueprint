@@ -43,6 +43,7 @@ final class HologramBusyReplies {
         }
         if (request.hasKey("uiSequence", 4)) proof.setLong("uiSequence", request.getLong("uiSequence"));
         if (request.hasKey("planRevision", 4)) proof.setLong("planRevision", request.getLong("planRevision"));
+        if (request.hasKey("clientTaskToken", 4)) proof.setLong("clientTaskToken", request.getLong("clientTaskToken"));
         if (request.hasKey("artifactVersion", 3))
             proof.setInteger("artifactVersion", request.getInteger("artifactVersion"));
         NBTTagCompound previous = replies[kind.ordinal()];

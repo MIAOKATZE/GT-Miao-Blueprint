@@ -404,6 +404,26 @@ public final class HologramClientLibraryRegression {
         SimpleAssert.that(
             !quick.bootstrap(fourth, "fourth-session"),
             "Escape during disk loading prevents a later upload from starting");
+        String fallback = quick.begin();
+        SimpleAssert.that(quick.bootstrap(fallback, "fallback-bootstrap"), "fallback gets its own server capability");
+        SimpleAssert.that(
+            !quick.snapshotMatches(third, 21, 21) && !quick.snapshotMatches(fallback, 22, 21),
+            "old shortcut snapshot and old task token cannot complete a fresh background shortcut");
+        SimpleAssert.that(
+            !quick.placement(third, "fallback-bootstrap", "placed"),
+            "old fallback reply cannot replace the current session");
+        SimpleAssert.that(
+            quick.placement(fallback, "fallback-bootstrap", "placed"),
+            "current fallback reply binds the actual new placement session");
+        SimpleAssert.that(
+            !quick.commitLockedSession("fallback-bootstrap"),
+            "bootstrap or old locked session does not imply final placement");
+        SimpleAssert.that(
+            quick.snapshotMatches(fallback, 22, 22) && quick.commitLockedSession("placed"),
+            "matching task, quick capability and actual locked placement finish the background shortcut");
+        SimpleAssert.that(
+            !quick.placement(fallback, "fallback-bootstrap", "placed"),
+            "late fallback success cannot revive the completed task");
     }
 
     private interface Operation {

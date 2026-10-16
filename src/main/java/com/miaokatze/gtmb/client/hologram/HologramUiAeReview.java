@@ -57,7 +57,8 @@ final class HologramUiAeReview {
             .isEmpty() || !ui.session.state().session.equals(dto.getString("session"))
             || dto.getLong("planRevision") != ui.session.revision()) return;
         HologramAeReviewModel next = new HologramAeReviewModel(dto, true);
-        if (HologramUiAeReview.AE_REVIEW_GATE.first(next)) {
+        if (HologramUiAeReview.AE_REVIEW_GATE.first(next)
+            || this.aeReview == null && HologramBackgroundTasks.awaitingReview()) {
             this.aeReview = next;
             this.aeReviewTab = this.aeReviewOffset = this.aeDetailOffset = 0;
             this.aeReviewGroup = this.aeReviewSelected = -1;

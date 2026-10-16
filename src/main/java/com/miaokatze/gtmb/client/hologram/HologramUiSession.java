@@ -116,6 +116,7 @@ final class HologramUiSession {
     }
 
     boolean editable() {
+        if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
             && job != 1
@@ -158,6 +159,8 @@ final class HologramUiSession {
     }
 
     void send(String op, NBTTagCompound request, boolean pending) {
+        if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
+        sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));
         if (areaImporting() && !"close".equals(op) && !"cancelAeSave".equals(op) && !"aePreviewClose".equals(op))
             return;
         if (!ui.ae.commandAllowed(op)) return;
@@ -176,6 +179,10 @@ final class HologramUiSession {
         if (!n.hasKey("structureId")) n.setString("structureId", state.data.getString("activeStructure"));
         n.setString("session", state.session);
         n.setString("op", op);
+        if (HologramBackgroundTasks.libraryTask() && (op.startsWith("saveBlueprint") || "savePreset".equals(op)
+            || "updatePreset".equals(op)
+            || "exportDraft".equals(op)
+            || "confirmAeSave".equals(op))) n.setLong("clientTaskToken", HologramBackgroundTasks.token());
         n.setLong("uiSequence", ++sequence);
         ui.preview.recordSelectionCommand(op, sequence);
         if (pending) {
@@ -190,7 +197,10 @@ final class HologramUiSession {
         }
         if (ui.diagnostics.captureRenderSmokeAction())
             ui.diagnostics.capturedRenderSmokeAction((NBTTagCompound) n.copy());
-        else HologramNetwork.sendAction(n);
+        else {
+            HologramBackgroundTasks.command(state.session, sequence, op);
+            HologramNetwork.sendAction(n);
+        }
     }
 
     HologramProgress progress() {

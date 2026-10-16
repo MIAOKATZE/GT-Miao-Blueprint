@@ -13,6 +13,7 @@ public final class HologramProcessingFlowRegression {
     }
 
     public static void run() {
+        explicitChoiceGuidance();
         nativeSaveStages();
         HologramProcessingFlow optional = new HologramProcessingFlow(new NBTTagCompound());
         optional.requirements((1 << 4) | (1 << 5));
@@ -188,6 +189,46 @@ public final class HologramProcessingFlowRegression {
                 .getTagList("confirmedStages", 8)
                 .tagCount() == 1 && !changed.complete(),
             "Changing recommended identity or network choices returns to the earliest affected review step");
+    }
+
+    private static void explicitChoiceGuidance() {
+        NBTTagCompound defaults = new NBTTagCompound();
+        HologramProcessingFlow flow = new HologramProcessingFlow(defaults);
+        check(
+            "self".equals(
+                flow.values()
+                    .getString("tendency"))
+                && !flow.explicitChoice(),
+            "a recommended self-use value is not an explicit approval");
+        check(
+            flow.guidanceAccent(232) == 0x80efaa && flow.guidanceAccent(233) == 0x80efaa
+                && flow.guidanceAccent(231) == 0,
+            "both tendency choices guide an unconfirmed stage; Next does not claim readiness");
+        flow.tendency(false);
+        check(
+            flow.guidanceAccent(232) == 0 && flow.guidanceAccent(233) == 0
+                && flow.guidanceAccent(231) == 0x80efaa
+                && !flow.complete(),
+            "explicitly choosing the default transfers guidance to Next without completing server processing");
+        flow.next();
+        flow.clearChoice();
+        check(
+            flow.guidanceAccent(231) == 0 && flow.guidanceAccent(232) == 0x80efaa,
+            "a rejected or invalidated local stage requests a fresh decision");
+        flow.choose();
+        check(
+            flow.guidanceAccent(231) == 0x80efaa && flow.guidanceAccent(233) == 0,
+            "an explicit stage-specific choice also enables the next step");
+        check(
+            !defaults.hasKey("tendency") && flow.policy()
+                .getTagList("confirmedStages", 8)
+                .tagCount() == 1,
+            "guidance never mutates the source draft or invents remaining confirmations");
+        HologramProcessingFlow optional = new HologramProcessingFlow(defaults);
+        optional.requirements(0);
+        check(
+            optional.guidanceAccent(231) == 0x80efaa && !optional.explicitChoice(),
+            "an empty optional stage may continue while its recommendation remains unconfirmed");
     }
 
     private static void nativeSaveStages() {

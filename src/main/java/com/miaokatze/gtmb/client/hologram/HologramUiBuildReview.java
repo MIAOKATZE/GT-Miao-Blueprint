@@ -398,10 +398,9 @@ final class HologramUiBuildReview {
                     && !ui.session.state().data.getBoolean("virtualLocked")) ui.session.send("lockVirtual", null, true);
                 return true;
             case 50:
-                if (!ui.memory.initialStructureSetupRequired() && ui.session.editable()
-                    && (!ui.session.state().data.getBoolean("virtual")
-                        || ui.session.state().data.getBoolean("virtualPlacement")
-                            && ui.session.state().data.getBoolean("virtualLocked"))) {
+                if (ui.session.editable() && (!ui.session.state().data.getBoolean("virtual")
+                    || ui.session.state().data.getBoolean("virtualPlacement")
+                        && ui.session.state().data.getBoolean("virtualLocked"))) {
                     if (ui.review.placementReviewActive()) {
                         this.confirmedRevision = ui.session.revision();
                         this.confirmation = true;
@@ -434,8 +433,7 @@ final class HologramUiBuildReview {
                     ui.session.notice("缓存报价已变化，请重新核对当前确认信息后再放置");
                     return true;
                 }
-                if (!ui.memory.initialStructureSetupRequired() && ui.session.editable()
-                    && this.confirmation
+                if (ui.session.editable() && this.confirmation
                     && this.confirmedRevision == ui.session.revision()
                     && HologramPlacementConfirmation.networksReady(ui.session.state().data)
                     && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")

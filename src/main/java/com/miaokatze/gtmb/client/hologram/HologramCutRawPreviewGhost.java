@@ -25,8 +25,8 @@ import org.lwjgl.opengl.GLContext;
 final class HologramCutRawPreviewGhost {
 
     private static final int FRAMEBUFFER = 0x8d40, READ_FRAMEBUFFER = 0x8ca8, DRAW_FRAMEBUFFER = 0x8ca9;
-    private static final float OPACITY = .38f;
-    private static final float[] TINT = { .72f, .94f, 1 };
+    private static final float OPACITY = .65f;
+    private static final float[] TINT = { .90f, .97f, 1 };
     private Framebuffer layer;
     private int destination = -1, width, height, priorGlError, copyGlError;
     private long composites, depthCopies, sampleChecks, sampleMismatches;
