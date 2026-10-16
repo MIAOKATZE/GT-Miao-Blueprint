@@ -28,7 +28,7 @@ public final class HologramSnapshotInboxRegression {
             waitFor(release);
             return "PREPARE";
         })) {
-            SimpleAssert.that(inbox.offer(new byte[3]), "first snapshot admitted");
+            SimpleAssert.that(inbox.offer(new byte[3], 7), "first snapshot admitted");
             waitFor(entered);
             SimpleAssert.that(decodingThread.get() != Thread.currentThread(), "pure decode leaves client thread");
             SimpleAssert.that(!inbox.offer(new byte[2]), "active bytes count toward compressed budget");
@@ -36,8 +36,12 @@ public final class HologramSnapshotInboxRegression {
             SimpleAssert.that(!inbox.offerValue("next"), "decoded and undecoded entries share a bounded capacity");
             SimpleAssert.that(inbox.poll() == null, "ready ACK never overtakes blocked PREPARE");
             release.countDown();
-            SimpleAssert.eq("PREPARE", inbox.awaitNext().value, "PREPARE publishes first");
-            SimpleAssert.eq("ACK", inbox.poll().value, "ACK is retained and publishes second");
+            HologramSnapshotInbox.Result<String> decoded = inbox.awaitNext();
+            SimpleAssert.eq("PREPARE", decoded.value, "PREPARE publishes first");
+            SimpleAssert.eq(7L, decoded.transportSequence, "decode completion retains its exact transport owner");
+            HologramSnapshotInbox.Result<String> inline = inbox.poll();
+            SimpleAssert.eq("ACK", inline.value, "ACK is retained and publishes second");
+            SimpleAssert.eq(-1L, inline.transportSequence, "inline ACK cannot complete an unrelated transport");
             SimpleAssert.that(inbox.offerValue("next"), "consumption relieves backpressure for retry");
             SimpleAssert.eq("next", inbox.poll().value, "rejected input can be retried without loss");
             boolean rejected = false;

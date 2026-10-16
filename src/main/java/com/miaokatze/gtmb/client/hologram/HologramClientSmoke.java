@@ -15,6 +15,7 @@ import net.minecraft.util.ScreenShotHelper;
 import org.lwjgl.opengl.GL11;
 
 import cpw.mods.fml.common.FMLCommonHandler;
+import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
@@ -22,10 +23,31 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 public final class HologramClientSmoke {
 
     private final long installedAt = System.nanoTime();
+    private final long startupBudgetNanos = Math
+        .max(60L, Math.min(3600L, Long.getLong("gtmb.hologram.nativeStartupSeconds", 1800L))) * 1000000000L;
     private NBTTagCompound snapshot;
     private int scale = 0;
     private long stageAt;
     private boolean finished;
+    private long renderFrameSerial;
+    private CaptureRequest captureRequest;
+    private final NBTTagList renderFrames = new NBTTagList();
+
+    private static final class CaptureRequest {
+
+        final HologramScreen screen;
+        final String name, layout;
+        final long frameSerial, generation;
+
+        CaptureRequest(HologramScreen screen, String name, String layout, long frameSerial, long generation) {
+            this.screen = screen;
+            this.name = name;
+            this.layout = layout;
+            this.frameSerial = frameSerial;
+            this.generation = generation;
+        }
+    }
+
     private File snapshotFile;
     private NBTTagCompound blueprintSnapshot;
     private NBTTagCompound nativeDisplaySnapshot;
@@ -83,12 +105,12 @@ public final class HologramClientSmoke {
 
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
-        if (finished || event.phase != TickEvent.Phase.END) return;
+        if (finished || event.phase != TickEvent.Phase.END || captureRequest != null) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
             if (scale == 0) {
                 if (!(mc.currentScreen instanceof GuiMainMenu)) {
-                    if (System.nanoTime() - installedAt > 300000000000L)
+                    if (System.nanoTime() - installedAt > startupBudgetNanos)
                         throw new IllegalStateException("MainMenu initialization timed out");
                     return;
                 }
@@ -214,6 +236,31 @@ public final class HologramClientSmoke {
             if (glError != GL11.GL_NO_ERROR) throw new IllegalStateException("OpenGL error " + glError);
             String name = scenario < 0 ? "hologram-scale-" + scale
                 : "hologram-" + SCENARIOS[scenario] + "-scale-" + scale;
+            captureRequest = new CaptureRequest(
+                screen,
+                name,
+                layout,
+                renderFrameSerial,
+                screen.ui.canvas.renderGeneration());
+        } catch (Throwable failure) {
+            failure.printStackTrace();
+            finish(mc, false, failure.toString());
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public void renderEnd(TickEvent.RenderTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+        renderFrameSerial++;
+        CaptureRequest request = captureRequest;
+        if (finished || request == null) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.currentScreen != request.screen || renderFrameSerial <= request.frameSerial
+            || request.screen.ui.canvas.renderGeneration() <= request.generation) return;
+        captureRequest = null;
+        HologramScreen screen = request.screen;
+        String name = request.name, layout = request.layout;
+        try {
             File screenshot = new File(new File(mc.mcDataDir, "screenshots"), name + ".png");
             if (screenshot.exists() && !screenshot.delete())
                 throw new IllegalStateException("Cannot replace smoke screenshot: " + screenshot);
@@ -221,6 +268,7 @@ public final class HologramClientSmoke {
                 .saveScreenshot(mc.mcDataDir, name + ".png", mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
             if (!screenshot.isFile() || screenshot.length() == 0)
                 throw new IllegalStateException("Screenshot not saved: " + screenshot);
+            recordRenderFrame(mc, request, screenshot);
             if (scenario >= 0
                 && (SCENARIOS[scenario].startsWith("native-six-") || SCENARIOS[scenario].startsWith("native-ae-")
                     || SCENARIOS[scenario].startsWith("native-decoration-")))
@@ -250,6 +298,49 @@ public final class HologramClientSmoke {
         } catch (Throwable failure) {
             failure.printStackTrace();
             finish(mc, false, failure.toString());
+        }
+    }
+
+    private void recordRenderFrame(Minecraft mc, CaptureRequest request, File screenshot) throws Exception {
+        byte[] bytes = java.nio.file.Files.readAllBytes(screenshot.toPath());
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(bytes);
+        StringBuilder hash = new StringBuilder();
+        for (byte value : digest) hash.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+        NBTTagCompound frame = new NBTTagCompound();
+        frame.setString("png", screenshot.getName());
+        frame.setString("pngPath", screenshot.getAbsolutePath());
+        frame.setString("pngSha256", hash.toString());
+        frame.setString("capturePhase", "RenderTick.END");
+        frame.setLong("requestFrameSerial", request.frameSerial);
+        frame.setLong("actualFrameSerial", renderFrameSerial);
+        frame.setLong("requestGeneration", request.generation);
+        frame.setLong("actualGeneration", request.screen.ui.canvas.renderGeneration());
+        frame.setInteger("scale", scale);
+        frame.setString("scenario", scenario < 0 ? "scale-only" : SCENARIOS[scenario]);
+        frame.setInteger("width", mc.displayWidth);
+        frame.setInteger("height", mc.displayHeight);
+        frame.setLong("bytes", bytes.length);
+        renderFrames.appendTag(frame);
+        writeRenderFrames(mc, false, false);
+        System.out.println(
+            "[GTMB-HOLOGRAM-CLIENT] END FRAME " + screenshot.getName()
+                + " frame="
+                + renderFrameSerial
+                + " generation="
+                + request.screen.ui.canvas.renderGeneration());
+    }
+
+    private void writeRenderFrames(Minecraft mc, boolean complete, boolean passed) throws Exception {
+        NBTTagCompound record = new NBTTagCompound();
+        record.setTag("frames", renderFrames);
+        record.setBoolean("actualNetty", false);
+        record.setString("sourceKind", "server-snapshot-fixture");
+        record.setBoolean("completed", complete);
+        record.setBoolean("passed", passed);
+        try (java.io.FileOutputStream stream = new java.io.FileOutputStream(
+            new File(mc.mcDataDir, "hologram-render-frames.nbt"))) {
+            CompressedStreamTools.writeCompressed(record, stream);
         }
     }
 
@@ -373,9 +464,9 @@ public final class HologramClientSmoke {
                 : SCENARIOS[scenario];
         screen.smokeRenderScenario(renderScenario);
         if (SCENARIOS[scenario].startsWith("native-six-")) {
-            java.lang.reflect.Field yaw = HologramScreen.class.getDeclaredField("yaw");
-            yaw.setAccessible(true);
-            yaw.setDouble(screen, SCENARIOS[scenario].endsWith("-b") ? -Math.PI / 3 : Math.PI / 4);
+
+            HologramUiDiagnostics
+                .writeDiagnosticField(screen, "yaw", SCENARIOS[scenario].endsWith("-b") ? -Math.PI / 3 : Math.PI / 4);
         }
         stageAt = System.nanoTime();
     }
@@ -473,9 +564,8 @@ public final class HologramClientSmoke {
         int[] bounds = new int[4];
         String[] fields = { "viewportX", "viewportY", "viewportWidth", "viewportHeight" };
         for (int i = 0; i < fields.length; i++) {
-            java.lang.reflect.Field field = HologramScreen.class.getDeclaredField(fields[i]);
-            field.setAccessible(true);
-            bounds[i] = field.getInt(screen);
+
+            bounds[i] = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, fields[i]));
         }
         if (exactGt) {
             boolean sameBlockMetadataDifferentMachine = false;
@@ -676,6 +766,12 @@ public final class HologramClientSmoke {
     }
 
     private void finish(Minecraft mc, boolean passed, String reason) {
+        try {
+            writeRenderFrames(mc, true, passed);
+        } catch (Exception frameFailure) {
+            throw new IllegalStateException("Cannot finish render frame ledger", frameFailure);
+        }
+
         finished = true;
         System.out.println("[GTMB-HOLOGRAM-CLIENT] FINAL " + (passed ? "PASS " : "FAIL ") + reason);
         mc.shutdown();

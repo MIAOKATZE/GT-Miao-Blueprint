@@ -1157,7 +1157,7 @@ public final class HologramSulfurLineSmoke {
     }
 
     private Object liveSession() throws Exception {
-        Field field = HologramService.class.getDeclaredField("SESSIONS");
+        Field field = HologramWorkspace.class.getDeclaredField("SESSIONS");
         field.setAccessible(true);
         return ((Map<?, ?>) field.get(null)).get(actor.getUniqueID());
     }

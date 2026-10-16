@@ -1,0 +1,165 @@
+package com.miaokatze.gtmb.client.hologram;
+
+import java.lang.reflect.Field;
+import java.util.LinkedHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+
+import net.minecraft.block.BlockContainer;
+import net.minecraft.block.material.Material;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
+
+/** Native reader boundary without an FML provider or GL context; the native client probe covers actual drawing. */
+public final class HologramCutRawPreviewRegression {
+
+    private HologramCutRawPreviewRegression() {}
+
+    public static void run() throws ReflectiveOperationException {
+        AtomicInteger failures = new AtomicInteger();
+        HologramCutRawPreviewWorld world = shell((cell, error) -> failures.incrementAndGet());
+        NBTTagCompound row = new NBTTagCompound();
+        row.setInteger("x", 2);
+        row.setInteger("y", 3);
+        row.setInteger("z", 4);
+        row.setString("block", "minecraft:chest");
+        row.setInteger("meta", 5);
+        NBTTagCompound tile = new NBTTagCompound();
+        tile.setString("id", "unknown-addon:full-native-tile");
+        tile.setInteger("x", 12345);
+        tile.setInteger("y", 99);
+        tile.setInteger("z", -6789);
+        tile.setString("ownerUUID", "preserve-owner-exactly");
+        tile.setString("networkKey", "preserve-network-exactly");
+        NBTTagCompound unknown = new NBTTagCompound();
+        unknown.setString("privateAddonField", "full-private-state");
+        unknown.setByteArray("opaque", new byte[] { 0, -1, 42 });
+        tile.setTag("unknown", unknown);
+        row.setTag("tile", tile);
+        NBTTagCompound original = (NBTTagCompound) row.copy();
+        HologramCutRawPreviewWorld.Cell cell = new HologramCutRawPreviewWorld.Cell(row);
+        Field block = HologramCutRawPreviewWorld.Cell.class.getDeclaredField("block");
+        block.setAccessible(true);
+        block.set(cell, new ProbeBlock());
+        world.cells.put(HologramCutRawPreviewWorld.key(2, 3, 4), cell);
+        ProbeTile.reads = ProbeTile.lifecycle = 0;
+        ProbeTile loaded = (ProbeTile) world.getTileEntity(2, 3, 4);
+        check(loaded != null && loaded.getWorldObj() == world, "arbitrary native family uses only the detached world");
+        check(loaded.xCoord == 2 && loaded.yCoord == 3 && loaded.zCoord == 4, "only detached root XYZ are relocated");
+        check(
+            loaded.seen.getString("ownerUUID")
+                .equals("preserve-owner-exactly")
+                && loaded.seen.getString("networkKey")
+                    .equals("preserve-network-exactly")
+                && loaded.seen.getCompoundTag("unknown")
+                    .equals(unknown),
+            "complete unrecognized payload reaches the native reader");
+        check(
+            row.equals(original) && cell.raw.equals(original),
+            "a mutating native reader cannot modify either raw source");
+        check(
+            world.getTileEntity(2, 3, 4) == loaded && ProbeTile.reads == 1,
+            "native tiles are cached rather than recreated per frame");
+        check(
+            !world.setBlock(2, 3, 4, net.minecraft.init.Blocks.air, 0, 3) && world.getBlockMetadata(2, 3, 4) == 5,
+            "snapshot writes cannot change raw cells");
+        check(
+            world.setBlockMetadataWithNotify(2, 3, 4, 7, 4) && world.getBlockMetadata(2, 3, 4) == 7,
+            "render metadata impersonation is a disposable local overlay");
+        world.endRender();
+        check(world.getBlockMetadata(2, 3, 4) == 5, "ending native render restores source metadata");
+        loaded = null;
+        world.release();
+        check(
+            ProbeTile.lifecycle == 0 && world.cells.isEmpty(),
+            "dispose never dispatches validate, tick, or unload lifecycle");
+
+        world = shell((value, error) -> failures.incrementAndGet());
+        cell = new HologramCutRawPreviewWorld.Cell(row);
+        block.set(cell, new ProbeBlock());
+        cell.raw.getCompoundTag("tile")
+            .setBoolean("fail", true);
+        NBTTagCompound failingOriginal = (NBTTagCompound) cell.raw.copy();
+        world.cells.put(HologramCutRawPreviewWorld.key(2, 3, 4), cell);
+        check(
+            world.getTileEntity(2, 3, 4) == null && failures.get() == 1,
+            "native assertion failure becomes a visible diagnostic");
+        check(
+            world.getTileEntity(2, 3, 4) == null && failures.get() == 1,
+            "failed native factory is not retried every frame");
+        check(cell.raw.equals(failingOriginal) && row.equals(original), "failed reader retains the complete raw cache");
+        world.release();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static HologramCutRawPreviewWorld shell(BiConsumer<HologramCutRawPreviewWorld.Cell, Throwable> failure)
+        throws ReflectiveOperationException {
+        Field singleton = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        singleton.setAccessible(true);
+        HologramCutRawPreviewWorld world = (HologramCutRawPreviewWorld) ((sun.misc.Unsafe) singleton.get(null))
+            .allocateInstance(HologramCutRawPreviewWorld.class);
+        world.isRemote = true;
+        for (String name : new String[] { "cells", "renderMetadata" }) {
+            Field field = HologramCutRawPreviewWorld.class.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(world, new LinkedHashMap<String, Object>());
+        }
+        Field callback = HologramCutRawPreviewWorld.class.getDeclaredField("failure");
+        callback.setAccessible(true);
+        callback.set(world, failure);
+        return world;
+    }
+
+    private static void check(boolean value, String message) {
+        if (!value) throw new AssertionError(message);
+    }
+
+    private static final class ProbeBlock extends BlockContainer {
+
+        ProbeBlock() {
+            super(Material.wood);
+        }
+
+        @Override
+        public TileEntity createNewTileEntity(World world, int meta) {
+            return new ProbeTile();
+        }
+    }
+
+    public static final class ProbeTile extends TileEntity {
+
+        static int reads, lifecycle;
+        NBTTagCompound seen;
+
+        @Override
+        public void readFromNBT(NBTTagCompound tag) {
+            super.readFromNBT(tag);
+            reads++;
+            seen = (NBTTagCompound) tag.copy();
+            tag.getCompoundTag("unknown")
+                .setString("privateAddonField", "reader mutated its input");
+            if (tag.getBoolean("fail")) throw new AssertionError("native reader failure fixture");
+        }
+
+        @Override
+        public void validate() {
+            lifecycle++;
+        }
+
+        @Override
+        public void invalidate() {
+            lifecycle++;
+        }
+
+        @Override
+        public void onChunkUnload() {
+            lifecycle++;
+        }
+
+        @Override
+        public void updateEntity() {
+            lifecycle++;
+        }
+    }
+}

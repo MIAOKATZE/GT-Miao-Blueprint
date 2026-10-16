@@ -398,7 +398,7 @@ final class HologramBlockTransformRegression {
         automatic.put(0, pinned);
         targets.add(pinned);
         String firstPayload = preset.cells.get(0).tileNbt;
-        Method transform = HologramService.class.getDeclaredMethod(
+        Method transform = HologramWorldPlacementWorkflow.class.getDeclaredMethod(
             "transformVirtual",
             session.getClass(),
             int.class,

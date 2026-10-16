@@ -207,6 +207,8 @@ final class HologramBlueprintProcessing {
         receipt.setInteger("minimumLevel", minimum);
         receipt.setTag("policy", policy.write());
         receipt.setTag("generatedHints", generatedHints);
+        NBTTagCompound reports = HologramExtensionSnapshots.authoring(result);
+        if (!reports.hasNoTags()) receipt.setTag("extensions", reports);
         result.processingNbt = HologramBlueprintNbt.encodeCanonical(receipt);
         return result;
     }

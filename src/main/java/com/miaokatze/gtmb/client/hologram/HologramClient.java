@@ -67,6 +67,30 @@ public final class HologramClient {
         if (installed) return;
         installed = true;
         HologramLibraryClient.INSTANCE.install();
+        HologramCutClient.INSTANCE.install();
+        HologramNetwork.setProgressReceiver(nbt -> {
+            Minecraft minecraft = Minecraft.getMinecraft();
+            Object world = minecraft.theWorld, connection = minecraft.getNetHandler();
+            if (world == null || connection == null) return;
+            minecraft.func_152344_a(() -> {
+                if (world != minecraft.theWorld || connection != minecraft.getNetHandler()
+                    || retiredSessions.contains(nbt.getString("session"))) return;
+                HologramClientProgress.receive(nbt);
+                if (nbt.getBoolean("jobDelta") && HologramClientProgress.matches(nbt))
+                    HologramRenderer.jobVisualChanged(state, HologramJobVisuals.accept(state, nbt));
+                if ("rejected".equals(nbt.getString("outcome"))) {
+                    HologramLibraryClient.INSTANCE.transportRejectedSave(nbt);
+                    if ("cut".equals(nbt.getString("scope"))) {
+                        HologramCutClient.INSTANCE.transportRejected(nbt);
+                        return;
+                    }
+                    if (minecraft.currentScreen instanceof HologramScreen)
+                        ((HologramScreen) minecraft.currentScreen).ui.session.transportRejected(nbt);
+                    else if (minecraft.currentScreen instanceof HologramSettingsScreen)
+                        ((HologramSettingsScreen) minecraft.currentScreen).transportRejected(nbt);
+                }
+            });
+        });
         HologramNetwork.setClientReceiver(
             nbt -> Minecraft.getMinecraft()
                 .func_152344_a(() -> receive(nbt)));
@@ -77,6 +101,7 @@ public final class HologramClient {
             .bus()
             .register(listener);
         HologramClientSmoke.install();
+        HologramCutNativeClientProbe.install();
     }
 
     private static long lastUseTick = Long.MIN_VALUE;
@@ -96,8 +121,9 @@ public final class HologramClient {
                     .getString("gtitHologramToolId"),
             tool);
         previewDistance.sync(
-            worldStage() == HologramWorldFlow.Stage.AREA ? areaProjectorWorld()
-                : projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
+            HologramCutClient.INSTANCE.aiming() ? projectorWorld()
+                : worldStage() == HologramWorldFlow.Stage.AREA ? areaProjectorWorld()
+                    : projectorWorld() && worldStage() == HologramWorldFlow.Stage.MOVING,
             mc.theWorld,
             state == null ? "" : state.session);
     }
@@ -142,6 +168,7 @@ public final class HologramClient {
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!projectorWorld()) return;
+        if (HologramCutClient.INSTANCE.interceptsUse()) return;
         if (worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()) return;
         boolean air = input.getBoolean("air");
         long tick = mc.theWorld.getTotalWorldTime();
@@ -197,10 +224,16 @@ public final class HologramClient {
     private boolean inputScreenChanged;
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void cutMouse(MouseEvent event) {
+        HologramCutClient.INSTANCE.mouse(event);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
         if (event.dwheel == 0 || !projectorWorld()
-            || worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
-            || worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()
+            || !HologramCutClient.INSTANCE.aiming()
+                && (worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
+                    || worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld())
             || !altHeld()) return;
         syncPreviewDistance();
         previewDistance.scroll(event.dwheel);
@@ -251,6 +284,21 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null) return;
         java.util.List<String> lines = new java.util.ArrayList<>();
+        HologramProgress worldProgress = HologramClientProgress.view("server", "");
+        if (projectorWorld() && worldProgress != null)
+            lines.add(HologramProgressView.summary(worldProgress, System.nanoTime()));
+        HologramProgress snapshotProgress = HologramClientProgress.view("snapshot", "");
+        if (projectorWorld() && snapshotProgress != null && (worldProgress == null || !snapshotProgress.complete))
+            lines.add(HologramProgressView.summary(snapshotProgress, System.nanoTime()));
+        if (projectorWorld() && HologramJobVisuals.waitingForFull())
+            lines.add(HologramProgressView.phase("job.visualLag"));
+        HologramProgress libraryProgress = HologramLibraryClient.INSTANCE.progress();
+        if (projectorWorld() && libraryProgress != null)
+            lines.add(HologramProgressView.summary(libraryProgress, System.nanoTime()));
+        if (HologramCutClient.INSTANCE.guide(lines)) {
+            HologramWorldGuide.draw(lines, event.resolution);
+            return;
+        }
         if (projectorWorld() && HologramLibraryClient.INSTANCE.quickInProgress()) lines.add(
             HologramLibraryClient.INSTANCE.status() + " · "
                 + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.progressBytes())
@@ -333,6 +381,7 @@ public final class HologramClient {
         syncSnapshotWorld();
         installDecoded(snapshotInbox.poll());
         HologramLibraryClient.INSTANCE.tick();
+        HologramCutClient.INSTANCE.tick();
         Minecraft mc = Minecraft.getMinecraft();
         ItemStack tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
         boolean changed = inputContext.observe(
@@ -349,6 +398,7 @@ public final class HologramClient {
         inputScreenChanged = false;
         usePressFence.observe(mc.gameSettings.keyBindUseItem.getIsKeyPressed(), changed);
         syncPreviewDistance();
+        if (HologramCutClient.INSTANCE.active()) return;
         lockedNudge(mc, changed);
         boolean rotate = rotationKey.sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed);
         boolean undoArea = areaUndoKey.sample(
@@ -377,6 +427,11 @@ public final class HologramClient {
             "vertical",
             Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL));
         HologramNetwork.sendAction(request);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void progressFrame(TickEvent.RenderTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) HologramProgressView.beginFrame();
     }
 
     private void lockedNudge(Minecraft mc, boolean contextChanged) {
@@ -437,6 +492,7 @@ public final class HologramClient {
     public void worldEscape(GuiOpenEvent event) {
         inputScreenChanged = true;
         previewDistance.sync(false, null, "");
+        if (HologramCutClient.INSTANCE.escape(event)) return;
         if (event.gui instanceof GuiIngameMenu && projectorWorld()
             && HologramLibraryClient.INSTANCE.cancelQuickPlacement()) {
             HologramWorldFlow.Intent pendingIntent = HologramWorldFlow
@@ -473,6 +529,19 @@ public final class HologramClient {
         worldAction("beginAreaSelection");
     }
 
+    static void resumeProjectorUse(boolean alt, NBTTagCompound input) {
+        if (alt) {
+            int[] anchor = movingAnchor(state);
+            input.setString("action", "quickPlaceLastBlueprint");
+            input.setInteger("x", anchor[0]);
+            input.setInteger("y", anchor[1]);
+            input.setInteger("z", anchor[2]);
+            if (input.getBoolean("air")) input.setInteger("side", ForgeDirection.UP.ordinal());
+            if (HologramLibraryClient.INSTANCE.quickPlaceLast(input)) return;
+        } else input.setString("action", input.getBoolean("air") ? "useAir" : "useBlock");
+        HologramNetwork.sendAction(input);
+    }
+
     public static void openSettings() {
         NBTTagCompound request = new NBTTagCompound();
         request.setString("action", "openSettings");
@@ -481,7 +550,12 @@ public final class HologramClient {
 
     /** Only a render translation; no moving-preview world mutation packets are emitted. */
     static int[] movingAnchor(HologramState snapshot) {
+        if (snapshot != null && snapshot.data.getBoolean("cutPreview")) return HologramCutClient.INSTANCE.anchor();
         return worldTarget(true).anchor;
+    }
+
+    static int[] cutAnchor(boolean adjacent) {
+        return worldTarget(adjacent).anchor;
     }
 
     private static boolean altHeld() {
@@ -549,7 +623,9 @@ public final class HologramClient {
                 nbt.getByteArray("transportBytes"),
                 System.nanoTime());
             if (complete == null) return;
-            while (!snapshotInbox.offer(complete)) {
+            long transportSequence = nbt.getLong("transportSequence");
+            HologramClientProgress.decoding(transportSequence);
+            while (!snapshotInbox.offer(complete, transportSequence)) {
                 decodeNotice(
                     "decodeBusy",
                     "Hologram snapshots are arriving faster than they can be decoded; waiting to preserve update order.");
@@ -572,6 +648,7 @@ public final class HologramClient {
         previewDistance.sync(false, null, "");
         assembly = new HologramSnapshotAssembly();
         assemblyWorld = world;
+        HologramClientProgress.clear();
         snapshotInbox.clear();
         if (state != null && snapshotWorld != world) clearProjection();
     }
@@ -588,11 +665,13 @@ public final class HologramClient {
     private static void installDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result) {
         if (result == null) return;
         if (result.failure != null) {
+            HologramClientProgress.decoded(result.transportSequence, false);
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot decoding failed", result.failure);
             decodeNotice("decodeError", "Hologram snapshot decoding failed; the previous preview was retained.");
             return;
         }
         installSnapshot(result.value);
+        HologramClientProgress.decoded(result.transportSequence, true);
     }
 
     /** Registry lookups, world access, GUI and rendering resources remain on the client thread. */
@@ -601,11 +680,14 @@ public final class HologramClient {
             if (state != null && state.session.equals(nbt.getString("session"))) clearProjection(false);
             return;
         }
-        // Collection progress is not a complete editable structure; retain the last complete snapshot.
-        if (nbt.getBoolean("capturePending")) return;
         String session = nbt.getString("session");
         String generation = nbt.getString("generation");
         if ((!generation.isEmpty() && !generation.equals(session)) || retiredSessions.contains(session)) return;
+        // Progress never replaces the last complete editable structure or consumes an ACK ticket.
+        if (nbt.getBoolean("capturePending")) {
+            HologramClientProgress.snapshot(nbt);
+            return;
+        }
         boolean same = state != null && state.session.equals(session);
         if (same && nbt.getLong("planRevision") < state.data.getLong("planRevision")) return;
         long batch = nbt.getLong("batchSeq");
@@ -613,6 +695,7 @@ public final class HologramClient {
             && "PREPARE".equals(nbt.getString("phase"))))) return;
         // Reject stale packets before copying a large NBT tree or resolving thousands of block/item entries.
         HologramState next = new HologramState(nbt);
+        HologramClientProgress.snapshot(nbt);
         if (!same) {
             rootCloseFence.clear();
             if (state != null) retire(state.session);
@@ -623,6 +706,7 @@ public final class HologramClient {
         acceptedBatch = batch;
         receivedAt = now;
         HologramRenderer.release();
+        HologramJobVisuals.bind(next);
         state = next;
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
         Minecraft mc = Minecraft.getMinecraft();
@@ -741,6 +825,7 @@ public final class HologramClient {
         // A decoded server cancellation can precede an already arriving new-session snapshot.
         if (state != null) retire(state.session);
         HologramRenderer.release();
+        HologramJobVisuals.bind(null);
         state = null;
         snapshotWorld = null;
         acceptedBatch = -1;
@@ -757,6 +842,7 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();
+        if (HologramCutClient.INSTANCE.render(event.partialTicks)) return;
         if (state == null) return;
         if (mc.theWorld == null || mc.theWorld != snapshotWorld
             || mc.thePlayer == null

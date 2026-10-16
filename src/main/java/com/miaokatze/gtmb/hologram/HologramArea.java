@@ -15,8 +15,6 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
-
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
@@ -198,7 +196,9 @@ final class HologramArea {
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
         World world = player.worldObj;
+        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS);
         for (int budget = 4096; y <= maxY && budget > 0; budget--) {
+            if (budget < 4096 && System.nanoTime() >= deadline) break;
             if (contains(x, y, z)) {
                 if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
                 Block block = world.getBlock(x, y, z);
@@ -228,8 +228,8 @@ final class HologramArea {
                     if (tile instanceof IGregTechTileEntity) {
                         IGregTechTileEntity gt = (IGregTechTileEntity) tile;
                         cell.facing = HologramBlockIdentity.front(gt);
-                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
-                            && gt.getMetaTileEntity() instanceof IConstructable) {
+                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase && HologramStructureDiscovery
+                            .captureSupported((MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity())) {
                             cell.controller = true;
                             Structure structure = new Structure(
                                 x,

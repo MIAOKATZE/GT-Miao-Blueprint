@@ -582,7 +582,7 @@ public final class HologramNetworkInteractionSmoke {
         receipt.setBoolean("rawLiveAreaNormalizedBeforePlacement", true);
         receipt.setBoolean("rawLiveAreaRequiresBinding", true);
         receipt.setString("normalizedPresetId", portable.id);
-        Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         ((Map<UUID, Object>) sessions.get(null)).put(actor.getUniqueID(), session);
         // Fixture setup finishes through the ordinary production world-opening path. That path
@@ -651,7 +651,7 @@ public final class HologramNetworkInteractionSmoke {
     }
 
     private static Object liveSession() throws Exception {
-        Field field = HologramService.class.getDeclaredField("SESSIONS");
+        Field field = HologramWorkspace.class.getDeclaredField("SESSIONS");
         field.setAccessible(true);
         return ((Map<?, ?>) field.get(null)).get(actor.getUniqueID());
     }
@@ -663,7 +663,7 @@ public final class HologramNetworkInteractionSmoke {
     }
 
     private static Object invokeService(String name, Object session) throws Exception {
-        Method method = HologramService.class.getDeclaredMethod(name, session.getClass());
+        Method method = HologramEngineInspection.declaredMethod(name, session.getClass());
         method.setAccessible(true);
         return method.invoke(null, session);
     }
