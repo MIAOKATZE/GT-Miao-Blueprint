@@ -109,6 +109,7 @@ public final class HologramCutNativeClientProbe {
     private volatile String ordinarySeedFailure = "", ordinaryLocalId = "";
     private boolean ordinaryPolicyOpenNeeded, ordinaryLibrarySwitchNeeded;
     private long ordinaryPolicyTx, ordinaryAppliedTx;
+    private long markAimRender, raycastEvidenceAt;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.cutNativeClient")) return;
@@ -1430,6 +1431,29 @@ public final class HologramCutNativeClientProbe {
     }
 
     private void mark(String label, int x, int y, int z, int button) {
+        add(label + "-actual-client-block-arrived", mc -> {
+            if (mc.currentScreen != null) return false;
+            aim = new int[] { x, y, z };
+            writeRaycastWaitEvidence(mc);
+            if (!realMarkTargetReady(mc, x, y, z)) return false;
+            aim(mc);
+            markAimRender = renderSerial;
+            return true;
+        });
+        add(label + "-natural-native-ray-ready", mc -> {
+            if (mc.currentScreen != null || !realMarkTargetReady(mc, x, y, z)) {
+                writeRaycastWaitEvidence(mc);
+                return false;
+            }
+            if (renderSerial < markAimRender + 2) return false;
+            aim(mc);
+            MovingObjectPosition hit = mc.objectMouseOver;
+            writeRaycastWaitEvidence(mc);
+            return hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK
+                && hit.blockX == x
+                && hit.blockY == y
+                && hit.blockZ == z;
+        });
         add(label, mc -> {
             if (mc.currentScreen != null) return false;
             aim = new int[] { x, y, z };
@@ -1459,11 +1483,28 @@ public final class HologramCutNativeClientProbe {
         });
     }
 
+    private static boolean realMarkTargetReady(Minecraft mc, int x, int y, int z) {
+        if (mc.theWorld == null || !mc.theWorld.blockExists(x, y, z)) return false;
+        net.minecraft.world.chunk.Chunk chunk = mc.theWorld.getChunkFromChunkCoords(x >> 4, z >> 4);
+        return chunk != null && !(chunk instanceof net.minecraft.world.chunk.EmptyChunk)
+            && chunk.isChunkLoaded
+            && chunk.xPosition == (x >> 4)
+            && chunk.zPosition == (z >> 4)
+            && !mc.theWorld.isAirBlock(x, y, z);
+    }
+
+    private void writeRaycastWaitEvidence(Minecraft mc) throws Exception {
+        long now = System.nanoTime();
+        if (now < raycastEvidenceAt) return;
+        raycastEvidenceAt = now + 1000000000L;
+        HologramV011Evidence.write("cut-raycast-last.nbt", snapshot(mc));
+    }
+
     private void aim(Minecraft mc) {
         net.minecraft.util.Vec3 eyes = mc.thePlayer.getPosition(1.0F);
         double dx = aim[0] + .5 - eyes.xCoord, dz = aim[2] + .5 - eyes.zCoord;
         // Aim just inside the top face of the placement support so its adjacent cell is exactly y+1.
-        double targetY = (aim[0] == 56 || aim[0] == 72 || aim[0] == 88) && aim[1] == 79 ? 79.99 : aim[1] + .5;
+        double targetY = aim[1] == 79 ? aim[1] + .99 : aim[1] + .5;
         double dy = targetY - eyes.yCoord;
         float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90);
         float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
@@ -1920,6 +1961,23 @@ public final class HologramCutNativeClientProbe {
                         net.minecraft.block.Block.blockRegistry
                             .getNameForObject(mc.theWorld.getBlock(aim[0], aim[1], aim[2]))));
                 n.setInteger("actualAimMetadata", mc.theWorld.getBlockMetadata(aim[0], aim[1], aim[2]));
+                n.setBoolean("actualAimBlockExists", mc.theWorld.blockExists(aim[0], aim[1], aim[2]));
+                net.minecraft.world.chunk.Chunk chunk = mc.theWorld.getChunkFromChunkCoords(aim[0] >> 4, aim[2] >> 4);
+                n.setString(
+                    "actualAimChunkClass",
+                    chunk == null ? "null"
+                        : chunk.getClass()
+                            .getName());
+                n.setBoolean("actualAimChunkLoaded", chunk != null && chunk.isChunkLoaded);
+                if (chunk != null)
+                    n.setIntArray("actualAimChunkCoordinates", new int[] { chunk.xPosition, chunk.zPosition });
+                TileEntity tile = mc.theWorld.getTileEntity(aim[0], aim[1], aim[2]);
+                n.setString(
+                    "actualAimTileClass",
+                    tile == null ? "null"
+                        : tile.getClass()
+                            .getName());
+                n.setBoolean("actualAimReadyForRaycast", realMarkTargetReady(mc, aim[0], aim[1], aim[2]));
             }
         }
         n.setString("actualRaycastType", mc.objectMouseOver == null ? "null" : mc.objectMouseOver.typeOfHit.toString());
