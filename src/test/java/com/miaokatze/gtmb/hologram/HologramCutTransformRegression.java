@@ -55,6 +55,7 @@ public final class HologramCutTransformRegression {
         cells.appendTag(air);
         entry.setTag("cells", cells);
         NBTTagCompound original = (NBTTagCompound) entry.copy();
+        identityPreviewEnvelope(entry, original);
         NBTTagCompound transformed = HologramCutTransforms
             .apply(entry, new CutTransforms.Transform(1, 0, 0, 0), 10, 80, 10);
         SimpleAssert.that(entry.equals(original), "preview transform cannot mutate queue original");
@@ -109,5 +110,23 @@ public final class HologramCutTransformRegression {
         HologramCutTransforms.apply(entry, new CutTransforms.Transform(1, 0, 0, 0), 0, 0, 0);
         SimpleAssert.eq(1, calls[0], "closed exact registration no longer runs");
         SimpleAssert.that(entry.equals(original), "all extension operations preserve raw original");
+    }
+
+    private static void identityPreviewEnvelope(NBTTagCompound entry, NBTTagCompound original) {
+        NBTTagCompound expected = (NBTTagCompound) original.copy();
+        for (String key : new String[] { "rotation", "turnX", "turnZ", "mirror" }) expected.setInteger(key, 0);
+        NBTTagCompound preview = HologramCutTransforms
+            .apply(entry, new CutTransforms.Transform(0, 0, 0, 0), 10, 80, 10);
+        SimpleAssert.that(
+            expected.equals(preview),
+            "identity preview retains the entire typed raw entry, plus exactly four explicit pose ints");
+        SimpleAssert.that(entry.equals(original), "identity pose metadata is never appended to the durable source");
+        SimpleAssert.that(!preview.hasKey("transformUnknown"), "identity preview does not invent transform warnings");
+        preview.getTagList("cells", 10)
+            .getCompoundTagAt(0)
+            .getCompoundTag("tile")
+            .setString("owner", "preview-only");
+        SimpleAssert
+            .that(entry.equals(original), "identity preview cell and nested native payload remain detached copies");
     }
 }

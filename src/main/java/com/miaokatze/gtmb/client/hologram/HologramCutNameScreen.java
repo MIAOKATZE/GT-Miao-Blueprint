@@ -26,7 +26,7 @@ final class HologramCutNameScreen extends HologramMuiScreen {
     private String error = "";
 
     HologramCutNameScreen(String detail, BiConsumer<String, Boolean> save, Runnable cancel) {
-        super("cut_name", 306, 218);
+        super("cut_name", 306, 202);
         this.detail = detail;
         this.save = save;
         this.cancel = cancel;
@@ -40,22 +40,22 @@ final class HologramCutNameScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        panel().child(HologramMuiTheme.label(() -> text("title"), 12, 12, 282, 18, 0xffffdb83))
-            .child(HologramMuiTheme.label(() -> detail, 12, 36, 282, 45, 0xffd1dee6))
-            .child(HologramMuiTheme.label(() -> text("label"), 12, 85, 282, 14, 0xfff0ddb3))
+        HologramMuiTheme.header(panel(), () -> text("title"), 306);
+        panel().child(HologramMuiTheme.label(() -> detail, 14, 39, 278, 35, HologramMuiTheme.TEXT))
+            .child(HologramMuiTheme.label(() -> text("label"), 14, 80, 278, 12, HologramMuiTheme.MUTED))
             .child(
-                HologramMuiTheme.textField(draft, 12, 102, 282, 20, HologramCutNaming.MAX_LENGTH)
+                HologramMuiTheme.textField(draft, 12, 96, 282, 22, HologramCutNaming.MAX_LENGTH)
                     .name("cut_name_draft"))
-            .child(HologramMuiTheme.label(() -> text("hint"), 12, 128, 282, 28, 0xffb5c2cc))
-            .child(HologramMuiTheme.label(() -> error, 12, 154, 282, 24, 0xffff9696))
+            .child(HologramMuiTheme.label(() -> text("hint"), 14, 124, 278, 20, HologramMuiTheme.MUTED))
+            .child(HologramMuiTheme.label(() -> error, 14, 147, 278, 18, HologramMuiTheme.ERROR))
             .child(
-                HologramMuiTheme.button(() -> text("cancel"), 12, 183, 56, 22, () -> finish(false, false))
+                HologramMuiTheme.button(() -> text("cancel"), 12, 168, 56, 22, () -> finish(false, false))
                     .name("cut_name_cancel"))
             .child(
-                HologramMuiTheme.button(() -> text("save"), 74, 183, 56, 22, () -> finish(true, false))
+                HologramMuiTheme.primaryButton(() -> text("save"), 74, 168, 56, 22, () -> finish(true, false))
                     .name("cut_name_save"))
             .child(
-                HologramMuiTheme.button(() -> text("saveWithoutPrompt"), 136, 183, 158, 22, () -> finish(true, true))
+                HologramMuiTheme.button(() -> text("saveWithoutPrompt"), 136, 168, 158, 22, () -> finish(true, true))
                     .name("cut_name_skip"));
     }
 

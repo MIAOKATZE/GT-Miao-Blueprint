@@ -184,7 +184,11 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                 .hoverBackground(HologramMuiTheme.PRESSED)
                 .overlay(
                     IKey.dynamic(() -> text)
-                        .color(() -> enabled ? accent == 0 ? 0xfff0ddb3 : 0xff000000 | accent : 0xff647c7f))
+                        .color(
+                            () -> !enabled ? HologramMuiTheme.MUTED
+                                : accent == 0 ? HologramMuiTheme.TEXT
+                                    : accent == 0xff7272 ? HologramMuiTheme.ERROR : HologramMuiTheme.TITLE)
+                        .shadow(false))
                 .tooltipBuilder(tooltip -> {
                     String help = nativeTooltip(id, enabled);
                     tooltip.addLine(help == null || help.isEmpty() ? text : help);

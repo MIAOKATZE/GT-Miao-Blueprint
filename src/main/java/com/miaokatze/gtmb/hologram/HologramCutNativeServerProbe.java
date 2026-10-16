@@ -52,6 +52,12 @@ public final class HologramCutNativeServerProbe {
     private boolean placementSkipReady, placementSkipCut, placementSkipLock, placementSkipPasted;
     private NBTTagCompound placementSkipOriginal;
     private String placementSkipDiskHash;
+    private boolean ordinaryReady, ordinaryPolicyApplied, ordinaryCompleted;
+    private Block ordinaryAe, ordinaryGt;
+    private String ordinarySession;
+    private long ordinaryReviewRevision = -1, ordinaryReviewNonce, ordinaryAppliedRevision, ordinaryAppliedNonce;
+    private long ordinaryAppliedTick, ordinaryAdmissionTick = -1;
+    private int ordinaryRepeatedSnapshots;
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.cutNativeServer")) FMLCommonHandler.instance()
@@ -172,11 +178,19 @@ public final class HologramCutNativeServerProbe {
                     HologramV011Evidence.directory()
                         .resolve("cut-client-fail.txt")),
                 "native client did not fail");
+            if (placementSkipPasted && !ordinaryReady
+                && HologramV011Evidence.read("ordinary-client-prepare.nbt") != null) createOrdinaryBlueprint();
+            if (ordinaryReady) observeOrdinaryBlueprint();
             NBTTagCompound result = HologramV011Evidence.read("cut-client-final.nbt");
             if (result == null) return;
             require(
-                result.getBoolean(
-                    "passed") && cutA && cutB && pastedA && restoredB && compositeUndone && placementSkipPasted,
+                result.getBoolean("passed") && cutA
+                    && cutB
+                    && pastedA
+                    && restoredB
+                    && compositeUndone
+                    && placementSkipPasted
+                    && ordinaryCompleted,
                 "all independently witnessed world transitions completed");
             NBTTagCompound proof = base();
             proof.setTag("actualClient", result.copy());
@@ -407,6 +421,187 @@ public final class HologramCutNativeServerProbe {
         proof.setIntArray("source", new int[] { 84, 80, 64 });
         proof.setIntArray("target", new int[] { 88, 80, 64 });
         HologramV011Evidence.write("cut-placement-skip-server-ready.nbt", proof);
+    }
+
+    /** Fixture preparation only. No ordinary workspace/session/action is created or confirmed here. */
+    private void createOrdinaryBlueprint() throws Exception {
+        loadFixtureChunks(93, 105, 63, 70);
+        supportPlatform(93, 105, 63, 70);
+        ordinaryAe = Block.getBlockFromName("ae2fc:fluid_interface");
+        ordinaryGt = Block.getBlockFromName("gregtech:gt.blockmachines");
+        require(
+            ordinaryAe != null && ordinaryAe != Blocks.air && ordinaryGt != null && ordinaryGt != Blocks.air,
+            "ordinary GUI fixture requires actual AE2FC and GT registries");
+        for (int x : new int[] { 94, 95, 100, 101 }) require(
+            world.isAirBlock(x, 80, 64) && world.getTileEntity(x, 80, 64) == null,
+            "ordinary GUI source/target must start in genuine air");
+        require(setBlockChecked(94, 80, 64, ordinaryAe, 0, 3), "native ordinary AE2FC source");
+        TileEntity ae = world.getTileEntity(94, 80, 64);
+        require(
+            ae != null && ae.getClass()
+                .getName()
+                .contains("TileFluidInterface"),
+            "native fluid-interface TE");
+        NBTTagCompound aeRaw = HologramNativeCapture.capture(ae);
+        require(
+            aeRaw.hasKey("FluidInv", 10) && aeRaw.getCompoundTag("FluidInv")
+                .hasKey("#0", 10)
+                && aeRaw.getCompoundTag("FluidInv")
+                    .hasKey("#5", 10),
+            "native six empty fluid slots");
+        require(setBlockChecked(95, 80, 64, ordinaryGt, 3, 3), "native ordinary GT source");
+        require(world.getTileEntity(95, 80, 64) instanceof BaseMetaTileEntity, "native ordinary GT base");
+        BaseMetaTileEntity gt = (BaseMetaTileEntity) world.getTileEntity(95, 80, 64);
+        gt.setInitialValuesAsNBT(null, (short) 32765);
+        gt.setFrontFacing(ForgeDirection.EAST);
+        gt.disableWorking();
+        require(
+            gt.getMetaTileID() == 32765
+                && gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEBasicTank,
+            "actual registered atmospheric intake");
+        net.minecraftforge.fluids.Fluid fluid = net.minecraftforge.fluids.FluidRegistry.getFluid("air");
+        require(fluid != null, "actual registered air");
+        ((gregtech.api.metatileentity.implementations.MTEBasicTank) gt
+            .getMetaTileEntity()).mFluid = new net.minecraftforge.fluids.FluidStack(fluid, 1000);
+        NBTTagCompound gtRaw = HologramNativeCapture.capture(gt);
+        require(
+            gtRaw.getBoolean("mWorks") && gtRaw.getCompoundTag("mFluid")
+                .getInteger("Amount") == 1000,
+            "native stopped atmospheric intake serializer");
+        HologramPresets.Preset preset = new HologramPresets.Preset();
+        preset.id = java.util.UUID.randomUUID()
+            .toString();
+        preset.name = "Native GUI AE2FC and GT32765";
+        preset.schema = 2;
+        preset.controllerType = "area";
+        preset.authorName = actor.getCommandSenderName();
+        preset.authorUuid = actor.getUniqueID()
+            .toString();
+        preset.createdAt = System.currentTimeMillis();
+        HologramPresets.Cell a = HologramPresets.cell(new ItemStack(ordinaryAe), 0, 0, 0, -1, false);
+        a.block = "ae2fc:fluid_interface";
+        a.tileNbt = HologramBlueprintNbt.encodeCanonical(ordinaryAe, aeRaw);
+        HologramPresets.Cell g = HologramPresets.cell(new ItemStack(ordinaryGt, 1, 32765), 1, 0, 0, 5, false);
+        g.block = "gregtech:gt.blockmachines";
+        g.metadata = 3;
+        g.tileNbt = HologramBlueprintNbt.encodeCanonical(ordinaryGt, gtRaw);
+        preset.cells.add(a);
+        preset.cells.add(g);
+        HologramBlueprintVersions.stamp(preset);
+        HologramPresets.validate(preset);
+        actor.theItemInWorldManager.setGameType(WorldSettings.GameType.CREATIVE);
+        actor.capabilities.allowFlying = actor.capabilities.isFlying = false;
+        actor.sendPlayerAbilities();
+        actor.playerNetServerHandler.setPlayerLocation(100.5, 80, 67.5, 180, 0);
+        NBTTagCompound proof = base();
+        proof.setString(
+            "blueprintJson",
+            new String(HologramServerLibrary.encodeShare(preset), java.nio.charset.StandardCharsets.UTF_8));
+        proof.setString("fixtureName", preset.name);
+        proof.setIntArray("target", new int[] { 100, 80, 64 });
+        proof.setBoolean("fixturePreparationOnly", true);
+        proof.setBoolean("ordinarySessionCreatedByProbe", false);
+        HologramV011Evidence.write("ordinary-server-ready.nbt", proof);
+        ordinaryReady = true;
+    }
+
+    /** Observes the real player's production workspace, Netty actions and naturally advanced job. */
+    private void observeOrdinaryBlueprint() throws Exception {
+        if (ordinaryCompleted) return;
+        HologramSession s = HologramWorkspace.find(actor.getUniqueID());
+        if (s == null || s.virtualPreset == null || !"Native GUI AE2FC and GT32765".equals(s.virtualPreset.name))
+            return;
+        require(
+            s.player == actor && s.capture != null && s.capture.cells.size() == 2,
+            "ordinary private upload must bind the actual connected actor and two native cells");
+        if (s.virtualLocked && s.placementReviewIssued
+            && !s.placementDeidentificationChosen
+            && ordinaryReviewRevision < 0) {
+            require(
+                s.x == 100 && s.y == 80 && s.z == 64 && s.blueprintAwaitingConfirmation && s.job == 0,
+                "OS world input must lock the ordinary target without writing it");
+            ordinarySession = s.id;
+            ordinaryReviewRevision = s.planRevision;
+            ordinaryReviewNonce = s.placementReviewNonce;
+            HologramV011Evidence.write("ordinary-server-before-policy.nbt", ordinaryState(s));
+        }
+        if (s.placementDeidentificationChosen && !ordinaryPolicyApplied) {
+            require(
+                ordinaryReviewRevision >= 0 && s.id.equals(ordinarySession)
+                    && s.virtualLocked
+                    && s.x == 100
+                    && s.y == 80
+                    && s.z == 64
+                    && s.planRevision == ordinaryReviewRevision + 1
+                    && s.placementReviewNonce == ordinaryReviewNonce + 1
+                    && s.placementDeidentificationLevel == 1
+                    && s.job == 0
+                    && s.blueprintAwaitingConfirmation,
+                "real manual policy ACK must preserve the exact ghost and refresh revision/nonce only once");
+            ordinaryPolicyApplied = true;
+            ordinaryAppliedRevision = s.planRevision;
+            ordinaryAppliedNonce = s.placementReviewNonce;
+            ordinaryAppliedTick = world.getTotalWorldTime();
+            HologramV011Evidence.write("ordinary-server-policy-applied.nbt", ordinaryState(s));
+        }
+        if (!ordinaryPolicyApplied) return;
+        require(
+            s.id.equals(ordinarySession) && s.planRevision == ordinaryAppliedRevision
+                && s.placementReviewNonce == ordinaryAppliedNonce,
+            "background snapshots must not refresh the reviewed plan");
+        if (ordinaryRepeatedSnapshots < 3
+            && world.getTotalWorldTime() >= ordinaryAppliedTick + 5L * (ordinaryRepeatedSnapshots + 1)) {
+            // Read-only retransmission stimulus: unmodified production DTOs over the actual connection.
+            HologramSnapshots.send(s);
+            ordinaryRepeatedSnapshots++;
+            if (ordinaryRepeatedSnapshots == 3)
+                HologramV011Evidence.write("ordinary-server-repeated-snapshots.nbt", ordinaryState(s));
+        }
+        if (s.job == 1 && ordinaryAdmissionTick < 0) ordinaryAdmissionTick = world.getTotalWorldTime();
+        if (s.job != 3) return;
+        require(
+            ordinaryRepeatedSnapshots == 3 && s.completed == 2 && s.cursor == 2,
+            "only the naturally completed production two-cell world job can pass");
+        require(
+            world.getBlock(100, 80, 64) == ordinaryAe && world.getTileEntity(100, 80, 64) != null
+                && world.getTileEntity(100, 80, 64)
+                    .getClass()
+                    .getName()
+                    .contains("TileFluidInterface"),
+            "actual ordinary destination fluid interface");
+        require(
+            world.getBlock(101, 80, 64) == ordinaryGt && world.getTileEntity(101, 80, 64) instanceof BaseMetaTileEntity,
+            "actual ordinary destination GT base");
+        BaseMetaTileEntity gt = (BaseMetaTileEntity) world.getTileEntity(101, 80, 64);
+        NBTTagCompound raw = HologramNativeCapture.capture(gt);
+        require(
+            gt.getMetaTileID() == 32765 && !gt.isAllowedToWork()
+                && raw.getCompoundTag("mFluid")
+                    .getInteger("Amount") == 1000,
+            "ordinary placement must retain native GT identity, stopped configuration and physical air");
+        NBTTagCompound proof = ordinaryState(s);
+        proof.setTag("actualAeTile", HologramNativeCapture.capture(world.getTileEntity(100, 80, 64)));
+        proof.setTag("actualGtTile", raw);
+        proof.setBoolean("actualWorldCompletion", true);
+        proof.setBoolean("backendDirectBuildUsed", false);
+        HologramV011Evidence.write("ordinary-server-world-complete.nbt", proof);
+        ordinaryCompleted = true;
+    }
+
+    private NBTTagCompound ordinaryState(HologramSession s) {
+        NBTTagCompound proof = base();
+        proof.setString("session", s.id);
+        proof.setLong("planRevision", s.planRevision);
+        proof.setLong("placementReviewNonce", s.placementReviewNonce);
+        proof.setInteger("level", s.placementDeidentificationLevel);
+        proof.setInteger("job", s.job);
+        proof.setInteger("completed", s.completed);
+        proof.setString("status", s.status);
+        proof.setLong("worldTick", world.getTotalWorldTime());
+        proof.setLong("observedJobAdmissionTick", ordinaryAdmissionTick);
+        proof.setInteger("readOnlySnapshotRetransmissions", ordinaryRepeatedSnapshots);
+        proof.setTag("runtime", HologramRuntimeMetrics.snapshot());
+        return proof;
     }
 
     private void observePlacementSkip(NBTTagCompound durable, int count) throws Exception {

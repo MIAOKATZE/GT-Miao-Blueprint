@@ -21,7 +21,7 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel,
         Runnable confirmWithoutPrompt) {
-        super("cut_confirm", 306, 164);
+        super("cut_confirm", 306, 154);
         this.title = title;
         this.detail = detail;
         this.confirm = confirm;
@@ -36,32 +36,38 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        panel().child(HologramMuiTheme.label(() -> title, 12, 10, 282, 20, 0xffffdb83));
-        panel().child(HologramMuiTheme.label(() -> detail, 12, 36, 282, 80, 0xffd1dee6));
+        HologramMuiTheme.header(panel(), () -> title, 306);
+        panel().child(HologramMuiTheme.label(() -> detail, 14, 41, 278, 66, HologramMuiTheme.TEXT));
         if (confirmWithoutPrompt == null) {
             panel().child(
                 HologramMuiTheme
-                    .button(() -> HologramCutClient.text("confirm"), 12, 130, 132, 22, () -> finish(true, false))
+                    .primaryButton(
+                        () -> HologramCutClient.text("confirm"),
+                        162,
+                        120,
+                        132,
+                        22,
+                        () -> finish(true, false))
                     .name("cut_confirm"));
             panel().child(
                 HologramMuiTheme
-                    .button(() -> HologramCutClient.text("cancel"), 162, 130, 132, 22, () -> finish(false, false))
+                    .button(() -> HologramCutClient.text("cancel"), 12, 120, 132, 22, () -> finish(false, false))
                     .name("cut_cancel"));
         } else {
             panel().child(
                 HologramMuiTheme
-                    .button(() -> HologramCutClient.text("cancel"), 12, 130, 56, 22, () -> finish(false, false))
+                    .button(() -> HologramCutClient.text("cancel"), 12, 120, 56, 22, () -> finish(false, false))
                     .name("cut_cancel"));
             panel().child(
                 HologramMuiTheme
-                    .button(() -> HologramCutClient.text("confirm"), 74, 130, 56, 22, () -> finish(true, false))
+                    .primaryButton(() -> HologramCutClient.text("confirm"), 74, 120, 56, 22, () -> finish(true, false))
                     .name("cut_confirm"));
             panel().child(
                 HologramMuiTheme
                     .button(
                         () -> HologramCutClient.text("placement.confirmWithoutPrompt"),
                         136,
-                        130,
+                        120,
                         158,
                         22,
                         () -> finish(true, true))

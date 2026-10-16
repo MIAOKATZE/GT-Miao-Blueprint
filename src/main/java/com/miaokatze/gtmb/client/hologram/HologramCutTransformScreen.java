@@ -13,8 +13,8 @@ final class HologramCutTransformScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        panel().child(HologramMuiTheme.label(() -> HologramCutClient.text("transform"), 14, 8, 264, 18, 0xffffdb83));
-        panel().child(HologramMuiTheme.label(cut::poseSummary, 14, 28, 264, 18, 0xffd1dee6));
+        HologramMuiTheme.header(panel(), () -> HologramCutClient.text("transform"), 292);
+        panel().child(HologramMuiTheme.label(cut::poseSummary, 14, 35, 264, 13, HologramMuiTheme.MUTED));
         for (int axis = 0; axis < 3; axis++) {
             final int selectedAxis = axis;
             String name = new String[] { "X", "Y", "Z" }[axis];
@@ -42,7 +42,7 @@ final class HologramCutTransformScreen extends HologramMuiScreen {
         action(40, HologramCutClient.text("resetPose"), 14, 186, 128, cut::resetPose);
         panel().child(
             HologramMuiTheme
-                .button(() -> HologramCutClient.text("done"), 150, 186, 128, 20, () -> mc.displayGuiScreen(null))
+                .primaryButton(() -> HologramCutClient.text("done"), 150, 186, 128, 20, () -> mc.displayGuiScreen(null))
                 .name("cut_pose_0"));
         panel().child(HologramMuiTheme.label(() -> {
             HologramProgress current = cut.progress(false);

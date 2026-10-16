@@ -2,6 +2,8 @@ package com.miaokatze.gtmb.client.hologram;
 
 import org.lwjgl.input.Keyboard;
 
+import com.cleanroommc.modularui.api.drawable.IKey;
+
 /** Modal Shift switcher: all input stays in this screen until one release commits the choice. */
 final class HologramCutModeScreen extends HologramMuiScreen {
 
@@ -20,12 +22,12 @@ final class HologramCutModeScreen extends HologramMuiScreen {
     }
 
     HologramCutModeScreen() {
-        super("cut_modes", 360, 144);
+        super("cut_modes", 306, 126);
     }
 
     @Override
     protected void buildPanel() {
-        panel().child(HologramMuiTheme.label(() -> HologramCutClient.text("switcher"), 12, 10, 336, 20, 0xffffdb83));
+        HologramMuiTheme.header(panel(), () -> HologramCutClient.text("switcher"), 306);
         for (int mode = 0; mode < 2; mode++) {
             final boolean cut = mode == 1;
             panel()
@@ -34,19 +36,28 @@ final class HologramCutModeScreen extends HologramMuiScreen {
                         .button(
                             () -> (choice.cut() == cut ? "▶ " : "")
                                 + HologramCutClient.text(cut ? "mode" : "blueprint"),
-                            12 + mode * 174,
+                            12 + mode * 146,
                             42,
-                            162,
-                            40,
+                            136,
+                            34,
                             () -> {})
+                        .background(HologramMuiTheme.row(() -> choice.cut() == cut, false))
+                        .hoverBackground(HologramMuiTheme.row(() -> choice.cut() == cut, true))
+                        .overlay(
+                            IKey.dynamic(
+                                () -> (choice.cut() == cut ? "▶ " : "")
+                                    + HologramCutClient.text(cut ? "mode" : "blueprint"))
+                                .color(() -> choice.cut() == cut ? HologramMuiTheme.TITLE : HologramMuiTheme.TEXT)
+                                .shadow(false))
                         .name("cut_mode_" + mode)
                         .onMousePressed(button -> {
                             if (button == 1 && HologramCutClient.shift()) choice.cycle();
                             return true;
                         }));
         }
-        panel()
-            .child(HologramMuiTheme.label(() -> HologramCutClient.text("switcherHint"), 12, 94, 336, 40, 0xffb9ced8));
+        panel().child(
+            HologramMuiTheme
+                .label(() -> HologramCutClient.text("switcherHint"), 12, 86, 282, 28, HologramMuiTheme.MUTED));
     }
 
     @Override

@@ -54,7 +54,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        panel().child(HologramMuiTheme.label(() -> "投影仪设置 · 与编辑界面共享", 12, 9, 276, 18, 0xff9ceaf3));
+        HologramMuiTheme.header(panel(), () -> "投影仪设置 · 与编辑界面共享", 300);
         for (int id = 0; id <= 6; id++) {
             final int action = id;
             panel().child(
@@ -62,7 +62,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
                     .setEnabledIf(widget -> pendingSequence < 0 && (action != 5 || presets().tagCount() > 0)));
         }
         panel().child(
-            HologramMuiTheme.button(() -> "保存设置", 20, 208, 126, 20, () -> activate(7))
+            HologramMuiTheme.primaryButton(() -> "保存设置", 20, 208, 126, 20, () -> activate(7))
                 .setEnabledIf(widget -> pendingSequence < 0));
         panel().child(
             HologramMuiTheme.button(() -> "返回编辑", 154, 208, 126, 20, () -> activate(8))

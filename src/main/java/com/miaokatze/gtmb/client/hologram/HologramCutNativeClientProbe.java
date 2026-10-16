@@ -105,6 +105,10 @@ public final class HologramCutNativeClientProbe {
     private String guiTargetName = "";
     private long heartbeatAt;
     private String connectionFailure = "";
+    private volatile boolean ordinaryArtifactReady;
+    private volatile String ordinarySeedFailure = "", ordinaryLocalId = "";
+    private boolean ordinaryPolicyOpenNeeded, ordinaryLibrarySwitchNeeded;
+    private long ordinaryPolicyTx, ordinaryAppliedTx;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.cutNativeClient")) return;
@@ -476,17 +480,22 @@ public final class HologramCutNativeClientProbe {
                 .isEmpty() && HologramV011Evidence.read("cut-undo-restores-original-and-consumes.nbt") != null);
         compositeSteps();
         placementSkipSteps();
+        ordinaryBlueprintSteps();
         add("write-complete-real-input-client-proof", mc -> {
             NBTTagCompound n = snapshot(mc);
             n.setBoolean("passed", true);
             n.setBoolean("actualNettyClient", true);
             n.setBoolean("syntheticSnapshotsUsed", false);
             n.setBoolean("serviceSessionsCreatedByProbe", false);
+            n.setBoolean("ordinaryBlueprintGuiAndNettyPassed", true);
+            n.setTag("ordinaryClient", HologramV011Evidence.read("ordinary-client-complete.nbt"));
             n.setString(
                 "inputMethod",
-                "Target HWND window messages plus real global Shift SendInput only; native LWJGL and Forge consumption");
+                "Target HWND verified SendInput mouse; PostMessage keys and SendInput modifiers; actual per-action ACKs and native LWJGL/Forge consumption");
             n.setBoolean("targetWindowMessages", true);
-            n.setBoolean("globalShiftOnly", true);
+            n.setBoolean("targetHwndVerifiedSendInputMouse", true);
+            n.setBoolean("globalShiftOnly", false);
+            if (lastOsAck != null) n.setTag("lastActualInputBridgeAck", lastOsAck.copy());
             n.setBoolean("physicalPointerCoverage", false);
             n.setString(
                 "aimingMethod",
@@ -693,6 +702,269 @@ public final class HologramCutNativeClientProbe {
         shot("cut-placement-skip-real-paste-complete");
     }
 
+    /** An ordinary creative placement after every cut assertion; fixture artifact creation is not a user save test. */
+    private void ordinaryBlueprintSteps() {
+        add("ordinary-request-owned-native-fixture-preparation", mc -> {
+            require(
+                mc.currentScreen == null && client().entries()
+                    .isEmpty(),
+                "all cut cases finish before ordinary setup");
+            HologramV011Evidence.write("ordinary-client-prepare.nbt", snapshot(mc));
+            return true;
+        });
+        add("ordinary-native-server-source-and-artifact-prepare", mc -> {
+            NBTTagCompound ready = HologramV011Evidence.read("ordinary-server-ready.nbt");
+            if (ready == null || mc.thePlayer.getDistanceSq(100.5, 80, 67.5) > 2) return false;
+            prepareOrdinaryArtifact(mc, ready.getString("blueprintJson"));
+            return true;
+        });
+        add("ordinary-real-native-PNG-and-client-library-worker-complete", mc -> {
+            require(
+                ordinarySeedFailure.isEmpty(),
+                "ordinary fixture artifact preparation failed: " + ordinarySeedFailure);
+            return ordinaryArtifactReady;
+        });
+        hold("ordinary-switch-hold-control", KeyEvent.VK_CONTROL, true);
+        hold("ordinary-switch-hold-shift", KeyEvent.VK_SHIFT, true);
+        clickWorld("ordinary-switch-open-real-mode-panel", 1);
+        waitScreen("ordinary-real-mode-panel", HologramCutModeScreen.class);
+        add("ordinary-right-cycle-to-blueprint", mc -> {
+            require(
+                ((HologramCutInput.Switcher) field(mc.currentScreen, "choice")).cut(),
+                "CUT remains selected before explicit cycle");
+            click(mc, mc.currentScreen.width / 2, mc.currentScreen.height / 2, 1);
+            return true;
+        });
+        add(
+            "ordinary-blueprint-mode-selected",
+            mc -> mc.currentScreen instanceof HologramCutModeScreen
+                && !((HologramCutInput.Switcher) field(mc.currentScreen, "choice")).cut());
+        hold("ordinary-switch-release-shift", KeyEvent.VK_SHIFT, false);
+        hold("ordinary-switch-release-control", KeyEvent.VK_CONTROL, false);
+        add(
+            "ordinary-blueprint-area-choice-arrives",
+            mc -> mc.currentScreen == null && !client().cutMode()
+                && HologramClient.state != null
+                && HologramClient.state.data.getBoolean("areaSelecting"));
+        tap("ordinary-Escape-cancels-unused-area-selection", KeyEvent.VK_ESCAPE);
+        add(
+            "ordinary-area-cancel-actual-ACK",
+            mc -> mc.currentScreen == null && HologramClient.state != null
+                && !HologramClient.state.data.getBoolean("areaSelecting"));
+        add("ordinary-aim-empty-air-for-workstation", mc -> {
+            aim = null;
+            mc.thePlayer.rotationPitch = mc.thePlayer.prevRotationPitch = -80;
+            mc.entityRenderer.getMouseOver(1.0F);
+            require(
+                mc.objectMouseOver == null
+                    || mc.objectMouseOver.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK,
+                "ordinary air use must not import another controller");
+            return true;
+        });
+        clickWorld("ordinary-open-real-workstation", 1);
+        waitScreen("ordinary-actual-MUI-workstation", HologramScreen.class);
+        button("ordinary-open-blueprint-library", 149);
+        add("ordinary-native-library-tab", mc -> {
+            if (!(mc.currentScreen instanceof HologramScreen)) return false;
+            ordinaryLibrarySwitchNeeded = ((HologramScreen) mc.currentScreen).ui.library.publicLibrary();
+            return true;
+        });
+        button("ordinary-show-client-library-if-needed", 201, () -> ordinaryLibrarySwitchNeeded);
+        add("ordinary-owned-artifact-listed", mc -> {
+            if (!(mc.currentScreen instanceof HologramScreen) || HologramLibraryClient.INSTANCE.busy()) return false;
+            NBTTagList rows = HologramLibraryClient.INSTANCE.rows(false);
+            require(
+                !((HologramScreen) mc.currentScreen).ui.library.publicLibrary(),
+                "real client library tab required");
+            require(
+                rows.tagCount() == 1 && ordinaryLocalId.equals(
+                    rows.getCompoundTagAt(0)
+                        .getString("id")),
+                "isolated client contains exactly this prepared native artifact");
+            return true;
+        });
+        button("ordinary-select-real-local-artifact-row", 14000);
+        add(
+            "ordinary-library-selection-is-real",
+            mc -> ordinaryLocalId.equals(HologramLibraryClient.INSTANCE.selected(false)));
+        button("ordinary-native-place-selected-blueprint", 141);
+        add(
+            "ordinary-real-private-upload-and-moving-snapshot",
+            mc -> mc.currentScreen == null && HologramClient.state != null
+                && HologramClient.state.data.getBoolean("virtualPlacement")
+                && HologramClient.state.data.getBoolean("moving")
+                && ordinaryLocalId.equals(HologramClient.state.data.getString("libraryLocalId")));
+        mark("ordinary-real-world-lock-at-support", 100, 79, 64, 1);
+        add("ordinary-lock-ACK-keeps-two-cell-ghost", mc -> {
+            HologramState state = HologramClient.state;
+            return mc.currentScreen == null && state != null
+                && state.data.getBoolean("virtualLocked")
+                && state.data.getInteger("x") == 100
+                && state.data.getInteger("y") == 80
+                && state.data.getInteger("z") == 64
+                && state.cells.size() == 2;
+        });
+        clickWorld("ordinary-second-right-opens-material-review", 1);
+        waitScreen("ordinary-real-material-review", HologramScreen.class);
+        add("ordinary-review-before-manual-policy", mc -> {
+            HologramScreen screen = (HologramScreen) mc.currentScreen;
+            if (screen.ui.session.pendingSequence() >= 0
+                || HologramV011Evidence.read("ordinary-server-before-policy.nbt") == null) return false;
+            require(
+                screen.ui.review.confirmation() && screen.ui.review.placementReviewActive(),
+                "actual ordinary review is open");
+            require(
+                !screen.ui.session.state().data.getBoolean("placementDeidentificationChosen"),
+                "new fixture has no remembered placing-player choice");
+            ordinaryPolicyOpenNeeded = !screen.ui.identity.deidentificationDrawer();
+            return true;
+        });
+        button("ordinary-open-native-deidentification-drawer-if-needed", 211, () -> ordinaryPolicyOpenNeeded);
+        add("ordinary-capture-manual-policy-network-baseline", mc -> {
+            require(
+                ((HologramScreen) mc.currentScreen).ui.identity.deidentificationDrawer(),
+                "actual identity drawer required");
+            require(
+                (Integer) field(((HologramScreen) mc.currentScreen).ui.identity, "deidentificationLevel") == 1,
+                "native drawer proposes actual level one");
+            ordinaryPolicyTx = ordinaryActionPackets();
+            return true;
+        });
+        button("ordinary-native-apply-level-one", 214);
+        add("ordinary-real-manual-policy-ACK", mc -> {
+            if (!(mc.currentScreen instanceof HologramScreen)
+                || HologramV011Evidence.read("ordinary-server-policy-applied.nbt") == null) return false;
+            HologramScreen screen = (HologramScreen) mc.currentScreen;
+            NBTTagCompound state = screen.ui.session.state().data;
+            if (screen.ui.session.pendingSequence() >= 0 || !state.getBoolean("placementDeidentificationChosen"))
+                return false;
+            ordinaryAppliedTx = ordinaryActionPackets();
+            require(
+                ordinaryAppliedTx == ordinaryPolicyTx + 1 && state.getInteger("placementDeidentificationLevel") == 1
+                    && state.getInteger("job") == 0
+                    && screen.ui.review.confirmation(),
+                "one real apply click sends exactly one action and returns an editable unbuilt review");
+            return true;
+        });
+        add("ordinary-repeated-real-snapshots-do-not-reconfigure", mc -> {
+            NBTTagCompound repeated = HologramV011Evidence.read("ordinary-server-repeated-snapshots.nbt");
+            if (repeated == null || !(mc.currentScreen instanceof HologramScreen)) return false;
+            HologramScreen screen = (HologramScreen) mc.currentScreen;
+            NBTTagCompound state = screen.ui.session.state().data;
+            if (state.getLong("serverTick") < repeated.getLong("worldTick")) return false;
+            require(
+                ordinaryActionPackets() == ordinaryAppliedTx && screen.ui.session.pendingSequence() < 0
+                    && state.getLong("planRevision") == repeated.getLong("planRevision")
+                    && state.getLong("placementReviewNonce") == repeated.getLong("placementReviewNonce")
+                    && screen.ui.review.confirmation(),
+                "three unmodified Netty snapshots preserve the actual review without another configuration round trip");
+            NBTTagCompound proof = snapshot(mc);
+            proof.setTag("actualOrdinaryState", state.copy());
+            proof.setLong("applyActionPackets", ordinaryAppliedTx - ordinaryPolicyTx);
+            proof.setLong("additionalActionsAfterRepeatedSnapshots", ordinaryActionPackets() - ordinaryAppliedTx);
+            proof.setTag("serverRepeatedSnapshots", repeated);
+            HologramV011Evidence.write("ordinary-client-policy-and-repeats.nbt", proof);
+            return true;
+        });
+        shot("ordinary-native-reviewed-policy-applied");
+        button("ordinary-native-confirm-actual-world-placement", 55);
+        add("ordinary-real-world-and-client-terminal-completion", mc -> {
+            NBTTagCompound server = HologramV011Evidence.read("ordinary-server-world-complete.nbt");
+            if (server == null || !(mc.currentScreen instanceof HologramScreen)) return false;
+            HologramScreen screen = (HologramScreen) mc.currentScreen;
+            NBTTagCompound state = screen.ui.session.state().data;
+            if (screen.ui.session.pendingSequence() >= 0 || state.getInteger("job") != 3) return false;
+            require(
+                state.getInteger("completed") == 2 && ordinaryActionPackets() == ordinaryAppliedTx + 1
+                    && server.getBoolean("actualWorldCompletion")
+                    && state.getString("session")
+                        .equals(server.getString("session")),
+                "actual confirmation is the sole next action and the final Netty DTO agrees with independently inspected world tiles");
+            String visible = screen.ui.review.completionSummary();
+            require(
+                !visible.isEmpty() && visible.contains(HologramUiText.reason(state.getString("status")))
+                    && screen.ui.session.progress() == null,
+                "actual visible footer reports world completion with no lingering ACK progress");
+            NBTTagCompound proof = snapshot(mc);
+            proof.setTag("actualOrdinaryState", state.copy());
+            proof.setTag("serverActualWorld", server);
+            proof.setString("visibleCompletionSummary", visible);
+            proof.setBoolean("actualGuiAndNetty", true);
+            proof.setBoolean("serviceSessionsCreatedByProbe", false);
+            proof.setBoolean("userSaveWorkflowClaim", false);
+            HologramV011Evidence.write("ordinary-client-complete.nbt", proof);
+            return true;
+        });
+        shot("ordinary-native-actual-world-job-complete");
+    }
+
+    private static long ordinaryActionPackets() {
+        return HologramRuntimeMetrics.snapshot()
+            .getCompoundTag("network")
+            .getCompoundTag("action")
+            .getLong("c2sTxPackets");
+    }
+
+    private void prepareOrdinaryArtifact(Minecraft mc, String json) throws Exception {
+        Path game = mc.mcDataDir.toPath()
+            .toRealPath();
+        require(
+            game.startsWith(
+                HologramV011Evidence.directory()
+                    .getParent()
+                    .resolve("client")
+                    .toRealPath()),
+            "ordinary fixture artifact must stay inside the owned isolated client");
+        final byte[] bytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        final java.util.concurrent.ThreadPoolExecutor worker = (java.util.concurrent.ThreadPoolExecutor) field(
+            HologramLibraryClient.INSTANCE,
+            "worker");
+        worker.execute(() -> {
+            try {
+                com.miaokatze.gtmb.hologram.HologramLibraryFacade.validateNativeJson(bytes);
+                NBTTagCompound nativeSnapshot = HologramBlueprintPreview.snapshot(bytes);
+                HologramBlueprintPreview
+                    .capture(nativeSnapshot, () -> !done && mc.theWorld != null, image -> worker.execute(() -> {
+                        try {
+                            java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream();
+                            require(ImageIO.write(image, "png", encoded), "native preview PNG encoder");
+                            HologramClientLibrary store = new HologramClientLibrary(game);
+                            // The isolated runtime may be reused after a failed test; retire only this exact generated
+                            // fixture.
+                            for (HologramClientLibrary.Entry entry : store.list())
+                                if ("Native GUI AE2FC and GT32765".equals(entry.name)) store.delete(entry.id);
+                            ordinaryLocalId = store.save(bytes, encoded.toByteArray(), null);
+                            NBTTagCompound proof = new NBTTagCompound();
+                            proof.setString("localId", ordinaryLocalId);
+                            proof.setBoolean("fixturePreparationOnly", true);
+                            proof.setBoolean("userSaveWorkflowExercised", false);
+                            proof.setBoolean("nativePreviewCallbackCompleted", true);
+                            proof.setBoolean("productionLibraryWorker", true);
+                            proof.setInteger("pngWidth", image.getWidth());
+                            proof.setInteger("pngHeight", image.getHeight());
+                            proof.setString(
+                                "nativePngSha256",
+                                com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.hash(encoded.toByteArray()));
+                            proof.setString(
+                                "sourceJsonSha256",
+                                com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.hash(bytes));
+                            proof.setString(
+                                "isolatedArtifactJsonPath",
+                                store.savedPath(ordinaryLocalId)
+                                    .toString());
+                            proof.setTag("nativeCaptureWitness", HologramBlueprintPreview.lastCaptureWitness());
+                            HologramV011Evidence.write("ordinary-client-artifact-prepared.nbt", proof);
+                            ordinaryArtifactReady = true;
+                        } catch (Throwable failure) {
+                            ordinarySeedFailure = failure.toString();
+                        }
+                    }), failure -> ordinarySeedFailure = failure.toString());
+            } catch (Throwable failure) {
+                ordinarySeedFailure = failure.toString();
+            }
+        });
+    }
+
     private void poseWait(String label, int y, int x, int z, int mirror) {
         add(label, mc -> {
             Transform pose = (Transform) field(client(), "pose");
@@ -765,7 +1037,25 @@ public final class HologramCutNativeClientProbe {
                 .getCompoundTag("actualDisk")
                 .getTagList("entries", 10)
                 .getCompoundTagAt(0);
-            require(server.equals(raw), "all complete server queue fields reach full raw renderer without filtering");
+            // The authenticated preview protocol appends the requested pose even for the identity transform.
+            // Build the independent expected envelope from the real disk entry; never call the production transform.
+            NBTTagCompound expected = (NBTTagCompound) server.copy();
+            for (String key : new String[] { "rotation", "turnX", "turnZ", "mirror" }) {
+                require(!server.hasKey(key), "fresh composite disk entry has no preview-only pose field " + key);
+                require(
+                    raw.hasKey(key, 3) && raw.getInteger(key) == 0,
+                    "original preview appends the exact identity-pose int " + key);
+                expected.setInteger(key, 0);
+            }
+            result.setTag("independentOriginalDiskEntry", server.copy());
+            result.setTag("independentExpectedPreview", expected.copy());
+            result.setString("independentExpectedPreviewSha256", HologramCutRawPreview.digest(expected));
+            result.setBoolean("completeExpectedPreviewMatches", expected.equals(raw));
+            HologramV011Evidence.write("cut-fullraw-original-comparison.nbt", result);
+            require(
+                expected.equals(raw) && HologramCutRawPreview.digest(expected)
+                    .equals(stats.getString("rawEntrySha256")),
+                "all complete server queue fields reach full raw renderer unchanged, plus exactly four identity-pose ints");
             result.setString("independentOriginalSha256", HologramCutRawPreview.digest(server));
         }
         World detached = (World) field(staticField(HologramCutRawPreview.class, "WORLD"), "world");
@@ -1183,7 +1473,12 @@ public final class HologramCutNativeClientProbe {
     }
 
     private void button(String label, int id) {
+        button(label, id, () -> true);
+    }
+
+    private void button(String label, int id, java.util.function.BooleanSupplier needed) {
         add(label + "-native-pointer-move", mc -> {
+            if (!needed.getAsBoolean()) return true;
             if (mc.currentScreen == null || client().busy()) return false;
             String target = controlName(mc.currentScreen, id);
             for (IWidget button : buttons(mc.currentScreen)) {
@@ -1202,6 +1497,7 @@ public final class HologramCutNativeClientProbe {
             return false;
         });
         add(label + "-natural-native-hover", mc -> {
+            if (!needed.getAsBoolean()) return true;
             require(
                 mc.currentScreen == guiTargetScreen && guiTarget.isValid(),
                 "native pointer target retains its actual screen/widget identity");
@@ -1237,6 +1533,7 @@ public final class HologramCutNativeClientProbe {
             return true;
         });
         add(label, mc -> {
+            if (!needed.getAsBoolean()) return true;
             require(
                 mc.currentScreen == guiTargetScreen && guiTarget.isValid(),
                 "native target remains live before separate mouse-down");
@@ -1393,6 +1690,7 @@ public final class HologramCutNativeClientProbe {
     }
 
     private static String controlName(GuiScreen screen, int id) {
+        if (screen instanceof HologramScreen) return "projector_control_" + id;
         if (screen instanceof HologramCutNameScreen)
             return new String[] { "cut_name_cancel", "cut_name_save", "cut_name_skip" }[id];
         if (screen instanceof HologramCutConfirmScreen)
