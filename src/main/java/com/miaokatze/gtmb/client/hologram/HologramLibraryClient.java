@@ -783,13 +783,7 @@ final class HologramLibraryClient {
     void saveDraft(HologramState state, NBTTagCompound options, boolean replace) {
         if (busy()) return;
         if (!beginBackgroundTask("保存蓝图")) return;
-        NBTTagCompound request = (NBTTagCompound) options.copy();
-        request.setString("op", "exportDraft");
-        request.setString("session", state.session);
-        request.setLong("planRevision", state.data.getLong("planRevision"));
-        String replaceId = replace && state.data.getBoolean("virtual") ? state.data.getString("libraryLocalId") : "";
-        request.setString("localId", replaceId);
-        request.setString("replaceLocalId", replaceId);
+        NBTTagCompound request = draftRequest(state, options, replace);
         preparing = true;
         draftPending = true;
         downloadExpected = true;
@@ -798,6 +792,20 @@ final class HologramLibraryClient {
         captureActor();
         status = "正在准备蓝图，确认后下载至客户端";
         HologramNetwork.sendLibrary(request);
+    }
+
+    /** The actual Save request envelope overrides caller options after task ownership has been acquired. */
+    NBTTagCompound draftRequest(HologramState state, NBTTagCompound options, boolean replace) {
+        if (backgroundTaskToken <= 0) throw new IllegalStateException("Blueprint save requires an active task token");
+        NBTTagCompound request = (NBTTagCompound) options.copy();
+        request.setString("op", "exportDraft");
+        request.setLong("clientTaskToken", backgroundTaskToken);
+        request.setString("session", state.session);
+        request.setLong("planRevision", state.data.getLong("planRevision"));
+        String replaceId = replace && state.data.getBoolean("virtual") ? state.data.getString("libraryLocalId") : "";
+        request.setString("localId", replaceId);
+        request.setString("replaceLocalId", replaceId);
+        return request;
     }
 
     void cancelDraftReview() {

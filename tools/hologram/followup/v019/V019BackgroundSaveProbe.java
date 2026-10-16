@@ -29,7 +29,9 @@ public final class V019BackgroundSaveProbe {
     private Object mc, actor, backend;
     private boolean client, server, done, fixtureReady, configRequested, restoreRequested, configured;
     private int phase, ticks, stage, choiceStep, placed, originalUp, originalDown, originalMax;
-    private long started, phaseStarted, lastGeneration = -1, heartbeat;
+    private long started, phaseStarted, lastGeneration = -1, heartbeat, saveTaskToken, lastSaveDiagnostic;
+    private int saveDiagnostics;
+    private boolean saveWaitScreenshotPending, saveWaitScreenshotDone;
     private String verdict = "";
 
     @Mod.EventHandler
@@ -51,7 +53,7 @@ public final class V019BackgroundSaveProbe {
             for (String key : new String[] { "gtmb.hologram.clientSmoke", "gtmb.hologram.sulfurLineClient", "gtmb.v019.ctmClient", "gtmb.v019.downloadClient", "gtmb.hologram.followupWorkbenchClient", "gtmb.hologram.followupProductionFlow", "gtmb.hologram.productionPreviewSmoke" })
                 check(!Boolean.getBoolean(key), "exclusive stimulus driver: " + key);
         }
-        proof.setProperty("scope", "real dedicated world 16-cubed block area; production area command packets and server capture; actual six-stage MUI input and Save/AE confirmation; observer independently verifies real JSON+PNG/owner ACK and disposed background panels; no OS input");
+        proof.setProperty("scope", "real dedicated world 16-cubed block area; production area command packets and server capture; actual six-stage MUI input and Save with optional production AE review; observer independently verifies real JSON+PNG/owner ACK and disposed background panels; no OS input");
         proof.setProperty("pid", ManagementFactory.getRuntimeMXBean().getName());
         started = phaseStarted = System.nanoTime();
         FMLCommonHandler.instance().bus().register(this);
@@ -74,6 +76,7 @@ public final class V019BackgroundSaveProbe {
             Object player = get(mc, "field_71439_g"), world = get(mc, "field_71441_e");
             Object gui = get(mc, "field_71462_r");
             pulse(gui);
+            if (phase == 10) saveDiagnostic(gui);
             if (phase == 0) {
                 if (ticks < 30 || gui == null) return;
                 String address = System.getProperty("gtmb.v019.address", "127.0.0.1:25678");
@@ -103,6 +106,18 @@ public final class V019BackgroundSaveProbe {
             Object state = get(clientType("HologramClient"), "state");
             if (state == null) return;
             Object data = get(state, "data");
+            if (phase == 10) {
+                Object save = call(clientType("HologramLibraryClient"), "actualSaveWitness");
+                Object head = call(save, "func_74775_l", "downloadBeginReply");
+                if (saveTaskToken > 0 && (Long) call(head, "func_74763_f", "clientTaskToken") == saveTaskToken) {
+                    proof.setProperty("saveReviewRoute", "production direct save without AE review");
+                    proof.setProperty("uiControlReleasedToObserver", "true"); advance(11);
+                } else if (file("background-save-native.nbt").isFile()) {
+                    // The observer may already have emitted its terminal receipt before this listener runs.
+                    // Phase 11 validates it; existence is never treated as success here.
+                    proof.setProperty("saveReviewRoute", "observer terminal before optional AE review"); advance(11);
+                }
+            }
             if (phase == 2) {
                 if (!bool(data, "areaSelecting")) return;
                 areaPoint(state, 1, 0, 80, 0); advance(3); return;
@@ -126,6 +141,8 @@ public final class V019BackgroundSaveProbe {
                 if (!file("background-save-native.nbt").isFile()) return;
                 Object receipt = call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74797_a", file("background-save-native.nbt"));
                 check(receipt != null && bool(receipt, "completed"), "observer completed receipt required");
+                check(saveTaskToken > 0 && (Long) call(receipt, "func_74763_f", "taskToken") == saveTaskToken,
+                    "observer receipt belongs to this exact Save task");
                 check(bool(receipt, "passed"), "production observer failed: " + str(receipt, "failure"));
                 check(bool(receipt, "actualIoCompleted") && bool(receipt, "completedWhileUiClosed"), "actual background pair IO required");
                 proof.setProperty("observerReceipt", file("background-save-native.nbt").getCanonicalPath());
@@ -163,15 +180,84 @@ public final class V019BackgroundSaveProbe {
                 typeName(gui, "V019 background real world save"); lastGeneration = generation; advance(9);
             } else if (phase == 9) {
                 if (!displayedSource(gui, ui, state)) return;
-                click(gui, ui, 140, generation); advance(10);
+                click(gui, ui, 140, generation);
+                saveTaskToken = (Long) call(clientType("HologramBackgroundTasks"), "token");
+                proof.setProperty("saveTaskTokenAfter140", String.valueOf(saveTaskToken)); advance(10);
             } else if (phase == 10) {
                 if (!bool(ui, "aeReview")) return;
                 Object review = call(data, "func_74775_l", "aeSaveReview");
                 check(!str(review, "transactionId").isEmpty(), "actual AE review nonce required");
                 proof.setProperty("aeReviewTransaction", str(review, "transactionId"));
+                proof.setProperty("saveReviewRoute", "actual AE review confirmation 181");
                 click(gui, ui, 181, generation); proof.setProperty("uiControlReleasedToObserver", "true"); advance(11);
             }
         } catch (Throwable failure) { fail(failure); }
+    }
+
+    /** One naturally rendered END framebuffer; this listener never drives, constructs, or reopens a screen. */
+    @SubscribeEvent
+    public void renderTick(TickEvent.RenderTickEvent event) {
+        if (!client || done || !saveWaitScreenshotPending || saveWaitScreenshotDone || mc == null
+            || event.phase != TickEvent.Phase.END) return;
+        try {
+            int width = (Integer) get(mc, "field_71443_c"), height = (Integer) get(mc, "field_71440_d");
+            File game = (File) get(mc, "field_71412_D");
+            String name = "gtmb-" + output.getParentFile().getName().replaceAll("[^A-Za-z0-9_-]", "_") + "-save-wait.png";
+            File actual = new File(new File(game, "screenshots"), name);
+            check(!actual.exists(), "fresh real save-wait screenshot path required");
+            call(Class.forName("net.minecraft.util.ScreenShotHelper"), "func_148259_a", game, name, width, height, call(mc, "func_147110_a"));
+            check(actual.isFile() && javax.imageio.ImageIO.read(actual) != null, "real RenderTick.END framebuffer PNG decodes");
+            Files.copy(actual.toPath(), file("save-wait-render-end.png").toPath());
+            saveWaitScreenshotDone = true; saveWaitScreenshotPending = false;
+            Object screen = get(mc, "field_71462_r");
+            proof.setProperty("saveWaitScreenshot", file("save-wait-render-end.png").getCanonicalPath());
+            proof.setProperty("saveWaitScreenshotPhase", "RenderTick.END; driver phase " + phase);
+            proof.setProperty("saveWaitScreenshotScreen", screen == null ? "world" : screen.getClass().getName());
+            persist("RUNNING");
+        } catch (Throwable failure) { fail(failure); }
+    }
+
+    private void saveDiagnostic(Object gui) throws Exception {
+        long now = System.nanoTime();
+        if (lastSaveDiagnostic != 0 && now - lastSaveDiagnostic < 5000000000L) return;
+        lastSaveDiagnostic = now;
+        Object diagnostic = construct("net.minecraft.nbt.NBTTagCompound");
+        Object library = get(clientType("HologramLibraryClient"), "INSTANCE");
+        Object task = call(clientType("HologramBackgroundTasks"), "actualTaskWitness");
+        Object saveState = call(clientType("HologramLibraryClient"), "actualSaveState");
+        Object save = call(clientType("HologramLibraryClient"), "actualSaveWitness");
+        String label = (String) call(clientType("HologramBackgroundTasks"), "label");
+        String libraryStatus = (String) call(library, "status");
+        call(diagnostic, "func_74772_a", "observedAtNanos", now);
+        call(diagnostic, "func_74778_a", "taskLabel", label);
+        call(diagnostic, "func_74778_a", "libraryStatus", libraryStatus);
+        call(diagnostic, "func_74782_a", "actualTask", task);
+        call(diagnostic, "func_74782_a", "actualSaveState", saveState);
+        call(diagnostic, "func_74782_a", "actualSaveWitness", save);
+        if (gui != null && gui.getClass().getName().equals("com.miaokatze.gtmb.client.hologram.HologramScreen"))
+            call(diagnostic, "func_74782_a", "actualUi", call(gui, "smokeLibraryUiState"));
+        Object state = get(clientType("HologramClient"), "state");
+        if (state != null) {
+            Object source = get(state, "data"), summary = construct("net.minecraft.nbt.NBTTagCompound");
+            // Copy actual source fields without duplicating all 4096 cells every five seconds.
+            for (String key : new String[] { "status", "session", "planRevision", "uiSequence", "blueprintSavePending",
+                "blueprintSaved", "blueprintDirty", "blueprintOperation", "blueprintOperationSuccess", "aeSaveReview",
+                "aeReportError", "aeReportBlocking", "blueprintProcessingComplete", "processingPresetOperation" }) {
+                Object tag = call(source, "func_74781_a", key);
+                if (tag != null) call(summary, "func_74782_a", key, call(tag, "func_74737_b"));
+            }
+            call(diagnostic, "func_74782_a", "actualSourceSummary", summary);
+        }
+        String name = String.format(java.util.Locale.ROOT, "save-wait-%03d.nbt", ++saveDiagnostics);
+        call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", diagnostic, file(name));
+        proof.setProperty("saveWaitDiagnostic", name);
+        proof.setProperty("saveWaitTaskBusy", String.valueOf(bool(task, "busy")));
+        proof.setProperty("saveWaitTaskToken", String.valueOf(call(task, "func_74763_f", "token")));
+        proof.setProperty("saveWaitTaskLabel", label);
+        proof.setProperty("saveWaitLibraryStatus", libraryStatus);
+        proof.setProperty("saveWaitFinalOutcome", str(call(save, "func_74775_l", "finalOutcome"), "op"));
+        if (!saveWaitScreenshotDone) saveWaitScreenshotPending = true;
+        persist("RUNNING");
     }
 
     @SubscribeEvent

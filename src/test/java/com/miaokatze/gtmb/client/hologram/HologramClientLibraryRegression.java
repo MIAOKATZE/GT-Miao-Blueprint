@@ -27,6 +27,7 @@ public final class HologramClientLibraryRegression {
             exercise();
             exerciseSaveReadbackReuse();
             exerciseSaveMessages();
+            exerciseSaveRequest();
             exerciseQuickFence();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
@@ -357,6 +358,65 @@ public final class HologramClientLibraryRegression {
                 "real English artifact rollback failure remains visible");
         } finally {
             status.set(client, previous);
+        }
+    }
+
+    private static void exerciseSaveRequest() throws ReflectiveOperationException {
+        HologramLibraryClient client = HologramLibraryClient.INSTANCE;
+        java.lang.reflect.Field task = HologramLibraryClient.class.getDeclaredField("backgroundTaskToken");
+        task.setAccessible(true);
+        long previous = task.getLong(client);
+        try {
+            net.minecraft.nbt.NBTTagCompound stateTag = new net.minecraft.nbt.NBTTagCompound();
+            stateTag.setString("session", "current-save-session");
+            stateTag.setLong("planRevision", 42);
+            stateTag.setBoolean("virtual", true);
+            stateTag.setString("libraryLocalId", "local_11111111-1111-1111-1111-111111111111");
+            HologramState state = new HologramState(stateTag);
+            net.minecraft.nbt.NBTTagCompound options = new net.minecraft.nbt.NBTTagCompound();
+            options.setString("name", "Actual Save request");
+            options.setString("op", "obsolete-operation");
+            options.setString("session", "old-session");
+            options.setLong("planRevision", 7);
+            options.setLong("clientTaskToken", 91);
+            options.setString("replaceLocalId", "old-local");
+            net.minecraft.nbt.NBTTagCompound policy = new net.minecraft.nbt.NBTTagCompound();
+            policy.setBoolean("retainCovers", true);
+            options.setTag("policy", policy);
+            net.minecraft.nbt.NBTTagCompound original = (net.minecraft.nbt.NBTTagCompound) options.copy();
+            task.setLong(client, 92);
+            net.minecraft.nbt.NBTTagCompound request = client.draftRequest(state, options, false);
+            SimpleAssert.eq("exportDraft", request.getString("op"), "actual Save uses the production export operation");
+            SimpleAssert.eq(state.session, request.getString("session"), "Save binds the current source session");
+            SimpleAssert.eq(42L, request.getLong("planRevision"), "Save binds the current source revision");
+            SimpleAssert.that(
+                com.miaokatze.gtmb.hologram.HologramLibraryDownload.taskMatches(92, request),
+                "the actual outgoing Save envelope is accepted by the current response correlation policy");
+            SimpleAssert.that(
+                !com.miaokatze.gtmb.hologram.HologramLibraryDownload.taskMatches(91, request),
+                "options from a cancelled save cannot carry their old token into a new save");
+            SimpleAssert.eq("", request.getString("localId"), "Save As cannot accidentally replace an old file");
+            SimpleAssert.eq("", request.getString("replaceLocalId"), "Save As overrides stale replacement options");
+            SimpleAssert.eq("Actual Save request", request.getString("name"), "author options reach the real request");
+            request.getCompoundTag("policy")
+                .setBoolean("retainCovers", false);
+            SimpleAssert
+                .eq(original, options, "request construction and later mutation leave caller options untouched");
+            net.minecraft.nbt.NBTTagCompound replacement = client.draftRequest(state, options, true);
+            SimpleAssert.eq(
+                stateTag.getString("libraryLocalId"),
+                replacement.getString("replaceLocalId"),
+                "explicit replacement uses the current draft identity");
+            task.setLong(client, 0);
+            boolean rejected = false;
+            try {
+                client.draftRequest(state, options, false);
+            } catch (IllegalStateException expected) {
+                rejected = true;
+            }
+            SimpleAssert.that(rejected, "a Save request cannot escape without task ownership");
+        } finally {
+            task.setLong(client, previous);
         }
     }
 
