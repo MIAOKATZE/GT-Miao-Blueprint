@@ -1088,7 +1088,8 @@ public final class HologramCutNativeClientProbe {
         require(
             "native-offscreen-depth-copy-tinted-alpha-composite".equals(stats.getString("ghostMethod"))
                 && stats.getFloat("ghostOpacity") > 0
-                && stats.getFloat("ghostOpacity") < .5f
+                && stats.getFloat("ghostOpacity") < 1
+                && Math.abs(stats.getFloat("ghostOpacity") - .65f) < .00001f
                 && stats.getLong("ghostComposites") > 0
                 && stats.getLong("ghostDepthCopies") > 0
                 && stats.getLong("ghostOutlineCells") > 0
