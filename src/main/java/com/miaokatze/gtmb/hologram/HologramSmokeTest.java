@@ -546,7 +546,7 @@ public final class HologramSmokeTest {
         ServerTaskScheduler.INSTANCE.onServerTick(new TickEvent.ServerTickEvent(TickEvent.Phase.END));
         flushTransport();
         if (capture.state == previous) {
-            Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+            Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
             sessions.setAccessible(true);
             Object pendingSession = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
             require(

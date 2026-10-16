@@ -726,7 +726,8 @@ public final class HologramAeBlueprintSmoke {
             presetField.setAccessible(true);
             presetField.set(session, draft.preset);
             ItemStack[] playerBefore = inventory(fixtures.actor);
-            Method populate = HologramService.class.getDeclaredMethod("populateVirtual", session.getClass());
+            Method populate = HologramBlueprintProjection.class
+                .getDeclaredMethod("populateVirtual", session.getClass());
             populate.setAccessible(true);
             populate.invoke(null, session);
             HologramCapture capture = (HologramCapture) field(session, "capture");
@@ -755,7 +756,7 @@ public final class HologramAeBlueprintSmoke {
             request.setInteger("z", hidden.z);
             request.setString("structureId", (String) field(session, "blueprintActiveStructure"));
             request.setLong("planRevision", (Long) field(session, "planRevision"));
-            Method action = HologramService.class
+            Method action = HologramAuthoringWorkflow.class
                 .getDeclaredMethod("aeAction", session.getClass(), NBTTagCompound.class, String.class);
             action.setAccessible(true);
             check(
@@ -773,7 +774,7 @@ public final class HologramAeBlueprintSmoke {
                 if ("patterns/#35".equals(row.getString("id"))) hiddenPreviewSlot = !row.getBoolean("enabled");
             }
             check(hiddenPreviewSlot, "actual_service_preview_exposes_disabled_hidden35_for_explicit_repair");
-            Method ready = HologramService.class.getDeclaredMethod("aeReady", session.getClass());
+            Method ready = HologramBuildPreparation.class.getDeclaredMethod("aeReady", session.getClass());
             ready.setAccessible(true);
             check(!(Boolean) ready.invoke(null, session), "blocked_virtual_admission_still_rejects_actual_placement");
             boolean rejectedCost = false;
@@ -960,7 +961,7 @@ public final class HologramAeBlueprintSmoke {
         ItemStack sample, NBTTagCompound canonical) throws Exception {
         ItemStack[] inventoryBefore = inventory(fixtures.actor);
         byte[] sourceBefore = bytes(fixtures.captured(index));
-        Method classify = HologramService.class
+        Method classify = HologramPlanPolicy.class
             .getDeclaredMethod("classify", session.getClass(), HologramCapture.Cell.class, int.class);
         classify.setAccessible(true);
         check(
@@ -1010,7 +1011,7 @@ public final class HologramAeBlueprintSmoke {
                 false,
                 "canonical_persistent_blocker");
         }
-        Method refresh = HologramService.class.getDeclaredMethod("refreshPlan", session.getClass());
+        Method refresh = HologramResourcePlanner.class.getDeclaredMethod("refreshPlan", session.getClass());
         refresh.setAccessible(true);
         refresh.invoke(null, session);
         List<?> statuses = (List<?>) field(session, "planStatus");
@@ -1030,7 +1031,8 @@ public final class HologramAeBlueprintSmoke {
             .getDeclaredField("virtualLocked");
         locked.setAccessible(true);
         locked.setBoolean(session, true);
-        Method direct = HologramService.class.getDeclaredMethod("directBuild", session.getClass(), boolean.class);
+        Method direct = HologramBuildPreparation.class
+            .getDeclaredMethod("directBuild", session.getClass(), boolean.class);
         direct.setAccessible(true);
         direct.invoke(null, session, false);
         List<?> work = (List<?>) field(session, "work");
@@ -1076,7 +1078,7 @@ public final class HologramAeBlueprintSmoke {
         ((HologramPresets.Preset) field(
             negative,
             "virtualPreset")).aePolicyVersion = HologramAeBlueprint.POLICY_VERSION;
-        Method classify = HologramService.class
+        Method classify = HologramPlanPolicy.class
             .getDeclaredMethod("classify", negative.getClass(), HologramCapture.Cell.class, int.class);
         classify.setAccessible(true);
         check(
@@ -1175,7 +1177,7 @@ public final class HologramAeBlueprintSmoke {
                 && emptyInventoryTag(selected, "config", "#", 9, false)
                 && !selected.hasKey("proxy"),
             "filtered_off_native_payload_omits_source_inventories_ghosts_and_identity_" + index);
-        Method planMethod = HologramService.class
+        Method planMethod = HologramCellPolicy.class
             .getDeclaredMethod("resourcePlan", session.getClass(), HologramCapture.Cell.class);
         planMethod.setAccessible(true);
         HologramBlueprintResources.Plan extras = (HologramBlueprintResources.Plan) planMethod

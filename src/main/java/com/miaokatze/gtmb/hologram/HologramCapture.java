@@ -49,8 +49,13 @@ public final class HologramCapture {
     final IdentityHashMap<IStructureElement<?>, HologramReplacementFamily.Family> familyCache = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, String> roleCache = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, Set<String>> declarationTrace = new IdentityHashMap<>();
+    /** One declaration identity graph per capture, retained across server tick continuations. */
+    IStructureDefinition<?> definition;
+    private long interpretationGeneration = HologramDeclarationAdapters.generation();
+    net.minecraft.nbt.NBTTagCompound extensionReports = new net.minecraft.nbt.NBTTagCompound();
     boolean incomplete;
     String failure = "";
+    String failureOrigin = "";
     final long started = System.nanoTime();
     long deadline = started + CAPTURE_TIME_NS;
     boolean pending;
@@ -144,21 +149,31 @@ public final class HologramCapture {
         ACTIVE.set(capture);
         try {
             if (resumed == null) {
-                if (machine instanceof MTEForgeOfGods && ((MTEForgeOfGods) machine).getData()
+                com.miaokatze.gtmb.api.StructureSources.Plan supplied = com.miaokatze.gtmb.api.StructureSources
+                    .resolve(machine, trigger);
+                if (supplied != null) {
+                    capture.definition = supplied.definition;
+                    for (com.miaokatze.gtmb.api.StructureSources.Piece piece : supplied.pieces)
+                        capture.pieces.add(new Piece(piece.name, piece.a, piece.b, piece.c, piece.trigger()));
+                } else if (machine instanceof MTEForgeOfGods && ((MTEForgeOfGods) machine).getData()
                     .isRenderActive()) {
-                    // The native hint constructor always shows the dormant main ring. The live machine
-                    // checks shaft + air rings after converting its rings into the star renderer.
-                    int rings = ((MTEForgeOfGods) machine).getData()
-                        .getRingAmount();
-                    capture.pieces.add(new Piece("beam_shaft", 63, 14, 1, trigger.copy()));
-                    capture.pieces.add(new Piece("first_ring_air", 63, 14, -59, trigger.copy()));
-                    if (trigger.stackSize > 1) capture.pieces
-                        .add(new Piece(rings >= 2 ? "second_ring_air" : "second_ring", 55, 11, -67, trigger.copy()));
-                    if (trigger.stackSize > 2) capture.pieces
-                        .add(new Piece(rings >= 3 ? "third_ring_air" : "third_ring", 47, 13, -76, trigger.copy()));
-                } else((IConstructable) machine).construct(trigger, true);
+                        // The native hint constructor always shows the dormant main ring. The live machine
+                        // checks shaft + air rings after converting its rings into the star renderer.
+                        int rings = ((MTEForgeOfGods) machine).getData()
+                            .getRingAmount();
+                        capture.pieces.add(new Piece("beam_shaft", 63, 14, 1, trigger.copy()));
+                        capture.pieces.add(new Piece("first_ring_air", 63, 14, -59, trigger.copy()));
+                        if (trigger.stackSize > 1) capture.pieces.add(
+                            new Piece(rings >= 2 ? "second_ring_air" : "second_ring", 55, 11, -67, trigger.copy()));
+                        if (trigger.stackSize > 2) capture.pieces
+                            .add(new Piece(rings >= 3 ? "third_ring_air" : "third_ring", 47, 13, -76, trigger.copy()));
+                    } else((IConstructable) machine).construct(trigger, true);
             }
-            IStructureDefinition definition = machine.getStructureDefinition();
+            // Some community controllers rebuild every element on every call. Rebuilding here on
+            // continuation would conflict with cells already collected from the previous identity graph.
+            if (capture.definition == null) capture.definition = machine.getStructureDefinition();
+            IStructureDefinition definition = capture.definition;
+            capture.refreshInterpretationGeneration();
             final World world = machine.getBaseMetaTileEntity()
                 .getWorld();
             int x = machine.getBaseMetaTileEntity()
@@ -167,10 +182,13 @@ public final class HologramCapture {
                     .getYCoord(),
                 z = machine.getBaseMetaTileEntity()
                     .getZCoord();
+            // Native definition discovery is atomic; resumable element walking shares the server tick budget.
+            capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
             walkPieces(capture, definition, world, machine.getExtendedFacing(), x, y, z);
         } catch (CaptureYieldException yielded) {
             // Resume on a later server tick, retaining captured cells and declaration caches.
         } catch (RuntimeException | LinkageError e) {
+            capture.noteFailure(e);
             capture.incomplete = true;
             if (capture.failure.isEmpty()) capture.failure = e.getClass()
                 .getSimpleName();
@@ -183,6 +201,11 @@ public final class HologramCapture {
         if (capture.pending) return capture;
         capture.addAnchor(machine);
         if (capture.pieces.isEmpty()) capture.fail("NO_BUILD_PIECES");
+        if (!capture.incomplete) try {
+            capture.extensionReports = HologramExtensionSnapshots.capture(capture);
+        } catch (java.io.IOException rejected) {
+            capture.fail(rejected.getMessage());
+        }
         if (capture.incomplete) {
             capture.failure += " elapsedMs=" + ((System.nanoTime() - capture.started) / 1000000L)
                 + " pieces="
@@ -267,6 +290,7 @@ public final class HologramCapture {
                         }
                         if (cell.unknown && "block".equals(cell.role)) cell.role = "interface";
                     } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                        capture.noteFailure(e);
                         cell.unknown = true;
                         capture.failure = e.getClass()
                             .getSimpleName();
@@ -290,10 +314,29 @@ public final class HologramCapture {
         }
     }
 
+    void clearInterpretationCaches() {
+        casingCache.clear();
+        familyCache.clear();
+        roleCache.clear();
+        declarationTrace.clear();
+        interpretationGeneration = HologramDeclarationAdapters.generation();
+    }
+
+    private void refreshInterpretationGeneration() {
+        if (interpretationGeneration != HologramDeclarationAdapters.generation()) clearInterpretationCaches();
+    }
+
     private void fail(String reason) {
         incomplete = true;
         if (failure.isEmpty()) failure = reason;
         else if ("TIME_LIMIT".equals(reason) && !failure.startsWith("TIME_LIMIT")) failure = reason + ": " + failure;
+    }
+
+    private void noteFailure(Throwable failure) {
+        if (!failureOrigin.isEmpty()) return;
+        StackTraceElement[] trace = failure.getStackTrace();
+        failureOrigin = failure.getClass()
+            .getSimpleName() + (trace.length == 0 ? "" : " at " + trace[0]);
     }
 
     /** Delegate hints through reviewed wrappers without evaluating a deferred controller factory. */
@@ -362,6 +405,7 @@ public final class HologramCapture {
             .ordinal();
         cells.removeIf(cell -> cell.x == x && cell.y == y && cell.z == z);
         cells.add(anchor);
+        positions.put(x + "," + y + "," + z, anchor);
     }
 
     private HologramCasingFallback.Target casing(IStructureElement<?> element, ItemStack trigger) {

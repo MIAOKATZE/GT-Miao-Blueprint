@@ -1608,8 +1608,8 @@ public final class HologramSulfurLineSmokeClientProbe {
 
     private NBTTagCompound nativeSaveProof(HologramBlueprintArtifact.Artifact artifact, String local) throws Exception {
         NBTTagCompound proof = HologramLibraryClient.actualSaveWitness();
-        for (String key : new String[] { "nativePreviewWitness", "previewVerifiedReply", "ownerDiskAck",
-            "saveCommittedReply" }) if (!proof.hasKey(key, 10)) return null;
+        for (String key : new String[] { "nativePreviewWitness", "ownerDiskAck", "saveCommittedReply" })
+            if (!proof.hasKey(key, 10)) return null;
         proof.setTag("actualLibrarySaveState", HologramLibraryClient.actualSaveState());
         NBTTagCompound nativePreview = proof.getCompoundTag("nativePreviewWitness");
         if (!artifact.jsonSha256.equals(nativePreview.getString("sourceJsonSha256"))) return null;
@@ -1624,23 +1624,14 @@ public final class HologramSulfurLineSmokeClientProbe {
                 && "RGB8_TOP_LEFT_ROW_MAJOR".equals(nativePreview.getString("rgbPacking"))
                 && previewRgbHash(artifact.png).equals(nativePreview.getString("rgbSha256")),
             "actual saved PNG pixels match the source-fenced native END framebuffer readback");
+        String saveFlow = HologramV011NormalDecorProbe.verifySaveTransaction(
+            proof,
+            artifact,
+            local,
+            HologramClient.state.session,
+            data().getLong("planRevision"));
         NBTTagCompound acknowledgement = proof.getCompoundTag("ownerDiskAck");
-        String receipt = acknowledgement.getString("saveReceipt");
-        require(!receipt.isEmpty(), "actual owner disk ACK has a save receipt");
-        String[] keys = { "previewVerifiedReply", "ownerDiskAck", "saveCommittedReply" };
-        String[] operations = { "previewVerified", "ackBlueprintSaved", "saveCommitted" };
-        for (int index = 0; index < keys.length; index++) {
-            NBTTagCompound packet = proof.getCompoundTag(keys[index]);
-            require(
-                operations[index].equals(packet.getString("op")) && receipt.equals(packet.getString("saveReceipt"))
-                    && local.equals(packet.getString("localId"))
-                    && HologramClient.state.session.equals(packet.getString("session"))
-                    && data().getLong("planRevision") == packet.getLong("planRevision")
-                    && packet.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION
-                    && artifact.jsonSha256.equals(packet.getString("jsonSha256"))
-                    && artifact.pngSha256.equals(packet.getString("previewSha256")),
-                "actual native save packet belongs to this exact committed source pair: " + keys[index]);
-        }
+        proof.setString("saveReceiptFlow", saveFlow);
         proof.setByteArray("savedJson", artifact.json);
         proof.setByteArray("savedPng", artifact.png);
         proof.setString("savedJsonSha256", artifact.jsonSha256);
@@ -1987,10 +1978,8 @@ public final class HologramSulfurLineSmokeClientProbe {
     }
 
     private static Object field(Object target, String name) throws Exception {
-        Field value = target.getClass()
-            .getDeclaredField(name);
-        value.setAccessible(true);
-        return value.get(target);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(target, name));
     }
 
     private static Path localPath(Minecraft mc, String id) {

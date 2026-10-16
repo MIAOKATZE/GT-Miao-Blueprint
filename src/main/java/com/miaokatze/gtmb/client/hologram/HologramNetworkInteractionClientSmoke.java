@@ -2,7 +2,6 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.io.FileOutputStream;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -267,9 +266,9 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static void typeHint(HologramScreen screen, String text) throws Exception {
-        Method project = HologramScreen.class.getDeclaredMethod("smokePreviewPoint", int.class, int.class);
-        project.setAccessible(true);
-        int[] point = (int[]) project.invoke(screen, 120, 229);
+
+        int[] point = (int[]) HologramUiDiagnostics
+            .invokeDiagnostic(screen, "smokePreviewPoint", new Class<?>[] { int.class, int.class }, 120, 229);
         screen.mouseClicked(point[0], point[1], 0);
         screen.mouseMovedOrUp(point[0], point[1], 0);
         GuiTextField editor = (GuiTextField) field(screen, "networkHintField");
@@ -331,9 +330,8 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static Object field(HologramScreen screen, String name) throws Exception {
-        Field field = HologramScreen.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(screen);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(screen, name));
     }
 
     private static void observe(Minecraft mc, long frame) throws Exception {
@@ -402,9 +400,8 @@ public final class HologramNetworkInteractionClientSmoke {
     }
 
     private static void set(HologramScreen screen, String name, Object value) throws Exception {
-        Field field = HologramScreen.class.getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(screen, value);
+
+        HologramUiDiagnostics.writeDiagnosticField(screen, name, value);
     }
 
     private static void screenshot(Minecraft mc, String name) throws Exception {

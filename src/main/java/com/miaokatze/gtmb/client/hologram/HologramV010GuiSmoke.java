@@ -522,17 +522,13 @@ public final class HologramV010GuiSmoke {
     }
 
     private static Object field(Object owner, String name) throws Exception {
-        Field field = owner.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(owner);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(owner, name));
     }
 
     private static void set(Object owner, String name, Object value) throws Exception {
-        Field field = owner.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(owner, value);
+
+        HologramUiDiagnostics.writeDiagnosticField(owner, name, value);
     }
 
     private static boolean contains(int[] values, int wanted) {

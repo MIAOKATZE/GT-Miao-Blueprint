@@ -1,8 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
@@ -79,23 +76,18 @@ public final class HologramNetworkBindingUiSmoke {
     }
 
     private static void click(HologramScreen screen, int id) throws Exception {
-        Method method = HologramScreen.class.getDeclaredMethod("smokeClickDrawnControl", int.class);
-        method.setAccessible(true);
-        method.invoke(screen, id);
+
+        HologramUiDiagnostics.invokeDiagnostic(screen, "smokeClickDrawnControl", new Class<?>[] { int.class }, id);
     }
 
     private static Object field(Object object, String name) throws Exception {
-        Field field = object.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(object);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(object, name));
     }
 
     private static void set(Object object, String name, Object value) throws Exception {
-        Field field = object.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(object, value);
+
+        HologramUiDiagnostics.writeDiagnosticField(object, name, value);
     }
 
     private static void require(boolean condition, String name) {

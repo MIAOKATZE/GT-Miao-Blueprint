@@ -821,7 +821,7 @@ public final class HologramBlueprintResourcesRegression {
         java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
-        Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Object session = unsafe.allocateInstance(type);
         for (Object[] entry : new Object[][] { { "player", player }, { "materialContext", context },
             { "virtual", true } }) {
@@ -834,13 +834,13 @@ public final class HologramBlueprintResourcesRegression {
         java.lang.reflect.Field presetField = type.getDeclaredField("virtualPreset");
         presetField.setAccessible(true);
         presetField.set(session, preset);
-        java.lang.reflect.Method fuzzy = HologramService.class
+        java.lang.reflect.Method fuzzy = HologramMaterialAccess.class
             .getDeclaredMethod("fuzzyBlueprintShells", type, ItemStack.class);
         fuzzy.setAccessible(true);
         SimpleAssert.that(
             !(Boolean) fuzzy.invoke(null, session, sealed) && (Boolean) fuzzy.invoke(null, session, plain),
             "level one construction still applies exact sealed payment while allowing ordinary fuzzy shells");
-        java.lang.reflect.Method copyInventory = HologramService.class
+        java.lang.reflect.Method copyInventory = HologramMaterialAccess.class
             .getDeclaredMethod("copyInventory", net.minecraft.entity.player.EntityPlayerMP.class);
         copyInventory.setAccessible(true);
         ItemStack[] before = (ItemStack[]) copyInventory.invoke(null, player);
@@ -849,7 +849,7 @@ public final class HologramBlueprintResourcesRegression {
             transaction.takeOneFuzzy(sealed, false),
             "real identical seal is physically reserved via exact fallback");
         SimpleAssert.eq(0, context.count(sealed, 64), "reservation removes the one paid sealed item");
-        java.lang.reflect.Method rollback = HologramService.class
+        java.lang.reflect.Method rollback = HologramWorldTransactions.class
             .getDeclaredMethod("rollbackMaterials", type, HologramMaterials.Transaction.class, ItemStack[].class);
         rollback.setAccessible(true);
         rollback.invoke(null, session, transaction, before);
@@ -894,7 +894,7 @@ public final class HologramBlueprintResourcesRegression {
             SimpleAssert.that(
                 net.minecraft.item.Item.itemRegistry.getObject(registeredMaterial) == material,
                 "isolated controller material uses the actual Forge registry name");
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Object session = unsafe.allocateInstance(type);
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
@@ -913,13 +913,13 @@ public final class HologramBlueprintResourcesRegression {
             controller.blueprintItem = registeredMaterial;
             controller.blueprintDamage = id;
             controller.meta = 0;
-            java.lang.reflect.Method draft = HologramService.class
+            java.lang.reflect.Method draft = HologramCellPolicy.class
                 .getDeclaredMethod("draftTarget", type, HologramCapture.Cell.class, int.class);
             draft.setAccessible(true);
-            java.lang.reflect.Method explicit = HologramService.class
+            java.lang.reflect.Method explicit = HologramCellPolicy.class
                 .getDeclaredMethod("explicitTarget", type, HologramCapture.Cell.class, int.class);
             explicit.setAccessible(true);
-            java.lang.reflect.Method warning = HologramService.class
+            java.lang.reflect.Method warning = HologramBlueprintData.class
                 .getDeclaredMethod("blueprintSourceWarning", HologramPresets.Preset.class, String.class);
             warning.setAccessible(true);
             SimpleAssert.eq(
@@ -1024,7 +1024,7 @@ public final class HologramBlueprintResourcesRegression {
                     field.setAccessible(true);
                     field.set(player, new com.mojang.authlib.GameProfile(new UUID(9, 8), "builder"));
                 }
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Object session = unsafe.allocateInstance(type);
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
@@ -1036,11 +1036,11 @@ public final class HologramBlueprintResourcesRegression {
                 field.setAccessible(true);
                 field.set(session, entry[1]);
             }
-            java.lang.reflect.Method resources = HologramService.class
+            java.lang.reflect.Method resources = HologramCellPolicy.class
                 .getDeclaredMethod("resourcePlan", type, HologramCapture.Cell.class);
-            java.lang.reflect.Method cache = HologramService.class
+            java.lang.reflect.Method cache = HologramCellPolicy.class
                 .getDeclaredMethod("cachePlan", type, HologramCapture.Cell.class, int.class);
-            java.lang.reflect.Method covers = HologramService.class
+            java.lang.reflect.Method covers = HologramCellPolicy.class
                 .getDeclaredMethod("coverCosts", type, HologramCapture.Cell.class);
             resources.setAccessible(true);
             cache.setAccessible(true);
