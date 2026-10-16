@@ -31,6 +31,8 @@ public final class V016ProductionGuiProbe {
     private boolean complete;
     private boolean dispatched;
     private long initialGeneration;
+    private long lastObservedGeneration;
+    private final List<Long> observedGenerations = new ArrayList<Long>();
     private File output;
 
     @Mod.EventHandler
@@ -59,6 +61,11 @@ public final class V016ProductionGuiProbe {
             catch (NoSuchFieldException ignored) { }
         }
         throw new NoSuchFieldException(name);
+    }
+
+    private long renderGeneration() throws Exception {
+        Object canvas = field(field(screen, "ui"), "canvas");
+        return ((Number) method(canvas.getClass(), "renderGeneration").invoke(canvas)).longValue();
     }
 
     @SubscribeEvent
@@ -96,7 +103,8 @@ public final class V016ProductionGuiProbe {
             Constructor<?> screenConstructor = screenType.getDeclaredConstructor(state);
             screenConstructor.setAccessible(true);
             screen = screenConstructor.newInstance(snapshot);
-            initialGeneration = ((Number) method(screenType, "smokeRenderGeneration").invoke(screen)).longValue();
+            initialGeneration = renderGeneration();
+            lastObservedGeneration = initialGeneration;
             method(mc, "func_147108_a", Class.forName("net.minecraft.client.gui.GuiScreen")).invoke(minecraft, screen);
             receipt.setProperty("openedScreen", field(minecraft, "field_71462_r").getClass().getName());
             Class.forName("org.lwjgl.opengl.GL11").getMethod("glGetError").invoke(null);
@@ -109,10 +117,13 @@ public final class V016ProductionGuiProbe {
         if (complete || screen == null || event.phase != TickEvent.Phase.END) return;
         try {
             if (field(minecraft, "field_71462_r") != screen) throw new IllegalStateException("Probe Screen was replaced");
-            long generation = ((Number) method(screen.getClass(), "smokeRenderGeneration").invoke(screen)).longValue();
-            if (generation <= initialGeneration) return;
+            long generation = renderGeneration();
+            if (generation < lastObservedGeneration) throw new IllegalStateException("Render generation regressed");
+            if (generation == lastObservedGeneration) return;
             int error = ((Number) Class.forName("org.lwjgl.opengl.GL11").getMethod("glGetError").invoke(null)).intValue();
             if (error != 0) throw new IllegalStateException("Native GL error " + error);
+            lastObservedGeneration = generation;
+            observedGenerations.add(Long.valueOf(generation));
             frames++;
             if (!dispatched) {
                 dispatchEveryHostMethod();
@@ -124,6 +135,7 @@ public final class V016ProductionGuiProbe {
             receipt.setProperty("nativeFramesObserved", String.valueOf(frames));
             receipt.setProperty("initialGeneration", String.valueOf(initialGeneration));
             receipt.setProperty("finalGeneration", String.valueOf(generation));
+            receipt.setProperty("observedGenerations", observedGenerations.toString());
             receipt.setProperty("glError", "0");
             screenshot();
             complete = true;
