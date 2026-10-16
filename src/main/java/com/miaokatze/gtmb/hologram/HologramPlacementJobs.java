@@ -134,8 +134,17 @@ final class HologramPlacementJobs {
         }
         HologramResourcePlanner.refreshResources(s);
         if (!HologramPlanPolicy.constructionAllowed(s)) return;
+        for (int i = 0; i < s.capture.cells.size(); i++) {
+            HologramCapture.Cell cell = s.capture.cells.get(i);
+            if (HologramSessionPolicy.inScope(s, cell, i) && "unsupported".equals(cell.status)
+                && !cell.resourceError.isEmpty()) {
+                s.status = "蓝图资源数据无法安全解析，未施工：" + cell.resourceError;
+                return;
+            }
+        }
         if (!s.planRecoveryFits) {
-            s.status = "背包无法容纳回收，请整理后重试";
+            s.status = s.blueprintResourceMissing.isEmpty() ? "背包无法容纳回收，请整理后重试"
+                : "蓝图资源校验失败，未施工：" + s.blueprintResourceMissing;
             return;
         }
         if (s.planMissing > 0 && (!s.virtual || !s.forcePlacementReady)) {
@@ -155,7 +164,28 @@ final class HologramPlacementJobs {
         }
         controllerWorkLast(s);
         if (s.work.isEmpty()) {
-            s.status = "选定范围没有可安全施工的位置";
+            int satisfied = 0, protectedCells = 0, unsupported = 0;
+            String reason = "";
+            for (int i = 0; i < s.capture.cells.size(); i++) {
+                HologramCapture.Cell cell = s.capture.cells.get(i);
+                if (!HologramSessionPolicy.inScope(s, cell, i) || cell.anchor) continue;
+                String status = s.planStatus.get(i);
+                if ("satisfied".equals(status)) satisfied++;
+                else {
+                    if ("unsupported".equals(status)) unsupported++;
+                    else protectedCells++;
+                    if (reason.isEmpty()) reason = HologramPlanPolicy.reason(s, cell, i);
+                }
+            }
+            s.status = protectedCells == 0 && unsupported == 0 && satisfied > 0
+                ? "目标范围已满足，无需施工；未放置方块、未扣材料（" + satisfied + " 格）"
+                : "没有可安全施工的位置：已满足 " + satisfied
+                    + " 格，保护或占位 "
+                    + protectedCells
+                    + " 格，不支持 "
+                    + unsupported
+                    + " 格"
+                    + (reason.isEmpty() ? "" : "；" + reason);
             return;
         }
         s.replacementAuthorized = s.mode == 1;

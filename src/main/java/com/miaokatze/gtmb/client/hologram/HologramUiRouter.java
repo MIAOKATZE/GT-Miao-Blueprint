@@ -363,10 +363,21 @@ final class HologramUiRouter {
                                 + ui.session.state().data.getInteger("protected"));
                 }
             }
-            if (ui.review.confirmation() && ui.session.progress() != null) {
+            if (ui.review.confirmation()) {
                 drawRect(32, 318, HologramUiCanvas.viewportWidth + 26, 333, 0xff142a32);
-                HologramProgressView
-                    .draw(ui.host.font(), ui.session.progress(), 35, 321, HologramUiCanvas.viewportWidth - 12, 0);
+                HologramProgress progress = ui.session.progress();
+                if (progress != null) HologramProgressView
+                    .draw(ui.host.font(), progress, 35, 321, HologramUiCanvas.viewportWidth - 12, 0);
+                else {
+                    String result = ui.session.notice()
+                        .isEmpty() ? ui.review.completionSummary() : ui.session.notice();
+                    ui.canvas.text(result, 35, 321, HologramUiCanvas.viewportWidth - 12, 0xffbd91);
+                    if (mx >= 35 && mx < HologramUiCanvas.viewportWidth + 26 && my >= 318 && my < 333)
+                        ui.canvas.tooltip(
+                            new ArrayList<>(
+                                ui.host.font()
+                                    .listFormattedStringToWidth(result, 390)));
+                }
             }
             ui.preview.drawEmptyVoxelPreview(mx, my);
             if (ui.annotations.annotationInteractive()) ui.annotations.drawAnnotations(mx, my);

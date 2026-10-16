@@ -89,8 +89,7 @@ final class HologramUiSession {
         ui.library.applyOpeningPurpose();
         ui.preview.acknowledgeSelection(next);
         ui.library.acknowledgeSnapshot(next, library, newSession);
-        if (pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence")))
-            commandProgress.finish(System.nanoTime());
+        if (pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence"))) commandProgress.clear();
         ui.preview.acknowledgeEdits(next);
         ui.review.acknowledgeReview(next);
         ui.preview.syncLayerAndSelection(next);
@@ -180,6 +179,7 @@ final class HologramUiSession {
         n.setLong("uiSequence", ++sequence);
         ui.preview.recordSelectionCommand(op, sequence);
         if (pending) {
+            notice = "";
             pendingSequence(sequence);
             pendingOperation = op;
             String phase = "scan".equals(op) || "processBlueprint".equals(op) ? "analysis"
@@ -199,7 +199,8 @@ final class HologramUiSession {
         HologramProgress transport = HologramClientProgress.view("snapshot", "");
         if (pendingTicket.sequence() >= 0 && transport != null && !transport.complete) return transport;
         HologramProgress command = commandProgress.view(System.nanoTime());
-        return command != null ? command : server;
+        // A transport ACK is not a successful world operation. Its authoritative status wins immediately.
+        return command != null && !command.complete ? command : null;
     }
 
     void transportRejected(NBTTagCompound event) {

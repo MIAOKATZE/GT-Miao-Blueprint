@@ -314,9 +314,21 @@ final class HologramAuthoringWorkflow {
     static boolean blueprintAction(HologramSession s, NBTTagCompound action, String op) {
         try {
             if ("deidentifyBlueprint".equals(op) || "configurePlacementDeidentification".equals(op)) {
+                int level = HologramDeidentification.checked(action.getInteger("level"));
+                if ("configurePlacementDeidentification".equals(op) && s.virtual
+                    && s.capture != null
+                    && s.virtualPreset != null
+                    && action.hasKey("planRevision", 4)
+                    && action.getLong("planRevision") >= 0
+                    && action.getLong("planRevision") <= s.planRevision
+                    && s.placementDeidentificationChosen
+                    && s.placementDeidentificationLevel == HologramDeidentification.level(s.virtualPreset)
+                    && s.placementDeidentificationLevel >= level) {
+                    // A retry must preserve the real refusal/completion status as well as review authority.
+                    return true;
+                }
                 if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)
                     throw new java.io.IOException("蓝图已更新，请重新核对去标识等级");
-                int level = HologramDeidentification.checked(action.getInteger("level"));
                 deidentifyDraft(s, level);
                 s.virtualPreset.deidentificationChosen = true;
                 s.deidentificationChosen = true;

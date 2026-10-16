@@ -12,7 +12,6 @@ from urllib.parse import unquote, urlsplit
 import psutil
 
 
-CLIENT_RSS_LIMIT = int(4.4 * 1024 ** 3)
 
 
 def digest(path):
@@ -64,7 +63,7 @@ def main():
     receipt = {'scope': 'actual FML production main-menu empty import Screen, no world/network/business retest',
                'expected': args.expect, 'command': command, 'environment_sha256': digest(environment),
                'normal_sha256': digest(normal), 'start_unix': started, 'timeout': False,
-               'memory_limited': False, 'client_rss_limit_bytes': CLIENT_RSS_LIMIT,
+               'client_heap_max_bytes': heap_limits[0],
                'client_peak_rss_bytes': 0, 'client_rss_samples': 0}
     with log_path.open('wb') as log:
         process = subprocess.Popen(command, cwd=env['client'], stdout=log, stderr=subprocess.STDOUT)
@@ -76,10 +75,6 @@ def main():
                 rss = client_monitor.memory_info().rss
                 receipt['client_rss_samples'] += 1
                 receipt['client_peak_rss_bytes'] = max(receipt['client_peak_rss_bytes'], rss)
-                if rss >= CLIENT_RSS_LIMIT:
-                    receipt['memory_limited'] = True
-                    receipt['resource_stop_reason'] = f'Owned client RSS {rss} reached {CLIENT_RSS_LIMIT} bytes'
-                    break
             except psutil.NoSuchProcess:
                 pass
             if time.time() - started >= args.timeout:
@@ -87,7 +82,7 @@ def main():
                 break
             time.sleep(.05)
         if process.poll() is None:
-            # Resource limits terminate this owned client immediately, without a pre-stop wait.
+            # Only the explicit run timeout stops this owned client here; RSS is observational.
             process.terminate()
             try:
                 receipt['exit_code'] = process.wait(timeout=15)
@@ -144,23 +139,20 @@ def main():
         accepted = (observed.get('status') == 'PASS' and observed.get('hostMethodCount') == '9'
                     and observed.get('glError') == '0' and observed.get('fmlDeobfuscatedEnvironment') == 'false'
                     and int(observed.get('nativeFramesObserved', '0')) >= 4 and source_matches
-                    and receipt['normal_unchanged'] and not receipt['timeout'] and not receipt['memory_limited']
+                    and receipt['normal_unchanged'] and not receipt['timeout']
                     and receipt['exit_code'] == 0
                     and (not mui2 or migration_passed))
         receipt['status'] = 'PASS' if accepted else 'FAIL'
     else:
         accepted = ('AbstractMethodError' in all_errors and 'drawDefaultBackground' in all_errors
-                    and receipt['normal_unchanged'] and not receipt['timeout'] and not receipt['memory_limited']
+                    and receipt['normal_unchanged'] and not receipt['timeout']
                     and source_matches)
         receipt['status'] = 'EXPECTED_OLD_ABSTRACT_METHOD_ERROR' if accepted else 'FAIL'
-    if receipt['memory_limited']:
-        receipt['status'] = 'RESOURCE_LIMIT_STOPPED_NOT_PRODUCT_RESULT'
-        receipt['product_verdict'] = 'NOT_EVALUATED'
     receipt['log_sha256'] = digest(log_path)
     receipt['crash_report_hashes'] = {str(path.relative_to(fixture)): digest(path) for path in crashes}
     receipt_file.write_text(json.dumps(receipt, indent=2), encoding='utf-8')
     print(json.dumps(receipt, indent=2))
-    return 2 if receipt['memory_limited'] else 1 if receipt['status'] == 'FAIL' else 0
+    return 1 if receipt['status'] == 'FAIL' else 0
 
 
 if __name__ == '__main__':

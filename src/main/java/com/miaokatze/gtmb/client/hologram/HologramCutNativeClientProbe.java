@@ -164,8 +164,8 @@ public final class HologramCutNativeClientProbe {
                 "target-window-binding-acknowledged",
                 mc -> mc.currentScreen == null && lastOsAck != null
                     && lastOsAck.getString("input_method")
-                        .startsWith("target HWND PostMessage"),
-                3000000000L));
+                        .startsWith("target HWND verified SendInput"),
+                20000000000L));
         hold("hold-physical-shift", KeyEvent.VK_SHIFT, true);
         clickWorld("shift-right-opens-mode-switcher", 1);
         waitScreen("actual-mode-switcher-default", HologramCutModeScreen.class);

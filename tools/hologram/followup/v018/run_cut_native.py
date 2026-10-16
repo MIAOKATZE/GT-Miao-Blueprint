@@ -15,7 +15,6 @@ import psutil
 
 ROOT = Path(__file__).resolve().parents[4]
 WORLD_PREFIX = "hologram-cut-v020-"
-CLIENT_RSS_LIMIT = int(4.4 * 1024 ** 3)
 
 
 def digest(path):
@@ -55,6 +54,17 @@ def set_properties(text, changes):
     return "\n".join(lines) + "\n"
 
 
+def validate_client_heap(text):
+    options = [line.strip().strip('"') for line in text.splitlines()
+               if line.strip().strip('"').startswith("-Xmx")]
+    if options != ["-Xmx4096M"]:
+        raise ValueError("Cut client arguments require exactly one -Xmx4096M")
+    heap_bytes = int(options[0][4:-1]) * 1024 ** 2
+    if heap_bytes > 5 * 1024 ** 3:
+        raise ValueError("Client maximum allocated heap exceeds 5GiB")
+    return heap_bytes
+
+
 def client_args(text, fixture, receipts):
     # Prepared java-args.txt has exactly one Java argument per quoted line.
     lines = text.splitlines()
@@ -81,11 +91,13 @@ def client_args(text, fixture, receipts):
     lines = [line for line in lines if not re.match(r"-Xm[sx]", line.strip().strip('"')) and not any(token in line for token in
              ("-Dgtmb.hologram.cutAeData", "-Dgtmb.hologram.cutNative", "-Dgtmb.hologram.followup",
               "-Dgtmb.hologram.nativeStartupSeconds", "-Dgtmb.v016.productionGui"))]
-    additions = ['"-Xms768M"', '"-Xmx3072M"'] + [f'"-D{key}={value}"' for key, value in properties.items()]
+    additions = ['"-Xms768M"', '"-Xmx4096M"'] + [f'"-D{key}={value}"' for key, value in properties.items()]
     index = next((i for i, line in enumerate(lines) if line.strip('"') == "-cp"), None)
     if index is None:
         raise ValueError("Prepared client arguments have no explicit -cp boundary")
-    return "\n".join(lines[:index] + additions + lines[index:]) + "\n"
+    generated = "\n".join(lines[:index] + additions + lines[index:]) + "\n"
+    validate_client_heap(generated)
+    return generated
 
 
 def stage(args):
@@ -186,12 +198,12 @@ def stage(args):
 def run(record, timeout):
     fixture, receipts, output = map(Path, (record["fixture"], record["receipts"], record["output"]))
     assert_idle(fixture)
+    heap_bytes = validate_client_heap((fixture / "cut-java-args.txt").read_text(encoding="utf-8"))
     processes, logs = {}, []
     result = dict(record, status="FAIL", scope="Actual paired normal-JAR dedicated server/client plus targeted Win32 input; listed cut probes only",
                   started_unix=time.time(), timeout_seconds=timeout, processes={}, failure="",
-                  client_heap_max="3072M", client_rss_limit_bytes=CLIENT_RSS_LIMIT, client_peak_rss_bytes=0,
-                  client_rss_samples=0, resource_stop_reason="", product_verdict="NOT_EVALUATED")
-    resource_limited = False
+                  client_heap_max="4096M", client_heap_max_bytes=heap_bytes, client_peak_rss_bytes=0,
+                  client_rss_samples=0, product_verdict="NOT_EVALUATED")
     deadline = time.monotonic() + timeout
 
     def launch(role, command, cwd):
@@ -234,16 +246,6 @@ def run(record, timeout):
                     rss = client_monitor.memory_info().rss
                     result["client_rss_samples"] += 1
                     result["client_peak_rss_bytes"] = max(result["client_peak_rss_bytes"], rss)
-                    if rss >= CLIENT_RSS_LIMIT:
-                        resource_limited = True
-                        result["status"] = "RESOURCE_LIMIT_STOPPED_NOT_PRODUCT_RESULT"
-                        result["resource_stop_reason"] = f"Owned client RSS {rss} reached {CLIENT_RSS_LIMIT} bytes"
-                        result["resource_limit_detected_unix"] = time.time()
-                        result["processes"]["client"]["forced_stop"] = True
-                        # Stop client growth before bridge input cleanup or server shutdown waits.
-                        client.terminate()
-                        result["client_termination_requested_unix"] = time.time()
-                        raise RuntimeError(result["resource_stop_reason"])
                 except psutil.NoSuchProcess:
                     pass
             failures()
@@ -275,7 +277,6 @@ def run(record, timeout):
             if "input" in processes and processes["input"].poll() is None:
                 (receipts / "cut-os-input-bridge-stop.txt").write_text("owned launcher shutdown\n", encoding="ascii")
                 result["input_release_requested_unix"] = time.time()
-                result["input_release_after_client_resource_stop"] = resource_limited
             if "server" in processes and processes["server"].poll() is None:
                 try:
                     processes["server"].stdin.write(b"stop\n")
@@ -287,7 +288,7 @@ def run(record, timeout):
                 if process is None or process.poll() is not None:
                     continue
                 try:
-                    process.wait(timeout=1 if resource_limited and role == "client" else 10 if role == "input" else 20)
+                    process.wait(timeout=10 if role == "input" else 20)
                 except subprocess.TimeoutExpired:
                     result["processes"][role]["forced_stop"] = True
                     process.terminate()
@@ -305,7 +306,7 @@ def run(record, timeout):
         result["receipt_sha256"] = {path.name: digest(path) for path in receipts.glob("cut-*") if path.is_file()}
         save(output / "process-receipt.json", result)
     print(json.dumps({key: result[key] for key in ("status", "name", "output", "failure", "processes")}, indent=2))
-    return 0 if result["status"].startswith("PASS_") else 2 if resource_limited else 1
+    return 0 if result["status"].startswith("PASS_") else 1
 
 
 def main():

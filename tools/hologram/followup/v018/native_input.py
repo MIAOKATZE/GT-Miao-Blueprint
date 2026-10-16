@@ -1,9 +1,9 @@
 """Version-2 CutNativeClientProbe input bridge, restricted to one fixture Java PID.
 
 Run from the repository with --fixture DIR --receipts DIR --pid PID --timeout SECONDS.
-Mouse/key messages address only the verified LWJGL/GLFW/SDL HWND. SendInput supplies
-the asynchronous state of modifiers while that HWND is foreground; cleanup releases
-only inputs owned by this bridge. Posted messages are not physical pointer evidence.
+Mouse SendInput requires the verified LWJGL/GLFW/SDL HWND to be foreground and
+the physical hit window to have its PID. Keys use targeted messages and SendInput
+modifier state. Cleanup releases only inputs owned by this bridge.
 Requires Windows and psutil. This script never starts/stops Java or closes a window.
 """
 
@@ -23,7 +23,7 @@ import psutil
 
 
 ROOT = Path(__file__).resolve().parents[4]
-METHOD = "target HWND PostMessage; foreground modifier state via SendInput"
+METHOD = "target HWND verified SendInput mouse; PostMessage keys + SendInput modifiers"
 KEYS = {16, 17, 18, 27, 65, 68, 82}  # The probe sends AWT virtual-key codes.
 MODIFIERS = {16, 17, 18}
 OPERATIONS = {"focus", "key-down", "key-up", "mouse-move", "mouse-down", "mouse-up", "release-all"}
@@ -122,6 +122,8 @@ class Win32:
         self.user = ctypes.WinDLL("user32", use_last_error=True)
         self.hwnd = None
         self.focus_evidence = {}
+        self.mouse_evidence = {}
+        self.pending_pointer = None
         self.keys, self.physical, self.buttons = set(), set(), {}
         u = self.user
         self.callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -132,6 +134,11 @@ class Win32:
             "IsWindowVisible": ([wintypes.HWND], wintypes.BOOL),
             "GetClassNameW": ([wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
             "GetClientRect": ([wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+            "ClientToScreen": ([wintypes.HWND, ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
+            "GetPhysicalCursorPos": ([ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
+            "WindowFromPhysicalPoint": ([wintypes.POINT], wintypes.HWND),
+            "GetSystemMetrics": ([ctypes.c_int], ctypes.c_int),
+            "SetThreadDpiAwarenessContext": ([ctypes.c_void_p], ctypes.c_void_p),
             "GetForegroundWindow": ([], wintypes.HWND),
             "SetForegroundWindow": ([wintypes.HWND], wintypes.BOOL),
             "ShowWindow": ([wintypes.HWND, ctypes.c_int], wintypes.BOOL),
@@ -174,7 +181,7 @@ class Win32:
         class Input(ctypes.Structure):
             _fields_ = [("type", wintypes.DWORD), ("value", InputUnion)]
 
-        self.Input, self.KeyboardInput = Input, KeyboardInput
+        self.Input, self.KeyboardInput, self.MouseInput = Input, KeyboardInput, MouseInput
         if ctypes.sizeof(Input) != (40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28):
             raise RuntimeError("Unexpected Win32 INPUT structure layout")
         u.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(Input), ctypes.c_int]
@@ -213,6 +220,7 @@ class Win32:
         size = (rect.right - rect.left, rect.bottom - rect.top)
         if size != (request["width"], request["height"]):
             raise RuntimeError(f"Client pixel dimensions {size} differ from request")
+        self.request_width, self.request_height = request["width"], request["height"]
         return {"pid": self.target.pid, "hwnd": hex(hwnd), "window_class": window_class,
                 "client_width": size[0], "client_height": size[1]}
 
@@ -224,6 +232,8 @@ class Win32:
             return hex(hwnd or 0), pid.value
 
         if focus:
+            focus_started = time.monotonic()
+            focus_deadline = focus_started + 12
             before = identity(self.user.GetForegroundWindow())
             self.focus_evidence = {"focus_before_hwnd": before[0], "focus_before_pid": before[1],
                                    "focus_method": "owned HWND show/raise; bounded same-desktop queue attachment",
@@ -234,49 +244,70 @@ class Win32:
                     raise RuntimeError("Focus target no longer belongs to the bound Java PID")
                 # AttachThreadInput resets queue key state. Focus-only attachment is
                 # permitted solely with no physical input and no bridge-owned holds.
+                all_observed_held = set()
+
+                def check_focus_target():
+                    self.target.validate()
+                    if not self.owned(self.hwnd):
+                        raise RuntimeError("Owned focus target changed while awaiting focus")
+                    stop_file = getattr(self, "stop_file", None)
+                    if stop_file is not None and stop_file.exists():
+                        raise RuntimeError("Owned paired launcher requested shutdown while awaiting focus")
+                    if time.monotonic() >= focus_deadline:
+                        raise RuntimeError("Shared 12-second focus deadline expired; refusing focus queue changes")
+
                 def require_idle_input():
-                    if self.keys or self.physical or self.buttons or any(
-                        self.user.GetAsyncKeyState(key) & 0x8000 for key in range(1, 256)
-                    ):
+                    held = [key for key in range(1, 256) if self.user.GetAsyncKeyState(key) & 0x8000]
+                    if self.keys or self.physical or self.buttons or held:
+                        self.focus_evidence["focus_race_held_vks"] = ",".join(map(str, held))
                         raise RuntimeError("Input is held; refusing focus queue changes")
 
-                # Startup can coincide with a user's transient key/button press. Wait
-                # without releasing it or changing queues; subsequent races stay fail-closed.
-                if self.keys or self.physical or self.buttons:
-                    raise RuntimeError("Bridge-owned input is held; refusing focus queue changes")
-                idle_started = time.monotonic()
-                idle_since = None
-                observed_held = set()
-                try:
-                    while True:
-                        self.target.validate()
-                        if not self.owned(self.hwnd):
-                            raise RuntimeError("Owned focus target changed while awaiting idle input")
-                        stop_file = getattr(self, "stop_file", None)
-                        if stop_file is not None and stop_file.exists():
-                            raise RuntimeError("Owned paired launcher requested shutdown while awaiting idle input")
-                        held = [key for key in range(1, 256) if self.user.GetAsyncKeyState(key) & 0x8000]
-                        observed_held.update(held)
-                        self.focus_evidence["focus_held_vks"] = ",".join(map(str, sorted(observed_held)))
-                        self.focus_evidence["focus_last_held_vks"] = ",".join(map(str, held))
-                        now = time.monotonic()
-                        if held:
-                            idle_since = None
-                        elif idle_since is None:
-                            idle_since = now
-                        elif now - idle_since >= .15:
-                            break
-                        if now - idle_started >= 10:
-                            raise RuntimeError("Input is held or not stably idle after 10 seconds; refusing focus queue changes")
-                        time.sleep(.02)
-                finally:
-                    self.focus_evidence["focus_idle_wait_ms"] = round((time.monotonic() - idle_started) * 1000)
+                def wait_idle(stage):
+                    # Called only before attachment. No input is released or synthesized.
+                    idle_started = time.monotonic()
+                    idle_since = None
+                    observed_held = set()
+                    prefix = "focus_" + stage + "_"
+                    try:
+                        while True:
+                            check_focus_target()
+                            if self.keys or self.physical or self.buttons:
+                                raise RuntimeError("Bridge-owned input is held; refusing focus queue changes")
+                            held = [key for key in range(1, 256) if self.user.GetAsyncKeyState(key) & 0x8000]
+                            observed_held.update(held)
+                            all_observed_held.update(held)
+                            self.focus_evidence[prefix + "held_vks"] = ",".join(map(str, sorted(observed_held)))
+                            self.focus_evidence[prefix + "last_held_vks"] = ",".join(map(str, held))
+                            self.focus_evidence["focus_held_vks"] = ",".join(map(str, sorted(all_observed_held)))
+                            self.focus_evidence["focus_last_held_vks"] = ",".join(map(str, held))
+                            now = time.monotonic()
+                            if held:
+                                idle_since = None
+                            elif idle_since is None:
+                                idle_since = now
+                            elif now - idle_since >= .75:
+                                break
+                            time.sleep(.02)
+                    finally:
+                        waited = round((time.monotonic() - idle_started) * 1000)
+                        self.focus_evidence[prefix + "idle_wait_ms"] = waited
+                        self.focus_evidence["focus_idle_wait_ms"] = self.focus_evidence.get("focus_idle_wait_ms", 0) + waited
+                        observed_hwnd = self.user.GetForegroundWindow()
+                        observed_pid = wintypes.DWORD()
+                        observed_thread = self.user.GetWindowThreadProcessId(
+                            observed_hwnd, ctypes.byref(observed_pid)) if observed_hwnd else 0
+                        self.focus_evidence.update({prefix + "after_idle_hwnd": hex(observed_hwnd or 0),
+                                                    prefix + "after_idle_pid": observed_pid.value,
+                                                    prefix + "after_idle_thread": observed_thread})
+
+                wait_idle("initial")
                 require_idle_input()
                 self.user.ShowWindow(self.hwnd, 9 if self.user.IsIconic(self.hwnd) else 5)
                 self.user.BringWindowToTop(self.hwnd)
                 self.user.SetForegroundWindow(self.hwnd)
-                limit = time.monotonic() + .3
+                limit = min(focus_deadline, time.monotonic() + .3)
                 while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < limit:
+                    check_focus_target()
                     time.sleep(.02)
                 if self.user.GetForegroundWindow() != self.hwnd:
                     current_thread = self.kernel.GetCurrentThreadId()
@@ -300,6 +331,10 @@ class Win32:
                     # Explicitly create this bridge thread's message queue, without consuming messages.
                     message = wintypes.MSG()
                     self.user.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)
+                    wait_idle("owned_target_attach")
+                    after_idle = identity(self.user.GetForegroundWindow())
+                    self.focus_evidence.update(focus_owned_target_after_idle_hwnd=after_idle[0],
+                                               focus_owned_target_after_idle_pid=after_idle[1])
                     attached = False
                     try:
                         if current_thread != target_thread:
@@ -326,6 +361,10 @@ class Win32:
                         if self.user.GetForegroundWindow() == self.hwnd:
                             break
                         prefix = f"focus_foreground_attempt_{attempt}_"
+                        before_idle = self.user.GetForegroundWindow()
+                        self.focus_evidence[prefix + "before_idle_hwnd"] = identity(before_idle)[0]
+                        self.focus_evidence[prefix + "before_idle_pid"] = identity(before_idle)[1]
+                        wait_idle(f"foreground_attempt_{attempt}_attach")
                         foreground_hwnd = self.user.GetForegroundWindow()
                         foreground_pid = wintypes.DWORD()
                         foreground_thread = self.user.GetWindowThreadProcessId(
@@ -334,6 +373,11 @@ class Win32:
                                                     prefix + "pid": foreground_pid.value,
                                                     prefix + "thread": foreground_thread,
                                                     prefix + "attach": "not attempted"})
+                        if foreground_hwnd == self.hwnd:
+                            break
+                        if foreground_hwnd != before_idle:
+                            self.focus_evidence[prefix + "changed"] = "during idle wait; attachment skipped"
+                            continue
                         if not foreground_thread:
                             raise RuntimeError("No stable foreground thread for focus transfer")
                         require_idle_input()
@@ -386,8 +430,9 @@ class Win32:
                         if changed:
                             continue
                         # Foreground activation may finish asynchronously after queues detach.
-                        transfer_limit = time.monotonic() + .5
+                        transfer_limit = min(focus_deadline, time.monotonic() + .5)
                         while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < transfer_limit:
+                            check_focus_target()
                             time.sleep(.02)
                         current = identity(self.user.GetForegroundWindow())
                         self.focus_evidence.update({prefix + "settled_hwnd": current[0],
@@ -395,13 +440,15 @@ class Win32:
                         # Retry solely for a changed foreground, not repeated permission forcing.
                         if self.user.GetForegroundWindow() in (foreground_hwnd, self.hwnd):
                             break
-                limit = time.monotonic() + 1
+                limit = min(focus_deadline, time.monotonic() + 1)
                 while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < limit:
+                    check_focus_target()
                     time.sleep(.02)
                 self.target.validate()
             finally:
                 after = identity(self.user.GetForegroundWindow())
                 self.focus_evidence.update(focus_after_hwnd=after[0], focus_after_pid=after[1])
+                self.focus_evidence["focus_total_ms"] = round((time.monotonic() - focus_started) * 1000)
                 self.focus_evidence["focus_verified"] = str(
                     self.user.GetForegroundWindow() == self.hwnd and self.owned(self.hwnd)).lower()
         if self.user.GetForegroundWindow() != self.hwnd:
@@ -419,7 +466,7 @@ class Win32:
             self.target.validate()
             self.foreground()
         event = self.Input()
-        event.type = 1  # INPUT_KEYBOARD; never inject global mouse input.
+        event.type = 1  # INPUT_KEYBOARD
         event.value.keyboard = self.KeyboardInput(key, 0, 0 if down else 2, 0, 0)
         if self.user.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) != 1:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -448,41 +495,178 @@ class Win32:
         else:
             self.keys.remove(key)
 
+    def physical_geometry(self, x, y):
+        if not (0 <= x < self.request_width and 0 <= y < self.request_height):
+            raise ValueError("Requested pointer is outside the bound client area")
+        previous = self.user.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))  # PMv2, this thread only.
+        if not previous:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            rect = wintypes.RECT()
+            if not self.user.GetClientRect(self.hwnd, ctypes.byref(rect)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            width, height = rect.right - rect.left, rect.bottom - rect.top
+            if width <= 0 or height <= 0:
+                raise RuntimeError("Physical target client area is empty")
+            origin = wintypes.POINT(0, 0)
+            if not self.user.ClientToScreen(self.hwnd, ctypes.byref(origin)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            point = wintypes.POINT(min(width - 1, round(x * width / self.request_width)),
+                                  min(height - 1, round(y * height / self.request_height)))
+            if not self.user.ClientToScreen(self.hwnd, ctypes.byref(point)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            virtual = tuple(self.user.GetSystemMetrics(index) for index in (76, 77, 78, 79))
+            if virtual[2] <= 1 or virtual[3] <= 1:
+                raise RuntimeError("Invalid physical virtual-desktop dimensions")
+            geometry = (origin.x, origin.y, width, height, *virtual)
+            self.mouse_evidence.update(mouse_request_x=x, mouse_request_y=y,
+                                       mouse_physical_target_x=point.x, mouse_physical_target_y=point.y,
+                                       mouse_physical_client_left=origin.x, mouse_physical_client_top=origin.y,
+                                       mouse_physical_client_width=width, mouse_physical_client_height=height,
+                                       mouse_scale_x=width / self.request_width, mouse_scale_y=height / self.request_height,
+                                       mouse_virtual_left=virtual[0], mouse_virtual_top=virtual[1],
+                                       mouse_virtual_width=virtual[2], mouse_virtual_height=virtual[3])
+            return point, geometry
+        finally:
+            if not self.user.SetThreadDpiAwarenessContext(ctypes.c_void_p(previous)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.mouse_evidence["mouse_thread_dpi_restored"] = "true"
+
+    def verify_physical_hit(self, point, geometry):
+        self.target.validate()
+        self.foreground()
+        left, top, width, height = geometry[:4]
+        hit = self.user.WindowFromPhysicalPoint(point)
+        hit_pid = wintypes.DWORD()
+        if hit:
+            self.user.GetWindowThreadProcessId(hit, ctypes.byref(hit_pid))
+        self.mouse_evidence.update(mouse_physical_hit_hwnd=hex(hit or 0),
+                                   mouse_physical_hit_pid=hit_pid.value,
+                                   mouse_actual_physical_x=point.x, mouse_actual_physical_y=point.y)
+        self.mouse_evidence.pop("mouse_hit_rejected", None)
+        if not (left <= point.x < left + width and top <= point.y < top + height):
+            self.mouse_evidence["mouse_hit_rejected"] = "outside owned client area"
+            raise RuntimeError("Physical pointer is outside the owned target client area")
+        if not self.owned(self.hwnd) or not self.owned(hit):
+            self.mouse_evidence["mouse_hit_rejected"] = "physical hit has different ownership"
+            raise RuntimeError("Physical pointer hit window does not belong to the bound Java PID")
+
+    def physical_cursor(self):
+        point = wintypes.POINT()
+        if not self.user.GetPhysicalCursorPos(ctypes.byref(point)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return point
+
+    def send_mouse(self, flags, dx=0, dy=0, down_hold=None, release_button=None, cleanup_only=False):
+        if cleanup_only:
+            if release_button not in self.buttons or dx or dy or flags != (0x0004 if release_button == 0 else 0x0010):
+                raise RuntimeError("Cleanup may only release a mouse button successfully injected by this bridge")
+        else:
+            self.target.validate()
+            if not self.owned(self.hwnd):
+                raise RuntimeError("Mouse target no longer belongs to the bound Java PID")
+            self.foreground()
+        event = self.Input()
+        event.type = 0  # INPUT_MOUSE
+        event.value.mouse = self.MouseInput(dx, dy, 0, flags, 0, 0)
+        if self.user.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) != 1:
+            raise ctypes.WinError(ctypes.get_last_error())
+        # Update ownership immediately after insertion, before evidence or any further checks.
+        if down_hold is not None:
+            button, x, y = down_hold
+            self.buttons[button] = (x, y)
+        if release_button is not None:
+            del self.buttons[release_button]
+        self.mouse_evidence["mouse_sendinput_flags"] = hex(flags)
+        self.mouse_evidence["mouse_cleanup_only"] = str(cleanup_only).lower()
+
+    def cleanup_mouse(self, button, reason, context_changed=True):
+        self.mouse_evidence.update(mouse_cleanup_only="true", mouse_context_changed=str(context_changed).lower(),
+                                   mouse_cleanup_reason=reason)
+        self.send_mouse(0x0004 if button == 0 else 0x0010, release_button=button, cleanup_only=True)
+        released = self.mouse_evidence.get("mouse_cleanup_released_buttons", "")
+        self.mouse_evidence["mouse_cleanup_released_buttons"] = (released + "," if released else "") + str(button)
+        print(f"CLEANUP owned mouse-up button={button} cleanup_only=true context_changed={context_changed} reason={reason}", flush=True)
+
     def mouse_move(self, x, y):
-        parameter = (x & 0xffff) | ((y & 0xffff) << 16)
-        mask = sum(1 if b == 0 else 2 for b in self.buttons)
-        mask |= 4 if 16 in self.keys else 0
-        mask |= 8 if 17 in self.keys else 0
-        self.post(0x200, mask, parameter)
+        point, geometry = self.physical_geometry(x, y)
+        self.verify_physical_hit(point, geometry)
+        vx, vy, vw, vh = geometry[4:]
+        if not (vx <= point.x < vx + vw and vy <= point.y < vy + vh):
+            raise RuntimeError("Target point is outside the physical virtual desktop")
+        dx = round((point.x - vx) * 65535 / (vw - 1))
+        dy = round((point.y - vy) * 65535 / (vh - 1))
+        self.mouse_evidence.update(mouse_absolute_dx=dx, mouse_absolute_dy=dy,
+                                   mouse_route="UI absolute SendInput; temporary thread DPI context")
+        self.send_mouse(0x0001 | 0x8000 | 0x4000, dx, dy)
+        limit = time.monotonic() + .5
+        while True:
+            self.target.validate()
+            self.foreground()
+            stop_file = getattr(self, "stop_file", None)
+            if stop_file is not None and stop_file.exists():
+                raise RuntimeError("Owned launcher requested shutdown while verifying pointer move")
+            actual = self.physical_cursor()
+            if abs(actual.x - point.x) <= 1 and abs(actual.y - point.y) <= 1:
+                self.verify_physical_hit(actual, geometry)
+                self.pending_pointer = (x, y)
+                return
+            if time.monotonic() >= limit:
+                raise RuntimeError("Actual physical cursor did not reach the verified UI point")
+            time.sleep(.02)
 
     def mouse(self, button, down, x=0, y=0):
         if down:
             if button in self.buttons:
                 raise ValueError("Duplicate mouse-down")
+            if self.user.GetAsyncKeyState(1 if button == 0 else 2) & 0x8000:
+                raise RuntimeError("Physical mouse button is already held; refusing ownership")
         elif button not in self.buttons:
             raise ValueError("Cannot release a mouse button this bridge did not press")
         if not down:
             x, y = self.buttons[button]
-        parameter = (x & 0xffff) | ((y & 0xffff) << 16)
-        mask = sum(1 if b == 0 else 2 for b in self.buttons)
-        mask |= 4 if 16 in self.keys else 0
-        mask |= 8 if 17 in self.keys else 0
-        self.mouse_move(x, y)  # WM_MOUSEMOVE in verified target-client coordinates.
-        if down:
-            mask |= 1 if button == 0 else 2
-        else:
-            mask &= ~(1 if button == 0 else 2)
-        self.post((0x201 if down else 0x202) if button == 0 else (0x204 if down else 0x205), mask, parameter)
-        if down:
-            self.buttons[button] = (x, y)
-        else:
-            del self.buttons[button]
+            try:
+                point, geometry = self.physical_geometry(x, y)
+                self.verify_physical_hit(self.physical_cursor(), geometry)
+                self.mouse_evidence["mouse_route"] = "owned-button SendInput release; no pointer movement"
+                self.send_mouse(0x0004 if button == 0 else 0x0010, release_button=button)
+                return
+            except Exception as context_error:
+                if button in self.buttons:
+                    owned_warp = False
+                    if self.mouse_evidence.get("mouse_hit_rejected"):
+                        try:
+                            self.target.validate()
+                            owned_warp = self.owned(self.hwnd) and self.user.GetForegroundWindow() == self.hwnd
+                        except Exception:
+                            pass
+                    self.cleanup_mouse(button, f"normal mouse-up context changed: {context_error}",
+                                       context_changed="physical_cursor_warp" if owned_warp else True)
+                    if owned_warp:
+                        self.mouse_evidence.update(mouse_release_only_warp="true",
+                                                   mouse_route="owned foreground cursor warp: UP-only release; no movement")
+                        return
+                raise RuntimeError("Owned mouse button released for cleanup; normal mouse-up context changed") from context_error
+        point, geometry = self.physical_geometry(x, y)
+        actual = self.physical_cursor()
+        self.verify_physical_hit(actual, geometry)
+        if down and self.pending_pointer is not None:
+            if self.pending_pointer != (x, y) or abs(actual.x - point.x) > 1 or abs(actual.y - point.y) > 1:
+                raise RuntimeError("UI button request does not match the verified physical hover point")
+            self.mouse_evidence["mouse_route"] = "button-only SendInput after separate verified UI move"
+        elif down:
+            if (x, y) != (self.request_width // 2, self.request_height // 2):
+                raise RuntimeError("Noncentral click requires a preceding explicit UI mouse-move request")
+            self.mouse_evidence["mouse_route"] = "world-centre button-only SendInput; no pointer movement"
+        self.send_mouse(0x0002 if button == 0 else 0x0008, down_hold=(button, x, y))
+        self.pending_pointer = None
 
     def release(self):
         errors = []
         for button in list(self.buttons):
             try:
-                self.mouse(button, False)
+                self.cleanup_mouse(button, "release-all/finally: release only this bridge's injected button",
+                                   context_changed="not_checked")
             except Exception as error:
                 errors.append(str(error))
         for key in sorted(self.keys - MODIFIERS) + sorted(self.keys & MODIFIERS):
@@ -502,19 +686,36 @@ class Win32:
 
     def execute(self, request):
         self.focus_evidence = {}
-        evidence = self.bind(request)
+        self.mouse_evidence = {}
         operation = request["operation"]
-        if operation == "release-all":
-            self.release()
-        else:
-            self.foreground(focus=operation == "focus")
-            if operation.startswith("key-"):
-                self.keyboard(request["key"], operation == "key-down")
-            elif operation == "mouse-move":
-                self.mouse_move(request["x"], request["y"])
-            elif operation.startswith("mouse-"):
-                self.mouse(request["key"], operation == "mouse-down", request["x"], request["y"])
-        return {**evidence, **self.focus_evidence}
+        try:
+            evidence = self.bind(request)
+            if operation == "release-all":
+                self.release()
+            else:
+                self.foreground(focus=operation == "focus")
+                if operation == "focus":
+                    # Establish an owned physical pointer before the first button-only
+                    # world gesture. Later world clicks never reposition the pointer.
+                    self.mouse_move(request["x"], request["y"])
+                    self.pending_pointer = None
+                    self.mouse_evidence.update(mouse_focus_centre="true",
+                                               mouse_route="focus-stage owned-client-centre SendInput")
+                elif operation.startswith("key-"):
+                    self.keyboard(request["key"], operation == "key-down")
+                elif operation == "mouse-move":
+                    self.mouse_move(request["x"], request["y"])
+                elif operation.startswith("mouse-"):
+                    self.mouse(request["key"], operation == "mouse-down", request["x"], request["y"])
+        except Exception as context_error:
+            # Bind/foreground checks may fail before mouse() sees the UP. Release our
+            # global hold first, then reject the request with truthful cleanup evidence.
+            if operation == "mouse-up" and request["key"] in self.buttons:
+                self.cleanup_mouse(request["key"], f"mouse-up pre-dispatch context changed: {context_error}")
+            elif operation == "release-all":
+                self.release()
+            raise
+        return {**evidence, **self.focus_evidence, **self.mouse_evidence}
 
 
 def main():
@@ -556,7 +757,7 @@ def main():
                     print(f"ACK {sequence} {request['operation']}", flush=True)
                 except Exception as error:
                     acknowledge(receipts, sequence, {"success": "false", "input_method": METHOD,
-                                                      "failure": str(error), **bridge.focus_evidence})
+                                                      "failure": str(error), **bridge.focus_evidence, **bridge.mouse_evidence})
                     raise
                 sequence += 1
                 continue

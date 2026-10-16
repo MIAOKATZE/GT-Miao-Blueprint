@@ -28,6 +28,7 @@ reader generation 变化后，既有服务端会话在下一次候选/舱口查�
 | `BlockTransforms` | 独立 metadata、tile/item NBT → 旋转后的数据 | 编辑、预览和原生放置的旋转流程 |
 | `NativeCapture` | 已审阅的 TileEntity/conduit → 完整独立 NBT | 原生 capture 边界，可替代有副作用的 serializer |
 | `NativePlacement` | block 与独立 payload → 新 tile 和完整材料账单 | payload 验证、材料核算和既有服务器事务 |
+| `ResourceContainers` | 完整流体容器 NBT 副本 → 精确 long 数量与流体身份 | 普通蓝图所选库存的材料核算；注册及关闭使报价缓存失效 |
 | `GTMBExtensions.nativeDisplay` | 仅检查 tile 类型的 predicate | 原生预览快照 family gate |
 | `ClientRendering` | 静态 renderer、独立 tile/multipart 工厂 | 静态预览 registry，专服无需加载此客户端类 |
 | `BlueprintSnapshots` | 不可变 snapshot → 命名空间 NBT 报告或 IOException | 完整采集后、作者处理完成后 |
@@ -66,6 +67,21 @@ piece 名、main/channel、负数 offset 和 Controller 坐标规则仍由原生
 原生 capture 必须返回完整 schema，不得清空 live 库存或网络来伪造安全结果。placement 的 create 返回独立 tile，只操作 detachedWorld；materials 核算全部物理部件、cover 和所选物理库存。只有账单确实覆盖库存实体物品，includesInventoryDrops 才能为 true。登记格式不会绕过材料、归属、量子绑定、受保护格、世界权限或回滚。
 
 显示 predicate 只检查类型。client renderer 只读独立 access/tile，禁止 tick、事件、放置钩子、网络注册和任意 TESR。原 registry 的内置特殊渲染优先级不变。
+
+## 流体容器材料解码
+
+```java
+GTMBExtensions.Registration fluids = ResourceContainers.register("my_mod:contents", context -> {
+    if (!context.nativeTileId.equals("my_mod:tank") || !context.name.equals("contents")) return null;
+    return ResourceContainers.numberedFluidSlots(context.container());
+});
+```
+
+`FluidCodec` 返回 null 表示不适用；非 null 结果声明已经完整核算该子树，空列表表示合法空库存。适配器必须验证所有字段、类型和数量，遇到未知或无法计价的数据抛出 IOException。`Context` 提供原生 tile ID、GT 机器 ID、根键及当前路径；NBT 和返回的流体身份均为独立副本。适配器不接触世界、库存或会话，也不授予放置权限。
+
+内置通用 numbered 槽格式接受连续 `#0..#N` compound：空槽、Forge `FluidName/Amount/Tag` 或 AE `FluidName/Count=0/Cnt/Req/Craft/tag`。AE 的实际数量来自 long `Cnt`，不能用占位的 `Count` 计价。只在流体上下文或 fluid/tank 名称下自动识别；其他原生容器可通过上述公开方法适配。未知字段、缺号、错误类型、负数和混合数量格式明确拒绝；保留的 payload 不会被改写。`FluidAmount.amount` 使用 long，`identity()` 保留流体标签；后续宿主材料支付仍会检查标签是否可被实际存储后端保真处理。
+
+注册按顺序尝试，首个非 null 结果负责完整子树；`generation()` 在注册及关闭 handle 时递增，用于材料计划缓存。现有去标识等级保留所选物理库存；用户显式取消该 NBT 根键后，恢复内容和对应材料账单才一并移除。
 
 ## 快照检查与作者处理报告
 

@@ -49,6 +49,7 @@ public final class HologramSmokeTest {
             }
         }
         HologramCompatibilitySmoke.registerIfEnabled();
+        HologramPartialPlacementSmoke.registerIdentityFixtureIfEnabled();
         if (Boolean.getBoolean("energyNetworkSmoke") || Boolean.getBoolean("gtmb.hologram.energyNetworkSmoke"))
             HologramEnergyNetworkSmoke.registerIfEnabled();
         if (Boolean.getBoolean("gtmb.hologram.smoketest")) FMLCommonHandler.instance()

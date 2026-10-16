@@ -748,14 +748,22 @@ public final class HologramClient {
             }
     }
 
+    private static final HologramPlacementDeidentificationSync placementIdentitySync = new HologramPlacementDeidentificationSync();
+
+    static void placementDeidentificationRequested(HologramState snapshot, int level) {
+        placementIdentitySync.requested(snapshot.data, level);
+    }
+
     private static void restorePlacementDeidentification(HologramState snapshot) {
-        if (!snapshot.data.getBoolean("virtualPlacement")) return;
+        if (!snapshot.data.getBoolean("virtualPlacement")) {
+            placementIdentitySync.clear();
+            return;
+        }
         HologramDeidentificationMemory memory = HologramDeidentificationMemory.client();
         Integer remembered = memory.choice(HologramDeidentificationMemory.source(snapshot.data));
         if (remembered == null) return;
         int level = HologramDeidentificationMemory.level(snapshot.data, true, remembered);
-        if (snapshot.data.getBoolean("placementDeidentificationChosen")
-            && snapshot.data.getInteger("placementDeidentificationLevel") == level) return;
+        if (!placementIdentitySync.shouldRestore(snapshot.data, level)) return;
         NBTTagCompound request = new NBTTagCompound();
         request.setString("op", "configurePlacementDeidentification");
         request.setString("session", snapshot.session);
@@ -812,6 +820,7 @@ public final class HologramClient {
     }
 
     private static void clearProjection(boolean invalidatePending) {
+        placementIdentitySync.clear();
         rootCloseFence.clear();
         if (invalidatePending) {
             assembly.clear();

@@ -193,12 +193,17 @@ final class HologramUiDeidentification {
         request.setInteger("deidentificationLevel", level);
         request.setInteger("level", level);
         request.setBoolean("deidentificationChosen", true);
+        if (this.deidentificationPlacement)
+            HologramClient.placementDeidentificationRequested(ui.session.state(), level);
         if (id == 214) {
             if (ui.ae.aeReview() != null && ui.ae.aeReview().review) {
                 // Explicitly cancel the exact old save review; processing never confirms that nonce.
                 ui.ae.activateAeReview(182);
             }
-            ui.session.send("deidentifyBlueprint", request, true);
+            ui.session.send(
+                this.deidentificationPlacement ? "configurePlacementDeidentification" : "deidentifyBlueprint",
+                request,
+                true);
         } else if (this.deidentificationPlacement) ui.session.send("configurePlacementDeidentification", request, true);
         else ui.session.notice("已记住保存去标识等级 " + level + "，保存时将重新校验");
         this.deidentificationDrawer = false;

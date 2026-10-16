@@ -59,6 +59,7 @@ public final class HologramWorldServiceRegression {
             set(session, "blueprintAwaitingConfirmation", true);
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
+            preset.id = "world_confirmation_fixture";
             preset.name = "confirmation fixture";
             preset.controllerType = "area";
             preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 1, 0, 0, -1, false));
@@ -95,6 +96,10 @@ public final class HologramWorldServiceRegression {
             SimpleAssert.eq(0, get(session, "job"), "stale material plan cannot start construction");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             positionLockRequiresSeparateWorldReview(session, player, request, action);
+            placementPolicyIsIdempotentAndKeepsConfirmation(session, action);
+            resourceSchemaFailureIsVisible(player);
+            satisfiedPlanIsAnExplicitNoop(player, world);
+            request.setLong("planRevision", (Long) get(session, "planRevision"));
             request.setBoolean("forceExplicit", true);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
             SimpleAssert.eq(0, get(session, "job"), "first explicit force has no server authority");
@@ -120,6 +125,152 @@ public final class HologramWorldServiceRegression {
             Throwable cause = failure;
             while (cause.getCause() != null) cause = cause.getCause();
             throw new AssertionError("production world confirmation regression", cause);
+        }
+    }
+
+    private static void placementPolicyIsIdempotentAndKeepsConfirmation(Object session, Method action)
+        throws ReflectiveOperationException {
+        long revision = (Long) get(session, "planRevision"), nonce = (Long) get(session, "placementReviewNonce");
+        HologramCapture capture = (HologramCapture) get(session, "capture");
+        int x = capture.cells.get(0).x, y = capture.cells.get(0).y, z = capture.cells.get(0).z;
+        NBTTagCompound configure = new NBTTagCompound();
+        configure.setString("session", (String) get(session, "id"));
+        configure.setLong("planRevision", revision);
+        configure.setLong("placementReviewNonce", nonce);
+        configure.setInteger("level", 1);
+        action.invoke(null, session, configure, "configurePlacementDeidentification");
+        long appliedRevision = (Long) get(session, "planRevision"),
+            appliedNonce = (Long) get(session, "placementReviewNonce");
+        SimpleAssert.eq(revision + 1, appliedRevision, "manual placement policy produces one reviewed material plan");
+        SimpleAssert.eq(nonce + 1, appliedNonce, "manual application replaces the old review nonce once");
+        SimpleAssert.eq(
+            true,
+            get(session, "placementDeidentificationChosen"),
+            "server acknowledges the placing player's own policy");
+        SimpleAssert.that(
+            get(session, "capture") == capture && capture.cells.get(0).x == x
+                && capture.cells.get(0).y == y
+                && capture.cells.get(0).z == z,
+            "deidentification retains the exact locked ghost capture and world coordinates");
+        SimpleAssert.eq(true, get(session, "virtualLocked"), "policy application keeps the target locked");
+        SimpleAssert.eq(
+            true,
+            get(session, "blueprintAwaitingConfirmation"),
+            "policy ACK still requires a real placement confirmation");
+        action.invoke(null, session, configure, "configurePlacementDeidentification");
+        SimpleAssert.eq(
+            appliedRevision,
+            get(session, "planRevision"),
+            "retrying the exact original packet is idempotent after its first ACK");
+        SimpleAssert.eq(
+            appliedNonce,
+            get(session, "placementReviewNonce"),
+            "a stale same-policy retry cannot expire the new review");
+        configure.setLong("planRevision", appliedRevision);
+        for (int i = 0; i < 20; i++) action.invoke(null, session, configure, "configurePlacementDeidentification");
+        SimpleAssert
+            .eq(appliedRevision, get(session, "planRevision"), "duplicate preference requests do not refresh the plan");
+        SimpleAssert.eq(
+            appliedNonce,
+            get(session, "placementReviewNonce"),
+            "duplicate preference requests do not revoke the reviewed nonce");
+        Object oldCompleted = get(session, "completed");
+        set(session, "job", 3);
+        set(session, "completed", 7);
+        String appliedStatus = (String) get(session, "status");
+        set(session, "status", "actual terminal world result");
+        action.invoke(null, session, configure, "configurePlacementDeidentification");
+        SimpleAssert.eq(3, get(session, "job"), "a duplicate policy cannot reset a completed world job to idle");
+        SimpleAssert.eq(7, get(session, "completed"), "a duplicate policy cannot erase actual completed-cell counts");
+        SimpleAssert.eq(
+            "actual terminal world result",
+            get(session, "status"),
+            "idempotent policy keeps actual rejection or completion feedback");
+        set(session, "job", 0);
+        set(session, "completed", oldCompleted);
+        set(session, "status", appliedStatus);
+        configure.setBoolean("forceExplicit", false);
+        action.invoke(null, session, configure, "confirmBlueprintPlacement");
+        SimpleAssert.eq(0, get(session, "job"), "a policy ACK does not invent successful world placement");
+        SimpleAssert.eq(
+            true,
+            get(session, "forcePlacementReady"),
+            "the genuine confirmation returns the actual missing-material gate");
+        SimpleAssert.that(
+            ((String) get(session, "status")).contains("再次点击施工"),
+            "confirmation returns an explicit shortage result the user can act on");
+        set(session, "forcePlacementReady", false);
+    }
+
+    private static void resourceSchemaFailureIsVisible(EntityPlayerMP player) {
+        try {
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 1);
+            session.virtual = session.virtualPlacement = session.virtualLocked = true;
+            session.materialSettings.main = session.materialSettings.containers = session.materialSettings.me = false;
+            session.materialContext = new HologramMaterials.Context(player, session.materialSettings);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.name = "resource schema rejection";
+            preset.controllerType = "area";
+            HologramPresets.Cell unsupported = HologramPresets.cell(new ItemStack(Blocks.chest), 1, 0, 0, -1, false);
+            NBTTagCompound raw = new NBTTagCompound();
+            raw.setString("id", "Chest");
+            raw.setTag("customAsset", new ItemStack(net.minecraft.init.Items.diamond).writeToNBT(new NBTTagCompound()));
+            unsupported.tileNbt = HologramBlueprintNbt.encodeCanonical(raw);
+            preset.cells.add(unsupported);
+            preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 2, 0, 0, -1, false));
+            session.virtualPreset = preset;
+            HologramBlueprintProjection.populateVirtual(session);
+            HologramCapture.Cell invalid = session.capture.cells.get(0);
+            SimpleAssert.that(
+                !invalid.resourceError.isEmpty() && invalid.resourceError.contains("customAsset"),
+                "the actual resource parser rejects an unaudited physical asset");
+            SimpleAssert.eq(
+                "pending",
+                session.capture.cells.get(1).status,
+                "the other real blueprint cell is independently placeable");
+            HologramPlacementJobs.start(session);
+            SimpleAssert.eq(0, session.job, "unsafe resource data blocks the entire world job before any writes");
+            SimpleAssert.that(
+                session.status.contains(invalid.resourceError) && !session.status.contains("背包无法容纳回收"),
+                "the user sees the actual resource schema failure rather than a false inventory-capacity diagnosis");
+            SimpleAssert.eq(0, session.completed, "rejected schema does not manufacture completed cells");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("resource rejection fixture", failure);
+        }
+    }
+
+    private static void satisfiedPlanIsAnExplicitNoop(EntityPlayerMP player,
+        HologramServiceEditRegression.ReadOnlyWorld world) {
+        net.minecraft.block.Block oldBlock = world.occupied;
+        int oldX = world.occupiedX;
+        net.minecraft.tileentity.TileEntity oldTile = world.occupant;
+        try {
+            world.occupied = Blocks.stone;
+            world.occupiedX = 1;
+            world.occupant = null;
+            HologramSession s = new HologramSession(player, 0, 64, 0, false, 1);
+            s.virtual = s.virtualPlacement = s.virtualLocked = true;
+            s.materialSettings.main = s.materialSettings.containers = s.materialSettings.me = false;
+            s.materialContext = new HologramMaterials.Context(player, s.materialSettings);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.name = "already satisfied world";
+            preset.controllerType = "area";
+            preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 1, 0, 0, -1, false));
+            s.virtualPreset = preset;
+            HologramBlueprintProjection.populateVirtual(s);
+            SimpleAssert.eq("satisfied", s.capture.cells.get(0).status, "native classifier sees the existing target");
+            HologramPlacementJobs.start(s);
+            SimpleAssert.eq(0, s.job, "a satisfied plan does not manufacture a running or completed job");
+            SimpleAssert.eq(0, s.completed, "NOOP does not claim a written cell");
+            SimpleAssert.that(
+                s.status.contains("已满足") && s.status.contains("未扣材料"),
+                "no-work confirmation explicitly explains that the target already exists without payment");
+        } finally {
+            world.occupied = oldBlock;
+            world.occupiedX = oldX;
+            world.occupant = oldTile;
         }
     }
 

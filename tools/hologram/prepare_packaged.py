@@ -220,7 +220,7 @@ def main():
     if baseline_profile:
         profile_args.append('-Dgtmb.hologram.productionAdjacentBaselineWitness=true')
         profile_args.append('-Dgtmb.hologram.energyNetworkSmoke=false')
-    launch = ['-Xms768M', '-Xmx3072M'] + jvm + args.jvm_arg + profile_args + [
+    launch = ['-Xms768M', '-Xmx4096M'] + jvm + args.jvm_arg + profile_args + [
         '-Dgtmb.hologram.packagedPreviewProbe=' + ('false' if gui_profile else 'true'),
         '-Dgtmb.hologram.productionPreviewSmoke=' + ('false' if baseline_profile or gui_profile else 'true'),
         '-Dgtmb.hologram.packagedProbeDir=' + str(fixture),

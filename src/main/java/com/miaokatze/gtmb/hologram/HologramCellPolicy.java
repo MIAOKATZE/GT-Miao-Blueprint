@@ -361,7 +361,9 @@ final class HologramCellPolicy {
             return new HologramBlueprintResources.Plan().addNativeItems(
                 HologramGtswnPlacementMaterials.extraMaterials(cell.block, HologramBlueprintNbt.decode(cell.tileNbt)));
         }
-        String fingerprint = cell.tileNbt + ":"
+        String fingerprint = com.miaokatze.gtmb.api.ResourceContainers.generation() + ":"
+            + cell.tileNbt
+            + ":"
             + cell.itemNbt
             + ":"
             + s.virtualPreset.retainNbt
