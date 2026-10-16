@@ -77,13 +77,14 @@ public final class HologramBackgroundNativeProbe {
                     mc.displayWidth,
                     mc.displayHeight,
                     mc.getFramebuffer());
+                Object previousPanel = firstScreen.panel();
                 firstScreen.muiKey('\0', org.lwjgl.input.Keyboard.KEY_ESCAPE);
                 require(mc.currentScreen == null, "task UI closes while native save is still owned");
                 receipt.setBoolean("detachedAgain", true);
                 require(HologramBackgroundTasks.reopen(), "second reopen keeps the actual task");
                 HologramBackgroundScreen second = (HologramBackgroundScreen) mc.currentScreen;
                 require(
-                    second != firstScreen && second.panel() != firstScreen.panel(),
+                    second != firstScreen && second.panel() != previousPanel,
                     "reopening allocates a fresh MUI panel instead of disposed widgets");
                 firstScreen = second;
                 receipt.setBoolean("freshPanelAfterDispose", true);
