@@ -1,7 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,9 +31,13 @@ public final class HologramQuantumAnnotationClientProbe {
         int checked = 0;
         for (HologramAnnotationMarkers.Marker marker : visible) {
             if (!marker.key.startsWith("quantum:")) continue;
-            Method project = HologramScreen.class.getDeclaredMethod("smokePreviewPoint", int.class, int.class);
-            project.setAccessible(true);
-            int[] point = (int[]) project.invoke(screen, marker.x, marker.y);
+
+            int[] point = (int[]) HologramUiDiagnostics.invokeDiagnostic(
+                screen,
+                "smokePreviewPoint",
+                new Class<?>[] { int.class, int.class },
+                marker.x,
+                marker.y);
             screen.drawScreen(point[0], point[1], 0);
             Object tooltip = read(screen, "tooltip");
             if (tooltip == null || !tooltip.toString()
@@ -71,8 +73,7 @@ public final class HologramQuantumAnnotationClientProbe {
     }
 
     private static Object read(HologramScreen screen, String name) throws ReflectiveOperationException {
-        Field field = HologramScreen.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(screen);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(screen, name));
     }
 }

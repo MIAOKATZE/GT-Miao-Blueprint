@@ -21,6 +21,51 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
+        cases.put(
+            "client_progress_is_factual_session_bound_and_render_only",
+            com.miaokatze.gtmb.client.hologram.HologramProgressRegression::run);
+        cases.put(
+            "client_job_deltas_are_ordered_bounded_and_display_only",
+            com.miaokatze.gtmb.client.hologram.HologramJobVisualRegression::run);
+        cases.put(
+            "configured_testlab_is_inert_by_default_and_owns_bounded_facilities",
+            com.miaokatze.gtmb.testlab.TestLabRegression::run);
+        cases.put(
+            "testlab_blueprint_bridge_requires_owned_loaded_survival_fixtures",
+            HologramTestLabBlueprintRegression::run);
+        cases.put(
+            "dynamic_structure_definitions_are_frozen_per_capture_and_resumed_across_pieces",
+            HologramDynamicDefinitionRegression::run);
+        cases.put("community_extension_registrations_and_detached_snapshot_processing", () -> {
+            try {
+                HologramCommunityApiRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("cut_clipboard_preserves_raw_data_atomic_storage_and_packet_budgets", HologramCutRegression::run);
+        cases.put("cut_pose_geometry_raw_directions_and_extension_lifecycle", HologramCutTransformRegression::run);
+        cases.put("cut_raw_preview_preserves_payload_in_detached_world", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramCutRawPreviewRegression.run();
+            } catch (ReflectiveOperationException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put(
+            "cut_input_switcher_queue_priority_and_cancel",
+            com.miaokatze.gtmb.client.hologram.HologramCutInputRegression::run);
+        cases.put(
+            "cut_idle_sync_and_lost_ack_recovery_never_replay_world_edits",
+            com.miaokatze.gtmb.client.hologram.HologramCutRequestRegression::run);
+        cases.put("cut_directory_reads_survive_tool_context_races", HologramCutContextRegression::run);
+        cases.put(
+            "workstation_modal_input_and_session_bound_ack_tickets",
+            com.miaokatze.gtmb.client.hologram.HologramUiModuleRegression::run);
+        cases.put(
+            "workstation_host_ports_are_explicit_and_do_not_share_minecraft_method_names",
+            com.miaokatze.gtmb.client.hologram.HologramUiHostRegression::run);
         cases.put(
             "preview_camera_wasd_follows_orientation_and_normalizes_motion",
             com.miaokatze.gtmb.client.hologram.HologramPreviewCameraRegression::run);
@@ -236,7 +281,7 @@ public final class HologramRegressionTest {
                 .invoke(null, unsafe, world, actor, "DraftOwner");
             reconnect = (net.minecraft.entity.player.EntityPlayerMP) factory
                 .invoke(null, unsafe, world, actor, "DraftOwner");
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(
                 net.minecraft.entity.player.EntityPlayerMP.class,
                 int.class,
@@ -246,7 +291,7 @@ public final class HologramRegressionTest {
                 int.class);
             constructor.setAccessible(true);
             Object session = constructor.newInstance(owner, 0, 64, 0, false, 2);
-            java.lang.reflect.Field sessionMap = HologramService.class.getDeclaredField("SESSIONS");
+            java.lang.reflect.Field sessionMap = HologramWorkspace.class.getDeclaredField("SESSIONS");
             sessionMap.setAccessible(true);
             sessions = (Map<java.util.UUID, Object>) sessionMap.get(null);
             previous = sessions.put(actor, session);

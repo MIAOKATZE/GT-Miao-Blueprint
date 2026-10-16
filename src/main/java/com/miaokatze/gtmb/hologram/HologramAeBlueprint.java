@@ -2573,7 +2573,12 @@ public final class HologramAeBlueprint {
                     null));
             if (data.hasKey("waitingToSend") && !data.hasKey("waitingToSend", 9))
                 throw new IOException("Invalid Interface waiting buffer");
-            NBTTagList queue = data.getTagList("waitingToSend", 10);
+            // A typed getter silently substitutes an empty list when a retained nonempty list has another element
+            // type. Preserve the actual native tag so malformed queued cargo cannot become an empty, payable host.
+            NBTTagList queue = data.hasKey("waitingToSend") ? (NBTTagList) data.getTag("waitingToSend")
+                : new NBTTagList();
+            if (queue.tagCount() > 0 && queue.func_150303_d() != 10)
+                throw new IOException("Invalid AE2 Interface waiting queue entry type");
             if (queue.tagCount() > 512) throw new IOException("AE waiting queue budget exceeded");
             NBTTagList safe = new NBTTagList();
             for (int i = 0; i < queue.tagCount(); i++) {

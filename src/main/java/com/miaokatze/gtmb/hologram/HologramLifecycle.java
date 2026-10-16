@@ -8,6 +8,7 @@ public final class HologramLifecycle {
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) HologramCutService.startupRecovery();
         if (event.phase == TickEvent.Phase.END) HologramService.tick();
     }
 }

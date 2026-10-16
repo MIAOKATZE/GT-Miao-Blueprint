@@ -15,12 +15,19 @@ final class HologramSettingsScreen extends GuiScreen {
     private int priority, recovery, presetIndex = -1;
     private long sequence;
     private long pendingSequence = -1;
+    private final HologramProgress.Tracker progress = new HologramProgress.Tracker();
+    private String progressNotice = "";
 
     HologramSettingsScreen(HologramState snapshot) {
         updateState(snapshot);
     }
 
     void updateState(HologramState snapshot) {
+        progressNotice = "";
+        if (state != null && state.session.equals(snapshot.session)
+            && pendingSequence >= 0
+            && snapshot.data.getLong("uiSequence") >= pendingSequence) progress.finish(System.nanoTime());
+        else if (state != null && !state.session.equals(snapshot.session)) progress.clear();
         state = snapshot;
         if (snapshot.data.getLong("uiSequence") >= pendingSequence) pendingSequence = -1;
         sequence = Math.max(sequence, snapshot.data.getLong("uiSequence"));
@@ -98,6 +105,8 @@ final class HologramSettingsScreen extends GuiScreen {
         request.setString("session", state.session);
         request.setLong("uiSequence", ++sequence);
         pendingSequence = sequence;
+        progressNotice = "";
+        progress.update(state.session + ":" + sequence, "settings", 0, 0, "", false, System.nanoTime());
         request.setBoolean("materialMain", main);
         request.setBoolean("materialContainers", containers);
         request.setBoolean("materialMe", me);
@@ -112,15 +121,28 @@ final class HologramSettingsScreen extends GuiScreen {
         HologramNetwork.sendAction(request);
     }
 
+    void transportRejected(NBTTagCompound event) {
+        if (!state.session.equals(event.getString("session")) || pendingSequence < 0
+            || pendingSequence != event.getLong("uiSequence")) return;
+        pendingSequence = -1;
+        progress.clear();
+        progressNotice = HologramProgressView.phase("busy");
+        initGui();
+    }
+
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
         drawCenteredString(fontRendererObj, "投影仪设置 · 与编辑界面共享", width / 2, height / 2 - 120, 0x9ceaf3);
         drawCenteredString(fontRendererObj, "ME 不可用时回收至主背包；背包满则持久暂存", width / 2, height / 2 + 108, 0xbacbd1);
         String presetError = state.data.getString("presetConfigError");
-        drawCenteredString(
+        HologramProgress waiting = progress.view(System.nanoTime());
+        if (waiting != null) HologramProgressView
+            .draw(fontRendererObj, waiting, width / 2 - 130, height / 2 + 121, 260, height >= 300 ? 3 : 0);
+        else drawCenteredString(
             fontRendererObj,
-            presetError.isEmpty() ? state.data.getString("status") : "预设列表读取失败：" + presetError,
+            !progressNotice.isEmpty() ? progressNotice
+                : presetError.isEmpty() ? state.data.getString("status") : "预设列表读取失败：" + presetError,
             width / 2,
             height / 2 + 121,
             presetError.isEmpty() ? 0xe5c488 : 0xef8585);

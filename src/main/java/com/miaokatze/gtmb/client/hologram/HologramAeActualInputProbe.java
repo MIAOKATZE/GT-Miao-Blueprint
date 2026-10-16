@@ -201,9 +201,8 @@ final class HologramAeActualInputProbe {
 
     private static boolean intercepting(HologramScreen screen) {
         try {
-            java.lang.reflect.Field field = HologramScreen.class.getDeclaredField("captureRenderSmokeAction");
-            field.setAccessible(true);
-            return field.getBoolean(screen);
+
+            return ((Boolean) HologramUiDiagnostics.readDiagnosticField(screen, "captureRenderSmokeAction"));
         } catch (ReflectiveOperationException failure) {
             throw new IllegalStateException("cannot verify real dispatch mode", failure);
         }

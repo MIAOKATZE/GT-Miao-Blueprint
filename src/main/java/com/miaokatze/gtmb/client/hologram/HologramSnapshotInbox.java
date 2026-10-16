@@ -15,10 +15,12 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
 
         final T value;
         final Exception failure;
+        final long transportSequence;
 
-        Result(T value, Exception failure) {
+        Result(T value, Exception failure, long transportSequence) {
             this.value = value;
             this.failure = failure;
+            this.transportSequence = transportSequence;
         }
     }
 
@@ -26,14 +28,16 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
 
         final long epoch;
         final int cost;
+        final long transportSequence;
         byte[] bytes;
         Result<T> result;
 
-        Entry(long epoch, byte[] bytes, T value) {
+        Entry(long epoch, byte[] bytes, T value, long transportSequence) {
             this.epoch = epoch;
+            this.transportSequence = transportSequence;
             this.bytes = bytes;
             cost = bytes == null ? 0 : bytes.length;
-            if (bytes == null) result = new Result<>(value, null);
+            if (bytes == null) result = new Result<>(value, null, transportSequence);
         }
     }
 
@@ -55,10 +59,14 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
 
     /** Ownership of the bytes transfers only when accepted. Reservations include decoded, unconsumed results. */
     synchronized boolean offer(byte[] bytes) {
+        return offer(bytes, -1);
+    }
+
+    synchronized boolean offer(byte[] bytes, long transportSequence) {
         if (bytes == null || bytes.length == 0 || bytes.length > byteBudget)
             throw new IllegalArgumentException("snapshot byte budget");
         if (!room(bytes.length)) return false;
-        entries.addLast(new Entry<>(epoch, bytes, null));
+        entries.addLast(new Entry<>(epoch, bytes, null, transportSequence));
         reservedBytes += bytes.length;
         if (worker == null) {
             worker = new Thread(this::decodeLoop, "GTMB snapshot decoder");
@@ -72,7 +80,7 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
     /** Small legacy/control messages cannot overtake earlier compressed ACKs. */
     synchronized boolean offerValue(T value) {
         if (!room(0)) return false;
-        entries.addLast(new Entry<>(epoch, null, value));
+        entries.addLast(new Entry<>(epoch, null, value, -1));
         notifyAll();
         return true;
     }
@@ -149,9 +157,9 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
             }
             Result<T> result;
             try {
-                result = new Result<>(decoder.decode(entry.bytes), null);
+                result = new Result<>(decoder.decode(entry.bytes), null, entry.transportSequence);
             } catch (Exception e) {
-                result = new Result<>(null, e);
+                result = new Result<>(null, e, entry.transportSequence);
             }
             synchronized (this) {
                 entry.bytes = null;

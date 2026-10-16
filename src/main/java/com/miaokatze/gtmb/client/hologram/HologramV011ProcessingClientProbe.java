@@ -94,19 +94,16 @@ public final class HologramV011ProcessingClientProbe {
                     && data.getBoolean("blueprintRetainCovers")
                     && data.getBoolean("blueprintNbtAll"),
                 "native author Save preserves the reviewed full NBT and cover choices");
-            Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
-            nameField.setAccessible(true);
-            GuiTextField target = (GuiTextField) nameField.get(screen);
+
+            GuiTextField target = (GuiTextField) ((Object) HologramUiDiagnostics
+                .readDiagnosticField(screen, "presetNameField"));
             require(target != null, "real author name field exists");
-            Field scaleField = HologramScreen.class.getDeclaredField("scale");
-            Field originX = HologramScreen.class.getDeclaredField("originX");
-            Field originY = HologramScreen.class.getDeclaredField("originY");
-            scaleField.setAccessible(true);
-            originX.setAccessible(true);
-            originY.setAccessible(true);
-            float scale = scaleField.getFloat(screen);
-            int x = originX.getInt(screen) + Math.round((target.xPosition + 4) * scale);
-            int y = originY.getInt(screen) + Math.round((target.yPosition + 7) * scale);
+
+            float scale = ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale"));
+            int x = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originX"))
+                + Math.round((target.xPosition + 4) * scale);
+            int y = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
+                + Math.round((target.yPosition + 7) * scale);
             screen.mouseClicked(x, y, 0);
             screen.mouseMovedOrUp(x, y, 0);
             nativeMouseEvents++;
@@ -461,12 +458,12 @@ public final class HologramV011ProcessingClientProbe {
 
     /** A decoded ACK can arrive between frames; only the native preview binds the current displayed snapshot. */
     private static boolean displayedSource(HologramScreen screen, NBTTagCompound ui) throws Exception {
-        Field screenState = HologramScreen.class.getDeclaredField("state");
+
         Field renderedState = HologramRenderer.class.getDeclaredField("previewState");
-        screenState.setAccessible(true);
+
         renderedState.setAccessible(true);
         HologramState source = HologramClient.state;
-        return source != null && screenState.get(screen) == source
+        return source != null && ((Object) HologramUiDiagnostics.readDiagnosticField(screen, "state")) == source
             && renderedState.get(null) == source
             && source.session.equals(ui.getString("session"))
             && source.data.getLong("planRevision") == ui.getLong("planRevision");
@@ -503,9 +500,9 @@ public final class HologramV011ProcessingClientProbe {
     }
 
     private static int confirmations(HologramScreen screen) throws Exception {
-        java.lang.reflect.Field field = HologramScreen.class.getDeclaredField("processingFlow");
-        field.setAccessible(true);
-        HologramProcessingFlow flow = (HologramProcessingFlow) field.get(screen);
+
+        HologramProcessingFlow flow = (HologramProcessingFlow) ((Object) HologramUiDiagnostics
+            .readDiagnosticField(screen, "processingFlow"));
         return flow == null ? 6
             : flow.policy()
                 .getTagList("confirmedStages", 8)

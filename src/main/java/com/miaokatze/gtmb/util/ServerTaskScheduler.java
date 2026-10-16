@@ -43,7 +43,7 @@ public final class ServerTaskScheduler {
     }
 
     /**
-     * 服务器 tick：消费网络线程投递的任务（每 tick 清空，操作延迟 ≤1 tick）。
+     * 服务器 tick：最多执行 64 项或 5ms 的可协作任务；余项保持 FIFO 到后续 tick。
      * <p>
      * 任务失败逐个捕获（一个任务异常不影响同批其余任务），统一日志不再按
      * 原三份队列的「邮件/抽奖/签到」文案误导排障。
@@ -51,13 +51,21 @@ public final class ServerTaskScheduler {
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
+        long measured = com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.serverTasksStarted();
+        long deadline = System.nanoTime() + 5_000_000L;
+        int executed = 0;
         Runnable task;
-        while ((task = SERVER_TASKS.poll()) != null) {
+        while (executed < 64 && (executed == 0 || System.nanoTime() < deadline)
+            && (task = SERVER_TASKS.poll()) != null) {
+            executed++;
             try {
                 task.run();
             } catch (Throwable t) {
                 LOG.error("执行服务器主线程任务失败", t);
             }
         }
+        if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
+            com.miaokatze.gtmb.hologram.HologramRuntimeMetrics
+                .serverTasksFinished(measured, executed, SERVER_TASKS.size());
     }
 }
