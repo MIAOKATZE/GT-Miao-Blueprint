@@ -9,11 +9,13 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 import psutil
 
 ROOT = Path(__file__).resolve().parents[4]
 WORLD_PREFIX = "hologram-cut-v020-"
+CLIENT_RSS_LIMIT = int(4.4 * 1024 ** 3)
 
 
 def digest(path):
@@ -56,6 +58,17 @@ def set_properties(text, changes):
 def client_args(text, fixture, receipts):
     # Prepared java-args.txt has exactly one Java argument per quoted line.
     lines = text.splitlines()
+    username = next((i for i, line in enumerate(lines) if line.strip('"') == "--username"), None)
+    if username is None or username + 1 >= len(lines):
+        raise ValueError("Prepared client arguments lack an offline username")
+    # Vanilla 1.7.10 login bounds names to sixteen characters; menu-only fixtures never exercise it.
+    offline_name = "GTMBProbeV018"
+    lines[username + 1] = f'"{offline_name}"'
+    identity = next((i for i, line in enumerate(lines) if line.strip('"') == "--uuid"), None)
+    if identity is None or identity + 1 >= len(lines):
+        raise ValueError("Prepared client arguments lack an offline UUID")
+    offline_uuid = uuid.UUID(bytes=hashlib.md5(("OfflinePlayer:" + offline_name).encode("utf-8")).digest(), version=3)
+    lines[identity + 1] = f'"{offline_uuid.hex}"'
     properties = {
         "gtmb.v016.productionGui": "false",
         "gtmb.hologram.cutNativeClient": "true",
@@ -65,10 +78,10 @@ def client_args(text, fixture, receipts):
         "gtmb.hologram.nativeStartupSeconds": "600",
     }
     # Exclude previous opt-in test profiles, retaining runtime/library/identity arguments.
-    lines = [line for line in lines if not any(token in line for token in
+    lines = [line for line in lines if not re.match(r"-Xm[sx]", line.strip().strip('"')) and not any(token in line for token in
              ("-Dgtmb.hologram.cutAeData", "-Dgtmb.hologram.cutNative", "-Dgtmb.hologram.followup",
               "-Dgtmb.hologram.nativeStartupSeconds", "-Dgtmb.v016.productionGui"))]
-    additions = [f'"-D{key}={value}"' for key, value in properties.items()]
+    additions = ['"-Xms768M"', '"-Xmx3072M"'] + [f'"-D{key}={value}"' for key, value in properties.items()]
     index = next((i for i, line in enumerate(lines) if line.strip('"') == "-cp"), None)
     if index is None:
         raise ValueError("Prepared client arguments have no explicit -cp boundary")
@@ -175,7 +188,10 @@ def run(record, timeout):
     assert_idle(fixture)
     processes, logs = {}, []
     result = dict(record, status="FAIL", scope="Actual paired normal-JAR dedicated server/client plus targeted Win32 input; listed cut probes only",
-                  started_unix=time.time(), timeout_seconds=timeout, processes={}, failure="")
+                  started_unix=time.time(), timeout_seconds=timeout, processes={}, failure="",
+                  client_heap_max="3072M", client_rss_limit_bytes=CLIENT_RSS_LIMIT, client_peak_rss_bytes=0,
+                  client_rss_samples=0, resource_stop_reason="", product_verdict="NOT_EVALUATED")
+    resource_limited = False
     deadline = time.monotonic() + timeout
 
     def launch(role, command, cwd):
@@ -205,10 +221,31 @@ def run(record, timeout):
                 raise TimeoutError("Server startup deadline expired")
             time.sleep(.5)
         client = launch("client", record["client_command"], fixture / "client")
+        client_monitor = psutil.Process(client.pid)
+        client_created = client_monitor.create_time()
         bridge_command = [sys.executable, str(Path(__file__).with_name("native_input.py")), "--fixture", str(fixture),
                           "--receipts", str(receipts), "--pid", str(client.pid), "--timeout", str(timeout)]
         launch("input", bridge_command, ROOT)
         while time.monotonic() < deadline:
+            if client.poll() is None:
+                try:
+                    if client_monitor.create_time() != client_created:
+                        raise RuntimeError("Owned client PID identity changed during RSS monitoring")
+                    rss = client_monitor.memory_info().rss
+                    result["client_rss_samples"] += 1
+                    result["client_peak_rss_bytes"] = max(result["client_peak_rss_bytes"], rss)
+                    if rss >= CLIENT_RSS_LIMIT:
+                        resource_limited = True
+                        result["status"] = "RESOURCE_LIMIT_STOPPED_NOT_PRODUCT_RESULT"
+                        result["resource_stop_reason"] = f"Owned client RSS {rss} reached {CLIENT_RSS_LIMIT} bytes"
+                        result["resource_limit_detected_unix"] = time.time()
+                        result["processes"]["client"]["forced_stop"] = True
+                        # Stop client growth before bridge input cleanup or server shutdown waits.
+                        client.terminate()
+                        result["client_termination_requested_unix"] = time.time()
+                        raise RuntimeError(result["resource_stop_reason"])
+                except psutil.NoSuchProcess:
+                    pass
             failures()
             passes = all((receipts / name).is_file() and (receipts / name).read_text(encoding="utf-8").startswith("PASS ")
                          for name in ("cut-client-pass.txt", "cut-server-pass.txt"))
@@ -221,21 +258,24 @@ def run(record, timeout):
                 if any(digest(Path(record[key])) != record["normal_sha256"] for key in ("client_jar", "server_jar")):
                     raise RuntimeError("Normal JAR changed during runtime")
                 result["status"] = "PASS_FOR_LISTED_CUT_NATIVE_SCOPE"
+                result["product_verdict"] = "PASS_FOR_LISTED_CUT_NATIVE_SCOPE"
                 break
             if client.poll() is not None and not (receipts / "cut-client-pass.txt").exists():
                 raise RuntimeError("Client exited before its native PASS marker")
             if server.poll() is not None and not (receipts / "cut-server-pass.txt").exists():
                 raise RuntimeError("Server exited before its independent PASS marker")
-            time.sleep(.25)
+            time.sleep(.05)
         else:
             raise TimeoutError("Paired run did not naturally close within timeout")
     except BaseException as error:
         result["failure"] = f"{type(error).__name__}: {error}"
     finally:
-        if result["status"] == "FAIL":
+        if not result["status"].startswith("PASS_"):
             # Ask the bridge to release its own held keys before any forced Python stop.
             if "input" in processes and processes["input"].poll() is None:
                 (receipts / "cut-os-input-bridge-stop.txt").write_text("owned launcher shutdown\n", encoding="ascii")
+                result["input_release_requested_unix"] = time.time()
+                result["input_release_after_client_resource_stop"] = resource_limited
             if "server" in processes and processes["server"].poll() is None:
                 try:
                     processes["server"].stdin.write(b"stop\n")
@@ -247,7 +287,7 @@ def run(record, timeout):
                 if process is None or process.poll() is not None:
                     continue
                 try:
-                    process.wait(timeout=10 if role == "input" else 20)
+                    process.wait(timeout=1 if resource_limited and role == "client" else 10 if role == "input" else 20)
                 except subprocess.TimeoutExpired:
                     result["processes"][role]["forced_stop"] = True
                     process.terminate()
@@ -265,7 +305,7 @@ def run(record, timeout):
         result["receipt_sha256"] = {path.name: digest(path) for path in receipts.glob("cut-*") if path.is_file()}
         save(output / "process-receipt.json", result)
     print(json.dumps({key: result[key] for key in ("status", "name", "output", "failure", "processes")}, indent=2))
-    return 0 if result["status"].startswith("PASS_") else 1
+    return 0 if result["status"].startswith("PASS_") else 2 if resource_limited else 1
 
 
 def main():

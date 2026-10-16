@@ -12,7 +12,7 @@ final class HologramCutModeScreen extends HologramMuiScreen {
     public void updateScreen() {
         if (!choice.release(HologramCutClient.shift())) return;
         mc.displayGuiScreen(null);
-        if (choice.cut()) HologramCutClient.INSTANCE.beginSelection();
+        if (choice.cut()) HologramCutClient.INSTANCE.chooseCutMode();
         else {
             HologramCutClient.INSTANCE.chooseBlueprintMode();
             HologramClient.beginAreaSelection();

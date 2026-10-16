@@ -76,9 +76,30 @@ public final class HologramCutInputRegression {
             "blueprint Ctrl-Shift area-subtract is retained");
         for (boolean shift : new boolean[] { false, true }) for (boolean alt : new boolean[] { false, true }) {
             check(HologramCutInput.Intent.NONE, idle, true, shift, alt, true);
-            check(HologramCutInput.Intent.MARK, HologramCutInput.Stage.SELECTING, true, shift, alt, false);
-            check(HologramCutInput.Intent.LOCK, HologramCutInput.Stage.MOVING, true, shift, alt, false);
-            check(HologramCutInput.Intent.CONFIRM, HologramCutInput.Stage.LOCKED, true, shift, alt, false);
+            check(
+                shift && alt ? HologramCutInput.Intent.SELECT
+                    : alt ? HologramCutInput.Intent.UNDO : HologramCutInput.Intent.MARK,
+                HologramCutInput.Stage.SELECTING,
+                true,
+                shift,
+                alt,
+                false);
+            check(
+                shift && alt ? HologramCutInput.Intent.SELECT
+                    : alt ? HologramCutInput.Intent.UNDO : HologramCutInput.Intent.LOCK,
+                HologramCutInput.Stage.MOVING,
+                true,
+                shift,
+                alt,
+                false);
+            check(
+                shift && alt ? HologramCutInput.Intent.SELECT
+                    : alt ? HologramCutInput.Intent.UNDO : HologramCutInput.Intent.CONFIRM,
+                HologramCutInput.Stage.LOCKED,
+                true,
+                shift,
+                alt,
+                false);
         }
         HologramCutInput.Switcher choice = new HologramCutInput.Switcher();
         SimpleAssert.that(!choice.cut(), "switcher initially selects blueprint");
@@ -226,6 +247,14 @@ public final class HologramCutInputRegression {
         SimpleAssert
             .that(remembered.release(false) && !remembered.cut(), "one additional right press returns to blueprint");
         for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
+            SimpleAssert.eq(
+                HologramCutInput.Intent.SELECT,
+                HologramCutInput.right(stage, true, true, false, true, false),
+                "Shift-Alt-right starts a fresh local selection before mark/lock/confirm from " + stage);
+            SimpleAssert.eq(
+                HologramCutInput.Intent.UNDO,
+                HologramCutInput.right(stage, false, true, false, true, false),
+                "explicit Alt-right undo takes priority over ordinary stage gestures from " + stage);
             SimpleAssert.eq(
                 stage != idle,
                 HologramCutInput.cancelsActivity(stage, false, false),

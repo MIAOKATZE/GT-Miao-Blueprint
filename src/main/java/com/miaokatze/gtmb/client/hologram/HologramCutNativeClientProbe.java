@@ -14,6 +14,8 @@ import java.util.Properties;
 import javax.imageio.ImageIO;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiDisconnected;
+import net.minecraft.client.gui.GuiErrorScreen;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.multiplayer.ServerData;
@@ -21,6 +23,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.IChatComponent;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.world.World;
@@ -100,6 +103,8 @@ public final class HologramCutNativeClientProbe {
     private int[] guiTargetPoint;
     private long guiMoveRender;
     private String guiTargetName = "";
+    private long heartbeatAt;
+    private String connectionFailure = "";
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.cutNativeClient")) return;
@@ -175,7 +180,59 @@ public final class HologramCutNativeClientProbe {
         });
         shot("cut-mode-switcher-cut-selected");
         hold("physical-shift-release-commits-cut", KeyEvent.VK_SHIFT, false);
-        add("release-entered-selection-once", mc -> mc.currentScreen == null && client().selecting());
+        add("release-remembers-cut-mode-without-starting-selection", mc -> {
+            if (mc.currentScreen != null) return false;
+            require(
+                client().cutMode() && field(client(), "stage") == HologramCutInput.Stage.IDLE
+                    && !client().selecting()
+                    && !(Boolean) field(client(), "cutSession")
+                    && field(client(), "preview") == null
+                    && field(client(), "rawPreview") == null
+                    && client().entries()
+                        .isEmpty(),
+                "choosing CUT enters the remembered idle mode with an empty cache");
+            return true;
+        });
+        clickWorld("initial-cut-mode-ordinary-right-opens-empty-storage", 1);
+        waitScreen("initial-cut-mode-real-empty-storage", HologramCutStorageScreen.class);
+        add("initial-empty-storage-has-no-fabricated-preview", mc -> {
+            require(
+                client().entries()
+                    .isEmpty() && browser(mc).renderer() == null,
+                "ordinary right exposes the actual empty cache without a fabricated raw structure");
+            return true;
+        });
+        shot("cut-mode-initial-empty-cache-native-list");
+        tap("initial-empty-storage-Escape", KeyEvent.VK_ESCAPE);
+        add("initial-empty-storage-Escape-keeps-idle-cut-mode", mc -> {
+            if (mc.currentScreen != null || client().syncingDirectory()) return false;
+            require(
+                client().cutMode() && field(client(), "stage") == HologramCutInput.Stage.IDLE
+                    && client().entries()
+                        .isEmpty(),
+                "Escape closes the empty list while retaining CUT mode");
+            cancellationPackets = cutPacketsSent();
+            return true;
+        });
+        hold("cut-mode-empty-cache-hold-shift", KeyEvent.VK_SHIFT, true);
+        clickWorld("cut-mode-empty-cache-shift-right-only-notice", 1);
+        add("cut-mode-empty-cache-never-enters-selection-or-dialog", mc -> {
+            require(
+                mc.currentScreen == null && client().cutMode()
+                    && field(client(), "stage") == HologramCutInput.Stage.IDLE
+                    && !client().selecting()
+                    && field(client(), "preview") == null
+                    && field(client(), "rawPreview") == null
+                    && client().entries()
+                        .isEmpty()
+                    && cutPacketsSent() == cancellationPackets
+                    && HologramCutClient.text("emptyPreview")
+                        .equals(client().status()),
+                "CUT Shift-right with an empty cache only displays the actual empty-cache notice and emits no CutAction");
+            return true;
+        });
+        hold("cut-mode-empty-cache-release-shift", KeyEvent.VK_SHIFT, false);
+        beginCutSelection("first-cut-explicit");
         mark("first-cut-left-first-corner", 48, 80, 64, 0);
         shot("cut-first-corner-selection");
         mark("first-cut-right-second-corner-real-marker", 49, 81, 64, 1);
@@ -209,20 +266,6 @@ public final class HologramCutNativeClientProbe {
                 "Escape preserved empty server queue");
             return true;
         });
-        hold("cut-mode-empty-cache-hold-shift", KeyEvent.VK_SHIFT, true);
-        clickWorld("cut-mode-empty-cache-shift-right-only-notice", 1);
-        add("cut-mode-empty-cache-never-enters-selection-or-dialog", mc -> {
-            require(
-                mc.currentScreen == null && !client().selecting()
-                    && client().entries()
-                        .isEmpty()
-                    && cutPacketsSent() == cancellationPackets
-                    && !client().status()
-                        .isEmpty(),
-                "CUT Shift-right with empty cache only reports empty cache");
-            return true;
-        });
-        hold("cut-mode-empty-cache-release-shift", KeyEvent.VK_SHIFT, false);
         repeatFirstSelection("name-save");
         add("confirmation-before-mutation", mc -> {
             require(
@@ -431,17 +474,6 @@ public final class HologramCutNativeClientProbe {
             "real-undo-ack-and-disk-consumption",
             mc -> !client().busy() && client().entries()
                 .isEmpty() && HologramV011Evidence.read("cut-undo-restores-original-and-consumes.nbt") != null);
-        clickWorld("cut-mode-empty-cache-ordinary-right-opens-list", 1);
-        waitScreen("cut-mode-empty-cache-list", HologramCutStorageScreen.class);
-        add("cut-mode-empty-list-remains-readonly", mc -> {
-            require(
-                client().entries()
-                    .isEmpty() && browser(mc).renderer() == null,
-                "empty cache has a real accessible list and no fabricated raw preview");
-            return true;
-        });
-        shot("cut-mode-empty-cache-native-list");
-        button("close-empty-cache-list", 0);
         compositeSteps();
         placementSkipSteps();
         add("write-complete-real-input-client-proof", mc -> {
@@ -807,6 +839,7 @@ public final class HologramCutNativeClientProbe {
         }
         try {
             long now = System.nanoTime();
+            observeConnectionAndHeartbeat(mc, now);
             if (pollOsInput(now)) return;
             if (releaseKey != 0) {
                 if (nativeKeyDown(releaseKey)) keyDownWitness = true;
@@ -860,6 +893,102 @@ public final class HologramCutNativeClientProbe {
         } catch (Throwable failure) {
             fail(mc, failure);
         }
+    }
+
+    /** Observes actual client state only, before startup/input waits can hide a failed handshake. */
+    private void observeConnectionAndHeartbeat(Minecraft mc, long now) throws Exception {
+        GuiScreen current = mc.currentScreen;
+        String screenName = current == null ? "world"
+            : current.getClass()
+                .getName();
+        boolean errorScreen = current instanceof GuiDisconnected || current instanceof GuiErrorScreen
+            || "cpw.mods.fml.client.GuiModsMissingForServer".equals(screenName);
+        if (step > 0 && errorScreen) {
+            StringBuilder reason = new StringBuilder(screenName);
+            NBTTagList fields = new NBTTagList();
+            // Field types survive SRG remapping. Do not inspect GuiScreen/Minecraft or account fields.
+            for (Class<?> type = current.getClass(); type != null
+                && type != GuiScreen.class; type = type.getSuperclass()) {
+                for (Field member : type.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(member.getModifiers())) continue;
+                    Class<?> fieldType = member.getType();
+                    if (!IChatComponent.class.isAssignableFrom(fieldType) && fieldType != String.class
+                        && !Iterable.class.isAssignableFrom(fieldType)
+                        && !java.util.Map.class.isAssignableFrom(fieldType)) continue;
+                    member.setAccessible(true);
+                    Object value = member.get(current);
+                    if (value == null) continue;
+                    String actual = value instanceof IChatComponent ? ((IChatComponent) value).getUnformattedText()
+                        : String.valueOf(value);
+                    reason.append('\n')
+                        .append(member.getName())
+                        .append('=')
+                        .append(actual);
+                    NBTTagCompound row = new NBTTagCompound();
+                    row.setString("declaringClass", type.getName());
+                    row.setString("field", member.getName());
+                    row.setString("actualText", diagnosticText(actual));
+                    row.setBoolean("textTruncated", actual.length() > 16000);
+                    fields.appendTag(row);
+                }
+            }
+            connectionFailure = reason.toString();
+            NBTTagCompound proof = heartbeat(mc, now);
+            proof.setBoolean("passed", false);
+            proof.setTag("actualErrorGuiFields", fields);
+            proof.setString("actualConnectionReason", diagnosticText(connectionFailure));
+            proof.setBoolean("reasonTruncatedInNbt", connectionFailure.length() > 16000);
+            proof.setString("fullReasonFile", "cut-client-connection-error.txt");
+            HologramV011Evidence.write("cut-client-connection-error.nbt", proof);
+            HologramV011Evidence.marker("cut-client-connection-error.txt", connectionFailure);
+            throw new IllegalStateException("actual connection error GUI: " + diagnosticText(connectionFailure));
+        }
+        if (heartbeatAt == 0 || now - heartbeatAt >= 5000000000L) {
+            NBTTagCompound proof = heartbeat(mc, now);
+            HologramV011Evidence.write("cut-client-heartbeat.nbt", proof);
+            System.out.println(
+                "[GTMB-CUT-NATIVE-CLIENT] HEARTBEAT step=" + step
+                    + " phase="
+                    + proof.getString("phase")
+                    + " screen="
+                    + screenName
+                    + " world="
+                    + (mc.theWorld != null)
+                    + " player="
+                    + (mc.thePlayer != null)
+                    + " render="
+                    + renderSerial);
+            heartbeatAt = now;
+        }
+    }
+
+    private NBTTagCompound heartbeat(Minecraft mc, long now) {
+        NBTTagCompound proof = new NBTTagCompound();
+        proof.setString("scope", "read-only actual client connection and probe phase observation");
+        proof.setInteger("step", step);
+        proof.setString("stepLabel", step < steps.size() ? steps.get(step).label : "complete");
+        proof.setString(
+            "phase",
+            step == 0 ? "waiting-menu" : step == 1 ? "waiting-real-player-and-directory" : "active");
+        proof.setString(
+            "screen",
+            mc.currentScreen == null ? "world"
+                : mc.currentScreen.getClass()
+                    .getName());
+        proof.setBoolean("worldPresent", mc.theWorld != null);
+        proof.setBoolean("playerPresent", mc.thePlayer != null);
+        proof.setBoolean("netHandlerPresent", mc.getNetHandler() != null);
+        proof.setLong("worldTick", mc.theWorld == null ? -1 : mc.theWorld.getTotalWorldTime());
+        proof.setLong("elapsedMillis", (now - started) / 1000000L);
+        proof.setLong("stepElapsedMillis", (now - stepStarted) / 1000000L);
+        proof.setLong("naturalRenderSerial", renderSerial);
+        proof.setBoolean("osInputPending", osPending);
+        proof.setString("osInputOperation", osOperation == null ? "" : osOperation);
+        return proof;
+    }
+
+    private static String diagnosticText(String text) {
+        return text.length() <= 16000 ? text : text.substring(0, 16000) + " [truncated; full reason in text file]";
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
@@ -1383,6 +1512,7 @@ public final class HologramCutNativeClientProbe {
         n.setString("stage", field(client(), "stage").toString());
         n.setString("selected", client().selected());
         n.setString("status", client().status());
+        if (!connectionFailure.isEmpty()) n.setString("actualConnectionReason", diagnosticText(connectionFailure));
         NBTTagCompound poseProof = new NBTTagCompound();
         ((Transform) field(client(), "pose")).write(poseProof);
         n.setTag("pose", poseProof);

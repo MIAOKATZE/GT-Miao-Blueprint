@@ -7,7 +7,7 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 /**
  * Input priority shared by the world controller and regression tests.
  * CUT mode survives local cancellation; the server-owned queue is independent of every local stage.
- * IDLE -> SELECTING (first CUT choice / Shift-Alt-right) -> IDLE (saved cut).
+ * Choosing CUT enters IDLE; IDLE -> SELECTING (Shift-Alt-right) -> IDLE (saved cut).
  * IDLE -> MOVING (Shift-right with a stored cut) -> LOCKED (right) -> confirmation/submission (right).
  * Escape returns any local activity to IDLE; only a confirmed server paste/undo consumes a stored cut.
  */
@@ -49,11 +49,12 @@ final class HologramCutInput {
     static Intent right(Stage stage, boolean shift, boolean alt, boolean blueprintBusy, boolean cutMode,
         boolean control) {
         if (control && shift && !alt && !blueprintBusy) return Intent.SWITCHER;
+        if (shift && alt && !blueprintBusy) return Intent.SELECT;
+        if (cutMode && alt && !shift && !blueprintBusy) return Intent.UNDO;
         if (stage == Stage.SELECTING) return Intent.MARK;
         if (stage == Stage.MOVING) return Intent.LOCK;
         if (stage == Stage.LOCKED) return Intent.CONFIRM;
         if (blueprintBusy) return Intent.NONE;
-        if (shift && alt) return Intent.SELECT;
         if (cutMode) {
             if (alt) return Intent.UNDO;
             return shift ? Intent.PREVIEW : Intent.STORAGE;

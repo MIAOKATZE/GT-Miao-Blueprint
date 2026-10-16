@@ -195,7 +195,8 @@ final class HologramCutClient {
             blueprintBusy(),
             cutMode,
             key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL));
-        if (HologramCutInput.requiresCutReady(intent) && busy()) {
+        if (HologramCutInput.requiresCutReady(intent)
+            && (intent == HologramCutInput.Intent.SELECT ? cutUnavailable() : busy())) {
             retryCutStorage();
             return;
         }
@@ -235,7 +236,7 @@ final class HologramCutClient {
 
     void beginSelection() {
         cutMode = true;
-        if (busy()) {
+        if (cutUnavailable()) {
             retryCutStorage();
             return;
         }
@@ -483,6 +484,12 @@ final class HologramCutClient {
 
     boolean cutMode() {
         return cutMode;
+    }
+
+    void chooseCutMode() {
+        cancel();
+        cutMode = true;
+        status.show(text("cutModeHint"));
     }
 
     void chooseBlueprintMode() {

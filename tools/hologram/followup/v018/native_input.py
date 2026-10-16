@@ -121,6 +121,7 @@ class Win32:
         self.target = target
         self.user = ctypes.WinDLL("user32", use_last_error=True)
         self.hwnd = None
+        self.focus_evidence = {}
         self.keys, self.physical, self.buttons = set(), set(), {}
         u = self.user
         self.callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -133,6 +134,17 @@ class Win32:
             "GetClientRect": ([wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
             "GetForegroundWindow": ([], wintypes.HWND),
             "SetForegroundWindow": ([wintypes.HWND], wintypes.BOOL),
+            "ShowWindow": ([wintypes.HWND, ctypes.c_int], wintypes.BOOL),
+            "IsIconic": ([wintypes.HWND], wintypes.BOOL),
+            "BringWindowToTop": ([wintypes.HWND], wintypes.BOOL),
+            "SetActiveWindow": ([wintypes.HWND], wintypes.HWND),
+            "SetFocus": ([wintypes.HWND], wintypes.HWND),
+            "AttachThreadInput": ([wintypes.DWORD, wintypes.DWORD, wintypes.BOOL], wintypes.BOOL),
+            "GetThreadDesktop": ([wintypes.DWORD], wintypes.HANDLE),
+            "GetUserObjectInformationW": ([wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                             wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL),
+            "PeekMessageW": ([ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT,
+                               wintypes.UINT, wintypes.UINT], wintypes.BOOL),
             "PostMessageW": ([wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL),
             "MapVirtualKeyW": ([wintypes.UINT, wintypes.UINT], wintypes.UINT),
             "GetAsyncKeyState": ([ctypes.c_int], ctypes.c_short),
@@ -140,6 +152,9 @@ class Win32:
         for name, (arguments, result) in signatures.items():
             function = getattr(u, name)
             function.argtypes, function.restype = arguments, result
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.GetCurrentThreadId.argtypes = []
+        self.kernel.GetCurrentThreadId.restype = wintypes.DWORD
         # Match Minecraft display pixels instead of DPI-virtualized desktop coordinates.
         u.SetProcessDPIAware()
 
@@ -202,11 +217,162 @@ class Win32:
                 "client_width": size[0], "client_height": size[1]}
 
     def foreground(self, focus=False):
+        def identity(hwnd):
+            pid = wintypes.DWORD()
+            if hwnd:
+                self.user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            return hex(hwnd or 0), pid.value
+
         if focus:
-            self.user.SetForegroundWindow(self.hwnd)
-            limit = time.monotonic() + 1
-            while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < limit:
-                time.sleep(.02)
+            before = identity(self.user.GetForegroundWindow())
+            self.focus_evidence = {"focus_before_hwnd": before[0], "focus_before_pid": before[1],
+                                   "focus_method": "owned HWND show/raise; bounded same-desktop queue attachment",
+                                   "focus_attach": "not needed"}
+            try:
+                self.target.validate()
+                if not self.owned(self.hwnd):
+                    raise RuntimeError("Focus target no longer belongs to the bound Java PID")
+                # AttachThreadInput resets queue key state. Focus-only attachment is
+                # permitted solely with no physical input and no bridge-owned holds.
+                def require_idle_input():
+                    if self.keys or self.physical or self.buttons or any(
+                        self.user.GetAsyncKeyState(key) & 0x8000 for key in range(1, 256)
+                    ):
+                        raise RuntimeError("Input is held; refusing focus queue changes")
+
+                require_idle_input()
+                self.user.ShowWindow(self.hwnd, 9 if self.user.IsIconic(self.hwnd) else 5)
+                self.user.BringWindowToTop(self.hwnd)
+                self.user.SetForegroundWindow(self.hwnd)
+                limit = time.monotonic() + .3
+                while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < limit:
+                    time.sleep(.02)
+                if self.user.GetForegroundWindow() != self.hwnd:
+                    current_thread = self.kernel.GetCurrentThreadId()
+                    target_pid = wintypes.DWORD()
+                    target_thread = self.user.GetWindowThreadProcessId(self.hwnd, ctypes.byref(target_pid))
+                    if not target_thread or target_pid.value != self.target.pid:
+                        raise RuntimeError("Owned target thread changed before focus attachment")
+
+                    def desktop_name(thread):
+                        handle = self.user.GetThreadDesktop(thread)
+                        name = ctypes.create_unicode_buffer(256)
+                        needed = wintypes.DWORD()
+                        if not handle or not self.user.GetUserObjectInformationW(
+                            handle, 2, name, ctypes.sizeof(name), ctypes.byref(needed)
+                        ):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        return name.value
+
+                    if desktop_name(current_thread) != desktop_name(target_thread):
+                        raise RuntimeError("Owned target thread is on another desktop")
+                    # Explicitly create this bridge thread's message queue, without consuming messages.
+                    message = wintypes.MSG()
+                    self.user.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)
+                    attached = False
+                    try:
+                        if current_thread != target_thread:
+                            require_idle_input()
+                            self.focus_evidence["focus_attach"] = "attempted bridge-to-owned-target attachment"
+                            if not self.user.AttachThreadInput(current_thread, target_thread, True):
+                                raise ctypes.WinError(ctypes.get_last_error())
+                            attached = True
+                            self.focus_evidence["focus_attach"] = "bridge thread to verified target thread"
+                        self.user.BringWindowToTop(self.hwnd)
+                        self.user.SetActiveWindow(self.hwnd)
+                        self.user.SetFocus(self.hwnd)
+                        self.user.SetForegroundWindow(self.hwnd)
+                    finally:
+                        if attached:
+                            detached = self.user.AttachThreadInput(current_thread, target_thread, False)
+                            self.focus_evidence["focus_detached"] = str(bool(detached)).lower()
+                            if not detached:
+                                raise ctypes.WinError(ctypes.get_last_error())
+                    # If the caller still lacks foreground permission, temporarily join
+                    # the current foreground queue. Never activate/message its HWND.
+                    # A changing foreground handle permits only one fresh observation.
+                    for attempt in range(1, 3):
+                        if self.user.GetForegroundWindow() == self.hwnd:
+                            break
+                        prefix = f"focus_foreground_attempt_{attempt}_"
+                        foreground_hwnd = self.user.GetForegroundWindow()
+                        foreground_pid = wintypes.DWORD()
+                        foreground_thread = self.user.GetWindowThreadProcessId(
+                            foreground_hwnd, ctypes.byref(foreground_pid)) if foreground_hwnd else 0
+                        self.focus_evidence.update({prefix + "hwnd": hex(foreground_hwnd or 0),
+                                                    prefix + "pid": foreground_pid.value,
+                                                    prefix + "thread": foreground_thread,
+                                                    prefix + "attach": "not attempted"})
+                        if not foreground_thread:
+                            raise RuntimeError("No stable foreground thread for focus transfer")
+                        require_idle_input()
+                        if not (desktop_name(current_thread) == desktop_name(target_thread)
+                                == desktop_name(foreground_thread)):
+                            raise RuntimeError("Foreground and owned target threads are not on the same desktop")
+                        self.focus_evidence[prefix + "same_desktop"] = "true"
+                        if self.user.GetForegroundWindow() != foreground_hwnd:
+                            self.focus_evidence[prefix + "changed"] = "before attachment"
+                            continue
+                        joined = False
+                        changed = False
+                        try:
+                            self.target.validate()
+                            if not self.owned(self.hwnd):
+                                raise RuntimeError("Owned focus target changed before foreground attachment")
+                            require_idle_input()
+                            if foreground_thread != current_thread:
+                                self.focus_evidence[prefix + "attach"] = "attempted"
+                                if not self.user.AttachThreadInput(current_thread, foreground_thread, True):
+                                    raise ctypes.WinError(ctypes.get_last_error())
+                                joined = True
+                                self.focus_evidence[prefix + "attach"] = "true"
+                            else:
+                                self.focus_evidence[prefix + "attach"] = "already this bridge thread"
+                            if self.user.GetForegroundWindow() != foreground_hwnd:
+                                changed = True
+                                self.focus_evidence[prefix + "changed"] = "after attachment; activation skipped"
+                            else:
+                                self.target.validate()
+                                if not self.owned(self.hwnd):
+                                    raise RuntimeError("Owned focus target changed during foreground attachment")
+                                require_idle_input()
+                                if self.user.GetForegroundWindow() != foreground_hwnd:
+                                    changed = True
+                                    self.focus_evidence[prefix + "changed"] = "before activation; activation skipped"
+                                else:
+                                    self.focus_evidence[prefix + "set_foreground_return"] = str(bool(
+                                        self.user.SetForegroundWindow(self.hwnd))).lower()
+                                    self.user.BringWindowToTop(self.hwnd)
+                        finally:
+                            if joined:
+                                detached = self.user.AttachThreadInput(current_thread, foreground_thread, False)
+                                self.focus_evidence[prefix + "detached"] = str(bool(detached)).lower()
+                                if not detached:
+                                    raise ctypes.WinError(ctypes.get_last_error())
+                            current = identity(self.user.GetForegroundWindow())
+                            self.focus_evidence.update({prefix + "after_hwnd": current[0],
+                                                        prefix + "after_pid": current[1]})
+                        if changed:
+                            continue
+                        # Foreground activation may finish asynchronously after queues detach.
+                        transfer_limit = time.monotonic() + .5
+                        while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < transfer_limit:
+                            time.sleep(.02)
+                        current = identity(self.user.GetForegroundWindow())
+                        self.focus_evidence.update({prefix + "settled_hwnd": current[0],
+                                                    prefix + "settled_pid": current[1]})
+                        # Retry solely for a changed foreground, not repeated permission forcing.
+                        if self.user.GetForegroundWindow() in (foreground_hwnd, self.hwnd):
+                            break
+                limit = time.monotonic() + 1
+                while self.user.GetForegroundWindow() != self.hwnd and time.monotonic() < limit:
+                    time.sleep(.02)
+                self.target.validate()
+            finally:
+                after = identity(self.user.GetForegroundWindow())
+                self.focus_evidence.update(focus_after_hwnd=after[0], focus_after_pid=after[1])
+                self.focus_evidence["focus_verified"] = str(
+                    self.user.GetForegroundWindow() == self.hwnd and self.owned(self.hwnd)).lower()
         if self.user.GetForegroundWindow() != self.hwnd:
             raise RuntimeError("Target HWND is not foreground; refusing input")
 
@@ -304,6 +470,7 @@ class Win32:
             raise RuntimeError("Input release incomplete: " + "; ".join(errors))
 
     def execute(self, request):
+        self.focus_evidence = {}
         evidence = self.bind(request)
         operation = request["operation"]
         if operation == "release-all":
@@ -316,7 +483,7 @@ class Win32:
                 self.mouse_move(request["x"], request["y"])
             elif operation.startswith("mouse-"):
                 self.mouse(request["key"], operation == "mouse-down", request["x"], request["y"])
-        return evidence
+        return {**evidence, **self.focus_evidence}
 
 
 def main():
@@ -357,7 +524,7 @@ def main():
                     print(f"ACK {sequence} {request['operation']}", flush=True)
                 except Exception as error:
                     acknowledge(receipts, sequence, {"success": "false", "input_method": METHOD,
-                                                      "failure": str(error)})
+                                                      "failure": str(error), **bridge.focus_evidence})
                     raise
                 sequence += 1
                 continue
