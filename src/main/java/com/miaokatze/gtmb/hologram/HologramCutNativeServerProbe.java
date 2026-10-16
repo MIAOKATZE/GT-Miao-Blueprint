@@ -17,6 +17,8 @@ import net.minecraft.tileentity.TileEntityChest;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.WorldSettings;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import appeng.api.AEApi;
@@ -47,6 +49,9 @@ public final class HologramCutNativeServerProbe {
     private NBTTagCompound compositeOriginal, recutOriginal, originalCompositeCell;
     private String compositeDiskHash, recutDiskHash;
     private int immutablePreviewChecks, originalAeOwner;
+    private boolean placementSkipReady, placementSkipCut, placementSkipLock, placementSkipPasted;
+    private NBTTagCompound placementSkipOriginal;
+    private String placementSkipDiskHash;
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.cutNativeServer")) FMLCommonHandler.instance()
@@ -90,7 +95,7 @@ public final class HologramCutNativeServerProbe {
                 actor.inventory.mainInventory[0] = new ItemStack(
                     (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector"));
                 actor.inventory.currentItem = 0;
-                world.getChunkFromBlockCoords(48, 64);
+                loadFixtureChunks(47, 57, 63, 70);
                 supportPlatform(47, 57, 66, 69);
                 originalA = chest(48, Items.diamond, 7, "native-cut-A");
                 originalB = chest(52, Items.emerald, 3, "native-cut-B");
@@ -98,9 +103,9 @@ public final class HologramCutNativeServerProbe {
                     world.isAirBlock(49, 80, 64) && world.isAirBlock(53, 80, 64),
                     "real air cells in both selections");
                 require(
-                    world.setBlock(49, 81, 64, Blocks.stone, 0, 3) && world.setBlock(53, 81, 64, Blocks.stone, 0, 3),
+                    setBlockChecked(49, 81, 64, Blocks.stone, 0, 3) && setBlockChecked(53, 81, 64, Blocks.stone, 0, 3),
                     "physical second-corner sight markers; boxes still contain two air cells");
-                require(world.setBlock(56, 79, 64, Blocks.stone, 0, 3), "real paste sight support");
+                require(setBlockChecked(56, 79, 64, Blocks.stone, 0, 3), "real paste sight support");
                 actor.playerNetServerHandler.setPlayerLocation(50.5, 80, 67.5, 180, 0);
                 actor.inventoryContainer.detectAndSendChanges();
                 NBTTagCompound ready = base();
@@ -159,6 +164,7 @@ public final class HologramCutNativeServerProbe {
                         createComposite();
                     }
                     observeComposite(durable, count);
+                    observePlacementSkip(durable, count);
                 }
             }
             require(
@@ -169,7 +175,8 @@ public final class HologramCutNativeServerProbe {
             NBTTagCompound result = HologramV011Evidence.read("cut-client-final.nbt");
             if (result == null) return;
             require(
-                result.getBoolean("passed") && cutA && cutB && pastedA && restoredB && compositeUndone,
+                result.getBoolean(
+                    "passed") && cutA && cutB && pastedA && restoredB && compositeUndone && placementSkipPasted,
                 "all independently witnessed world transitions completed");
             NBTTagCompound proof = base();
             proof.setTag("actualClient", result.copy());
@@ -194,7 +201,10 @@ public final class HologramCutNativeServerProbe {
     }
 
     private NBTTagCompound chest(int x, Item item, int amount, String name) {
-        require(world.isAirBlock(x, 80, 64) && world.setBlock(x, 80, 64, Blocks.chest, 2, 3), "fresh real chest");
+        require(world.isAirBlock(x, 80, 64) && setBlockChecked(x, 80, 64, Blocks.chest, 2, 3), "fresh real chest");
+        require(
+            world.getTileEntity(x, 80, 64) instanceof TileEntityChest,
+            "actual loaded chunk created a native chest tile");
         TileEntityChest chest = (TileEntityChest) world.getTileEntity(x, 80, 64);
         chest.func_145976_a(name);
         ItemStack stack = new ItemStack(item, amount);
@@ -206,6 +216,17 @@ public final class HologramCutNativeServerProbe {
         chest.markDirty();
         NBTTagCompound result = new NBTTagCompound();
         chest.writeToNBT(result);
+        require(
+            chest.getWorldObj() == world && chest.getStackInSlot(4) != null
+                && chest.getStackInSlot(4)
+                    .getItem() == item
+                && chest.getStackInSlot(4).stackSize == amount
+                && name.equals(
+                    chest.getStackInSlot(4)
+                        .getTagCompound()
+                        .getString("nativeCutWitness"))
+                && tileEqual(result, world.getTileEntity(x, 80, 64)),
+            "actual world chest retains its complete fixture inventory");
         return result;
     }
 
@@ -222,13 +243,21 @@ public final class HologramCutNativeServerProbe {
 
     private void noDrops() {
         require(
-            world.getEntitiesWithinAABB(EntityItem.class, AxisAlignedBB.getBoundingBox(45, 77, 61, 79, 86, 73))
+            world.getEntitiesWithinAABB(EntityItem.class, AxisAlignedBB.getBoundingBox(45, 77, 61, 92, 86, 73))
                 .isEmpty(),
             "cut/undo created no item entities");
     }
 
     private void createComposite() throws Exception {
+        // The EBF helper inspects an x/z +/-5 cube before placing its controller.
+        loadFixtureChunks(59, 77, 59, 70);
         BaseMetaTileEntity gt = HologramInteractionSmoke.createFixture(world, actor, 64, 80, 64);
+        require(
+            world.getBlock(64, 80, 64) == gregtech.api.GregTechAPI.sBlockMachines
+                && world.getTileEntity(64, 80, 64) == gt
+                && gt.getWorldObj() == world
+                && gt.getMetaTileEntity() != null,
+            "real loaded composite chunk contains the native GT controller");
         // The native EBF helper first requires its entire surrounding cube to be fresh air.
         supportPlatform(63, 77, 66, 70);
         gt.setOwnerName("RawNativeOwner");
@@ -246,7 +275,7 @@ public final class HologramCutNativeServerProbe {
         cableTag.setString("id", "ae2_cablebus");
         raw.getTagList("parts", 10)
             .appendTag(cableTag);
-        require(world.setBlock(66, 80, 64, fmp, 0, 2), "real composite FMP block");
+        require(setBlockChecked(66, 80, 64, fmp, 0, 2), "real composite FMP block");
         TileEntity multipart = HologramCutWorld.createTile(world, raw);
         multipart.setWorldObj(world);
         world.getChunkFromBlockCoords(66, 64)
@@ -259,7 +288,10 @@ public final class HologramCutNativeServerProbe {
         require(originalAeOwner >= 0, "real AE registered owner");
         nativeCable(multipart).getGridNode()
             .setPlayerID(originalAeOwner);
-        require(world.setBlock(67, 80, 64, nativeBlock("appeng.block.storage.BlockDrive"), 0, 2), "real AE drive");
+        require(setBlockChecked(67, 80, 64, nativeBlock("appeng.block.storage.BlockDrive"), 0, 2), "real AE drive");
+        require(
+            world.getTileEntity(66, 80, 64) == multipart && world.getTileEntity(67, 80, 64) instanceof TileDrive,
+            "actual world contains both native multipart and AE drive tiles");
         TileDrive drive = (TileDrive) world.getTileEntity(67, 80, 64);
         drive.setOrientation(ForgeDirection.WEST, ForgeDirection.UP);
         ItemStack cell = AEApi.instance()
@@ -284,7 +316,7 @@ public final class HologramCutNativeServerProbe {
             .setPlayerID(originalAeOwner);
         chest(68, Items.emerald, 9, "native-fullraw-chest");
         require(
-            world.setBlock(69, 81, 64, Blocks.stone, 0, 3) && world.setBlock(72, 79, 64, Blocks.stone, 0, 3),
+            setBlockChecked(69, 81, 64, Blocks.stone, 0, 3) && setBlockChecked(72, 79, 64, Blocks.stone, 0, 3),
             "real raw selection marker and paste support");
         actor.playerNetServerHandler.setPlayerLocation(66.5, 80, 67.5, 180, 0);
         NBTTagCompound proof = base();
@@ -358,6 +390,78 @@ public final class HologramCutNativeServerProbe {
             compositeUndone = true;
             noDrops();
             observe("composite-undo-original-pose-consumed", durable);
+            createPlacementSkip();
+        }
+    }
+
+    /** This final fixture leaves the preceding genuine original-position undo unchanged. */
+    private void createPlacementSkip() throws Exception {
+        loadFixtureChunks(83, 90, 63, 70);
+        supportPlatform(83, 90, 66, 69);
+        require(world.isAirBlock(84, 80, 64) && world.isAirBlock(88, 80, 64), "fresh independent skip fixture");
+        require(setBlockChecked(84, 80, 64, Blocks.gold_block, 0, 3), "one real original gold block");
+        require(setBlockChecked(88, 79, 64, Blocks.stone, 0, 3), "one real skip-placement support");
+        actor.playerNetServerHandler.setPlayerLocation(84.5, 80, 67, 180, 0);
+        placementSkipReady = true;
+        NBTTagCompound proof = base();
+        proof.setIntArray("source", new int[] { 84, 80, 64 });
+        proof.setIntArray("target", new int[] { 88, 80, 64 });
+        HologramV011Evidence.write("cut-placement-skip-server-ready.nbt", proof);
+    }
+
+    private void observePlacementSkip(NBTTagCompound durable, int count) throws Exception {
+        if (!placementSkipReady) return;
+        if (!placementSkipCut && count == 1 && world.isAirBlock(84, 80, 64)) {
+            require(
+                durable.getBoolean(HologramCutPlacementPreference.SKIP_PROMPT),
+                "placement skip persisted before final fixture");
+            placementSkipOriginal = (NBTTagCompound) durable.getTagList("entries", 10)
+                .getCompoundTagAt(0)
+                .copy();
+            require(
+                placementSkipOriginal.getInteger("sizeX") == 1 && placementSkipOriginal.getInteger("sizeY") == 1
+                    && placementSkipOriginal.getInteger("sizeZ") == 1,
+                "independent one-cell real cut");
+            NBTTagList cells = placementSkipOriginal.getTagList("cells", 10);
+            require(
+                cells.tagCount() == 1 && "minecraft:gold_block".equals(
+                    cells.getCompoundTagAt(0)
+                        .getString("block"))
+                    && cells.getCompoundTagAt(0)
+                        .getInteger("meta") == 0,
+                "actual original complete gold-cell payload");
+            placementSkipDiskHash = diskHash();
+            placementSkipCut = true;
+            noDrops();
+            observe("placement-skip-source-cut", durable);
+            actor.playerNetServerHandler.setPlayerLocation(87.5, 80, 67, 180, 0);
+        }
+        if (placementSkipCut && !placementSkipPasted && count == 1) {
+            require(
+                world.isAirBlock(88, 80, 64) && durable.getTagList("entries", 10)
+                    .getCompoundTagAt(0)
+                    .equals(placementSkipOriginal) && diskHash().equals(placementSkipDiskHash),
+                "preview and first lock preserve the actual source, target, queue and disk bytes");
+            if (!placementSkipLock && HologramV011Evidence.read("cut-placement-skip-client-locked.nbt") != null) {
+                require(
+                    "LOCKED".equals(
+                        HologramV011Evidence.read("cut-placement-skip-client-locked.nbt")
+                            .getString("stage")),
+                    "client's independently sampled locked stage");
+                placementSkipLock = true;
+                observe("placement-skip-lock-no-write", durable);
+            }
+        }
+        if (placementSkipCut && !placementSkipPasted && count == 0 && world.getBlock(88, 80, 64) == Blocks.gold_block) {
+            require(
+                placementSkipLock && world.isAirBlock(84, 80, 64) && world.getBlockMetadata(88, 80, 64) == 0,
+                "only the later separate right press placed the original exact cell");
+            require(
+                durable.getBoolean(HologramCutPlacementPreference.SKIP_PROMPT),
+                "placement skip remains durable after consuming the final entry");
+            placementSkipPasted = true;
+            noDrops();
+            observe("placement-skip-second-right-pasted", durable);
         }
     }
 
@@ -445,8 +549,42 @@ public final class HologramCutNativeServerProbe {
 
     private void supportPlatform(int minX, int maxX, int minZ, int maxZ) {
         for (int x = minX; x <= maxX; x++) for (int z = minZ; z <= maxZ; z++) require(
-            world.isAirBlock(x, 79, z) && world.setBlock(x, 79, z, Blocks.stone, 0, 3),
+            world.isAirBlock(x, 79, z) && setBlockChecked(x, 79, z, Blocks.stone, 0, 3),
             "real standing platform strictly below all source and target volumes");
+    }
+
+    /** Independent fixture oracle; deliberately does not call the production transaction loader. */
+    private void loadFixtureChunks(int minX, int maxX, int minZ, int maxZ) {
+        java.util.Set<Chunk> identities = java.util.Collections
+            .newSetFromMap(new java.util.IdentityHashMap<Chunk, Boolean>());
+        for (int cx = minX >> 4; cx <= maxX >> 4; cx++) for (int cz = minZ >> 4; cz <= maxZ >> 4; cz++) {
+            Chunk loaded = world.theChunkProviderServer.loadChunk(cx, cz);
+            require(
+                loaded != null && !(loaded instanceof EmptyChunk)
+                    && loaded.xPosition == cx
+                    && loaded.zPosition == cz
+                    && loaded.isChunkLoaded
+                    && identities.add(loaded),
+                "each fixture position loads a distinct genuine chunk with matching coordinates");
+            require(
+                world.theChunkProviderServer.chunkExists(cx, cz) && world.getChunkFromChunkCoords(cx, cz) == loaded,
+                "normal world reads use the exact genuine loaded fixture chunk");
+        }
+    }
+
+    private boolean setBlockChecked(int x, int y, int z, Block block, int metadata, int flags) {
+        Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
+        require(
+            !(chunk instanceof EmptyChunk) && chunk.xPosition == (x >> 4) && chunk.zPosition == (z >> 4),
+            "fixture writes never target EmptyChunk or a wrong-position chunk");
+        boolean placed = world.setBlock(x, y, z, block, metadata, flags);
+        // Native chest/AE placement may derive facing metadata in onBlockAdded; their complete tiles
+        // are checked by each fixture. Static platform/marker/gold metadata must remain exact.
+        require(
+            placed && world.getBlock(x, y, z) == block
+                && (block.hasTileEntity(metadata) || world.getBlockMetadata(x, y, z) == metadata),
+            "fixture write is the actual expected block, with exact static-marker metadata");
+        return placed;
     }
 
     private static Block nativeBlock(String name) {

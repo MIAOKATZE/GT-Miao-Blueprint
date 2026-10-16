@@ -3,7 +3,6 @@ package com.miaokatze.gtmb.client.hologram;
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
 import static net.minecraft.client.gui.Gui.*;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -28,7 +27,7 @@ final class HologramUiProcessing {
 
     private boolean processingPresetSaveReview;
 
-    private GuiTextField processingPresetField;
+    private HologramMuiTextField processingPresetField;
 
     private String selectedProcessingPreset = "";
 
@@ -402,7 +401,7 @@ final class HologramUiProcessing {
                         ? ui.processing.processingState()
                             .getInteger("requiredStages")
                         : 63);
-            this.processingPresetField = new GuiTextField(ui.host.font(), 42, 220, 288, 18);
+            this.processingPresetField = new HologramMuiTextField(ui.host.parent(), 42, 220, 288, 18);
             this.processingPresetField.setMaxStringLength(64);
             this.processingPresetField.setText(
                 ui.library.presetNameField()
@@ -413,7 +412,7 @@ final class HologramUiProcessing {
         if (id == 221) {
             if (!ui.processing.processingReady()) return true;
             this.processingPresetSaveReview = true;
-            this.processingPresetField = new GuiTextField(ui.host.font(), 96, 150, 486, 18);
+            this.processingPresetField = new HologramMuiTextField(ui.host.parent(), 96, 150, 486, 18);
             this.processingPresetField.setMaxStringLength(64);
             this.processingPresetField.setText(
                 ui.library.presetNameField()
@@ -670,7 +669,7 @@ final class HologramUiProcessing {
         return this.processingFlow;
     }
 
-    GuiTextField processingPresetField() {
+    HologramMuiTextField processingPresetField() {
         return this.processingPresetField;
     }
 

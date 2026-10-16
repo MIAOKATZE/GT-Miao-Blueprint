@@ -25,12 +25,17 @@ def main():
     parser.add_argument('--jar', type=Path, required=True)
     parser.add_argument('--srg-runtime', type=Path, default=ROOT / 'build/rfg/srg_merged_minecraft.jar')
     parser.add_argument('--forge-runtime', type=Path, default=ROOT / 'build/rfg/recompiled_minecraft-1.7.10.jar')
+    parser.add_argument('--mui2', type=Path, help='Actual normal MUI2 2.3.92 library; enables migration static ABI gate')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--expect', choices=['pass', 'old-ame'], required=True)
     args = parser.parse_args()
     for path in (args.java, args.javac, args.asm, args.jar, args.srg_runtime, args.forge_runtime):
         if not path.is_file():
             parser.error('Missing required input: ' + str(path))
+    if args.mui2 and (not args.mui2.is_file() or args.mui2.name.endswith(('-dev.jar', '-sources.jar'))):
+        parser.error('Actual normal MUI2 library required')
+    if args.mui2 and args.expect != 'pass':
+        parser.error('The legacy old-ame control uses the three-input SRG dispatch fixture')
     if args.jar.name.endswith(('-dev.jar', '-sources.jar')):
         parser.error('The unchanged normal release JAR is required')
     output = args.output.resolve()
@@ -40,6 +45,8 @@ def main():
     classes = output / 'observer-classes'
     classes.mkdir()
     inputs = {str(path.resolve()): digest(path) for path in (SOURCE, args.asm, args.jar, args.srg_runtime, args.forge_runtime)}
+    if args.mui2:
+        inputs[str(args.mui2.resolve())] = digest(args.mui2)
     with zipfile.ZipFile(args.jar) as archive:
         class_hashes = {name: hashlib.sha256(archive.read(name)).hexdigest() for name in (
             'com/miaokatze/gtmb/client/hologram/HologramScreen.class',
@@ -48,10 +55,13 @@ def main():
                        '-cp', str(args.asm.resolve()), '-d', str(classes), str(SOURCE)]
     launch = [str(args.java.resolve()), '-cp', str(classes) + ';' + str(args.asm.resolve()), MAIN,
               str(args.jar.resolve()), str(args.srg_runtime.resolve()), str(args.forge_runtime.resolve())]
+    if args.mui2:
+        launch.append(str(args.mui2.resolve()))
     (output / 'commands.json').write_text(json.dumps({'compile': compile_command, 'launch': launch}, indent=2))
     compiled = subprocess.run(compile_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     (output / 'compile.log').write_bytes(compiled.stdout)
-    receipt = {'scope': 'SRG JVM ABI fixture, no FML/GL/native GUI claim', 'expected': args.expect,
+    receipt = {'scope': ('actual normal GTMB/MUI2 bytecode static ABI, no FML/GL/native GUI claim' if args.mui2
+                         else 'SRG JVM ABI fixture, no FML/GL/native GUI claim'), 'expected': args.expect,
                'input_hashes': inputs, 'normal_class_hashes': class_hashes,
                'compile_exit_code': compiled.returncode, 'normal_jar_remapped': False}
     if compiled.returncode:

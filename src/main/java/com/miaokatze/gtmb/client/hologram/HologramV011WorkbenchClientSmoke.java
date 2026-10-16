@@ -21,7 +21,6 @@ import javax.imageio.ImageIO;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiMainMenu;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.JsonToNBT;
@@ -501,7 +500,7 @@ public final class HologramV011WorkbenchClientSmoke {
         screen("actual-library-scroll-offset", (mc, screen, ui) -> {
             require(
                 ui.getInteger("libraryOffset") == Math.min(retainedOffset + 1, ui.getInteger("rows") - 4),
-                "native LWJGL wheel/handleMouseInput advances actual library offset");
+                "native LWJGL wheel/MUI2 dispatch advances actual library offset");
             retainedOffset = ui.getInteger("libraryOffset");
             NBTTagList entries = ui.getTagList("entries", 10);
             targetLocalId = entries.getCompoundTagAt(retainedOffset + 1)
@@ -1156,7 +1155,7 @@ public final class HologramV011WorkbenchClientSmoke {
     private void type(String label, String field, String value) {
         screen(label, (mc, screen, ui) -> {
             if (!idle(screen, ui)) return false;
-            GuiTextField target = (GuiTextField) read(screen, field);
+            HologramMuiTextField target = (HologramMuiTextField) read(screen, field);
             require(target != null, "actual text field " + field + " exists");
             NBTTagCompound keyboard = new NBTTagCompound();
             keyboard.setInteger("step", step);
@@ -1172,20 +1171,19 @@ public final class HologramV011WorkbenchClientSmoke {
             keyboard.setTag("actualUiBefore", ui.copy());
             try {
                 int[] point = point(screen, target.xPosition + 4, target.yPosition + 7);
-                screen.mouseClicked(point[0], point[1], 0);
-                screen.mouseMovedOrUp(point[0], point[1], 0);
+                HologramMuiProbeInput.click(screen, point[0], point[1], 0);
                 keyboard.setBoolean("focusedAfterNativeClick", target.isFocused());
                 require(target.isFocused(), "native click focuses actual text field " + field);
                 key(Keyboard.KEY_LCONTROL, true);
-                // GuiTextField receives ASCII SOH from a real Ctrl+A keyboard event in Minecraft 1.7.10.
-                screen.keyTyped('\u0001', Keyboard.KEY_A);
+                // The MUI2 dispatcher checks the same Control state as the native keyboard route.
+                HologramMuiProbeInput.key(screen, '\u0001', Keyboard.KEY_A);
                 keyboard.setString("selectedAfterControlA", target.getSelectedText());
                 require(
                     target.getText()
                         .equals(target.getSelectedText()),
                     "native Ctrl+A selects the complete actual field text");
                 key(Keyboard.KEY_LCONTROL, false);
-                for (char character : value.toCharArray()) screen.keyTyped(character, 0);
+                for (char character : value.toCharArray()) HologramMuiProbeInput.key(screen, character, 0);
                 require(value.equals(target.getText()), "native keyboard replaced actual field text");
                 keyboard.setBoolean("passed", true);
             } catch (Exception | Error failure) {
@@ -1217,8 +1215,7 @@ public final class HologramV011WorkbenchClientSmoke {
             for (int py = y + 5; py < y + height - 6; py++) for (int px = x + 5; px < x + width - 6; px++) {
                 if (controlAt(ui, px, py) || HologramRenderer.pick(px, py) != wanted) continue;
                 int[] point = point(screen, px, py);
-                screen.mouseClicked(point[0], point[1], 0);
-                screen.mouseMovedOrUp(point[0], point[1], 0);
+                HologramMuiProbeInput.click(screen, point[0], point[1], 0);
                 if (((Integer) read(screen, "selected")) == wanted) return true;
             }
             throw new AssertionError("actual rendered preview has no native selectable point for " + wanted);
@@ -1981,8 +1978,7 @@ public final class HologramV011WorkbenchClientSmoke {
 
     private static void nativeClick(HologramScreen screen, int id) {
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
     }
 
     private static int[] point(HologramScreen screen, int x, int y) throws Exception {
@@ -2006,7 +2002,7 @@ public final class HologramV011WorkbenchClientSmoke {
                 original[i] = fields[i].get(null);
                 fields[i].set(null, values[i]);
             }
-            screen.handleMouseInput();
+            HologramMuiProbeInput.scroll(screen, point[0], point[1], delta);
         } finally {
             for (int i = 0; i < fields.length; i++)
                 if (fields[i] != null && original[i] != null) fields[i].set(null, original[i]);

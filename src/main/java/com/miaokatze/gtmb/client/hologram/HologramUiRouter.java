@@ -430,20 +430,16 @@ final class HologramUiRouter {
 
     void drawTabs(int mx, int my) {
         for (int i = 0; i < 2; i++) {
-            int x = 12 + i * 62;
-            Control tab = new Control(148 + i, x, 9, 58, 17, true);
-            ui.canvas.controls()
-                .add(tab);
-            boolean active = ui.library.blueprintTab() == (i == 1);
-            drawRect(x, 9, x + 58, 26, active ? 0xff274c56 : tab.contains(mx, my) ? 0xff213d46 : 0xff17333c);
-            int accent = ui.memory.contextualAccent(148 + i);
-            if (active || accent != 0) drawRect(x, 24, x + 58, 26, 0xff000000 | (accent != 0 ? accent : 0x81dce9));
-            ui.host.renderCenteredText(
-                ui.host.font(),
-                i == 0 ? "结构调整" : "蓝图设置",
-                x + 29,
-                13,
-                accent != 0 ? accent : active ? 0x81dce9 : 0xc1d2d0);
+            ui.canvas.button(
+                148 + i,
+                12 + i * 62,
+                9,
+                58,
+                17,
+                i == 0 ? "\u7ed3\u6784\u8c03\u6574" : "\u84dd\u56fe\u8bbe\u7f6e",
+                true,
+                mx,
+                my);
         }
     }
 

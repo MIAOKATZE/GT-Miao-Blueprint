@@ -30,7 +30,11 @@ final class HologramCutWorld {
 
     /** FMP registers a loading carrier, so its own factory must build the live composite. No payload is rewritten. */
     static TileEntity createTile(WorldServer world, NBTTagCompound tag) throws IOException {
-        if (!"savedMultipart".equals(tag.getString("id"))) return TileEntity.createAndLoadEntity(tag);
+        if (!"savedMultipart".equals(tag.getString("id"))) return HologramCutTiles.create(
+            world,
+            world.getBlock(tag.getInteger("x"), tag.getInteger("y"), tag.getInteger("z")),
+            world.getBlockMetadata(tag.getInteger("x"), tag.getInteger("y"), tag.getInteger("z")),
+            tag);
         try {
             Object loader = Class.forName("codechicken.multipart.handler.MultipartSaveLoad$")
                 .getField("MODULE$")
@@ -129,6 +133,7 @@ final class HologramCutWorld {
         if (cells.tagCount()
             != HologramCutEntry.volume(entry.getInteger("sizeX"), entry.getInteger("sizeY"), entry.getInteger("sizeZ")))
             throw new IOException("剪切记录不完整");
+        HologramCutChunks.loadWithLightNeighbors(world, ox, oz, entry.getInteger("sizeX"), entry.getInteger("sizeZ"));
         List<TileEntity> tiles = new ArrayList<>();
         // Read every original NBT before touching the destination. Only root xyz are relocated.
         for (int i = 0; i < cells.tagCount(); i++) {
@@ -136,40 +141,44 @@ final class HologramCutWorld {
             if (Block.getBlockFromName(cell.getString("block")) == null) throw new IOException("原方块模组未加载");
             TileEntity tile = null;
             if (!air && cell.hasKey("tile", 10)) {
-                tile = createTile(
-                    world,
-                    HologramCutEntry.relocatedTile(
-                        cell,
-                        ox + cell.getInteger("x"),
-                        oy + cell.getInteger("y"),
-                        oz + cell.getInteger("z")));
+                NBTTagCompound payload = HologramCutEntry.relocatedTile(
+                    cell,
+                    ox + cell.getInteger("x"),
+                    oy + cell.getInteger("y"),
+                    oz + cell.getInteger("z"));
+                tile = "savedMultipart".equals(payload.getString("id")) ? createTile(world, payload)
+                    : HologramCutTiles.create(
+                        world,
+                        Block.getBlockFromName(cell.getString("block")),
+                        cell.getInteger("meta"),
+                        payload);
                 if (tile == null) throw new IOException("原方块实体无法读取，记录已保留");
             }
             tiles.add(tile);
         }
-        Set<Chunk> chunks = new LinkedHashSet<>();
+        HologramCutLighting lighting = new HologramCutLighting();
         // Detach all inventories before changing any block, including replaced destination inventories.
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
+            lighting.capture(chunk);
             TileEntity previous = world.getTileEntity(x, y, z);
             chunk.removeTileEntity(x & 15, y, z & 15);
             if (previous != null) world.loadedTileEntityList.remove(previous);
-            chunks.add(chunk);
         }
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
             ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
-            if (sections[y >> 4] == null)
+            Block replacement = air ? Blocks.air : Block.getBlockFromName(cell.getString("block"));
+            if (sections[y >> 4] == null) {
+                if (replacement == Blocks.air) continue;
                 sections[y >> 4] = new ExtendedBlockStorage((y >> 4) << 4, !world.provider.hasNoSky);
-            sections[y >> 4].func_150818_a(
-                x & 15,
-                y & 15,
-                z & 15,
-                air ? Blocks.air : Block.getBlockFromName(cell.getString("block")));
+                lighting.sectionCreated(chunk, y >> 4);
+            }
+            sections[y >> 4].func_150818_a(x & 15, y & 15, z & 15, replacement);
             sections[y >> 4].setExtBlockMetadata(x & 15, y & 15, z & 15, air ? 0 : cell.getInteger("meta"));
         }
         for (TileEntity tile : tiles) if (tile != null) {
@@ -188,21 +197,19 @@ final class HologramCutWorld {
                         .getCompoundTag("tile")
                         .getString("id")))
                     loadMultipart(tile);
-                else if (tile instanceof appeng.tile.AEBaseTile) ((appeng.tile.AEBaseTile) tile).onReady();
+                else HologramCutTiles.ready(tile);
             } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
                 throw new IOException("原生方块实体加载失败，完整剪切记录已保留", failure);
             }
         }
-        for (Chunk chunk : chunks) {
-            chunk.generateSkylightMap();
-            chunk.setChunkModified();
-        }
+        lighting.finish(world);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             world.func_147451_t(x, y, z);
             world.markBlockForUpdate(x, y, z);
         }
+        lighting.complete();
     }
 
     /**
@@ -211,6 +218,7 @@ final class HologramCutWorld {
      */
     static void saveAndVerify(WorldServer world, NBTTagCompound entry, int ox, int oy, int oz, boolean air)
         throws Exception {
+        HologramCutChunks.load(world, ox, oz, entry.getInteger("sizeX"), entry.getInteger("sizeZ"));
         AnvilChunkLoader loader = (AnvilChunkLoader) world.theChunkProviderServer.currentChunkLoader;
         Set<Chunk> chunks = new LinkedHashSet<>();
         NBTTagList cells = entry.getTagList("cells", 10);

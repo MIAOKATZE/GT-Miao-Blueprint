@@ -6,7 +6,6 @@ import static net.minecraft.client.gui.Gui.*;
 import java.util.ArrayList;
 import java.util.List;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -35,7 +34,7 @@ final class HologramUiNbtEditor {
 
     private final List<String> nbtIgnoredPaths = new ArrayList<>();
 
-    private GuiTextField nbtValueField;
+    private HologramMuiTextField nbtValueField;
 
     private int nbtValueIndex = -1;
 
@@ -54,7 +53,7 @@ final class HologramUiNbtEditor {
         this.nbtOffset = 0;
         this.nbtCellScope = !placement && ui.preview.selected() >= 0;
         this.nbtValueIndex = -1;
-        this.nbtValueField = new GuiTextField(ui.host.font(), 62, 233, 286, 17);
+        this.nbtValueField = new HologramMuiTextField(ui.host.parent(), 62, 233, 286, 17);
         this.nbtValueField.setMaxStringLength(8192);
         this.nbtPathsView = false;
         this.nbtIgnoredPaths.clear();
@@ -397,7 +396,7 @@ final class HologramUiNbtEditor {
         return this.nbtPlacement;
     }
 
-    GuiTextField nbtValueField() {
+    HologramMuiTextField nbtValueField() {
         return this.nbtValueField;
     }
 

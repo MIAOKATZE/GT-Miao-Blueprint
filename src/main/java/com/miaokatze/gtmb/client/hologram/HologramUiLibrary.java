@@ -5,7 +5,6 @@ import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -23,7 +22,7 @@ final class HologramUiLibrary {
         this.ui = ui;
     }
 
-    private GuiTextField presetNameField;
+    private HologramMuiTextField presetNameField;
 
     private boolean libraryDrawer;
 
@@ -35,11 +34,11 @@ final class HologramUiLibrary {
 
     private boolean libraryAdminDrawer;
 
-    private GuiTextField libraryUploadField;
+    private HologramMuiTextField libraryUploadField;
 
-    private GuiTextField libraryDownloadField;
+    private HologramMuiTextField libraryDownloadField;
 
-    private GuiTextField libraryQuotaField;
+    private HologramMuiTextField libraryQuotaField;
 
     private long libraryConfigRevision = -1;
 
@@ -255,20 +254,9 @@ final class HologramUiLibrary {
             Control entry = new Control(14000 + i, x + 5, y, w - 10, 28, ui.session.editable());
             ui.canvas.controls()
                 .add(entry);
-            if (active || entry.contains(mx, my))
-                drawRect(x + 5, y, x + w - 5, y + 28, active ? 0xff244b57 : 0xff203b43);
-            if (active) drawRect(x + 5, y + 2, x + 8, y + 26, 0xff81dce9);
-            drawRect(x + 8, y + 27, x + w - 8, y + 28, 0xff2b444c);
-            drawRect(x + 12, y + 5, x + 23, y + 16, active ? 0xff7fbdc8 : 0xff637e89);
-            drawRect(x + 14, y + 7, x + 21, y + 9, 0xff19313a);
-            drawRect(x + 14, y + 11, x + 21, y + 13, 0xff19313a);
-            ui.canvas.text(row.getString("name"), x + 29, y + 4, w - 42, active ? 0xf5e4b9 : 0xd0dada);
-            ui.canvas.text(
-                row.getInteger("cells") + " 格 · " + ui.library.blueprintSource(row),
-                x + 29,
-                y + 17,
-                w - 42,
-                0x8ba7ad);
+            entry.label = (active ? "\u25b6 " : "") + row.getString(
+                "name") + "\n" + row.getInteger("cells") + " \u683c \u00b7 " + ui.library.blueprintSource(row);
+            entry.accent = active ? 0x81dce9 : 0;
             if (entry.contains(mx, my)) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
@@ -404,21 +392,14 @@ final class HologramUiLibrary {
             Control entry = new Control(14000 + i, x + 5, y, w - 10, 28, idle);
             ui.canvas.controls()
                 .add(entry);
-            drawRect(
-                x + 5,
-                y,
-                x + w - 5,
-                y + 27,
-                active ? 0xff244b57 : entry.contains(mx, my) ? 0xff203b43 : 0xff172f36);
-            if (active) drawRect(x + 5, y + 2, x + 8, y + 25, 0xff81dce9);
-            ui.canvas.text(row.getString("name"), x + 12, y + 3, w - 25, active ? 0xf5e4b9 : 0xd0dada);
             String author = row.getString("authorName");
-            ui.canvas.text(
-                "作者：" + (author.isEmpty() ? "未署名" : author) + " · " + HologramLibraryClient.bytes(row.getLong("bytes")),
-                x + 12,
-                y + 16,
-                w - 25,
-                0x8ba7ad);
+            entry.label = (active ? "\u25b6 " : "") + row.getString("name")
+                + "\n"
+                + "\u4f5c\u8005\uff1a"
+                + (author.isEmpty() ? "\u672a\u7f72\u540d" : author)
+                + " \u00b7 "
+                + HologramLibraryClient.bytes(row.getLong("bytes"));
+            entry.accent = active ? 0x81dce9 : 0;
             if (entry.contains(mx, my)) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
@@ -498,8 +479,8 @@ final class HologramUiLibrary {
         this.libraryQuotaField = ui.library.libraryAdminField(210, String.valueOf(config.getInteger("maxUploads")));
     }
 
-    GuiTextField libraryAdminField(int y, String value) {
-        GuiTextField field = new GuiTextField(ui.host.font(), 282, y, 136, 18);
+    HologramMuiTextField libraryAdminField(int y, String value) {
+        HologramMuiTextField field = new HologramMuiTextField(ui.host.parent(), 282, y, 136, 18);
         field.setMaxStringLength(7);
         field.setText(value);
         return field;
@@ -1231,7 +1212,7 @@ final class HologramUiLibrary {
         return value;
     }
 
-    GuiTextField libraryDownloadField() {
+    HologramMuiTextField libraryDownloadField() {
         return this.libraryDownloadField;
     }
 
@@ -1257,7 +1238,7 @@ final class HologramUiLibrary {
         return value;
     }
 
-    GuiTextField libraryQuotaField() {
+    HologramMuiTextField libraryQuotaField() {
         return this.libraryQuotaField;
     }
 
@@ -1270,7 +1251,7 @@ final class HologramUiLibrary {
         return value;
     }
 
-    GuiTextField libraryUploadField() {
+    HologramMuiTextField libraryUploadField() {
         return this.libraryUploadField;
     }
 
@@ -1286,11 +1267,11 @@ final class HologramUiLibrary {
         return this.overwriteTarget;
     }
 
-    GuiTextField presetNameField() {
+    HologramMuiTextField presetNameField() {
         return this.presetNameField;
     }
 
-    GuiTextField presetNameField(GuiTextField value) {
+    HologramMuiTextField presetNameField(HologramMuiTextField value) {
         this.presetNameField = value;
         return value;
     }
@@ -1319,7 +1300,7 @@ final class HologramUiLibrary {
 
     void initializeFields() {
         ui.library.presetNameField(
-            new GuiTextField(ui.host.font(), 457, 78, HologramScreenLayout.COMPACT_PANEL_WIDTH - 10, 16));
+            new HologramMuiTextField(ui.host.parent(), 457, 78, HologramScreenLayout.COMPACT_PANEL_WIDTH - 10, 16));
         ui.library.presetNameField()
             .setMaxStringLength(48);
         if (ui.session.state().data.getBoolean("virtual")) ui.library.presetNameField()

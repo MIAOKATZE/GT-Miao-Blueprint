@@ -6,9 +6,12 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipFile;
 
 import org.objectweb.asm.ClassReader;
@@ -29,6 +32,8 @@ public final class HologramV016ReleaseGuiBridgeProbe implements Opcodes {
     private static final String GUI_SCREEN = GUI + "Screen";
     private static final String FONT = "net/minecraft/client/gui/FontRenderer";
     private static final String MC = "net/minecraft/client/Minecraft";
+    // Runtime tasks supply ASM9; compilation also supports Forge's older ASM declarations.
+    private static final int MIGRATION_ASM = 9 << 16;
     public static final Map<String, Integer> CALLS = new LinkedHashMap<String, Integer>();
 
     public static void hit(String method) {
@@ -260,8 +265,12 @@ public final class HologramV016ReleaseGuiBridgeProbe implements Opcodes {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 3)
-            throw new IllegalArgumentException("normal.jar srg_merged_minecraft.jar forge_patched_minecraft.jar");
+        if (args.length == 4) {
+            migrationAbi(args);
+            return;
+        }
+        if (args.length != 3) throw new IllegalArgumentException(
+            "normal.jar srg_merged_minecraft.jar forge_patched_minecraft.jar [normal-mui2-2.3.92.jar]");
         Isolated loader = new Isolated();
         List<String> contract = new ArrayList<String>();
         ZipFile target = new ZipFile(new File(args[0]));
@@ -384,5 +393,174 @@ public final class HologramV016ReleaseGuiBridgeProbe implements Opcodes {
         json.append("]}");
         System.out.println(json);
         if (!status.equals("PASS")) System.exit(1);
+    }
+
+    /** Reads actual release/library bytes. This route deliberately defines no fixture classes. */
+    private static void migrationAbi(String[] args) throws Exception {
+        final Map<String, ClassReader> classes = new LinkedHashMap<String, ClassReader>();
+        final List<String> screens = new ArrayList<String>();
+        final Set<String> libraries = new HashSet<String>();
+        for (int input : new int[] { 1, 2, 3, 0 }) {
+            try (ZipFile zip = new ZipFile(args[input])) {
+                Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
+                while (entries.hasMoreElements()) {
+                    String name = entries.nextElement()
+                        .getName();
+                    if (!name.endsWith(".class")) continue;
+                    String type = name.substring(0, name.length() - 6);
+                    ClassReader actual = new ClassReader(entry(zip, type));
+                    if (input == 2) {
+                        classes.put("forgepatch/" + type, actual);
+                        if (!classes.containsKey(type)) classes.put(type, actual);
+                    } else classes.put(type, actual);
+                    if (input == 3 && type.startsWith("com/cleanroommc/modularui/")) libraries.add(type);
+                    if (input == 0 && type.startsWith(BASE)
+                        && (type.endsWith("Screen") || type.startsWith(BASE + "HologramMui")
+                            || type.startsWith(BASE + "HologramUi")))
+                        screens.add(type);
+                }
+                if (input == 3) {
+                    if (zip.getEntry("mcmod.info") == null) throw new AssertionError("MUI2 mod metadata missing");
+                    java.io.InputStream in = zip.getInputStream(zip.getEntry("mcmod.info"));
+                    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                    try {
+                        byte[] b = new byte[4096];
+                        int n;
+                        while ((n = in.read(b)) >= 0) out.write(b, 0, n);
+                    } finally {
+                        in.close();
+                    }
+                    if (!new String(out.toByteArray(), "UTF-8").contains("2.3.92"))
+                        throw new AssertionError("Actual MUI2 2.3.92 normal library required");
+                }
+            }
+        }
+        if (!libraries.contains("com/cleanroommc/modularui/screen/GuiScreenWrapper"))
+            throw new AssertionError("Actual MUI2 wrapper absent");
+        if (!inherits(classes, SCREEN, "com/cleanroommc/modularui/screen/GuiScreenWrapper", new HashSet<String>()))
+            throw new AssertionError("Workstation does not use the actual MUI2 wrapper");
+        List<String[]> ports;
+        try (ZipFile target = new ZipFile(args[0])) {
+            ports = interfaceMethods(entry(target, HOST));
+        }
+        if (ports.size() != 9) throw new AssertionError("Review changed Host contract: " + ports.size());
+        for (String[] port : ports) {
+            Integer access = declaredMember(required(classes, SCREEN), port[0], port[1], false);
+            if (access == null || (access & (ACC_PUBLIC | ACC_STATIC | ACC_ABSTRACT)) != ACC_PUBLIC)
+                throw new AssertionError("Normal Screen lacks explicit concrete Host port " + port[0] + port[1]);
+        }
+        final Set<String> checked = new HashSet<String>();
+        final List<String> failures = new ArrayList<String>();
+        for (final String screen : screens) {
+            required(classes, screen).accept(new ClassVisitor(MIGRATION_ASM) {
+
+                @Override
+                public MethodVisitor visitMethod(int a, final String n, String d, String s, String[] e) {
+                    return new MethodVisitor(MIGRATION_ASM) {
+
+                        private void check(String owner, String name, String desc, boolean field) {
+                            if (!owner.startsWith(BASE) && !owner.startsWith("net/minecraft/")
+                                && !owner.startsWith("com/cleanroommc/modularui/")) return;
+                            String key = owner + "." + name + desc;
+                            checked.add(key);
+                            if (!resolves(classes, owner, name, desc, field, new HashSet<String>()))
+                                failures.add(screen + "." + n + " -> unresolved " + key);
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String name, String desc, boolean itf) {
+                            check(owner, name, desc, false);
+                        }
+
+                        @Override
+                        public void visitFieldInsn(int op, String owner, String name, String desc) {
+                            check(owner, name, desc, true);
+                        }
+
+                        @Override
+                        public void visitTypeInsn(int op, String type) {
+                            if (type.equals("net/minecraft/client/gui/GuiButton")
+                                || type.equals("net/minecraft/client/gui/GuiTextField"))
+                                failures.add(screen + "." + n + " uses vanilla control " + type);
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+        if (screens.size() < 6 || checked.size() < 10) throw new AssertionError("Migration surface was not inspected");
+        Collections.sort(screens);
+        System.out.println(
+            "{\"status\":" + quote(failures.isEmpty() ? "PASS" : "FAIL")
+                + ",\"scope\":\"actual unchanged normal GTMB and MUI2 2.3.92 bytes; static inheritance/member ABI witness; no class loading, FML, GL or native GUI claim\""
+                + ",\"passed\":"
+                + (failures.isEmpty() ? 9 : 0)
+                + ",\"hostPorts\":9,\"mui2Version\":\"2.3.92\""
+                + ",\"referencesChecked\":"
+                + checked.size()
+                + ",\"screens\":"
+                + quote(screens.toString())
+                + ",\"targetBytesModified\":false,\"fixtureClassesDefined\":false,\"failures\":"
+                + quote(failures.toString())
+                + "}");
+        if (!failures.isEmpty()) throw new AssertionError(failures.toString());
+    }
+
+    private static ClassReader required(Map<String, ClassReader> classes, String type) {
+        ClassReader reader = classes.get(type);
+        if (reader == null) throw new AssertionError("Actual input class missing: " + type);
+        return reader;
+    }
+
+    private static Integer declaredMember(ClassReader reader, final String name, final String desc, boolean field) {
+        final Integer[] found = { null };
+        reader.accept(new ClassVisitor(MIGRATION_ASM) {
+
+            @Override
+            public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                if (!field && n.equals(name) && d.equals(desc)) found[0] = a;
+                return null;
+            }
+
+            @Override
+            public FieldVisitor visitField(int a, String n, String d, String s, Object v) {
+                if (field && n.equals(name) && d.equals(desc)) found[0] = a;
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return found[0];
+    }
+
+    private static boolean resolves(Map<String, ClassReader> classes, String owner, String name, String desc,
+        boolean field, Set<String> seen) {
+        if (owner == null || !seen.add(owner)) return false;
+        ClassReader reader = classes.get(owner);
+        if (reader == null && owner.startsWith("java/")) {
+            try (java.io.InputStream in = ClassLoader.getSystemResourceAsStream(owner + ".class")) {
+                if (in != null) {
+                    reader = new ClassReader(in);
+                    classes.put(owner, reader);
+                }
+            } catch (java.io.IOException failure) {
+                throw new IllegalStateException("Cannot inspect actual JDK ABI " + owner, failure);
+            }
+        }
+        if (reader == null) return false;
+        if (declaredMember(reader, name, desc, field) != null) return true;
+        ClassReader patched = classes.get("forgepatch/" + owner);
+        if (patched != null && declaredMember(patched, name, desc, field) != null) return true;
+        if (name.equals("<init>")) return false;
+        if (resolves(classes, reader.getSuperName(), name, desc, field, seen)) return true;
+        for (String itf : reader.getInterfaces()) if (resolves(classes, itf, name, desc, field, seen)) return true;
+        return false;
+    }
+
+    private static boolean inherits(Map<String, ClassReader> classes, String owner, String parent, Set<String> seen) {
+        if (parent.equals(owner)) return true;
+        if (owner == null || !seen.add(owner)) return false;
+        ClassReader reader = classes.get(owner);
+        if (reader == null) return false;
+        if (inherits(classes, reader.getSuperName(), parent, seen)) return true;
+        for (String itf : reader.getInterfaces()) if (inherits(classes, itf, parent, seen)) return true;
+        return false;
     }
 }

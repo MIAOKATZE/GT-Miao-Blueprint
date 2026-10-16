@@ -544,8 +544,7 @@ public final class HologramGuidanceNativeClientProbe {
 
     private void pointer(HologramScreen screen, int id) {
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
         pointerActions++;
     }
 

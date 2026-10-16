@@ -1,6 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -11,7 +10,6 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -95,7 +93,7 @@ public final class HologramV011ProcessingClientProbe {
                     && data.getBoolean("blueprintNbtAll"),
                 "native author Save preserves the reviewed full NBT and cover choices");
 
-            GuiTextField target = (GuiTextField) ((Object) HologramUiDiagnostics
+            HologramMuiTextField target = (HologramMuiTextField) ((Object) HologramUiDiagnostics
                 .readDiagnosticField(screen, "presetNameField"));
             require(target != null, "real author name field exists");
 
@@ -104,33 +102,21 @@ public final class HologramV011ProcessingClientProbe {
                 + Math.round((target.xPosition + 4) * scale);
             int y = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
                 + Math.round((target.yPosition + 7) * scale);
-            screen.mouseClicked(x, y, 0);
-            screen.mouseMovedOrUp(x, y, 0);
+            HologramMuiProbeInput.click(screen, x, y, 0);
             nativeMouseEvents++;
             require(target.isFocused(), "native mouse focuses actual author name field");
             ControlKey control = controlKey();
             keyboardWitness = control.witness;
             try {
                 control.set(true);
-                screen.keyTyped('\u0001', Keyboard.KEY_A);
+                HologramMuiProbeInput.key(screen, '\u0001', Keyboard.KEY_A);
                 require(
                     target.getText()
                         .equals(target.getSelectedText()),
                     "native Ctrl+A selects author name");
                 control.set(false);
-                Method injectText = null;
-                Constructor<?> textEvent = null;
-                try {
-                    Class<?> input = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents");
-                    Class<?> event = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents$TextEvent");
-                    injectText = input.getMethod("injectTextEvent", event);
-                    textEvent = event.getConstructor(String.class);
-                } catch (ClassNotFoundException vanillaInput) {
-                    // Vanilla consumes characters directly; the normal pack also queues native LWJGL3 text events.
-                }
                 for (char character : name.toCharArray()) {
-                    if (injectText != null) injectText.invoke(null, textEvent.newInstance(String.valueOf(character)));
-                    screen.keyTyped(character, 0);
+                    HologramMuiProbeInput.key(screen, character, 0);
                 }
                 nativeKeyEvents += name.length() + 1;
             } finally {
@@ -493,8 +479,7 @@ public final class HologramV011ProcessingClientProbe {
                     + ui.getLong("renderGeneration"));
         }
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
         nativeMouseEvents++;
         lastMouseControl = id;
     }

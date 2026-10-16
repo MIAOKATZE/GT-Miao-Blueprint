@@ -538,8 +538,7 @@ final class HologramUiAeReview {
             if (!preview.getString("token")
                 .isEmpty() && next.session.equals(preview.getString("session"))) {
                 aePreviewTransition = true;
-                ui.host.minecraft()
-                    .displayGuiScreen(new HologramAeContainerScreen(ui.host.parent(), preview));
+                new HologramAeContainerScreen(ui.host.parent(), preview).open();
             } else ui.session.notice(next.data.getString("status"));
         }
     }

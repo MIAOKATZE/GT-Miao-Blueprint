@@ -1,0 +1,13 @@
+gtmb.hologram.cut.name.title=命名並確認剪下
+gtmb.hologram.cut.name.label=剪下暫存名稱
+gtmb.hologram.cut.name.default=暫時剪下
+gtmb.hologram.cut.name.hint=儲存後才會移走選區。後續自動命名仍會確認範圍。
+gtmb.hologram.cut.name.cancel=取消
+gtmb.hologram.cut.name.save=儲存
+gtmb.hologram.cut.name.saveWithoutPrompt=不再提示並儲存
+gtmb.hologram.cut.name.invalid=名稱須不超過64個字元，且不含控制符號或格式碼。
+gtmb.hologram.cut.placement.confirmWithoutPrompt=確認且以後不再提醒
+gtmb.hologram.cut.idle=剪下模式 · 暫無快取 · 右鍵：剪下清單 · Shift + Alt + 右鍵：框選剪下
+gtmb.hologram.cut.emptyPreview=暫無剪下快取；Shift + Alt + 右鍵框選剪下，或右鍵開啟剪下清單。
+gtmb.hologram.cut.exited=已退出剪下活動，快取仍保留在剪下清單中。
+gtmb.hologram.cut.cutModeHint=剪下模式 · Ctrl + Shift + 右鍵：切換藍圖 / 剪下

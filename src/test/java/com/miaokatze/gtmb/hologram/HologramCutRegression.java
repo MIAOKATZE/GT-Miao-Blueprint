@@ -50,6 +50,8 @@ public final class HologramCutRegression {
             wire.setInteger("x1", -20);
             wire.setInteger("y1", 80);
             wire.setInteger("z1", 42);
+            wire.setString("name", "原料缓存 / Raw cache");
+            wire.setBoolean(HologramCutNaming.SKIP_PROMPT, true);
             ByteBuf encoded = Unpooled.buffer();
             try {
                 new HologramNetwork.CutAction(wire).toBytes(encoded);
@@ -118,6 +120,23 @@ public final class HologramCutRegression {
                 "native network identity retained");
             SimpleAssert.eq(10, tile.getInteger("x"), "original tile snapshot remains immutable");
             NBTTagCompound entry = new NBTTagCompound();
+            entry.setLong("sequence", 7);
+            SimpleAssert.eq(
+                "剪切 #7",
+                HologramCutEntry.directory(entry)
+                    .getString("name"),
+                "old entries retain automatic names");
+            SimpleAssert.eq("缓存", HologramCutNaming.checkedName("  缓存  "), "names trim surrounding whitespace");
+            SimpleAssert.eq(
+                64,
+                HologramCutNaming.checkedName(new String(new char[64]).replace('\0', 'a'))
+                    .length(),
+                "maximum name remains accepted");
+            rejected(
+                () -> HologramCutNaming.checkedName(new String(new char[65]).replace('\0', 'a')),
+                "oversized name");
+            rejected(() -> HologramCutNaming.checkedName("unsafe\nname"), "name control characters");
+            rejected(() -> HologramCutNaming.checkedName("\u00a7cname"), "name formatting escapes");
             entry.setString(
                 "id",
                 UUID.randomUUID()
@@ -152,6 +171,53 @@ public final class HologramCutRegression {
             UUID owner = UUID.randomUUID();
             HologramCutStorage store = new HologramCutStorage(directory, owner);
             NBTTagCompound state = store.load();
+            SimpleAssert.that(!HologramCutNaming.skipsPrompt(state), "old and missing preferences continue prompting");
+            SimpleAssert.that(!HologramCutPlacementPreference.skipsPrompt(state), "old saves still confirm placement");
+            NBTTagCompound placementChoice = new NBTTagCompound();
+            placementChoice.setString("action", "paste");
+            placementChoice.setBoolean(HologramCutPlacementPreference.SKIP_PROMPT, true);
+            HologramCutPlacementPreference.validate(placementChoice);
+            SimpleAssert.that(
+                !HologramCutPlacementPreference.skipsPrompt(state),
+                "a proposed or cancelled choice cannot save a placement preference");
+            NBTTagCompound ordinaryPaste = new NBTTagCompound();
+            ordinaryPaste.setString("action", "paste");
+            HologramCutPlacementPreference.remember(state, ordinaryPaste);
+            SimpleAssert.that(
+                !HologramCutPlacementPreference.skipsPrompt(state),
+                "ordinary confirmation retains future prompts");
+            NBTTagCompound placementOnly = new NBTTagCompound();
+            HologramCutPlacementPreference.remember(placementOnly, placementChoice);
+            SimpleAssert.that(
+                HologramCutPlacementPreference.skipsPrompt(placementOnly)
+                    && !HologramCutNaming.skipsPrompt(placementOnly),
+                "placement opt-out does not disable cut naming");
+            for (String invalidAction : new String[] { "cut", "undo", "list", "preview" }) {
+                NBTTagCompound invalidChoice = (NBTTagCompound) placementChoice.copy();
+                invalidChoice.setString("action", invalidAction);
+                rejected(
+                    () -> HologramCutPlacementPreference.validate(invalidChoice),
+                    "non-paste placement preference " + invalidAction);
+            }
+            NBTTagCompound invalidType = (NBTTagCompound) placementChoice.copy();
+            invalidType.setString(HologramCutPlacementPreference.SKIP_PROMPT, "true");
+            rejected(() -> HologramCutPlacementPreference.validate(invalidType), "non-boolean placement preference");
+            NBTTagCompound normalSave = new NBTTagCompound();
+            normalSave.setString("name", "普通保存");
+            HologramCutNaming.apply(state, new NBTTagCompound(), normalSave);
+            SimpleAssert.that(!HologramCutNaming.skipsPrompt(state), "ordinary save does not disable naming prompt");
+            HologramCutNaming.apply(state, entry, wire);
+            SimpleAssert.that(
+                !HologramCutPlacementPreference.skipsPrompt(state),
+                "naming opt-out does not disable placement confirmation");
+            HologramCutPlacementPreference.remember(state, placementChoice);
+            SimpleAssert.eq(
+                "原料缓存 / Raw cache",
+                HologramCutEntry.directory(entry)
+                    .getString("name"),
+                "directory preserves custom name");
+            SimpleAssert
+                .that(HologramCutNaming.skipsPrompt(state), "explicit skip choice is part of pending durable state");
             state.getTagList("entries", 10)
                 .appendTag(entry);
             NBTTagCompound journal = new NBTTagCompound();
@@ -161,6 +227,12 @@ public final class HologramCutRegression {
             journal.setString("consumeId", entry.getString("id"));
             state.setTag("pending", journal);
             store.save(state);
+            SimpleAssert.that(
+                HologramCutNaming.skipsPrompt(store.load()),
+                "naming preference survives storage reload with journal");
+            SimpleAssert.that(
+                HologramCutPlacementPreference.skipsPrompt(store.load()),
+                "placement preference survives storage reload with journal");
             SimpleAssert.that(
                 state.equals(new HologramCutStorage(directory, owner).load()),
                 "raw entry and incomplete transaction survive new storage instance");
@@ -175,6 +247,8 @@ public final class HologramCutRegression {
             Files.createDirectory(deniedTemporary);
             NBTTagCompound damagedAttempt = (NBTTagCompound) state.copy();
             damagedAttempt.removeTag("entries");
+            damagedAttempt.setBoolean(HologramCutNaming.SKIP_PROMPT, false);
+            damagedAttempt.setBoolean(HologramCutPlacementPreference.SKIP_PROMPT, false);
             rejected(() -> store.save(damagedAttempt), "failed pre-mutation persistence is reported");
             SimpleAssert.that(
                 state.equals(store.load()),
@@ -186,12 +260,31 @@ public final class HologramCutRegression {
                     .getTagList("entries", 10)
                     .tagCount(),
                 "authenticated owners have independent queues");
+            SimpleAssert.that(
+                !HologramCutNaming.skipsPrompt(new HologramCutStorage(directory, UUID.randomUUID()).load()),
+                "another owner does not inherit naming preference");
+            SimpleAssert.that(
+                !HologramCutNaming.skipsPrompt(new HologramCutStorage(directory.resolve("other-save"), owner).load()),
+                "same owner in another save does not inherit naming preference");
+            SimpleAssert.that(
+                !HologramCutPlacementPreference
+                    .skipsPrompt(new HologramCutStorage(directory, UUID.randomUUID()).load()),
+                "another owner does not inherit placement preference");
+            SimpleAssert.that(
+                !HologramCutPlacementPreference
+                    .skipsPrompt(new HologramCutStorage(directory.resolve("other-save"), owner).load()),
+                "same owner in another save does not inherit placement preference");
             state.removeTag("pending");
             store.save(state);
             SimpleAssert.that(
                 !store.load()
                     .hasKey("pending"),
                 "atomic commit clears journal only after explicit completion");
+            SimpleAssert
+                .that(HologramCutNaming.skipsPrompt(store.load()), "journal completion retains naming preference");
+            SimpleAssert.that(
+                HologramCutPlacementPreference.skipsPrompt(store.load()),
+                "journal completion retains placement preference");
             Files.delete(
                 directory.resolve("gtmb-cut")
                     .resolve(owner + ".nbt"));

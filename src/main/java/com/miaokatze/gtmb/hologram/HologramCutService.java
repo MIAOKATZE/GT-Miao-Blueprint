@@ -101,6 +101,9 @@ public final class HologramCutService {
                         "action",
                         "requestId",
                         "id",
+                        "name",
+                        HologramCutNaming.SKIP_PROMPT,
+                        HologramCutPlacementPreference.SKIP_PROMPT,
                         "x1",
                         "y1",
                         "z1",
@@ -114,8 +117,15 @@ public final class HologramCutService {
                         "turnX",
                         "turnZ",
                         "mirror")
-                    .contains(name)) throw new IOException("剪切请求只能包含操作、坐标和条目编号");
+                    .contains(name)) throw new IOException("剪切请求只能包含操作、坐标、名称和条目编号");
             }
+            if (request.hasKey("name") && (!"cut".equals(request.getString("action")) || !request.hasKey("name", 8)))
+                throw new IOException("只有剪切操作可以提交文本名称");
+            if (request.hasKey(HologramCutNaming.SKIP_PROMPT)
+                && (!"cut".equals(request.getString("action")) || !request.hasKey(HologramCutNaming.SKIP_PROMPT, 1)))
+                throw new IOException("只有剪切操作可以保存命名偏好");
+            if ("cut".equals(request.getString("action"))) HologramCutNaming.checkedName(request.getString("name"));
+            HologramCutPlacementPreference.validate(request);
             String requestId = UUID.fromString(request.getString("requestId"))
                 .toString();
             if (!requestId.equals(request.getString("requestId"))) throw new IOException("无效剪切请求编号");
@@ -169,6 +179,7 @@ public final class HologramCutService {
                         long sequence = state.getLong("sequence") + 1;
                         state.setLong("sequence", sequence);
                         entry.setLong("sequence", sequence);
+                        HologramCutNaming.apply(state, entry, request);
                         state.getTagList("entries", 10)
                             .appendTag(entry);
                     } else {
@@ -190,6 +201,7 @@ public final class HologramCutService {
                             entry.getInteger("sizeY"),
                             entry.getInteger("sizeZ"));
                     }
+                    HologramCutPlacementPreference.remember(state, request);
                     NBTTagCompound done = new NBTTagCompound();
                     done.setString("id", requestId);
                     state.getTagList("requests", 10)
@@ -308,6 +320,9 @@ public final class HologramCutService {
     }
 
     private static void directory(NBTTagCompound response, NBTTagCompound state) {
+        response.setBoolean(HologramCutNaming.SKIP_PROMPT, HologramCutNaming.skipsPrompt(state));
+        response
+            .setBoolean(HologramCutPlacementPreference.SKIP_PROMPT, HologramCutPlacementPreference.skipsPrompt(state));
         NBTTagList entries = new NBTTagList();
         NBTTagList raw = state.getTagList("entries", 10);
         for (int i = 0; i < raw.tagCount(); i++) entries.appendTag(HologramCutEntry.directory(raw.getCompoundTagAt(i)));

@@ -6,7 +6,6 @@ import static net.minecraft.client.gui.Gui.*;
 import java.util.ArrayList;
 import java.util.List;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -29,7 +28,7 @@ final class HologramUiAnnotations {
 
     private int versionsOffset;
 
-    private GuiTextField promptField;
+    private HologramMuiTextField promptField;
 
     private HologramState annotationState;
 
@@ -438,11 +437,11 @@ final class HologramUiAnnotations {
         return value;
     }
 
-    GuiTextField promptField() {
+    HologramMuiTextField promptField() {
         return this.promptField;
     }
 
-    GuiTextField promptField(GuiTextField value) {
+    HologramMuiTextField promptField(HologramMuiTextField value) {
         this.promptField = value;
         return value;
     }
@@ -466,7 +465,7 @@ final class HologramUiAnnotations {
     }
 
     void initializeFields() {
-        ui.annotations.promptField(new GuiTextField(ui.host.font(), 62, 129, 354, 18));
+        ui.annotations.promptField(new HologramMuiTextField(ui.host.parent(), 62, 129, 354, 18));
         ui.annotations.promptField()
             .setMaxStringLength(1024);
         ui.annotations.promptField()

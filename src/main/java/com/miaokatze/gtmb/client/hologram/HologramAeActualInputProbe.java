@@ -32,7 +32,7 @@ final class HologramAeActualInputProbe {
             return false;
         }
         // The production mouse route handles the drawn control's enabled/modal gates.
-        screen.smokeClickControl(id);
+        HologramMuiProbeInput.control(screen, id);
         lastMouseFrame = renderedFrame;
         return true;
     }
@@ -60,8 +60,8 @@ final class HologramAeActualInputProbe {
         ItemStack sample = mc.thePlayer.inventory.mainInventory[sourceIndex];
         require(sample != null, "prepared real player sample slot is empty");
         HologramAePreviewModel before = screen.smokeModel();
-        screen.smokeMouseButton(source[0], source[1], 0, true);
-        screen.smokeMouseButton(target[0], target[1], 0, false);
+        HologramMuiProbeInput.press(screen, source[0], source[1], 0);
+        HologramMuiProbeInput.release(screen, target[0], target[1], 0);
         lastMouseFrame = renderedFrame;
         require(screen.smokePendingSequence() >= 1, "actual backpack drag did not dispatch a request");
         return new EditWitness(before, slotId, screen.smokePendingSequence(), sample);
@@ -88,15 +88,15 @@ final class HologramAeActualInputProbe {
         if (sample == null) return null; // Caller retains its stage, applies bounded timeout and real search/page
                                          // inputs.
         HologramAePreviewModel before = screen.smokeModel();
-        screen.smokeMouseButton(sx, sy, 0, true);
-        screen.smokeMouseButton(target[0], target[1], 0, false);
+        HologramMuiProbeInput.press(screen, sx, sy, 0);
+        HologramMuiProbeInput.release(screen, target[0], target[1], 0);
         lastMouseFrame = renderedFrame;
         require(screen.smokePendingSequence() >= 1, "actual public NEI sample drag did not dispatch a request");
         return new EditWitness(before, slotId, screen.smokePendingSequence(), sample);
     }
 
     void exitWithKey(HologramAeContainerScreen screen, char character, int key) {
-        screen.keyTyped(character, key);
+        HologramMuiProbeInput.key(screen, character, key);
     }
 
     static final class EditWitness {
@@ -209,8 +209,8 @@ final class HologramAeActualInputProbe {
     }
 
     private static void mouse(HologramAeContainerScreen screen, int[] point, int button) {
-        screen.smokeMouseButton(point[0], point[1], button, true);
-        screen.smokeMouseButton(point[0], point[1], button, false);
+        HologramMuiProbeInput.press(screen, point[0], point[1], button);
+        HologramMuiProbeInput.release(screen, point[0], point[1], button);
     }
 
     private static void require(boolean condition, String message) {

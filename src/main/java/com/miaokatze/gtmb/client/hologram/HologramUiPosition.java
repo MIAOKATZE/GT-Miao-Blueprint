@@ -3,7 +3,6 @@ package com.miaokatze.gtmb.client.hologram;
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
 import static net.minecraft.client.gui.Gui.*;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.NBTTagCompound;
 
 /** Internal position workflow; composed by the workstation, never part of the mod extension API. */
@@ -15,16 +14,16 @@ final class HologramUiPosition {
         this.ui = ui;
     }
 
-    private GuiTextField positionXField;
+    private HologramMuiTextField positionXField;
 
-    private GuiTextField positionYField;
+    private HologramMuiTextField positionYField;
 
-    private GuiTextField positionZField;
+    private HologramMuiTextField positionZField;
 
     private boolean positionDrawer;
 
-    GuiTextField positionField(int x) {
-        GuiTextField field = new GuiTextField(ui.host.font(), x, 116, 70, 18);
+    HologramMuiTextField positionField(int x) {
+        HologramMuiTextField field = new HologramMuiTextField(ui.host.parent(), x, 116, 70, 18);
         field.setMaxStringLength(11);
         field.setText("0");
         return field;
@@ -98,29 +97,29 @@ final class HologramUiPosition {
         return value;
     }
 
-    GuiTextField positionXField() {
+    HologramMuiTextField positionXField() {
         return this.positionXField;
     }
 
-    GuiTextField positionXField(GuiTextField value) {
+    HologramMuiTextField positionXField(HologramMuiTextField value) {
         this.positionXField = value;
         return value;
     }
 
-    GuiTextField positionYField() {
+    HologramMuiTextField positionYField() {
         return this.positionYField;
     }
 
-    GuiTextField positionYField(GuiTextField value) {
+    HologramMuiTextField positionYField(HologramMuiTextField value) {
         this.positionYField = value;
         return value;
     }
 
-    GuiTextField positionZField() {
+    HologramMuiTextField positionZField() {
         return this.positionZField;
     }
 
-    GuiTextField positionZField(GuiTextField value) {
+    HologramMuiTextField positionZField(HologramMuiTextField value) {
         this.positionZField = value;
         return value;
     }

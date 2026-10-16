@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -28,13 +27,13 @@ final class HologramUiConfiguration {
         this.ui = ui;
     }
 
-    private GuiTextField mainField;
+    private HologramMuiTextField mainField;
 
-    private GuiTextField channelNameField;
+    private HologramMuiTextField channelNameField;
 
-    private GuiTextField channelValueField;
+    private HologramMuiTextField channelValueField;
 
-    private GuiTextField optionValueField;
+    private HologramMuiTextField optionValueField;
 
     private boolean sourceDrawer;
 
@@ -1435,20 +1434,20 @@ final class HologramUiConfiguration {
         return value;
     }
 
-    GuiTextField channelNameField() {
+    HologramMuiTextField channelNameField() {
         return this.channelNameField;
     }
 
-    GuiTextField channelNameField(GuiTextField value) {
+    HologramMuiTextField channelNameField(HologramMuiTextField value) {
         this.channelNameField = value;
         return value;
     }
 
-    GuiTextField channelValueField() {
+    HologramMuiTextField channelValueField() {
         return this.channelValueField;
     }
 
-    GuiTextField channelValueField(GuiTextField value) {
+    HologramMuiTextField channelValueField(HologramMuiTextField value) {
         this.channelValueField = value;
         return value;
     }
@@ -1489,11 +1488,11 @@ final class HologramUiConfiguration {
         return value;
     }
 
-    GuiTextField mainField() {
+    HologramMuiTextField mainField() {
         return this.mainField;
     }
 
-    GuiTextField mainField(GuiTextField value) {
+    HologramMuiTextField mainField(HologramMuiTextField value) {
         this.mainField = value;
         return value;
     }
@@ -1507,11 +1506,11 @@ final class HologramUiConfiguration {
         return value;
     }
 
-    GuiTextField optionValueField() {
+    HologramMuiTextField optionValueField() {
         return this.optionValueField;
     }
 
-    GuiTextField optionValueField(GuiTextField value) {
+    HologramMuiTextField optionValueField(HologramMuiTextField value) {
         this.optionValueField = value;
         return value;
     }
@@ -1557,20 +1556,20 @@ final class HologramUiConfiguration {
     }
 
     void initializeFields() {
-        ui.config.mainField(new GuiTextField(ui.host.font(), 271, 213, 55, 16));
+        ui.config.mainField(new HologramMuiTextField(ui.host.parent(), 271, 213, 55, 16));
         ui.config.mainField()
             .setMaxStringLength(10);
         ui.config.mainField()
             .setText(Integer.toString(ui.session.state().data.getInteger("main")));
-        ui.config.channelNameField(new GuiTextField(ui.host.font(), 165, 190, 150, 16));
+        ui.config.channelNameField(new HologramMuiTextField(ui.host.parent(), 165, 190, 150, 16));
         ui.config.channelNameField()
             .setMaxStringLength(48);
-        ui.config.channelValueField(new GuiTextField(ui.host.font(), 321, 190, 75, 16));
+        ui.config.channelValueField(new HologramMuiTextField(ui.host.parent(), 321, 190, 75, 16));
         ui.config.channelValueField()
             .setMaxStringLength(10);
         ui.config.channelValueField()
             .setText("1");
-        ui.config.optionValueField(new GuiTextField(ui.host.font(), 168, 232, 137, 16));
+        ui.config.optionValueField(new HologramMuiTextField(ui.host.parent(), 168, 232, 137, 16));
         ui.config.optionValueField()
             .setMaxStringLength(10);
     }

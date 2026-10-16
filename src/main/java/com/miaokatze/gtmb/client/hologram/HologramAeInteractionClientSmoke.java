@@ -8,7 +8,6 @@ import java.util.HashSet;
 import java.util.Set;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
@@ -96,7 +95,7 @@ final class HologramAeInteractionClientSmoke {
                 + (mc.currentScreen == null ? "world"
                     : mc.currentScreen.getClass()
                         .getName())
-                + (stage == 39 && mc.currentScreen instanceof HologramAeContainerScreen
+                + (stage == 39 && HologramAeContainerScreen.from(mc.currentScreen) != null
                     ? " navigation=" + childNavigationDiagnostic()
                     : ""));
         // A transient publication is retried before the stage performs any non-idempotent mouse/key input.
@@ -213,11 +212,11 @@ final class HologramAeInteractionClientSmoke {
                     if (HologramLibraryClient.dedicated()) beforeLocalFiles = localFiles();
                     busyBlockedTraffic = guard.customPackets();
                     signal("ae-busy-visible.txt");
-                    parent.smokeClickAt(oldSavePoint[0], oldSavePoint[1], 0);
-                    parent.smokeClickAt(oldPlacePoint[0], oldPlacePoint[1], 0);
+                    HologramMuiProbeInput.click(parent, oldSavePoint[0], oldSavePoint[1], 0);
+                    HologramMuiProbeInput.click(parent, oldPlacePoint[0], oldPlacePoint[1], 0);
                     int[] blockedEdit = previewScreenPoint(60, 110);
-                    parent.smokeClickAt(blockedEdit[0], blockedEdit[1], 0);
-                    parent.keyTyped((char) 127, Keyboard.KEY_DELETE);
+                    HologramMuiProbeInput.click(parent, blockedEdit[0], blockedEdit[1], 0);
+                    HologramMuiProbeInput.key(parent, (char) 127, Keyboard.KEY_DELETE);
                     screenshot("ae-real-import-busy-old-actions-hidden");
                     next(60);
                     break;
@@ -276,7 +275,7 @@ final class HologramAeInteractionClientSmoke {
                     parent.smokeSnapshot()
                         .getBoolean("areaImporting"),
                     "natural import window ended before user cancellation");
-                parent.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                HologramMuiProbeInput.key(parent, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                 busyCancelledWorldTick = receipt().getLong("tick");
                 next(61);
                 break;
@@ -419,7 +418,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(192)) next(14);
                 break;
             case 14:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 HologramAeContainerScreen blockedChild = child();
                 require(
                     blockedChild.smokeModel().x == issue.getInteger("x")
@@ -483,7 +482,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(179)) next(23);
                 break;
             case 23:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(
                     new File(receipts, "ae-preview-stage23-state.nbt"))) {
                     CompressedStreamTools.writeCompressed(parent.smokeSnapshot(), out);
@@ -579,18 +578,19 @@ final class HologramAeInteractionClientSmoke {
                 unfocusSearchByMouse();
                 int[] clonePoint = child().smokeSlotPoint(slotId);
                 require(clonePoint != null, "card marker disappeared before native clone input check");
-                child().smokeMouseButton(clonePoint[0], clonePoint[1], 2, true);
-                child().smokeMouseButton(clonePoint[0], clonePoint[1], 2, false);
-                child().keyTyped('1', Keyboard.KEY_1);
-                child().keyTyped('q', Keyboard.KEY_Q);
-                child().keyTyped(' ', Keyboard.KEY_SPACE);
+                HologramMuiProbeInput.click(child(), clonePoint[0], clonePoint[1], 2);
+                HologramMuiProbeInput.key(child(), '1', Keyboard.KEY_1);
+                HologramMuiProbeInput.key(child(), 'q', Keyboard.KEY_Q);
+                HologramMuiProbeInput.key(child(), ' ', Keyboard.KEY_SPACE);
                 originalScale = mc.gameSettings.guiScale;
                 mc.gameSettings.guiScale = originalScale == 1 ? 2 : 1;
                 net.minecraft.client.gui.ScaledResolution scaled = new net.minecraft.client.gui.ScaledResolution(
                     mc,
                     mc.displayWidth,
                     mc.displayHeight);
-                child().setWorldAndResolution(mc, scaled.getScaledWidth(), scaled.getScaledHeight());
+                child().getScreenWrapper()
+                    .getGuiScreen()
+                    .setWorldAndResolution(mc, scaled.getScaledWidth(), scaled.getScaledHeight());
                 next(36);
                 break;
             case 36:
@@ -600,9 +600,11 @@ final class HologramAeInteractionClientSmoke {
                     mc,
                     mc.displayWidth,
                     mc.displayHeight);
-                child().setWorldAndResolution(mc, restored.getScaledWidth(), restored.getScaledHeight());
+                child().getScreenWrapper()
+                    .getGuiScreen()
+                    .setWorldAndResolution(mc, restored.getScaledWidth(), restored.getScaledHeight());
                 unfocusSearchByMouse();
-                child().keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                HologramMuiProbeInput.key(child(), 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                 returnParentRender = parent.smokeRenderGeneration();
                 next(37);
                 break;
@@ -622,7 +624,7 @@ final class HologramAeInteractionClientSmoke {
                 }
                 break;
             case 39:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 require(child().smokeModel().x == 648, "Drive native preview binding mismatch");
                 if (!drivePreviewRecorded) {
                     System.out.println(
@@ -643,7 +645,7 @@ final class HologramAeInteractionClientSmoke {
                     mark(child(), slotId).getTagCompound()
                         .getLong("ic") == 0L,
                     "full storage contents leaked into the mark");
-                child().keyTyped((char) 0, Keyboard.KEY_ESCAPE);
+                HologramMuiProbeInput.key(child(), (char) 0, Keyboard.KEY_ESCAPE);
                 sourceIndex = 2;
                 next(41);
                 break;
@@ -656,7 +658,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(179)) next(43);
                 break;
             case 43:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 require(
                     child().smokeModel().x == fixture.getIntArray("aeSourceX")[sourceIndex],
                     "part host preview coordinate mismatch");
@@ -684,8 +686,7 @@ final class HologramAeInteractionClientSmoke {
                 int[] point = markers.getCompoundTagAt(0)
                     .getIntArray("screenPoint");
                 require(point.length == 2, "AE warning marker has no drawn hit coordinate");
-                parent.mouseClicked(point[0], point[1], 0);
-                parent.mouseMovedOrUp(point[0], point[1], 0);
+                HologramMuiProbeInput.click(parent, point[0], point[1], 0);
                 next(46);
                 break;
             case 46:
@@ -892,21 +893,22 @@ final class HologramAeInteractionClientSmoke {
 
     private void enterDraftName() throws Exception {
 
-        GuiTextField name = (GuiTextField) ((Object) HologramUiDiagnostics
+        HologramMuiTextField name = (HologramMuiTextField) ((Object) HologramUiDiagnostics
             .readDiagnosticField(parent, "presetNameField"));
-        name.setFocused(true);
-        key(Keyboard.KEY_LCONTROL, true);
-        parent.keyTyped((char) 1, Keyboard.KEY_A);
-        key(Keyboard.KEY_LCONTROL, false);
-        for (char c : "SocketAEV005".toCharArray()) parent.keyTyped(c, 0);
+        int[] point = previewScreenPoint(name.xPosition + 4, name.yPosition + 7);
+        HologramMuiProbeInput.click(parent, point[0], point[1], 0);
+        require(name.isFocused(), "actual mouse click did not focus the blueprint name");
+        HologramMuiProbeInput.key(parent, (char) 1, Keyboard.KEY_A);
+        for (char c : "SocketAEV005".toCharArray()) HologramMuiProbeInput.key(parent, c, 0);
         require("SocketAEV005".equals(name.getText()), "actual Ctrl+A name editing did not replace the previous name");
-        name.setFocused(false);
+        HologramMuiProbeInput.key(parent, '\r', Keyboard.KEY_RETURN);
+        require(!name.isFocused(), "actual Enter did not commit and release the blueprint name");
     }
 
     private void assertPreservedDraftName() throws Exception {
 
-        String name = ((GuiTextField) ((Object) HologramUiDiagnostics.readDiagnosticField(parent, "presetNameField")))
-            .getText();
+        String name = ((HologramMuiTextField) ((Object) HologramUiDiagnostics
+            .readDiagnosticField(parent, "presetNameField"))).getText();
         NBTTagCompound observed = parent.smokeLibraryUiState();
         observed.setString("draftName", name);
         observed.setString("expectedDraftName", "SocketAEV005");
@@ -946,8 +948,7 @@ final class HologramAeInteractionClientSmoke {
                 route.setTag("skippedCandidates", skipped);
                 route.setInteger("sourceIndex", index);
                 route.setTag("beforeUi", parent.smokeLibraryUiState());
-                parent.mouseClicked(actual[0], actual[1], 0);
-                parent.mouseMovedOrUp(actual[0], actual[1], 0);
+                HologramMuiProbeInput.click(parent, actual[0], actual[1], 0);
                 route.setIntArray("actualSelectedIndices", parent.smokeSelectedIndices());
                 route.setTag("afterUi", parent.smokeLibraryUiState());
                 writeSelectionObservation(route);
@@ -1347,13 +1348,10 @@ final class HologramAeInteractionClientSmoke {
         if (text.equals(search) && text.equals(LayoutManager.searchField.text())) return true;
         int x = LayoutManager.searchField.x + LayoutManager.searchField.w / 2;
         int y = LayoutManager.searchField.y + LayoutManager.searchField.h / 2;
-        child().smokeMouseButton(x, y, 0, true);
-        child().smokeMouseButton(x, y, 0, false);
+        HologramMuiProbeInput.click(child(), x, y, 0);
         require(LayoutManager.searchField.focused(), "actual NEI search click failed to focus");
-        key(Keyboard.KEY_LCONTROL, true);
-        child().keyTyped((char) 1, Keyboard.KEY_A);
-        key(Keyboard.KEY_LCONTROL, false);
-        for (char c : text.toCharArray()) child().keyTyped(c, 0);
+        HologramMuiProbeInput.key(child(), (char) 1, Keyboard.KEY_A);
+        for (char c : text.toCharArray()) HologramMuiProbeInput.key(child(), c, 0);
         require(
             text.equals(LayoutManager.searchField.text()),
             "actual NEI search typing did not populate the public search field");
@@ -1364,9 +1362,11 @@ final class HologramAeInteractionClientSmoke {
 
     private void unfocusSearchByMouse() {
         // Title-band click follows the production outside-slot route and releases the public NEI search focus.
-        int x = (child().width - 256) / 2 + 10, y = (child().height - 238) / 2 + 10;
-        child().smokeMouseButton(x, y, 0, true);
-        child().smokeMouseButton(x, y, 0, false);
+        int x = child().getMainPanel()
+            .getArea().x + 10,
+            y = child().getMainPanel()
+                .getArea().y + 10;
+        HologramMuiProbeInput.click(child(), x, y, 0);
         require(
             LayoutManager.searchField == null || !LayoutManager.searchField.focused(),
             "actual title-band click failed to release NEI search focus");
@@ -1458,9 +1458,9 @@ final class HologramAeInteractionClientSmoke {
 
     private HologramAeContainerScreen child() {
         require(
-            Minecraft.getMinecraft().currentScreen instanceof HologramAeContainerScreen,
+            HologramAeContainerScreen.from(Minecraft.getMinecraft().currentScreen) != null,
             "actual AE child screen required");
-        return (HologramAeContainerScreen) Minecraft.getMinecraft().currentScreen;
+        return HologramAeContainerScreen.from(Minecraft.getMinecraft().currentScreen);
     }
 
     private ItemStack sample(String key) {

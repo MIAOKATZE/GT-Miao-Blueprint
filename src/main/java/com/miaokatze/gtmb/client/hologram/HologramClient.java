@@ -34,6 +34,7 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
+import cpw.mods.fml.common.gameevent.InputEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
 /** Registered only by ClientProxy; the common network receiver never links client classes. */
@@ -487,6 +488,11 @@ public final class HologramClient {
         HologramNetwork.sendAction(request);
     }
 
+    @SubscribeEvent
+    public void cutWorldKey(InputEvent.KeyInputEvent event) {
+        HologramCutClient.INSTANCE.keyInput();
+    }
+
     /** Intercept only the world's pause menu; chat and other screens retain their own Escape behavior. */
     @SubscribeEvent
     public void worldEscape(GuiOpenEvent event) {
@@ -730,8 +736,10 @@ public final class HologramClient {
                 if (same && screen.retainsPlacementReview(next)) screen.updateState(next);
                 else mc.displayGuiScreen(null);
             }
-        } else if (mc.currentScreen instanceof HologramAeContainerScreen && same) {
-            ((HologramAeContainerScreen) mc.currentScreen).updateState(next);
+        } else if (HologramAeContainerScreen.activeForSession(next.session) != null && same) {
+            // The MUI2 stack preserves this child while NEI temporarily owns the vanilla screen.
+            HologramAeContainerScreen.activeForSession(next.session)
+                .updateState(next);
         } else if (mc.currentScreen instanceof HologramScreen
             && (same || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
                 ((HologramScreen) mc.currentScreen).updateState(next);

@@ -72,20 +72,28 @@ abstract class ReleaseGuiBridgeArguments : CommandLineArgumentProvider {
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val forgeRuntime: RegularFileProperty
 
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val muiRuntime: RegularFileProperty
+
     override fun asArguments(): Iterable<String> = listOf(
         normalJar.get().asFile.absolutePath,
         srgRuntime.get().asFile.absolutePath,
-        forgeRuntime.get().asFile.absolutePath
+        forgeRuntime.get().asFile.absolutePath,
+        muiRuntime.get().asFile.absolutePath
     )
 }
 
 val releaseGuiBridgeAsm = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8"))
+val releaseGuiMuiRuntime = configurations.detachedConfiguration(
+    dependencies.create("com.github.GTNewHorizons:ModularUI2:2.3.92-1.7.10")
+).apply { isTransitive = false }
 val releaseGuiNormalJar = tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfJar").flatMap { it.archiveFile }
 val releaseGuiSrgRuntime = layout.buildDirectory.file("rfg/srg_merged_minecraft.jar")
 val releaseGuiForgeRuntime = layout.buildDirectory.file("rfg/recompiled_minecraft-1.7.10.jar")
 tasks.register<JavaExec>("runReleaseGuiBridgeTest") {
     group = "verification"
-    description = "Dispatches every UI host method from the unchanged normal reobfuscated JAR against an SRG ABI fixture."
+    description = "Verifies the normal projector UI ABI against the pinned normal MUI2 and SRG runtimes."
     dependsOn("reobfJar", "compileTestJava")
     mainClass = "com.miaokatze.gtmb.client.hologram.HologramV016ReleaseGuiBridgeProbe"
     // No main output/development engine is available to the isolated target loader.
@@ -94,6 +102,7 @@ tasks.register<JavaExec>("runReleaseGuiBridgeTest") {
         normalJar.set(releaseGuiNormalJar)
         srgRuntime.set(releaseGuiSrgRuntime)
         forgeRuntime.set(releaseGuiForgeRuntime)
+        muiRuntime.set(layout.file(providers.provider { releaseGuiMuiRuntime.singleFile }))
     })
 }
 tasks.named("check") { dependsOn("runReleaseGuiBridgeTest") }

@@ -382,7 +382,7 @@ public final class HologramInteractionClientSmoke {
                         "peer_tab_preserves_preview_selection");
                     closedAtWorldFrame = renderedWorldFrames;
                     closedAtServerTick = receipt().getLong("tick");
-                    screen.keyTyped('\0', Keyboard.KEY_ESCAPE);
+                    HologramMuiProbeInput.key(screen, '\0', Keyboard.KEY_ESCAPE);
                     require(mc.currentScreen == null, "Escape_from_blueprints_exits_whole_GUI");
                     stage = 61;
                     break;
@@ -393,7 +393,7 @@ public final class HologramInteractionClientSmoke {
                         "reopen_after_Escape_preserves_actual_mouse_selection");
                     closedAtWorldFrame = renderedWorldFrames;
                     closedAtServerTick = receipt().getLong("tick");
-                    screen.keyTyped('e', Keyboard.KEY_E);
+                    HologramMuiProbeInput.key(screen, 'e', Keyboard.KEY_E);
                     require(mc.currentScreen == null, "E_from_blueprints_exits_whole_GUI");
                     stage = 63;
                     break;
@@ -404,7 +404,7 @@ public final class HologramInteractionClientSmoke {
                         "reopen_after_E_preserves_actual_mouse_selection");
                     closedAtWorldFrame = renderedWorldFrames;
                     closedAtServerTick = receipt().getLong("tick");
-                    screen.keyTyped('e', Keyboard.KEY_E);
+                    HologramMuiProbeInput.key(screen, 'e', Keyboard.KEY_E);
                     require(mc.currentScreen == null, "blueprint_memory_E_closes_before_actual_controller_reopen");
                     stage = 95;
                     break;
@@ -641,15 +641,22 @@ public final class HologramInteractionClientSmoke {
                     break;
                 case 48:
                     if (!areaProcessing.tick(screen)) return;
-                    net.minecraft.client.gui.GuiTextField name = (net.minecraft.client.gui.GuiTextField) ((Object) HologramUiDiagnostics
+                    HologramMuiTextField name = (HologramMuiTextField) ((Object) HologramUiDiagnostics
                         .readDiagnosticField(screen, "presetNameField"));
-                    name.setFocused(true);
+                    int[] namePoint = (int[]) HologramUiDiagnostics.invokeDiagnostic(
+                        screen,
+                        "smokePreviewPoint",
+                        new Class<?>[] { int.class, int.class },
+                        name.xPosition + 4,
+                        name.yPosition + 7);
+                    HologramMuiProbeInput.click(screen, namePoint[0], namePoint[1], 0);
+                    require(name.isFocused(), "actual_mouse_focuses_blueprint_name");
                     keyboard(Keyboard.KEY_LCONTROL, true);
-                    screen.keyTyped((char) 1, Keyboard.KEY_A);
+                    HologramMuiProbeInput.key(screen, (char) 1, Keyboard.KEY_A);
                     keyboard(Keyboard.KEY_LCONTROL, false);
-                    screen.keyTyped('\b', Keyboard.KEY_BACK);
+                    HologramMuiProbeInput.key(screen, '\b', Keyboard.KEY_BACK);
                     for (char character : (sufficientBlueprintPass ? "SocketSufficient" : "SocketV004").toCharArray())
-                        screen.keyTyped(character, 0);
+                        HologramMuiProbeInput.key(screen, character, 0);
                     recordClickedFrame(screen);
                     stage = 68;
                     break;
@@ -717,7 +724,7 @@ public final class HologramInteractionClientSmoke {
                             ? HologramLibraryClient.INSTANCE.selected(false)
                             : state.getString("libraryLocalId");
                         require(libraryTab(screen), "saved_blueprint_shortcut_preserves_last_library_tab");
-                        screen.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                        HologramMuiProbeInput.key(screen, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                         require(mc.currentScreen == null, "quick_place_starts_from_actual_closed_workspace");
                         keyboard(Keyboard.KEY_LMENU, true);
                         rightClickSource(mc);
@@ -1041,8 +1048,7 @@ public final class HologramInteractionClientSmoke {
                         + Math.round(x * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
                     int mouseY = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
                         + Math.round(y * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
-                    screen.mouseClicked(mouseX, mouseY, 0);
-                    screen.mouseMovedOrUp(mouseX, mouseY, 0);
+                    HologramMuiProbeInput.click(screen, mouseX, mouseY, 0);
                     int[] selected = screen.smokeSelectedIndices();
                     require(
                         selected.length == 1 && selected[0] == index,
@@ -1116,8 +1122,7 @@ public final class HologramInteractionClientSmoke {
             + Math.round(logicalX * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
         int y = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
             + Math.round(logicalY * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
-        screen.mouseClicked(x, y, button);
-        screen.mouseMovedOrUp(x, y, button);
+        HologramMuiProbeInput.click(screen, x, y, button);
     }
 
     private void beginRepeatCompletedPlacement(Minecraft mc, HologramScreen screen, NBTTagCompound state, int nextStage)
@@ -1150,7 +1155,7 @@ public final class HologramInteractionClientSmoke {
         repeatCancelledTick = receipt().getLong("tick");
         aimedProjectionGeneration = "";
         saveObservation("post-complete-Alt-before-receipt-" + nextStage + ".nbt", receipt());
-        screen.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+        HologramMuiProbeInput.key(screen, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
         require(mc.currentScreen == null, "completed_placement_E_returns_to_world_before_Alt_repeat");
         stage = 83;
         waitTicks = 0;
@@ -1323,7 +1328,7 @@ public final class HologramInteractionClientSmoke {
             clearClickedFrame();
             waitTicks = 0;
             if (afterRepeatStage == 40) {
-                draft.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                HologramMuiProbeInput.key(draft, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                 require(mc.currentScreen == null, "sufficient_repeat_reopened_draft_actual_E_closes_before_next_area");
                 repeatCancelledTick = receipt().getLong("tick");
                 stage = 90;
@@ -2166,7 +2171,7 @@ public final class HologramInteractionClientSmoke {
         if (id == 55 && !placementReviewReady(screen)) throw new AwaitDraw();
         awaitControl(screen, id);
         if (id == 55) logConfirmClickState(screen, "before-native-mouse");
-        screen.smokeClickControl(id);
+        HologramMuiProbeInput.control(screen, id);
         if (id == 55) logConfirmClickState(screen, "after-native-mouse");
         recordClickedFrame(screen);
         System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] mouse control=" + id + " stage=" + stage);

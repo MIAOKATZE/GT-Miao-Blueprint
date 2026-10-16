@@ -36,6 +36,7 @@ final class HologramCutEntry {
 
     static NBTTagCompound capture(WorldServer world, int x, int y, int z, int sx, int sy, int sz) throws IOException {
         bounds(x, y, z, sx, sy, sz);
+        HologramCutChunks.loadWithLightNeighbors(world, x, z, sx, sz);
         NBTTagCompound entry = new NBTTagCompound();
         entry.setString(
             "id",
@@ -90,7 +91,8 @@ final class HologramCutEntry {
                 entry.getTag(key)
                     .copy());
         }
-        result.setString("name", "剪切 #" + entry.getLong("sequence"));
+        if (result.getString("name")
+            .isEmpty()) result.setString("name", "剪切 #" + entry.getLong("sequence"));
         return result;
     }
 

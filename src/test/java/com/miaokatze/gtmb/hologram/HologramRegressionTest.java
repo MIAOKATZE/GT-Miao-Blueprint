@@ -45,6 +45,7 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("cut_clipboard_preserves_raw_data_atomic_storage_and_packet_budgets", HologramCutRegression::run);
+        cases.put("cut_native_tile_read_has_world_and_preserves_registry_payload", HologramCutTilesRegression::run);
         cases.put(
             "cut_native_disk_readback_rejects_stale_blocks_tiles_and_relocated_chunks",
             HologramCutDiskRegression::run);
@@ -69,6 +70,12 @@ public final class HologramRegressionTest {
         cases.put(
             "workstation_host_ports_are_explicit_and_do_not_share_minecraft_method_names",
             com.miaokatze.gtmb.client.hologram.HologramUiHostRegression::run);
+        cases.put(
+            "projector_family_uses_native_mui2_controls_and_shared_pocket_textures",
+            com.miaokatze.gtmb.client.hologram.HologramMuiMigrationRegression::run);
+        cases.put(
+            "cut_storage_preview_fences_selection_lifecycle_and_late_raw_replies",
+            com.miaokatze.gtmb.client.hologram.HologramCutStoragePreviewRegression::run);
         cases.put(
             "preview_camera_wasd_follows_orientation_and_normalizes_motion",
             com.miaokatze.gtmb.client.hologram.HologramPreviewCameraRegression::run);

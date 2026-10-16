@@ -1,13 +1,12 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import net.minecraft.client.gui.GuiScreen;
-
 import org.lwjgl.input.Keyboard;
 
 /** Modal Shift switcher: all input stays in this screen until one release commits the choice. */
-final class HologramCutModeScreen extends GuiScreen {
+final class HologramCutModeScreen extends HologramMuiScreen {
 
-    private final HologramCutInput.Switcher choice = new HologramCutInput.Switcher();
+    private final HologramCutInput.Switcher choice = new HologramCutInput.Switcher(
+        HologramCutClient.INSTANCE.cutMode());
 
     @Override
     public void updateScreen() {
@@ -15,9 +14,47 @@ final class HologramCutModeScreen extends GuiScreen {
         mc.displayGuiScreen(null);
         if (choice.cut()) HologramCutClient.INSTANCE.beginSelection();
         else {
-            HologramCutClient.INSTANCE.cancel();
+            HologramCutClient.INSTANCE.chooseBlueprintMode();
             HologramClient.beginAreaSelection();
         }
+    }
+
+    HologramCutModeScreen() {
+        super("cut_modes", 360, 144);
+    }
+
+    @Override
+    protected void buildPanel() {
+        panel().child(HologramMuiTheme.label(() -> HologramCutClient.text("switcher"), 12, 10, 336, 20, 0xffffdb83));
+        for (int mode = 0; mode < 2; mode++) {
+            final boolean cut = mode == 1;
+            panel()
+                .child(
+                    HologramMuiTheme
+                        .button(
+                            () -> (choice.cut() == cut ? "▶ " : "")
+                                + HologramCutClient.text(cut ? "mode" : "blueprint"),
+                            12 + mode * 174,
+                            42,
+                            162,
+                            40,
+                            () -> {})
+                        .name("cut_mode_" + mode)
+                        .onMousePressed(button -> {
+                            if (button == 1 && HologramCutClient.shift()) choice.cycle();
+                            return true;
+                        }));
+        }
+        panel()
+            .child(HologramMuiTheme.label(() -> HologramCutClient.text("switcherHint"), 12, 94, 336, 40, 0xffb9ced8));
+    }
+
+    @Override
+    protected boolean muiKey(char character, int key) {
+        if (key != Keyboard.KEY_ESCAPE) return false;
+        choice.cancel();
+        mc.displayGuiScreen(null);
+        return true;
     }
 
     @Override
@@ -26,40 +63,9 @@ final class HologramCutModeScreen extends GuiScreen {
     }
 
     @Override
-    protected void keyTyped(char character, int key) {
-        if (key == Keyboard.KEY_ESCAPE) {
-            choice.cancel();
-            mc.displayGuiScreen(null);
-        }
-    }
-
-    @Override
-    public void drawScreen(int mouseX, int mouseY, float ticks) {
-        drawDefaultBackground();
-        int panelWidth = Math.min(480, width - 20), left = (width - panelWidth) / 2;
-        java.util.List<String> hints = fontRendererObj
-            .listFormattedStringToWidth(HologramCutClient.text("switcherHint"), panelWidth - 20);
-        int panelHeight = 88 + hints.size() * 11, top = (height - panelHeight) / 2;
-        drawRect(left, top, left + panelWidth, top + panelHeight, 0xee17232b);
-        drawCenteredString(fontRendererObj, HologramCutClient.text("switcher"), width / 2, top + 10, 0xffffff);
-        int half = panelWidth / 2;
-        for (int i = 0; i < 2; i++) {
-            int x = left + i * half + 8;
-            boolean selected = choice.cut() == (i == 1);
-            drawRect(x, top + 31, x + half - 16, top + 72, selected ? 0xff327685 : 0xff293843);
-            drawCenteredString(
-                fontRendererObj,
-                HologramCutClient.text(i == 0 ? "blueprint" : "mode"),
-                x + (half - 16) / 2,
-                top + 47,
-                selected ? 0xffffff : 0x99aabb);
-        }
-        int y = top + 82;
-        for (String hint : hints) {
-            drawCenteredString(fontRendererObj, hint, width / 2, y, 0xb9ced8);
-            y += 11;
-        }
-        super.drawScreen(mouseX, mouseY, ticks);
+    protected boolean muiMouseBefore(int button) {
+        if (button == 1 && HologramCutClient.shift()) choice.cycle();
+        return true;
     }
 
     @Override

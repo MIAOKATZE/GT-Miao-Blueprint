@@ -29,7 +29,7 @@ Target: **GTNH 2.9.0 RC-2 / Minecraft 1.7.10 / Forge 10.13.4.1614**. Install GTM
 
 目标：**GTNH 2.9.0 RC-2 / Minecraft 1.7.10 / Forge 10.13.4.1614**。**客户端与服务端均需安装** GTMB，正式成品见 [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
 
-Dependencies / 必需依赖：GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2（included in GTNH / 整包已提供）。**GTIT is optional / GTIT 为可选模组。**
+Dependencies / 必需依赖：GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.92-1.7.10 or newer / 及更新版本**。The target GTNH pack includes these dependencies / 目标 GTNH 整包已提供。**GTIT is optional / GTIT 为可选模组。**
 
 ## Neko Blueprint Hologram Projector / 猫猫蓝图全息投影仪
 
@@ -42,10 +42,10 @@ Shapeless recipe: **1 StructureLib Hologram Projector → 1 Neko Blueprint Holog
 | Action / 操作 | Result / 用途 |
 | --- | --- |
 | Right-click / 普通右键 | Open the workspace; aim at a real controller to import its structure. 打开工作台；对准真实控制器则导入其结构。 |
-| Shift+right-click / Shift+右键 | Hold Shift and right-click to select Blueprint or Cut; right-click again cycles, releasing Shift enters the mode. 按住 Shift 右键打开「蓝图／剪切」切换器，继续右键切换，松开 Shift 进入。蓝图模式左右键标两角，再次 Shift+右键导入。 |
-| Cut / 剪切 | Mark two corners and confirm to move the original blocks into persistent storage. Left/right-click marks the corners. 左右键标两角，确认后原样剪切到持久暂存。 |
-| Stored cuts / 剪切暂存 | Right-click opens storage; Alt+right-click restores the selected cut; Shift+right-click previews placement; Shift+Alt+right-click cuts another region. Alt+A/D selects an entry. 右键打开暂存，Alt+右键撤销，Shift+右键放置，Shift+Alt+右键继续剪切，Alt+A/D 切换条目；放置或撤销成功后消费。 |
-| Cut placement / 剪切放置 | Right-click locks the preview; right-click again opens confirmation. R rotates around Y, Ctrl+R around X; Alt+R opens XYZ rotation, mirror and facing controls. 右键锁定预览，再次右键确认；R 绕 Y 轴旋转，Ctrl+R 绕 X 轴旋转，Alt+R 打开三轴旋转、镜像与朝向面板。撤销恢复剪切时的原位、原姿态。 |
+| Mode switcher / 模式切换 | In Blueprint mode, Shift+right-click opens the selector; with no active Blueprint operation, Ctrl+Shift+right-click opens it from either mode. Hold Shift and right-click to cycle, then release Shift to enter. Choosing Cut starts corner selection. 蓝图模式下 Shift+右键打开切换器；没有正在进行的蓝图操作时，任一模式都可用 Ctrl+Shift+右键重新打开。按住 Shift 继续右键切换，松开 Shift 进入。选择「剪切」会直接开始框选。 |
+| Cut / 剪切 | In Cut mode, left- and right-click mark the two corners in either order. The prompt offers Cancel, Save, or Save and don't ask again. Cancel makes no world change; Save moves the selection into persistent storage. This save-local player preference skips naming only; later cuts still require area confirmation. A completed cut stays in storage for later use. 剪切模式下左键和右键分别标两个角，顺序不限。随后可「取消」「保存」或「不再提示并保存」。取消不改动世界；保存后选区进入持久剪切暂存。当前存档中该玩家的偏好只跳过命名，之后仍确认范围。剪切完成后可稍后再放置，条目继续保留在暂存中。 |
+| Stored cuts / 剪切暂存 | Right-click opens storage. Select a row to see its 3D preview on the right; browsing does not move or lock the world preview. Place starts placement, Alt+right-click restores the selected cut, and Alt+A/D changes the entry. In Cut mode, Shift+right-click previews the selected cut; Shift+Alt+right-click selects another region. Esc exits the local activity and keeps stored entries. Only a successful paste or undo consumes an entry. 右键打开暂存；选中列表行后，右侧显示该结构的 3D 预览，浏览不会移动或锁定世界预览。「放置」开始放置，Alt+右键撤销所选剪切，Alt+A/D 切换条目。剪切模式中 Shift+右键预览所选条目，Shift+Alt+右键继续框选。Esc 退出当前本地操作但保留暂存条目。只有成功粘贴或撤销才消费条目。 |
+| Cut placement / 剪切放置 | Right-click locks the world preview; unless the placement preference is saved, a second right-click opens Cancel, Confirm, or Confirm and don't ask again. The save-local player placement preference is separate from cut naming and skips only this prompt. Change pose before confirming: R rotates around Y, Ctrl+R around X, and Alt+R opens rotation, mirror and facing controls. The confirmation shows position and pose but has no pose controls. Esc keeps the stored cut; a successful paste consumes it. 右键锁定世界预览；未保存放置偏好时，再次右键打开「取消」「确认」或「确认且以后不提醒」。放置偏好在当前存档中为该玩家单独保存，与剪切命名互不影响，只跳过放置确认框。确认前用 R 绕 Y 轴旋转、Ctrl+R 绕 X 轴旋转，或 Alt+R 打开旋转、镜像和朝向面板调整姿态。确认框显示位置和姿态，但没有姿态操作按钮。Esc 保留暂存；粘贴成功后才消费条目。 |
 | Position / 选位置 | Selection uses the hit block; the world preview attaches to its face. Without a hit, it floats; Alt forces floating, Alt+wheel adjusts 0–64 blocks (0 = your feet). 框选取命中方块，世界预览贴合命中表面；无命中时悬空，Alt 强制悬空，Alt+滚轮调距 0–64 格（0 为脚下）。 |
 | Place / 放置 | Select a blueprint and click Place; right-click locks the green preview cyan, then right-click to review materials and confirm. Esc cancels. 选择蓝图并点「放置所选」；右键将绿色预览锁为青色，再右键核对材料并确认，Esc 取消。 |
 

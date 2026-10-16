@@ -14,7 +14,6 @@ import java.util.Properties;
 import javax.imageio.ImageIO;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.multiplayer.ServerData;
@@ -32,7 +31,12 @@ import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.Display;
 
+import com.cleanroommc.modularui.api.IMuiScreen;
+import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
+import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.miaokatze.gtmb.api.CutTransforms.Transform;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramV011Evidence;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -89,6 +93,13 @@ public final class HologramCutNativeClientProbe {
     private String firstId, secondId, captureLabel;
     private GuiScreen captureScreen;
     private String compositeId;
+    private long cancellationPackets;
+    private NBTTagCompound browserWorldBefore, browserPoseBefore;
+    private IWidget guiTarget;
+    private GuiScreen guiTargetScreen;
+    private int[] guiTargetPoint;
+    private long guiMoveRender;
+    private String guiTargetName = "";
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.cutNativeClient")) return;
@@ -112,6 +123,7 @@ public final class HologramCutNativeClientProbe {
                         .resolve("cut-client-final.nbt")),
                 "fresh receipts");
             mc.gameSettings.pauseOnLostFocus = false;
+            HologramRuntimeMetrics.setEnabled(true);
             cpw.mods.fml.client.FMLClientHandler.instance()
                 .setupServerList();
             cpw.mods.fml.client.FMLClientHandler.instance()
@@ -167,7 +179,51 @@ public final class HologramCutNativeClientProbe {
         mark("first-cut-left-first-corner", 48, 80, 64, 0);
         shot("cut-first-corner-selection");
         mark("first-cut-right-second-corner-real-marker", 49, 81, 64, 1);
-        waitScreen("first-cut-confirmation-required", HologramCutConfirmScreen.class);
+        waitScreen("first-cut-name-required", HologramCutNameScreen.class);
+        add("capture-name-cancel-codec-baseline", mc -> {
+            cancellationPackets = cutPacketsSent();
+            return true;
+        });
+        button("native-name-cancel-button", 0);
+        add("name-cancel-emits-zero-cut-packets", mc -> {
+            if (mc.currentScreen != null) return false;
+            require(cutPacketsSent() == cancellationPackets, "cancel button emitted no encoded CutAction");
+            require(
+                client().entries()
+                    .isEmpty() && !client().selecting(),
+                "cancel preserved empty server queue");
+            return true;
+        });
+        repeatFirstSelection("name-escape");
+        add("capture-name-escape-codec-baseline", mc -> {
+            cancellationPackets = cutPacketsSent();
+            return true;
+        });
+        tap("native-name-escape", KeyEvent.VK_ESCAPE);
+        add("name-escape-emits-zero-cut-packets", mc -> {
+            if (mc.currentScreen != null) return false;
+            require(cutPacketsSent() == cancellationPackets, "Escape emitted no encoded CutAction");
+            require(
+                client().entries()
+                    .isEmpty() && !client().selecting(),
+                "Escape preserved empty server queue");
+            return true;
+        });
+        hold("cut-mode-empty-cache-hold-shift", KeyEvent.VK_SHIFT, true);
+        clickWorld("cut-mode-empty-cache-shift-right-only-notice", 1);
+        add("cut-mode-empty-cache-never-enters-selection-or-dialog", mc -> {
+            require(
+                mc.currentScreen == null && !client().selecting()
+                    && client().entries()
+                        .isEmpty()
+                    && cutPacketsSent() == cancellationPackets
+                    && !client().status()
+                        .isEmpty(),
+                "CUT Shift-right with empty cache only reports empty cache");
+            return true;
+        });
+        hold("cut-mode-empty-cache-release-shift", KeyEvent.VK_SHIFT, false);
+        repeatFirstSelection("name-save");
         add("confirmation-before-mutation", mc -> {
             require(
                 client().entries()
@@ -186,6 +242,36 @@ public final class HologramCutNativeClientProbe {
             require(firstId.equals(client().selected()), "first FIFO item selected");
             return true;
         });
+        tap("cut-success-first-Escape-returns-to-world", KeyEvent.VK_ESCAPE);
+        add("cut-success-Escape-preserves-cached-entry", mc -> {
+            require(
+                mc.currentScreen == null && !client().active()
+                    && client().entries()
+                        .size() == 1
+                    && firstId.equals(client().selected()),
+                "first post-cut Escape leaves the real cached entry available");
+            return true;
+        });
+        hold("cut-mode-cached-place-hold-shift", KeyEvent.VK_SHIFT, true);
+        clickWorld("cut-mode-cached-shift-right-starts-placement", 1);
+        hold("cut-mode-cached-place-release-shift", KeyEvent.VK_SHIFT, false);
+        moving("cut-mode-cached-placement-actual-preview-ack");
+        add("cut-mode-cached-placement-preserves-entry", mc -> {
+            require(
+                firstId.equals(client().selected()) && client().entries()
+                    .size() == 1,
+                "CUT Shift-right starts preview of the actual cached ID without consuming it");
+            return true;
+        });
+        tap("cut-mode-cached-placement-Escape", KeyEvent.VK_ESCAPE);
+        add(
+            "cut-mode-cached-placement-Escape-keeps-cache",
+            mc -> mc.currentScreen == null && !client().active()
+                && client().entries()
+                    .size() == 1);
+        clickWorld("cut-mode-ordinary-right-keeps-list-entry", 1);
+        waitScreen("cut-mode-explicit-cache-list", HologramCutStorageScreen.class);
+        button("cut-mode-explicit-cache-list-close", 0);
         hold("hold-shift-for-second-cut", KeyEvent.VK_SHIFT, true);
         hold("hold-alt-for-second-cut", KeyEvent.VK_ALT, true);
         clickWorld("queued-shift-alt-right-new-selection", 1);
@@ -194,8 +280,8 @@ public final class HologramCutNativeClientProbe {
         add("queued-new-cut-selection-active", mc -> mc.currentScreen == null && client().selecting());
         mark("second-cut-left-first-corner", 52, 80, 64, 0);
         mark("second-cut-right-second-corner-real-marker", 53, 81, 64, 1);
-        waitScreen("second-cut-confirmation-required", HologramCutConfirmScreen.class);
-        button("confirm-second-cut-native-pointer", 1);
+        waitScreen("ordinary-save-keeps-second-name-prompt", HologramCutNameScreen.class);
+        button("save-second-cut-and-explicitly-disable-name-prompt", 2);
         add("two-genuine-server-entries-fifo", mc -> {
             if (client().busy() || client().entries()
                 .size() != 2 || HologramV011Evidence.read("cut-second-cut-fifo-disk-and-air.nbt") == null) return false;
@@ -218,14 +304,22 @@ public final class HologramCutNativeClientProbe {
         });
         clickWorld("ordinary-right-opens-server-directory", 1);
         waitScreen("directory-with-two-server-entries", HologramCutStorageScreen.class);
+        add("capture-world-preview-before-readonly-browser", mc -> {
+            browserWorldBefore = HologramCutRawPreview.snapshot();
+            browserPoseBefore = new NBTTagCompound();
+            ((Transform) field(client(), "pose")).write(browserPoseBefore);
+            return true;
+        });
+        browserReady("directory-first-entry-complete-isolated-raw-render", true);
         add("directory-has-no-delete-control", mc -> {
-            for (Object raw : buttons(mc.currentScreen)) {
-                GuiButton b = (GuiButton) raw;
-                require(b.id == 0 || b.id == 1 || b.id == 2 || b.id >= 100, "allowlisted directory controls");
+            for (IWidget b : buttons(mc.currentScreen)) {
+                String name = b.getName();
                 require(
-                    !b.displayString.contains("删除") && !b.displayString.toLowerCase(java.util.Locale.ROOT)
-                        .contains("delete"),
-                    "no delete control");
+                    name != null && (name.startsWith("cut_entry_") || name.equals("cut_storage_close")
+                        || name.equals("cut_storage_place")
+                        || name.equals("cut_storage_undo")
+                        || name.equals("cut_storage_sync")),
+                    "allowlisted actual native directory controls: " + name);
             }
             return true;
         });
@@ -233,11 +327,13 @@ public final class HologramCutNativeClientProbe {
         hold("hold-alt-for-directory-cycle", KeyEvent.VK_ALT, true);
         hold("native-alt-d-next-down", KeyEvent.VK_D, true);
         hold("native-alt-d-next-up", KeyEvent.VK_D, false);
-        add("native-alt-d-selected-second", mc -> secondId.equals(client().selected()));
+        add("native-alt-d-selected-second", mc -> secondId.equals(browser(mc).state.selected()));
+        browserReady("directory-second-entry-complete-isolated-raw-render", false);
         shot("cut-storage-alt-d-second");
         hold("native-alt-a-previous-down", KeyEvent.VK_A, true);
         hold("native-alt-a-previous-up", KeyEvent.VK_A, false);
-        add("native-alt-a-selected-first", mc -> firstId.equals(client().selected()));
+        add("native-alt-a-selected-first", mc -> firstId.equals(browser(mc).state.selected()));
+        browserReady("directory-returned-first-entry-complete-isolated-raw-render", true);
         hold("release-alt-after-native-cycle", KeyEvent.VK_ALT, false);
         button("native-directory-place-first", 1);
         moving("server-preview-before-escape");
@@ -271,6 +367,35 @@ public final class HologramCutNativeClientProbe {
         shot("cut-locked-preview");
         clickWorld("separate-second-right-opens-paste-confirmation", 1);
         waitScreen("paste-confirmation-before-world-write", HologramCutConfirmScreen.class);
+        add("placement-review-has-only-cancel-confirm-skip", mc -> {
+            java.util.Set<String> names = new java.util.HashSet<>();
+            for (IWidget widget : buttons(mc.currentScreen)) names.add(widget.getName());
+            require(
+                names.equals(
+                    new java.util.HashSet<>(java.util.Arrays.asList("cut_cancel", "cut_confirm", "cut_confirm_skip"))),
+                "placement review has exactly the three requested native actions");
+            require(
+                !(Boolean) field(client(), "skipPlacementPrompt"),
+                "naming preference does not disable placement review");
+            cancellationPackets = cutPacketsSent();
+            return true;
+        });
+        button("native-cancel-placement-review", 0);
+        add("placement-cancel-emits-zero-cut-packets", mc -> {
+            if (mc.currentScreen != null) return false;
+            require(
+                cutPacketsSent() == cancellationPackets && client().entries()
+                    .size() == 2 && !client().active(),
+                "placement Cancel writes no CutAction and preserves both cached entries");
+            return true;
+        });
+        clickWorld("reopen-directory-after-placement-cancel", 1);
+        waitScreen("directory-after-placement-cancel", HologramCutStorageScreen.class);
+        button("restart-first-placement-after-review-cancel", 1);
+        moving("placement-review-retry-raw-ack");
+        mark("placement-review-retry-lock", 56, 79, 64, 1);
+        clickWorld("placement-review-retry-second-right", 1);
+        waitScreen("placement-review-retry-confirmation", HologramCutConfirmScreen.class);
         shot("cut-paste-confirmation");
         button("native-confirm-paste", 1);
         add("paste-success-consumes-first-retains-second", mc -> {
@@ -278,6 +403,9 @@ public final class HologramCutNativeClientProbe {
                 .size() != 1 || HologramV011Evidence.read("cut-paste-consumed-original-nbt-retained.nbt") == null)
                 return false;
             require(secondId.equals(client().selected()), "FIFO next selected after successful consumption");
+            require(
+                !(Boolean) field(client(), "skipPlacementPrompt"),
+                "ordinary confirmation retains the future placement prompt");
             return true;
         });
         clickWorld("directory-for-original-position-undo", 1);
@@ -303,7 +431,19 @@ public final class HologramCutNativeClientProbe {
             "real-undo-ack-and-disk-consumption",
             mc -> !client().busy() && client().entries()
                 .isEmpty() && HologramV011Evidence.read("cut-undo-restores-original-and-consumes.nbt") != null);
+        clickWorld("cut-mode-empty-cache-ordinary-right-opens-list", 1);
+        waitScreen("cut-mode-empty-cache-list", HologramCutStorageScreen.class);
+        add("cut-mode-empty-list-remains-readonly", mc -> {
+            require(
+                client().entries()
+                    .isEmpty() && browser(mc).renderer() == null,
+                "empty cache has a real accessible list and no fabricated raw preview");
+            return true;
+        });
+        shot("cut-mode-empty-cache-native-list");
+        button("close-empty-cache-list", 0);
         compositeSteps();
+        placementSkipSteps();
         add("write-complete-real-input-client-proof", mc -> {
             NBTTagCompound n = snapshot(mc);
             n.setBoolean("passed", true);
@@ -337,15 +477,7 @@ public final class HologramCutNativeClientProbe {
         add(
             "actual-native-composite-fixture-ready",
             mc -> HologramV011Evidence.read("cut-composite-server-ready.nbt") != null);
-        hold("composite-hold-shift", KeyEvent.VK_SHIFT, true);
-        clickWorld("composite-shift-right-switcher", 1);
-        waitScreen("composite-mode-screen", HologramCutModeScreen.class);
-        add("composite-cycle-cut-mode", mc -> {
-            click(mc, mc.currentScreen.width / 2, mc.currentScreen.height / 2, 1);
-            return true;
-        });
-        hold("composite-release-shift", KeyEvent.VK_SHIFT, false);
-        add("composite-selection-active", mc -> mc.currentScreen == null && client().selecting());
+        beginCutSelection("composite");
         mark("composite-real-GT-first-corner", 64, 80, 64, 0);
         mark("composite-real-marker-second-corner", 69, 81, 64, 1);
         waitScreen("composite-cut-confirmation", HologramCutConfirmScreen.class);
@@ -425,20 +557,23 @@ public final class HologramCutNativeClientProbe {
         clickWorld("composite-second-right-paste-review", 1);
         waitScreen("composite-transformed-paste-confirmation", HologramCutConfirmScreen.class);
         shot("cut-transform-paste-confirmation");
-        button("composite-confirm-transformed-paste", 1);
+        button("composite-confirm-transformed-paste-and-disable-future-review", 2);
         add(
             "composite-real-paste-consumed-independent-world",
             mc -> !client().busy() && client().entries()
                 .isEmpty() && HologramV011Evidence.read("cut-composite-pose-paste-consumed.nbt") != null);
-        hold("recut-hold-shift", KeyEvent.VK_SHIFT, true);
-        clickWorld("recut-native-switcher", 1);
-        waitScreen("recut-mode-screen", HologramCutModeScreen.class);
-        add("recut-select-cut-mode", mc -> {
-            click(mc, mc.currentScreen.width / 2, mc.currentScreen.height / 2, 1);
+        add("placement-skip-ack-is-independent-and-persisted", mc -> {
+            require(
+                (Boolean) field(client(), "skipPlacementPrompt") && (Boolean) field(client(), "skipNamePrompt"),
+                "server ACK mirrors the two independently selected preferences");
+            require(
+                HologramV011Evidence.read("cut-composite-pose-paste-consumed.nbt")
+                    .getCompoundTag("actualDisk")
+                    .getBoolean("skipPlacementPrompt"),
+                "placement preference is durable with the actual paste");
             return true;
         });
-        hold("recut-release-shift", KeyEvent.VK_SHIFT, false);
-        add("recut-selection-active", mc -> mc.currentScreen == null && client().selecting());
+        beginCutSelection("recut");
         mark("recut-real-transformed-marker-corner", 72, 81, 64, 0);
         mark("recut-real-transformed-GT-corner", 72, 80, 69, 1);
         waitScreen("recut-confirmation", HologramCutConfirmScreen.class);
@@ -470,6 +605,60 @@ public final class HologramCutNativeClientProbe {
             "recut-undo-original-pose-consumed",
             mc -> !client().busy() && client().entries()
                 .isEmpty() && HologramV011Evidence.read("cut-composite-undo-original-pose-consumed.nbt") != null);
+    }
+
+    /** Separate final fixture: the previous composite still returns through a genuine undo. */
+    private void placementSkipSteps() {
+        add(
+            "placement-skip-independent-one-cell-fixture-ready",
+            mc -> HologramV011Evidence.read("cut-placement-skip-server-ready.nbt") != null);
+        beginCutSelection("placement-skip-cut");
+        mark("placement-skip-one-cell-first-corner", 84, 80, 64, 0);
+        mark("placement-skip-one-cell-second-corner", 84, 80, 64, 1);
+        waitScreen("placement-skip-one-cell-cut-confirmation", HologramCutConfirmScreen.class);
+        button("placement-skip-confirm-real-one-cell-cut", 1);
+        add(
+            "placement-skip-real-cut-ack",
+            mc -> !client().busy() && client().entries()
+                .size() == 1 && HologramV011Evidence.read("cut-placement-skip-source-cut.nbt") != null);
+        clickWorld("placement-skip-open-storage", 1);
+        waitScreen("placement-skip-storage", HologramCutStorageScreen.class);
+        button("placement-skip-start-world-preview", 1);
+        moving("placement-skip-world-preview-ack");
+        add("placement-skip-capture-lock-packet-baseline", mc -> {
+            require((Boolean) field(client(), "skipPlacementPrompt"), "server-owned placement skip remains selected");
+            cancellationPackets = cutPacketsSent();
+            return true;
+        });
+        mark("placement-skip-first-right-locks-only", 88, 79, 64, 1);
+        add("placement-skip-lock-zero-write-proof", mc -> {
+            if (field(client(), "stage") != HologramCutInput.Stage.LOCKED) return false;
+            require(
+                mc.currentScreen == null && cutPacketsSent() == cancellationPackets
+                    && client().entries()
+                        .size() == 1,
+                "skip preference still requires a separate second right press; lock sends no CutAction");
+            require(
+                java.util.Arrays.equals(client().anchor(), new int[] { 88, 80, 64 }),
+                "independent skip target locked");
+            HologramV011Evidence.write("cut-placement-skip-client-locked.nbt", snapshot(mc));
+            return true;
+        });
+        add(
+            "placement-skip-server-witnessed-lock-without-write",
+            mc -> HologramV011Evidence.read("cut-placement-skip-lock-no-write.nbt") != null);
+        shot("cut-placement-skip-locked-before-second-right");
+        clickWorld("placement-skip-separate-second-right-submits-without-dialog", 1);
+        add("placement-skip-real-paste-ack-no-dialog", mc -> {
+            if (client().busy() || !client().entries()
+                .isEmpty() || HologramV011Evidence.read("cut-placement-skip-second-right-pasted.nbt") == null)
+                return false;
+            require(
+                mc.currentScreen == null && cutPacketsSent() == cancellationPackets + 1,
+                "second right sends exactly one genuine paste CutAction without a review dialog");
+            return true;
+        });
+        shot("cut-placement-skip-real-paste-complete");
     }
 
     private void poseWait(String label, int y, int x, int z, int mirror) {
@@ -547,7 +736,7 @@ public final class HologramCutNativeClientProbe {
             require(server.equals(raw), "all complete server queue fields reach full raw renderer without filtering");
             result.setString("independentOriginalSha256", HologramCutRawPreview.digest(server));
         }
-        World detached = (World) staticField(HologramCutRawPreview.class, "world");
+        World detached = (World) field(staticField(HologramCutRawPreview.class, "WORLD"), "world");
         require(
             detached != null && detached != mc.theWorld
                 && detached.isRemote
@@ -855,7 +1044,7 @@ public final class HologramCutNativeClientProbe {
         net.minecraft.util.Vec3 eyes = mc.thePlayer.getPosition(1.0F);
         double dx = aim[0] + .5 - eyes.xCoord, dz = aim[2] + .5 - eyes.zCoord;
         // Aim just inside the top face of the placement support so its adjacent cell is exactly y+1.
-        double targetY = (aim[0] == 56 || aim[0] == 72) && aim[1] == 79 ? 79.99 : aim[1] + .5;
+        double targetY = (aim[0] == 56 || aim[0] == 72 || aim[0] == 88) && aim[1] == 79 ? 79.99 : aim[1] + .5;
         double dy = targetY - eyes.yCoord;
         float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90);
         float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
@@ -865,17 +1054,76 @@ public final class HologramCutNativeClientProbe {
     }
 
     private void button(String label, int id) {
-        add(label, mc -> {
+        add(label + "-native-pointer-move", mc -> {
             if (mc.currentScreen == null || client().busy()) return false;
-            for (Object raw : buttons(mc.currentScreen)) {
-                GuiButton button = (GuiButton) raw;
-                if (button.id == id && button.enabled && button.visible) {
-                    click(mc, button.xPosition + button.width / 2, button.yPosition + button.height / 2, 0);
+            String target = controlName(mc.currentScreen, id);
+            for (IWidget button : buttons(mc.currentScreen)) {
+                if (target.equals(button.getName()) && button.isEnabled()
+                    && button.areAncestorsEnabled()
+                    && button.isValid()
+                    && button.getArea().width > 0
+                    && button.getArea().height > 0) {
+                    guiTarget = button;
+                    guiTargetScreen = mc.currentScreen;
+                    guiTargetName = target;
+                    moveToGuiTarget(mc);
                     return true;
                 }
             }
             return false;
         });
+        add(label + "-natural-native-hover", mc -> {
+            require(
+                mc.currentScreen == guiTargetScreen && guiTarget.isValid(),
+                "native pointer target retains its actual screen/widget identity");
+            int[] current = screenCenter(guiTarget);
+            if (!java.util.Arrays.equals(current, guiTargetPoint)) {
+                moveToGuiTarget(mc);
+                return false;
+            }
+            if (renderSerial < guiMoveRender + 2) return false;
+            boolean hovered = false;
+            NBTTagList actual = new NBTTagList();
+            for (LocatedWidget located : ((IMuiScreen) mc.currentScreen).getScreen()
+                .getMainPanel()
+                .getHovering()) {
+                IWidget widget = located.getElement();
+                if (widget == guiTarget) hovered = true;
+                NBTTagCompound row = new NBTTagCompound();
+                row.setString(
+                    "class",
+                    widget == null ? "null"
+                        : widget.getClass()
+                            .getName());
+                row.setString("name", widget == null || widget.getName() == null ? "" : widget.getName());
+                actual.appendTag(row);
+            }
+            NBTTagCompound proof = snapshot(mc);
+            proof.setTag("actualMUIHovering", actual);
+            proof.setBoolean("targetInActualHovering", hovered);
+            proof.setLong("moveRenderSerial", guiMoveRender);
+            proof.setLong("observedRenderSerial", renderSerial);
+            HologramV011Evidence.write(label + "-native-hover.nbt", proof);
+            require(hovered, "real OS pointer and natural MUI hit testing reach " + guiTargetName);
+            return true;
+        });
+        add(label, mc -> {
+            require(
+                mc.currentScreen == guiTargetScreen && guiTarget.isValid(),
+                "native target remains live before separate mouse-down");
+            click(mc, guiTargetPoint[0], guiTargetPoint[1], 0);
+            return true;
+        });
+    }
+
+    private void moveToGuiTarget(Minecraft mc) throws Exception {
+        guiTargetPoint = screenCenter(guiTarget);
+        guiMoveRender = renderSerial;
+        osInput(
+            "mouse-move",
+            0,
+            guiTargetPoint[0] * mc.displayWidth / mc.currentScreen.width,
+            guiTargetPoint[1] * mc.displayHeight / mc.currentScreen.height);
     }
 
     private void moving(String label) {
@@ -981,6 +1229,7 @@ public final class HologramCutNativeClientProbe {
             "true".equals(ack.getProperty("success")),
             "Win32 input rejected: " + ack.getProperty("failure", "unknown"));
         osPending = false;
+        if ("mouse-move".equals(osOperation)) guiMoveRender = renderSerial;
         if ("mouse-down".equals(osOperation)) {
             releaseAt = now + 150000000L;
             if (awaitWorldMouse) awaitedMouseDeadline = now + 3000000000L;
@@ -993,10 +1242,127 @@ public final class HologramCutNativeClientProbe {
         return HologramCutClient.INSTANCE;
     }
 
-    private static List<?> buttons(GuiScreen screen) throws Exception {
-        Field field = GuiScreen.class.getDeclaredField("buttonList");
-        field.setAccessible(true);
-        return (List<?>) field.get(screen);
+    private static List<IWidget> buttons(GuiScreen screen) {
+        require(screen instanceof IMuiScreen, "actual MUI2 wrapper required for native pointer input");
+        List<IWidget> pending = new ArrayList<>(), result = new ArrayList<>();
+        pending.add(
+            ((IMuiScreen) screen).getScreen()
+                .getMainPanel());
+        for (int i = 0; i < pending.size(); i++) {
+            IWidget widget = pending.get(i);
+            pending.addAll(widget.getChildren());
+            if (widget instanceof ButtonWidget) result.add(widget);
+        }
+        return result;
+    }
+
+    private static int[] screenCenter(IWidget widget) {
+        com.cleanroommc.modularui.screen.viewport.TransformationMatrix transform = LocatedWidget.of(widget)
+            .getTransformationMatrix();
+        float x = widget.getArea().width / 2f, y = widget.getArea().height / 2f;
+        return new int[] { transform.transformX(x, y), transform.transformY(x, y) };
+    }
+
+    private static String controlName(GuiScreen screen, int id) {
+        if (screen instanceof HologramCutNameScreen)
+            return new String[] { "cut_name_cancel", "cut_name_save", "cut_name_skip" }[id];
+        if (screen instanceof HologramCutConfirmScreen)
+            return new String[] { "cut_cancel", "cut_confirm", "cut_confirm_skip" }[id];
+        if (screen instanceof HologramCutTransformScreen) return "cut_pose_" + id;
+        if (screen instanceof HologramCutStorageScreen)
+            return "cut_storage_" + new String[] { "close", "place", "undo", "sync" }[id];
+        throw new AssertionError(
+            "Unknown native control screen " + screen.getClass()
+                .getName());
+    }
+
+    private static long cutPacketsSent() {
+        require(HologramRuntimeMetrics.isEnabled(), "real codec TX observation enabled");
+        return HologramRuntimeMetrics.snapshot()
+            .getCompoundTag("network")
+            .getCompoundTag("cutAction")
+            .getLong("c2sTxPackets");
+    }
+
+    private void repeatFirstSelection(String label) {
+        beginCutSelection(label);
+        mark(label + "-first-corner", 48, 80, 64, 0);
+        mark(label + "-second-corner", 49, 81, 64, 1);
+        waitScreen(label + "-name", HologramCutNameScreen.class);
+    }
+
+    /** CUT mode's explicit new-selection gesture remains distinct from cached Shift-right placement. */
+    private void beginCutSelection(String label) {
+        hold(label + "-hold-shift", KeyEvent.VK_SHIFT, true);
+        hold(label + "-hold-alt", KeyEvent.VK_ALT, true);
+        clickWorld(label + "-explicit-new-cut-selection", 1);
+        hold(label + "-release-alt", KeyEvent.VK_ALT, false);
+        hold(label + "-release-shift", KeyEvent.VK_SHIFT, false);
+        add(label + "-selection-active", mc -> mc.currentScreen == null && client().selecting());
+    }
+
+    private static HologramCutStoragePreview browser(Minecraft mc) throws Exception {
+        return (HologramCutStoragePreview) field(mc.currentScreen, "preview");
+    }
+
+    private void browserReady(String label, boolean first) {
+        add(label, mc -> {
+            if (!(mc.currentScreen instanceof HologramCutStorageScreen)) return false;
+            HologramCutStoragePreview owner = browser(mc);
+            HologramCutRawPreviewSession renderer = owner.renderer();
+            if (renderer == null || renderer.inspection()
+                .getLong("frames") < 3
+                || renderer.inspection()
+                    .getInteger("pendingVisibleCells") != 0)
+                return false;
+            String expected = first ? firstId : secondId;
+            require(
+                expected.equals(
+                    owner.raw()
+                        .getString("id")),
+                "actual raw browser response matches selected row");
+            require(
+                renderer != staticField(HologramCutRawPreview.class, "WORLD"),
+                "browser owns an independent real render session");
+            require(
+                HologramCutRawPreview.snapshot()
+                    .equals(browserWorldBefore),
+                "row changes preserve the complete world preview source");
+            NBTTagCompound pose = new NBTTagCompound();
+            ((Transform) field(client(), "pose")).write(pose);
+            require(
+                pose.equals(browserPoseBefore) && firstId.equals(client().selected()),
+                "readonly row selection does not change world placement identity or pose");
+            require(
+                renderer.inspection()
+                    .getInteger("failureCount") == 0
+                    && renderer.inspection()
+                        .getLong("staticRendered") > 0
+                    && renderer.inspection()
+                        .getLong("ghostStateChecks") > 0
+                    && renderer.inspection()
+                        .getLong("ghostStateMismatches") == 0,
+                "native browser models rendered and restored caller GL state");
+            require(
+                renderer.snapshot()
+                    .equals(owner.raw()),
+                "complete raw source remains intact after actual GUI rendering");
+            World detached = (World) field(renderer, "world");
+            require(
+                detached != null && detached != mc.theWorld
+                    && detached.isRemote
+                    && detached.loadedTileEntityList.isEmpty()
+                    && detached.getTotalWorldTime() == 0,
+                "browser detached native world is unticked and unregistered");
+            NBTTagCompound proof = snapshot(mc);
+            proof.setTag("browserRaw", renderer.snapshot());
+            proof.setTag("browserInspection", renderer.inspection());
+            proof.setTag("worldPreviewBefore", browserWorldBefore.copy());
+            proof.setTag("worldPreviewAfter", HologramCutRawPreview.snapshot());
+            proof.setBoolean("independentRenderSession", true);
+            HologramV011Evidence.write(label + ".nbt", proof);
+            return true;
+        });
     }
 
     private static Object field(Object object, String name) throws Exception {
@@ -1023,6 +1389,20 @@ public final class HologramCutNativeClientProbe {
         if (compositeId != null) n.setString("compositeId", compositeId);
         n.setTag("rawInspection", HologramCutRawPreview.inspection());
         n.setBoolean("busy", client().busy());
+        n.setString("pendingNativeGuiTarget", guiTargetName);
+        if (guiTargetPoint != null) n.setIntArray("pendingNativeGuiScreenPoint", guiTargetPoint);
+        if (mc.currentScreen instanceof IMuiScreen) {
+            com.cleanroommc.modularui.screen.viewport.ModularGuiContext context = ((IMuiScreen) mc.currentScreen)
+                .getScreen()
+                .getContext();
+            n.setIntArray("actualMUIAbsoluteMouse", new int[] { context.getAbsMouseX(), context.getAbsMouseY() });
+        }
+        n.setLong(
+            "cutActionCodecTxPackets",
+            HologramRuntimeMetrics.snapshot()
+                .getCompoundTag("network")
+                .getCompoundTag("cutAction")
+                .getLong("c2sTxPackets"));
         n.setBoolean("windowActive", Display.isActive());
         n.setBoolean("inGameHasFocus", mc.inGameHasFocus);
         n.setInteger("displayX", Display.getX());
@@ -1120,18 +1500,29 @@ public final class HologramCutNativeClientProbe {
                 "actualRaycastHit",
                 new int[] { mc.objectMouseOver.blockX, mc.objectMouseOver.blockY, mc.objectMouseOver.blockZ,
                     mc.objectMouseOver.sideHit });
-        if (mc.currentScreen != null) {
+        if (mc.currentScreen instanceof IMuiScreen) {
             NBTTagList controls = new NBTTagList();
-            for (Object raw : buttons(mc.currentScreen)) {
-                GuiButton b = (GuiButton) raw;
+            for (IWidget b : buttons(mc.currentScreen)) {
                 NBTTagCompound c = new NBTTagCompound();
-                c.setInteger("id", b.id);
-                c.setString("text", b.displayString);
-                c.setBoolean("enabled", b.enabled);
-                c.setInteger("x", b.xPosition);
-                c.setInteger("y", b.yPosition);
-                c.setInteger("w", b.width);
-                c.setInteger("h", b.height);
+                c.setString(
+                    "widgetClass",
+                    b.getClass()
+                        .getName());
+                c.setString("name", b.getName() == null ? "" : b.getName());
+                c.setBoolean("enabled", b.isEnabled() && b.areAncestorsEnabled());
+                c.setInteger("x", b.getArea().x);
+                c.setInteger("y", b.getArea().y);
+                c.setInteger("w", b.getArea().width);
+                c.setInteger("h", b.getArea().height);
+                c.setInteger("relativeX", b.getArea().rx);
+                c.setInteger("relativeY", b.getArea().ry);
+                c.setIntArray("actualScreenCenter", screenCenter(b));
+                c.setString(
+                    "actualViewportMatrix",
+                    LocatedWidget.of(b)
+                        .getTransformationMatrix()
+                        .getMatrix()
+                        .toString());
                 controls.appendTag(c);
             }
             n.setTag("actualControls", controls);

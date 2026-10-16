@@ -1,7 +1,8 @@
 package com.miaokatze.gtmb.hologram;
 
 /**
- * Independent owner/save clipboard. Requests contain IDs, coordinates and integer pose only, never block data.
+ * Independent owner/save clipboard. Requests contain IDs, coordinates, pose and optional naming/confirmation choices,
+ * never block data.
  * Selected replies contain the complete detached raw entry; rotation/turnX/turnZ/mirror default to identity.
  */
 public final class HologramCutProtocol {

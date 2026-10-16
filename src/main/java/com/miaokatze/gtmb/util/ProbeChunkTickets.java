@@ -21,6 +21,7 @@ public final class ProbeChunkTickets {
                 NBTTagCompound marker = ticket.getModData();
                 if (marker.getBoolean("gtmbEnergyProbe") || marker.getBoolean("gtmbNetworkProbe")
                     || marker.getBoolean("gtmbPreviewSourceProbe")
+                    || marker.getBoolean("gtmbAeCutDataProbe")
                     || marker.getBoolean("gtmbTestLab")) ForgeChunkManager.releaseTicket(ticket);
             }
         });

@@ -32,6 +32,7 @@ public final class HologramCutNativeSmoke {
     private int fluidDue = -1;
 
     public static void install() {
+        HologramCutAeDataNativeSmoke.install();
         if (Boolean.getBoolean("gtmb.hologram.cutNativeSmoke")) FMLCommonHandler.instance()
             .bus()
             .register(new HologramCutNativeSmoke());

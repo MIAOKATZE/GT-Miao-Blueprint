@@ -3,16 +3,16 @@ package com.miaokatze.gtmb.client.hologram;
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
 import static net.minecraft.client.gui.Gui.*;
 
-import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
-public final class HologramScreen extends GuiScreen implements HologramUiHost {
+public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
 
     final HologramUiModules ui = new HologramUiModules(this);
 
     HologramScreen(HologramState state) {
+        super("workstation");
         ui.session.initialize(state);
     }
 
@@ -25,6 +25,8 @@ public final class HologramScreen extends GuiScreen implements HologramUiHost {
     }
 
     public void initGui() {
+        super.initGui();
+        resetNativeFields();
         ui.router.initGui();
     }
 
@@ -32,8 +34,14 @@ public final class HologramScreen extends GuiScreen implements HologramUiHost {
         return ui.router.doesGuiPauseGame();
     }
 
-    public void onGuiClosed() {
+    protected void onMuiClose() {
         ui.router.onGuiClosed();
+    }
+
+    @Override
+    public void onGuiClosed() {
+        ui.memory.rememberUi();
+        if (ui.ae.aePreviewTransition()) ui.ae.aePreviewTransition(false);
     }
 
     static void rememberBlueprintPlacement(HologramState snapshot) {
@@ -48,8 +56,18 @@ public final class HologramScreen extends GuiScreen implements HologramUiHost {
         ui.router.updateScreen();
     }
 
-    public void drawScreen(int mouseX, int mouseY, float ticks) {
+    protected void renderScene(int mouseX, int mouseY, float ticks) {
+        canvasTransform(ui.canvas.originX(), ui.canvas.originY(), ui.canvas.scale());
         ui.router.drawScreen(mouseX, mouseY, ticks);
+        for (HologramUiCanvas.Control control : ui.canvas.controls()) nativeButton(
+            control.id,
+            control.x,
+            control.y,
+            control.w,
+            control.h,
+            control.label,
+            control.enabled,
+            control.accent);
     }
 
     long saveQuantumGroups(NBTTagList groups, long sourceRevision) {
@@ -99,6 +117,39 @@ public final class HologramScreen extends GuiScreen implements HologramUiHost {
 
     public void keyTyped(char c, int key) {
         ui.router.keyTyped(c, key);
+    }
+
+    @Override
+    protected void activateNative(int id) {
+        ui.memory.initialEditHint(ui.memory.savedEditHint(false));
+        ui.memory.rememberGuidance();
+        ui.router.activate(id);
+    }
+
+    @Override
+    protected void sceneScroll() {
+        ui.router.handleMouseInput();
+    }
+
+    @Override
+    protected String nativeTooltip(int id, boolean enabled) {
+        String help = ui.canvas.controlHelp(id);
+        if (help == null) return "";
+        return enabled ? help : help + "\n" + ui.canvas.disabledReason(id);
+    }
+
+    @Override
+    protected boolean muiKeyBefore(char character, int key) {
+        if (key != org.lwjgl.input.Keyboard.KEY_ESCAPE && key != org.lwjgl.input.Keyboard.KEY_RETURN
+            && key != org.lwjgl.input.Keyboard.KEY_NUMPADENTER) return false;
+        ui.router.keyTyped(character, key);
+        return true;
+    }
+
+    @Override
+    protected boolean muiKey(char character, int key) {
+        ui.router.keyTyped(character, key);
+        return true;
     }
 
     int[] smokeControlPoint(int id) {

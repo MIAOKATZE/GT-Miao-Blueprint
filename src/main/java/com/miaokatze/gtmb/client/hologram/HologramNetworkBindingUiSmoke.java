@@ -50,9 +50,9 @@ public final class HologramNetworkBindingUiSmoke {
         probe.setWorldAndResolution(Minecraft.getMinecraft(), current.width, current.height);
         for (int i = 0; i < 2; i++) {
             set(probe, "pendingSequence", -1L);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             click(probe, 60000 + i);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             click(probe, 61020 + i);
             NBTTagCompound request = (NBTTagCompound) field(probe, "capturedRenderSmokeAction");
             require(
@@ -67,7 +67,7 @@ public final class HologramNetworkBindingUiSmoke {
                 "client_sends_only_server_owned_group_and_inventory_index_" + i);
         }
         set(probe, "pendingSequence", -1L);
-        probe.keyTyped('\0', Keyboard.KEY_E);
+        HologramMuiProbeInput.key(probe, '\0', Keyboard.KEY_E);
         require(
             !(Boolean) field(probe, "networkDrawer") && "closeNetworkBindings"
                 .equals(((NBTTagCompound) field(probe, "capturedRenderSmokeAction")).getString("op")),
@@ -77,7 +77,7 @@ public final class HologramNetworkBindingUiSmoke {
 
     private static void click(HologramScreen screen, int id) throws Exception {
 
-        HologramUiDiagnostics.invokeDiagnostic(screen, "smokeClickDrawnControl", new Class<?>[] { int.class }, id);
+        HologramMuiProbeInput.control(screen, id);
     }
 
     private static Object field(Object object, String name) throws Exception {

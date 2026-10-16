@@ -14,6 +14,7 @@ public final class HologramCutInputRegression {
 
     public static void run() {
         recoveryIsolation();
+        selectedModeRouting();
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         check(HologramCutInput.Intent.SWITCHER, idle, false, true, false, false);
         check(HologramCutInput.Intent.NONE, idle, false, false, true, false);
@@ -161,8 +162,8 @@ public final class HologramCutInputRegression {
             for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
                 SimpleAssert.eq(
                     HologramCutInput.Intent.SWITCHER,
-                    HologramCutInput.right(stage, true, true, false, false, requests.writing()),
-                    "an unresolved " + operation + " allows local mode selection even from " + stage);
+                    HologramCutInput.right(stage, true, false, false, true, true),
+                    "an unresolved " + operation + " allows Ctrl-Shift mode selection even from " + stage);
             }
             HologramCutInput.Switcher mode = new HologramCutInput.Switcher();
             SimpleAssert.that(mode.release(false) && !mode.cut(), "Shift release chooses ordinary blueprint");
@@ -173,11 +174,11 @@ public final class HologramCutInputRegression {
             requests.reconcile("pending");
             SimpleAssert.eq(
                 HologramCutInput.Intent.PREVIEW,
-                HologramCutInput.right(idle, true, true, false, false, requests.writing()),
+                HologramCutInput.right(idle, true, false, false, true, false),
                 "confirmed recovery restores the usual queued Shift-right placement gesture");
             SimpleAssert.eq(
                 HologramCutInput.Intent.SELECT,
-                HologramCutInput.right(idle, true, true, true, false, requests.writing()),
+                HologramCutInput.right(idle, true, true, false, true, false),
                 "confirmed recovery preserves Shift-Alt batch cutting");
         }
         for (HologramCutInput.Intent intent : new HologramCutInput.Intent[] { HologramCutInput.Intent.SELECT,
@@ -189,23 +190,74 @@ public final class HologramCutInputRegression {
             "the local switcher never requires a successful cut-directory sync");
     }
 
+    private static void selectedModeRouting() {
+        HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
+        SimpleAssert.eq(
+            HologramCutInput.Intent.PREVIEW,
+            HologramCutInput.right(idle, true, false, false, true, false),
+            "remembered CUT mode routes Shift-right directly to preview, including the empty-cache notice");
+        SimpleAssert.eq(
+            HologramCutInput.Intent.STORAGE,
+            HologramCutInput.right(idle, false, false, false, true, false),
+            "CUT mode keeps the list directly reachable while idle, even without cached entries");
+        SimpleAssert.eq(
+            HologramCutInput.Intent.NONE,
+            HologramCutInput.right(idle, false, false, false, false, false),
+            "choosing blueprint keeps its ordinary right click independent of stored cuts");
+        SimpleAssert.that(
+            !HologramCutInput.interceptsUse(idle, false, false, false),
+            "a private cut directory alone cannot intercept ordinary blueprint use");
+        SimpleAssert.that(
+            HologramCutInput.interceptsUse(idle, false, false, true),
+            "an idle CUT mode still intercepts the storage-list gesture");
+        for (boolean cut : new boolean[] { false, true }) {
+            SimpleAssert.eq(
+                HologramCutInput.Intent.SELECT,
+                HologramCutInput.right(idle, true, true, false, cut, false),
+                "Shift-Alt-right starts another selection without a placement preview");
+            SimpleAssert.eq(
+                HologramCutInput.Intent.SWITCHER,
+                HologramCutInput.right(idle, true, false, false, cut, true),
+                "Ctrl-Shift-right reopens the mode selector in either mode");
+        }
+        HologramCutInput.Switcher remembered = new HologramCutInput.Switcher(true);
+        SimpleAssert.that(remembered.cut(), "reopened mode selector starts on the selected CUT mode");
+        remembered.cycle();
+        SimpleAssert
+            .that(remembered.release(false) && !remembered.cut(), "one additional right press returns to blueprint");
+        for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
+            SimpleAssert.eq(
+                stage != idle,
+                HologramCutInput.cancelsActivity(stage, false, false),
+                "Escape clears selection/moving/locked activity without depending on the persistent queue");
+        }
+        SimpleAssert.that(
+            HologramCutInput.cancelsActivity(idle, true, false),
+            "Escape exits the local cut session after cut completion without forcing a paste");
+        SimpleAssert
+            .that(HologramCutInput.cancelsActivity(idle, false, true), "Escape clears residual local raw preview");
+        SimpleAssert.that(
+            !HologramCutInput.cancelsActivity(idle, false, false),
+            "after cancelling once another Escape can open the normal pause menu");
+    }
+
     private static void checkRecoveryRouting(boolean queued, String situation) {
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         SimpleAssert.eq(
             HologramCutInput.Intent.SWITCHER,
-            HologramCutInput.right(idle, queued, true, false, false, true),
-            situation + ": Shift-right opens the local mode selector immediately");
+            HologramCutInput.right(idle, true, false, false, queued, true),
+            situation + ": Ctrl-Shift-right opens the local mode selector immediately");
         SimpleAssert.eq(
-            queued,
-            HologramCutInput.interceptsUse(idle, queued, false, false),
+            false,
+            HologramCutInput.interceptsUse(idle, false, false, false),
             situation + ": ordinary blueprint use has no dependency on a missing cut directory or write ACK");
         for (boolean shift : new boolean[] { false, true }) {
             SimpleAssert.that(
-                !HologramCutInput.interceptsUse(idle, queued, shift, true),
+                !HologramCutInput.interceptsUse(idle, shift, true, queued),
                 situation + ": active blueprint input keeps priority, including Shift-right finish");
             SimpleAssert.eq(
                 HologramCutInput.Intent.NONE,
-                HologramCutInput.right(idle, queued, shift, false, true, true),
+                HologramCutInput.right(idle, shift, false, true, queued, true),
                 situation + ": cut recovery cannot redirect an active blueprint gesture");
         }
     }
@@ -214,7 +266,7 @@ public final class HologramCutInputRegression {
         boolean shift, boolean alt, boolean blueprintBusy) {
         SimpleAssert.eq(
             expected,
-            HologramCutInput.right(stage, queued, shift, alt, blueprintBusy),
+            HologramCutInput.right(stage, shift, alt, blueprintBusy, queued, false),
             "cut interaction priority: " + stage + "/" + queued + "/" + shift + "/" + alt + "/" + blueprintBusy);
     }
 }

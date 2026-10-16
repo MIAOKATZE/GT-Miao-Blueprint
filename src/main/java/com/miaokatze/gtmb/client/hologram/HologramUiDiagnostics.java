@@ -171,13 +171,13 @@ final class HologramUiDiagnostics {
         probe.ui.diagnostics.captureRenderSmokeAction = true;
         GuiScreen originalGui = ui.host.minecraft().currentScreen;
         try {
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(186);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(189);
             if (probe.ui.ae.aeReviewOffset() != 2 || probe.ui.ae.aeIssueRows()
                 .size() != 7) throw new IllegalStateException("AE issue paging lost rows");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(181);
             if (probe.ui.diagnostics.capturedRenderSmokeAction == null
                 || !"confirmAeSave".equals(probe.ui.diagnostics.capturedRenderSmokeAction.getString("op"))
@@ -194,7 +194,7 @@ final class HologramUiDiagnostics {
             fixture.setTag("aeSaveReview", dto);
             fixture.setLong("uiSequence", probe.ui.session.sequence());
             probe.updateState(new HologramState(fixture));
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.capturedRenderSmokeAction = null;
             probe.ui.diagnostics.smokeClickDrawnControl(181);
             if (probe.ui.diagnostics.capturedRenderSmokeAction != null || probe.ui.ae.aeReview() == null)
@@ -203,7 +203,7 @@ final class HologramUiDiagnostics {
             if (probe.ui.ae.aeReview() != null
                 || !"cancelAeSave".equals(probe.ui.diagnostics.capturedRenderSmokeAction.getString("op")))
                 throw new IllegalStateException("AE modal Esc failed to cancel without closing root");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeControlPoint(148);
             probe.ui.diagnostics.smokeControlPoint(149);
             if (ui.host.minecraft().currentScreen != originalGui)
@@ -227,7 +227,7 @@ final class HologramUiDiagnostics {
             fixture.setTag("aeIssues", rows);
             probe.updateState(new HologramState(fixture));
             probe.ui.diagnostics.capturedRenderSmokeAction = null;
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             HologramAnnotationMarkers.Marker reportMarker = null;
             int structureMarkers = 0;
             for (HologramAnnotationMarkers.Marker marker : probe.ui.annotations.annotationMarkers())
@@ -238,14 +238,14 @@ final class HologramUiDiagnostics {
                 .tagCount() > 0 && structureMarkers != 1)
                 throw new IllegalStateException("AE warnings lack a complete report or one structural aggregate");
             int[] point = probe.ui.diagnostics.smokePreviewPoint(reportMarker.x, reportMarker.y);
-            probe.drawScreen(point[0], point[1], 0);
+            HologramMuiProbeInput.renderFixture(probe, point[0], point[1], 0);
             if (probe.ui.canvas.tooltip() == null || !probe.ui.canvas.tooltip()
                 .toString()
                 .contains("存储元件内容清空"))
                 throw new IllegalStateException("AE warning icon hover did not expand the summary");
-            probe.ui.router.mouseClicked(point[0], point[1], 0);
-            probe.ui.router.mouseMovedOrUp(point[0], point[1], 0);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.press(probe, point[0], point[1], 0);
+            HologramMuiProbeInput.release(probe, point[0], point[1], 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (!"ae:report".equals(probe.ui.annotations.pinnedAnnotation())
                 || probe.ui.diagnostics.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("AE warning pin did not persist as a local interaction");
@@ -430,17 +430,14 @@ final class HologramUiDiagnostics {
 
     void smokeClickControl(int id) {
         HologramUiDiagnostics.requireInteractionSmoke();
-        int[] p = ui.diagnostics.smokeControlPoint(id);
-        ui.router.mouseClicked(p[0], p[1], 0);
-        ui.router.mouseMovedOrUp(p[0], p[1], 0);
+        HologramMuiProbeInput.control(ui.host.parent(), id);
     }
 
     void smokeClickAt(int x, int y, int button) {
         HologramUiDiagnostics.requireInteractionSmoke();
         if (this.captureRenderSmokeAction)
             throw new IllegalStateException("Live clicks require actual network dispatch");
-        ui.router.mouseClicked(x, y, button);
-        ui.router.mouseMovedOrUp(x, y, button);
+        HologramMuiProbeInput.click(ui.host.parent(), x, y, button);
     }
 
     NBTTagCompound smokeAreaImportUiState() {
@@ -509,8 +506,8 @@ final class HologramUiDiagnostics {
         ui.preview.moveHandles(false);
         try {
             int[] point = ui.diagnostics.smokePreviewPoint(logicalX, logicalY);
-            ui.router.mouseClicked(point[0], point[1], 0);
-            ui.router.mouseMovedOrUp(point[0], point[1], 0);
+            HologramMuiProbeInput.press(ui.host.parent(), point[0], point[1], 0);
+            HologramMuiProbeInput.release(ui.host.parent(), point[0], point[1], 0);
             if (this.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("Local preview selection emitted a network operation");
             return ui.preview.selection()
@@ -555,8 +552,8 @@ final class HologramUiDiagnostics {
         this.captureRenderSmokeAction = true;
         try {
             int[] confirm = ui.diagnostics.smokeControlPoint(55);
-            ui.router.mouseClicked(confirm[0], confirm[1], 0);
-            ui.router.mouseMovedOrUp(confirm[0], confirm[1], 0);
+            HologramMuiProbeInput.press(ui.host.parent(), confirm[0], confirm[1], 0);
+            HologramMuiProbeInput.release(ui.host.parent(), confirm[0], confirm[1], 0);
             if (this.capturedRenderSmokeAction == null
                 || !"build".equals(this.capturedRenderSmokeAction.getString("op"))
                 || this.capturedRenderSmokeAction.getLong("planRevision") != reviewed)
@@ -567,8 +564,8 @@ final class HologramUiDiagnostics {
             ui.session.updateState(new HologramState(initial));
             if (!ui.review.confirmation()) throw new IllegalStateException("Build force reply did not reopen review");
             int[] cancel = ui.diagnostics.smokeControlPoint(54);
-            ui.router.mouseClicked(cancel[0], cancel[1], 0);
-            ui.router.mouseMovedOrUp(cancel[0], cancel[1], 0);
+            HologramMuiProbeInput.press(ui.host.parent(), cancel[0], cancel[1], 0);
+            HologramMuiProbeInput.release(ui.host.parent(), cancel[0], cancel[1], 0);
             ui.session.updateState(new HologramState(initial));
             if (ui.review.confirmation())
                 throw new IllegalStateException("Cancelled force review reopened on an unrelated snapshot");
@@ -643,8 +640,8 @@ final class HologramUiDiagnostics {
                         .clear();
                     int mouseX = ui.canvas.originX() + Math.round(x * ui.canvas.scale()),
                         mouseY = ui.canvas.originY() + Math.round(y * ui.canvas.scale());
-                    ui.router.mouseClicked(mouseX, mouseY, 0);
-                    ui.router.mouseMovedOrUp(mouseX, mouseY, 0);
+                    HologramMuiProbeInput.press(ui.host.parent(), mouseX, mouseY, 0);
+                    HologramMuiProbeInput.release(ui.host.parent(), mouseX, mouseY, 0);
                     if (ui.preview.selection()
                         .size() != 1
                         || !ui.preview.selection()
@@ -656,8 +653,8 @@ final class HologramUiDiagnostics {
                     ui.preview.selection()
                         .clear();
                     ui.preview.selected(-1);
-                    ui.router.mouseClicked(mouseX, mouseY, 0);
-                    ui.router.mouseMovedOrUp(mouseX, mouseY, 0);
+                    HologramMuiProbeInput.press(ui.host.parent(), mouseX, mouseY, 0);
+                    HologramMuiProbeInput.release(ui.host.parent(), mouseX, mouseY, 0);
                     HologramState.Cell clicked = ui.session.state().cells.get(target);
                     String active = ui.session.state().data.getString("activeStructure");
                     String group = clicked.belongsToStructure(active) ? active : clicked.structureId;
@@ -685,8 +682,8 @@ final class HologramUiDiagnostics {
                             ui.preview.selection()
                                 .clear();
                             ui.preview.selected(-1);
-                            ui.router.mouseClicked(edgeX, edgeY, 0);
-                            ui.router.mouseMovedOrUp(edgeX, edgeY, 0);
+                            HologramMuiProbeInput.press(ui.host.parent(), edgeX, edgeY, 0);
+                            HologramMuiProbeInput.release(ui.host.parent(), edgeX, edgeY, 0);
                             int members = 0;
                             for (HologramState.Cell cell : ui.session.state().cells)
                                 if (cell.belongsToStructure(outline)) members++;
@@ -734,25 +731,25 @@ final class HologramUiDiagnostics {
         probe.setWorldAndResolution(ui.host.minecraft(), ui.host.screenWidth(), ui.host.screenHeight());
         probe.ui.diagnostics.captureRenderSmokeAction = true;
         try {
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             HologramAnnotationMarkers.Marker global = probe.ui.annotations.visibleMarkers()
                 .get(0);
             int[] markerPoint = probe.ui.diagnostics.smokePreviewPoint(global.x, global.y);
-            probe.drawScreen(markerPoint[0], markerPoint[1], 0);
+            HologramMuiProbeInput.renderFixture(probe, markerPoint[0], markerPoint[1], 0);
             if (probe.ui.canvas.tooltip() == null || !probe.ui.canvas.tooltip()
                 .toString()
                 .contains("V004 icon hover and pin"))
                 throw new IllegalStateException("Annotation icon hover did not expand the persisted prompt");
-            probe.ui.router.mouseClicked(markerPoint[0], markerPoint[1], 0);
-            probe.ui.router.mouseMovedOrUp(markerPoint[0], markerPoint[1], 0);
+            HologramMuiProbeInput.press(probe, markerPoint[0], markerPoint[1], 0);
+            HologramMuiProbeInput.release(probe, markerPoint[0], markerPoint[1], 0);
             if (!"blueprint".equals(probe.ui.annotations.pinnedAnnotation())
                 || probe.ui.diagnostics.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("Annotation pin was not a local mouse interaction");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (!"blueprint".equals(probe.ui.annotations.pinnedAnnotation()))
                 throw new IllegalStateException("Pinned prompt disappeared when the mouse left the icon");
-            probe.ui.router.mouseClicked(markerPoint[0], markerPoint[1], 0);
-            probe.ui.router.mouseMovedOrUp(markerPoint[0], markerPoint[1], 0);
+            HologramMuiProbeInput.press(probe, markerPoint[0], markerPoint[1], 0);
+            HologramMuiProbeInput.release(probe, markerPoint[0], markerPoint[1], 0);
             if (!probe.ui.annotations.pinnedAnnotation()
                 .isEmpty()) throw new IllegalStateException("Second icon click did not unpin");
 
@@ -784,7 +781,7 @@ final class HologramUiDiagnostics {
                 probe.ui.preview.selection()
                     .first());
             probe.ui.preview.moveHandles(true);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (!probe.ui.preview.selection()
                 .movable(probe.ui.session.state()))
                 throw new IllegalStateException("Complete structure selection did not expose legal movement");
@@ -804,7 +801,7 @@ final class HologramUiDiagnostics {
             probe.ui.preview.selection()
                 .clear();
             probe.ui.preview.selected(-1);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             int[] air = null;
             airSearch: for (int y = HologramUiCanvas.viewportY + 50; y
                 < HologramUiCanvas.viewportY + HologramUiCanvas.viewportHeight - 45; y += 2)
@@ -818,12 +815,12 @@ final class HologramUiDiagnostics {
                         for (HologramState.Cell cell : probe.ui.session.state().cells)
                             if (cell.x == voxel[0] && cell.y == voxel[1] && cell.z == voxel[2]) exists = true;
                         if (exists) continue;
-                        probe.drawScreen(point[0], point[1], 0);
+                        HologramMuiProbeInput.renderFixture(probe, point[0], point[1], 0);
                         if (!java.util.Arrays.equals(voxel, probe.ui.preview.emptyVoxelPreview()))
                             throw new IllegalStateException(
                                 "Alt air coordinates disagree with the projected voxel preview");
-                        probe.ui.router.mouseClicked(point[0], point[1], 0);
-                        probe.ui.router.mouseMovedOrUp(point[0], point[1], 0);
+                        HologramMuiProbeInput.press(probe, point[0], point[1], 0);
+                        HologramMuiProbeInput.release(probe, point[0], point[1], 0);
                         NBTTagCompound request = probe.ui.diagnostics.capturedRenderSmokeAction;
                         if (request == null || !"addPosition".equals(request.getString("op"))
                             || request.getInteger("dx") + fixture.getInteger("x") != voxel[0]
@@ -866,7 +863,7 @@ final class HologramUiDiagnostics {
             probe.ui.diagnostics.captureRenderSmokeAction = true;
             ui.host.minecraft()
                 .displayGuiScreen(probe);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             int[] structureTab = probe.ui.diagnostics.smokeControlPoint(148),
                 blueprintTab = probe.ui.diagnostics.smokeControlPoint(149);
             if (structureTab[1] != blueprintTab[1] || structureTab[0] >= blueprintTab[0])
@@ -891,16 +888,16 @@ final class HologramUiDiagnostics {
             if (!clicked) throw new IllegalStateException("Tab persistence smoke never selected a real preview face");
             int[] selected = probe.ui.preview.selection()
                 .indices();
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(149);
             if (!probe.ui.library.libraryDrawer())
                 throw new IllegalStateException("Peer blueprint tab did not open the library");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             NBTTagList rows = fixture.getTagList("presets", 10);
             if (rows.tagCount() == 0)
                 throw new IllegalStateException("Library row smoke requires a real saved blueprint");
             int[] rowPoint = probe.ui.diagnostics.smokeControlPoint(14000);
-            probe.drawScreen(rowPoint[0], rowPoint[1], 0);
+            HologramMuiProbeInput.renderFixture(probe, rowPoint[0], rowPoint[1], 0);
             if (probe.ui.canvas.tooltip() == null || !probe.ui.canvas.tooltip()
                 .toString()
                 .contains(
@@ -920,7 +917,7 @@ final class HologramUiDiagnostics {
             fixture.setLong("uiSequence", probe.ui.session.sequence());
             probe.updateState(new HologramState(fixture));
             int[] namePoint = probe.ui.diagnostics.smokePreviewPoint(HologramScreenLayout.COMPACT_PANEL_X + 18, 84);
-            probe.ui.router.mouseClicked(namePoint[0], namePoint[1], 0);
+            HologramMuiProbeInput.press(probe, namePoint[0], namePoint[1], 0);
             String before = probe.ui.library.presetNameField()
                 .getText();
             probe.ui.router.keyTyped('e', Keyboard.KEY_E);
@@ -960,7 +957,7 @@ final class HologramUiDiagnostics {
             fixture.setString("openPurpose", "placementReview");
             fixture.setLong("placementReviewNonce", 1);
             again.updateState(new HologramState(fixture));
-            again.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(again, 0, 0, 0);
             if (!again.ui.library.libraryDrawer() || !again.ui.review.confirmation())
                 throw new IllegalStateException("Placement review changed the remembered tab or bypassed materials");
             NBTTagCompound beforeCancel = (NBTTagCompound) again.ui.session.state().data.copy();
@@ -975,11 +972,11 @@ final class HologramUiDiagnostics {
                     || again.ui.diagnostics.capturedRenderSmokeAction != beforeCancelAction)
                     throw new IllegalStateException(
                         "Identity cancellation changed the source, review nonce, pending materials or operation");
-                again.drawScreen(0, 0, 0);
+                HologramMuiProbeInput.renderFixture(again, 0, 0, 0);
                 again.ui.diagnostics.smokeControlPoint(55);
             }
             again.ui.router.keyTyped('\0', Keyboard.KEY_ESCAPE);
-            again.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(again, 0, 0, 0);
             if (again.ui.review.confirmation() || again.ui.identity.deidentificationDrawer()
                 || !again.ui.library.libraryDrawer()
                 || !beforeCancel.equals(again.ui.session.state().data)
@@ -1013,7 +1010,7 @@ final class HologramUiDiagnostics {
             throw new IllegalStateException("UI smoke disabled");
         if (!ui.review.placementReviewActive() || !ui.review.confirmation())
             throw new IllegalStateException("Repeated right-click did not open the placement precheck");
-        ui.router.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(ui.host.parent(), 0, 0, 0);
         ui.diagnostics.smokeControlPoint(55);
         ui.diagnostics.smokeControlPoint(168);
         ui.diagnostics.smokeControlPoint(169);
@@ -1024,14 +1021,14 @@ final class HologramUiDiagnostics {
             throw new IllegalStateException("Placement review lost its distinct title or direct confirmation action");
         long previousSequence = ui.session.sequence();
         ui.diagnostics.smokeClickDrawnControl(168);
-        ui.router.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(ui.host.parent(), 0, 0, 0);
         ui.diagnostics.smokeClickDrawnControl(172);
         if (ui.nbt.nbtDrawer() || !ui.review.confirmation()
             || !ui.review.placementReviewActive()
             || ui.session.sequence() != previousSequence)
             throw new IllegalStateException(
                 "Cancelling NBT adjustment changed the placement authority or fixed position");
-        ui.router.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(ui.host.parent(), 0, 0, 0);
         ui.diagnostics.smokeAssertPlacementConfirmationDispatch();
         return "purpose=" + ui.session.state().data.getString("openPurpose")
             + " tab="
@@ -1054,7 +1051,7 @@ final class HologramUiDiagnostics {
             // These background surfaces can remain selected while the modal covers their controls.
             probe.ui.config.roleDropdown(probe.ui.position.positionDrawer(probe.ui.config.sourceDrawer(true)));
             probe.setWorldAndResolution(ui.host.minecraft(), ui.host.screenWidth(), ui.host.screenHeight());
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(55);
             NBTTagCompound request = probe.ui.diagnostics.capturedRenderSmokeAction;
             if (request == null || !"confirmBlueprintPlacement".equals(request.getString("op"))
@@ -1077,7 +1074,7 @@ final class HologramUiDiagnostics {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")
             && !Boolean.getBoolean("gtmb.hologram.realInteractionSmoke"))
             throw new IllegalStateException("UI smoke disabled");
-        ui.router.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(ui.host.parent(), 0, 0, 0);
         boolean wholePlacement = ui.session.state().data.getBoolean("wholeBlueprintPlacement")
             || ui.session.state().data.getBoolean("virtualPlacement");
         int expected = !wholePlacement && ui.preview.selection()
@@ -1117,7 +1114,7 @@ final class HologramUiDiagnostics {
 
     NBTTagCompound smokeCaptureAxisDrag(boolean ctrlAtStart, boolean ctrlAtRelease) {
         this.smokeCtrlSelection = ctrlAtStart;
-        ui.router.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(ui.host.parent(), 0, 0, 0);
         for (int axis = 0; axis < 3; axis++) {
             double[] center = ui.preview.gizmo()
                 .start(),
@@ -1131,7 +1128,7 @@ final class HologramUiDiagnostics {
                 || ui.preview.gizmo()
                     .pick(ui.canvas.localX(start[0]), ui.canvas.localY(start[1])) != axis)
                 continue;
-            ui.router.mouseClicked(start[0], start[1], 0);
+            HologramMuiProbeInput.press(ui.host.parent(), start[0], start[1], 0);
             if (ui.preview.gizmo()
                 .axis() != axis) continue;
             int[] finish = ui.diagnostics.smokePreviewPoint(
@@ -1139,7 +1136,7 @@ final class HologramUiDiagnostics {
                 (int) Math.round(sy + (end[1] - center[1]) * .7));
             this.smokeCtrlSelection = ctrlAtRelease;
             ui.router.mouseClickMove(finish[0], finish[1], 0, 100);
-            ui.router.mouseMovedOrUp(finish[0], finish[1], 0);
+            HologramMuiProbeInput.release(ui.host.parent(), finish[0], finish[1], 0);
             if (this.capturedRenderSmokeAction == null
                 || !"editMove".equals(this.capturedRenderSmokeAction.getString("op")))
                 throw new IllegalStateException("Actual RGB axis drag did not submit an editMove packet");
@@ -1188,7 +1185,7 @@ final class HologramUiDiagnostics {
         probe.setWorldAndResolution(ui.host.minecraft(), ui.host.screenWidth(), ui.host.screenHeight());
         probe.ui.diagnostics.captureRenderSmokeAction = true;
         try {
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             java.util.Map<Integer, Integer> visibleControlCounts = new java.util.HashMap<>();
             for (Control control : probe.ui.canvas.controls())
                 visibleControlCounts.put(control.id, visibleControlCounts.getOrDefault(control.id, 0) + 1);
@@ -1201,12 +1198,12 @@ final class HologramUiDiagnostics {
             if (probe.ui.diagnostics.drawnControlEnabled(140) || probe.ui.diagnostics.drawnControlEnabled(166))
                 throw new IllegalStateException("Processing gate exposed saving or NBT early");
             probe.ui.diagnostics.smokeClickDrawnControl(220);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(231);
             if (probe.ui.processing.processingFlow().stage != 0)
                 throw new IllegalStateException("Next advanced an untouched stage");
             probe.ui.diagnostics.smokeClickDrawnControl(233);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (!probe.ui.diagnostics.drawnControlEnabled(231) || probe.ui.processing.processingFlow()
                 .complete()
                 || probe.ui.processing.processingFlow()
@@ -1217,7 +1214,7 @@ final class HologramUiDiagnostics {
                     "Sharing inclination did not offer defaults or implicitly confirmed stages");
             int[] choices = { 235, 240, 261, 270, 280, 291 };
             for (int stage = 0; stage < choices.length; stage++) {
-                probe.drawScreen(0, 0, 0);
+                HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
                 if (probe.ui.processing.processingFlow().stage != stage || probe.ui.processing.processingFlow()
                     .policy()
                     .getTagList("confirmedStages", 8)
@@ -1228,7 +1225,7 @@ final class HologramUiDiagnostics {
                     throw new IllegalStateException(
                         "Author raw floor zero did not permit level zero independently of the processed placement floor six");
                 probe.ui.diagnostics.smokeClickDrawnControl(choices[stage]);
-                probe.drawScreen(0, 0, 0);
+                HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
                 if (!probe.ui.diagnostics.drawnControlEnabled(231))
                     throw new IllegalStateException("Explicit stage choice did not open Next");
                 probe.ui.diagnostics.smokeClickDrawnControl(231);
@@ -1242,14 +1239,14 @@ final class HologramUiDiagnostics {
                 || process.getCompoundTag("policy")
                     .getInteger("deidentificationLevel") != 0)
                 throw new IllegalStateException("Six actual choices did not submit a complete processing policy");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (probe.ui.diagnostics.drawnControlEnabled(140))
                 throw new IllegalStateException("Saving opened before the server receipt");
             fixture.setLong("uiSequence", probe.ui.session.sequence());
             fixture.setBoolean("blueprintProcessingComplete", true);
             fixture.setBoolean("blueprintDirty", false);
             probe.updateState(new HologramState(fixture));
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (!probe.ui.diagnostics.drawnControlEnabled(140) || !probe.ui.diagnostics.drawnControlEnabled(166))
                 throw new IllegalStateException("Server success did not open saving and NBT");
             probe.ui.diagnostics.capturedRenderSmokeAction = null;
@@ -1263,25 +1260,25 @@ final class HologramUiDiagnostics {
             fixture.setBoolean("blueprintDirty", true);
             probe.updateState(new HologramState(fixture));
             probe.ui.library.libraryOffset(4);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(14004);
             if (!probe.ui.library.discardReview() || probe.ui.diagnostics.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("Dirty row switch skipped its discard confirmation");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(225);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(222);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(14004);
             if (!"processing-row-4".equals(probe.ui.library.overwriteTarget()) || probe.ui.library.libraryOffset() != 4
                 || probe.ui.diagnostics.capturedRenderSmokeAction != null
                 || probe.ui.library.libraryNavigation() != null)
                 throw new IllegalStateException("Overwrite target selection loaded a blueprint or lost list offset");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(140);
             if (!probe.ui.library.overwriteReview() || probe.ui.diagnostics.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("Saving skipped the named overwrite confirmation");
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(224);
             if (!"saveBlueprintReplace".equals(probe.ui.diagnostics.capturedRenderSmokeAction.getString("op"))
                 || !probe.ui.diagnostics.capturedRenderSmokeAction.getBoolean("confirmOverwrite")
@@ -1303,7 +1300,7 @@ final class HologramUiDiagnostics {
             fixture.setBoolean("discardConfirmationRequired", true);
             probe.ui.diagnostics.capturedRenderSmokeAction = null;
             probe.updateState(new HologramState(fixture));
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             if (!probe.ui.library.discardReview() || !probe.ui.library.libraryDrawer()) throw new IllegalStateException(
                 "A guarded world source did not preserve the authoritative blueprint workspace");
             probe.ui.diagnostics.smokeClickDrawnControl(225);
@@ -1315,7 +1312,7 @@ final class HologramUiDiagnostics {
             proposal.setLong("sourceSwitchNonce", 702);
             probe.updateState(new HologramState(fixture));
             probe.ui.diagnostics.capturedRenderSmokeAction = null;
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             probe.ui.diagnostics.smokeClickDrawnControl(224);
             NBTTagCompound sourceRequest = probe.ui.diagnostics.capturedRenderSmokeAction;
             if (sourceRequest == null || !"importArea".equals(sourceRequest.getString("op"))
@@ -1431,7 +1428,7 @@ final class HologramUiDiagnostics {
             throw new IllegalStateException("UI library entry incorrectly opened materials before choosing placement");
         browse.ui.diagnostics.captureRenderSmokeAction = true;
         try {
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             browse.ui.diagnostics.smokeClickDrawnControl(140);
             if (browse.ui.diagnostics.capturedRenderSmokeAction == null
                 || !"saveBlueprintAs".equals(browse.ui.diagnostics.capturedRenderSmokeAction.getString("op"))
@@ -1444,17 +1441,17 @@ final class HologramUiDiagnostics {
             if (!browse.ui.library.libraryDrawer() || !browse.ui.library.libraryResult()
                 .contains("Smoke write failure"))
                 throw new IllegalStateException("Save failure disappeared from the library");
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             browse.ui.diagnostics.smokeClickDrawnControl(140);
             if (!"saveBlueprintAs".equals(browse.ui.diagnostics.capturedRenderSmokeAction.getString("op")))
                 throw new IllegalStateException("Save As did not request a distinct new library entry");
             fixture.setLong("uiSequence", browse.ui.session.sequence());
             fixture.setString("status", "Smoke saved as new blueprint");
             browse.updateState(new HologramState(fixture));
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             browse.ui.diagnostics.capturedRenderSmokeAction = null;
             browse.ui.diagnostics.smokeClickDrawnControl(175);
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             if (!"smoke-ui-entry".equals(browse.ui.library.deletePresetId())
                 || browse.ui.diagnostics.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("Delete bypassed the named confirmation");
@@ -1462,9 +1459,9 @@ final class HologramUiDiagnostics {
             if (!browse.ui.library.deletePresetId()
                 .isEmpty() || browse.ui.diagnostics.capturedRenderSmokeAction != null)
                 throw new IllegalStateException("Delete cancellation emitted an operation");
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             browse.ui.diagnostics.smokeClickDrawnControl(175);
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             browse.ui.diagnostics.smokeClickDrawnControl(176);
             if (!"deletePreset".equals(browse.ui.diagnostics.capturedRenderSmokeAction.getString("op"))
                 || !"smoke-ui-entry".equals(browse.ui.diagnostics.capturedRenderSmokeAction.getString("presetId")))
@@ -1475,7 +1472,7 @@ final class HologramUiDiagnostics {
             if (!browse.ui.library.libraryDrawer() || !browse.ui.library.libraryResult()
                 .contains("Smoke delete failure"))
                 throw new IllegalStateException("Delete failure disappeared from the library");
-            browse.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(browse, 0, 0, 0);
             browse.ui.diagnostics.capturedRenderSmokeAction = null;
             browse.ui.diagnostics.smokeClickDrawnControl(141);
             if (browse.ui.diagnostics.capturedRenderSmokeAction == null
@@ -1503,9 +1500,7 @@ final class HologramUiDiagnostics {
     }
 
     void smokeClickDrawnControl(int id) {
-        int[] point = ui.diagnostics.smokeControlPoint(id);
-        ui.router.mouseClicked(point[0], point[1], 0);
-        ui.router.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.control(ui.host.parent(), id);
     }
 
     String smokeRenderGizmoHover(String scenario) {
@@ -1524,7 +1519,7 @@ final class HologramUiDiagnostics {
                 String pickedStructure = HologramRenderer.pickStructure(mx, my);
                 String pickedHint = HologramRenderer.hintAt(mx, my);
                 if (structure != !pickedStructure.isEmpty() || hint != !pickedHint.isEmpty()) continue;
-                ui.router.drawScreen(mouseX, mouseY, 0);
+                HologramMuiProbeInput.renderFixture(ui.host.parent(), mouseX, mouseY, 0);
                 List<String> expected = new ArrayList<>();
                 expected.add("拖动轴移动；按住 Ctrl 开始拖动即复制；松开提交规划");
                 if (hint) expected.addAll(

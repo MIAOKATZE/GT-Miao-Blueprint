@@ -5,7 +5,6 @@ import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
 
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -31,7 +30,7 @@ final class HologramUiNetworkBindings {
 
     private final HologramNetworkBindingNavigation networkBindingNavigation = new HologramNetworkBindingNavigation();
 
-    private GuiTextField networkHintField;
+    private HologramMuiTextField networkHintField;
 
     NBTTagList networkGroups() {
         return ui.session.state().data.getCompoundTag("networkBindings")
@@ -341,11 +340,11 @@ final class HologramUiNetworkBindings {
         return this.networkGroupOffset;
     }
 
-    GuiTextField networkHintField() {
+    HologramMuiTextField networkHintField() {
         return this.networkHintField;
     }
 
-    GuiTextField networkHintField(GuiTextField value) {
+    HologramMuiTextField networkHintField(HologramMuiTextField value) {
         this.networkHintField = value;
         return value;
     }
@@ -355,7 +354,7 @@ final class HologramUiNetworkBindings {
     }
 
     void initializeFields() {
-        ui.bindings.networkHintField(new GuiTextField(ui.host.font(), 50, 220, 325, 18));
+        ui.bindings.networkHintField(new HologramMuiTextField(ui.host.parent(), 50, 220, 325, 18));
         ui.bindings.networkHintField()
             .setMaxStringLength(256);
         ui.bindings.loadNetworkHintField();

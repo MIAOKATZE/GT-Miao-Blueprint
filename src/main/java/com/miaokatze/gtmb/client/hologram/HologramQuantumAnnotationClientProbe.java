@@ -24,7 +24,7 @@ public final class HologramQuantumAnnotationClientProbe {
         if (!((String) read(screen, "pinnedAnnotation")).isEmpty())
             throw new IllegalStateException("Quantum marker probe starts with the annotation surface unpinned");
         long sequence = (Long) read(screen, "sequence"), pending = (Long) read(screen, "pendingSequence");
-        screen.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
         @SuppressWarnings("unchecked")
         List<HologramAnnotationMarkers.Marker> visible = new ArrayList<>(
             (List<HologramAnnotationMarkers.Marker>) read(screen, "visibleMarkers"));
@@ -38,7 +38,7 @@ public final class HologramQuantumAnnotationClientProbe {
                 new Class<?>[] { int.class, int.class },
                 marker.x,
                 marker.y);
-            screen.drawScreen(point[0], point[1], 0);
+            HologramMuiProbeInput.renderFixture(screen, point[0], point[1], 0);
             Object tooltip = read(screen, "tooltip");
             if (tooltip == null || !tooltip.toString()
                 .contains(marker.title))
@@ -51,13 +51,11 @@ public final class HologramQuantumAnnotationClientProbe {
                     throw new IllegalStateException(
                         "Actual quantum marker hover omitted its group/member hint " + marker.key);
             }
-            screen.mouseClicked(point[0], point[1], 0);
-            screen.mouseMovedOrUp(point[0], point[1], 0);
-            screen.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.click(screen, point[0], point[1], 0);
+            HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
             if (!marker.key.equals(read(screen, "pinnedAnnotation")))
                 throw new IllegalStateException("Actual quantum marker click failed to pin " + marker.key);
-            screen.mouseClicked(point[0], point[1], 0);
-            screen.mouseMovedOrUp(point[0], point[1], 0);
+            HologramMuiProbeInput.click(screen, point[0], point[1], 0);
             if (!((String) read(screen, "pinnedAnnotation")).isEmpty())
                 throw new IllegalStateException("Actual quantum marker repeat click failed to unpin " + marker.key);
             checked++;

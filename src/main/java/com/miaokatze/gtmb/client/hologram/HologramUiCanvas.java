@@ -9,7 +9,6 @@ import java.util.List;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderItem;
 import net.minecraft.item.ItemStack;
-import net.minecraft.util.ResourceLocation;
 
 import org.lwjgl.opengl.GL11;
 
@@ -26,7 +25,15 @@ final class HologramUiCanvas {
 
     static final int DESIGN_H = HologramScreenLayout.HEIGHT;
 
-    private final List<Control> controls = new ArrayList<>();
+    private final List<Control> controls = new ArrayList<>() {
+
+        @Override
+        public void clear() {
+            super.clear();
+            ui.host.parent()
+                .clearNativeFieldVisibility();
+        }
+    };
 
     private final RenderItem itemRenderer = new RenderItem();
 
@@ -106,10 +113,12 @@ final class HologramUiCanvas {
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glColor4f(1, 1, 1, 1);
-            ui.host.minecraft()
-                .getTextureManager()
-                .bindTexture(new ResourceLocation("gtmb", "textures/gui/pocket/POCKET_C2_" + name + ".png"));
-            func_152125_a(x, y, 0, 0, 1, 1, w, h, 1, 1);
+            (switch (name) {
+                case "cloth" -> HologramMuiTheme.CLOTH;
+                case "btn" -> HologramMuiTheme.BUTTON;
+                case "btn_pressed" -> HologramMuiTheme.PRESSED;
+                default -> HologramMuiTheme.PANEL;
+            }).draw((float) x, y, w, h);
         } finally {
             GL11.glPopAttrib();
         }
@@ -127,7 +136,6 @@ final class HologramUiCanvas {
             h,
             enabled);
         this.controls.add(drawn);
-        ui.canvas.skin(enabled && c.contains(mx, my) ? "btn_pressed" : "btn", x, y, w, h);
         int accent = ui.ae.aeReview() != null ? HologramGuidance.modalAccent(id, 181, 182)
             : !ui.library.deletePresetId()
                 .isEmpty()
@@ -171,32 +179,6 @@ final class HologramUiCanvas {
             accent = 0xff7272;
         drawn.label = label;
         drawn.accent = enabled ? accent : 0;
-        if (enabled && accent != 0) {
-            int border = 0xff000000 | accent;
-            drawRect(x, y, x + w, y + 1, border);
-            drawRect(x, y + h - 1, x + w, y + h, border);
-            drawRect(x, y, x + 1, y + h, border);
-            drawRect(x + w - 1, y, x + w, y + h, border);
-        }
-        if (this.compactControls) {
-            GL11.glPushMatrix();
-            GL11.glTranslatef(x + w / 2F, 0, 0);
-            GL11.glScalef(1 / HologramScreenLayout.CONTROL_WIDTH_SCALE, 1, 1);
-            GL11.glTranslatef(-x - w / 2F, 0, 0);
-        }
-        try {
-            ui.host.renderCenteredText(
-                ui.host.font(),
-                ui.host.font()
-                    .trimStringToWidth(
-                        label,
-                        (this.compactControls ? Math.round(w * HologramScreenLayout.CONTROL_WIDTH_SCALE) : w) - 6),
-                x + w / 2,
-                y + (h - 8) / 2,
-                enabled ? accent == 0 ? 0xf0ddb3 : accent : 0x647c7f);
-        } finally {
-            if (this.compactControls) GL11.glPopMatrix();
-        }
         if (c.contains(mx, my)) {
             String help = ui.canvas.controlHelp(id);
             if (help != null) {

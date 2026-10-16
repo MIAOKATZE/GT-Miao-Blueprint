@@ -77,6 +77,32 @@ def main():
                 path = path[1:]
             source_matches = source_matches and Path(path).resolve() == normal.resolve()
     receipt['actual_class_origins_match_selected_normal_jar'] = source_matches
+    mui2 = observed.get('mui2Version') is not None
+    migration_passed = (observed.get('mui2Version') == '2.3.92-1.7.10'
+                        and observed.get('mui2Resource', '').startswith('jar:file:')
+                        and '-dev.jar' not in observed.get('mui2Resource', '')
+                        and int(observed.get('actualNativeButtons', '0')) > 0
+                        and int(observed.get('actualNativeTextFields', '0')) > 0
+                        and 'real ModularScreen hit-test' in observed.get('operation', '')
+                        and observed.get('operationBefore') != observed.get('operationAfter')
+                        and observed.get('resourceReload', '').startswith('PASS ')
+                        and observed.get('cutActionCodecPackets') == '0'
+                        and all(observed.get('texture.' + name, '').endswith('decoded and GL bound ' + dimensions)
+                                for name, dimensions in (('PANEL', '64x64'), ('CLOTH', '32x32'),
+                                                         ('BUTTON', '88x18'), ('PRESSED', '88x18')))
+                        and (fixture / 'receipts/native-hologram-before-reload.png').is_file()
+                        and (fixture / 'receipts/native-hologram-screen.png').is_file())
+    receipt['actual_mui2_migration_scope'] = migration_passed if mui2 else 'legacy fixture, not MUI2 validation'
+    receipt['framebuffer_hashes'] = {path.name: digest(path) for path in (fixture / 'receipts').glob('native-hologram-*.png')}
+    if mui2:
+        url = observed.get('mui2Resource', '')
+        if url.startswith('jar:file:') and '!' in url:
+            path = unquote(urlsplit(url[4:].split('!', 1)[0]).path)
+            if re.match(r'^/[A-Za-z]:/', path):
+                path = path[1:]
+            library = Path(path)
+            if library.is_file():
+                receipt['actual_mui2_runtime'] = {'path': str(library.resolve()), 'sha256': digest(library)}
     log = log_path.read_text(encoding='utf-8', errors='replace')
     crashes = list((fixture / 'client/crash-reports').glob('*.txt'))
     all_errors = log + '\n'.join(path.read_text(encoding='utf-8', errors='replace') for path in crashes)
@@ -84,7 +110,8 @@ def main():
         accepted = (observed.get('status') == 'PASS' and observed.get('hostMethodCount') == '9'
                     and observed.get('glError') == '0' and observed.get('fmlDeobfuscatedEnvironment') == 'false'
                     and int(observed.get('nativeFramesObserved', '0')) >= 4 and source_matches
-                    and receipt['normal_unchanged'] and not receipt['timeout'] and receipt['exit_code'] == 0)
+                    and receipt['normal_unchanged'] and not receipt['timeout'] and receipt['exit_code'] == 0
+                    and (not mui2 or migration_passed))
         receipt['status'] = 'PASS' if accepted else 'FAIL'
     else:
         accepted = ('AbstractMethodError' in all_errors and 'drawDefaultBackground' in all_errors
