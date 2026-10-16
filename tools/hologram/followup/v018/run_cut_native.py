@@ -26,6 +26,11 @@ def save(path, record):
     path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def scenario_receipts(directory):
+    return sorted(path for path in directory.iterdir()
+                  if path.is_file() and path.name.startswith(("cut-", "ordinary-")))
+
+
 def contained(path, parent=ROOT):
     path = path.resolve(strict=True)
     path.relative_to(parent)
@@ -122,12 +127,12 @@ def stage(args):
     if previous and previous["name"] == args.name:
         if previous["normal_sha256"] != selected_hash or (output / "process-receipt.json").exists():
             raise RuntimeError("This name was already used or selected JAR changed")
-        if any(receipts.glob("cut-*")):
+        if scenario_receipts(receipts):
             raise RuntimeError("Staged receipts are no longer fresh")
         return previous
-    old_receipts = list(receipts.glob("cut-*"))
+    old_receipts = scenario_receipts(receipts)
     if old_receipts and not previous:
-        raise RuntimeError("Old cut receipts lack a previous-run manifest; archive them explicitly first")
+        raise RuntimeError("Old scenario receipts lack a previous-run manifest; archive them explicitly first")
     if output.exists():
         raise FileExistsError("Run output already exists; choose a fresh name")
     previous_jars = [client / "mods" / env["normal_jar"], server / "mods" / env["normal_jar"]]
@@ -303,7 +308,7 @@ def run(record, timeout):
             log.close()
         result["closed_unix"] = time.time()
         result["artifacts_sha256"] = {path.name: digest(path) for path in output.glob("*.log")}
-        result["receipt_sha256"] = {path.name: digest(path) for path in receipts.glob("cut-*") if path.is_file()}
+        result["receipt_sha256"] = {path.name: digest(path) for path in scenario_receipts(receipts)}
         save(output / "process-receipt.json", result)
     print(json.dumps({key: result[key] for key in ("status", "name", "output", "failure", "processes")}, indent=2))
     return 0 if result["status"].startswith("PASS_") else 1

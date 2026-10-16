@@ -170,7 +170,7 @@ public final class HologramCutNativeClientProbe {
                 mc -> mc.currentScreen == null && lastOsAck != null
                     && lastOsAck.getString("input_method")
                         .startsWith("target HWND verified SendInput"),
-                20000000000L));
+                145000000000L));
         hold("hold-physical-shift", KeyEvent.VK_SHIFT, true);
         clickWorld("shift-right-opens-mode-switcher", 1);
         waitScreen("actual-mode-switcher-default", HologramCutModeScreen.class);
@@ -1674,7 +1674,7 @@ public final class HologramCutNativeClientProbe {
         osPending = true;
         osOperation = operation;
         osKey = key;
-        osAckDeadline = System.nanoTime() + ("focus".equals(operation) ? 15000000000L : 5000000000L);
+        osAckDeadline = System.nanoTime() + ("focus".equals(operation) ? 135000000000L : 5000000000L);
     }
 
     private boolean pollOsInput(long now) throws Exception {

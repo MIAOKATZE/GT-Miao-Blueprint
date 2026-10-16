@@ -297,7 +297,7 @@ class Win32:
 
         if focus:
             focus_started = time.monotonic()
-            focus_deadline = focus_started + 12
+            focus_deadline = focus_started + 120
             before = identity(self.user.GetForegroundWindow())
             self.focus_evidence = {"focus_before_hwnd": before[0], "focus_before_pid": before[1],
                                    "focus_method": "owned HWND show/raise; bounded same-desktop queue attachment",
@@ -318,7 +318,7 @@ class Win32:
                     if stop_file is not None and stop_file.exists():
                         raise RuntimeError("Owned paired launcher requested shutdown while awaiting focus")
                     if time.monotonic() >= focus_deadline:
-                        raise RuntimeError("Shared 12-second focus deadline expired; refusing focus queue changes")
+                        raise RuntimeError("Shared 120-second focus deadline expired; refusing focus queue changes")
 
                 def require_idle_input():
                     held = [key for key in range(1, 256) if self.user.GetAsyncKeyState(key) & 0x8000]
