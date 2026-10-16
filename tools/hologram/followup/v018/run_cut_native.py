@@ -125,6 +125,8 @@ def stage(args):
     manifest = fixture / "cut-native-stage.json"
     previous = json.loads(manifest.read_text(encoding="utf-8")) if manifest.exists() else None
     if previous and previous["name"] == args.name:
+        if bool(previous.get("manual_input_start", False)) != args.manual_input_start:
+            raise RuntimeError("Staged manual input gating mode differs; use matching flags or a new run name")
         if previous["normal_sha256"] != selected_hash or (output / "process-receipt.json").exists():
             raise RuntimeError("This name was already used or selected JAR changed")
         if scenario_receipts(receipts):
@@ -187,6 +189,8 @@ def stage(args):
     common = ["-Dgtmb.hologram.nativeStartupSeconds=600", f"-Dgtmb.hologram.followupRoot={fixture.as_posix()}",
               f"-Dgtmb.hologram.followupReceiptDir={receipts.as_posix()}"]
     record = dict(name=args.name, fixture=str(fixture), receipts=str(receipts), output=str(output), world=world,
+                  manual_input_start=args.manual_input_start,
+                  input_gating_mode="explicit root marker" if args.manual_input_start else "automatic",
                   normal_source=str(jar), normal_sha256=selected_hash, status="STAGED_ONLY_NOT_RUN",
                   client_jar=str(destinations[0]), server_jar=str(destinations[1]), staged_unix=time.time(),
                   client_command=[str(java), "@" + str(args_file)],
@@ -242,6 +246,8 @@ def run(record, timeout):
         client_created = client_monitor.create_time()
         bridge_command = [sys.executable, str(Path(__file__).with_name("native_input.py")), "--fixture", str(fixture),
                           "--receipts", str(receipts), "--pid", str(client.pid), "--timeout", str(timeout)]
+        if record.get("manual_input_start", False):
+            bridge_command.append("--wait-for-start")
         launch("input", bridge_command, ROOT)
         while time.monotonic() < deadline:
             if client.poll() is None:
@@ -321,6 +327,8 @@ def main():
     parser.add_argument("--name", required=True)
     parser.add_argument("--timeout", type=float, default=1200)
     parser.add_argument("--stage-only", action="store_true")
+    parser.add_argument("--manual-input-start", action="store_true",
+                        help="Require a root-written cut-os-input-start.allow marker before the bridge sends input")
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("Timeout must be positive")

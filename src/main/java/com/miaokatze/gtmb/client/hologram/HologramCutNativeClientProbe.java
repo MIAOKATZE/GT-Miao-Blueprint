@@ -715,7 +715,10 @@ public final class HologramCutNativeClientProbe {
         });
         add("ordinary-native-server-source-and-artifact-prepare", mc -> {
             NBTTagCompound ready = HologramV011Evidence.read("ordinary-server-ready.nbt");
-            if (ready == null || mc.thePlayer.getDistanceSq(100.5, 80, 67.5) > 2) return false;
+            if (ready == null) return false;
+            double dx = mc.thePlayer.posX - 100.5, dy = mc.thePlayer.boundingBox.minY - 80,
+                dz = mc.thePlayer.posZ - 67.5;
+            if (dx * dx + dy * dy + dz * dz > 2) return false;
             prepareOrdinaryArtifact(mc, ready.getString("blueprintJson"));
             return true;
         });

@@ -789,6 +789,8 @@ def main():
     parser.add_argument("--receipts", type=Path, required=True)
     parser.add_argument("--pid", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=900)
+    parser.add_argument("--wait-for-start", action="store_true",
+                        help="Wait for the owned receipts/cut-os-input-start.allow marker before any input")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("Win32 input requires Windows")
@@ -803,10 +805,19 @@ def main():
     with lock.open("x", encoding="ascii") as stream:
         stream.write(token)
     sequence, deadline = 1, time.monotonic() + args.timeout
+    start_allowed = not args.wait_for_start
     try:
         while time.monotonic() < deadline:
             if (receipts / "cut-os-input-bridge-stop.txt").exists():
                 raise RuntimeError("Owned paired launcher requested input release and shutdown")
+            if not start_allowed:
+                bridge.target.validate()
+                marker = receipts / "cut-os-input-start.allow"
+                if not marker.is_file() or marker.is_symlink():
+                    time.sleep(.02)
+                    continue
+                start_allowed = True
+                print("Manual input start marker observed; beginning real request handling", flush=True)
             request_path = receipts / f"cut-os-input-request-{sequence}.properties"
             ack_path = receipts / f"cut-os-input-ack-{sequence}.properties"
             if ack_path.exists():
