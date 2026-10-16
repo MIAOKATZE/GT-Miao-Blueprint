@@ -36,6 +36,8 @@ public final class TestLabRuntime {
     private String persistedRunId = "";
     private long reportWriteNanos;
     private long ticks;
+    private NBTTagCompound lastActor = new NBTTagCompound();
+    private boolean cleanupPending;
 
     TestLabRuntime(TestLabConfig config) {
         this.config = config;
@@ -76,6 +78,11 @@ public final class TestLabRuntime {
     void start(String requestedKind) throws Exception {
         if (!TestLab.isEnabled()) throw new IOException("Lab disabled");
         if (active()) throw new IOException("Another lab run is active; stop it first");
+        if (hasWorldResources()) {
+            cleanupResources();
+            if (cleanupPending)
+                throw new IOException("Previous lab cleanup is incomplete; retained resources were not replaced");
+        }
         WorldServer overworld = MinecraftServer.getServer()
             .worldServerForDimension(0);
         ownership = new TestLabOwnership(
@@ -101,6 +108,7 @@ public final class TestLabRuntime {
         reportPersisted = false;
         persistedRunId = "";
         reportWriteNanos = 0;
+        lastActor = new NBTTagCompound();
         report = new TestLabReport(runId, kind, config);
         try {
             lease = new TestLabLease(world, config, ownership, runId);
@@ -209,6 +217,9 @@ public final class TestLabRuntime {
         if (active()) {
             finish("CANCELLED", reason);
             persistSafely();
+        } else if (hasWorldResources()) {
+            cleanupResources();
+            if (report != null) persistSafely();
         }
     }
 
@@ -222,7 +233,28 @@ public final class TestLabRuntime {
             report.data.setString("detail", detail);
             if (config.performance) report.data.setTag("metricsEnd", HologramRuntimeMetrics.snapshot());
         }
+        cleanupResources();
+        if (report != null) report.data.getCompoundTag("timing")
+            .setLong("elapsedNanos", System.nanoTime() - report.started);
+    }
+
+    private boolean hasWorldResources() {
+        return world != null || actor != null || lease != null || backend != null;
+    }
+
+    /** Retain failed leases for stop/start retry; detach observations before releasing successful world ownership. */
+    private void cleanupResources() {
+        boolean retry = cleanupPending;
         RuntimeException cleanupFailure = null;
+        try {
+            if (actor != null) {
+                lastActor = (NBTTagCompound) actor.tag()
+                    .copy();
+                if (report != null) report.data.setTag("actor", lastActor.copy());
+            }
+        } catch (RuntimeException failure) {
+            cleanupFailure = failure;
+        }
         try {
             if (actor != null) actor.clear();
         } catch (RuntimeException failure) {
@@ -234,18 +266,30 @@ public final class TestLabRuntime {
             cleanupFailure = failure;
         }
         leasedZone = null;
-        if (cleanupFailure != null) {
+        int remaining = lease == null ? 0 : lease.size();
+        cleanupPending = cleanupFailure != null || remaining != 0;
+        if (cleanupPending) {
             state = "FAIL";
             if (report != null) {
                 report.data.setString("state", state);
-                report.data.setString("cleanupError", cleanupFailure.toString());
-                report.check("owned_chunk_cleanup", "FAIL", cleanupFailure.toString());
+                String detail = cleanupFailure == null ? "Owned chunks remain: " + remaining
+                    : cleanupFailure.toString();
+                report.data.setString("cleanupError", detail);
+                report.check("owned_chunk_cleanup", "FAIL", detail);
             }
-            GTMiaoBlueprint.LOG.error("GTMB lab cleanup failed " + runId, cleanupFailure);
+            if (cleanupFailure != null) GTMiaoBlueprint.LOG.error("GTMB lab cleanup failed " + runId, cleanupFailure);
+        } else {
+            // No world-bound object is needed for terminal status/report: lastActor is detached NBT.
+            world = null;
+            actor = null;
+            lease = null;
+            backend = null;
+            if (retry && report != null) report.data.setBoolean("cleanupRecovered", true);
         }
-        if (report != null) report.data.setInteger("ownedChunksAfterCleanup", lease == null ? 0 : lease.size());
-        if (report != null) report.data.getCompoundTag("timing")
-            .setLong("elapsedNanos", System.nanoTime() - report.started);
+        if (report != null) {
+            report.data.setInteger("ownedChunksAfterCleanup", remaining);
+            report.data.setBoolean("cleanupPending", cleanupPending);
+        }
     }
 
     private void persistSafely() {
@@ -285,9 +329,14 @@ public final class TestLabRuntime {
         n.setString("runKind", kind);
         n.setBoolean("worldLoaded", DimensionManager.getWorld(config.dimension) != null);
         n.setInteger("ownedChunks", lease == null ? 0 : lease.size());
-        if (actor != null) n.setTag("actor", actor.tag());
+        if (actor != null || !lastActor.hasNoTags()) n.setTag("actor", actorTag());
+        n.setBoolean("cleanupPending", cleanupPending);
         persistence(n);
         return n;
+    }
+
+    NBTTagCompound actorTag() {
+        return actor == null ? (NBTTagCompound) lastActor.copy() : actor.tag();
     }
 
     private void persistence(NBTTagCompound n) {

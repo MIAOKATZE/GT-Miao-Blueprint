@@ -1,15 +1,18 @@
 package com.miaokatze.gtmb.testlab;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
+import net.minecraft.world.ChunkCoordIntPair;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -113,6 +116,63 @@ public final class TestLabRegression {
         SimpleAssert.eq("first", labelJson.get(0), "JSON keeps non-compound list values and order");
         SimpleAssert.eq("second", labelJson.get(1), "JSON keeps final list value");
         SimpleAssert.eq(2, labels.tagCount(), "JSON does not mutate native report list");
+        lifecycleCleanup(defaults);
+    }
+
+    /** Exercise failed cleanup retention and retry without constructing or loading a Minecraft world. */
+    private static void lifecycleCleanup(TestLabConfig config) {
+        try {
+            TestLabRuntime runtime = new TestLabRuntime(config);
+            NBTTagCompound terminalActor = new NBTTagCompound();
+            terminalActor.setString("id", "detached-terminal-actor");
+            terminalActor.setDouble("actualX", 4096.5);
+            field(TestLabRuntime.class, "lastActor").set(runtime, terminalActor);
+            NBTTagCompound observed = runtime.actorTag();
+            observed.setString("id", "changed-by-observer");
+            SimpleAssert.eq(
+                "detached-terminal-actor",
+                runtime.actorTag()
+                    .getString("id"),
+                "terminal actor observation is detached");
+            TestLabLease lease = new TestLabLease(null, config, null, "cleanup-retry-unit");
+            @SuppressWarnings("unchecked")
+            Set<ChunkCoordIntPair> chunks = (Set<ChunkCoordIntPair>) field(TestLabLease.class, "chunks").get(lease);
+            chunks.add(new ChunkCoordIntPair(1, 1));
+            field(TestLabRuntime.class, "lease").set(runtime, lease);
+            // Deliberately absent world makes unload fail; its owned chunk must stay reachable for retry.
+            runtime.stop("unit cleanup failure");
+            SimpleAssert.that(
+                field(TestLabRuntime.class, "lease").get(runtime) == lease,
+                "cleanup failure retains exact lease owner");
+            SimpleAssert.that(
+                field(TestLabRuntime.class, "cleanupPending").getBoolean(runtime),
+                "cleanup failure is observable");
+            SimpleAssert.eq(1, lease.size(), "cleanup failure does not invent zero owned chunks");
+            SimpleAssert
+                .eq("FAIL", field(TestLabRuntime.class, "state").get(runtime), "cleanup failure cannot report pass");
+            // The native release condition is now satisfied. Stop must retry even though no task is active.
+            chunks.clear();
+            runtime.stop("unit cleanup retry");
+            runtime.stop("unit cleanup idempotence");
+            for (String name : new String[] { "world", "actor", "lease", "backend", "task" }) SimpleAssert
+                .that(field(TestLabRuntime.class, name).get(runtime) == null, "successful cleanup releases " + name);
+            SimpleAssert.that(
+                !field(TestLabRuntime.class, "cleanupPending").getBoolean(runtime),
+                "successful retry clears pending cleanup");
+            SimpleAssert.eq(
+                "detached-terminal-actor",
+                runtime.actorTag()
+                    .getString("id"),
+                "cleanup preserves terminal actor evidence");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("testlab lifecycle cleanup", failure);
+        }
+    }
+
+    private static Field field(Class<?> type, String name) throws ReflectiveOperationException {
+        Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
     }
 
     private static TestLabConfig config(int x) {
