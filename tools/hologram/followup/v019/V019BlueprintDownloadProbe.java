@@ -439,9 +439,14 @@ public final class V019BlueprintDownloadProbe {
             check(call(world, "func_147439_a", x, 119, z) == stone, "real platform block readback");
             for (int y = 120; y <= 123; y++) call(world, "func_147465_d", x, y, z, air, 0, 2);
         }
-        call(world, "func_72950_a", 16, 120, 16);
+        // Standard spawn belongs to WorldInfo; World has no func_72950_a(int,int,int) SRG method.
+        Object worldInfo = call(world, "func_72912_H");
+        call(worldInfo, "func_76081_a", 16, 120, 16);
+        check((Integer) call(worldInfo, "func_76079_c") == 16
+            && (Integer) call(worldInfo, "func_76075_d") == 120
+            && (Integer) call(worldInfo, "func_76074_e") == 16, "standard WorldInfo spawn readback");
         proof.setProperty("platformNativeBlockReadback", "81 stone blocks at y119; clear y120..123");
-        proof.setProperty("standardWorldSpawn", "16,120,16");
+        proof.setProperty("standardWorldSpawn", "16,120,16; WorldInfo.func_76081_a; native getter readback");
         platformReady = true;
     }
 

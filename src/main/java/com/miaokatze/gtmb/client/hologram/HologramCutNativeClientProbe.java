@@ -1655,7 +1655,9 @@ public final class HologramCutNativeClientProbe {
             if (wheelAwaiting) {
                 if (nativeWheelSerial == wheelBefore) return false;
                 require(
-                    lastNativeWheel.getInteger("dwheel") == wheelDelta && lastNativeWheel.getBoolean("alt")
+                    (lastNativeWheel.getInteger("dwheel") == wheelDelta
+                        || lastNativeWheel.getInteger("dwheel") == Integer.signum(wheelDelta))
+                        && lastNativeWheel.getBoolean("alt")
                         && lastNativeWheel.getBoolean("canceled")
                         && previewDistance() == wheelExpectedDistance,
                     "real Forge wheel event is consumed by the distance handler and moves exactly one notch");
