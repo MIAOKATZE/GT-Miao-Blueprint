@@ -87,12 +87,7 @@ final class HologramCutWorld {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             if (world.getBlock(x, y, z) == Block.getBlockFromName(cell.getString("block"))) {
-                Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
-                ExtendedBlockStorage section = chunk.getBlockStorageArray()[y >> 4];
-                if (section != null) section.setExtBlockMetadata(x & 15, y & 15, z & 15, cell.getInteger("meta"));
-                TileEntity tile = world.getTileEntity(x, y, z);
-                if (tile != null) tile.updateContainingBlockInfo();
-                chunk.setChunkModified();
+                restoreMetadata(world, x, y, z, cell.getInteger("meta"));
             }
         }
         Set<Chunk> chunks = new LinkedHashSet<>();
@@ -200,6 +195,17 @@ final class HologramCutWorld {
                 throw new IOException("原生方块实体加载失败，完整剪切记录已保留", failure);
             }
         }
+        // Native initialization can rewrite metadata (for example an AE host's transient powered bit).
+        // Commit the captured raw state first; ordinary native updates resume after the durable commit.
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            restoreMetadata(
+                world,
+                ox + cell.getInteger("x"),
+                oy + cell.getInteger("y"),
+                oz + cell.getInteger("z"),
+                air ? 0 : cell.getInteger("meta"));
+        }
         lighting.finish(world);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
@@ -208,6 +214,15 @@ final class HologramCutWorld {
             world.markBlockForUpdate(x, y, z);
         }
         lighting.complete();
+    }
+
+    private static void restoreMetadata(WorldServer world, int x, int y, int z, int metadata) {
+        Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
+        ExtendedBlockStorage section = chunk.getBlockStorageArray()[y >> 4];
+        if (section != null) section.setExtBlockMetadata(x & 15, y & 15, z & 15, metadata);
+        TileEntity tile = world.getTileEntity(x, y, z);
+        if (tile != null) tile.updateContainingBlockInfo();
+        chunk.setChunkModified();
     }
 
     /**
@@ -305,9 +320,23 @@ final class HologramCutWorld {
         void verifyCell(int x, int y, int z, NBTTagCompound cell, boolean air, NBTTagCompound expectedTile)
             throws IOException {
             Block expectedBlock = air ? Blocks.air : Block.getBlockFromName(cell.getString("block"));
-            if (blocks.getBlock(x & 15, y, z & 15) != expectedBlock
-                || blocks.getBlockMetadata(x & 15, y, z & 15) != (air ? 0 : cell.getInteger("meta")))
-                throw new IOException("剪切世界方块未完整存盘");
+            Block actualBlock = blocks.getBlock(x & 15, y, z & 15);
+            int expectedMetadata = air ? 0 : cell.getInteger("meta");
+            int actualMetadata = blocks.getBlockMetadata(x & 15, y, z & 15);
+            if (actualBlock != expectedBlock || actualMetadata != expectedMetadata) throw new IOException(
+                "剪切世界方块未完整存盘 at [" + x
+                    + ","
+                    + y
+                    + ","
+                    + z
+                    + "] expected="
+                    + Block.blockRegistry.getNameForObject(expectedBlock)
+                    + ":"
+                    + expectedMetadata
+                    + " actual="
+                    + Block.blockRegistry.getNameForObject(actualBlock)
+                    + ":"
+                    + actualMetadata);
             NBTTagCompound tile = tiles.get(tileKey(x, y, z));
             if (expectedTile == null) {
                 if (tile != null) throw new IOException("剪切世界实体未完整存盘");

@@ -134,6 +134,7 @@ public final class V0111CompositeNativeProbe {
                 writeNbt("composite-manifest.nbt",manifest);
                 proof.setProperty("fixtureReady","true"); proof.setProperty("actualSourceVolume","64000");
                 if(seedMode){
+                    writeNbt("composite-source-baseline.nbt",call(bridge,"baselineSnapshot"));
                     int volume=integer(report,"sourceVolume"),nonAir=integer(report,"sourceNonAirBlocks"),expected=integer(report,"expectedBlueprintCells");
                     check(volume==64000&&nonAir>0&&nonAir<=volume&&expected==nonAir,"independent native volume/non-air count is complete before ordinary import");
                     proof.setProperty("actualSourceNonAirBlocks",String.valueOf(nonAir));proof.setProperty("actualSourceAirBlocks",String.valueOf(volume-nonAir));
@@ -376,10 +377,10 @@ public final class V0111CompositeNativeProbe {
                 check(cells==expected,"ordinary private artifact hydration cells="+cells+" expected independent native non-air="+expected+" of source volume=64000 before target lock");
                 proof.setProperty(kind()+"PrivateBlueprintCellCount",String.valueOf(cells));
                 if(!timing.containsKey(kind()+".privateLoadNanos")){
-                    Object admission=privateReply("privateReady",privateTransfer);check(admission!=null,"actual native privateBegin admission ACK");
+                    Object admission=privateReply("uploadReady",privateTransfer);check(admission!=null,"actual native privateBegin admission ACK");
                     Object evidence=nbt(),chunks=construct("net.minecraft.nbt.NBTTagList");
                     synchronized(incomingPrivateReplies){for(Object reply:incomingPrivateReplies)if("chunkAck".equals(str(reply,"op"))&&privateTransfer.equals(str(reply,"transfer")))call(chunks,"func_74742_a",call(reply,"func_74737_b"));}
-                    call(evidence,"func_74782_a","privateReady",call(admission,"func_74737_b"));call(evidence,"func_74782_a","chunkAcks",chunks);call(evidence,"func_74782_a","privateImported",call(imported,"func_74737_b"));
+                    call(evidence,"func_74782_a","uploadReady",call(admission,"func_74737_b"));call(evidence,"func_74782_a","chunkAcks",chunks);call(evidence,"func_74782_a","privateImported",call(imported,"func_74737_b"));
                     writeNbt("composite-"+kind()+"-private-import.nbt",evidence);proof.setProperty(kind()+"PrivateChunkAcks",String.valueOf(count(chunks)));
                     timing.setProperty(kind()+".privateLoadNanos",String.valueOf(System.nanoTime()-longFlowStarted));
                     proof.setProperty(kind()+"PrivateLoadAcknowledged","true");
@@ -448,7 +449,9 @@ public final class V0111CompositeNativeProbe {
                 watchNativeTask("save",false,previousTask);
                 proof.setProperty(kind()+"SaveButton","140 actual MUI dispatch");advance(12);
             } else if(phase==17) {
-                if(!bool(data,"blueprintAwaitingConfirmation")||!drawnControlReady(ui,50))return;
+                if(!bool(data,"blueprintAwaitingConfirmation"))return;
+                if(drawnControlReady(ui,55)){proof.setProperty(kind()+"DirectPlacementReview","native final55 already drawn; no redundant50 dispatch");advance(18);return;}
+                if(!drawnControlReady(ui,50))return;
                 click(gui,ui,50,gen);advance(18);
             } else if(phase==18) {if(!drawnControlReady(ui,55))return;long previousTask=nativeTaskWatermark();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
             pulse();
@@ -807,7 +810,7 @@ public final class V0111CompositeNativeProbe {
         // The existing post-delivery observer leaves the actual library receiver and its request/ACK handling intact.
         originalLibraryProbe=(Consumer<Object>)get(product("HologramNetwork"),"libraryProbeReceiver");
         member(product("HologramNetwork"),"libraryProbeReceiver").set(null,(Consumer<Object>)value->{
-            try{if(Arrays.asList("privateReady","chunkAck","privateImported").contains(str(value,"op")))incomingPrivateReplies.add(value);}catch(Exception error){throw new IllegalStateException("Cannot observe native private-library ACK",error);}
+            try{if(Arrays.asList("uploadReady","chunkAck","privateImported").contains(str(value,"op")))incomingPrivateReplies.add(value);}catch(Exception error){throw new IllegalStateException("Cannot observe native private-library ACK",error);}
             if(originalLibraryProbe!=null)originalLibraryProbe.accept(value);
         });libraryProbeInstalled=true;
     }
@@ -1003,7 +1006,7 @@ public final class V0111CompositeNativeProbe {
     private Path receiptPath(String name)throws IOException {
         String base=name.endsWith(".tmp")?name.substring(0,name.length()-4):name;
         check(Arrays.asList("composite-client.properties","composite-server.properties","composite-client-timing.properties","composite-server-timing.properties","fixture-request.properties",
-            "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
+            "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-source-baseline.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
             "composite-self-private-import.nbt","composite-share-private-import.nbt",
             "composite-self-blocked-control.nbt","composite-share-blocked-control.nbt","composite-raw-blocked-control.nbt",

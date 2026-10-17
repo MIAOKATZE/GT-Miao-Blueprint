@@ -4,11 +4,13 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 
@@ -33,6 +35,11 @@ public final class CompositeWorldWitness {
     private long operationStarted;
     private boolean awaitingFormation;
     private final MessageDigest staticSourceDigest = MessageDigest.getInstance("SHA-256");
+    private static final String SOURCE_FINGERPRINT_ALGORITHM = "canonical-nbt-v1";
+    private static Field nbtListElementsField;
+    private int baselineScanTicks;
+    private long baselineFirstWorldTick, baselineLastWorldTick;
+    private CompositeEuLedger euLedger;
 
     public CompositeWorldWitness(Object world,Object actor,Object manifest,Object seedReceipt)throws Exception {
         this.world=world;this.actor=actor;this.manifest=manifest;this.source=ints(manifest,"source");this.bankOrigin=ints(manifest,"bank");result=nbt();
@@ -73,18 +80,23 @@ public final class CompositeWorldWitness {
         putText(result,"fixtureNativeEuCredit","100000000000");
         putText(result,"status","BASELINE");putBool(result,"actualNetty",true);putText(result,"nativeSave","NOT_RUN");
         putText(result,"fixtureScope","same closed owned seed-world copy; exact manifest; independent test-only native world/payment witness; no new product helpers installed into historical product");
+        if(Boolean.getBoolean(CompositeEuLedger.PROPERTY))putText(result,"rawNativeEuLedger","NOT_OBSERVED: no CUT-before-removal observation hook; raw world PASS does not claim EU conservation");
     }
 
     public void tick()throws Exception {
+        if(euLedger!=null)euLedger.tick();
         if(baselineCursor<64000){
+            baselineLastWorldTick=(Long)call(world,"func_82737_E");
+            if(baselineScanTicks++==0)baselineFirstWorldTick=baselineLastWorldTick;
             for(int n=0;n<256&&baselineCursor<64000;n++,baselineCursor++){
                 Object row=read(source,baselineCursor);baseline.add(row);
                 if(!text(row,"block").equals("minecraft:air"))sourceNonAirBlocks++;
-                inspectPhysicalMinimum(row);staticSourceDigest.update(String.valueOf(normalize(row,"raw",true)).getBytes(StandardCharsets.UTF_8));
+                inspectPhysicalMinimum(row);staticSourceDigest.update(canonicalBytes(normalize(row,"raw",true)));
             }
             if(baselineCursor==64000){
                 putInt(result,"sourceVolume",baselineCursor);putInt(result,"sourceNonAirBlocks",sourceNonAirBlocks);
                 putInt(result,"sourceAirBlocks",baselineCursor-sourceNonAirBlocks);putInt(result,"expectedBlueprintCells",sourceNonAirBlocks);
+                putText(result,"sourceFingerprintAlgorithm",SOURCE_FINGERPRINT_ALGORITHM);
                 putText(result,"blueprintCountBasis","one independent native World baseline scan of all 64000 positions; vanilla air excluded from ordinary blueprint cells; raw includes air");
                 putText(result,"sourceSha256",hash(baseline));StringBuilder value=new StringBuilder();for(byte b:staticSourceDigest.digest())value.append(String.format("%02x",b&255));putText(result,"staticSourceSha256",value.toString());putText(result,"status","READY");
             }
@@ -105,6 +117,22 @@ public final class CompositeWorldWitness {
 
     public boolean ready(){return baselineCursor==64000&&checking.isEmpty();}
     public Object report()throws Exception{return call(result,"func_74737_b");}
+    /** Detached original World samples, captured over the baseline scan rather than read again at shutdown. */
+    public Object baselineSnapshot()throws Exception {
+        check(baselineCursor==64000&&baseline.size()==64000,"complete independent baseline snapshot required");
+        Object out=nbt(),rows=listTag();
+        for(Object row:baseline)append(rows,call(row,"func_74737_b"));
+        tag(out,"rows",rows);tag(out,"manifest",call(manifest,"func_74737_b"));
+        putInt(out,"sourceVolume",baselineCursor);putInt(out,"sourceNonAirBlocks",sourceNonAirBlocks);
+        putInt(out,"sourceAirBlocks",baselineCursor-sourceNonAirBlocks);putInt(out,"expectedBlueprintCells",sourceNonAirBlocks);
+        putInt(out,"scanCellsPerTick",256);putInt(out,"scanTicks",baselineScanTicks);
+        putLong(out,"firstWorldTick",baselineFirstWorldTick);putLong(out,"lastWorldTick",baselineLastWorldTick);
+        putText(out,"rowOrder","index=xOffset+40*zOffset+1600*yOffset; source origin and size in manifest");
+        putText(out,"samplingScope","64000 direct native World block/meta and TileEntity.writeToNBT rows over multiple natural ticks; original unnormalized NBT, not a simultaneous or shutdown snapshot");
+        putText(out,"sourceFingerprintAlgorithm",SOURCE_FINGERPRINT_ALGORITHM);
+        putText(out,"sourceSha256",text(result,"sourceSha256"));putText(out,"staticSourceSha256",text(result,"staticSourceSha256"));
+        return out;
+    }
     public void fundPlacement(String kind)throws Exception {
         check(funded.isEmpty(),"one finite supply outstanding");Object s=session();check((Boolean)get(s,"virtualPlacement")&&(Boolean)get(s,"virtualLocked"),"actual locked product placement");
         int[] at=ints(manifest,kind);check((Integer)get(s,"x")==at[0]&&(Integer)get(s,"y")==at[1]&&(Integer)get(s,"z")==at[2],"exact canonical target");
@@ -113,6 +141,13 @@ public final class CompositeWorldWitness {
         Object proxy=call(drive,"getProxy"),storage=call(proxy,"getStorage");check((Boolean)call(proxy,"isActive"),"naturally active seeded finite grid");itemMonitor=call(storage,"getItemInventory");fluidMonitor=call(storage,"getFluidInventory");
         check(empty(itemMonitor)&&empty(fluidMonitor),"native finite bank begins empty");
         bankBefore=stockSnapshot();euBefore=(BigInteger)call(Class.forName("gregtech.common.misc.WirelessNetworkManager"),"getUserEU",call(actor,"func_110124_au"));wirelessBefore=wirelessStored();euQuote=(BigInteger)get(quote,"energy");
+        if(Boolean.getBoolean(CompositeEuLedger.PROPERTY)){
+            Object settings=get(s,"materialSettings");set(settings,"main",false);set(settings,"containers",false);set(settings,"me",true);
+            call(product("HologramMaterials"),"write",call(actor,"func_70694_bm"),settings);
+            set(s,"materialContext",construct("com.miaokatze.gtmb.hologram.HologramMaterials$Context",actor,settings));
+            euLedger=new CompositeEuLedger(world,actor,s,source,bankOrigin,at,euQuote);euLedger.begin();
+            putText(result,"nativeEuLedgerProfile","opt-in native GTSWN hook; extra GTSWN-TEST dimension/listeners; no native scenario or UI kit; not comparable to historical gate=false environment");
+        }
         check(((List<?>)get(quote,"essentia")).isEmpty(),"no unsupported essentia fixture supply");
         Object modulate=enumValue("appeng.api.config.Actionable","MODULATE");
         for(Object item:(List<?>)get(quote,"items")){Object offered=call(Class.forName("appeng.util.item.AEItemStack"),"create",call(item,"func_77946_l"));check(call(itemMonitor,"injectItems",offered,modulate,actionSource)==null,"finite exact item supply accepted");stock.add(call(offered,"copy"));}
@@ -130,7 +165,11 @@ public final class CompositeWorldWitness {
         for(Object quoted:stock){long supplied=(Long)call(quoted,"getStackSize"),remaining=remaining(itemMonitor,quoted);check(remaining==0,"exact independently observed native item balance exhausted");Object row=nbt();call(quoted,"writeToNBT",row);putLong(row,"supplied",supplied);putLong(row,"remaining",remaining);putLong(row,"nativeDebited",supplied-remaining);append(itemRows,row);}
         for(Object quoted:fluids){long supplied=(Long)call(quoted,"getStackSize"),remaining=remaining(fluidMonitor,quoted);check(remaining==0,"exact independently observed native fluid balance exhausted");Object row=nbt();call(quoted,"writeToNBT",row);putLong(row,"supplied",supplied);putLong(row,"remaining",remaining);putLong(row,"nativeDebited",supplied-remaining);append(fluidRows,row);}
         BigInteger euAfter=(BigInteger)call(Class.forName("gregtech.common.misc.WirelessNetworkManager"),"getUserEU",call(actor,"func_110124_au")),uptake=wirelessStored().subtract(wirelessBefore);
-        check(uptake.signum()>=0&&euAfter.equals(euBefore.subtract(uptake)),"actual EU debit equals exact supplied quote plus independent native wireless hatch uptake");
+        if(euLedger!=null){
+            try{tag(ledger,"nativeEuLedger",euLedger.finish(euQuote));}
+            catch(CompositeEuLedger.LedgerFailure failure){tag(ledger,"nativeEuLedger",failure.receipt);tag(result,kind+"Paid",ledger);throw failure;}
+            finally{euLedger=null;}
+        }else check(uptake.signum()>=0&&euAfter.equals(euBefore.subtract(uptake)),"actual EU debit equals exact supplied quote plus independent native wireless hatch uptake");
         tag(ledger,"items",itemRows);tag(ledger,"fluids",fluidRows);tag(ledger,"beforeSupply",bankBefore);tag(ledger,"remainingStock",stockSnapshot());putText(ledger,"euBefore",euBefore.toString());putText(ledger,"euSupplied",euQuote.toString());putText(ledger,"euAfter",euAfter.toString());putText(ledger,"nativeWirelessHatchUptake",uptake.toString());tag(result,kind+"Paid",ledger);
         stock.clear();fluids.clear();funded="";startCheck(kind);
     }
@@ -140,6 +179,7 @@ public final class CompositeWorldWitness {
     public void complete()throws Exception{check(ready(),"oracle completion");for(String kind:new String[]{"self","share","raw"})check(bool(result,kind+"Passed"),"all actual world postchecks");for(String kind:new String[]{"self","share"})check(bool(compound(result,kind+"SaveCommit"),"ownerCommit"),"actual production owner Save commit");putText(result,"status","PASS");}
     public void completeScenario(String kind)throws Exception{check(Arrays.asList("self","share","raw").contains(kind),"explicit supported scenario");check(ready()&&bool(result,kind+"Passed"),"actual independent selected scenario postcheck");if(!kind.equals("raw"))check(bool(compound(result,kind+"SaveCommit"),"ownerCommit"),"actual owner Save commit");putText(result,"scenario",kind);putText(result,"status","PASS");}
     public void close()throws Exception{
+        if(euLedger!=null){euLedger.close();euLedger=null;putText(result,"nativeEuLedgerInterrupted","window stopped before settlement; no PASS claimed");}
         Class<?> wireless=Class.forName("gregtech.common.misc.WirelessNetworkManager");Object owner=call(actor,"func_110124_au");BigInteger remaining=(BigInteger)call(wireless,"getUserEU",owner);
         check(remaining.signum()>=0&&remaining.compareTo(fixtureEuCredits)<=0,"isolated fixture EU cleanup balance bounded by actual native credits");
         if(remaining.signum()>0)check((Boolean)call(wireless,"addEUToGlobalEnergyMap",owner,remaining.negate()),"native finite fixture EU remainder returned");
@@ -173,7 +213,8 @@ public final class CompositeWorldWitness {
         for(String key:new String[]{"x","y","z","mTickTimer","mLastUpdate","mLastUpdateTime","mMachine","mUpdated","mUpdate","mNeedsUpdate","mStartUpCheck","mRuntime","mRunTime","mProgresstime","mMaxProgresstime","lastTime","lastTick","lastUpdate","updateCount","lastMetadata","channelCount","usedChannels"})remove(tile,key);
         // GT .205 saves this server-onPostTick counter at the native TE root; inventory/configuration are untouched.
         if(text(out,"tileClass").equals("gregtech.api.metatileentity.BaseMetaTileEntity")||text(tile,"id").equals("BaseMetaTileEntity"))remove(tile,"mTotalRunTime");
-        for(String key:new HashSet<String>(keys(tile)))if(Arrays.asList("proxy","node","grid","GridNode").contains(key)){Object node=compound(tile,key);for(String runtime:new String[]{"g","k","p"})remove(node,runtime);}
+        // AE GridNode p=playerID, k=lastSecurityKey, g=world GridStorage ID. Retain all three:
+        // no exact host/path network-rebuild exception has yet been established for this witness.
         if(kind.equals("share"))for(String key:new String[]{"Owner","OwnerUUID","owner","ownerUUID","mOwner","mOwnerName","mOwnerUuid","mOwnerUUID","UUID","uuid","SecurityKey","securityKey","lastOutput"})remove(tile,key);
         if(has(tile,"anchorDim")&&has(tile,"anchorX")){if(expected){putInt(tile,"anchorDim",integer(manifest,"dimension"));putInt(tile,"anchorX",bankOrigin[0]+3);putInt(tile,"anchorY",bankOrigin[1]+3);putInt(tile,"anchorZ",bankOrigin[2]+3+(kind.equals("share")?14:0));}remove(tile,"anchorGeneration");remove(tile,"anchorSchema");}
         return out;
@@ -245,7 +286,54 @@ public final class CompositeWorldWitness {
     private static int size(Object list)throws Exception{return (Integer)call(list,"func_74745_c");}
     private static Object entry(Object list,int index)throws Exception{return call(list,"func_150305_b",index);}
     private static String abbreviate(Object value){String s=String.valueOf(value);return s.length()>400?s.substring(0,400):s;}
-    private static String hash(List<Object> rows)throws Exception{MessageDigest md=MessageDigest.getInstance("SHA-256");for(Object row:rows)md.update(String.valueOf(row).getBytes(StandardCharsets.UTF_8));StringBuilder s=new StringBuilder();for(byte b:md.digest())s.append(String.format("%02x",b&255));return s.toString();}
+    private static String hash(List<Object> rows)throws Exception{MessageDigest md=MessageDigest.getInstance("SHA-256");for(Object row:rows)md.update(canonicalBytes(row));StringBuilder s=new StringBuilder();for(byte b:md.digest())s.append(String.format("%02x",b&255));return s.toString();}
+    /** Self-delimiting typed NBT encoding; compound order is irrelevant, list order and numeric bits are exact. */
+    private static byte[] canonicalBytes(Object value)throws Exception {
+        ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream out=new DataOutputStream(bytes);
+        canonical(out,value,0);out.flush();return bytes.toByteArray();
+    }
+    private static void canonicalString(DataOutputStream out,String value)throws Exception {
+        // UTF-16 code units preserve even unpaired Java surrogates without replacement or modified-UTF limits.
+        out.writeInt(value.length());for(int i=0;i<value.length();i++)out.writeChar(value.charAt(i));
+    }
+    private static void canonical(DataOutputStream out,Object value,int depth)throws Exception {
+        check(value!=null&&depth<=512,"invalid or excessively nested canonical NBT");
+        int type=((Byte)call(value,"func_74732_a")).intValue();out.writeByte(type);
+        switch(type) {
+            case 0: return;
+            case 1: out.writeByte((Byte)call(value,"func_150290_f"));return;
+            case 2: out.writeShort((Short)call(value,"func_150289_e"));return;
+            case 3: out.writeInt((Integer)call(value,"func_150287_d"));return;
+            case 4: out.writeLong((Long)call(value,"func_150291_c"));return;
+            case 5: out.writeInt(Float.floatToRawIntBits((Float)call(value,"func_150288_h")));return;
+            case 6: out.writeLong(Double.doubleToRawLongBits((Double)call(value,"func_150286_g")));return;
+            case 7: {byte[] data=(byte[])call(value,"func_150292_c");out.writeInt(data.length);out.write(data);return;}
+            case 8: canonicalString(out,(String)call(value,"func_150285_a_"));return;
+            case 9: {
+                int elementType=(Integer)call(value,"func_150303_d");
+                check(elementType>=0&&elementType<=11,"unsupported canonical NBT list element type "+elementType);
+                List<?> elements=nbtListElements(value);check(elements.size()==size(value),"canonical NBT list size mismatch");
+                check(elements.isEmpty()||elementType!=0,"nonempty canonical NBT END list");
+                out.writeByte(elementType);out.writeInt(elements.size());
+                for(Object element:elements){check(((Byte)call(element,"func_74732_a")).intValue()==elementType,"canonical NBT list element type mismatch");canonical(out,element,depth+1);}return;
+            }
+            case 10: {
+                List<String> names=new ArrayList<String>(keys(value));Collections.sort(names);out.writeInt(names.size());
+                for(String name:names){canonicalString(out,name);canonical(out,call(value,"func_74781_a",name),depth+1);}return;
+            }
+            case 11: {int[] data=(int[])call(value,"func_150302_c");out.writeInt(data.length);for(int n:data)out.writeInt(n);return;}
+            default: throw new IllegalStateException("Composite copied-world witness: unsupported canonical NBT tag type "+type);
+        }
+    }
+    private static List<?> nbtListElements(Object value)throws Exception {
+        if(nbtListElementsField==null){
+            for(Field field:Class.forName("net.minecraft.nbt.NBTTagList").getDeclaredFields())if(List.class.isAssignableFrom(field.getType())){
+                check(nbtListElementsField==null,"ambiguous native NBT list storage");field.setAccessible(true);nbtListElementsField=field;
+            }
+            check(nbtListElementsField!=null,"native NBT list storage unavailable");
+        }
+        return (List<?>)nbtListElementsField.get(value);
+    }
     @SuppressWarnings({"unchecked","rawtypes"})private static Object enumValue(String type,String name)throws Exception{return Enum.valueOf((Class)Class.forName(type),name);}
     private static Class<?> product(String name)throws Exception{return Class.forName("com.miaokatze.gtmb.hologram."+name);}
     private static Object nbt()throws Exception{return construct("net.minecraft.nbt.NBTTagCompound");}

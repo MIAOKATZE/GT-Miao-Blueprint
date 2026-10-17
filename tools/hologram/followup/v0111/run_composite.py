@@ -242,6 +242,27 @@ def changed_server_properties(original, world):
     return ("\n".join(lines) + "\n").encode("latin-1")
 
 
+def native_eu_ledger_config(original):
+    """Change only the explicit boot gate in an existing owned Forge config; retain the test ID."""
+    if original is None:
+        raise IntegrityFailure("Native EU profile requires the existing owned GTSWN config")
+    text = original.decode("latin-1")
+    blocks = list(re.finditer(r"(?ms)^[ \t]*testworld[ \t]*\{[^\r\n]*\r?\n(.*?)^[ \t]*\}", text))
+    if len(blocks) != 1:
+        raise IntegrityFailure("Expected exactly one unambiguous GTSWN testworld category")
+    block = blocks[0]
+    body = block[1]
+    ids = re.findall(r"(?m)^[ \t]*I:dimensionId[ \t]*=[ \t]*([0-9]+)[ \t]*\r?$", body)
+    if ids != ["19871"]:
+        raise IntegrityFailure("Native EU profile requires the existing separate GTSWN test dimension19871; no remapping")
+    gates = list(re.finditer(r"(?m)^([ \t]*B:enableAgentTestHarness[ \t]*=[ \t]*)(true|false)([ \t]*\r?)$", body))
+    if len(gates) != 1:
+        raise IntegrityFailure("Expected exactly one explicit native startup gate")
+    gate = gates[0]
+    changed = body[:gate.start(2)] + "true" + body[gate.end(2):]
+    return (text[:block.start(1)] + changed + text[block.end(1):]).encode("latin-1")
+
+
 RECEIPT_LEAVES = frozenset(("composite-client.properties", "composite-server.properties",
                             "composite-client-timing.properties", "composite-server-timing.properties"))
 RECEIPT_READ_ATTEMPTS = 8
@@ -390,6 +411,8 @@ def run(args):
         if any(name.endswith(".class") and not name.startswith("gtmb/v0111/probe/")
                for name in archive.namelist()):
             raise IntegrityFailure("Latency addon may contain only independent probe classes")
+        if args.native_eu_ledger and "gtmb/v0111/probe/CompositeEuLedger.class" not in archive.namelist():
+            raise IntegrityFailure("Explicit native EU profile requires the independent ledger helper")
     if jar.name.casefold() == addon.name.casefold():
         raise ValueError("Product and addon destinations must be distinct")
     output = within(OUTPUTS / args.name, BUILD)
@@ -415,6 +438,8 @@ def run(args):
                   f"-Dgtmb.v0111.seedMode={str(args.seed_world is not None).lower()}", f"-Dgtmb.v0111.scenario={args.scenario}"]
     client_tokens[client_tokens.index("-cp"):client_tokens.index("-cp")] = mode_flags
     server_tokens[server_tokens.index("-jar"):server_tokens.index("-jar")] = mode_flags
+    if args.native_eu_ledger:
+        server_tokens.insert(server_tokens.index("-jar"), "-Dgtmb.v0111.nativeEuLedger=true")
     targets = {
         "server-properties": within(fixture / "server/server.properties", fixture, exists=True),
         "server-library-config": within(fixture / "server/config/gtmb/server-blueprint-library.cfg", fixture),
@@ -423,10 +448,13 @@ def run(args):
         "client-testlab": within(fixture / "client/config/gtmb-testlab.cfg", fixture),
         "client-library-metadata": within(fixture / "client/config/gtmb/client-blueprint-library.properties", fixture),
     }
+    if args.native_eu_ledger:
+        targets["server-gtswn-native-eu-profile"] = within(fixture / "server/config/gtswn/gtswn.cfg", fixture, exists=True)
     if not args.large_edit:
         targets["observer-workstation-screenshot"] = within(
             fixture / "client/screenshots/v0110-background-workstation.png", fixture)
     originals = {key: path.read_bytes() if path.is_file() else None for key, path in targets.items()}
+    staged_eu_config = native_eu_ledger_config(originals["server-gtswn-native-eu-profile"]) if args.native_eu_ledger else None
     preserved_addons = {str(within(path, fixture, exists=True)): sha(path)
                         for role in ("client", "server")
                         for path in (fixture / role / "mods").iterdir()
@@ -470,6 +498,15 @@ def run(args):
                                       and not path.name.casefold().startswith("gtmb")}
                               for role in ("client", "server")},
         "before_files": backups, "processes": {}, "moved_originals": [], "installed": [],
+        "native_eu_ledger_profile": {
+            "enabled": args.native_eu_ledger,
+            "comparability": "new explicit test-only environment; not directly comparable to historical startup gate=false" if args.native_eu_ledger else "historical default observer-disabled path",
+            "server_only": True, "gtswn_test_dimension": 19871 if args.native_eu_ledger else None,
+            "startup_effects": "native GTSWN-TEST dimension registration/loading, test listeners and idle report executor; no scenario/kit command; readonly exclusive EU sink starts only at funded placement" if args.native_eu_ledger else "no requested native test gate change",
+            "raw_eu_observation": "NOT_OBSERVED: raw cut/paste window is not hooked; raw world PASS makes no EU-ledger claim",
+            "claims": "EU bank settlement plus agreement with per-cell product cache quote; not independent cache-pricing correctness or AE bank payment",
+            "material_transfer_ae": "NOT_OBSERVED: native AE transfer fees do not invalidate independent item/fluid and EU-account claims; cacheQuoteAE>0 remains NOT_SUPPORTED",
+        },
         "preserved_v016_addons": preserved_addons,
         "cleanup_errors": [], "addonsCleanup": False, "processClosed": False,
         "user_instance_modified": False, "worlds_copied": False,
@@ -501,6 +538,9 @@ def run(args):
         assert_port_available()
         # All complete-byte backups precede the first live-fixture mutation.
         touched = True
+        if args.native_eu_ledger:
+            targets["server-gtswn-native-eu-profile"].write_bytes(staged_eu_config)
+            result["native_eu_ledger_profile"]["staged_config_sha256"] = sha(targets["server-gtswn-native-eu-profile"])
         targets["server-properties"].write_bytes(changed_server_properties(originals["server-properties"], world_name))
         for key in ("server-testlab", "client-testlab"):
             targets[key].parent.mkdir(parents=True, exist_ok=True)
@@ -543,6 +583,15 @@ def run(args):
                     raise IntegrityFailure("Installed artifact digest differs")
         assert_idle()
         assert_port_available()
+        result["staged_config_inputs"] = {key: {"path": str(path), "sha256": sha(path) if path.is_file() else None}
+                                          for key, path in targets.items() if "config" in path.parts}
+        profile_inputs = {"prepared_environment_sha256": result["environment_sha256"],
+                          "configs": result["staged_config_inputs"], "arguments": result["argfiles_sha256"],
+                          "dependencies": result["dependency_hashes"], "product_sha256": result["normal_sha256"],
+                          "addon_sha256": result["addon_sha256"], "native_eu_ledger": args.native_eu_ledger}
+        result["effective_profile_inputs"] = profile_inputs
+        result["effective_profile_sha256"] = hashlib.sha256(json.dumps(profile_inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        publish()
         deadline = time.monotonic() + timeout_seconds
         server = launch("server")
         startup_deadline = min(deadline, time.monotonic() + 600)
@@ -851,6 +900,8 @@ def main():
     parser.add_argument("--timeout-seconds", type=int, default=10800)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--scenario", choices=("all", "self", "share", "raw"), default="all")
+    parser.add_argument("--native-eu-ledger", action="store_true",
+                        help="Opt in to a new uniform server-side GTSWN startup-gate profile and independent EU observer; not historical-environment comparable; raw EU is NOT_OBSERVED")
     parser.add_argument("--seed-world", type=Path)
     parser.add_argument("--seed-manifest", type=Path)
     parser.add_argument("--seed-receipt", type=Path)

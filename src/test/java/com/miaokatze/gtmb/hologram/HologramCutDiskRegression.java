@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,8 @@ import net.minecraft.world.gen.ChunkProviderServer;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
+import cpw.mods.fml.relauncher.ReflectionHelper;
+
 /** Real native chunk serialization/readback; stale disk and changed payloads must never authorize a commit. */
 public final class HologramCutDiskRegression {
 
@@ -48,10 +51,11 @@ public final class HologramCutDiskRegression {
             Field provider = World.class.getDeclaredField("provider");
             provider.setAccessible(true);
             provider.set(world, new WorldProviderSurface());
+            world.provider.hasNoSky = true;
             world.chunks = new HashMap<>();
-            world.theChunkProviderServer = (ChunkProviderServer) unsafe.allocateInstance(ChunkProviderServer.class);
+            world.loadedTileEntityList = new ArrayList<>();
             DirectSaveLoader writer = new DirectSaveLoader(directory.toFile());
-            world.theChunkProviderServer.currentChunkLoader = writer;
+            world.theChunkProviderServer = new FixtureProvider(world, writer);
             Chunk chunk = new Chunk(world, -1, 1);
             world.chunks.put(key(-1, 1), chunk);
             ExtendedBlockStorage section = new ExtendedBlockStorage(192, true);
@@ -96,7 +100,17 @@ public final class HologramCutDiskRegression {
             // Matching live bytes cannot authorize a commit when the real region still has the old state.
             cell.setInteger("meta", 4);
             section.setExtBlockMetadata(14, 8, 3, 4);
-            rejected(() -> saved.verifyCell(-2, 200, 19, cell, false, tile), "stale disk metadata");
+            IOException mismatch = rejected(
+                () -> saved.verifyCell(-2, 200, 19, cell, false, tile),
+                "stale disk metadata");
+            SimpleAssert.that(
+                mismatch.getMessage()
+                    .contains("[-2,200,19]")
+                    && mismatch.getMessage()
+                        .contains("expected=minecraft:chest:4")
+                    && mismatch.getMessage()
+                        .contains("actual=minecraft:chest:5"),
+                "failed disk verification identifies the coordinate and exact expected/actual block metadata");
             cell.setInteger("meta", 5);
             section.setExtBlockMetadata(14, 8, 3, 5);
             NBTTagCompound changedTile = (NBTTagCompound) tile.copy();
@@ -132,11 +146,95 @@ public final class HologramCutDiskRegression {
             }
             HologramCutWorld.SavedChunk missingTile = reader.read(world, -1, 1);
             rejected(() -> missingTile.verifyCell(-2, 200, 19, cell, false, tile), "missing native inventory on disk");
+            initializedMetadata(world, reader);
             // RegionFileCache owns open handles. Do not globally clear other tests' or a running world's cache.
             directory.toFile()
                 .deleteOnExit();
         } catch (Exception failure) {
             throw new AssertionError("native cut disk verification", failure);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void initializedMetadata(FixtureWorld world, HologramCutWorld.DiskReader reader) throws Exception {
+        String id = "gtmb_test_cut_metadata_on_ready";
+        Map<String, Class<?>> types = (Map<String, Class<?>>) ReflectionHelper
+            .findField(TileEntity.class, "nameToClassMap", "field_145855_i")
+            .get(null);
+        Map<Class<?>, String> names = (Map<Class<?>, String>) ReflectionHelper
+            .findField(TileEntity.class, "classToNameMap", "field_145853_j")
+            .get(null);
+        Class<?> previousType = types.put(id, MetadataReadyTile.class);
+        String previousName = names.put(MetadataReadyTile.class, id);
+        try {
+            NBTTagCompound entry = entry();
+            entry.setInteger("sizeX", 2);
+            NBTTagList cells = entry.getTagList("cells", 10);
+            cells.appendTag(
+                cells.getCompoundTagAt(0)
+                    .copy());
+            for (int index = 0; index < 2; index++) {
+                NBTTagCompound cell = cells.getCompoundTagAt(index);
+                cell.setInteger("x", index);
+                cell.setInteger("y", 0);
+                cell.setInteger("z", 0);
+                cell.setInteger("meta", 12 + index);
+                NBTTagCompound payload = new NBTTagCompound();
+                payload.setString("id", id);
+                payload.setString("customName", "original metadata fixture " + index);
+                cell.setTag("tile", payload);
+            }
+            NBTTagCompound original = (NBTTagCompound) entry.copy();
+            MetadataReadyTile.readyCalls = 0;
+            HologramCutWorld.apply(world, entry, -2, 200, 19, false);
+            SimpleAssert.eq(2, MetadataReadyTile.readyCalls, "both native readiness callbacks actually ran");
+            for (int index = 0; index < 2; index++) {
+                SimpleAssert.eq(
+                    12 + index,
+                    world.getBlockMetadata(-2 + index, 200, 19),
+                    "raw metadata wins after all native readiness callbacks");
+                SimpleAssert.eq(
+                    12 + index,
+                    world.getTileEntity(-2 + index, 200, 19)
+                        .getBlockMetadata(),
+                    "tile metadata cache reflects restored raw state");
+            }
+            SimpleAssert.that(original.equals(entry), "native readiness does not rewrite the durable raw input");
+            // Keep this short-lived harness free of vanilla's permanent non-daemon file I/O thread.
+            world.theChunkProviderServer.currentChunkLoader.saveChunk(world, world.getChunkFromChunkCoords(-1, 1));
+            HologramCutWorld.SavedChunk saved = reader.read(world, -1, 1);
+            for (int index = 0; index < 2; index++) {
+                NBTTagCompound expected = new NBTTagCompound();
+                world.getTileEntity(-2 + index, 200, 19)
+                    .writeToNBT(expected);
+                saved.verifyCell(-2 + index, 200, 19, cells.getCompoundTagAt(index), false, expected);
+            }
+        } finally {
+            if (previousType == null) types.remove(id);
+            else types.put(id, previousType);
+            if (previousName == null) names.remove(MetadataReadyTile.class);
+            else names.put(MetadataReadyTile.class, previousName);
+        }
+    }
+
+    /** Native readiness may update both this host and an already initialized neighbor. */
+    public static final class MetadataReadyTile extends appeng.tile.AEBaseTile {
+
+        static int readyCalls;
+
+        @Override
+        public void onReady() {
+            SimpleAssert.that(
+                getWorldObj().getTileEntity(-2, 200, 19) instanceof MetadataReadyTile
+                    && getWorldObj().getTileEntity(-1, 200, 19) instanceof MetadataReadyTile,
+                "the complete raw structure is attached before native readiness");
+            Chunk chunk = getWorldObj().getChunkFromChunkCoords(-1, 1);
+            ExtendedBlockStorage section = chunk.getBlockStorageArray()[12];
+            section.setExtBlockMetadata(xCoord & 15, 8, 3, 8 + (xCoord + 2));
+            updateContainingBlockInfo();
+            getBlockMetadata(); // Cache the native state so final restoration must also invalidate this cache.
+            section.setExtBlockMetadata(14, 8, 3, 8);
+            readyCalls++;
         }
     }
 
@@ -154,11 +252,13 @@ public final class HologramCutDiskRegression {
         return entry;
     }
 
-    private static void rejected(Checked action, String label) throws Exception {
+    private static IOException rejected(Checked action, String label) throws Exception {
         try {
             action.run();
             throw new AssertionError(label);
-        } catch (IOException expected) {}
+        } catch (IOException expected) {
+            return expected;
+        }
     }
 
     private static long key(int x, int z) {
@@ -229,6 +329,29 @@ public final class HologramCutDiskRegression {
         @Override
         public int getBlockMetadata(int x, int y, int z) {
             return getChunkFromChunkCoords(x >> 4, z >> 4).getBlockMetadata(x & 15, y, z & 15);
+        }
+
+        @Override
+        public boolean func_147451_t(int x, int y, int z) {
+            return false;
+        }
+
+        @Override
+        public void markBlockForUpdate(int x, int y, int z) {}
+    }
+
+    private static final class FixtureProvider extends ChunkProviderServer {
+
+        private final FixtureWorld fixture;
+
+        FixtureProvider(FixtureWorld world, DirectSaveLoader writer) {
+            super(world, writer, null);
+            fixture = world;
+        }
+
+        @Override
+        public Chunk loadChunk(int x, int z) {
+            return fixture.chunks.computeIfAbsent(key(x, z), ignored -> new Chunk(fixture, x, z));
         }
     }
 }
