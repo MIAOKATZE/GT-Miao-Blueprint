@@ -33,7 +33,7 @@ def main():
     classes = args.output / 'classes'
     classes.mkdir()
     command = [str(args.javac.resolve()), '-source', '8', '-target', '8', '-encoding', 'UTF-8',
-               '-cp', str(args.fml_compile_jar.resolve()), '-d', str(classes.resolve()), str(source), str(source.with_name("CompositeWorldWitness.java")), str(source.with_name("CompositeEuLedger.java"))]
+               '-cp', str(args.fml_compile_jar.resolve()), '-d', str(classes.resolve()), str(source), str(source.with_name("CompositeWorldWitness.java")), str(source.with_name("CompositeEuLedger.java")), str(source.with_name("NativeContractsProbe.java"))]
     (args.output / 'compile-command.json').write_text(json.dumps(command, indent=2), encoding='utf-8')
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     (args.output / 'compile.log').write_bytes(result.stdout)
@@ -47,6 +47,7 @@ def main():
     receipt = dict(scope='test-only addon build; no game executed', addon=str(addon.resolve()),
                    addon_sha256=digest(addon), source_sha256=digest(source), witness_sha256=digest(source.with_name("CompositeWorldWitness.java")),
                    eu_ledger_sha256=digest(source.with_name("CompositeEuLedger.java")),
+                   native_contracts_probe_sha256=digest(source.with_name("NativeContractsProbe.java")),
                    fml_compile_jar_sha256=digest(args.fml_compile_jar),
                    gtmb_classes_replaced=False, minecraft_method_links='SRG reflection')
     (args.output / 'build-receipt.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')

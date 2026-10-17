@@ -17,6 +17,7 @@ import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.ChunkPosition;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.storage.AnvilChunkLoader;
@@ -108,7 +109,7 @@ final class HologramCutWorld {
                 if (!air && "savedMultipart".equals(
                     cell.getCompoundTag("tile")
                         .getString("id"))) {
-                    TileEntity tile = world.getTileEntity(x, y, z);
+                    TileEntity tile = attachedTile(world, x, y, z);
                     if (tile != null) describeMultipart(world, tile);
                 }
             } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
@@ -226,14 +227,14 @@ final class HologramCutWorld {
         Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
         ExtendedBlockStorage section = chunk.getBlockStorageArray()[y >> 4];
         if (section != null) section.setExtBlockMetadata(x & 15, y & 15, z & 15, metadata);
-        TileEntity tile = world.getTileEntity(x, y, z);
+        TileEntity tile = attachedTile(world, x, y, z);
         if (tile != null) tile.updateContainingBlockInfo();
         chunk.setChunkModified();
     }
 
     /**
-     * I/O verification only: native initialization may legitimately change runtime identities such as AE grid IDs.
-     * Verify disk against a detached snapshot of the initialized live tile, never approve/filter the source payload.
+     * I/O verification only: serialize live tiles once through the installed native chunk writer. Its final payload
+     * becomes a detached snapshot, checked against real region bytes after the native I/O queue drains.
      */
     static void saveAndVerify(WorldServer world, NBTTagCompound entry, int ox, int oy, int oz, boolean air)
         throws Exception {
@@ -241,31 +242,30 @@ final class HologramCutWorld {
         AnvilChunkLoader loader = (AnvilChunkLoader) world.theChunkProviderServer.currentChunkLoader;
         Set<Chunk> chunks = new LinkedHashSet<>();
         NBTTagList cells = entry.getTagList("cells", 10);
-        Map<Long, NBTTagCompound> expectedTiles = new LinkedHashMap<>();
+        Map<Long, TileEntity> liveTiles = new LinkedHashMap<>();
+        boolean diagnostics = Boolean.getBoolean("gtmb.cutDiskDiagnostics");
+        Map<Long, NBTTagCompound> before = diagnostics ? new LinkedHashMap<>() : null;
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
-            TileEntity live = world.getTileEntity(x, y, z);
+            TileEntity live = selectedTile(world, x, y, z, cell, air);
             if (live != null) {
-                NBTTagCompound saved = new NBTTagCompound();
-                live.writeToNBT(saved);
-                expectedTiles.put(tileKey(x, y, z), (NBTTagCompound) saved.copy());
+                liveTiles.put(tileKey(x, y, z), live);
+                if (diagnostics) {
+                    NBTTagCompound saved = new NBTTagCompound();
+                    live.writeToNBT(saved);
+                    before.put(tileKey(x, y, z), (NBTTagCompound) saved.copy());
+                }
             }
             chunks
                 .add(world.getChunkFromChunkCoords((ox + cell.getInteger("x")) >> 4, (oz + cell.getInteger("z")) >> 4));
         }
-        NativeSaveObservation observation = Boolean.getBoolean("gtmb.cutDiskDiagnostics")
-            ? new NativeSaveObservation(world)
-            : null;
-        if (observation == null) {
-            for (Chunk chunk : chunks) loader.saveChunk(world, chunk);
-        } else {
-            MinecraftForge.EVENT_BUS.register(observation);
-            try {
-                for (Chunk chunk : chunks) observation.save(loader, chunk, expectedTiles);
-            } finally {
-                MinecraftForge.EVENT_BUS.unregister(observation);
-            }
+        NativeSaveSnapshot snapshot = new NativeSaveSnapshot(world);
+        MinecraftForge.EVENT_BUS.register(snapshot);
+        try {
+            for (Chunk chunk : chunks) snapshot.save(loader, chunk, liveTiles);
+        } finally {
+            MinecraftForge.EVENT_BUS.unregister(snapshot);
         }
         ThreadedFileIOBase.threadedIOInstance.waitForFinish();
         Map<Long, SavedChunk> disk = new LinkedHashMap<>();
@@ -279,16 +279,23 @@ final class HologramCutWorld {
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
-            disk.get(key(x >> 4, z >> 4))
-                .verifyCell(
-                    x,
-                    y,
-                    z,
-                    cell,
-                    air,
-                    expectedTiles.get(tileKey(x, y, z)),
-                    observation != null && observation.observed(x, y, z),
-                    observation == null ? null : observation.tile(x, y, z));
+            long position = tileKey(x, y, z);
+            TileEntity live = selectedTile(world, x, y, z, cell, air);
+            if (live != liveTiles.get(position))
+                throw new IOException("剪切方块实体在存盘期间被替换 at [" + x + "," + y + "," + z + "]");
+            snapshot.verifyPresence(x, y, z, live);
+            SavedChunk saved = disk.get(key(x >> 4, z >> 4));
+            try {
+                saved.verifyCell(x, y, z, cell, air, snapshot.tile(x, y, z));
+            } catch (IOException failure) {
+                if (!diagnostics) throw failure;
+                throw new IOException(
+                    failure.getMessage() + " pre/native="
+                        + firstNbtDifference(before.get(position), snapshot.tile(x, y, z))
+                        + " pre/disk="
+                        + firstNbtDifference(before.get(position), saved.tiles.get(position)),
+                    failure);
+            }
         }
         for (String name : regions) try (RandomAccessFile region = new RandomAccessFile(
             new java.io.File(new java.io.File(loader.chunkSaveLocation, "region"), name),
@@ -298,16 +305,44 @@ final class HologramCutWorld {
             }
     }
 
-    /** Opt-in diagnostic evidence only; the independent live snapshot remains the strict commit condition. */
-    public static final class NativeSaveObservation {
+    static TileEntity selectedTile(WorldServer world, int x, int y, int z, NBTTagCompound cell, boolean air)
+        throws IOException {
+        // The native getter may create an empty default tile. Verification must observe the attached original.
+        TileEntity live = attachedTile(world, x, y, z);
+        boolean required = !air && cell.hasKey("tile", 10);
+        if (required != (live != null)) throw new IOException(
+            "剪切方块实体覆盖不完整 at [" + x
+                + ","
+                + y
+                + ","
+                + z
+                + "] expectedPresent="
+                + required
+                + " actualPresent="
+                + (live != null));
+        if (live != null && (live.getWorldObj() != world || live.xCoord != x
+            || live.yCoord != y
+            || live.zCoord != z
+            || live.isInvalid())) throw new IOException("剪切方块实体世界或坐标无效 at [" + x + "," + y + "," + z + "]");
+        return live;
+    }
+
+    private static TileEntity attachedTile(WorldServer world, int x, int y, int z) {
+        return world.getChunkFromChunkCoords(x >> 4, z >> 4).chunkTileEntityMap
+            .get(new ChunkPosition(x & 15, y, z & 15));
+    }
+
+    /** Capture this exact native save; missing events or selected live tiles never authorize consumption. */
+    public static final class NativeSaveSnapshot {
 
         private final WorldServer world;
         private final Thread thread = Thread.currentThread();
         private final Map<Long, NBTTagCompound> tiles = new LinkedHashMap<>();
+        private final Set<Long> nativePositions = new LinkedHashSet<>();
         private Chunk activeChunk;
         private NBTTagCompound root;
 
-        NativeSaveObservation(WorldServer world) {
+        NativeSaveSnapshot(WorldServer world) {
             this.world = world;
         }
 
@@ -317,27 +352,50 @@ final class HologramCutWorld {
                 root = event.getData();
         }
 
-        void save(AnvilChunkLoader loader, Chunk chunk, Map<Long, NBTTagCompound> expected) throws Exception {
+        void save(AnvilChunkLoader loader, Chunk chunk, Map<Long, TileEntity> expected) throws Exception {
             activeChunk = chunk;
             root = null;
             try {
                 loader.saveChunk(world, chunk);
-                if (root == null) return; // Observation availability must not change the strict disk verdict.
+                if (root == null) throw new IOException(
+                    "剪切原生存盘事件未捕获，记录已保留 at chunk [" + chunk.xPosition + "," + chunk.zPosition + "]");
                 // Keep the event's reference until saveChunk returns: later handlers may edit its final payload.
-                NBTTagList saved = root.getCompoundTag("Level")
-                    .getTagList("TileEntities", 10);
+                NBTTagCompound level = root.getCompoundTag("Level");
+                if (!root.hasKey("Level", 10) || !level.hasKey("xPos", 3)
+                    || !level.hasKey("zPos", 3)
+                    || level.getInteger("xPos") != chunk.xPosition
+                    || level.getInteger("zPos") != chunk.zPosition) throw new IOException("剪切原生存盘区块坐标无效，记录已保留");
+                NBTTagList saved = tileList(level);
                 for (int index = 0; index < saved.tagCount(); index++) {
                     NBTTagCompound tile = saved.getCompoundTagAt(index);
                     long key = tileKey(tile.getInteger("x"), tile.getInteger("y"), tile.getInteger("z"));
+                    nativePositions.add(key);
                     if (!expected.containsKey(key)) continue;
-                    NBTTagCompound snapshot = expected.get(key);
-                    // Matching payloads reuse an immutable existing snapshot. Copy only diagnostic differences.
-                    tiles.put(key, sameNbt(snapshot, tile) ? snapshot : (NBTTagCompound) tile.copy());
+                    TileEntity live = expected.get(key);
+                    if (!tile.hasKey("x", 3) || !tile.hasKey("y", 3)
+                        || !tile.hasKey("z", 3)
+                        || !tile.hasKey("id", 8)
+                        || tile.getString("id")
+                            .isEmpty()
+                        || tile.getInteger("x") != live.xCoord
+                        || tile.getInteger("y") != live.yCoord
+                        || tile.getInteger("z") != live.zCoord
+                        || (live.xCoord >> 4) != chunk.xPosition
+                        || (live.zCoord >> 4) != chunk.zPosition)
+                        throw new IOException(
+                            "剪切原生存盘实体坐标或类型无效 at [" + live.xCoord + "," + live.yCoord + "," + live.zCoord + "]");
+                    if (tiles.put(key, (NBTTagCompound) tile.copy()) != null) throw new IOException(
+                        "剪切原生存盘实体坐标重复 at [" + live.xCoord + "," + live.yCoord + "," + live.zCoord + "]");
                 }
-                for (Map.Entry<Long, NBTTagCompound> entry : expected.entrySet()) {
-                    NBTTagCompound tile = entry.getValue();
-                    if ((tile.getInteger("x") >> 4) == chunk.xPosition && (tile.getInteger("z") >> 4) == chunk.zPosition
-                        && !tiles.containsKey(entry.getKey())) tiles.put(entry.getKey(), null);
+                for (Map.Entry<Long, TileEntity> entry : expected.entrySet()) {
+                    TileEntity live = entry.getValue();
+                    if ((live.xCoord >> 4) != chunk.xPosition || (live.zCoord >> 4) != chunk.zPosition) continue;
+                    if (live.getWorldObj() != world || live.isInvalid()
+                        || attachedTile(world, live.xCoord, live.yCoord, live.zCoord) != live)
+                        throw new IOException(
+                            "剪切方块实体在存盘期间被替换 at [" + live.xCoord + "," + live.yCoord + "," + live.zCoord + "]");
+                    if (!tiles.containsKey(entry.getKey())) throw new IOException(
+                        "剪切原生存盘遗漏方块实体 at [" + live.xCoord + "," + live.yCoord + "," + live.zCoord + "]");
                 }
             } finally {
                 activeChunk = null;
@@ -345,13 +403,21 @@ final class HologramCutWorld {
             }
         }
 
-        boolean observed(int x, int y, int z) {
-            return tiles.containsKey(tileKey(x, y, z));
+        void verifyPresence(int x, int y, int z, TileEntity live) throws IOException {
+            if (nativePositions.contains(tileKey(x, y, z)) != (live != null)) throw new IOException(
+                "剪切原生存盘实体覆盖不一致 at [" + x + "," + y + "," + z + "] expectedPresent=" + (live != null));
         }
 
         NBTTagCompound tile(int x, int y, int z) {
             return tiles.get(tileKey(x, y, z));
         }
+    }
+
+    private static NBTTagList tileList(NBTTagCompound level) throws IOException {
+        if (!level.hasKey("TileEntities", 9)) throw new IOException("剪切存盘实体列表缺失，记录已保留");
+        NBTTagList tiles = (NBTTagList) level.getTag("TileEntities");
+        if (tiles.tagCount() > 0 && tiles.func_150303_d() != 10) throw new IOException("剪切存盘实体列表类型无效，记录已保留");
+        return tiles;
     }
 
     /** Bounded structural diagnostics: paths and tag types only, never inventory/identity/string values. */
@@ -436,24 +502,21 @@ final class HologramCutWorld {
         final Chunk blocks;
         final NBTTagCompound level;
         private final Map<Long, NBTTagCompound> tiles = new LinkedHashMap<>();
+        private final Set<Long> duplicateTiles = new LinkedHashSet<>();
 
-        SavedChunk(Chunk blocks, NBTTagCompound level) {
+        SavedChunk(Chunk blocks, NBTTagCompound level) throws IOException {
             this.blocks = blocks;
             this.level = level;
-            NBTTagList savedTiles = level.getTagList("TileEntities", 10);
+            NBTTagList savedTiles = tileList(level);
             for (int t = 0; t < savedTiles.tagCount(); t++) {
                 NBTTagCompound tile = savedTiles.getCompoundTagAt(t);
-                tiles.put(tileKey(tile.getInteger("x"), tile.getInteger("y"), tile.getInteger("z")), tile);
+                long key = tileKey(tile.getInteger("x"), tile.getInteger("y"), tile.getInteger("z"));
+                if (tiles.put(key, tile) != null) duplicateTiles.add(key);
             }
         }
 
         void verifyCell(int x, int y, int z, NBTTagCompound cell, boolean air, NBTTagCompound expectedTile)
             throws IOException {
-            verifyCell(x, y, z, cell, air, expectedTile, false, null);
-        }
-
-        void verifyCell(int x, int y, int z, NBTTagCompound cell, boolean air, NBTTagCompound expectedTile,
-            boolean nativeObserved, NBTTagCompound nativeTile) throws IOException {
             Block expectedBlock = air ? Blocks.air : Block.getBlockFromName(cell.getString("block"));
             Block actualBlock = blocks.getBlock(x & 15, y, z & 15);
             int expectedMetadata = air ? 0 : cell.getInteger("meta");
@@ -472,7 +535,10 @@ final class HologramCutWorld {
                     + Block.blockRegistry.getNameForObject(actualBlock)
                     + ":"
                     + actualMetadata);
-            NBTTagCompound tile = tiles.get(tileKey(x, y, z));
+            long position = tileKey(x, y, z);
+            if (duplicateTiles.contains(position))
+                throw new IOException("剪切存盘实体坐标重复 at [" + x + "," + y + "," + z + "]");
+            NBTTagCompound tile = tiles.get(position);
             if (!sameNbt(expectedTile, tile)) throw new IOException(
                 "方块实体存盘读回与本次世界快照不一致，记录已保留 at [" + x
                     + ","
@@ -480,13 +546,8 @@ final class HologramCutWorld {
                     + ","
                     + z
                     + "]"
-                    + " snapshot/disk="
-                    + firstNbtDifference(expectedTile, tile)
-                    + (nativeObserved
-                        ? " snapshot/native=" + firstNbtDifference(expectedTile, nativeTile)
-                            + " native/disk="
-                            + firstNbtDifference(nativeTile, tile)
-                        : " native=unobserved"));
+                    + " native/disk="
+                    + firstNbtDifference(expectedTile, tile));
         }
     }
 

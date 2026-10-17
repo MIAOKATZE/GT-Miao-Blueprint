@@ -163,6 +163,7 @@ public final class HologramCutDiskRegression {
             HologramCutWorld.SavedChunk missingTile = reader.read(world, -1, 1);
             rejected(() -> missingTile.verifyCell(-2, 200, 19, cell, false, tile), "missing native inventory on disk");
             syntheticSaveObservationContract(world, writer, reader, cell, tile);
+            oneShotNativeWriter(world, writer, reader, cell);
             initializedMetadata(world, reader);
             // RegionFileCache owns open handles. Do not globally clear other tests' or a running world's cache.
             directory.toFile()
@@ -219,18 +220,19 @@ public final class HologramCutDiskRegression {
     private static void syntheticSaveObservationContract(FixtureWorld world, DirectSaveLoader writer,
         HologramCutWorld.DiskReader reader, NBTTagCompound cell, NBTTagCompound expected) throws Exception {
         Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
-        HologramCutWorld.NativeSaveObservation observation = new HologramCutWorld.NativeSaveObservation(world);
+        HologramCutWorld.NativeSaveSnapshot observation = new HologramCutWorld.NativeSaveSnapshot(world);
         SyntheticLaterSaveCallback mutator = new SyntheticLaterSaveCallback(world, chunk, observation);
-        Map<Long, NBTTagCompound> snapshots = new HashMap<>();
-        snapshots.put(HologramCutWorld.tileKey(-2, 200, 19), expected);
+        TileEntity live = world.getTileEntity(-2, 200, 19);
+        Map<Long, TileEntity> selected = new HashMap<>();
+        selected.put(HologramCutWorld.tileKey(-2, 200, 19), live);
         writer.syntheticCallback = root -> {
             ChunkDataEvent.Save callback = new ChunkDataEvent.Save(chunk, root);
             observation.onSave(callback);
             mutator.onSave(callback);
         };
         try {
-            observation.save(writer, chunk, snapshots);
-            SimpleAssert.that(observation.observed(-2, 200, 19), "synthetic save callback was captured for this scope");
+            observation.save(writer, chunk, selected);
+            observation.verifyPresence(-2, 200, 19, live);
             NBTTagCompound nativeTile = observation.tile(-2, 200, 19);
             SimpleAssert.that(
                 nativeTile != null && nativeTile.hasKey("lateNativeDiagnostic", 8),
@@ -238,19 +240,109 @@ public final class HologramCutDiskRegression {
             SimpleAssert
                 .that(!expected.hasKey("lateNativeDiagnostic"), "diagnostic observation never rewrites expected");
             HologramCutWorld.SavedChunk saved = reader.read(world, -1, 1);
-            IOException mismatch = rejected(
-                () -> saved.verifyCell(-2, 200, 19, cell, false, expected, true, nativeTile),
-                "diagnostic native payload must not authorize a changed tile");
-            SimpleAssert.that(
-                mismatch.getMessage()
-                    .contains("snapshot/native=path=$/lateNativeDiagnostic")
-                    && mismatch.getMessage()
-                        .contains("native/disk=equal"),
-                "strict failure identifies a difference before disk serialization");
+            saved.verifyCell(-2, 200, 19, cell, false, nativeTile);
+            rejected(
+                () -> saved.verifyCell(-2, 200, 19, cell, false, expected),
+                "independent pre-save bytes differ from the final native payload");
             mutator.lastTile.removeTag("lateNativeDiagnostic");
             SimpleAssert.that(
                 nativeTile.hasKey("lateNativeDiagnostic"),
                 "changed observed payload is detached from mutable synthetic callback references");
+            NBTTagCompound diskRoot;
+            try (DataInputStream input = RegionFileCache.getChunkInputStream(writer.chunkSaveLocation, -1, 1)) {
+                diskRoot = CompressedStreamTools.read(input);
+            }
+            diskRoot.getCompoundTag("Level")
+                .getTagList("TileEntities", 10)
+                .getCompoundTagAt(0)
+                .removeTag("lateNativeDiagnostic");
+            try (DataOutputStream output = RegionFileCache.getChunkOutputStream(writer.chunkSaveLocation, -1, 1)) {
+                CompressedStreamTools.write(diskRoot, output);
+            }
+            HologramCutWorld.SavedChunk altered = reader.read(world, -1, 1);
+            IOException mismatch = rejected(
+                () -> altered.verifyCell(-2, 200, 19, cell, false, nativeTile),
+                "native snapshot cannot authorize altered real disk bytes");
+            SimpleAssert.that(
+                mismatch.getMessage()
+                    .contains("native/disk=path=$/lateNativeDiagnostic"),
+                "the final native snapshot is compared with actual region bytes");
+        } finally {
+            writer.syntheticCallback = null;
+        }
+        nativeCoverageFailures(world, writer, reader, cell, expected, selected);
+    }
+
+    private static void nativeCoverageFailures(FixtureWorld world, DirectSaveLoader writer,
+        HologramCutWorld.DiskReader reader, NBTTagCompound cell, NBTTagCompound expected,
+        Map<Long, TileEntity> selected) throws Exception {
+        Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
+        TileEntity live = world.getTileEntity(-2, 200, 19);
+        NBTTagCompound required = (NBTTagCompound) cell.copy();
+        required.setTag("tile", expected.copy());
+        SimpleAssert.that(
+            HologramCutWorld.selectedTile(world, -2, 200, 19, required, false) == live,
+            "raw presence and live tile identity are checked without serializing the tile");
+        rejected(
+            () -> HologramCutWorld.selectedTile(world, -2, 200, 19, cell, false),
+            "an unrecorded live tile cannot become a new expected payload");
+        chunk.chunkTileEntityMap.remove(new ChunkPosition(14, 200, 3));
+        world.synthesizeMissingTile = true;
+        try {
+            rejected(
+                () -> HologramCutWorld.selectedTile(world, -2, 200, 19, required, false),
+                "a missing original live tile cannot be approved as absent on disk");
+            SimpleAssert.that(
+                chunk.chunkTileEntityMap.isEmpty(),
+                "coverage checks cannot replace a lost inventory with a lazily created empty tile");
+        } finally {
+            world.synthesizeMissingTile = false;
+            chunk.chunkTileEntityMap.put(new ChunkPosition(14, 200, 3), live);
+        }
+        HologramCutWorld.NativeSaveSnapshot absentEvent = new HologramCutWorld.NativeSaveSnapshot(world);
+        rejected(
+            () -> absentEvent.save(writer, chunk, selected),
+            "a missing real save callback must retain the transaction");
+        for (String corruption : new String[] { "missing", "coordinate", "duplicate", "replaced" }) {
+            HologramCutWorld.NativeSaveSnapshot snapshot = new HologramCutWorld.NativeSaveSnapshot(world);
+            writer.syntheticCallback = root -> {
+                NBTTagCompound level = root.getCompoundTag("Level");
+                NBTTagList tiles = level.getTagList("TileEntities", 10);
+                if ("missing".equals(corruption)) level.setTag("TileEntities", new NBTTagList());
+                if ("coordinate".equals(corruption)) tiles.getCompoundTagAt(0)
+                    .setInteger("x", -1);
+                if ("duplicate".equals(corruption)) tiles.appendTag(
+                    tiles.getCompoundTagAt(0)
+                        .copy());
+                if ("replaced".equals(corruption))
+                    chunk.chunkTileEntityMap.put(new ChunkPosition(14, 200, 3), new TileEntityChest());
+                snapshot.onSave(new ChunkDataEvent.Save(chunk, root));
+            };
+            try {
+                rejected(
+                    () -> snapshot.save(writer, chunk, selected),
+                    "selected native coverage rejects " + corruption);
+            } finally {
+                writer.syntheticCallback = null;
+                chunk.chunkTileEntityMap.put(new ChunkPosition(14, 200, 3), live);
+            }
+        }
+        HologramCutWorld.NativeSaveSnapshot snapshot = new HologramCutWorld.NativeSaveSnapshot(world);
+        writer.syntheticCallback = root -> {
+            NBTTagCompound unrelated = new NBTTagCompound();
+            unrelated.setInteger("x", -1);
+            unrelated.setInteger("y", 200);
+            unrelated.setInteger("z", 19);
+            root.getCompoundTag("Level")
+                .getTagList("TileEntities", 10)
+                .appendTag(unrelated);
+            snapshot.onSave(new ChunkDataEvent.Save(chunk, root));
+        };
+        try {
+            snapshot.save(writer, chunk, selected);
+            reader.read(world, -1, 1)
+                .verifyCell(-2, 200, 19, cell, false, snapshot.tile(-2, 200, 19));
+            rejected(() -> snapshot.verifyPresence(-2, 200, 19, null), "unexpected selected native tile is rejected");
         } finally {
             writer.syntheticCallback = null;
         }
@@ -260,11 +352,10 @@ public final class HologramCutDiskRegression {
 
         private final FixtureWorld world;
         private final Chunk chunk;
-        private final HologramCutWorld.NativeSaveObservation observation;
+        private final HologramCutWorld.NativeSaveSnapshot observation;
         NBTTagCompound lastTile;
 
-        SyntheticLaterSaveCallback(FixtureWorld world, Chunk chunk,
-            HologramCutWorld.NativeSaveObservation observation) {
+        SyntheticLaterSaveCallback(FixtureWorld world, Chunk chunk, HologramCutWorld.NativeSaveSnapshot observation) {
             this.world = world;
             this.chunk = chunk;
             this.observation = observation;
@@ -282,6 +373,79 @@ public final class HologramCutDiskRegression {
                 () -> observation.onSave(new ChunkDataEvent.Save(chunk, new NBTTagCompound())));
             otherThread.start();
             otherThread.join();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void oneShotNativeWriter(FixtureWorld world, DirectSaveLoader writer,
+        HologramCutWorld.DiskReader reader, NBTTagCompound cell) throws Exception {
+        String id = "gtmb_test_one_shot_writer";
+        Map<String, Class<?>> types = (Map<String, Class<?>>) ReflectionHelper
+            .findField(TileEntity.class, "nameToClassMap", "field_145855_i")
+            .get(null);
+        Map<Class<?>, String> names = (Map<Class<?>, String>) ReflectionHelper
+            .findField(TileEntity.class, "classToNameMap", "field_145853_j")
+            .get(null);
+        Class<?> previousType = types.put(id, OneShotWriteChest.class);
+        String previousName = names.put(OneShotWriteChest.class, id);
+        Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
+        ChunkPosition position = new ChunkPosition(14, 200, 3);
+        TileEntity previousTile = chunk.chunkTileEntityMap.get(position);
+        OneShotWriteChest live = new OneShotWriteChest();
+        live.setInventorySlotContents(
+            4,
+            ((TileEntityChest) previousTile).getStackInSlot(4)
+                .copy());
+        live.setWorldObj(world);
+        live.xCoord = -2;
+        live.yCoord = 200;
+        live.zCoord = 19;
+        chunk.chunkTileEntityMap.put(position, live);
+        HologramCutWorld.NativeSaveSnapshot snapshot = new HologramCutWorld.NativeSaveSnapshot(world);
+        Map<Long, TileEntity> selected = new HashMap<>();
+        NBTTagCompound required = (NBTTagCompound) cell.copy();
+        required.setTag("tile", new NBTTagCompound());
+        selected.put(
+            HologramCutWorld.tileKey(-2, 200, 19),
+            HologramCutWorld.selectedTile(world, -2, 200, 19, required, false));
+        writer.syntheticCallback = root -> snapshot.onSave(new ChunkDataEvent.Save(chunk, root));
+        try {
+            snapshot.save(writer, chunk, selected);
+            snapshot.verifyPresence(-2, 200, 19, live);
+            SimpleAssert.eq(1, live.writeCalls, "normal snapshot capture invokes the native tile writer exactly once");
+            SimpleAssert.that(
+                !live.forceClientUpdate && snapshot.tile(-2, 200, 19)
+                    .getBoolean("forceClientUpdate"),
+                "one-shot serializer output is retained although serialization consumed the live flag");
+            reader.read(world, -1, 1)
+                .verifyCell(-2, 200, 19, cell, false, snapshot.tile(-2, 200, 19));
+            SimpleAssert.that(
+                snapshot.tile(-2, 200, 19)
+                    .getTagList("Items", 10)
+                    .tagCount() == 1,
+                "single native serialization retains the full original inventory payload");
+        } finally {
+            writer.syntheticCallback = null;
+            chunk.chunkTileEntityMap.put(position, previousTile);
+            if (previousType == null) types.remove(id);
+            else types.put(id, previousType);
+            if (previousName == null) names.remove(OneShotWriteChest.class);
+            else names.put(OneShotWriteChest.class, previousName);
+        }
+    }
+
+    /** Mirrors a native writer that writes a pending flag and clears it as part of serialization. */
+    public static final class OneShotWriteChest extends TileEntityChest {
+
+        int writeCalls;
+        boolean forceClientUpdate = true;
+
+        @Override
+        public void writeToNBT(NBTTagCompound tag) {
+            super.writeToNBT(tag);
+            writeCalls++;
+            tag.setBoolean("forceClientUpdate", forceClientUpdate);
+            forceClientUpdate = false;
         }
     }
 
@@ -339,6 +503,29 @@ public final class HologramCutDiskRegression {
                     .writeToNBT(expected);
                 saved.verifyCell(-2 + index, 200, 19, cells.getCompoundTagAt(index), false, expected);
             }
+            // A native callback can remove an earlier host after all tiles were initially attached.
+            // Metadata/cache maintenance must leave that loss visible to the strict presence check.
+            MetadataReadyTile.removeEarlierHost = true;
+            MetadataReadyTile.readyCalls = 0;
+            world.synthesizeMissingTile = true;
+            try {
+                HologramCutWorld.apply(world, entry, -2, 200, 19, false);
+                SimpleAssert.eq(2, MetadataReadyTile.readyCalls, "removal happens after both readiness callbacks ran");
+                Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
+                SimpleAssert.that(
+                    !chunk.chunkTileEntityMap.containsKey(new ChunkPosition(14, 200, 3)),
+                    "post-ready metadata/cache maintenance cannot create an empty replacement tile");
+                rejected(
+                    () -> HologramCutWorld.selectedTile(world, -2, 200, 19, cells.getCompoundTagAt(0), false),
+                    "a tile removed by native readiness must fail strict presence verification");
+                SimpleAssert.that(
+                    !chunk.chunkTileEntityMap.containsKey(new ChunkPosition(14, 200, 3)),
+                    "strict presence checks also leave the removed native inventory absent");
+                SimpleAssert.that(original.equals(entry), "failed native readiness never rewrites the raw record");
+            } finally {
+                MetadataReadyTile.removeEarlierHost = false;
+                world.synthesizeMissingTile = false;
+            }
         } finally {
             if (previousType == null) types.remove(id);
             else types.put(id, previousType);
@@ -351,6 +538,7 @@ public final class HologramCutDiskRegression {
     public static final class MetadataReadyTile extends appeng.tile.AEBaseTile {
 
         static int readyCalls;
+        static boolean removeEarlierHost;
 
         @Override
         public void onReady() {
@@ -365,6 +553,7 @@ public final class HologramCutDiskRegression {
             getBlockMetadata(); // Cache the native state so final restoration must also invalidate this cache.
             section.setExtBlockMetadata(14, 8, 3, 8);
             readyCalls++;
+            if (removeEarlierHost && xCoord == -1) chunk.chunkTileEntityMap.remove(new ChunkPosition(14, 200, 3));
         }
     }
 
@@ -429,6 +618,7 @@ public final class HologramCutDiskRegression {
     private static final class FixtureWorld extends WorldServer {
 
         Map<Long, Chunk> chunks;
+        boolean synthesizeMissingTile;
 
         private FixtureWorld() {
             super(null, null, "cut disk fixture", 0, null, null);
@@ -456,7 +646,18 @@ public final class HologramCutDiskRegression {
 
         @Override
         public TileEntity getTileEntity(int x, int y, int z) {
-            return getChunkFromChunkCoords(x >> 4, z >> 4).chunkTileEntityMap.get(new ChunkPosition(x & 15, y, z & 15));
+            Chunk chunk = getChunkFromChunkCoords(x >> 4, z >> 4);
+            ChunkPosition position = new ChunkPosition(x & 15, y, z & 15);
+            TileEntity tile = chunk.chunkTileEntityMap.get(position);
+            if (tile == null && synthesizeMissingTile) {
+                tile = new TileEntityChest();
+                tile.setWorldObj(this);
+                tile.xCoord = x;
+                tile.yCoord = y;
+                tile.zCoord = z;
+                chunk.chunkTileEntityMap.put(position, tile);
+            }
+            return tile;
         }
 
         @Override

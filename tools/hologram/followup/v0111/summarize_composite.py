@@ -32,7 +32,9 @@ def summarize(case):
         "native_environment": {**{key: receipt.get(key) for key in
                                ("allow_nether", "allow_flight", "view_distance", "testlab_force_lease_ceiling",
                                 "client_Xmx", "server_Xmx")},
-                               "pause_on_lost_focus_applied": client.get("pauseOnLostFocusApplied")},
+                               "pause_on_lost_focus_applied": client.get("pauseOnLostFocusApplied"),
+                               "native_eu_ledger_enabled": receipt.get("native_eu_ledger_profile", {}).get("enabled", False),
+                               "cut_disk_diagnostics_enabled": receipt.get("cut_disk_diagnostics", {}).get("enabled", False)},
         "seed_files": receipt.get("seed_files"),
         "fixture_static_source_sha256": server.get("fixtureStaticSourceSha256"),
         "source_volume": server.get("actualSourceVolume"),
@@ -71,6 +73,8 @@ def main():
                                                      row["native_environment"]["pause_on_lost_focus_applied"] == "false" and
                                                      row["native_environment"] == cases[0]["native_environment"]
                                                      for row in cases))
+    shared["no_cut_disk_diagnostic_overhead"] = bool(cases and all(
+        not row["native_environment"]["cut_disk_diagnostics_enabled"] for row in cases))
     comparable = all(shared.values())
     comparisons = []
     baselines = {}
