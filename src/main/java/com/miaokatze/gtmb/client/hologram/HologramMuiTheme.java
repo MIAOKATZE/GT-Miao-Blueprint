@@ -1,6 +1,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -94,6 +95,20 @@ final class HologramMuiTheme {
     static ButtonWidget<?> primaryButton(Supplier<String> text, int x, int y, int width, int height, Runnable action) {
         return button(text, x, y, width, height, action).background(PRIMARY)
             .hoverBackground(PRIMARY_HOVER);
+    }
+
+    /** Keep the projector trim, then cover its orange edge with a semantic solid frame. */
+    static IDrawable guidanceBackground(boolean hover, IntSupplier accent, BooleanSupplier enabled) {
+        return (context, x, y, width, height, theme) -> {
+            (hover ? PRESSED : BUTTON).draw(context, x, y, width, height, theme);
+            int color = HologramUiAccent.borderColor(accent.getAsInt(), enabled.getAsBoolean());
+            if (color == 0) return;
+            int edge = HologramUiAccent.BORDER_WIDTH;
+            GuiDraw.drawRect(x, y, width, edge, color);
+            GuiDraw.drawRect(x, y + height - edge, width, edge, color);
+            GuiDraw.drawRect(x, y + edge, edge, height - edge * 2, color);
+            GuiDraw.drawRect(x + width - edge, y + edge, edge, height - edge * 2, color);
+        };
     }
 
     static void header(ModularPanel panel, Supplier<String> title, int width) {

@@ -6,10 +6,10 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
 /**
  * Input priority shared by the world controller and regression tests.
- * CUT mode survives local cancellation; the server-owned queue is independent of every local stage.
+ * The server-owned queue is independent of the selected tool and every local stage.
  * Choosing CUT enters SELECTING; a saved cut starts a fresh empty selection until Escape.
  * Shift-right opens storage from every cut stage; an explicit row action starts MOVING -> LOCKED -> paste.
- * Escape returns any local activity to IDLE; only a confirmed server paste/undo consumes a stored cut.
+ * Escape exits CUT entirely; only a confirmed server paste/undo consumes a stored cut.
  */
 final class HologramCutInput {
 
@@ -70,6 +70,10 @@ final class HologramCutInput {
 
     static boolean cancelsActivity(Stage stage, boolean session, boolean preview) {
         return stage != Stage.IDLE || session || preview;
+    }
+
+    static boolean exitsMode(Stage stage, boolean cutMode, boolean session, boolean preview) {
+        return cutMode || cancelsActivity(stage, session, preview);
     }
 
     static boolean requiresCutReady(Intent intent) {

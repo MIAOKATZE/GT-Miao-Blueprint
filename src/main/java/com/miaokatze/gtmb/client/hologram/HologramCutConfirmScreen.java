@@ -94,7 +94,8 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
     @Override
     protected boolean muiKey(char c, int key) {
         if (key != Keyboard.KEY_ESCAPE) return false;
-        finish(false, false);
+        finished = true;
+        HologramCutClient.INSTANCE.exitCutMode();
         return true;
     }
 

@@ -10,6 +10,7 @@ final class HologramBuildPreparation {
     private HologramBuildPreparation() {}
 
     static void nativeBuild(HologramSession s) {
+        if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (s.mode != 0) {
             s.status = "原版搭建只用于补建模式";
@@ -29,6 +30,7 @@ final class HologramBuildPreparation {
     }
 
     static void directBuild(HologramSession s, boolean rescan) {
+        if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (!HologramBuildPreparation.aeReady(s)) return;
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
@@ -51,6 +53,7 @@ final class HologramBuildPreparation {
     }
 
     static void reviewedBuild(HologramSession s, NBTTagCompound action) {
+        if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision) {
             s.forcePlacementReady = false;
             s.status = "确认计划已更新，请重新核对材料与位置";

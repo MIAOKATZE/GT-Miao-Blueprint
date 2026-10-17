@@ -33,6 +33,15 @@ final class HologramArea {
     final java.util.Set<String> edited = new java.util.HashSet<>();
     final List<Structure> discovery = new ArrayList<>();
     int discoveryIndex;
+    private java.util.Iterator<Map.Entry<String, HologramCapture.Cell>> declarationMembers;
+    private int declarationMemberDone, declarationMemberTotal;
+    String importPhase = "blocks";
+    HologramAreaPreparation preparation;
+    HologramSession staging;
+    Map<String, HologramSession> declarationSessions = new java.util.HashMap<>();
+    int structureIndex, membershipIndex;
+    HologramBlueprintProjection.Population population;
+    HologramResourcePlanner.PlanTask planTask;
     long expandedNbt;
     String active = "";
     String pointMode = "replace";
@@ -139,6 +148,7 @@ final class HologramArea {
     }
 
     void begin(World world) throws IOException {
+        cancelImportWork();
         int[] bounds = bounds();
         minX = bounds[0];
         minY = bounds[1];
@@ -167,6 +177,14 @@ final class HologramArea {
         paletteKeys.clear();
         edited.clear();
         discoveryIndex = 0;
+        declarationMembers = null;
+        importPhase = "blocks";
+        preparation = null;
+        staging = null;
+        declarationSessions = new java.util.HashMap<>();
+        structureIndex = membershipIndex = 0;
+        population = null;
+        planTask = null;
         expandedNbt = 0;
         importing = true;
         imported = false;
@@ -195,6 +213,7 @@ final class HologramArea {
 
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
+        if (imported) return true;
         World world = player.worldObj;
         long deadline = HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS);
         for (int budget = 4096; y <= maxY && budget > 0; budget--) {
@@ -258,6 +277,22 @@ final class HologramArea {
         if (y <= maxY) return false;
         if (discoveryIndex < discovery.size()) {
             Structure structure = discovery.get(discoveryIndex);
+            if (declarationMembers != null) {
+                importPhase = "declaration_memberships";
+                for (int work = 0; declarationMembers.hasNext() && work < 4096; work++) {
+                    if (work > 0 && System.nanoTime() >= deadline) break;
+                    Map.Entry<String, HologramCapture.Cell> entry = declarationMembers.next();
+                    HologramCapture.Cell cell = entry.getValue();
+                    if (contains(cell.x, cell.y, cell.z)) addMember(entry.getKey(), structure.id);
+                    declarationMemberDone++;
+                }
+                if (!declarationMembers.hasNext()) {
+                    declarationMembers = null;
+                    discoveryIndex++;
+                }
+                return false;
+            }
+            importPhase = "declarations";
             if (world.getTileEntity(structure.x, structure.y, structure.z) != structure.machine.getBaseMetaTileEntity())
                 throw new IOException("控制器在导入期间变化，请重新选择区域");
             // Tool configuration belongs to the previously selected machine, never every controller in a region.
@@ -279,39 +314,102 @@ final class HologramArea {
             structure.capture = HologramCapture
                 .collect(structure.machine, structureTrigger, structure.machine.getExtendedFacing(), structure.capture);
             if (!structure.capture.pending) {
-                if (!structure.capture.incomplete)
-                    for (Map.Entry<String, HologramCapture.Cell> entry : structure.capture.positions.entrySet()) {
-                        HologramCapture.Cell cell = entry.getValue();
-                        if (cell.x >= minX && cell.x <= maxX
-                            && cell.y >= minY
-                            && cell.y <= maxY
-                            && cell.z >= minZ
-                            && cell.z <= maxZ
-                            && contains(cell.x, cell.y, cell.z)) addMember(entry.getKey(), structure.id);
-                    }
-                discoveryIndex++;
+                if (!structure.capture.incomplete) {
+                    declarationMembers = structure.capture.positions.entrySet()
+                        .iterator();
+                    declarationMemberDone = 0;
+                    declarationMemberTotal = structure.capture.positions.size();
+                } else discoveryIndex++;
             }
             return false;
         }
-        // Publish only a canonical detached draft, keeping the source world's cells and identities untouched.
-        blueprint = HologramAePolicy.sanitize(blueprint).preset;
+        if (preparation == null) preparation = new HologramAreaPreparation();
+        if ("blocks".equals(importPhase) || "declarations".equals(importPhase)
+            || "declaration_memberships".equals(importPhase)) importPhase = "networks";
+        if ("networks".equals(importPhase)) {
+            if (preparation.captureNetworks(blueprint, 4096, deadline)) importPhase = "canonicalize";
+            return false;
+        }
+        if ("canonicalize".equals(importPhase)) {
+            if (!preparation.start(blueprint) || !preparation.ready()) return false;
+            blueprint = preparation.result();
+            imported = true;
+            // Workflow continues with detached memberships, projection and plan; publication is atomic.
+            importPhase = "memberships";
+            return true;
+        }
+        return false;
+    }
+
+    void cancelImportWork() {
+        if (importing) imported = false;
         importing = false;
-        imported = true;
-        return true;
+        if (discoveryIndex < discovery.size()) {
+            HologramCapture capture = discovery.get(discoveryIndex).capture;
+            if (capture != null) capture.cancelPending();
+        }
+        if (preparation != null) preparation.cancel();
+        staging = null;
+        if (!imported) declarationSessions.clear();
+        population = null;
+        planTask = null;
     }
 
     /** Current import phase; no source-world reads are needed for the progress display. */
     String importStage() {
-        return y <= maxY ? "blocks" : "declarations";
+        return importPhase;
     }
 
-    /** Progress belongs to the current phase and reads only the detached scan cursor. */
+    long importDone() {
+        if ("blocks".equals(importPhase)) {
+            long width = (long) maxX - minX + 1, depth = (long) maxZ - minZ + 1;
+            return (((long) y - minY) * depth + z - minZ) * width + x - minX;
+        }
+        if ("declarations".equals(importPhase)) return discoveryIndex;
+        if ("declaration_memberships".equals(importPhase)) return declarationMemberDone;
+        if ("networks".equals(importPhase)) return preparation == null ? 0 : preparation.networksDone();
+        if ("canonicalize".equals(importPhase)) return preparation == null ? 0 : preparation.progress().done;
+        if ("memberships".equals(importPhase)) return (long) structureIndex + membershipIndex;
+        if ("projection".equals(importPhase)) return population == null ? 0 : population.completed();
+        if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.completed();
+        return 0;
+    }
+
+    long importTotal() {
+        if ("blocks".equals(importPhase))
+            return ((long) maxX - minX + 1) * ((long) maxZ - minZ + 1) * ((long) maxY - minY + 1);
+        if ("declarations".equals(importPhase)) return discovery.size();
+        if ("declaration_memberships".equals(importPhase)) return declarationMemberTotal;
+        if ("canonicalize".equals(importPhase)) return preparation == null ? 1 : preparation.progress().total;
+        if ("projection".equals(importPhase)) return population == null ? 0 : population.total();
+        if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.total();
+        if ("memberships".equals(importPhase)) return blueprint.cells.size() + (long) discovery.size();
+        return blueprint == null ? 0 : blueprint.cells.size();
+    }
+
+    String importUnit() {
+        if ("declarations".equals(importPhase)) return "structures";
+        if ("memberships".equals(importPhase) || "projection".equals(importPhase)
+            || "plan".equals(importPhase)
+            || "canonicalize".equals(importPhase)) return "entries";
+        return "cells";
+    }
+
+    HologramAreaPreparation.Progress progressSnapshot() {
+        if ("canonicalize".equals(importPhase) && preparation != null) return preparation.progress();
+        return new HologramAreaPreparation.Progress(importDetail(), importDone(), importTotal());
+    }
+
+    String importDetail() {
+        if ("canonicalize".equals(importPhase) && preparation != null) return preparation.progress().phase;
+        if ("plan".equals(importPhase) && planTask != null) return planTask.phase();
+        return "";
+    }
+
+    /** Progress belongs to the current phase, with no estimated weights between unrelated operations. */
     int importProgress() {
-        if (y > maxY) return discovery.isEmpty() ? 100 : (int) (100D * discoveryIndex / discovery.size());
-        long width = (long) maxX - minX + 1, depth = (long) maxZ - minZ + 1;
-        long total = width * depth * ((long) maxY - minY + 1);
-        long visited = (((long) y - minY) * depth + z - minZ) * width + x - minX;
-        return total <= 0 ? 0 : Math.max(0, Math.min(100, (int) (100D * visited / total)));
+        HologramAreaPreparation.Progress current = progressSnapshot();
+        return current.total <= 0 ? 0 : (int) Math.max(0, Math.min(100, 100D * current.done / current.total));
     }
 
     /** Inventory identity is read without client-only pick hooks or harvesting callbacks. */

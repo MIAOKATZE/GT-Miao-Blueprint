@@ -10,6 +10,7 @@ final class HologramCutRequests {
 
     static final long READ_TIMEOUT_NS = 15000000000L, WRITE_TIMEOUT_NS = 60000000000L;
     private final Map<String, Request> requests = new LinkedHashMap<>();
+    private long activityGeneration;
     private boolean held;
 
     boolean observeHeld(boolean holding) {
@@ -21,14 +22,15 @@ final class HologramCutRequests {
     static final class Request {
 
         final String id, action, target;
-        final long sentAt;
+        final long sentAt, activityGeneration;
         boolean expired;
 
-        Request(String id, String action, String target, long sentAt) {
+        Request(String id, String action, String target, long sentAt, long activityGeneration) {
             this.id = id;
             this.action = action;
             this.target = target;
             this.sentAt = sentAt;
+            this.activityGeneration = activityGeneration;
         }
 
         boolean writesWorld() {
@@ -41,7 +43,18 @@ final class HologramCutRequests {
             .removeIf(
                 entry -> entry.getValue().expired && !entry.getValue()
                     .writesWorld());
-        requests.put(id, new Request(id, action, target, now));
+        requests.put(id, new Request(id, action, target, now, activityGeneration));
+    }
+
+    /** Retire only local preview work; authoritative writes and directory reconciliation remain owned. */
+    void exitActivity() {
+        activityGeneration++;
+        requests.entrySet()
+            .removeIf(entry -> "preview".equals(entry.getValue().action));
+    }
+
+    boolean currentActivity(Request request) {
+        return request.activityGeneration == activityGeneration;
     }
 
     Request acknowledge(String id) {
@@ -100,6 +113,7 @@ final class HologramCutRequests {
 
     void clear() {
         requests.clear();
+        activityGeneration++;
         held = false;
     }
 }

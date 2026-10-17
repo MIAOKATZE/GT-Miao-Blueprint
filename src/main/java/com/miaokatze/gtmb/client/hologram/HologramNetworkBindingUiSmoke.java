@@ -17,7 +17,7 @@ public final class HologramNetworkBindingUiSmoke {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke"))
             throw new IllegalStateException("Client smoke is disabled");
         HologramState state = (HologramState) field(current, "state");
-        NBTTagCompound fixture = (NBTTagCompound) state.data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) state.fullData();
         fixture.removeTag("aeSaveReview");
         fixture.setBoolean("networkBindingRequested", true);
         fixture.setBoolean("editable", true);

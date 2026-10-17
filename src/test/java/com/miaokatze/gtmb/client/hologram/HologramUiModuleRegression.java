@@ -14,6 +14,7 @@ public final class HologramUiModuleRegression {
     private HologramUiModuleRegression() {}
 
     public static void run() {
+        localPlanConsumersWaitWithoutLockingEditing();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -89,5 +90,53 @@ public final class HologramUiModuleRegression {
                 HologramUiTabMemory.openingTab(opening, true),
                 "the explicit " + purpose + " opening overrides remembered structure navigation");
         }
+    }
+
+    private static void localPlanConsumersWaitWithoutLockingEditing() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("localPlanPending", true);
+        state.setInteger("job", 2);
+        for (int id : new int[] { 50, 51, 55, 132, 140, 159, 162, 179, 181, 192, 220, 221, 293, 294 })
+            SimpleAssert.that(
+                HologramUiCanvas.localPlanBlocks(state, id),
+                "full-plan consumer " + id + " waits for the server planning publication");
+        for (int id : new int[] { 10, 11, 12, 13, 14, 15, 52, 54, 60, 61, 65, 66, 69, 95, 108, 109, 112, 113, 134, 146,
+            148, 149, 182, 214, 216, 225, 230, 232, 233, 234, 240, 263, 295, 296, 10001 })
+            SimpleAssert.that(
+                !HologramUiCanvas.localPlanBlocks(state, id),
+                "editing, selection, view or cancellation control " + id + " remains available during planning");
+        state.setInteger("job", 1);
+        SimpleAssert.that(
+            !HologramUiCanvas.localPlanBlocks(state, 51),
+            "pausing an existing job remains available although resuming waits for the current plan");
+        SimpleAssert.that(
+            HologramUiCanvas.localPlanBlocks(state, 231, true, false)
+                && !HologramUiCanvas.localPlanBlocks(state, 231, false, false),
+            "only the processing wizard's final server submission waits; local next-step navigation remains usable");
+        SimpleAssert.that(
+            HologramUiCanvas.localPlanBlocks(state, 224, false, true)
+                && !HologramUiCanvas.localPlanBlocks(state, 224, false, false),
+            "overwrite/save confirmation waits while discarding edits or switching sources remains usable");
+        state.setString("localPlanError", "actual planner failure");
+        SimpleAssert.eq(
+            "actual planner failure",
+            HologramUiCanvas.localPlanReason(state),
+            "a failed planner shows its actual error rather than pretending to make progress");
+        state.setBoolean("localPlanPending", false);
+        SimpleAssert.that(
+            !HologramUiCanvas.localPlanBlocks(state, 140),
+            "the successful complete-plan publication immediately reopens saving");
+        HologramProgress.Tracker progress = new HologramProgress.Tracker();
+        HologramProgress actual = progress.update("plan-a", "localPlan.plan.targets", 17, 410, "cells", false, 1L);
+        SimpleAssert.that(
+            HologramUiCanvas.localPlanProgress(actual) && actual.done == 17 && actual.total == 410,
+            "the original preview uses factual local planning counters");
+        SimpleAssert.that(
+            !HologramUiCanvas.localPlanProgress(progress.update("job-a", "job", 17, 410, "cells", false, 2L)),
+            "another server operation is never relabeled as local planning progress");
+        SimpleAssert.that(
+            !HologramUiCanvas
+                .localPlanProgress(progress.update("plan-a", "localPlan.plan.targets", 410, 410, "cells", true, 3L)),
+            "a completed local phase does not leave a stale pending overlay");
     }
 }

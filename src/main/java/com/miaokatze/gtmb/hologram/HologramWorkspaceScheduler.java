@@ -43,6 +43,7 @@ final class HologramWorkspaceScheduler {
 
     private static void tickSession(HologramSession s) {
         if (!HologramSessionPolicy.valid(s) || s.libraryWorld != s.player.worldObj) {
+            HologramDeferredPlanRefresh.suspend(s);
             HologramProjectorWorkflow.libraryCloseUi(s);
             if (!HologramWorkspace.areaSessionOwned(s)) HologramWorkspace.clearAreaSelection(s);
         }
@@ -57,6 +58,12 @@ final class HologramWorkspaceScheduler {
             HologramBuildPreparation.tickPending(s);
             return;
         }
+        if (s.localPlanPending) {
+            if (!s.localPlanError.isEmpty() && HologramSnapshotPreparation.tick(s)) return;
+            HologramDeferredPlanRefresh.tick(s);
+            return;
+        }
+        if (HologramSnapshotPreparation.tick(s)) return;
         HologramPlacementJobs.tickJob(s);
     }
 }

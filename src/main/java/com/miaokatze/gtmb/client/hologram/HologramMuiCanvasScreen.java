@@ -180,14 +180,11 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
 
         NativeButton(int id) {
             widget = new ButtonWidget<>().name("projector_control_" + id)
-                .background(HologramMuiTheme.BUTTON)
-                .hoverBackground(HologramMuiTheme.PRESSED)
+                .background(HologramMuiTheme.guidanceBackground(false, () -> accent, () -> enabled))
+                .hoverBackground(HologramMuiTheme.guidanceBackground(true, () -> accent, () -> enabled))
                 .overlay(
                     IKey.dynamic(() -> text)
-                        .color(
-                            () -> !enabled ? HologramMuiTheme.MUTED
-                                : accent == 0 ? HologramMuiTheme.TEXT
-                                    : accent == 0xff7272 ? HologramMuiTheme.ERROR : HologramMuiTheme.TITLE)
+                        .color(() -> HologramUiAccent.textColor(accent, enabled))
                         .shadow(false))
                 .tooltipBuilder(tooltip -> {
                     String help = nativeTooltip(id, enabled);

@@ -393,6 +393,7 @@ final class HologramUiProcessing {
     }
 
     boolean activateProcessing(int id) {
+        if (ui.canvas.rejectLocalPlanAction(id)) return true;
         if (id == 220) {
             if (!HologramGuidance.authorWorkspace(ui.session.state().data)) return true;
             NBTTagCompound policy = ui.session.state().data.hasKey("processingPolicy")
@@ -545,6 +546,7 @@ final class HologramUiProcessing {
 
     boolean confirmPresetSave(int id) {
         if (id == 224 && this.processingPresetSaveReview) {
+            if (ui.canvas.rejectLocalPlanAction(id)) return true;
             String name = this.processingPresetField.getText()
                 .trim();
             if (name.isEmpty()) return true;
@@ -562,6 +564,7 @@ final class HologramUiProcessing {
     }
 
     boolean activateControl(int id) {
+        if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
             case 166:
                 if (!ui.processing.canEditBlueprintNbt()) return true;
@@ -726,5 +729,40 @@ final class HologramUiProcessing {
         retainNbt = !snapshot.data.hasKey("blueprintRetainNbt") || snapshot.data.getBoolean("blueprintRetainNbt");
         retainCovers = !snapshot.data.hasKey("blueprintRetainCovers")
             || snapshot.data.getBoolean("blueprintRetainCovers");
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setLong("revision", ui.session.revision());
+        state.setBoolean("retainNbt", retainNbt);
+        state.setBoolean("retainCovers", retainCovers);
+        state.setBoolean("fullReview", processingFullReview);
+        state.setBoolean("saveReview", processingPresetSaveReview);
+        state.setString("selectedPreset", selectedProcessingPreset);
+        if (processingFlow != null) state.setTag("flow", processingFlow.backgroundUiState());
+        if (processingPresetField != null) state.setString("name", processingPresetField.getText());
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound state) {
+        retainNbt = state.getBoolean("retainNbt");
+        retainCovers = state.getBoolean("retainCovers");
+        processingFullReview = state.getBoolean("fullReview");
+        selectedProcessingPreset = state.getString("selectedPreset");
+        // Completed processing invalidates an older local flow; reopening must not offer to submit it again.
+        if (state.getLong("revision") != ui.session.revision()) return;
+        processingPresetSaveReview = state.getBoolean("saveReview");
+        if (state.hasKey("flow", 10))
+            processingFlow = HologramProcessingFlow.restoreBackgroundUiState(state.getCompoundTag("flow"));
+        if (processingFlow != null || processingPresetSaveReview) {
+            processingPresetField = new HologramMuiTextField(
+                ui.host.parent(),
+                processingPresetSaveReview ? 96 : 42,
+                processingPresetSaveReview ? 150 : 220,
+                processingPresetSaveReview ? 486 : 288,
+                18);
+            processingPresetField.setMaxStringLength(64);
+            processingPresetField.setText(state.getString("name"));
+        }
     }
 }

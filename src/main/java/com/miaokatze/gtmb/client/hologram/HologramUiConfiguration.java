@@ -76,6 +76,21 @@ final class HologramUiConfiguration {
 
     private long basicConfigurationRevision = -1;
 
+    void drawResetButton(int x, int y, int width, int mx, int my) {
+        ui.canvas.button(
+            134,
+            x,
+            y,
+            width,
+            17,
+            ui.session.state().data.getBoolean("structureBuilt") ? "校准为当前" : "重置为默认",
+            ui.session.editable() && ui.preview.previewInteractive()
+                && ui.session.state().data.getBoolean("target")
+                && ui.session.state().data.getBoolean("supported"),
+            mx,
+            my);
+    }
+
     void drawConfig(int mx, int my) {
         drawRect(
             HologramUiCanvas.panelX,
@@ -279,6 +294,7 @@ final class HologramUiConfiguration {
     }
 
     void drawFooter(int mx, int my) {
+        ui.canvas.drawLocalPlanProgress(38, 260, 398, mx, my);
         int job = ui.session.state().data.getInteger("job");
         ui.canvas.button(
             50,
@@ -1756,5 +1772,59 @@ final class HologramUiConfiguration {
             basicConfigurationSequence = sequence;
             basicConfigurationRevision = ui.session.revision();
         }
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("sourceDrawer", sourceDrawer);
+        state.setBoolean("hatchDrawer", hatchDrawer);
+        state.setBoolean("presetDrawer", presetDrawer);
+        state.setBoolean("roleDropdown", roleDropdown);
+        state.setBoolean("drawer", drawer);
+        state.setBoolean("resetReview", resetReview);
+        state.setBoolean("resetCalibration", resetCalibration);
+        state.setBoolean("customPresets", customPresets);
+        state.setBoolean("presetDowngrade", presetDowngrade);
+        state.setInteger("roleOffset", roleOffset);
+        state.setInteger("hatchOffset", hatchOffset);
+        state.setInteger("hatchRole", hatchRole);
+        state.setInteger("hatchFilterTier", hatchFilterTier);
+        state.setInteger("presetTier", presetTier);
+        state.setInteger("presetOffset", presetOffset);
+        state.setInteger("drawerOffset", drawerOffset);
+        state.setString("selectedHatchPreset", selectedHatchPreset);
+        state.setString("optionChannel", optionChannel);
+        if (mainField != null) state.setString("main", mainField.getText());
+        if (channelNameField != null) state.setString("channelName", channelNameField.getText());
+        if (channelValueField != null) state.setString("channelValue", channelValueField.getText());
+        if (optionValueField != null) state.setString("optionValue", optionValueField.getText());
+        if (hatchPresetNameField != null) state.setString("hatchPresetName", hatchPresetNameField.getText());
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound state) {
+        sourceDrawer = state.getBoolean("sourceDrawer");
+        hatchDrawer = state.getBoolean("hatchDrawer");
+        presetDrawer = state.getBoolean("presetDrawer");
+        roleDropdown = state.getBoolean("roleDropdown");
+        drawer = state.getBoolean("drawer");
+        resetReview = state.getBoolean("resetReview");
+        resetCalibration = state.getBoolean("resetCalibration");
+        customPresets = state.getBoolean("customPresets");
+        presetDowngrade = state.getBoolean("presetDowngrade");
+        roleOffset = Math.max(0, state.getInteger("roleOffset"));
+        hatchOffset = Math.max(0, state.getInteger("hatchOffset"));
+        hatchRole = Math.max(0, state.getInteger("hatchRole"));
+        hatchFilterTier = state.getInteger("hatchFilterTier");
+        presetTier = state.getInteger("presetTier");
+        presetOffset = Math.max(0, state.getInteger("presetOffset"));
+        drawerOffset = Math.max(0, state.getInteger("drawerOffset"));
+        selectedHatchPreset = state.getString("selectedHatchPreset");
+        optionChannel = state.getString("optionChannel");
+        if (mainField != null && state.hasKey("main")) mainField.setText(state.getString("main"));
+        if (channelNameField != null) channelNameField.setText(state.getString("channelName"));
+        if (channelValueField != null) channelValueField.setText(state.getString("channelValue"));
+        if (optionValueField != null) optionValueField.setText(state.getString("optionValue"));
+        if (hatchPresetNameField != null) hatchPresetNameField.setText(state.getString("hatchPresetName"));
     }
 }

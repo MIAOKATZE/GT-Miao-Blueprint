@@ -80,7 +80,7 @@ public final class HologramNativePreviewIsolationRegression {
                 "current native payload remains a compound after snapshot copy");
             SimpleAssert
                 .that(HologramNativeTiles.supported(block), "public adapter recognizes the registered block family");
-            NBTTagCompound before = (NBTTagCompound) state.data.copy();
+            NBTTagCompound before = (NBTTagCompound) state.fullData();
             HologramBlockAccess target = access(state, false);
             SimpleAssert
                 .that(target.getBlock(7, 68, -3) == block, "bounded native access resolves the fixture coordinates");
@@ -131,7 +131,8 @@ public final class HologramNativePreviewIsolationRegression {
                 isolated.isSideSolid(30000000, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, true)
                     && !isolated.isSideSolid(30000000, 68, -3, net.minecraftforge.common.util.ForgeDirection.UP, false),
                 "outside world bounds preserves the native caller default");
-            SimpleAssert.eq(before, state.data, "mutating a serializer's input never changes the source snapshot");
+            SimpleAssert
+                .eq(before, state.fullData(), "mutating a serializer's input never changes the source snapshot");
             SimpleAssert.eq(
                 "minecraft:planks",
                 state.cells.get(0).targetDisplay.getCompoundTag("nativeTile")

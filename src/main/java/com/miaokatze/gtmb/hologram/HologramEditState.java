@@ -9,6 +9,9 @@ import net.minecraft.item.ItemStack;
 
 final class HologramEditState {
 
+    final java.util.Set<Integer> sparseIndices;
+    final HologramCapture sparseCapture;
+    final java.util.Set<Integer> selectionIndices;
     final List<HologramCapture.Cell> geometry = new ArrayList<>();
     final List<HologramPresets.Structure> structures = new ArrayList<>();
     final List<HologramAePolicy.Issue> aeIssues;
@@ -25,12 +28,24 @@ final class HologramEditState {
     final int hatchTier;
 
     HologramEditState(HologramSession s) {
-        aeIssues = HologramAePolicy.copyIssues(s.virtualPreset == null ? null : s.virtualPreset.aeIssues);
-        if (s.virtualPreset != null) for (HologramPresets.Structure original : s.virtualPreset.structures)
-            structures.add(HologramBlueprintData.copyStructure(original));
+        this(s, null);
+    }
+
+    HologramEditState(HologramSession s, java.util.Set<Integer> indices) {
+        sparseIndices = indices == null ? null : new java.util.LinkedHashSet<>(indices);
+        sparseCapture = indices == null ? null : s.capture;
+        selectionIndices = new java.util.LinkedHashSet<>(s.selectedIndices);
+        aeIssues = indices == null
+            ? HologramAePolicy.copyIssues(s.virtualPreset == null ? null : s.virtualPreset.aeIssues)
+            : null;
+        if (indices == null && s.virtualPreset != null)
+            for (HologramPresets.Structure original : s.virtualPreset.structures)
+                structures.add(HologramBlueprintData.copyStructure(original));
         if (s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && s.capture != null)
-            for (HologramCapture.Cell cell : s.capture.cells)
+            for (int index : indices == null ? allIndices(s.capture.cells.size()) : indices) {
+                HologramCapture.Cell cell = s.capture.cells.get(index);
                 geometry.add(HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z));
+            }
         presetSupported = s.presetSupported;
         presetAvailable = s.presetAvailable;
         presetReason = s.presetReason;
@@ -39,26 +54,52 @@ final class HologramEditState {
         selected = s.selected;
         if (s.capture != null) for (int index : s.selectedIndices) if (index >= 0 && index < s.capture.cells.size())
             selectedPositions.add(HologramValues.position(s.capture.cells.get(index)));
-        if (s.capture != null) for (Map.Entry<Integer, ItemStack> entry : s.autoTargets.entrySet()) automatic.put(
-            HologramValues.position(s.capture.cells.get(entry.getKey())),
-            entry.getValue()
-                .copy());
-        for (Map.Entry<String, ItemStack> entry : s.coordinatePins.entrySet()) targets.put(
-            entry.getKey(),
-            entry.getValue()
-                .copy());
-        if (s.capture != null) for (int i = 0; i < s.capture.cells.size(); i++) if (s.pins.containsKey(i)) targets.put(
-            HologramValues.position(s.capture.cells.get(i)),
-            s.pins.get(i)
-                .copy());
-        facings = new HashMap<>(s.facingPins);
-        suppressed = new java.util.HashSet<>(s.suppressedAuto);
-        virtualEdited = new java.util.HashSet<>(s.virtualEdited);
+        if (indices == null) {
+            if (s.capture != null) for (Map.Entry<Integer, ItemStack> entry : s.autoTargets.entrySet()) automatic.put(
+                HologramValues.position(s.capture.cells.get(entry.getKey())),
+                entry.getValue()
+                    .copy());
+            for (Map.Entry<String, ItemStack> entry : s.coordinatePins.entrySet()) targets.put(
+                entry.getKey(),
+                entry.getValue()
+                    .copy());
+            if (s.capture != null) for (Map.Entry<Integer, ItemStack> entry : s.pins.entrySet()) targets.put(
+                HologramValues.position(s.capture.cells.get(entry.getKey())),
+                entry.getValue()
+                    .copy());
+            facings = new HashMap<>(s.facingPins);
+            suppressed = new java.util.HashSet<>(s.suppressedAuto);
+            virtualEdited = new java.util.HashSet<>(s.virtualEdited);
+        } else {
+            facings = new HashMap<>();
+            suppressed = new java.util.HashSet<>();
+            virtualEdited = new java.util.HashSet<>();
+            for (int index : indices) {
+                String key = HologramValues.position(s.capture.cells.get(index));
+                ItemStack pin = s.pins.containsKey(index) ? s.pins.get(index) : s.coordinatePins.get(key);
+                if (pin != null) targets.put(key, pin.copy());
+                ItemStack auto = s.localPlanPending ? s.frozenAutoTargets.get(key) : s.autoTargets.get(index);
+                if (auto != null) automatic.put(key, auto.copy());
+                if (s.facingPins.containsKey(key)) facings.put(key, s.facingPins.get(key));
+                if (s.suppressedAuto.contains(key)) suppressed.add(key);
+                if (s.virtualEdited.contains(key)) virtualEdited.add(key);
+            }
+        }
         presetEnabled = s.presetEnabled;
         presetPaused = s.presetPaused;
         hatchDowngrade = s.hatchDowngrade;
         noHatches = s.noHatches;
         hatchTier = s.hatchTier;
+    }
+
+    private static java.util.Set<Integer> allIndices(int count) {
+        java.util.Set<Integer> indices = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < count; i++) indices.add(i);
+        return indices;
+    }
+
+    HologramEditState current(HologramSession s) {
+        return new HologramEditState(s, sparseIndices);
     }
 
     boolean sameAs(HologramEditState other) {
@@ -103,6 +144,73 @@ final class HologramEditState {
     }
 
     void apply(HologramSession s) {
+        if (sparseIndices != null) {
+            int row = 0;
+            for (int index : sparseIndices) {
+                HologramCapture.Cell cell = s.capture.cells.get(index);
+                String key = HologramValues.position(cell);
+                if (!geometry.isEmpty()) {
+                    s.cellIndices.remove(cell);
+                    cell = HologramBlueprintData.blueprintCell(geometry.get(row++), cell.x, cell.y, cell.z);
+                    s.capture.cells.set(index, cell);
+                    cell.stableIndex = index;
+                    s.capture.positions.put(key, cell);
+                    s.cellIndices.put(cell, index);
+                    if (s.manualPositions.containsKey(key)) s.manualPositions.put(key, cell);
+                }
+                s.pins.remove(index);
+                s.coordinatePins.remove(key);
+                if (targets.containsKey(key) && HologramCellPolicy.acceptableSample(s, cell, targets.get(key))) {
+                    s.pins.put(
+                        index,
+                        targets.get(key)
+                            .copy());
+                    s.coordinatePins.put(
+                        key,
+                        targets.get(key)
+                            .copy());
+                }
+                s.autoTargets.remove(index);
+                s.frozenAutoTargets.remove(key);
+                if (automatic.containsKey(key) && HologramCellPolicy.acceptableSample(s, cell, automatic.get(key))) {
+                    s.autoTargets.put(
+                        index,
+                        automatic.get(key)
+                            .copy());
+                    s.frozenAutoTargets.put(
+                        key,
+                        automatic.get(key)
+                            .copy());
+                }
+                s.facingPins.remove(key);
+                if (facings.containsKey(key)) {
+                    ItemStack target = s.pins.containsKey(index) ? s.pins.get(index)
+                        : HologramCellPolicy.draftTarget(s, cell, index);
+                    for (int direction : HologramCellPolicy.legalFacings(s, cell, target))
+                        if (direction == facings.get(key)) s.facingPins.put(key, direction);
+                }
+                if (suppressed.contains(key)) s.suppressedAuto.add(key);
+                else s.suppressedAuto.remove(key);
+                if (virtualEdited.contains(key)) s.virtualEdited.add(key);
+                else s.virtualEdited.remove(key);
+            }
+            s.mode = mode;
+            s.scope = scope;
+            s.selected = selected;
+            s.selectedIndices.clear();
+            for (int index : selectionIndices)
+                if (index >= 0 && index < s.capture.cells.size()) s.selectedIndices.add(index);
+            s.presetSupported = presetSupported;
+            s.presetAvailable = presetAvailable;
+            s.presetReason = presetReason;
+            s.presetEnabled = presetEnabled;
+            s.presetPaused = presetPaused;
+            s.hatchDowngrade = hatchDowngrade;
+            s.noHatches = noHatches;
+            s.hatchTier = hatchTier;
+            s.allocationsFrozen = true;
+            return;
+        }
         if (s.virtualPreset != null) {
             s.virtualPreset.aeIssues = HologramAePolicy.copyIssues(aeIssues);
             s.virtualPreset.structures.clear();

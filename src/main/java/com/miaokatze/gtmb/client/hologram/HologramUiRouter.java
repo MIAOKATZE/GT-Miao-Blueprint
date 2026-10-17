@@ -42,6 +42,7 @@ final class HologramUiRouter {
     void onGuiClosed() {
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();
+            HologramBackgroundTasks.rememberUi(ui);
             HologramBackgroundTasks.detach();
             Keyboard.enableRepeatEvents(false);
             return;
@@ -65,6 +66,7 @@ final class HologramUiRouter {
     void closeRoot() {
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();
+            HologramBackgroundTasks.rememberUi(ui);
             HologramBackgroundTasks.detach();
             ui.host.minecraft()
                 .displayGuiScreen(null);
@@ -85,19 +87,19 @@ final class HologramUiRouter {
         ui.canvas.text("正在导入框选区域", 142, 13, 360, 0xf5e4b9);
         drawRect(30, 62, 650, 282, 0xff172f36);
         ui.canvas.text("正在导入区域 · 请稍候", 50, 78, 580, 0xffe59b);
-        String stage = "declarations".equals(ui.session.state().data.getString("areaImportStage")) ? "正在解析结构与配置…"
-            : "正在读取方块与配置…";
-        ui.canvas.text(stage, 50, 105, 580, 0x8bdddf);
+        String stage = ui.session.state().data.getString("areaImportStage");
+        if (stage.isEmpty()) stage = "blocks";
+        ui.canvas.text(HologramProgressView.phase("area." + stage), 50, 105, 580, 0x8bdddf);
         ui.canvas.text("导入完成前，暂不能编辑、保存或放置蓝图。", 50, 123, 580, 0xe5c28d);
         ui.canvas.text("取消后保留导入前的蓝图。", 50, 141, 580, 0xa9d6cf);
         HologramProgress progress = ui.session.progress();
         if (progress == null || !progress.phase.startsWith("area.")) progress = importProgress.update(
             ui.session.state().session,
-            "declarations".equals(ui.session.state().data.getString("areaImportStage")) ? "area.declarations"
-                : "area.blocks",
-            ui.session.state().data.getInteger("areaImportProgress"),
-            100,
-            "steps",
+            "area." + stage,
+            ui.session.state().data.getString("areaImportDetail"),
+            ui.session.state().data.getLong("areaImportDone"),
+            ui.session.state().data.getLong("areaImportTotal"),
+            ui.session.state().data.getString("areaImportUnit"),
             false,
             System.nanoTime());
         HologramProgressView.draw(ui.host.font(), progress, 50, 165, 580, 9);
@@ -107,6 +109,7 @@ final class HologramUiRouter {
     }
 
     void updateScreen() {
+        ui.library.maybeShowSaveGuidance();
         ui.library.tickStatus();
         ui.config.tickMainField();
         ui.library.tickNameField();
@@ -147,28 +150,11 @@ final class HologramUiRouter {
                     ui.canvas.incrementRenderGeneration(1, true);
                     return;
                 }
-                ui.canvas.text(HologramBackgroundTasks.label(), 142, 13, 450, 0xf5e4b9);
-                ui.canvas.text(HologramBackgroundTasks.status(), 40, 110, 590, 0xe5c488);
-                HologramProgress taskProgress = HologramBackgroundTasks.progress();
-                if (taskProgress != null) HologramProgressView.draw(ui.host.font(), taskProgress, 40, 174, 590, 8);
-                ui.canvas.text("关闭界面后任务继续；右键投影仪返回此任务", 40, 150, 590, 0xbacbd1);
-                ui.canvas.button(990, 40, 220, 185, 24, "后台继续 · Esc / E", true, mx, my);
-                ui.canvas.button(
-                    992,
-                    240,
-                    220,
-                    185,
-                    24,
-                    HologramBackgroundTasks.pauseLabel(),
-                    HologramBackgroundTasks.pauseAvailable(),
-                    mx,
-                    my);
-                ui.canvas.button(991, 440, 220, 185, 24, "主动取消任务", HologramBackgroundTasks.canCancel(), mx, my);
-                ui.canvas.incrementRenderGeneration(1, true);
-                return;
             }
             if (ui.session.areaImporting()) {
                 ui.router.drawImportBusy(mx, my);
+                if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction())
+                    drawTaskStatus(mx, my);
                 ui.canvas.incrementRenderGeneration(1, true);
                 return;
             }
@@ -477,12 +463,33 @@ final class HologramUiRouter {
                 ui.canvas.tooltip(null);
                 ui.library.drawBlueprintSwitchReview(mx, my);
             }
-            if (ui.canvas.tooltip() != null) ui.host.renderTooltip(ui.canvas.tooltip(), mx, my, ui.host.font());
+            if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) drawTaskStatus(mx, my);
+            if (ui.canvas.tooltip() != null && !ui.library.saveGuidanceOpen())
+                ui.host.renderTooltip(ui.canvas.tooltip(), mx, my, ui.host.font());
         } finally {
             GL11.glPopMatrix();
             GL11.glPopAttrib();
         }
         ui.canvas.incrementRenderGeneration(1, true);
+    }
+
+    private void drawTaskStatus(int mx, int my) {
+        drawRect(9, 317, HologramUiCanvas.DESIGN_W - 9, 337, 0xff142a32);
+        HologramProgress progress = HologramBackgroundTasks.progress();
+        if (progress != null) HologramProgressView.draw(ui.host.font(), progress, 14, 322, 430, 0);
+        else ui.canvas.text(HologramBackgroundTasks.status(), 14, 323, 430, 0xe5c488);
+        ui.canvas.button(990, 451, 318, 70, 17, "后台继续", true, mx, my);
+        ui.canvas.button(
+            992,
+            525,
+            318,
+            70,
+            17,
+            HologramBackgroundTasks.pauseLabel(),
+            HologramBackgroundTasks.pauseAvailable(),
+            mx,
+            my);
+        ui.canvas.button(991, 599, 318, 70, 17, "取消任务", HologramBackgroundTasks.canCancel(), mx, my);
     }
 
     void drawTabs(int mx, int my) {
@@ -642,6 +649,7 @@ final class HologramUiRouter {
     }
 
     void keyTyped(char c, int key) {
+        if (ui.library.consumeSaveGuidanceKey(key)) return;
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) closeRoot();
             return;

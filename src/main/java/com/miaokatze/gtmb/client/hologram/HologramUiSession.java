@@ -136,9 +136,8 @@ final class HologramUiSession {
     }
 
     NBTTagCompound cellTag() {
-        return ui.preview.selected() < 0 ? new NBTTagCompound()
-            : this.state.data.getTagList("cells", 10)
-                .getCompoundTagAt(ui.preview.selected());
+        HologramState.Cell cell = selectedCell();
+        return cell == null ? new NBTTagCompound() : cell.tag();
     }
 
     String editingReason() {
@@ -204,6 +203,7 @@ final class HologramUiSession {
     }
 
     HologramProgress progress() {
+        if (HologramBackgroundTasks.busy()) return HologramBackgroundTasks.progress();
         HologramProgress server = HologramClientProgress.view("server", state.session);
         if (server != null && !server.complete) return server;
         HologramProgress transport = HologramClientProgress.view("snapshot", "");
@@ -271,5 +271,18 @@ final class HologramUiSession {
 
     HologramState state() {
         return this.state;
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setLong("sequence", sequence);
+        state.setString("openedPurpose", openedPurpose);
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound saved) {
+        sequence = Math.max(sequence, saved.getLong("sequence"));
+        // Do not restore pending tickets: ownership and progress live outside the disposable screen.
+        // No command is issued here, including when the saved ticket already completed while closed.
     }
 }

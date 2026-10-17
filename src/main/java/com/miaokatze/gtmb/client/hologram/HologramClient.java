@@ -56,6 +56,12 @@ public final class HologramClient {
         HologramSnapshotCodec::decode);
     private static long lastDecodeNotice;
     private static final HologramRootCloseFence rootCloseFence = new HologramRootCloseFence();
+    private static HologramState.Preparation preparingSnapshot;
+    private static HologramSnapshotInbox.Result<NBTTagCompound> preparingResult;
+    private static final java.util.Deque<HologramSnapshotInbox.Result<NBTTagCompound>> deferredSnapshots = new java.util.ArrayDeque<>();
+    private static int deferredCellRows;
+    private static final int SNAPSHOT_PREPARE_WORK = 4096, DEFERRED_SNAPSHOT_LIMIT = 8, DEFERRED_CELL_LIMIT = 16384;
+    private static final long SNAPSHOT_PREPARE_NANOS = 2_000_000L;
 
     /** Explicit root exit only: an already queued opening snapshot must not reopen the editor. */
     static void dismissRootView(String session, long sequence) {
@@ -179,7 +185,7 @@ public final class HologramClient {
             if (usePressFence.consume()) HologramBackgroundTasks.reopen();
             return;
         }
-        HologramBackgroundTasks.reopen();
+        if (HologramBackgroundTasks.reopen()) return;
         if (HologramCutClient.INSTANCE.interceptsUse()) return;
         if (worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()) return;
         boolean air = input.getBoolean("air");
@@ -406,6 +412,7 @@ public final class HologramClient {
         syncSnapshotWorld();
         HologramBackgroundTasks.tick();
         installDecoded(snapshotInbox.poll());
+        prepareSnapshotStep();
         HologramLibraryClient.INSTANCE.tick();
         HologramCutClient.INSTANCE.tick();
         Minecraft mc = Minecraft.getMinecraft();
@@ -516,7 +523,6 @@ public final class HologramClient {
 
     @SubscribeEvent
     public void cutWorldKey(InputEvent.KeyInputEvent event) {
-        if (HologramBackgroundTasks.busy()) return;
         HologramCutClient.INSTANCE.keyInput();
     }
 
@@ -525,8 +531,8 @@ public final class HologramClient {
     public void worldEscape(GuiOpenEvent event) {
         inputScreenChanged = true;
         previewDistance.sync(false, null, "");
-        if (HologramBackgroundTasks.busy()) return;
         if (HologramCutClient.INSTANCE.escape(event)) return;
+        if (HologramBackgroundTasks.busy()) return;
         if (event.gui instanceof GuiIngameMenu && projectorWorld()
             && HologramLibraryClient.INSTANCE.cancelQuickPlacement()) {
             HologramWorldFlow.Intent pendingIntent = HologramWorldFlow
@@ -680,6 +686,8 @@ public final class HologramClient {
         assemblyWorld = world;
         HologramClientProgress.clear();
         snapshotInbox.clear();
+        clearSnapshotPreparation();
+        fullSnapshotRequested = false;
         if (state != null && snapshotWorld != world) clearProjection();
     }
 
@@ -700,13 +708,138 @@ public final class HologramClient {
             decodeNotice("decodeError", "Hologram snapshot decoding failed; the previous preview was retained.");
             return;
         }
-        installSnapshot(result.value);
-        HologramClientProgress.decoded(result.transportSequence, true);
+        NBTTagCompound nbt = result.value;
+        if (nbt.getBoolean("progressOnly")) {
+            HologramClientProgress.receive(nbt.hasKey("progress", 10) ? nbt.getCompoundTag("progress") : nbt);
+            return;
+        }
+        if (!validSnapshotIdentity(nbt)) return;
+        if (nbt.getBoolean("cancelled") || nbt.getBoolean("capturePending")) {
+            if (preparingResult != null && preparingResult.value.getString("session")
+                .equals(nbt.getString("session"))
+                && (nbt.getBoolean("cancelled")
+                    || nbt.getLong("planRevision") >= preparingResult.value.getLong("planRevision")))
+                clearSnapshotPreparation();
+            installSnapshot(nbt);
+            HologramClientProgress.decoded(result.transportSequence, true);
+        } else if (!nbt.getBoolean("partial")) {
+            HologramSnapshotInbox.Result<NBTTagCompound> deferred = deferredSnapshots.peekLast();
+            if (deferred != null && deferred.value.getString("session")
+                .equals(nbt.getString("session")) && olderSnapshot(nbt, deferred.value)) return;
+            if (preparingResult != null) {
+                NBTTagCompound previous = preparingResult.value;
+                if (previous.getString("session")
+                    .equals(nbt.getString("session"))) {
+                    if (olderSnapshot(nbt, previous)) return;
+                } else retire(previous.getString("session"));
+                HologramClientProgress.decoded(preparingResult.transportSequence, false);
+            }
+            clearSnapshotPreparation();
+            preparingResult = result;
+            preparingSnapshot = new HologramState.Preparation(nbt);
+            snapshotPreparationProgress();
+        } else if (preparingSnapshot != null || !deferredSnapshots.isEmpty()) {
+            int rows = nbt.getTagList("cells", 10)
+                .tagCount();
+            if (deferredSnapshots.size() >= DEFERRED_SNAPSHOT_LIMIT || rows > DEFERRED_CELL_LIMIT - deferredCellRows) {
+                clearSnapshotPreparation();
+                requestFullSnapshot(nbt.getString("session"));
+                HologramClientProgress.decoded(result.transportSequence, false);
+                return;
+            }
+            deferredSnapshots.addLast(result);
+            deferredCellRows += rows;
+        } else {
+            installSnapshot(nbt);
+            HologramClientProgress.decoded(result.transportSequence, true);
+        }
+    }
+
+    private static boolean validSnapshotIdentity(NBTTagCompound nbt) {
+        String session = nbt.getString("session"), generation = nbt.getString("generation");
+        return (generation.isEmpty() || generation.equals(session)) && !retiredSessions.contains(session)
+            && (nbt.getBoolean("cancelled") || state == null
+                || !state.session.equals(session)
+                || !olderSnapshot(nbt, state.data));
+    }
+
+    private static boolean olderSnapshot(NBTTagCompound candidate, NBTTagCompound baseline) {
+        long revision = candidate.getLong("planRevision"), previous = baseline.getLong("planRevision");
+        return revision < previous || candidate.getLong("batchSeq") < baseline.getLong("batchSeq")
+            || revision == previous && candidate.getLong("uiSequence") < baseline.getLong("uiSequence")
+            || candidate.getLong("batchSeq") == baseline.getLong("batchSeq")
+                && "ACK".equals(baseline.getString("phase"))
+                && "PREPARE".equals(candidate.getString("phase"));
+    }
+
+    private static void prepareSnapshotStep() {
+        if (preparingSnapshot == null) {
+            installDeferredSnapshot();
+            return;
+        }
+        if (!preparingSnapshot.step(SNAPSHOT_PREPARE_WORK, SNAPSHOT_PREPARE_NANOS)) {
+            snapshotPreparationProgress();
+            return;
+        }
+        HologramSnapshotInbox.Result<NBTTagCompound> complete = preparingResult;
+        HologramState prepared = preparingSnapshot.result();
+        preparingSnapshot = null;
+        preparingResult = null;
+        installSnapshot(complete.value, prepared);
+        HologramClientProgress.decoded(complete.transportSequence, true);
+        // Edit ACKs remain ordered behind the complete baseline. One small delta is installed per tick.
+        installDeferredSnapshot();
+    }
+
+    private static void installDeferredSnapshot() {
+        if (deferredSnapshots.isEmpty()) return;
+        HologramSnapshotInbox.Result<NBTTagCompound> next = deferredSnapshots.removeFirst();
+        deferredCellRows -= next.value.getTagList("cells", 10)
+            .tagCount();
+        installSnapshot(next.value);
+        HologramClientProgress.decoded(next.transportSequence, true);
+    }
+
+    private static void snapshotPreparationProgress() {
+        NBTTagCompound event = new NBTTagCompound();
+        event.setString("scope", "snapshot");
+        event.setString("session", preparingResult.value.getString("session"));
+        event.setLong("sequence", preparingResult.transportSequence);
+        event.setLong("uiSequence", preparingResult.value.getLong("uiSequence"));
+        event.setString("phase", preparingSnapshot.phase());
+        event.setLong("done", preparingSnapshot.completed());
+        event.setLong("total", preparingSnapshot.total());
+        event.setString("unit", preparingSnapshot.unit());
+        HologramClientProgress.receive(event);
+    }
+
+    private static void clearSnapshotPreparation() {
+        preparingSnapshot = null;
+        preparingResult = null;
+        deferredSnapshots.clear();
+        deferredCellRows = 0;
+    }
+
+    private static void requestFullSnapshot(String session) {
+        if (fullSnapshotRequested) return;
+        fullSnapshotRequested = true;
+        NBTTagCompound recovery = new NBTTagCompound();
+        recovery.setString("op", "requestFullSnapshot");
+        recovery.setString("session", session);
+        recovery.setLong("planRevision", state == null ? -1 : state.data.getLong("planRevision"));
+        HologramNetwork.sendAction(recovery);
     }
 
     /** Registry lookups, world access, GUI and rendering resources remain on the client thread. */
+    private static boolean fullSnapshotRequested;
+
     private static void installSnapshot(NBTTagCompound nbt) {
+        installSnapshot(nbt, null);
+    }
+
+    private static void installSnapshot(NBTTagCompound nbt, HologramState prepared) {
         if (nbt.getBoolean("cancelled")) {
+            retire(nbt.getString("session"));
             HologramBackgroundTasks.cancelled(nbt.getString("session"));
             if (state != null && state.session.equals(nbt.getString("session"))) clearProjection(false);
             return;
@@ -722,30 +855,41 @@ public final class HologramClient {
         }
         boolean same = state != null && state.session.equals(session);
         if (same && nbt.getLong("planRevision") < state.data.getLong("planRevision")) return;
+        if (same && nbt.getBoolean("partial")
+            && nbt.getLong("baseRevision") < state.data.getLong("planRevision")
+            && nbt.getLong("planRevision") == state.data.getLong("planRevision")) return;
         long batch = nbt.getLong("batchSeq");
         if (same && (batch < acceptedBatch || (batch == acceptedBatch && "ACK".equals(state.data.getString("phase"))
             && "PREPARE".equals(nbt.getString("phase"))))) return;
         // Reject stale packets before copying a large NBT tree or resolving thousands of block/item entries.
-        HologramState next = new HologramState(nbt);
+        HologramState next;
+        try {
+            next = prepared == null ? HologramState.apply(state, nbt) : prepared;
+        } catch (IllegalArgumentException incompatible) {
+            if (!nbt.getBoolean("partial")) throw incompatible;
+            requestFullSnapshot(session);
+            return;
+        }
+        if (!nbt.getBoolean("partial")) fullSnapshotRequested = false;
+        nbt = next.data;
         HologramClientProgress.snapshot(nbt);
         if (!same) {
             rootCloseFence.clear();
             if (state != null) retire(state.session);
-            HologramRenderer.release();
             acceptedBatch = -1;
         }
         long now = System.nanoTime();
         acceptedBatch = batch;
         receivedAt = now;
-        HologramRenderer.release();
         HologramJobVisuals.bind(next);
+        HologramRenderer.snapshotChanged(state, next);
         state = next;
         HologramUiConfiguration.observePresetSnapshot(next);
         HologramBackgroundTasks.snapshot(next);
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
-        if (HologramBackgroundTasks.detached() || mc.currentScreen instanceof HologramBackgroundScreen) return;
+        if (HologramBackgroundTasks.detached()) return;
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;
@@ -862,6 +1006,8 @@ public final class HologramClient {
     }
 
     private static void clearProjection(boolean invalidatePending) {
+        fullSnapshotRequested = false;
+        clearSnapshotPreparation();
         placementIdentitySync.clear();
         rootCloseFence.clear();
         if (invalidatePending) {

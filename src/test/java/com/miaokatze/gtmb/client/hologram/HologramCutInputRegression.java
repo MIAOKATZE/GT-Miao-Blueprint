@@ -261,7 +261,14 @@ public final class HologramCutInputRegression {
             SimpleAssert.eq(
                 stage != idle,
                 HologramCutInput.cancelsActivity(stage, false, false),
-                "Escape clears selection/moving/locked activity without depending on the persistent queue");
+                "local cancellation clears selection/moving/locked activity independently of the persistent queue");
+            SimpleAssert.that(
+                HologramCutInput.exitsMode(stage, true, false, false),
+                "Escape exits CUT from every stage, including idle without an active session: " + stage);
+            SimpleAssert.eq(
+                stage != idle,
+                HologramCutInput.exitsMode(stage, false, false, false),
+                "residual activity is still escapable without the selected mode flag: " + stage);
         }
         SimpleAssert.that(
             HologramCutInput.cancelsActivity(idle, true, false),
@@ -269,8 +276,16 @@ public final class HologramCutInputRegression {
         SimpleAssert
             .that(HologramCutInput.cancelsActivity(idle, false, true), "Escape clears residual local raw preview");
         SimpleAssert.that(
-            !HologramCutInput.cancelsActivity(idle, false, false),
+            !HologramCutInput.exitsMode(idle, false, false, false),
             "after cancelling once another Escape can open the normal pause menu");
+        SimpleAssert.eq(
+            HologramCutInput.Intent.NONE,
+            HologramCutInput.right(idle, false, false, false, false, false),
+            "after Escape ordinary right use is available regardless of retained cut cache");
+        SimpleAssert.eq(
+            HologramCutInput.Intent.SWITCHER,
+            HologramCutInput.right(idle, true, false, false, false, false),
+            "after Escape Shift-right follows the default blueprint mode selector");
     }
 
     private static void continuousAndNudge() {

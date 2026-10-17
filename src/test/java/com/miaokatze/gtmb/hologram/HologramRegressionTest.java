@@ -32,6 +32,12 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression::run);
         cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
         cases.put(
+            "area_resource_planning_is_resumable_and_matches_sync_results",
+            HologramResourcePlannerRegression::run);
+        cases.put(
+            "snapshot_publication_preserves_fifo_and_cancels_stale_generations",
+            HologramSnapshotPublishRegression::run);
+        cases.put(
             "client_progress_is_factual_session_bound_and_render_only",
             com.miaokatze.gtmb.client.hologram.HologramProgressRegression::run);
         cases.put(
@@ -188,6 +194,7 @@ public final class HologramRegressionTest {
         cases.put("native_channel_casing_and_batch_compatibility", HologramCompatibilityRegression::run);
         cases.put("channel_wrapped_declarations_are_expanded", HologramRegressionTest::wrappedDeclarations);
         cases.put("clipboard_edits_preserve_automatic_source_and_other_cells", HologramServiceEditRegression::run);
+        cases.put("stable_module_edits_use_sparse_history_resources_and_cell_deltas", HologramLocalEditRegression::run);
         cases.put("preset_updates_keep_identity_and_persist_atomically", HologramPresetPersistenceRegression::run);
         cases.put(
             "blueprint_nbt_sharing_missing_dependencies_and_legacy_storage",

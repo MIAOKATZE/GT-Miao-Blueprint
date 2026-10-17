@@ -16,6 +16,16 @@ final class HologramActionDispatcher {
     static void handle(EntityPlayerMP player, NBTTagCompound action) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
+        if (action.getInteger("clientSnapshotProtocol") == 1) s.cellDeltaProtocol = true;
+        if ("requestFullSnapshot".equals(action.getString("op"))) {
+            long tick = player.worldObj.getTotalWorldTime();
+            if (s.snapshotResyncTick == Long.MIN_VALUE || tick - s.snapshotResyncTick >= 20) {
+                s.snapshotResyncTick = tick;
+                s.localEdits.invalidate();
+                HologramSnapshots.send(s);
+            }
+            return;
+        }
         if ("ackBlueprintSaved".equals(action.getString("op"))) {
             if (HologramLibraryWorkflow.acknowledgeBlueprintSave(s, action)) HologramSnapshots.send(s);
             return;
@@ -45,6 +55,10 @@ final class HologramActionDispatcher {
             HologramSession.cancelCaptureRetry(s);
             HologramSession.clearPending(s);
             s.status = "目标、维度、距离或持有工具已变化";
+            HologramSnapshots.send(s);
+            return;
+        }
+        if (HologramDeferredPlanRefresh.blocksAction(s, op)) {
             HologramSnapshots.send(s);
             return;
         }
@@ -157,9 +171,14 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
-        HologramEditState beforeEdit = HologramBlueprintEditor.isPlanningEdit(op) && s.job != 1 && s.job != 2
-            ? new HologramEditState(s)
-            : null;
+        HologramEditState beforeEdit = HologramBlueprintEditor.isPlanningEdit(op) && !"editCopy".equals(op)
+            && s.job != 1
+            && s.job != 2
+                ? new HologramEditState(
+                    s,
+                    HologramLocalPlanRefresh.sparseOperation(s, op) ? HologramLocalPlanRefresh.selected(s, action)
+                        : null)
+                : null;
         if (s.job != 1 && s.job != 2 && ("hatchPreset".equals(op) || "clearHatchPreset".equals(op))) {
             s.allocationsFrozen = false;
             s.frozenAutoTargets.clear();
@@ -351,7 +370,7 @@ final class HologramActionDispatcher {
                     HologramCellPolicy.setBlueprintTarget(s, cell, pin);
                     s.pins.put(index, pin);
                     s.coordinatePins.put(HologramValues.position(cell), pin.copy());
-                    HologramResourcePlanner.refreshPlan(s);
+                    HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
                     s.status = "库存样本已设为目标；点击施工才扣材料";
                 }
             }
@@ -380,7 +399,7 @@ final class HologramActionDispatcher {
                     HologramCellPolicy.setBlueprintTarget(s, cell, pin);
                     s.pins.put(index, pin);
                     s.coordinatePins.put(HologramValues.position(cell), pin.copy());
-                    HologramResourcePlanner.refreshPlan(s);
+                    HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
                     s.status = "来源物品已设为目标；点击施工才扣材料";
                 }
             }
@@ -421,7 +440,7 @@ final class HologramActionDispatcher {
                     HologramResourcePlanner.freezeAllocations(s);
                     if (direction == -1) s.facingPins.remove(HologramValues.position(cell));
                     else s.facingPins.put(HologramValues.position(cell), direction);
-                    HologramResourcePlanner.refreshPlan(s);
+                    HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
                     s.status = direction == -1 ? "已恢复自动朝向" : "仓室朝向已指定，施工时生效";
                 }
             }
@@ -456,12 +475,12 @@ final class HologramActionDispatcher {
             && ("configure".equals(op) || "customPin".equals(
                 op) || "sourcePin".equals(op) || "pin".equals(op) || "addPosition".equals(op) || "clearPin".equals(op)))
             HologramMaterialAccess.refreshMaterialChoices(s);
-        if (beforeEdit != null && !beforeEdit.sameAs(new HologramEditState(s))) {
+        if (beforeEdit != null && !beforeEdit.sameAs(beforeEdit.current(s))) {
             HologramBlueprintEditor.remember(s.undoEdits, beforeEdit);
             s.redoEdits.clear();
-            HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
+            if (beforeEdit.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, beforeEdit.sparseIndices))
+                HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
         }
-        if ("editUndo".equals(op) || "editRedo".equals(op)) HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
         HologramDraftPersistence.persist(s);
         HologramSnapshots.send(s);
     }

@@ -50,7 +50,14 @@ final class HologramBlueprintEditor {
         s.scope = 2;
         s.selectedIndices.clear();
         for (int index : indices) s.selectedIndices.add(index);
-        HologramResourcePlanner.refreshPlan(s);
+        refreshEdited(s, HologramLocalPlanRefresh.selected(s, action));
+    }
+
+    static void refreshEdited(HologramSession s, java.util.Set<Integer> dirty) {
+        if (HologramLocalPlanRefresh.refresh(s, dirty)) return;
+        if (s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && s.cellDeltaProtocol) {
+            HologramDeferredPlanRefresh.request(s, dirty);
+        } else HologramResourcePlanner.refreshPlan(s);
     }
 
     static boolean isPlanningEdit(String op) {
@@ -85,10 +92,13 @@ final class HologramBlueprintEditor {
                 s.status = undo ? "没有可撤销的规划编辑" : "没有可重做的规划编辑";
                 return;
             }
-            remember(undo ? s.redoEdits : s.undoEdits, new HologramEditState(s));
-            from.remove(from.size() - 1)
-                .apply(s);
-            HologramResourcePlanner.refreshPlan(s);
+            HologramEditState previous = from.remove(from.size() - 1);
+            remember(undo ? s.redoEdits : s.undoEdits, previous.current(s));
+            previous.apply(s);
+            if (previous.sparseIndices == null) HologramResourcePlanner.refreshPlan(s);
+            else refreshEdited(s, previous.sparseIndices);
+            if (previous.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, previous.sparseIndices))
+                HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
             s.status = undo ? "已撤销规划编辑；已施工的世界保持现状" : "已重做规划编辑；点击施工才改变世界";
             return;
         }
@@ -190,7 +200,7 @@ final class HologramBlueprintEditor {
             s.facingPins.remove(HologramValues.position(cell));
             if (legal.length > 0 && direction >= 0) s.facingPins.put(HologramValues.position(cell), direction);
             s.selected = index;
-            HologramResourcePlanner.refreshPlan(s);
+            refreshEdited(s, java.util.Collections.singleton(index));
             s.status = "已粘贴目标规划；施工时才扣除真实材料";
             return;
         }
@@ -227,10 +237,11 @@ final class HologramBlueprintEditor {
                 if (index < s.planTargets.size()) s.planTargets.set(index, nativeSample.copy());
             }
             s.virtualEdited.add(key);
-            s.cellIndices.clear();
-            s.indexedCapture = null;
+            s.cellIndices.remove(cell);
+            staged.stableIndex = index;
+            s.cellIndices.put(staged, index);
             s.selected = index;
-            HologramResourcePlanner.refreshPlan(s);
+            refreshEdited(s, java.util.Collections.singleton(index));
             s.status = "本格方块状态已水平旋转 90°；施工时生效";
             return;
         }
@@ -245,7 +256,7 @@ final class HologramBlueprintEditor {
         if (s.virtual) s.virtualEdited.add(HologramValues.position(cell));
         s.facingPins.put(HologramValues.position(cell), next);
         s.selected = index;
-        HologramResourcePlanner.refreshPlan(s);
+        refreshEdited(s, java.util.Collections.singleton(index));
         s.status = "已轮换到下一合法朝向；施工时生效";
     }
 
@@ -257,9 +268,16 @@ final class HologramBlueprintEditor {
         HologramCasingFallback.Target casing = HologramCasingFallback
             .resolve(cell.element, HologramCellPolicy.elementTrigger(s, cell));
         ItemStack target = casing == null ? null : new ItemStack(casing.block, 1, casing.meta);
-        if (s.virtual && s.virtualPreset != null) for (HologramPresets.Cell saved : s.virtualPreset.cells)
-            if (saved.x == cell.x - s.x && saved.y == cell.y - s.y && saved.z == cell.z - s.z)
-                target = saved.defaultStack();
+        if (s.virtual && s.virtualPreset != null) {
+            HologramPresets.Cell saved = s.localEdits.defaults
+                .get((cell.x - s.x) + "," + (cell.y - s.y) + "," + (cell.z - s.z));
+            if (saved != null) target = saved.defaultStack();
+            else for (HologramPresets.Cell fallback : s.virtualPreset.cells)
+                if (fallback.x == cell.x - s.x && fallback.y == cell.y - s.y && fallback.z == cell.z - s.z) {
+                    target = fallback.defaultStack();
+                    break;
+                }
+        }
         if (target == null && !cell.userPosition
             && !cell.unknown
             && !"hatch".equals(cell.role)
@@ -281,7 +299,7 @@ final class HologramBlueprintEditor {
         s.suppressedAuto.add(HologramValues.position(cell));
         s.selected = index;
         s.scope = 2;
-        HologramResourcePlanner.refreshPlan(s);
+        refreshEdited(s, java.util.Collections.singleton(index));
         return true;
     }
 
@@ -372,7 +390,15 @@ final class HologramBlueprintEditor {
         java.util.Set<Integer> selected = new java.util.HashSet<>();
         for (int index : indices) selected.add(index);
         java.util.Set<String> complete = new java.util.HashSet<>();
-        for (HologramPresets.Structure structure : s.virtualPreset.structures) {
+        if (s.localEdits.current(s)) {
+            Map<String, Integer> counts = new HashMap<>();
+            for (int index : selected) for (String member : s.capture.cells.get(index)
+                .memberships()) counts.merge(member, 1, Integer::sum);
+            for (Map.Entry<String, Integer> count : counts.entrySet()) {
+                List<Integer> members = s.localEdits.memberships.get(count.getKey());
+                if (members != null && members.size() == count.getValue()) complete.add(count.getKey());
+            }
+        } else for (HologramPresets.Structure structure : s.virtualPreset.structures) {
             boolean present = false, whole = true;
             for (int index = 0; index < s.capture.cells.size(); index++) if (s.capture.cells.get(index)
                 .belongsTo(structure.id)) {
@@ -432,11 +458,10 @@ final class HologramBlueprintEditor {
             s.blueprintClipboard.clear();
             s.blueprintClipboard.addAll(clipboard);
             if ("editCut".equals(op)) {
-                HologramEditState before = new HologramEditState(s);
                 for (int index : indices) s.capture.cells.get(index).excluded = true;
-                remember(s.undoEdits, before);
-                s.redoEdits.clear();
-                HologramResourcePlanner.refreshPlan(s);
+                java.util.Set<Integer> dirty = new java.util.LinkedHashSet<>();
+                for (int index : indices) dirty.add(index);
+                refreshEdited(s, dirty);
             }
             s.status = "editCut".equals(op) ? "已剪切蓝图规划，原位置标为排除；世界保持原状" : "已复制选中蓝图格及设备配置";
         } else {

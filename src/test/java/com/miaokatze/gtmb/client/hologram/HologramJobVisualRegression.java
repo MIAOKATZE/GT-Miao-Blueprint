@@ -13,14 +13,15 @@ public final class HologramJobVisualRegression {
     public static void run() {
         HologramJobVisuals.bind(null);
         HologramState basis = state("job", 2, 3, 0);
-        NBTTagCompound unchanged = (NBTTagCompound) basis.data.copy();
+        NBTTagCompound unchanged = (NBTTagCompound) basis.fullData();
         HologramJobVisuals.bind(basis);
         NBTTagCompound delta = delta("job", 2, 3, 1, 0, true, "placed");
         SimpleAssert.eq(1, HologramJobVisuals.accept(basis, delta).length, "one receipt changes only one visual cell");
         SimpleAssert
             .that(HologramJobVisuals.completed(basis, basis.cells.get(0)), "successful receipt hides its ghost");
         SimpleAssert.eq("pending", basis.cells.get(0).status, "receipt never rewrites an immutable editable cell");
-        SimpleAssert.that(unchanged.equals(basis.data), "receipt leaves all source, quote and authority NBT unchanged");
+        SimpleAssert
+            .that(unchanged.equals(basis.fullData()), "receipt leaves all source, quote and authority NBT unchanged");
         SimpleAssert
             .eq(0, HologramJobVisuals.accept(basis, delta).length, "duplicate batch cannot replay visual changes");
         NBTTagCompound sameBatch = delta("job", 2, 3, 1, 2, true, "placed");

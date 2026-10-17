@@ -25,6 +25,8 @@ final class HologramWorkspace {
 
     static void activate(UUID player, HologramSession session) {
         if (!player.equals(session.player.getUniqueID())) throw new IllegalArgumentException("Session owner mismatch");
+        HologramSession previous = SESSIONS.get(player);
+        if (previous != null && previous != session) HologramDeferredPlanRefresh.cancel(previous);
         SESSIONS.put(player, session);
     }
 
@@ -76,7 +78,8 @@ final class HologramWorkspace {
     }
 
     static void clearAreaSelection(HologramSession s) {
-        AREAS.remove(s.player.getUniqueID());
+        HologramArea area = AREAS.remove(s.player.getUniqueID());
+        if (area != null) area.cancelImportWork();
         AREA_EDITORS.remove(s.player.getUniqueID());
         AREA_STRUCTURES.remove(s.player.getUniqueID());
         boolean changed = clearAreaMarker(s, s.boundTool);
@@ -87,6 +90,7 @@ final class HologramWorkspace {
 
     /** A cached editor keeps its planning data but never reuses a retired network nonce. */
     static void activateAreaSession(HologramSession s) {
+        HologramDeferredPlanRefresh.suspend(s);
         s.id = UUID.randomUUID()
             .toString();
         s.uiSequence = 0;
@@ -96,7 +100,10 @@ final class HologramWorkspace {
 
     static void clear() {
         HologramNetwork.clearServerQueues();
-        for (HologramSession s : SESSIONS.values()) clearAreaSelection(s);
+        for (HologramSession s : SESSIONS.values()) {
+            HologramDeferredPlanRefresh.cancel(s);
+            clearAreaSelection(s);
+        }
         SESSIONS.clear();
         AREAS.clear();
         AREA_EDITORS.clear();
@@ -127,6 +134,7 @@ final class HologramWorkspace {
                 || !session.player.playerNetServerHandler.netManager.isChannelOpen()) {
                 HologramSession.clearPending(session);
                 HologramSession.cancelCaptureRetry(session);
+                HologramDeferredPlanRefresh.cancel(session);
                 clearAreaSelection(session);
                 sessions.remove();
             } else tick.accept(session);

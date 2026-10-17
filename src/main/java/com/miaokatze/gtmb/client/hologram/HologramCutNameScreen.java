@@ -90,7 +90,8 @@ final class HologramCutNameScreen extends HologramMuiScreen {
     @Override
     protected boolean muiKey(char character, int key) {
         if (key != Keyboard.KEY_ESCAPE) return false;
-        finish(false, false);
+        finished = true;
+        HologramCutClient.INSTANCE.exitCutMode();
         return true;
     }
 

@@ -519,7 +519,7 @@ final class HologramLibraryClient {
     }
 
     private boolean quickScreenAllowed(Minecraft mc) {
-        return mc.currentScreen == null || mc.currentScreen instanceof HologramBackgroundScreen
+        return mc.currentScreen == null
             || mc.currentScreen instanceof HologramScreen && HologramBackgroundTasks.libraryTask();
     }
 
@@ -1390,6 +1390,7 @@ final class HologramLibraryClient {
                     progressCompleted();
                     selectedLocal = acknowledgement.getString("localId");
                     announceSaved(pending.name, pending.path);
+                    HologramUiLibrary.committedSave(acknowledgement.getString("session"));
                     status = "JSON 与结构预览 PNG 已校验保存";
                 } else status = "蓝图保存未提交，原 JSON 与 PNG 已恢复：" + HologramUiText.reason(reply.getString("message"));
                 finishBackgroundTask(

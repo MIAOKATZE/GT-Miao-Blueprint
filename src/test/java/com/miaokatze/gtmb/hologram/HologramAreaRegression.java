@@ -8,6 +8,8 @@ public final class HologramAreaRegression {
     private HologramAreaRegression() {}
 
     public static void run() {
+        HologramAreaPreparationRegression.run();
+        HologramSnapshotMetadataRegression.run();
         try {
             HologramArea area = new HologramArea();
             area.point(2, 3, 64, 3, "replace");

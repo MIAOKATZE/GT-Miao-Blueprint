@@ -39,6 +39,8 @@ public final class HologramBackgroundTasks {
     private static long startRevision;
     private static long librarySequence;
     private static HologramState context;
+    private static HologramBackgroundUiState presentation;
+    private static boolean restorePending;
     private static String completion = "";
     private static boolean succeeded;
     private static boolean cancelling;
@@ -79,8 +81,15 @@ public final class HologramBackgroundTasks {
         }
         HologramProgress value = "library".equals(OWNER.kind()) ? HologramLibraryClient.INSTANCE.progress()
             : HologramClientProgress.view("server", session);
-        if (value != null && value.complete && busy()) return displayProgress
-            .update(value.operation, value.phase, value.done, value.total, value.unit, false, System.nanoTime());
+        if (value != null && value.complete && busy()) return displayProgress.update(
+            value.operation,
+            value.phase,
+            value.detail,
+            value.done,
+            value.total,
+            value.unit,
+            false,
+            System.nanoTime());
         return value;
     }
 
@@ -126,10 +135,13 @@ public final class HologramBackgroundTasks {
 
     static void tick() {
         Minecraft mc = Minecraft.getMinecraft();
-        if (busy() && (world != mc.theWorld || connection != mc.getNetHandler())) {
-            OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, "世界或连接已关闭，任务未继续");
+        if ((busy() || presentation != null) && (world != mc.theWorld || connection != mc.getNetHandler())) {
+            if (busy()) OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, "世界或连接已关闭，任务未继续");
             context = null;
+            presentation = null;
+            restorePending = false;
             session = "";
+            OWNER.attach();
         }
         if (mc.thePlayer != null && !pendingMessages.isEmpty()) {
             for (String message : pendingMessages) mc.thePlayer.addChatMessage(new ChatComponentText(message));
@@ -143,6 +155,8 @@ public final class HologramBackgroundTasks {
         connection = mc.getNetHandler();
         context = HologramClient.state;
         if (boundToken != OWNER.token()) {
+            presentation = null;
+            restorePending = false;
             cancelling = false;
             reviewSubmitted = false;
             controlPredecessors.clear();
@@ -372,18 +386,41 @@ public final class HologramBackgroundTasks {
         return OWNER.detached();
     }
 
+    static void rememberUi(HologramUiModules ui) {
+        if (!busy() || ui.diagnostics.captureRenderSmokeAction()) return;
+        if (context != null && !context.session.equals(ui.session.state().session)) return;
+        presentation = HologramBackgroundUiState.capture(ui, OWNER.token());
+    }
+
+    static void restoreUi(HologramUiModules ui) {
+        if (!restorePending) return;
+        restorePending = false;
+        long expected = busy() ? OWNER.token() : completedToken;
+        if (presentation != null && presentation.matches(ui.session.state().session, expected))
+            presentation.restore(ui);
+        if (!busy()) presentation = null;
+    }
+
+    private static HologramState workspaceState() {
+        HologramState latest = HologramClient.state;
+        return latest != null && (context == null || context.session.equals(latest.session)) ? latest : context;
+    }
+
     static boolean reopen() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (world != mc.theWorld || connection != mc.getNetHandler()) return false;
+        HologramState next = workspaceState();
+        if (next == null || !busy() && !(detached() && presentation != null)) return false;
         OWNER.attach();
-        if (!busy()) return false;
-        Minecraft.getMinecraft()
-            .displayGuiScreen(
-                awaitingReview() || awaitingSourceReview() ? new HologramScreen(context)
-                    : new HologramBackgroundScreen());
+        restorePending = true;
+        // Rebuild the normal workstation. Its initGui restores values into a fresh MUI tree.
+        mc.displayGuiScreen(new HologramScreen(next));
         return true;
     }
 
     static void returnToWorkspace() {
-        HologramState next = HologramClient.state == null ? context : HologramClient.state;
+        HologramState next = workspaceState();
+        restorePending = next != null;
         Minecraft.getMinecraft()
             .displayGuiScreen(next == null ? null : new HologramScreen(next));
     }

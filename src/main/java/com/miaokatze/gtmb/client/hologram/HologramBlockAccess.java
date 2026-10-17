@@ -14,7 +14,7 @@ import net.minecraftforge.common.util.ForgeDirection;
 /** Isolated, bounded render snapshot. Never exposes a live world or a live tile entity to renderers. */
 final class HologramBlockAccess implements IBlockAccess {
 
-    private final Map<String, HologramState.Cell> cells = new HashMap<>();
+    private final HologramRegionCache cells;
     private final boolean current;
     private final Map<String, TileEntity> tiles = new HashMap<>();
     private final Map<String, String> failures = new HashMap<>();
@@ -29,7 +29,7 @@ final class HologramBlockAccess implements IBlockAccess {
 
     HologramBlockAccess(HologramState state, boolean current) {
         this.current = current;
-        for (HologramState.Cell cell : state.cells) cells.put(key(cell.x, cell.y, cell.z), cell);
+        cells = state.regions;
     }
 
     private static String key(int x, int y, int z) {
@@ -37,13 +37,13 @@ final class HologramBlockAccess implements IBlockAccess {
     }
 
     public Block getBlock(int x, int y, int z) {
-        HologramState.Cell cell = cells.get(key(x, y, z));
+        HologramState.Cell cell = cells.at(x, y, z);
         Block block = cell == null ? null : cell.block(actual(cell));
         return block == null ? Blocks.air : block;
     }
 
     public int getBlockMetadata(int x, int y, int z) {
-        HologramState.Cell cell = cells.get(key(x, y, z));
+        HologramState.Cell cell = cells.at(x, y, z);
         return cell == null ? 0 : actual(cell) ? cell.meta : cell.wantMeta;
     }
 
@@ -56,7 +56,7 @@ final class HologramBlockAccess implements IBlockAccess {
                 return tile;
             }
             loaded.add(key);
-            HologramState.Cell cell = cells.get(key);
+            HologramState.Cell cell = cells.at(x, y, z);
             if (cell == null) return null;
             boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
             NBTTagCompound display = actual ? cell.actualDisplay : cell.targetDisplay;
@@ -119,7 +119,7 @@ final class HologramBlockAccess implements IBlockAccess {
     }
 
     boolean contains(int x, int y, int z) {
-        return cells.containsKey(key(x, y, z));
+        return cells.at(x, y, z) != null;
     }
 
     private boolean actual(HologramState.Cell cell) {

@@ -93,7 +93,10 @@ final class HologramBlueprintData {
     }
 
     static String blueprintSourceClass(HologramPresets.Preset preset, String id) {
-        HologramPresets.Structure structure = blueprintSource(preset, id);
+        return sourceClass(preset, blueprintSource(preset, id));
+    }
+
+    static String sourceClass(HologramPresets.Preset preset, HologramPresets.Structure structure) {
         if (structure != null && structure.sourceClass != null) return structure.sourceClass;
         if (preset.sourceClass != null && !preset.sourceClass.isEmpty()) return preset.sourceClass;
         if (preset.controllerId >= 0 && preset.controllerType != null && preset.controllerType.lastIndexOf(':') > 0)
@@ -102,14 +105,17 @@ final class HologramBlueprintData {
     }
 
     static String blueprintSourceWarning(HologramPresets.Preset preset, String id) {
-        String sourceClass = blueprintSourceClass(preset, id);
+        return sourceWarning(preset, blueprintSource(preset, id));
+    }
+
+    static String sourceWarning(HologramPresets.Preset preset, HologramPresets.Structure structure) {
+        String sourceClass = sourceClass(preset, structure);
         if (sourceClass.isEmpty()) return "";
         try {
             Class.forName(sourceClass, false, HologramBlueprintData.class.getClassLoader());
         } catch (ClassNotFoundException | LinkageError missing) {
             return "来源结构类缺失：" + sourceClass;
         }
-        HologramPresets.Structure structure = blueprintSource(preset, id);
         int controllerId = structure == null ? preset.controllerId : structure.controllerId;
         if (controllerId >= 0) {
             gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = controllerId

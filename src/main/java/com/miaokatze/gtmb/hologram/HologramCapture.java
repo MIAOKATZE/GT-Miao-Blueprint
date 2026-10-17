@@ -60,6 +60,10 @@ public final class HologramCapture {
     long deadline = started + CAPTURE_TIME_NS;
     boolean pending;
     int pieceCursor;
+    private int declaredAnchorIndex = -1;
+    HologramStructureCursor structureCursor;
+    boolean walkingComplete;
+    HologramExtensionSnapshots.CaptureTask extensionTask;
     Cell current;
     HologramChannelTrace.Report channelReport;
 
@@ -144,6 +148,11 @@ public final class HologramCapture {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger) : resumed;
         capture.deadline = System.nanoTime() + CAPTURE_TIME_NS;
         capture.pending = false;
+        if (capture.walkingComplete) {
+            capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
+            capture.finishExtensions();
+            return capture;
+        }
         HologramCapture previous = ACTIVE.get();
         HologramChannelTrace.Scope scope = HologramChannelTrace.begin(machine);
         ACTIVE.set(capture);
@@ -185,8 +194,6 @@ public final class HologramCapture {
             // Native definition discovery is atomic; resumable element walking shares the server tick budget.
             capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
             walkPieces(capture, definition, world, machine.getExtendedFacing(), x, y, z);
-        } catch (CaptureYieldException yielded) {
-            // Resume on a later server tick, retaining captured cells and declaration caches.
         } catch (RuntimeException | LinkageError e) {
             capture.noteFailure(e);
             capture.incomplete = true;
@@ -200,12 +207,10 @@ public final class HologramCapture {
         }
         if (capture.pending) return capture;
         capture.addAnchor(machine);
+        capture.walkingComplete = true;
         if (capture.pieces.isEmpty()) capture.fail("NO_BUILD_PIECES");
-        if (!capture.incomplete) try {
-            capture.extensionReports = HologramExtensionSnapshots.capture(capture);
-        } catch (java.io.IOException rejected) {
-            capture.fail(rejected.getMessage());
-        }
+        capture.finishExtensions();
+        if (capture.pending) return capture;
         if (capture.incomplete) {
             capture.failure += " elapsedMs=" + ((System.nanoTime() - capture.started) / 1000000L)
                 + " pieces="
@@ -223,14 +228,40 @@ public final class HologramCapture {
         return capture;
     }
 
+    private void finishExtensions() {
+        if (incomplete || !com.miaokatze.gtmb.api.BlueprintSnapshots
+            .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
+            cancelPending();
+            extensionTask = null;
+            return;
+        }
+        if (extensionTask == null) extensionTask = new HologramExtensionSnapshots.CaptureTask(this);
+        try {
+            pending = !extensionTask.step(this, CELLS_PER_BATCH, deadline);
+            if (!pending) {
+                extensionReports = extensionTask.result();
+                extensionTask = null;
+            }
+        } catch (java.io.IOException rejected) {
+            fail(rejected.getMessage());
+            pending = false;
+            cancelPending();
+            extensionTask = null;
+        }
+    }
+
+    void cancelPending() {
+        if (extensionTask != null) extensionTask.cancel();
+    }
+
     /** Resumable traversal of declared pieces; collection scope owns hint interception and completion. */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private static void walkPieces(HologramCapture capture, IStructureDefinition definition, World world,
         ExtendedFacing facing, int x, int y, int z) {
-        final int batchStart = capture.cells.size();
+        int remaining = CELLS_PER_BATCH;
         for (; capture.pieceCursor < capture.pieces.size(); capture.pieceCursor++) {
             Piece piece = capture.pieces.get(capture.pieceCursor);
-            definition.iterate(piece.name, world, facing, x, y, z, piece.a, piece.b, piece.c, new IStructureWalker() {
+            IStructureWalker walker = new IStructureWalker() {
 
                 public boolean visit(IStructureElement element, World w, int xx, int yy, int zz, int a, int b, int c) {
                     String position = xx + "," + yy + "," + zz;
@@ -241,12 +272,8 @@ public final class HologramCapture {
                         capture.fail("CONFLICTING_CELL " + position);
                         return false;
                     }
-                    if (capture.cells.size() - batchStart >= CELLS_PER_BATCH
-                        || (capture.cells.size() > batchStart && System.nanoTime() > capture.deadline)) {
-                        capture.pending = true;
-                        throw new CaptureYieldException();
-                    }
                     Cell cell = new Cell(element, xx, yy, zz, piece.trigger);
+                    if (xx == x && yy == y && zz == z) capture.declaredAnchorIndex = capture.cells.size();
                     capture.cells.add(cell);
                     capture.positions.put(position, cell);
                     capture.current = cell;
@@ -310,7 +337,34 @@ public final class HologramCapture {
                     capture.fail("UNLOADED " + xx + "," + yy + "," + zz);
                     return false;
                 }
-            });
+            };
+            if (HologramStructureCursor.supports(definition)) {
+                if (capture.structureCursor == null) capture.structureCursor = new HologramStructureCursor(
+                    definition.getStructureFor(piece.name),
+                    piece.a,
+                    piece.b,
+                    piece.c);
+                int cursorStart = capture.structureCursor.done();
+                boolean finished = capture.structureCursor
+                    .advance(world, facing, x, y, z, walker, remaining, capture.deadline);
+                remaining -= capture.structureCursor.done() - cursorStart;
+                if (!finished) {
+                    capture.pending = true;
+                    return;
+                }
+                capture.structureCursor = null;
+            } else {
+                // A custom iterator may deliberately differ from its declaration array. Preserve its callback
+                // semantics as one atomic native operation; only the standard V2 walk can be checkpointed safely.
+                definition.iterate(piece.name, world, facing, x, y, z, piece.a, piece.b, piece.c, walker);
+                remaining = 0;
+            }
+            if (capture.pieceCursor + 1 < capture.pieces.size()
+                && (remaining <= 0 || System.nanoTime() >= capture.deadline)) {
+                capture.pieceCursor++;
+                capture.pending = true;
+                return;
+            }
         }
     }
 
@@ -359,16 +413,6 @@ public final class HologramCapture {
         return element.spawnHint(context, world, x, y, z, signal);
     }
 
-    private static final class CaptureYieldException extends RuntimeException {
-
-        private static final long serialVersionUID = 1L;
-
-        @Override
-        public synchronized Throwable fillInStackTrace() {
-            return this;
-        }
-    }
-
     private void describeActual(Cell cell, World world) {
         TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
         if (tile == null) return;
@@ -403,7 +447,7 @@ public final class HologramCapture {
         anchor.actualFacing = machine.getBaseMetaTileEntity()
             .getFrontFacing()
             .ordinal();
-        cells.removeIf(cell -> cell.x == x && cell.y == y && cell.z == z);
+        if (declaredAnchorIndex >= 0) cells.remove(declaredAnchorIndex);
         cells.add(anchor);
         positions.put(x + "," + y + "," + z, anchor);
     }
@@ -435,6 +479,8 @@ public final class HologramCapture {
 
         final IStructureElement element;
         final int x, y, z;
+        // Runtime-only hint, accepted only when the current capture still owns this exact cell at that index.
+        int stableIndex = -1;
         Block block;
         int meta;
         boolean unknown;

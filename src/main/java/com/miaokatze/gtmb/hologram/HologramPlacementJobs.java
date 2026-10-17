@@ -122,6 +122,7 @@ final class HologramPlacementJobs {
     }
 
     static void start(HologramSession s) {
+        if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (!HologramSessionPolicy.wholeBlueprintPlacement(s) && (s.scope == 2 || s.scope == 3)
             && (s.selected < 0 || s.selected >= s.capture.cells.size())) {
             s.status = "请先选择施工位置";

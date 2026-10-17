@@ -32,9 +32,14 @@ final class HologramSessionPolicy {
 
     static int cellIndex(HologramSession s, HologramCapture.Cell cell) {
         if (s.capture == null) return -1;
+        int stable = cell.stableIndex;
+        if (stable >= 0 && stable < s.capture.cells.size() && s.capture.cells.get(stable) == cell) return stable;
         if (s.indexedCapture != s.capture || s.cellIndices.size() != s.capture.cells.size()) {
             s.cellIndices.clear();
-            for (int i = 0; i < s.capture.cells.size(); i++) s.cellIndices.put(s.capture.cells.get(i), i);
+            for (int i = 0; i < s.capture.cells.size(); i++) {
+                s.capture.cells.get(i).stableIndex = i;
+                s.cellIndices.put(s.capture.cells.get(i), i);
+            }
             s.indexedCapture = s.capture;
         }
         return s.cellIndices.getOrDefault(cell, -1);
@@ -75,6 +80,10 @@ final class HologramSessionPolicy {
             .isEmpty()) return true;
         if (s.virtualPreset != null) {
             String active = wholeBlueprintPlacement(s) ? "" : s.blueprintActiveStructure;
+            if (s.structureIndex != null) {
+                Boolean enabled = s.structureIndex.enabled(s.virtualPreset, cell.memberships(), active);
+                if (enabled != null) return enabled;
+            }
             boolean found = false, enabled = false;
             for (HologramPresets.Structure structure : s.virtualPreset.structures) {
                 if (!cell.belongsTo(structure.id)) continue;

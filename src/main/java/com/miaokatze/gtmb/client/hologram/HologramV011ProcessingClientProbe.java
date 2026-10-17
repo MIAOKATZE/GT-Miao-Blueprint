@@ -263,7 +263,7 @@ public final class HologramV011ProcessingClientProbe {
         receipt.setInteger("nativeFullReviewControl", 296);
         receipt.setTag("actualFullReviewBefore", fullReviewBefore.copy());
         receipt.setTag("actualFullReviewAfter", fullReviewAfter.copy());
-        receipt.setTag("actualSnapshot", HologramClient.state.data.copy());
+        receipt.setTag("actualSnapshot", HologramClient.state.fullData());
         receipt.setTag("actualUi", ui.copy());
         HologramV011Evidence.write("processing-client-final.nbt", receipt);
         complete = true;
@@ -331,7 +331,7 @@ public final class HologramV011ProcessingClientProbe {
                     MessageDigest.getInstance("SHA-256")
                         .digest(CompressedStreamTools.compress(HologramClient.state.data))));
             receipt.setTag("actualUi", ui.copy());
-            receipt.setTag("actualSnapshot", HologramClient.state.data.copy());
+            receipt.setTag("actualSnapshot", HologramClient.state.fullData());
             require(
                 HologramWorldGuide.lastRenderWitness() == null,
                 "world gesture guide is absent while author workbench is open");
@@ -467,7 +467,7 @@ public final class HologramV011ProcessingClientProbe {
             diagnostic.setLong("lastRenderGeneration", lastGeneration);
             diagnostic.setBoolean("displayedSourceMatches", displayedSource(screen, ui));
             diagnostic.setTag("actualUi", ui.copy());
-            if (HologramClient.state != null) diagnostic.setTag("actualSnapshot", HologramClient.state.data.copy());
+            if (HologramClient.state != null) diagnostic.setTag("actualSnapshot", HologramClient.state.fullData());
             HologramV011Evidence.write("processing-client-control-failure.nbt", diagnostic);
             throw new IllegalStateException(
                 "Actual author control " + id

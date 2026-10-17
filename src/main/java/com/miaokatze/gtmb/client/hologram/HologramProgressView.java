@@ -43,14 +43,21 @@ final class HologramProgressView {
     private HologramProgressView() {}
 
     static String phase(String phase) {
-        String key = "gtmb.hologram.progress." + phase;
+        String key = "gtmb.hologram.progress."
+            + (phase.startsWith("localPlan.") ? "area.detail." + phase.substring("localPlan.".length()) : phase);
         String value = StatCollector.translateToLocal(key);
         return key.equals(value) ? phase.replace('.', ' ') : value;
     }
 
     static String summary(HologramProgress value, long now) {
         if (value == null) return "";
-        return phase(value.phase) + " · " + metric(value, now);
+        return phaseLabel(value) + " · " + metric(value, now);
+    }
+
+    private static String phaseLabel(HologramProgress value) {
+        return phase(value.phase) + (value.detail.isEmpty() ? ""
+            : " · "
+                + phase((value.phase.startsWith("snapshot.") ? "snapshot.detail." : "area.detail.") + value.detail));
     }
 
     private static String metric(HologramProgress value, long now) {
@@ -71,7 +78,7 @@ final class HologramProgressView {
         long now = System.nanoTime();
         String metric = metric(value, now);
         int metricWidth = font.getStringWidth(metric);
-        String label = font.trimStringToWidth(phase(value.phase), Math.max(0, width - metricWidth - 8));
+        String label = font.trimStringToWidth(phaseLabel(value), Math.max(0, width - metricWidth - 8));
         font.drawString(label, x, y, 0xb9d5d4);
         font.drawString(metric, x + width - metricWidth, y, 0xf2dca5);
         if (rendered.size() < 16) rendered.add(

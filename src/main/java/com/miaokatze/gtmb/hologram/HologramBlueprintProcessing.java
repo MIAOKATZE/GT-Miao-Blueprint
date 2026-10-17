@@ -310,6 +310,10 @@ final class HologramBlueprintProcessing {
         int minimum = HologramDeidentification.level(preset);
         if (preset == null || minimum > 0) return minimum;
         for (HologramPresets.Cell cell : preset.cells) {
+            if (HologramSnapshotMetadataSource.detached() && cell.metadataIdentityBoundary != null) {
+                if (cell.metadataIdentityBoundary) return 1;
+                continue;
+            }
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (HologramAeBlueprint.supports(cell.block(), tag) || HologramNetworkBindings.node(cell.block())
                 || tag != null

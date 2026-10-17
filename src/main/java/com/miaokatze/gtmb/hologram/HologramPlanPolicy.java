@@ -138,31 +138,38 @@ final class HologramPlanPolicy {
         if (original == null || original.pending || original.incomplete) return false;
         boolean found = false;
         for (HologramCapture.Cell cell : original.cells) {
-            if (cell.anchor || cell.userPosition) continue;
-            if (!s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) return false;
-            Block block = s.player.worldObj.getBlock(cell.x, cell.y, cell.z);
-            TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
-            if (tile instanceof IGregTechTileEntity
-                && ((IGregTechTileEntity) tile).getMetaTileEntity() instanceof MTEHatch) {
-                if (HologramCellPolicy.hatchElement(
-                    s,
-                    cell,
-                    new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) tile).getMetaTileID()),
-                    true) == null) return false;
-            } else {
-                if (cell.unknown || cell.element == null || cell.block == null) return false;
-                if (cell.block == Blocks.air) {
-                    if (!HologramCellPolicy.trivial(s.player.worldObj, cell.x, cell.y, cell.z)) return false;
-                    continue;
-                }
-                int meta = s.player.worldObj.getBlockMetadata(cell.x, cell.y, cell.z);
-                if (tile != null && !HologramFrameSupport.acceptsCovered(cell.element, block, meta)) return false;
-                if (!HologramCellPolicy.knownSatisfied(cell, block, meta)
-                    && !HologramCellPolicy.destructive(cell, block, meta)) return false;
-            }
-            found = true;
+            int built = replacementCellBuilt(s, cell);
+            if (built < 0) return false;
+            found |= built > 0;
         }
         return found;
+    }
+
+    /** 0: ignored declaration; 1: verified member; -1: original structure is incomplete. */
+    static int replacementCellBuilt(HologramSession s, HologramCapture.Cell cell) {
+        if (cell.anchor || cell.userPosition) return 0;
+        if (!s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) return -1;
+        Block block = s.player.worldObj.getBlock(cell.x, cell.y, cell.z);
+        TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
+        if (tile instanceof IGregTechTileEntity
+            && ((IGregTechTileEntity) tile).getMetaTileEntity() instanceof MTEHatch) {
+            if (HologramCellPolicy.hatchElement(
+                s,
+                cell,
+                new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) tile).getMetaTileID()),
+                true) == null) return -1;
+        } else {
+            if (cell.unknown || cell.element == null || cell.block == null) return -1;
+            if (cell.block == Blocks.air) {
+                if (!HologramCellPolicy.trivial(s.player.worldObj, cell.x, cell.y, cell.z)) return -1;
+                return 0;
+            }
+            int meta = s.player.worldObj.getBlockMetadata(cell.x, cell.y, cell.z);
+            if (tile != null && !HologramFrameSupport.acceptsCovered(cell.element, block, meta)) return -1;
+            if (!HologramCellPolicy.knownSatisfied(cell, block, meta)
+                && !HologramCellPolicy.destructive(cell, block, meta)) return -1;
+        }
+        return 1;
     }
 
     static boolean constructionAllowed(HologramSession s) {

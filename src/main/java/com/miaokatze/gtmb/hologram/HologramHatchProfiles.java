@@ -45,33 +45,37 @@ final class HologramHatchProfiles {
         NBTTagList entries = new NBTTagList();
         result.setTag("entries", entries);
         if (s.virtual || s.capture == null || s.capture.incomplete || s.capturePending) return result;
-        for (int i = 0; i < s.capture.cells.size(); i++) {
-            HologramCapture.Cell cell = s.capture.cells.get(i);
-            if (cell.anchor || cell.userPosition || !HologramSessionPolicy.editableStructureCell(s, cell)) continue;
-            ItemStack stack = HologramCellPolicy.targetFor(s, cell, i);
-            if (stack == null || HologramCellPolicy.hatchTier(stack) == Integer.MAX_VALUE) continue;
-            String role = role(s, cell, stack);
-            if (role.isEmpty()) continue;
-            NBTTagCompound found = null;
-            for (int j = 0; j < entries.tagCount(); j++) {
-                NBTTagCompound entry = entries.getCompoundTagAt(j);
-                if (role.equals(entry.getString("role")) && same(stack, stack(entry))) found = entry;
-            }
-            if (found != null) found.setInteger("count", found.getInteger("count") + 1);
-            else {
-                NBTTagCompound entry = new NBTTagCompound();
-                entry.setString("role", role);
-                entry.setString("item", String.valueOf(Item.itemRegistry.getNameForObject(stack.getItem())));
-                entry.setInteger("damage", stack.getItemDamage());
-                if (stack.hasTagCompound()) entry.setTag(
-                    "tag",
-                    stack.getTagCompound()
-                        .copy());
-                entry.setInteger("count", 1);
-                entries.appendTag(entry);
-            }
-        }
+        for (int i = 0; i < s.capture.cells.size(); i++) captureCell(s, i, entries);
         return result;
+    }
+
+    /** One main-thread profile contribution, shared by the resumable full snapshot builder. */
+    static void captureCell(HologramSession s, int i, NBTTagList entries) {
+        if (s.virtual || s.capture == null || s.capture.incomplete || s.capturePending) return;
+        HologramCapture.Cell cell = s.capture.cells.get(i);
+        if (cell.anchor || cell.userPosition || !HologramSessionPolicy.editableStructureCell(s, cell)) return;
+        ItemStack stack = HologramCellPolicy.targetFor(s, cell, i);
+        if (stack == null || HologramCellPolicy.hatchTier(stack) == Integer.MAX_VALUE) return;
+        String role = role(s, cell, stack);
+        if (role.isEmpty()) return;
+        NBTTagCompound found = null;
+        for (int j = 0; j < entries.tagCount(); j++) {
+            NBTTagCompound entry = entries.getCompoundTagAt(j);
+            if (role.equals(entry.getString("role")) && same(stack, stack(entry))) found = entry;
+        }
+        if (found != null) found.setInteger("count", found.getInteger("count") + 1);
+        else {
+            NBTTagCompound entry = new NBTTagCompound();
+            entry.setString("role", role);
+            entry.setString("item", String.valueOf(Item.itemRegistry.getNameForObject(stack.getItem())));
+            entry.setInteger("damage", stack.getItemDamage());
+            if (stack.hasTagCompound()) entry.setTag(
+                "tag",
+                stack.getTagCompound()
+                    .copy());
+            entry.setInteger("count", 1);
+            entries.appendTag(entry);
+        }
     }
 
     static ItemStack stack(NBTTagCompound entry) {

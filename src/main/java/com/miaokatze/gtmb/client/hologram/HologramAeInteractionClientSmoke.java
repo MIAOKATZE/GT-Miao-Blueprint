@@ -152,7 +152,8 @@ final class HologramAeInteractionClientSmoke {
                 int[] wantedCorners = busyPass ? new int[] { 618, 56, 157, 684, 120, 223 }
                     : new int[] { 648, 88, 192, lastSourceX, 88, 192 };
                 if (!java.util.Arrays.equals(bothPoints, wantedCorners)) return false;
-                if (busyPass) oldBusyDraft = (NBTTagList) HologramClient.state.data.getTagList("cells", 10)
+                if (busyPass) oldBusyDraft = (NBTTagList) HologramClient.state.fullData()
+                    .getTagList("cells", 10)
                     .copy();
                 key(Keyboard.KEY_LSHIFT, true);
                 // The finishing gesture targets a different block and must preserve both selected corners.
@@ -285,7 +286,9 @@ final class HologramAeInteractionClientSmoke {
                     "E during actual import failed to return to the world or reopened GUI");
                 if (HologramClient.state == null || HologramClient.state.data.getBoolean("areaImporting")) return false;
                 require(
-                    oldBusyDraft.equals(HologramClient.state.data.getTagList("cells", 10)),
+                    oldBusyDraft.equals(
+                        HologramClient.state.fullData()
+                            .getTagList("cells", 10)),
                     "cancelled natural import changed the previous complete draft");
                 if (receipt().getLong("tick") - busyCancelledWorldTick < 80) return false;
                 require(
@@ -1622,7 +1625,7 @@ final class HologramAeInteractionClientSmoke {
         wheelObservations.appendTag(observed);
         NBTTagCompound evidence = new NBTTagCompound();
         evidence.setTag("wheels", wheelObservations.copy());
-        evidence.setTag("state", HologramClient.state.data.copy());
+        evidence.setTag("state", HologramClient.state.fullData());
         try (java.io.OutputStream output = Files
             .newOutputStream(new File(receipts, "ae-world-alt-wheel.nbt").toPath())) {
             CompressedStreamTools.writeCompressed(evidence, output);

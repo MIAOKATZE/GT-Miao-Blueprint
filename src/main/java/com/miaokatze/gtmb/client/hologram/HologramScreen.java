@@ -28,6 +28,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         super.initGui();
         resetNativeFields();
         ui.router.initGui();
+        HologramBackgroundTasks.restoreUi(ui);
     }
 
     public boolean doesGuiPauseGame() {
@@ -41,6 +42,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     @Override
     public void onGuiClosed() {
         ui.memory.rememberUi();
+        HologramBackgroundTasks.rememberUi(ui);
         if (ui.ae.aePreviewTransition()) ui.ae.aePreviewTransition(false);
     }
 

@@ -3,7 +3,6 @@ package com.miaokatze.gtmb.hologram;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -61,79 +60,7 @@ final class HologramBlueprintProjection {
                 .ordinal();
         }
         java.util.Set<String> palette = new java.util.HashSet<>();
-        for (int i = 0; i < s.capture.cells.size(); i++) {
-            HologramCapture.Cell cell = s.capture.cells.get(i);
-            HologramCellPolicy.validateOrdinarySourceVariant(s, cell);
-            ItemStack target = cell.anchor && s.target instanceof IGregTechTileEntity
-                ? new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) s.target).getMetaTileID())
-                : HologramCellPolicy.targetFor(s, cell, i);
-            HologramPresets.Cell saved;
-            if (target == null) {
-                if (cell.block == Blocks.air && !cell.unknown) cell.blueprintBlock = "minecraft:air";
-                if (cell.blueprintBlock.isEmpty() && cell.blueprintItem.isEmpty())
-                    throw new java.io.IOException("未知结构格需要明确目标");
-                saved = new HologramPresets.Cell();
-                saved.item = cell.blueprintItem.isEmpty() ? null : cell.blueprintItem;
-                saved.damage = cell.blueprintDamage;
-                saved.block = cell.blueprintBlock.isEmpty() ? null : cell.blueprintBlock;
-                saved.metadata = cell.meta;
-                saved.x = cell.x - s.x;
-                saved.y = cell.y - s.y;
-                saved.z = cell.z - s.z;
-                saved.facing = HologramBlockIdentity
-                    .front(s.facingPins.getOrDefault(HologramValues.position(cell), s.planFacings.getOrDefault(i, -1)));
-                saved.controller = "templateController".equals(cell.role);
-            } else {
-                saved = HologramPresets.cell(
-                    target,
-                    cell.x - s.x,
-                    cell.y - s.y,
-                    cell.z - s.z,
-                    s.facingPins
-                        .getOrDefault(HologramValues.position(cell), s.planFacings.getOrDefault(i, cell.actualFacing)),
-                    cell.anchor || "templateController".equals(cell.role));
-                Block block = HologramCellPolicy.targetPreviewBlock(s, cell, target);
-                if (HologramNativePlacement.supported(cell.block) || HologramAePolicy.handles(cell.block, cell.tileNbt)
-                    || cell.block == Blocks.lit_redstone_lamp
-                        && target.getItem() == Item.getItemFromBlock(Blocks.redstone_lamp))
-                    block = cell.block;
-                saved.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
-                saved.metadata = HologramCellPolicy.targetPreviewMeta(s, cell, target);
-                if (target.hasTagCompound())
-                    saved.itemNbt = HologramBlueprintNbt.encodeCaptured(target.getTagCompound());
-                HologramBlueprintData.addPalette(result, palette, target);
-            }
-            saved.tileNbt = cell.tileNbt;
-            saved.itemNbt = cell.itemNbt.isEmpty() ? saved.itemNbt : cell.itemNbt;
-            if (!s.virtual && s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) {
-                TileEntity actual = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
-                if (actual != null && (cell.anchor || HologramCellPolicy.targetMatches(
-                    s,
-                    cell,
-                    i,
-                    s.player.worldObj.getBlock(cell.x, cell.y, cell.z),
-                    s.player.worldObj.getBlockMetadata(cell.x, cell.y, cell.z)))) {
-                    NBTTagCompound data = HologramNativeCapture.capture(actual);
-                    saved.tileNbt = HologramAeBlueprint.supports(cell.block, data)
-                        ? HologramBlueprintNbt.encodeCanonical(cell.block, data)
-                        : HologramBlueprintNbt.encodeCaptured(data);
-                }
-            }
-            saved.tileNbt = HologramDisplaySnapshot.retainCasing(target, cell.element, saved.tileNbt);
-            saved.structureId = cell.structureId.isEmpty() ? null : cell.structureId;
-            saved.structureIds = new ArrayList<>(cell.memberships());
-            if (s.machine != null && !result.structures.isEmpty()) {
-                saved.structureId = result.structures.get(0).id;
-                saved.structureIds = new ArrayList<>(Collections.singletonList(saved.structureId));
-            }
-            if (cell.structureTargets != null)
-                saved.allowedTargets = HologramBlueprintData.savedTargets(cell.structureTargets);
-            else if (cell.element != null && !cell.anchor)
-                saved.allowedTargets = HologramBlueprintData.savedTargets(HologramCellPolicy.candidates(s, cell));
-            saved.excluded = cell.excluded;
-            saved.prompt = cell.prompt;
-            result.cells.add(saved);
-        }
+        for (int i = 0; i < s.capture.cells.size(); i++) result.cells.add(projectedCell(s, i, result, palette));
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null) for (HologramArea.Structure structure : area.structures.values()) {
             String mod = HologramSessionPolicy.sourceMod(structure.machine.getClass());
@@ -143,6 +70,81 @@ final class HologramBlueprintProjection {
                     .equals(mod)) result.modVersions.put(mod, installed.getVersion());
         }
         return result;
+    }
+
+    /** Project exactly one stable editor index with the same NBT and identity rules as a full export. */
+    static HologramPresets.Cell projectedCell(HologramSession s, int i, HologramPresets.Preset result,
+        java.util.Set<String> palette) throws java.io.IOException {
+        HologramCapture.Cell cell = s.capture.cells.get(i);
+        HologramCellPolicy.validateOrdinarySourceVariant(s, cell);
+        ItemStack target = cell.anchor && s.target instanceof IGregTechTileEntity
+            ? new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) s.target).getMetaTileID())
+            : HologramCellPolicy.targetFor(s, cell, i);
+        HologramPresets.Cell saved;
+        if (target == null) {
+            if (cell.block == Blocks.air && !cell.unknown) cell.blueprintBlock = "minecraft:air";
+            if (cell.blueprintBlock.isEmpty() && cell.blueprintItem.isEmpty())
+                throw new java.io.IOException("未知结构格需要明确目标");
+            saved = new HologramPresets.Cell();
+            saved.item = cell.blueprintItem.isEmpty() ? null : cell.blueprintItem;
+            saved.damage = cell.blueprintDamage;
+            saved.block = cell.blueprintBlock.isEmpty() ? null : cell.blueprintBlock;
+            saved.metadata = cell.meta;
+            saved.x = cell.x - s.x;
+            saved.y = cell.y - s.y;
+            saved.z = cell.z - s.z;
+            saved.facing = HologramBlockIdentity
+                .front(s.facingPins.getOrDefault(HologramValues.position(cell), s.planFacings.getOrDefault(i, -1)));
+            saved.controller = "templateController".equals(cell.role);
+        } else {
+            saved = HologramPresets.cell(
+                target,
+                cell.x - s.x,
+                cell.y - s.y,
+                cell.z - s.z,
+                s.facingPins
+                    .getOrDefault(HologramValues.position(cell), s.planFacings.getOrDefault(i, cell.actualFacing)),
+                cell.anchor || "templateController".equals(cell.role));
+            Block block = HologramCellPolicy.targetPreviewBlock(s, cell, target);
+            if (HologramNativePlacement.supported(cell.block) || HologramAePolicy.handles(cell.block, cell.tileNbt)
+                || cell.block == Blocks.lit_redstone_lamp
+                    && target.getItem() == Item.getItemFromBlock(Blocks.redstone_lamp))
+                block = cell.block;
+            saved.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
+            saved.metadata = HologramCellPolicy.targetPreviewMeta(s, cell, target);
+            if (target.hasTagCompound()) saved.itemNbt = HologramBlueprintNbt.encodeCaptured(target.getTagCompound());
+            HologramBlueprintData.addPalette(result, palette, target);
+        }
+        saved.tileNbt = cell.tileNbt;
+        saved.itemNbt = cell.itemNbt.isEmpty() ? saved.itemNbt : cell.itemNbt;
+        if (!s.virtual && s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) {
+            TileEntity actual = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
+            if (actual != null && (cell.anchor || HologramCellPolicy.targetMatches(
+                s,
+                cell,
+                i,
+                s.player.worldObj.getBlock(cell.x, cell.y, cell.z),
+                s.player.worldObj.getBlockMetadata(cell.x, cell.y, cell.z)))) {
+                NBTTagCompound data = HologramNativeCapture.capture(actual);
+                saved.tileNbt = HologramAeBlueprint.supports(cell.block, data)
+                    ? HologramBlueprintNbt.encodeCanonical(cell.block, data)
+                    : HologramBlueprintNbt.encodeCaptured(data);
+            }
+        }
+        saved.tileNbt = HologramDisplaySnapshot.retainCasing(target, cell.element, saved.tileNbt);
+        saved.structureId = cell.structureId.isEmpty() ? null : cell.structureId;
+        saved.structureIds = new ArrayList<>(cell.memberships());
+        if (s.machine != null && !result.structures.isEmpty()) {
+            saved.structureId = result.structures.get(0).id;
+            saved.structureIds = new ArrayList<>(Collections.singletonList(saved.structureId));
+        }
+        if (cell.structureTargets != null)
+            saved.allowedTargets = HologramBlueprintData.savedTargets(cell.structureTargets);
+        else if (cell.element != null && !cell.anchor)
+            saved.allowedTargets = HologramBlueprintData.savedTargets(HologramCellPolicy.candidates(s, cell));
+        saved.excluded = cell.excluded;
+        saved.prompt = cell.prompt;
+        return saved;
     }
 
     static HologramPresets.Preset editedVirtualPreset(HologramSession s, String name) throws java.io.IOException {
@@ -198,40 +200,96 @@ final class HologramBlueprintProjection {
     }
 
     static void populateVirtual(HologramSession s) {
-        // Import/reload changes the source scope; movement and rotation use transformVirtual and preserve choices.
         s.networkBindings.clear();
         s.networkBindingRequested = false;
         if (!s.virtual || s.virtualPreset == null) return;
         materializeImplicitStructure(s);
-        s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
-        s.pins.clear();
-        s.coordinatePins.clear();
-        s.facingPins.clear();
-        s.manualPositions.clear();
-        s.suppressedAuto.clear();
-        s.autoTargets.clear();
-        s.undoEdits.clear();
-        s.redoEdits.clear();
-        s.virtualEdited.clear();
-        s.virtualGroups.clear();
-        s.allocationsFrozen = false;
-        s.frozenAutoTargets.clear();
-        s.selected = -1;
-        s.selectedIndices.clear();
-        String fallbackSourceClass = HologramBlueprintData.blueprintSourceClass(s.virtualPreset, "");
-        String fallbackSourceWarning = HologramBlueprintData.blueprintSourceWarning(s.virtualPreset, "");
-        Map<String, String> sourceClasses = new HashMap<>(), sourceWarnings = new HashMap<>();
-        for (HologramPresets.Structure source : s.virtualPreset.structures) {
-            sourceClasses.put(source.id, HologramBlueprintData.blueprintSourceClass(s.virtualPreset, source.id));
-            sourceWarnings.put(source.id, HologramBlueprintData.blueprintSourceWarning(s.virtualPreset, source.id));
+        Population population = new Population(s);
+        while (!population.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        HologramResourcePlanner.refreshPlan(s);
+    }
+
+    /** Stages a fresh area's projection without touching the currently published session or running its plan twice. */
+    static final class Population {
+
+        private final HologramSession s;
+        private final Map<String, String> sourceClasses = new HashMap<>(), sourceWarnings = new HashMap<>();
+        private final Map<String, Integer> controllerIds = new HashMap<>();
+        private String fallbackSourceClass, fallbackSourceWarning;
+        private int sourceIndex, cursor, pass;
+        private boolean initialized;
+
+        Population(HologramSession s) {
+            this.s = s;
         }
-        List<HologramPresets.Cell> ordered = new ArrayList<>(s.virtualPreset.cells);
-        ordered.sort((a, b) -> Boolean.compare(a.controller, b.controller));
-        for (HologramPresets.Cell saved : ordered) {
+
+        long completed() {
+            return (long) sourceIndex + cursor + (long) pass * s.virtualPreset.cells.size();
+        }
+
+        long total() {
+            return s.virtualPreset.structures.size() + 2L * s.virtualPreset.cells.size();
+        }
+
+        boolean step(int maxWork, long deadline) {
+            if (!initialized) {
+                s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+                s.pins.clear();
+                s.coordinatePins.clear();
+                s.facingPins.clear();
+                s.manualPositions.clear();
+                s.suppressedAuto.clear();
+                s.autoTargets.clear();
+                s.undoEdits.clear();
+                s.redoEdits.clear();
+                s.virtualEdited.clear();
+                s.virtualGroups.clear();
+                s.allocationsFrozen = false;
+                s.frozenAutoTargets.clear();
+                s.selected = -1;
+                s.selectedIndices.clear();
+                s.structureIndex = new HologramStructureIndex(s.virtualPreset);
+                fallbackSourceClass = HologramBlueprintData.sourceClass(s.virtualPreset, null);
+                fallbackSourceWarning = HologramBlueprintData.sourceWarning(s.virtualPreset, null);
+                initialized = true;
+            }
+            for (int work = 0; work < maxWork; work++) {
+                if (work > 0 && System.nanoTime() >= deadline) return false;
+                if (sourceIndex < s.virtualPreset.structures.size()) {
+                    HologramPresets.Structure source = s.virtualPreset.structures.get(sourceIndex);
+                    s.structureIndex.add(sourceIndex++);
+                    sourceClasses.put(source.id, HologramBlueprintData.sourceClass(s.virtualPreset, source));
+                    sourceWarnings.put(source.id, HologramBlueprintData.sourceWarning(s.virtualPreset, source));
+                    controllerIds.put(source.id, source.controllerId);
+                } else if (pass < 2) {
+                    if (cursor >= s.virtualPreset.cells.size()) {
+                        cursor = 0;
+                        pass++;
+                        continue;
+                    }
+                    HologramPresets.Cell saved = s.virtualPreset.cells.get(cursor++);
+                    if (saved.controller != (pass == 1)) continue;
+                    populate(saved);
+                    if (s.capture.incomplete) return true;
+                } else return true;
+            }
+            return pass >= 2;
+        }
+
+        private boolean controllerMatches(HologramPresets.Cell saved, String warning) {
+            if (!saved.controller) return true;
+            if (!warning.isEmpty()) return false;
+            int controllerId = controllerIds.getOrDefault(saved.structureId, s.virtualPreset.controllerId);
+            ItemStack stack = saved.stack();
+            return stack == null || !(stack.getItem() instanceof ItemMachines)
+                || controllerId < 0
+                || stack.getItemDamage() == controllerId;
+        }
+
+        private void populate(HologramPresets.Cell saved) {
             String sourceId = saved.structureId == null ? "" : saved.structureId;
             String savedWarning = sourceWarnings.getOrDefault(sourceId, fallbackSourceWarning);
-            boolean controllerMatches = HologramBlueprintData
-                .blueprintControllerMatches(s.virtualPreset, saved, savedWarning);
+            boolean controllerMatches = controllerMatches(saved, savedWarning);
             ItemStack target = saved.missing() || !controllerMatches ? null
                 : HologramEssentia.shellMaterial(saved.stack());
             if (target != null && (HologramNativePlacement.supported(saved.block())
@@ -287,13 +345,13 @@ final class HologramBlueprintProjection {
             } catch (java.io.IOException invalidVariant) {
                 s.capture.incomplete = true;
                 s.capture.failure = "INVALID_PREFAB_VARIANT";
-                break;
+                return;
             }
             if (target != null && !(s.virtualPreset.schema >= 2 && HologramBlueprintData.editableAeSample(cell, target)
                 || HologramCellPolicy.placeableSample(s, cell, target))) {
                 s.capture.incomplete = true;
                 s.capture.failure = "INVALID_PREFAB_ITEM";
-                break;
+                return;
             }
             int index = s.capture.cells.size();
             s.capture.cells.add(cell);
@@ -308,7 +366,6 @@ final class HologramBlueprintProjection {
             for (int legal : HologramCellPolicy.legalFacings(s, cell, target))
                 if (saved.facing == legal) s.facingPins.put(HologramValues.position(cell), saved.facing);
         }
-        HologramResourcePlanner.refreshPlan(s);
     }
 
     static void materializeImplicitStructure(HologramSession s) {

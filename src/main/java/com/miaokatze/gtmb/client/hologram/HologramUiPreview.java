@@ -89,6 +89,10 @@ final class HologramUiPreview {
 
     private int[] emptyVoxelPreview;
 
+    private List<Integer> airBoundMembers;
+
+    private int[] airBounds;
+
     private long pendingSelectionSequence = -1;
 
     void drawPreview(int mx, int my) {
@@ -146,18 +150,10 @@ final class HologramUiPreview {
             ui.canvas.button(14, 38, 282, 66, 17, "复位视角", true, mx, my);
             ui.canvas.button(15, 106, 282, 74, 17, HologramClient.worldPreview ? "世界投影 ✓" : "世界投影 ×", true, mx, my);
         }
-        ui.canvas.button(
-            134,
-            184,
-            282,
-            120,
-            17,
-            ui.session.state().data.getBoolean("structureBuilt") ? "校准为当前" : "重置为默认",
-            ui.session.editable() && ui.preview.previewInteractive()
-                && ui.session.state().data.getBoolean("target")
-                && ui.session.state().data.getBoolean("supported"),
-            mx,
-            my);
+        if (!ui.library.libraryDrawer()) {
+            ui.config.drawResetButton(184, 282, 120, mx, my);
+            if (this.selected >= 0) ui.canvas.button(146, 310, 282, 132, 17, "所选格提示词", ui.session.editable(), mx, my);
+        }
         if (this.moveHandles && ui.preview.canMoveSelection()
             && !ui.library.libraryDrawer()
             && ui.preview.previewInteractive()) ui.preview.drawGizmo(mx, my);
@@ -232,18 +228,25 @@ final class HologramUiPreview {
         if (voxel == null) return null;
         String structure = ui.config.selectedStructureId();
         if (!structure.isEmpty()) {
-            int[] bounds = null;
-            for (HologramState.Cell member : ui.session.state().cells) if (member.belongsToStructure(structure)) {
-                if (bounds == null) bounds = new int[] { member.x, member.y, member.z, member.x, member.y, member.z };
-                else {
-                    bounds[0] = Math.min(bounds[0], member.x);
-                    bounds[1] = Math.min(bounds[1], member.y);
-                    bounds[2] = Math.min(bounds[2], member.z);
-                    bounds[3] = Math.max(bounds[3], member.x);
-                    bounds[4] = Math.max(bounds[4], member.y);
-                    bounds[5] = Math.max(bounds[5], member.z);
+            List<Integer> members = ui.session.state().structureMembers.get(structure);
+            if (airBoundMembers != members) {
+                airBoundMembers = members;
+                airBounds = null;
+                if (members != null) for (int index : members) {
+                    HologramState.Cell member = ui.session.state().cells.get(index);
+                    if (airBounds == null)
+                        airBounds = new int[] { member.x, member.y, member.z, member.x, member.y, member.z };
+                    else {
+                        airBounds[0] = Math.min(airBounds[0], member.x);
+                        airBounds[1] = Math.min(airBounds[1], member.y);
+                        airBounds[2] = Math.min(airBounds[2], member.z);
+                        airBounds[3] = Math.max(airBounds[3], member.x);
+                        airBounds[4] = Math.max(airBounds[4], member.y);
+                        airBounds[5] = Math.max(airBounds[5], member.z);
+                    }
                 }
             }
+            int[] bounds = airBounds;
             if (bounds != null && !HologramSelection.inside(
                 voxel[0],
                 voxel[1],
@@ -301,13 +304,13 @@ final class HologramUiPreview {
             ui.session.notice("此光标位置没有可编辑空气；调整视角或选择工作层");
             return true;
         }
-        for (HologramState.Cell cell : ui.session.state().cells)
-            if (cell.x == voxel[0] && cell.y == voxel[1] && cell.z == voxel[2]) {
-                this.selection.click(cell.index, ui.preview.controlSelectionHeld());
-                this.selected = this.selection.first();
-                ui.config.syncTargetSelectors();
-                return true;
-            }
+        HologramState.Cell cell = ui.session.state().regions.at(voxel[0], voxel[1], voxel[2]);
+        if (cell != null) {
+            this.selection.click(cell.index, ui.preview.controlSelectionHeld());
+            this.selected = this.selection.first();
+            ui.config.syncTargetSelectors();
+            return true;
+        }
         NBTTagCompound request = new NBTTagCompound();
         request.setInteger("dx", voxel[0] - ui.session.state().data.getInteger("x"));
         request.setInteger("dy", voxel[1] - ui.session.state().data.getInteger("y"));
@@ -694,7 +697,8 @@ final class HologramUiPreview {
     void movePreviewCamera() {
         long now = System.nanoTime(), previous = this.cameraFrame;
         this.cameraFrame = now;
-        if (previous == 0 || !org.lwjgl.opengl.Display.isActive()
+        if (HologramBackgroundTasks.busy() || previous == 0
+            || !org.lwjgl.opengl.Display.isActive()
             || !ui.preview.previewInteractive()
             || ui.router.textFieldFocused()
             || ui.library.libraryAdminDrawer()
@@ -1299,5 +1303,63 @@ final class HologramUiPreview {
     void initializeLayer(HologramState snapshot) {
         selected = selection.first();
         layer = snapshot.maxY;
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setLong("revision", ui.session.revision());
+        state.setIntArray("selection", selection.indices());
+        state.setIntArray("positions", selection.positions(ui.session.state()));
+        state.setInteger("layer", layer);
+        state.setBoolean("allLayers", allLayers);
+        state.setInteger("view", view);
+        state.setDouble("yaw", yaw);
+        state.setDouble("pitch", pitch);
+        state.setDouble("zoom", zoom);
+        state.setDouble("cameraX", camera.x);
+        state.setDouble("cameraZ", camera.z);
+        state.setInteger("sourceOffset", sourceOffset);
+        state.setInteger("sourceChoice", sourceChoice);
+        state.setBoolean("sourceTargets", sourceTargets);
+        state.setBoolean("inventory", inventory);
+        state.setInteger("inventorySlot", inventorySlot);
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound state) {
+        int[] indices = state.getIntArray("selection");
+        if (state.getLong("revision") != ui.session.revision()) {
+            int[] positions = state.getIntArray("positions");
+            java.util.Map<String, Integer> coordinates = new java.util.HashMap<>();
+            for (HologramState.Cell cell : ui.session.state().cells)
+                coordinates.put(cell.x + "," + cell.y + "," + cell.z, cell.index);
+            java.util.List<Integer> retained = new java.util.ArrayList<>();
+            for (int i = 0; i + 2 < positions.length; i += 3) {
+                Integer index = coordinates.get(positions[i] + "," + positions[i + 1] + "," + positions[i + 2]);
+                if (index != null) retained.add(index);
+            }
+            indices = new int[retained.size()];
+            for (int i = 0; i < indices.length; i++) indices[i] = retained.get(i);
+        }
+        selection.load(indices, -1, ui.session.state().cells.size());
+        selected = selection.first();
+        allLayers = state.getBoolean("allLayers");
+        layer = allLayers ? ui.session.state().maxY
+            : Math.max(ui.session.state().minY, Math.min(ui.session.state().maxY, state.getInteger("layer")));
+        view = state.getInteger("view");
+        yaw = state.getDouble("yaw");
+        pitch = state.getDouble("pitch");
+        zoom = state.getDouble("zoom");
+        camera.x = state.getDouble("cameraX");
+        camera.z = state.getDouble("cameraZ");
+        sourceOffset = Math.max(0, state.getInteger("sourceOffset"));
+        sourceChoice = state.getInteger("sourceChoice");
+        sourceTargets = state.getBoolean("sourceTargets");
+        inventory = state.getBoolean("inventory");
+        inventorySlot = state.getInteger("inventorySlot");
+        // Pointer gestures and queued edits are intentionally never replayed on a new widget tree.
+        dragging = boxSelecting = inventoryDragging = false;
+        gizmo.cancel();
+        ui.config.syncTargetSelectors();
     }
 }

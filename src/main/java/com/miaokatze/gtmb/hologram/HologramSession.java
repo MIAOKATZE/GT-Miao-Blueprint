@@ -107,6 +107,7 @@ final class HologramSession {
     boolean virtual, virtualPlacement, presetBrowseForPlacement, virtualLocked, settingsOnly, cancelled,
         calibratePending, buildAfterCapture;
     HologramPresets.Preset virtualPreset;
+    HologramStructureIndex structureIndex;
     // Private files remain on the client. Only one temporary, owner/session-bound draft is staged here.
     HologramPresets.Preset libraryPrivatePreset;
     String libraryLocalId = "", libraryReplaceLocalId = "";
@@ -121,9 +122,16 @@ final class HologramSession {
     String status = "";
     NBTTagCompound channels = new NBTTagCompound();
     HologramCapture capture;
+    boolean localPlanPending;
+    long localPlanGeneration;
+    String localPlanError = "";
+    HologramDeferredPlanRefresh.Work localPlanTask;
+    final HologramLocalPlanRefresh localEdits = new HologramLocalPlanRefresh();
+    boolean cellDeltaProtocol;
+    long snapshotResyncTick = Long.MIN_VALUE;
     boolean replacementReady, replacementAuthorized;
     HologramCapture indexedCapture;
-    final IdentityHashMap<HologramCapture.Cell, Integer> cellIndices = new IdentityHashMap<>();
+    IdentityHashMap<HologramCapture.Cell, Integer> cellIndices = new IdentityHashMap<>();
     HologramCapabilities.Result capabilities;
     HologramMaterials.Settings materialSettings;
     HologramMaterials.Context materialContext;
@@ -255,6 +263,7 @@ final class HologramSession {
 
     static void cancelCaptureRetry(HologramSession s) {
 
+        if (s.capturePending && s.capture != null) s.capture.cancelPending();
         s.capturePending = false;
         s.captureRetryDue = 0;
         s.retryChannels = null;

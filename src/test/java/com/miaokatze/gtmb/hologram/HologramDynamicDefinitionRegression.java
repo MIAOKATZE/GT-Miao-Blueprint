@@ -52,9 +52,13 @@ final class HologramDynamicDefinitionRegression {
             controller.getStructureDefinition();
             controller.definitionBuilds = 0;
             AtomicInteger callbacks = new AtomicInteger();
+            Thread callbackOwner = Thread.currentThread();
             try (GTMBExtensions.Registration observer = BlueprintSnapshots
                 .register("gtmb_test:dynamic-snapshot", BlueprintSnapshots.Stage.CAPTURE_COMPLETE, snapshot -> {
                     callbacks.incrementAndGet();
+                    SimpleAssert.that(
+                        Thread.currentThread() == callbackOwner,
+                        "existing community capture processors retain their documented server thread");
                     SimpleAssert.that(snapshot.cells.size() > 6000, "processor sees completed declaration only");
                     net.minecraft.nbt.NBTTagCompound report = new net.minecraft.nbt.NBTTagCompound();
                     report.setInteger("cells", snapshot.cells.size());
@@ -117,6 +121,7 @@ final class HologramDynamicDefinitionRegression {
             }
             SimpleAssert
                 .that(!StructureSources.hasSource(DynamicController.class), "closing source removes exact provider");
+            customIterator(controller);
         } catch (Exception failure) {
             throw new AssertionError("dynamic native definition capture", failure);
         } finally {
@@ -131,13 +136,55 @@ final class HologramDynamicDefinitionRegression {
         return trigger;
     }
 
+    private static void customIterator(DynamicController controller) {
+        com.gtnewhorizon.structurelib.structure.IStructureElement<DynamicController> element = StructureUtility
+            .ofBlock(Blocks.dirt, 0);
+        IStructureDefinition<DynamicController> custom = new IStructureDefinition<DynamicController>() {
+
+            @SuppressWarnings("unchecked")
+            public com.gtnewhorizon.structurelib.structure.IStructureElement<DynamicController>[] getStructureFor(
+                String name) {
+                return new com.gtnewhorizon.structurelib.structure.IStructureElement[] { element, element, element };
+            }
+
+            public boolean isContainedInStructure(String name, int a, int b, int c) {
+                return false;
+            }
+
+            @Override
+            public void iterate(String name, net.minecraft.world.World world, ExtendedFacing facing, int x, int y,
+                int z, int a, int b, int c,
+                com.gtnewhorizon.structurelib.structure.IStructureWalker<DynamicController> walker) {
+                // The reviewed native override intentionally exposes a different footprint from its raw array.
+                walker.visit(element, world, x + 17, y + 1, z, 17, 1, 0);
+                walker.visit(element, world, x + 18, y + 1, z, 18, 1, 0);
+            }
+        };
+        SimpleAssert.that(!HologramStructureCursor.supports(custom), "custom iterator must retain its native callback");
+        try (GTMBExtensions.Registration registration = StructureSources.register(
+            "gtmb_test:custom-native-iterator",
+            DynamicController.class,
+            (machine, trigger) -> new StructureSources.Plan(
+                custom,
+                Arrays.asList(new StructureSources.Piece("custom", 0, 0, 0, trigger))))) {
+            HologramCapture capture = complete(controller, signal(1, 1));
+            SimpleAssert.eq(3, capture.cells.size(), "custom override's two cells and controller anchor are retained");
+            SimpleAssert.that(
+                capture.positions.containsKey("17,101,0") && capture.positions.containsKey("18,101,0")
+                    && !capture.positions.containsKey("1,100,0"),
+                "custom native coordinates cannot be replaced by array traversal");
+        }
+    }
+
     private static HologramCapture complete(DynamicController controller, ItemStack trigger) {
         HologramCapture capture = null;
         int batches = 0;
+        long deadline = System.nanoTime() + 5_000_000_000L;
         do {
             capture = HologramCapture.collect(controller, trigger, ExtendedFacing.DEFAULT, capture);
             batches++;
-        } while (capture.pending && batches < 128);
+            if (capture.pending && capture.walkingComplete) Thread.yield();
+        } while (capture.pending && System.nanoTime() < deadline);
         SimpleAssert.that(
             !capture.pending && !capture.incomplete,
             "capture completed: " + capture.failure

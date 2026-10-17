@@ -68,6 +68,32 @@ final class HologramUiAeReview {
         }
     }
 
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        if (aeReview != null) {
+            state.setString("transactionId", aeReview.transactionId);
+            state.setLong("revision", ui.session.revision());
+            state.setInteger("tab", aeReviewTab);
+            state.setInteger("offset", aeReviewOffset);
+            state.setInteger("group", aeReviewGroup);
+            state.setInteger("selected", aeReviewSelected);
+            state.setInteger("detailOffset", aeDetailOffset);
+        }
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound state) {
+        // The review itself is reconstructed from the latest authenticated snapshot, never an old nonce.
+        if (aeReview == null || state.getLong("revision") != ui.session.revision()
+            || !aeReview.transactionId.equals(state.getString("transactionId"))) return;
+        aeReviewTab = Math.max(0, Math.min(2, state.getInteger("tab")));
+        aeReviewGroup = state.getInteger("group");
+        if (aeReviewGroup < -1 || aeReviewGroup >= aeReview.groups.size()) aeReviewGroup = -1;
+        aeReviewOffset = Math.max(0, Math.min(Math.max(0, aeRowCount() - 5), state.getInteger("offset")));
+        aeReviewSelected = state.getInteger("selected");
+        aeDetailOffset = Math.max(0, state.getInteger("detailOffset"));
+    }
+
     List<HologramAeReviewModel.Issue> aeIssueRows() {
         if (this.aeReviewGroup >= 0 && this.aeReviewGroup < this.aeReview.groups.size())
             return this.aeReview.groups.get(this.aeReviewGroup).rows;

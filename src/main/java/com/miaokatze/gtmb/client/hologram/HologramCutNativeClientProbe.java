@@ -220,21 +220,22 @@ public final class HologramCutNativeClientProbe {
             return true;
         });
         shot("cut-mode-initial-empty-cache-native-list");
-        tap("initial-empty-storage-Escape", KeyEvent.VK_ESCAPE);
-        add("initial-empty-storage-Escape-returns-to-selection", mc -> {
+        escapeCut("initial-empty-storage-Escape", 0);
+        add("initial-empty-storage-Escape-exits-cut-mode", mc -> {
             if (mc.currentScreen != null || client().syncingDirectory()) return false;
             require(
-                client().cutMode() && client().selecting()
+                !client().cutMode() && !client().active()
                     && client().entries()
                         .isEmpty(),
-                "closing an empty list returns to the continuous selection");
+                "Escape in the empty list exits CUT and keeps the empty cache");
             return true;
         });
-        tap("initial-selection-Escape-exits", KeyEvent.VK_ESCAPE);
+        beginCutSelection("initial-selection-reenter-after-storage-Escape");
+        escapeCut("initial-selection-Escape-exits", 0);
         add(
             "initial-selection-Escape-leaves-idle-cache-intact",
             mc -> mc.currentScreen == null && !client().active()
-                && client().cutMode()
+                && !client().cutMode()
                 && client().entries()
                     .isEmpty());
         beginCutSelection("first-cut-explicit");
@@ -273,16 +274,17 @@ public final class HologramCutNativeClientProbe {
             require(cutPacketsSent() == cancellationPackets, "cancel button emitted no encoded CutAction");
             require(
                 client().entries()
-                    .isEmpty() && !client().selecting(),
-                "cancel preserved empty server queue");
+                    .isEmpty() && !client().selecting() && client().cutMode(),
+                "the Cancel button preserved the empty server queue and selected CUT mode");
             return true;
         });
+        escapeCut("idle-cut-after-cancel-Escape", 0);
         repeatFirstSelection("name-escape");
         add("capture-name-escape-codec-baseline", mc -> {
             cancellationPackets = cutPacketsSent();
             return true;
         });
-        tap("native-name-escape", KeyEvent.VK_ESCAPE);
+        escapeCut("native-name-escape", 0);
         add("name-escape-emits-zero-cut-packets", mc -> {
             if (mc.currentScreen != null) return false;
             require(cutPacketsSent() == cancellationPackets, "Escape emitted no encoded CutAction");
@@ -352,7 +354,7 @@ public final class HologramCutNativeClientProbe {
             HologramV011Evidence.write("cut-continuous-two-cuts-client.nbt", snapshot(mc));
             return true;
         });
-        tap("continuous-success-Escape-returns-to-world", KeyEvent.VK_ESCAPE);
+        escapeCut("continuous-success-Escape-returns-to-world", 2);
         add("continuous-Escape-preserves-both-cached-entries", mc -> {
             require(
                 mc.currentScreen == null && !client().active()
@@ -362,16 +364,18 @@ public final class HologramCutNativeClientProbe {
                 "Escape stops continuous selection and keeps both cuts");
             return true;
         });
+        beginCutSelection("cached-list-reenter-cut-after-Escape");
         openStorage("cut-mode-cached-shift-right-opens-placement-list");
         waitScreen("cut-mode-cached-real-placement-list", HologramCutStorageScreen.class);
         button("cut-mode-cached-place-first-row", 1);
         moving("cut-mode-cached-placement-actual-preview-ack");
-        tap("cut-mode-cached-placement-Escape", KeyEvent.VK_ESCAPE);
+        escapeCut("cut-mode-cached-placement-Escape", 2);
         add(
             "cut-mode-cached-placement-Escape-keeps-cache",
             mc -> mc.currentScreen == null && !client().active()
                 && client().entries()
                     .size() == 2);
+        beginCutSelection("server-directory-reenter-cut-after-Escape");
         openStorage("shift-right-opens-server-directory");
         waitScreen("directory-with-two-server-entries", HologramCutStorageScreen.class);
         add("capture-world-preview-before-readonly-browser", mc -> {
@@ -408,7 +412,7 @@ public final class HologramCutNativeClientProbe {
         button("native-directory-place-first", 1);
         moving("server-preview-before-escape");
         shot("cut-moving-preview");
-        tap("native-escape-cancels-preview", KeyEvent.VK_ESCAPE);
+        escapeCut("native-escape-exits-cut-preview", 2);
         add("escape-leaves-two-server-entries", mc -> {
             if (client().active() || mc.currentScreen != null) return false;
             require(
@@ -417,6 +421,7 @@ public final class HologramCutNativeClientProbe {
                 "Escape does not consume entry");
             return true;
         });
+        beginCutSelection("directory-reenter-cut-after-preview-Escape");
         openStorage("reopen-directory-after-escape");
         waitScreen("directory-preserved-after-escape", HologramCutStorageScreen.class);
         shot("cut-storage-escape-preserved");
@@ -484,7 +489,7 @@ public final class HologramCutNativeClientProbe {
         button("native-open-undo-confirmation", 2);
         waitScreen("undo-confirmation-required", HologramCutConfirmScreen.class);
         shot("cut-undo-confirmation");
-        tap("escape-cancels-undo-confirmation", KeyEvent.VK_ESCAPE);
+        escapeCut("escape-exits-undo-confirmation", 1);
         add("undo-escape-preserves-entry", mc -> {
             if (mc.currentScreen != null) return false;
             require(
@@ -493,6 +498,7 @@ public final class HologramCutNativeClientProbe {
                 "cancel undo does not consume");
             return true;
         });
+        beginCutSelection("undo-reenter-cut-after-confirmation-Escape");
         openStorage("reopen-directory-to-confirm-undo");
         waitScreen("directory-after-undo-cancel", HologramCutStorageScreen.class);
         button("open-undo-again", 2);
@@ -716,12 +722,17 @@ public final class HologramCutNativeClientProbe {
         tap("recut-R-modify-display-pose", KeyEvent.VK_R);
         poseWait("recut-other-preview-pose-ack", 1, 0, 0, 0);
         shot("cut-recut-different-preview-pose");
-        tap("recut-Esc-cancels-display-only", KeyEvent.VK_ESCAPE);
+        escapeCut("recut-Esc-exits-cut-and-preserves-source", 1);
         add(
             "recut-cancel-retains-source-entry",
             mc -> !client().active() && mc.currentScreen == null
                 && client().entries()
                     .size() == 1);
+        beginCutSelection("recut-reenter-cut-after-Escape");
+        openStorage("recut-reopen-storage-for-undo");
+        waitScreen("recut-storage-for-undo", HologramCutStorageScreen.class);
+        button("recut-restart-preview-for-Alt-undo", 1);
+        moving("recut-reentered-preview-ack");
         hold("recut-Alt-undo-down", KeyEvent.VK_ALT, true);
         clickWorld("recut-native-Alt-right-undo", 1);
         hold("recut-Alt-undo-up", KeyEvent.VK_ALT, false);
@@ -1961,7 +1972,34 @@ public final class HologramCutNativeClientProbe {
         waitScreen(label + "-name", HologramCutNameScreen.class);
     }
 
-    /** Compatibility shortcut for restarting after Escape; entering CUT itself starts selection. */
+    private void escapeCut(String label, int retainedEntries) {
+        add(label + "-capture-packet-baseline", mc -> {
+            cancellationPackets = cutPacketsSent();
+            return true;
+        });
+        tap(label, KeyEvent.VK_ESCAPE);
+        add(label + "-whole-tool-exit-and-zero-packets", mc -> {
+            if (mc.currentScreen != null) return false;
+            require(
+                !client().cutMode() && !client().active()
+                    && !(Boolean) field(client(), "cutSession")
+                    && field(client(), "first") == null
+                    && field(client(), "second") == null
+                    && field(client(), "locked") == null
+                    && field(client(), "preview") == null
+                    && field(client(), "rawPreview") == null
+                    && !client().interceptsUse()
+                    && client().entries()
+                        .size() == retainedEntries
+                    && cutPacketsSent() == cancellationPackets,
+                "Escape leaves CUT inactive, restores ordinary right use, retains cached cuts and sends no CutAction");
+            List<String> guide = new ArrayList<>();
+            require(!client().guide(guide), "Escape removes the CUT HUD");
+            return true;
+        });
+    }
+
+    /** CUT must have been explicitly entered before browsing the saved directory. */
     private void openStorage(String label) {
         hold(label + "-hold-shift", KeyEvent.VK_SHIFT, true);
         clickWorld(label, 1);

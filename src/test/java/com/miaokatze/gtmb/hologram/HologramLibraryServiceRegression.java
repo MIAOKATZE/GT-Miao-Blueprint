@@ -66,9 +66,14 @@ final class HologramLibraryServiceRegression {
             NBTTagCompound request = new NBTTagCompound();
             request.setString("session", (String) get(session, "id"));
             request.setLong("planRevision", 42L);
-            Method send = HologramSnapshots.class.getDeclaredMethod("send", type);
-            send.setAccessible(true);
-            send.invoke(null, session);
+            // The asynchronous publication task consumes this header on its first budgeted step.
+            // Exercise that production boundary without requiring a Forge packet channel in this admission fixture.
+            NBTTagCompound header = HologramSnapshots.basicState((HologramSession) session);
+            SimpleAssert.that(header.getBoolean("open"), "prepared header carries the one-shot UI open intent");
+            SimpleAssert.that(
+                !HologramSnapshots.basicState((HologramSession) session)
+                    .getBoolean("open"),
+                "a second header cannot reopen the same UI intent");
             SimpleAssert.that(!(Boolean) get(session, "open"), "real snapshot consumes one-shot UI open intent");
             SimpleAssert
                 .that((Boolean) get(session, "libraryUiActive"), "snapshot retains independent active UI capability");
@@ -147,7 +152,7 @@ final class HologramLibraryServiceRegression {
             HologramService.handle(owner, close);
             SimpleAssert.that(!HologramService.librarySessionCurrent(owner, request), "closed UI cannot reopen");
             set(session, "open", true);
-            send.invoke(null, session);
+            HologramSnapshots.basicState((HologramSession) session);
             SimpleAssert.that(
                 HologramService.librarySessionCurrent(owner, request),
                 "explicit reopen grants fresh UI capability");
@@ -191,7 +196,7 @@ final class HologramLibraryServiceRegression {
                 HologramService.libraryPrivatePreset(owner, preset.id) == null,
                 "explicit close revokes private stage lookup after the one-shot open intent was consumed");
             set(session, "open", true);
-            send.invoke(null, session);
+            HologramSnapshots.basicState((HologramSession) session);
             String originalAuthor = preset.authorUuid;
             HologramLibraryService.stampAuthor(preset, owner, false);
             SimpleAssert.eq(originalAuthor, preset.authorUuid, "update preserves imported creator UUID");

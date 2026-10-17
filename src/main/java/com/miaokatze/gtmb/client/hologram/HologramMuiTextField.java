@@ -57,6 +57,8 @@ final class HologramMuiTextField {
 
     void show(long frame, int originX, int originY, float scale) {
         this.frame = frame;
+        field
+            .setTextColor(editable && !HologramBackgroundTasks.busy() ? HologramMuiTheme.TEXT : HologramMuiTheme.MUTED);
         int px = x, py = y;
         int w = Math.max(1, width), h = Math.max(1, height);
         if (actualX != px || actualY != py || actualW != w || actualH != h) {
@@ -147,12 +149,12 @@ final class HologramMuiTextField {
 
         @Override
         public Result onMousePressed(int button) {
-            return editable ? super.onMousePressed(button) : Result.STOP;
+            return editable && !HologramBackgroundTasks.busy() ? super.onMousePressed(button) : Result.STOP;
         }
 
         @Override
         public Result onKeyPressed(char character, int key) {
-            return editable ? super.onKeyPressed(character, key) : Result.STOP;
+            return editable && !HologramBackgroundTasks.busy() ? super.onKeyPressed(character, key) : Result.STOP;
         }
 
         void cursorEnd() {

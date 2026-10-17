@@ -64,7 +64,7 @@ final class HologramCutModeScreen extends HologramMuiScreen {
     protected boolean muiKey(char character, int key) {
         if (key != Keyboard.KEY_ESCAPE) return false;
         choice.cancel();
-        mc.displayGuiScreen(null);
+        HologramCutClient.INSTANCE.exitCutMode();
         return true;
     }
 

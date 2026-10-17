@@ -201,7 +201,7 @@ public final class HologramProcessingFlowRegression {
                 && !flow.explicitChoice(),
             "a recommended self-use value is not an explicit approval");
         check(
-            flow.guidanceAccent(232) == 0x80efaa && flow.guidanceAccent(233) == 0x80efaa
+            flow.guidanceAccent(232) == 0x68dded && flow.guidanceAccent(233) == 0x68dded
                 && flow.guidanceAccent(231) == 0,
             "both tendency choices guide an unconfirmed stage; Next does not claim readiness");
         flow.tendency(false);
@@ -213,7 +213,7 @@ public final class HologramProcessingFlowRegression {
         flow.next();
         flow.clearChoice();
         check(
-            flow.guidanceAccent(231) == 0 && flow.guidanceAccent(232) == 0x80efaa,
+            flow.guidanceAccent(231) == 0 && flow.guidanceAccent(232) == 0x68dded,
             "a rejected or invalidated local stage requests a fresh decision");
         flow.choose();
         check(

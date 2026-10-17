@@ -48,12 +48,12 @@ final class HologramUiMemory {
             this.blueprints = blueprints;
             this.libraryDrawer = libraryDrawer;
             this.revision = revision;
-            this.indices = indices;
+            this.indices = indices.clone();
             this.offset = offset;
             this.name = name;
             this.draftName = new HologramDraftNameMemory(source, name);
             this.reviewNonce = reviewNonce;
-            this.positions = positions;
+            this.positions = positions.clone();
         }
     }
 

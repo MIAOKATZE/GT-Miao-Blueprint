@@ -203,7 +203,7 @@ public final class HologramNetworkInteractionClientSmoke {
                     require(
                         state.data.getInteger("job") == 3,
                         "actual_client_confirm_started_and_completed_service_construction");
-                    write("network-client-built-state.nbt", state.data);
+                    write("network-client-built-state.nbt", state.fullData());
                     Files.write(
                         output.resolve("network-client-built.txt"),
                         "actual GUI Netty confirm build completed\n".getBytes(StandardCharsets.UTF_8));
@@ -237,7 +237,8 @@ public final class HologramNetworkInteractionClientSmoke {
             receipt.setString("failure", problem.toString());
             if (output != null) {
                 write("network-client-failure.nbt", receipt);
-                if (HologramClient.state != null) write("network-client-failure-state.nbt", HologramClient.state.data);
+                if (HologramClient.state != null)
+                    write("network-client-failure-state.nbt", HologramClient.state.fullData());
                 screenshot(mc, "network-native-failure-stage-" + stage + ".png");
             }
             throw new IllegalStateException(PREFIX + "FAIL stage=" + stage, problem);

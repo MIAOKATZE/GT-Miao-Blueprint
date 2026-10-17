@@ -69,6 +69,13 @@ final class HologramUiBuildReview {
             this.lastConfirmationBounds[2],
             this.lastConfirmationBounds[3],
             0xff172f36);
+        if (ui.session.state().data.getBoolean("localPlanPending")) {
+            ui.canvas.text("材料与改动 · 等待规划更新", 50, 68, 315, HologramUiAccent.SUGGESTION);
+            ui.canvas.drawLocalPlanProgress(50, 96, 309, mx, my);
+            ui.canvas.text("当前材料统计尚未完成；可返回预览继续编辑。", 50, 140, 315, HologramMuiTheme.TEXT);
+            ui.canvas.button(54, 50, 232, 315, 17, "返回", true, mx, my);
+            return;
+        }
         boolean placement = ui.review.placementReviewActive();
         NBTTagList cacheRows = HologramPlacementConfirmation.cacheResources(ui.session.state().data);
         this.lastCacheReviewSummary = HologramPlacementConfirmation.cacheSummary(ui.session.state().data);
@@ -379,6 +386,7 @@ final class HologramUiBuildReview {
     }
 
     boolean activateControl(int id) {
+        if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
             case 162:
                 if (ui.session.editable() && ui.session.state().data.getBoolean("materialOrderingAvailable")
@@ -635,5 +643,27 @@ final class HologramUiBuildReview {
 
     void restoreInitialUi(UiMemory memory) {
         seenPlacementReviewNonce = memory.reviewNonce;
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setLong("revision", ui.session.revision());
+        state.setLong("nonce", seenPlacementReviewNonce);
+        state.setInteger("materialOffset", materialOffset);
+        state.setBoolean("resourceReview", resourceReview);
+        state.setBoolean("confirmation", confirmation);
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound state) {
+        materialOffset = Math.max(0, state.getInteger("materialOffset"));
+        // A fresh server review or completed job must win over the closed presentation.
+        if (state.getLong("revision") != ui.session.revision() || state.getLong("nonce") != seenPlacementReviewNonce)
+            return;
+        int job = ui.session.state().data.getInteger("job");
+        if (job == 0) {
+            resourceReview = state.getBoolean("resourceReview");
+            confirmation |= state.getBoolean("confirmation");
+        }
     }
 }

@@ -9,6 +9,7 @@ public final class HologramCutRequestRegression {
     private HologramCutRequestRegression() {}
 
     public static void run() {
+        exitActivityOwnership();
         HologramCutRequests requests = new HologramCutRequests();
         SimpleAssert.that(requests.observeHeld(true), "equipping requests one directory sync");
         requests.begin("initial", "list", "", 0);
@@ -103,5 +104,47 @@ public final class HologramCutRequestRegression {
         notice.directoryRecovered();
         SimpleAssert
             .eq("write completed after late ACK", notice.message(), "late write outcome supersedes sync errors");
+    }
+
+    private static void exitActivityOwnership() {
+        for (String action : new String[] { "cut", "paste", "undo" }) {
+            HologramCutRequests requests = new HologramCutRequests();
+            requests.observeHeld(true);
+            requests.begin("directory", "list", "", 0);
+            requests.begin("write", action, "entry", 0);
+            requests.begin("old-preview", "preview", "entry", 0);
+            requests.exitActivity();
+            SimpleAssert.that(requests.writing(), "Escape retains the authoritative " + action + " outcome");
+            SimpleAssert.that(requests.active("list"), "Escape retains a pending directory read");
+            SimpleAssert.that(!requests.observeHeld(true), "Escape does not trigger another equip refresh");
+            SimpleAssert.that(!requests.active("preview"), "Escape retires the local preview request");
+            requests.begin("new-preview", "preview", "entry", 1);
+            SimpleAssert.that(requests.acknowledge("old-preview") == null, "old preview cannot revive after reentry");
+            HologramCutRequests.Request write = requests.acknowledge("write");
+            SimpleAssert.that(
+                write != null && !requests.currentActivity(write),
+                "late " + action + " ACK updates its authoritative outcome without changing a new local activity");
+            SimpleAssert.that(!requests.writing(), "late write ACK releases ownership without replay");
+            SimpleAssert.that(
+                requests.currentActivity(requests.acknowledge("new-preview")),
+                "a fresh preview still belongs to the new activity");
+            SimpleAssert.that(!requests.busy(), "retired preview cannot keep controls busy");
+
+            requests.begin("uncertain", action, "entry", 0);
+            requests.exitActivity();
+            List<HologramCutRequests.Request> expired = requests.expire(HologramCutRequests.WRITE_TIMEOUT_NS);
+            SimpleAssert.eq(
+                1L,
+                expired.stream()
+                    .filter(HologramCutRequests.Request::writesWorld)
+                    .count(),
+                "Escape preserves exactly one write timeout for authoritative reconciliation");
+            requests.begin("verify", "list", "uncertain", HologramCutRequests.WRITE_TIMEOUT_NS);
+            HologramCutRequests.Request reconciled = requests.reconcile("uncertain");
+            SimpleAssert.that(
+                reconciled != null && !requests.currentActivity(reconciled),
+                "late reconciliation cannot cancel or restart a newer local stage");
+            SimpleAssert.that(!requests.writing(), "reconciliation releases the original write without resubmission");
+        }
     }
 }

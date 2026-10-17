@@ -539,7 +539,12 @@ final class HologramServerLibrary {
                 rejectDropPayload(HologramBlueprintNbt.decode(cell.itemNbt));
             }
         }
-        HologramAePolicy.Draft draft = HologramAePolicy.sanitize(copy);
+        // Portable library data has no live-world context, including while canonicalizing on the I/O worker.
+        HologramAePolicy.Draft draft = HologramAePolicy.sanitizeOwned(
+            copy,
+            Collections.emptyMap(),
+            Collections.emptyMap(),
+            HologramAePolicy.PreparationProgress.NONE);
         if (draft.blocking) throw new IOException("Blueprint contains unresolved AE payloads; repair before upload");
         HologramPresets.validate(draft.preset);
         return draft.preset;

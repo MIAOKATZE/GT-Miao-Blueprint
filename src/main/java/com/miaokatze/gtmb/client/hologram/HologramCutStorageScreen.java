@@ -251,7 +251,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
     @Override
     protected boolean muiKey(char character, int key) {
         if (key == Keyboard.KEY_ESCAPE) {
-            mc.displayGuiScreen(null);
+            client().exitCutMode();
             return true;
         }
         if (HologramCutClient.alt() && (key == Keyboard.KEY_A || key == Keyboard.KEY_D)) {

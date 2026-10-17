@@ -1,0 +1,276 @@
+package com.miaokatze.gtmb.hologram;
+
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+
+/** Freezes the processing input a row at a time. Projection/native callbacks execute only on the owner thread. */
+final class HologramSnapshotMetadataSource {
+
+    static boolean detached() {
+        return HologramSnapshotDataContext.active();
+    }
+
+    static void enterDetached() {
+        enterDetached(new HologramSnapshotDataContext());
+    }
+
+    static void enterDetached(HologramSnapshotDataContext context) {
+        HologramSnapshotDataContext.enter(context);
+    }
+
+    static void exitDetached() {
+        HologramSnapshotDataContext.exit();
+    }
+
+    private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
+    private final HologramSession s;
+    private final HologramSnapshotDataContext dataContext;
+    private final HologramPresets.Preset original;
+    private final boolean project;
+    private final boolean draftOnly;
+    final HologramPresets.Preset result = new HologramPresets.Preset();
+    HologramBlueprintProcessing.Policy policy;
+    private final java.util.Set<String> palette = new HashSet<>();
+    private int stage, cursor;
+    private Iterator<? extends Map.Entry<String, String>> map;
+    private Iterator<HologramArea.Structure> areaStructures;
+
+    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext) {
+        this.s = s;
+        this.dataContext = dataContext;
+        project = s.processingSource == null;
+        draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
+        original = project ? s.virtualPreset : s.processingSource;
+    }
+
+    long done() {
+        return stage == 11 ? 1 : cursor;
+    }
+
+    String phase() {
+        return "metadata.source." + stage;
+    }
+
+    long total() {
+        if (stage == 1) return original == null || project && s.machine != null ? 0 : original.structures.size();
+        if (stage == 2) return original == null ? 0 : original.aeIssues.size();
+        if (stage == 3) return original == null ? s.blueprintHintAreas.size() : original.hintAreas.size();
+        if (stage == 4) {
+            java.util.List<String> keys = original == null ? s.retainedNbtKeys : original.retainedNbtKeys;
+            return keys == null ? 0 : keys.size();
+        }
+        if (stage == 5) return original == null ? 0 : original.modVersions.size();
+        if (stage == 6) return project ? s.capture == null ? 0 : s.capture.cells.size() : original.cells.size();
+        if (stage == 7) return project ? 0 : original.palette.size();
+        if (stage == 8) {
+            HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+            return !project || area == null ? 0 : area.structures.size();
+        }
+        if (stage == 9) return s.processingPolicy == null ? 0 : s.processingPolicy.cellNbtOverrides.size();
+        if (stage == 10) return s.processingPolicy == null ? 0 : s.processingPolicy.coordinateOverrides.size();
+        return 1;
+    }
+
+    boolean step(int maxWork, long deadline) throws IOException {
+        for (int work = 0; work < maxWork && stage < 11; work++) {
+            if (work > 0 && System.nanoTime() >= deadline) return false;
+            if (stage == 0) initialize();
+            else if (stage == 1) {
+                if (original != null && !(project && s.machine != null) && cursor < original.structures.size())
+                    result.structures.add(HologramBlueprintData.copyStructure(original.structures.get(cursor++)));
+                else next();
+            } else if (stage == 2) {
+                if (original != null && cursor < original.aeIssues.size()) result.aeIssues
+                    .add(GSON.fromJson(GSON.toJson(original.aeIssues.get(cursor++)), HologramAePolicy.Issue.class));
+                else next();
+            } else if (stage == 3) {
+                java.util.List<HologramPresets.HintArea> hints = original == null ? s.blueprintHintAreas
+                    : original.hintAreas;
+                if (cursor < hints.size()) result.hintAreas
+                    .add(GSON.fromJson(GSON.toJson(hints.get(cursor++)), HologramPresets.HintArea.class));
+                else next();
+            } else if (stage == 4) {
+                java.util.List<String> keys = original == null ? s.retainedNbtKeys : original.retainedNbtKeys;
+                if (keys != null && cursor < keys.size()) result.retainedNbtKeys.add(keys.get(cursor++));
+                else next();
+            } else if (stage == 5) {
+                if (map == null && original != null) map = original.modVersions.entrySet()
+                    .iterator();
+                if (map != null && map.hasNext()) {
+                    Map.Entry<String, String> entry = map.next();
+                    result.modVersions.put(entry.getKey(), entry.getValue());
+                    cursor++;
+                } else {
+                    map = null;
+                    next();
+                }
+            } else if (stage == 6) {
+                int size = project ? s.capture.cells.size() : original.cells.size();
+                if (cursor < size) {
+                    HologramPresets.Cell cell = project
+                        ? HologramBlueprintProjection.projectedCell(s, cursor++, result, palette)
+                        : copyCell(original.cells.get(cursor++));
+                    if (draftOnly) {
+                        HologramCapture.Cell authoring = project ? s.capture.cells.get(cursor - 1)
+                            : s.capture.positions.get((s.x + cell.x) + "," + (s.y + cell.y) + "," + (s.z + cell.z));
+                        if (authoring == null && cursor <= s.capture.cells.size()) {
+                            HologramCapture.Cell candidate = s.capture.cells.get(cursor - 1);
+                            if (candidate.x == s.x + cell.x && candidate.y == s.y + cell.y
+                                && candidate.z == s.z + cell.z) authoring = candidate;
+                        }
+                        if (authoring != null) cell.facing = HologramBlockIdentity.front(
+                            s.facingPins.getOrDefault(HologramValues.position(authoring), authoring.actualFacing));
+                    }
+                    freezeBlock(cell, dataContext);
+                    result.cells.add(cell);
+                } else next();
+            } else if (stage == 7) {
+                if (!project && cursor < original.palette.size())
+                    result.palette.add(copyCell(original.palette.get(cursor++)));
+                else next();
+            } else if (stage == 8) {
+                HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+                if (areaStructures == null && project && area != null) areaStructures = area.structures.values()
+                    .iterator();
+                if (areaStructures != null && areaStructures.hasNext()) {
+                    String mod = HologramSessionPolicy.sourceMod(areaStructures.next().machine.getClass());
+                    cursor++;
+                    for (cpw.mods.fml.common.ModContainer installed : cpw.mods.fml.common.Loader.instance()
+                        .getModList())
+                        if (mod.equals(installed.getModId())) result.modVersions.put(mod, installed.getVersion());
+                } else {
+                    initializePolicy();
+                    next();
+                }
+            } else if (stage == 9) {
+                if (s.processingPolicy != null && cursor < s.processingPolicy.cellNbtOverrides.size())
+                    policy.cellNbtOverrides.add(
+                        GSON.fromJson(
+                            GSON.toJson(s.processingPolicy.cellNbtOverrides.get(cursor++)),
+                            HologramBlueprintProcessing.CellNbtOverride.class));
+                else next();
+            } else {
+                if (map == null && s.processingPolicy != null) map = s.processingPolicy.coordinateOverrides.entrySet()
+                    .iterator();
+                if (map != null && map.hasNext()) {
+                    Map.Entry<String, String> entry = map.next();
+                    policy.coordinateOverrides.put(entry.getKey(), entry.getValue());
+                    cursor++;
+                } else next();
+            }
+        }
+        return stage == 11;
+    }
+
+    private void next() {
+        stage++;
+        cursor = 0;
+    }
+
+    private void initialize() throws IOException {
+        if (s.capture == null || s.capture.incomplete || s.capturePending) throw new IOException("请先完整载入结构或区域，再进行蓝图处理");
+        if (original != null) {
+            dataContext.freeze(original.processingNbt);
+            dataContext.freeze(original.quantumGroupingNbt);
+            copyScalars(original, result);
+            if (original.nativeBlueprint != null) result.nativeBlueprint = GSON
+                .fromJson(GSON.toJson(original.nativeBlueprint), HologramBlueprintVersions.Metadata.class);
+        }
+        java.util.List<String> keys = original == null ? s.retainedNbtKeys : original.retainedNbtKeys;
+        result.retainedNbtKeys = keys == null ? null : new ArrayList<>();
+        if (project) {
+            result.schema = 2;
+            result.name = s.virtualPreset == null || s.virtualPreset.name == null
+                || s.virtualPreset.name.trim()
+                    .isEmpty() ? "\u672a\u547d\u540d\u84dd\u56fe" : s.virtualPreset.name.trim();
+            if (s.virtualPreset == null) {
+                result.id = s.blueprintSavedId.isEmpty() ? null : s.blueprintSavedId;
+                result.prompt = s.blueprintPrompt;
+            }
+            if (s.machine != null) {
+                HologramPresets.Structure declared = new HologramPresets.Structure();
+                declared.id = s.x + "," + s.y + "," + s.z;
+                declared.name = s.machine.getLocalName();
+                declared.controllerId = ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) s.target)
+                    .getMetaTileID();
+                declared.sourceClass = s.machine.getClass()
+                    .getName();
+                declared.sourceMod = HologramSessionPolicy.sourceMod(s.machine.getClass());
+                HologramBlueprintData.storeStructureConfiguration(s, declared);
+                result.structures.add(declared);
+                result.sourceClass = declared.sourceClass;
+                result.sourceMod = declared.sourceMod;
+                result.controllerId = declared.controllerId;
+                result.controllerType = HologramSessionPolicy.controllerType(s);
+                result.controllerFacing = s.machine.getExtendedFacing()
+                    .ordinal();
+            }
+        }
+        next();
+    }
+
+    private void initializePolicy() {
+        if (s.processingPolicy == null) return;
+        policy = new HologramBlueprintProcessing.Policy();
+        copyScalars(s.processingPolicy, policy);
+        policy.confirmedStages = new ArrayList<>(s.processingPolicy.confirmedStages);
+        policy.ignoredNbtKeys = new ArrayList<>(s.processingPolicy.ignoredNbtKeys);
+        policy.ignoredNbtPaths = new ArrayList<>(s.processingPolicy.ignoredNbtPaths);
+    }
+
+    static HologramPresets.Cell copyCell(HologramPresets.Cell source) {
+        HologramPresets.Cell result = new HologramPresets.Cell();
+        copyScalars(source, result);
+        if (source.structureIds != null) result.structureIds = new ArrayList<>(source.structureIds);
+        if (source.allowedTargets != null) {
+            result.allowedTargets = new ArrayList<>();
+            for (HologramPresets.Target target : source.allowedTargets)
+                result.allowedTargets.add(GSON.fromJson(GSON.toJson(target), HologramPresets.Target.class));
+        }
+        return result;
+    }
+
+    static void freezeBlock(HologramPresets.Cell cell) throws IOException {
+        freezeBlock(cell, new HologramSnapshotDataContext());
+    }
+
+    static void freezeBlock(HologramPresets.Cell cell, HologramSnapshotDataContext dataContext) throws IOException {
+        net.minecraft.block.Block block = cell.block();
+        net.minecraft.nbt.NBTTagCompound payload = dataContext.freeze(cell.tileNbt);
+        dataContext.freeze(cell.itemNbt);
+        HologramCoordinatePolicies.freezeSensorSlots(cell, payload);
+        cell.metadataIdentityBoundary = HologramAeBlueprint.supports(block, payload)
+            || HologramNetworkBindings.node(block)
+            || payload != null && (payload.hasKey(HologramNetworkBindings.GROUP)
+                || payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
+            || HologramNetworkSchemas.removeExternalReferences(
+                block,
+                cell.damage,
+                payload == null ? null : (net.minecraft.nbt.NBTTagCompound) payload.copy());
+        cell.frozenBlock = block;
+        cell.frozenBlockResolved = true;
+    }
+
+    private static void copyScalars(Object source, Object target) {
+        try {
+            for (Field field : source.getClass()
+                .getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers()) || Modifier.isTransient(field.getModifiers())
+                    || Collection.class.isAssignableFrom(field.getType())
+                    || Map.class.isAssignableFrom(field.getType())
+                    || !field.getType()
+                        .isPrimitive() && field.getType() != String.class && field.getType() != Integer.class)
+                    continue;
+                field.set(target, field.get(source));
+            }
+        } catch (IllegalAccessException changedDto) {
+            throw new IllegalStateException(changedDto);
+        }
+    }
+}

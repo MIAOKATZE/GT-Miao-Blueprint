@@ -9,18 +9,20 @@ import java.util.Properties;
 
 import net.minecraft.nbt.NBTTagCompound;
 
-/** Only the workspace tab persists; placement authority and blueprint identity remain server state. */
+/** Client presentation preferences; placement authority and blueprint identity remain server state. */
 final class HologramUiTabMemory {
 
     private final File file;
     private Boolean blueprints;
+    private final Properties values = new Properties();
+    private boolean saveGuidanceSuppressed;
 
     HologramUiTabMemory(File file) {
         this.file = file;
         if (!file.isFile()) return;
-        Properties values = new Properties();
         try (InputStream input = Files.newInputStream(file.toPath())) {
             values.load(input);
+            saveGuidanceSuppressed = Boolean.parseBoolean(values.getProperty("saveGuidanceSuppressed", "false"));
             String tab = values.getProperty("tab");
             if ("blueprints".equals(tab)) blueprints = true;
             else if ("structure".equals(tab)) blueprints = false;
@@ -53,14 +55,27 @@ final class HologramUiTabMemory {
     void remember(boolean selected) {
         if (blueprints != null && blueprints == selected) return;
         blueprints = selected;
-        Properties values = new Properties();
         values.setProperty("tab", selected ? "blueprints" : "structure");
+        persist();
+    }
+
+    boolean saveGuidanceSuppressed() {
+        return saveGuidanceSuppressed;
+    }
+
+    void suppressSaveGuidance() {
+        saveGuidanceSuppressed = true;
+        values.setProperty("saveGuidanceSuppressed", "true");
+        persist();
+    }
+
+    private void persist() {
         try {
             Files.createDirectories(
                 file.toPath()
                     .getParent());
             try (OutputStream output = Files.newOutputStream(file.toPath())) {
-                values.store(output, "GT Miao Blueprint workspace tab");
+                values.store(output, "GT Miao Blueprint client UI preferences");
             }
         } catch (IOException ignored) {
             // Retain the preference for this client run even if persistence is unavailable.

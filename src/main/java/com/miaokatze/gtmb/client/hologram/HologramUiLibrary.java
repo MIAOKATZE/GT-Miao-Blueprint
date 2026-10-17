@@ -17,9 +17,44 @@ import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
 final class HologramUiLibrary {
 
     private final HologramUiModules ui;
+    private static final HologramSaveGuidance SAVE_GUIDANCE = new HologramSaveGuidance();
+    private HologramSaveGuidanceDialog saveGuidanceDialog;
 
     HologramUiLibrary(HologramUiModules ui) {
         this.ui = ui;
+    }
+
+    /** Called only after the client/server save transaction has actually committed. */
+    static void committedSave(String session) {
+        SAVE_GUIDANCE.committed(session);
+    }
+
+    int savedStructureAccent(int id) {
+        return SAVE_GUIDANCE.accent(ui.session.state().session, id);
+    }
+
+    boolean saveGuidanceOpen() {
+        return saveGuidanceDialog != null && saveGuidanceDialog.isOpen();
+    }
+
+    boolean consumeSaveGuidanceKey(int key) {
+        return saveGuidanceDialog != null && saveGuidanceDialog.consumeKey(key);
+    }
+
+    void maybeShowSaveGuidance() {
+        if (ui.host.minecraft().currentScreen != ui.host.parent() || HologramBackgroundTasks.busy()
+            || !ui.preview.previewInteractive()
+            || libraryAdminDrawer
+            || ui.bindings.networkDrawer()
+            || saveGuidanceOpen()) return;
+        HologramUiTabMemory preferences = HologramUiMemory.tabMemory();
+        if (preferences == null
+            || !SAVE_GUIDANCE.takeNotice(ui.session.state().session, preferences.saveGuidanceSuppressed())) return;
+        saveGuidanceDialog = new HologramSaveGuidanceDialog(
+            ui.host.parent()
+                .panel(),
+            preferences);
+        saveGuidanceDialog.open();
     }
 
     private HologramMuiTextField presetNameField;
@@ -251,7 +286,13 @@ final class HologramUiLibrary {
             boolean active = row.getString("id")
                 .equals(
                     this.overwriteMode ? this.overwriteTarget : ui.session.state().data.getString("selectedPresetId"));
-            Control entry = new Control(14000 + i, x + 5, y, w - 10, 28, ui.session.editable());
+            Control entry = new Control(
+                14000 + i,
+                x + 5,
+                y,
+                w - 10,
+                28,
+                ui.session.editable() && !HologramBackgroundTasks.busy());
             ui.canvas.controls()
                 .add(entry);
             entry.label = (active ? "\u25b6 " : "") + row.getString(
@@ -362,7 +403,7 @@ final class HologramUiLibrary {
         NBTTagList rows = library.rows(this.publicLibrary);
         NBTTagCompound selectedRow = library.selectedRow(this.publicLibrary);
         boolean chosen = !selectedRow.getString("id")
-            .isEmpty(), idle = ui.session.editable() && !library.busy();
+            .isEmpty(), idle = ui.session.editable() && !library.busy() && !HologramBackgroundTasks.busy();
         drawRect(x, 57, x + w, 314, 0xef172f36);
         ui.canvas.text("蓝图库 · " + rows.tagCount() + " 项", x + 5, 62, w - 70, 0xf5e4b9);
         ui.canvas.button(201, x + w - 62, 60, 57, 15, this.publicLibrary ? "服务器 ▾" : "客户端 ▾", true, mx, my);
@@ -500,6 +541,7 @@ final class HologramUiLibrary {
     }
 
     void drawBlueprintWorkbench(int mx, int my) {
+        ui.canvas.drawLocalPlanProgress(41, 260, 395, mx, my);
         if (!HologramGuidance.authorWorkspace(ui.session.state().data)) {
             drawRect(35, 239, 442, 259, 0xf0172f36);
             ui.canvas.text(
@@ -509,6 +551,9 @@ final class HologramUiLibrary {
                 395,
                 0xb9d5d4);
             ui.canvas.button(223, 41, 282, 120, 17, "旋转查看 ↻", true, mx, my);
+            if (ui.preview.selected() >= 0)
+                ui.canvas.button(146, 167, 282, 129, 17, "所选格提示词", ui.session.editable(), mx, my);
+            ui.config.drawResetButton(302, 282, 134, mx, my);
             return;
         }
         drawRect(35, 219, 442, 259, 0xf0172f36);
@@ -553,8 +598,9 @@ final class HologramUiLibrary {
         ui.canvas.button(223, 41, 282, 120, 17, "旋转查看 ↻", true, mx, my);
         if (ui.preview.selected() >= 0)
             ui.canvas.button(146, 167, 282, 129, 17, "所选格提示词", ui.session.editable(), mx, my);
-        if (ui.memory.savedEditHint() && !ui.memory.structureVisited())
-            ui.canvas.text("可修改 NBT / 提示词；结构调整请进入左上页签", 41, 301, 395, 0x68dded);
+        ui.config.drawResetButton(302, 282, 134, mx, my);
+        if (SAVE_GUIDANCE.pending(ui.session.state().session))
+            ui.canvas.text("蓝图已保存 · 点击左上青色“结构调整”继续设置结构", 41, 301, 395, HologramUiAccent.SUGGESTION);
     }
 
     void drawBlueprintSwitchReview(int mx, int my) {
@@ -622,6 +668,7 @@ final class HologramUiLibrary {
 
     boolean activateClientLibrary(int id) {
         if (!HologramLibraryClient.dedicated()) return false;
+        if (ui.canvas.rejectLocalPlanAction(id)) return true;
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
         if (id == 210 || id == 211) {
             if (id == 211) this.libraryAdminDrawer = false;
@@ -815,6 +862,7 @@ final class HologramUiLibrary {
 
     boolean confirmOverwrite(int id) {
         if (id == 224 && this.overwriteReview) {
+            if (ui.canvas.rejectLocalPlanAction(id)) return true;
             NBTTagCompound request = ui.library.blueprintSaveOptions();
             request.setString("presetId", this.overwriteTarget);
             request.setBoolean("confirmOverwrite", true);
@@ -902,6 +950,7 @@ final class HologramUiLibrary {
     }
 
     boolean activateControl(int id) {
+        if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
             case 141:
                 if (ui.session.editable() && ui.library.selectedPresetExists()) {
@@ -914,6 +963,7 @@ final class HologramUiLibrary {
                 this.blueprintTab = false;
                 this.libraryDrawer = false;
                 ui.memory.structureVisited(true);
+                SAVE_GUIDANCE.visitedStructure(ui.session.state().session);
                 ui.memory.rememberGuidance();
                 this.presetNameField.setFocused(false);
                 ui.memory.rememberUi();
@@ -1291,6 +1341,76 @@ final class HologramUiLibrary {
 
     NBTTagCompound sourceSwitchProposal() {
         return this.sourceSwitchProposal;
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("blueprintTab", blueprintTab);
+        state.setBoolean("libraryDrawer", libraryDrawer);
+        state.setBoolean("publicLibrary", publicLibrary);
+        state.setInteger("libraryOffset", libraryOffset);
+        state.setBoolean("overwriteMode", overwriteMode);
+        state.setBoolean("overwriteReview", overwriteReview);
+        state.setString("overwriteTarget", overwriteTarget);
+        state.setString("overwriteName", overwriteName);
+        state.setInteger("deferredLibraryAction", deferredLibraryAction);
+        state.setBoolean("discardReview", discardReview);
+        state.setBoolean("discardConfirmed", discardConfirmed);
+        state.setBoolean("keepLibraryOffset", keepLibraryOffset);
+        state.setString("name", presetNameField == null ? "" : presetNameField.getText());
+        state.setString("libraryResult", libraryResult);
+        state.setString("deletePresetId", deletePresetId);
+        state.setString("deletePresetName", deletePresetName);
+        state.setBoolean("libraryAdminDrawer", libraryAdminDrawer);
+        state.setLong("libraryConfigRevision", libraryConfigRevision);
+        if (libraryUploadField != null) state.setString("upload", libraryUploadField.getText());
+        if (libraryDownloadField != null) state.setString("download", libraryDownloadField.getText());
+        if (libraryQuotaField != null) state.setString("quota", libraryQuotaField.getText());
+        if (sourceSwitchProposal != null) state.setTag("sourceSwitchProposal", sourceSwitchProposal.copy());
+        return state;
+    }
+
+    void restoreBackgroundUiState(NBTTagCompound state) {
+        blueprintTab = state.getBoolean("blueprintTab");
+        libraryDrawer = state.getBoolean("libraryDrawer");
+        publicLibrary = state.getBoolean("publicLibrary");
+        libraryOffset = Math.max(0, state.getInteger("libraryOffset"));
+        overwriteMode = state.getBoolean("overwriteMode");
+        overwriteReview = state.getBoolean("overwriteReview");
+        overwriteTarget = state.getString("overwriteTarget");
+        overwriteName = state.getString("overwriteName");
+        deferredLibraryAction = state.getInteger("deferredLibraryAction");
+        discardReview = state.getBoolean("discardReview");
+        discardConfirmed = state.getBoolean("discardConfirmed");
+        keepLibraryOffset = state.getBoolean("keepLibraryOffset");
+        if (presetNameField != null) presetNameField.setText(state.getString("name"));
+        libraryResult = state.getString("libraryResult");
+        deletePresetId = state.getString("deletePresetId");
+        deletePresetName = state.getString("deletePresetName");
+        libraryConfigRevision = state.getLong("libraryConfigRevision");
+        libraryAdminDrawer = state.getBoolean("libraryAdminDrawer");
+        if (libraryAdminDrawer) {
+            libraryUploadField = libraryAdminField(140, state.getString("upload"));
+            libraryDownloadField = libraryAdminField(175, state.getString("download"));
+            libraryQuotaField = libraryAdminField(210, state.getString("quota"));
+        }
+        NBTTagCompound proposal = state.getCompoundTag("sourceSwitchProposal");
+        NBTTagCompound current = ui.session.state().data.getCompoundTag("discardTargetAction");
+        sourceSwitchProposal = null;
+        boolean exactProposal = !proposal.hasNoTags()
+            && ui.session.state().data.getBoolean("discardConfirmationRequired")
+            && ui.session.state().session.equals(proposal.getString("session"))
+            && ui.session.revision() == proposal.getLong("planRevision")
+            && !proposal.getString("sourceSwitchNonce")
+                .isEmpty()
+            && proposal.equals(current);
+        if (!exactProposal && (!proposal.hasNoTags() || !current.hasNoTags())) {
+            discardReview = false;
+            discardConfirmed = false;
+            deferredLibraryAction = -1;
+        }
+        // A source proposal may have arrived while the screen was closed. The current server snapshot wins.
+        acceptSourceSwitchProposal();
     }
 
     void prepareInitialization() {

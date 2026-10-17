@@ -34,6 +34,11 @@ public final class HologramProgressRegression {
         SimpleAssert.eq(49, value.percent(), "large counters remain exact without integer overflow or float rounding");
         value = tracker.update("save2", "job", 5, 10, "cells", true, 80);
         SimpleAssert.eq(50, value.percent(), "a terminal partial observation is not full completion");
+        value = tracker.update("area", "area.plan", "resources.cells", 7, 10, "cells", false, 81);
+        SimpleAssert.eq("resources.cells", value.detail, "real subphase detail is retained separately from its stage");
+        SimpleAssert.eq(70, value.percent(), "subphase progress uses actual measured counts");
+        tracker.finish(82);
+        SimpleAssert.eq("resources.cells", tracker.view(82).detail, "finishing retains the measured subphase");
         tracker.clear();
         SimpleAssert.that(tracker.view(100) == null, "cancel/error clears progress rather than showing100");
 
@@ -108,6 +113,15 @@ public final class HologramProgressRegression {
             HologramClientProgress.view("snapshot", "")
                 .percent(),
             "only actual decode completion finishes snapshot progress");
+        HologramClientProgress.clear();
+        NBTTagCompound detailed = event("area-details", 1, 1, "", "running");
+        detailed.setString("phase", "area.canonicalize");
+        detailed.setString("detail", "deidentify");
+        HologramClientProgress.receive(detailed);
+        SimpleAssert.eq(
+            "deidentify",
+            HologramClientProgress.view("server", "area-details").detail,
+            "server detail arrives without an additional progress poll or command");
         HologramClientProgress.clear();
         saveReceiptBusyResolution();
     }

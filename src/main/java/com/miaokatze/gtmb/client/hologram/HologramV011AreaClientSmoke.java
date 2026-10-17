@@ -611,7 +611,7 @@ public final class HologramV011AreaClientSmoke {
         request.setLong("targetChangedAfterRenderFrame", targetChangedAfterFrame);
         request.setLong("targetChangedAfterWorldRender", targetChangedAfterWorldRender);
         request.setLong("requestedWorldRenderSerial", worldRenderSerial);
-        request.setTag("nettySnapshot", HologramClient.state.data.copy());
+        request.setTag("nettySnapshot", HologramClient.state.fullData());
         bind(request);
         observation = request;
         afterObservation = following;
@@ -982,7 +982,7 @@ public final class HologramV011AreaClientSmoke {
         input.setLong("renderGeneration", screen.smokeRenderGeneration());
         input.setString("session", HologramClient.state.session);
         input.setLong("planRevision", HologramClient.state.data.getLong("planRevision"));
-        input.setTag("nettySnapshot", HologramClient.state.data.copy());
+        input.setTag("nettySnapshot", HologramClient.state.fullData());
         int[] point = screen.smokeControlPoint(id);
         input.setIntArray("controlPoint", point);
         HologramMuiProbeInput.click(screen, point[0], point[1], 0);
@@ -1152,7 +1152,7 @@ public final class HologramV011AreaClientSmoke {
             }
             if (HologramClient.state != null)
                 result.setInteger("liveStateObjectIdentity", System.identityHashCode(HologramClient.state));
-            if (HologramClient.state != null) result.setTag("actualSnapshot", HologramClient.state.data.copy());
+            if (HologramClient.state != null) result.setTag("actualSnapshot", HologramClient.state.fullData());
             for (int value : new int[] { Keyboard.KEY_LSHIFT, Keyboard.KEY_LCONTROL, Keyboard.KEY_LMENU })
                 key(value, false);
             bind(result);

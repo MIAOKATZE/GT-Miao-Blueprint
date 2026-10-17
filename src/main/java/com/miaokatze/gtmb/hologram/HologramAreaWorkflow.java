@@ -212,7 +212,7 @@ final class HologramAreaWorkflow {
                 s.blueprintDirty = s.areaImportPreviousDirty;
                 s.blueprintSource = s.areaImportPreviousSource;
             }
-            area.importing = false;
+            area.cancelImportWork();
             area.selecting = false;
         }
         s.ae.invalidate();
@@ -431,86 +431,168 @@ final class HologramAreaWorkflow {
         HologramResourcePlanner.refreshPlan(s);
     }
 
-    static void tickImport(HologramSession s, HologramArea area) {
+    /** Preserve user policy and request ownership; all source-specific pins/allocations belong to the new draft. */
+    static HologramSession importStaging(HologramSession source, HologramArea area) {
+        HologramSession staged = new HologramSession(
+            source.player,
+            area.minX,
+            area.minY,
+            area.minZ,
+            false,
+            source.side);
+        staged.id = source.id;
+        staged.uiSequence = source.uiSequence;
+        staged.planRevision = source.planRevision;
+        staged.blueprintClientTaskToken = source.blueprintClientTaskToken;
+        staged.libraryQuickClientTaskToken = source.libraryQuickClientTaskToken;
+        staged.libraryQuickToken = source.libraryQuickToken;
+        staged.libraryQuickPending = source.libraryQuickPending;
+        staged.libraryQuickBootstrapTick = source.libraryQuickBootstrapTick;
+        staged.libraryInitialSnapshot = source.libraryInitialSnapshot;
+        staged.libraryUiActive = source.libraryUiActive;
+        staged.materialSettings = source.materialSettings;
+        staged.main = source.main;
+        staged.mainExplicit = source.mainExplicit;
+        staged.channels = (NBTTagCompound) source.channels.copy();
+        staged.capabilities = source.capabilities;
+        staged.hatchTier = source.hatchTier;
+        staged.hatchDowngrade = source.hatchDowngrade;
+        staged.noHatches = source.noHatches;
+        staged.hints = source.hints;
+        staged.facing = source.facing;
+        staged.layer = source.layer;
+        staged.presetEnabled = source.presetEnabled;
+        staged.presetPaused = source.presetPaused;
+        staged.workspaceTab = source.workspaceTab;
+        staged.retainedNbtKeys = source.retainedNbtKeys;
+        staged.placementNbtKeys = source.placementNbtKeys;
+        staged.placementNbtCustomized = source.placementNbtCustomized;
+        staged.deidentificationChosen = source.deidentificationChosen;
+        staged.placementDeidentificationChosen = source.placementDeidentificationChosen;
+        staged.placementDeidentificationLevel = source.placementDeidentificationLevel;
+        staged.placementRetainCovers = source.placementRetainCovers;
+        staged.blueprintSavedId = source.blueprintSavedId;
+        staged.blueprintPrompt = source.blueprintPrompt;
+        staged.selectedProcessingPresetId = source.selectedProcessingPresetId;
+        staged.virtual = true;
+        staged.virtualPreset = area.blueprint;
+        staged.areaOverviewOwner = area;
+        // Fresh source: old mode/scope, bindings, processing review and all coordinate edits are not transferable.
+        return staged;
+    }
 
+    private static void importStructure(HologramArea area, HologramArea.Structure structure) {
+        HologramPresets.Structure saved = new HologramPresets.Structure();
+        saved.id = structure.id;
+        saved.name = structure.machine.getLocalName();
+        saved.x = structure.x - area.minX;
+        saved.y = structure.y - area.minY;
+        saved.z = structure.z - area.minZ;
+        saved.controllerId = structure.machine.getBaseMetaTileEntity()
+            .getMetaTileID();
+        saved.sourceClass = structure.machine.getClass()
+            .getName();
+        saved.sourceMod = HologramSessionPolicy.sourceMod(structure.machine.getClass());
+        saved.enabled = structure.enabled;
+        if (structure.capture != null) saved.main = Math.max(1, structure.capture.trigger.stackSize);
+        area.blueprint.structures.add(saved);
+    }
+
+    private static void importMembership(HologramArea area, HologramPresets.Cell saved) {
+        HologramSession staged = area.staging;
+        int x = area.minX + saved.x, y = area.minY + saved.y, z = area.minZ + saved.z;
+        saved.structureIds = area.memberships(x, y, z);
+        saved.structureId = saved.structureIds.isEmpty() ? null : saved.structureIds.get(0);
+        if (saved.structureIds.isEmpty() || saved.controller) return;
+        List<ItemStack> allowed = null;
+        for (String member : saved.structureIds) {
+            HologramSession source = HologramAreaDeclarations
+                .areaDeclarationSession(staged, area, member, area.declarationSessions);
+            HologramCapture.Cell declared = source == null ? null : source.capture.positions.get(x + "," + y + "," + z);
+            List<ItemStack> local = declared == null || source.capture.incomplete ? Collections.emptyList()
+                : HologramCellPolicy.declaredCandidates(source, declared);
+            if (allowed == null) allowed = new ArrayList<>(local);
+            else {
+                // Material intersections ignore NBT by definition; hash exact item identity + damage once per member.
+                Map<net.minecraft.item.Item, java.util.Set<Integer>> materials = new java.util.IdentityHashMap<>();
+                for (ItemStack option : local) if (option != null)
+                    materials.computeIfAbsent(option.getItem(), ignored -> new java.util.HashSet<>())
+                        .add(option.getItemDamage());
+                allowed.removeIf(
+                    target -> target == null || !materials.getOrDefault(target.getItem(), Collections.emptySet())
+                        .contains(target.getItemDamage()));
+            }
+        }
+        saved.allowedTargets = HologramBlueprintData.savedTargets(allowed == null ? Collections.emptyList() : allowed);
+    }
+
+    static boolean importOwned(HologramSession s, HologramArea area) {
+        return area.importing && HologramWorkspace.find(s.player.getUniqueID()) == s
+            && HologramWorkspace.AREAS.get(s.player.getUniqueID()) == area
+            && HologramNetwork.progressConnected(s.player)
+            && HologramSessionPolicy.valid(s);
+    }
+
+    /** Each tail phase owns a real cursor; the currently published editor remains intact until the complete plan. */
+    static void tickImport(HologramSession s, HologramArea area) {
+        String previousPhase = area.importStage();
         try {
-            if (!HologramSessionPolicy.valid(s)) throw new java.io.IOException("工具、维度或玩家状态已变化");
-            if (area.tick(s.player, HologramSessionPolicy.trigger(s))) {
-                s.x = area.minX;
-                s.y = area.minY;
-                s.z = area.minZ;
-                s.target = null;
-                s.machine = null;
-                s.context = null;
-                s.virtual = true;
-                s.virtualPlacement = false;
-                // A fresh area draft must not inherit the previous machine's dismantling mode or scope.
-                s.mode = 0;
-                s.scope = 0;
-                s.virtualPreset = area.blueprint;
-                s.areaOverviewOwner = area;
-                for (HologramArea.Structure structure : area.structures.values()) {
-                    HologramPresets.Structure saved = new HologramPresets.Structure();
-                    saved.id = structure.id;
-                    saved.name = structure.machine.getLocalName();
-                    saved.x = structure.x - s.x;
-                    saved.y = structure.y - s.y;
-                    saved.z = structure.z - s.z;
-                    saved.controllerId = structure.machine.getBaseMetaTileEntity()
-                        .getMetaTileID();
-                    saved.sourceClass = structure.machine.getClass()
-                        .getName();
-                    saved.sourceMod = HologramSessionPolicy.sourceMod(structure.machine.getClass());
-                    saved.enabled = structure.enabled;
-                    if (structure.capture != null) saved.main = Math.max(1, structure.capture.trigger.stackSize);
-                    area.blueprint.structures.add(saved);
-                }
-                for (HologramPresets.Cell saved : area.blueprint.cells) {
-                    saved.structureIds = area.memberships(s.x + saved.x, s.y + saved.y, s.z + saved.z);
-                    saved.structureId = saved.structureIds.isEmpty() ? null : saved.structureIds.get(0);
-                    if (!saved.structureIds.isEmpty() && !saved.controller) {
-                        List<ItemStack> allowed = null;
-                        for (String member : saved.structureIds) {
-                            HologramSession source = HologramAreaDeclarations.areaDeclarationSession(s, area, member);
-                            HologramCapture.Cell declared = source == null ? null
-                                : source.capture.positions
-                                    .get((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z));
-                            List<ItemStack> local = declared == null || source.capture.incomplete
-                                ? Collections.emptyList()
-                                : HologramCellPolicy.declaredCandidates(source, declared);
-                            if (allowed == null) allowed = new ArrayList<>(local);
-                            else allowed.removeIf(
-                                target -> local.stream()
-                                    .noneMatch(option -> HologramValues.sameMaterial(option, target)));
-                        }
-                        saved.allowedTargets = HologramBlueprintData
-                            .savedTargets(allowed == null ? Collections.emptyList() : allowed);
+            if (!importOwned(s, area)) throw new java.io.IOException("工具、维度或玩家状态已变化");
+            if (!area.imported) {
+                area.tick(s.player, HologramSessionPolicy.trigger(s));
+            } else if ("memberships".equals(area.importPhase)) {
+                if (area.staging == null) area.staging = importStaging(s, area);
+                long deadline = HologramWorkBudget.deadline(2_000_000L);
+                for (int work = 0; work < 4096; work++) {
+                    if (work > 0 && System.nanoTime() >= deadline) break;
+                    if (area.structureIndex < area.discovery.size())
+                        importStructure(area, area.discovery.get(area.structureIndex++));
+                    else if (area.membershipIndex < area.blueprint.cells.size())
+                        importMembership(area, area.blueprint.cells.get(area.membershipIndex++));
+                    else {
+                        area.population = new HologramBlueprintProjection.Population(area.staging);
+                        area.importPhase = "projection";
+                        break;
                     }
                 }
-                HologramBlueprintProjection.populateVirtual(s);
-                HologramResourcePlanner.refreshPlan(s);
-                s.processingSource = null;
-                s.processingPolicy = null;
-                s.processingReviewed = false;
-                s.processingWorkflowStarted = false;
-                s.blueprintDirty = true;
-                s.blueprintSource = "area";
-                s.decorLedger = new HologramDecorMaterials.Ledger();
-                s.status = "区域已导入；识别 " + area.structures.size() + " 个声明控制器，可分别编辑与保存蓝图";
-                s.open = true;
-                s.openPurpose = "blueprintEdit";
-                HologramSnapshots.send(s);
-            } else if (s.player.worldObj.getTotalWorldTime() % 10 == 0) {
-                // Progress snapshots keep the existing editor read-only and never request reopening.
-                HologramSnapshots.sendProgress(s);
+            } else if ("projection".equals(area.importPhase)) {
+                if (area.population.step(4096, HologramWorkBudget.deadline(2_000_000L))) {
+                    area.planTask = HologramResourcePlanner.beginPlan(area.staging);
+                    area.importPhase = "plan";
+                }
+            } else if ("plan".equals(area.importPhase) && area.planTask.step(4096, 2_000_000L)) {
+                publishImport(s, area);
+                return;
             }
+            if (!previousPhase.equals(area.importStage()) || s.player.worldObj.getTotalWorldTime() % 10 == 0)
+                HologramSnapshots.sendProgress(s);
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
-            area.importing = false;
+            area.cancelImportWork();
             s.status = "区域导入失败：" + failure.getMessage();
             s.open = true;
             HologramSnapshots.send(s);
         }
-        return;
+    }
 
+    private static void publishImport(HologramSession previous, HologramArea area) throws java.io.IOException {
+        if (area.staging == null || !importOwned(previous, area)) throw new java.io.IOException("区域导入会话已过期");
+        HologramSession staged = area.staging;
+        staged.uiSequence = previous.uiSequence;
+        staged.blueprintClientTaskToken = previous.blueprintClientTaskToken;
+        staged.libraryQuickClientTaskToken = previous.libraryQuickClientTaskToken;
+        staged.placementReviewNonce = previous.placementReviewNonce;
+        staged.blueprintDirty = true;
+        staged.blueprintSource = "area";
+        staged.status = "区域已导入；识别 " + area.structures.size() + " 个声明控制器，可分别编辑与保存蓝图";
+        staged.open = true;
+        staged.openPurpose = "blueprintEdit";
+        HologramWorkspace.AREA_STRUCTURES.put(previous.player.getUniqueID(), area.declarationSessions);
+        HologramWorkspace.AREA_EDITORS.put(previous.player.getUniqueID(), staged);
+        HologramWorkspace.activate(previous.player.getUniqueID(), staged);
+        area.importing = false;
+        area.staging = null;
+        area.population = null;
+        area.planTask = null;
+        HologramSnapshots.send(staged);
     }
 }

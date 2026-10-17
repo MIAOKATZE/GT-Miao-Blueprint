@@ -106,11 +106,20 @@ final class HologramBlueprintNbt {
     }
 
     private static String encode(NBTTagCompound tag, boolean rewriteOwnership) throws IOException {
+        return encode(tag, rewriteOwnership, true);
+    }
+
+    static String encodeData(NBTTagCompound tag) throws IOException {
+        return encode(tag, false, false);
+    }
+
+    private static String encode(NBTTagCompound tag, boolean rewriteOwnership, boolean resolveItems)
+        throws IOException {
         if (tag == null) return null;
         checkDepth(tag, 0);
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
         if (rewriteOwnership) rewrite(copy, null, "", false, false);
-        stableItems(copy, true);
+        if (resolveItems) stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(new GZIPOutputStream(new LimitedOutput(bytes, MAX_COMPRESSED)), MAX_EXPANDED))) {
@@ -201,13 +210,24 @@ final class HologramBlueprintNbt {
 
     static NBTTagCompound decode(String value) throws IOException {
         if (value == null || value.isEmpty()) return null;
+        if (HologramSnapshotDataContext.active()) return HologramSnapshotDataContext.decode(value);
+        NBTTagCompound tag = decodeData(value);
+        try {
+            stableItems(tag, false);
+            return tag;
+        } catch (RuntimeException invalid) {
+            throw new IOException("蓝图NBT编码无效", invalid);
+        }
+    }
+
+    static NBTTagCompound decodeData(String value) throws IOException {
+        if (value == null || value.isEmpty()) return null;
         if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");
         try {
             byte[] bytes = Base64.getDecoder()
                 .decode(value);
             if (bytes.length > MAX_COMPRESSED) throw new IOException("蓝图压缩NBT超出上限");
             NBTTagCompound tag = HologramSnapshotCodec.decode(bytes, MAX_EXPANDED, 16L * 1024 * 1024);
-            stableItems(tag, false);
             return tag;
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图NBT编码无效", invalid);

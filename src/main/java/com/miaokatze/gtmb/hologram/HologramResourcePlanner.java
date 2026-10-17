@@ -47,6 +47,35 @@ final class HologramResourcePlanner {
     }
 
     static void refreshPlan(HologramSession s) {
+        HologramDeferredPlanRefresh.cancel(s);
+        resetPlan(s);
+        if (s.capture == null) return;
+        World w = s.player.worldObj;
+        if (s.virtual && !s.allocationsFrozen) allocateVirtualTargets(s);
+        buildPreset(s);
+        if (s.mode == 2) s.planFacings.clear();
+        else refreshFacings(s);
+        for (int i = 0; i < s.capture.cells.size(); i++) {
+            s.capture.cells.get(i).stableIndex = i;
+            s.planTargets.add(HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i));
+        }
+        for (int i = 0; i < s.capture.cells.size(); i++) {
+            HologramCapture.Cell c = s.capture.cells.get(i);
+            boolean loaded = w.blockExists(c.x, c.y, c.z);
+            s.expectedBlocks.add(loaded ? w.getBlock(c.x, c.y, c.z) : Blocks.air);
+            s.expectedMeta.add(loaded ? w.getBlockMetadata(c.x, c.y, c.z) : 0);
+            TileEntity tile = loaded ? w.getTileEntity(c.x, c.y, c.z) : null;
+            s.expectedTiles.add(tile);
+            s.expectedFacings.add(
+                tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
+                    .ordinal() : -1);
+            c.status = HologramPlanPolicy.classify(s, c, i);
+            s.planStatus.add(c.status);
+        }
+        refreshResources(s);
+    }
+
+    private static void resetPlan(HologramSession s) {
         s.ae.invalidate();
         s.replacementAuthorized = false;
         s.replacementReady = HologramPlanPolicy.replacementStructureBuilt(s);
@@ -69,48 +98,332 @@ final class HologramResourcePlanner {
         s.planMissing = 0;
         s.planRecoveryFits = true;
         s.blueprintTotalResources = null;
-        if (s.capture == null) return;
-        World w = s.player.worldObj;
-        if (s.virtual && !s.allocationsFrozen) allocateVirtualTargets(s);
-        buildPreset(s);
-        if (s.mode == 2) s.planFacings.clear();
-        else refreshFacings(s);
-        for (int i = 0; i < s.capture.cells.size(); i++)
-            s.planTargets.add(HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i));
-        for (int i = 0; i < s.capture.cells.size(); i++) {
+    }
+
+    /** Area imports plan into an unactivated staging session. Native/world calls stay on this thread. */
+    static PlanTask beginPlan(HologramSession staging) {
+        if (!staging.virtual) throw new IllegalArgumentException("Staged planning requires a virtual session");
+        return new PlanTask(staging);
+    }
+
+    static final class PlanTask {
+
+        private final HologramSession s;
+        private final Thread owner = Thread.currentThread();
+        private final List<int[]> geometry = new ArrayList<>();
+        private HologramVirtualAllocationTask allocation;
+        private HologramExteriorTask exterior;
+        private HologramResourceTask resources;
+        private int stage, cursor, lastWork;
+        private boolean needsExterior;
+        private java.util.Set<String> outside = Collections.emptySet();
+
+        private PlanTask(HologramSession s) {
+            this.s = s;
+        }
+
+        boolean step(int maxWork, long maxNanos) {
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Planning must stay on its main thread");
+            HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
+            while (!done() && budget.take()) advance();
+            lastWork = budget.used();
+            return done();
+        }
+
+        boolean done() {
+            return stage == 9;
+        }
+
+        int lastWork() {
+            return lastWork;
+        }
+
+        String phase() {
+            if (stage == 1) return allocation.phase();
+            if (stage == 4) return exterior.phase();
+            if (stage == 8) return resources.phase();
+            return stage == 0 ? "plan.initialize"
+                : stage == 2 ? "plan.preset"
+                    : stage == 3 ? "facing.cells"
+                        : stage == 5 ? "facing.choose"
+                            : stage == 6 ? "plan.targets"
+                                : stage == 7 ? "plan.classify" : stage == 10 ? "plan.index" : "plan.complete";
+        }
+
+        long completed() {
+            if (stage == 1) return allocation.completed();
+            if (stage == 4) return exterior.completed();
+            if (stage == 8) return resources.completed();
+            return done() ? total() : cursor;
+        }
+
+        long total() {
+            if (stage == 1) return allocation.total();
+            if (stage == 4) return exterior.total();
+            if (stage == 8) return resources.total();
+            return s.capture == null ? 0 : s.capture.cells.size();
+        }
+
+        private void advance() {
+            if (stage == 0) {
+                resetPlan(s);
+                if (s.capture == null) {
+                    stage = 9;
+                    return;
+                }
+                s.cellIndices.clear();
+                stage = 10;
+            } else if (stage == 10) {
+                if (cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    s.capture.cells.get(i).stableIndex = i;
+                    s.cellIndices.put(s.capture.cells.get(i), i);
+                } else {
+                    s.indexedCapture = s.capture;
+                    allocation = new HologramVirtualAllocationTask(s);
+                    cursor = 0;
+                    stage = 1;
+                }
+            } else if (stage == 1) {
+                if (!allocation.done()) allocation.advance();
+                else {
+                    s.autoTargets.clear();
+                    if (!s.allocationsFrozen) buildPreset(s); // virtual non-frozen path is constant work
+                    s.planFacings.clear();
+                    cursor = 0;
+                    stage = 2;
+                }
+            } else if (stage == 2) {
+                if (s.allocationsFrozen && cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    HologramCapture.Cell c = s.capture.cells.get(i);
+                    ItemStack target = s.frozenAutoTargets.get(HologramValues.position(c));
+                    if (!c.anchor && !s.pins.containsKey(i) && HologramCellPolicy.acceptableSample(s, c, target))
+                        s.autoTargets.put(i, target.copy());
+                } else {
+                    cursor = 0;
+                    stage = s.mode == 2 ? 6 : 3;
+                }
+            } else if (stage == 3) {
+                if (cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    HologramCapture.Cell c = s.capture.cells.get(i);
+                    geometry.add(new int[] { c.x, c.y, c.z, c.block == Blocks.air && !c.anchor ? 0 : 1 });
+                    ItemStack target = HologramCellPolicy.draftTarget(s, c, i);
+                    if (target != null && target.getItem() instanceof ItemMachines
+                        && !(ItemMachines
+                            .getMetaTileEntity(target) instanceof gregtech.api.metatileentity.MetaPipeEntity))
+                        needsExterior = true;
+                } else {
+                    if (needsExterior) {
+                        exterior = new HologramExteriorTask(
+                            geometry,
+                            (x, y, z) -> s.player.worldObj.blockExists(x, y, z)
+                                && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
+                        stage = 4;
+                    } else {
+                        cursor = 0;
+                        stage = 5;
+                    }
+                }
+            } else if (stage == 4) {
+                if (!exterior.done()) exterior.advance();
+                else {
+                    outside = exterior.result();
+                    cursor = 0;
+                    stage = 5;
+                }
+            } else if (stage == 5) {
+                if (cursor < s.capture.cells.size()) facing(cursor++);
+                else {
+                    cursor = 0;
+                    stage = 6;
+                }
+            } else if (stage == 6) {
+                if (cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    s.planTargets.add(HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i));
+                } else {
+                    cursor = 0;
+                    stage = 7;
+                }
+            } else if (stage == 7) {
+                if (cursor < s.capture.cells.size()) classify(cursor++);
+                else {
+                    resources = new HologramResourceTask(s);
+                    stage = 8;
+                }
+            } else if (stage == 8) {
+                if (!resources.done()) resources.advance();
+                else stage = 9;
+            }
+        }
+
+        private void classify(int i) {
             HologramCapture.Cell c = s.capture.cells.get(i);
-            boolean loaded = w.blockExists(c.x, c.y, c.z);
-            s.expectedBlocks.add(loaded ? w.getBlock(c.x, c.y, c.z) : Blocks.air);
-            s.expectedMeta.add(loaded ? w.getBlockMetadata(c.x, c.y, c.z) : 0);
-            TileEntity tile = loaded ? w.getTileEntity(c.x, c.y, c.z) : null;
+            World world = s.player.worldObj;
+            boolean loaded = world.blockExists(c.x, c.y, c.z);
+            s.expectedBlocks.add(loaded ? world.getBlock(c.x, c.y, c.z) : Blocks.air);
+            s.expectedMeta.add(loaded ? world.getBlockMetadata(c.x, c.y, c.z) : 0);
+            TileEntity tile = loaded ? world.getTileEntity(c.x, c.y, c.z) : null;
             s.expectedTiles.add(tile);
             s.expectedFacings.add(
                 tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
                     .ordinal() : -1);
             c.status = HologramPlanPolicy.classify(s, c, i);
             s.planStatus.add(c.status);
+            if (s.localPlanPending) HologramLocalPlanRefresh.classified(s, i);
         }
-        refreshResources(s);
+
+        private void facing(int i) {
+            HologramCapture.Cell c = s.capture.cells.get(i);
+            ItemStack target = HologramCellPolicy.draftTarget(s, c, i);
+            if (target != null && target.getItem() instanceof ItemMachines
+                && ItemMachines.getMetaTileEntity(target) instanceof gregtech.api.metatileentity.MetaPipeEntity) {
+                s.facingPins.remove(HologramValues.position(c));
+                return;
+            }
+            int[] legal = HologramCellPolicy.legalFacings(s, c, target);
+            if (legal.length == 0) return;
+            Integer pin = s.facingPins.get(HologramValues.position(c));
+            if (pin != null) {
+                for (int side : legal) if (side == pin) s.planFacings.put(i, pin);
+                return;
+            }
+            TileEntity actual = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
+            if (actual instanceof IGregTechTileEntity && target != null
+                && !HologramRecovery.hasSeal(target)
+                && ((IGregTechTileEntity) actual).getMetaTileID() == target.getItemDamage()) {
+                int front = HologramBlockIdentity.front((IGregTechTileEntity) actual);
+                if (front >= 0) s.planFacings.put(i, front);
+                return;
+            }
+            if (HologramRecovery.hasSeal(target)) return;
+            int direction = HologramHatchGeometry.choose(c.x, c.y, c.z, legal, outside);
+            if (direction >= 0) s.planFacings.put(i, direction);
+        }
     }
 
     static NBTTagList blueprintResourceRows(HologramSession s) {
-        NBTTagList rows = s.blueprintResources == null ? new NBTTagList()
-            : s.blueprintResources.entries(HologramMaterialAccess.materialSource(s));
-        if (!s.blueprintEnergy.empty()) {
-            try {
-                HologramEnergy.Demand converted = new HologramEnergy.Demand();
-                List<String> sources = new ArrayList<>();
-                boolean individualFallback = false;
-                boolean unpricedCache = false;
-                for (HologramEnergy.Demand cell : s.blueprintEnergyCells) {
-                    HologramEnergy.Quote cellQuote = HologramMaterialAccess.materialSource(s)
-                        .cachedEnergyQuote(cell);
-                    converted.eu = converted.eu.add(cellQuote.eu);
-                    converted.ae = converted.ae.add(java.math.BigDecimal.valueOf(cellQuote.ae));
-                    individualFallback |= !cellQuote.affordable;
-                    unpricedCache |= cellQuote.source.contains("unsupported amount precision");
-                    if (!sources.contains(cellQuote.source)) sources.add(cellQuote.source);
+        ResourceRowsTask task = new ResourceRowsTask(s);
+        while (!task.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        return task.rows;
+    }
+
+    static final class ResourceRowsTask {
+
+        private final HologramSession s;
+        private HologramBlueprintResources.Plan.EntriesTask entries;
+        private NBTTagList rows = new NBTTagList();
+        private final HologramEnergy.Demand converted = new HologramEnergy.Demand();
+        private final java.util.Set<String> sourceSet = new java.util.LinkedHashSet<>();
+        private boolean individualFallback, unpricedCache;
+        private int stage, cursor;
+        private long completed;
+
+        ResourceRowsTask(HologramSession s) {
+            this.s = s;
+        }
+
+        NBTTagList result() {
+            return rows;
+        }
+
+        long done() {
+            return stage == 0 ? entries == null ? 0 : entries.done() : stage == 2 ? 0 : stage == 5 ? 1 : cursor;
+        }
+
+        long total() {
+            if (stage == 0) return entries == null ? 0 : entries.total();
+            if (stage == 1) return s.blueprintEnergy.empty() ? 0 : s.blueprintEnergyCells.size();
+            if (stage == 3) return s.blueprintEnergyWarnings.size();
+            if (stage == 4) return s.blueprintIntrinsicSources.size();
+            return 1;
+        }
+
+        boolean step(int maxWork, long deadline) {
+            for (int work = 0; work < maxWork && stage < 5; work++) {
+                if (work > 0 && System.nanoTime() >= deadline) return false;
+                if (stage == 0) {
+                    if (s.blueprintResources != null) {
+                        if (entries == null)
+                            entries = s.blueprintResources.entriesTask(HologramMaterialAccess.materialSource(s));
+                        long before = entries.done();
+                        boolean finished = entries.step(1, deadline);
+                        completed += entries.done() - before;
+                        if (!finished) continue;
+                        rows = entries.rows;
+                    }
+                    stage = 1;
+                    completed++;
+                } else if (stage == 1) {
+                    if (!s.blueprintEnergy.empty() && cursor < s.blueprintEnergyCells.size()) {
+                        HologramEnergy.Demand cell = s.blueprintEnergyCells.get(cursor++);
+                        try {
+                            HologramEnergy.Quote quote = HologramMaterialAccess.materialSource(s)
+                                .cachedEnergyQuote(cell);
+                            converted.eu = converted.eu.add(quote.eu);
+                            converted.ae = converted.ae.add(java.math.BigDecimal.valueOf(quote.ae));
+                            individualFallback |= !quote.affordable;
+                            unpricedCache |= quote.source.contains("unsupported amount precision");
+                            sourceSet.add(quote.source);
+                        } catch (RuntimeException | LinkageError unavailable) {
+                            failedEnergy();
+                            stage = 3;
+                            cursor = 0;
+                        }
+                        completed++;
+                    } else {
+                        stage = 2;
+                        cursor = 0;
+                    }
+                } else if (stage == 2) {
+                    if (!s.blueprintEnergy.empty()) finalizeEnergy();
+                    stage = 3;
+                    completed++;
+                } else if (stage == 3) {
+                    if (cursor < s.blueprintEnergyWarnings.size()) {
+                        String warning = s.blueprintEnergyWarnings.get(cursor++);
+                        appendCacheRow(
+                            rows,
+                            "cache.warning",
+                            warning,
+                            "0",
+                            "0",
+                            "\u7f13\u5b58\u5df2\u5b89\u5168\u7701\u7565",
+                            false);
+                        completed++;
+                    } else {
+                        stage = 4;
+                        cursor = 0;
+                    }
+                } else {
+                    if (cursor < s.blueprintIntrinsicSources.size()) {
+                        String intrinsic = s.blueprintIntrinsicSources.get(cursor++);
+                        appendCacheRow(
+                            rows,
+                            "cache.intrinsic",
+                            intrinsic,
+                            "0",
+                            "0",
+                            "\u539f\u751f\u56fa\u6709\u80fd\u6e90",
+                            false);
+                        completed++;
+                    } else stage = 5;
                 }
+            }
+            return stage == 5;
+        }
+
+        private void failedEnergy() {
+            appendCacheRow(rows, "cache.unavailable", "设备缓存 · 网络不可用", "0", "0", "缓存将清空", true);
+        }
+
+        private void finalizeEnergy() {
+            int energyStart = rows.tagCount();
+            List<String> sources = new ArrayList<>(sourceSet);
+            try {
                 // Placement pays/rounds each cell. Sum those quoted bills, never round combined RF/AE once.
                 HologramEnergy.Quote quote = HologramMaterialAccess.materialSource(s)
                     .cachedEnergyQuote(converted);
@@ -133,7 +446,7 @@ final class HologramResourcePlanner {
                     quote.availableAe < quote.ae);
                 if (unpricedCache || converted.empty() && individualFallback)
                     appendCacheRow(rows, "cache.precision", "设备缓存 · 数值不可精确付取", "0", "0", source, true);
-                for (int i = 0; i < rows.tagCount(); i++) {
+                for (int i = energyStart; i < rows.tagCount(); i++) {
                     NBTTagCompound row = rows.getCompoundTagAt(i);
                     if (!row.getBoolean("optionalCache")) continue;
                     row.setString("source", source);
@@ -144,14 +457,9 @@ final class HologramResourcePlanner {
                     row.setString("convertedAE", converted.ae.toPlainString());
                 }
             } catch (RuntimeException | LinkageError unavailable) {
-                appendCacheRow(rows, "cache.unavailable", "设备缓存 · 网络不可用", "0", "0", "缓存将清空", true);
+                failedEnergy();
             }
         }
-        for (String warning : s.blueprintEnergyWarnings)
-            appendCacheRow(rows, "cache.warning", warning, "0", "0", "缓存已安全省略", false);
-        for (String intrinsic : s.blueprintIntrinsicSources)
-            appendCacheRow(rows, "cache.intrinsic", intrinsic, "0", "0", "原生固有能源", false);
-        return rows;
     }
 
     static void appendCacheRow(NBTTagList rows, String key, String name, String required, String available,

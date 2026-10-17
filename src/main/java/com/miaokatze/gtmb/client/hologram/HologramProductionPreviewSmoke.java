@@ -396,7 +396,7 @@ public final class HologramProductionPreviewSmoke {
                 state.cells.size() == expectedCells() && state.data.getBoolean("supported")
                     && !state.data.getBoolean("capturePending"),
                 "complete original and adjacent network snapshot");
-            write("received-service-state.nbt", state.data);
+            write("received-service-state.nbt", state.fullData());
             String name = current ? "production-native-current.png" : "production-native-target.png";
             screenshot(name);
             // Consume this displayed frame's faces, camera and native models before the
@@ -722,7 +722,7 @@ public final class HologramProductionPreviewSmoke {
         if (Boolean.getBoolean("gtmb.hologram.networkInteractionSmoke"))
             write("source-chunk-keeper.nbt", HologramDecorSourceSmoke.sourceChunkEvidence());
         problem.printStackTrace();
-        if (HologramClient.state != null) write("failure-service-state.nbt", HologramClient.state.data);
+        if (HologramClient.state != null) write("failure-service-state.nbt", HologramClient.state.fullData());
         java.io.StringWriter trace = new java.io.StringWriter();
         problem.printStackTrace(new java.io.PrintWriter(trace));
         Files.write(

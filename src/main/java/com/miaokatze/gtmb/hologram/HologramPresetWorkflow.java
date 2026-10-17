@@ -20,6 +20,7 @@ final class HologramPresetWorkflow {
     /** Capture current server targets; all inventory and device data come from server-owned state. */
 
     static void savePreset(HologramSession s, String name) {
+        if (HologramDeferredPlanRefresh.blocked(s)) return;
         HologramPresets.Preset directSource = null;
         if (!s.processingReviewed) {
             try {
@@ -237,6 +238,7 @@ final class HologramPresetWorkflow {
     }
 
     static void saveVirtualPreset(HologramSession s, String name, boolean update) {
+        if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (!s.virtual || s.virtualPreset == null || s.capture == null || s.capture.incomplete || s.capturePending) {
             s.status = "请先完整载入自定义预设进行编辑";
             return;

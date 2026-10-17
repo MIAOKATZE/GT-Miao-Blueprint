@@ -9,6 +9,7 @@ import java.util.List;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderItem;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.opengl.GL11;
 
@@ -125,6 +126,12 @@ final class HologramUiCanvas {
     }
 
     void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
+        if (localPlanBlockedControl(id)) enabled = false;
+        if (HologramBackgroundTasks.busy() && id != 990
+            && id != 991
+            && id != 992
+            && !(HologramBackgroundTasks.awaitingReview() && HologramBackgroundTasks.reviewControl(id))
+            && !(HologramBackgroundTasks.awaitingSourceReview() && (id == 224 || id == 225))) enabled = false;
         Control c = new Control(id, x, y, w, h, enabled);
         Control drawn = c;
         if (this.compactControls) drawn = new Control(
@@ -175,6 +182,8 @@ final class HologramUiCanvas {
                 int contextual = ui.memory.contextualAccent(id);
                 if (contextual != 0 || id == 50 || id == 146 || id == 141) accent = contextual;
             }
+        int savedStructure = ui.library.savedStructureAccent(id);
+        if (savedStructure != 0 && ui.preview.previewInteractive()) accent = savedStructure;
         if (id == 150 && ui.session.state().data.getBoolean("sourceMissing")
             || id == 163 && ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing)
             accent = 0xff7272;
@@ -192,6 +201,9 @@ final class HologramUiCanvas {
     }
 
     String disabledReason(int id) {
+        if (localPlanBlockedControl(id)) return localPlanReason(ui.session.state().data);
+        if (HologramBackgroundTasks.busy() && id != 990 && id != 991 && id != 992)
+            return "后台任务正在处理当前蓝图，请等待完成或主动取消任务后继续编辑。";
         if ((id == 140 || id == 132 || id == 166 || id == 221) && !ui.processing.processingReady())
             return "先完成蓝图处理流程，服务端确认后开放保存与方块 NBT 编辑。";
         if (id == 179) return "请单选一个已支持的 AE 方块，并等待当前编辑回执。";
@@ -234,6 +246,13 @@ final class HologramUiCanvas {
 
     String controlHelp(int id) {
         switch (id) {
+            case 146:
+                return "编辑当前所选格的提示词；支持 Ctrl 多选、Shift 框选，可切换全局、方块或提示区范围。";
+            case 148:
+                return ui.library.savedStructureAccent(id) != 0 ? "蓝图已保存。进入结构调整，继续设置结构等级、信道、方块目标与仓室。"
+                    : "调整结构等级、信道、方块目标与仓室；施工前核对材料。";
+            case 149:
+                return "处理、保存和分享蓝图，并编辑蓝图 NBT 与提示词。";
             case 220:
                 return "按步骤选择流程预设、去标识、量子绑定、坐标、全局 NBT 和自动提示；每步明确选择后可继续。";
             case 221:
@@ -385,6 +404,72 @@ final class HologramUiCanvas {
                 return "撤销整机预设目标；保留手选目标、已有仓室与实际施工结果。";
             default:
                 return null;
+        }
+    }
+
+    /** UI counterpart of DeferredPlanRefresh.blocksAction; edits and presentation stay available. */
+    static boolean localPlanBlocks(NBTTagCompound state, int id) {
+        return localPlanBlocks(state, id, false, false);
+    }
+
+    static boolean localPlanBlocks(NBTTagCompound state, int id, boolean finalProcessingStep,
+        boolean savingConfirmation) {
+        if (!state.getBoolean("localPlanPending")) return false;
+        return switch (id) {
+            case 50, 55, 132, 140, 159, 162, 179, 181, 192, 220, 221, 293, 294 -> true;
+            case 51 -> state.getInteger("job") == 2;
+            case 231 -> finalProcessingStep;
+            case 224 -> savingConfirmation;
+            default -> false;
+        };
+    }
+
+    boolean localPlanBlockedControl(int id) {
+        return localPlanBlocks(
+            ui.session.state().data,
+            id,
+            ui.processing.processingFlow() != null && ui.processing.processingFlow().stage == 5,
+            ui.library.overwriteReview() || ui.processing.processingPresetSaveReview());
+    }
+
+    boolean rejectLocalPlanAction(int id) {
+        if (!localPlanBlockedControl(id)) return false;
+        ui.session.notice(localPlanReason(ui.session.state().data));
+        return true;
+    }
+
+    static String localPlanReason(NBTTagCompound state) {
+        String error = state.getString("localPlanError");
+        return error.isEmpty() ? "材料与差分正在更新，可继续编辑；完成后可保存、处理或施工。" : error;
+    }
+
+    static boolean localPlanProgress(HologramProgress progress) {
+        return progress != null && !progress.complete && progress.phase.startsWith("localPlan.");
+    }
+
+    /** Real server planning counters, kept on the original preview instead of taking a background lock. */
+    void drawLocalPlanProgress(int x, int y, int width, int mx, int my) {
+        NBTTagCompound state = ui.session.state().data;
+        if (!state.getBoolean("localPlanPending")) return;
+        drawRect(x - 3, y - 2, x + width + 3, y + 21, 0xf0142a32);
+        HologramProgress progress = HologramClientProgress.view("server", ui.session.state().session);
+        String reason = localPlanReason(state);
+        if (!state.getString("localPlanError")
+            .isEmpty()) ui.canvas.text(reason, x, y + 5, width, HologramMuiTheme.ERROR);
+        else if (localPlanProgress(progress)) {
+            HologramProgressView.draw(ui.host.font(), progress, x, y, width, 0);
+            ui.canvas.text(
+                HologramProgressView.detail(progress) + " · 可继续编辑",
+                x,
+                y + 11,
+                width,
+                HologramUiAccent.SUGGESTION);
+        } else ui.canvas.text(reason, x, y + 5, width, HologramUiAccent.SUGGESTION);
+        if (mx >= x - 3 && mx < x + width + 3 && my >= y - 2 && my < y + 21) {
+            tooltip = new ArrayList<>(
+                ui.host.font()
+                    .listFormattedStringToWidth(reason, 300));
+            if (localPlanProgress(progress)) tooltip.add(HologramProgressView.detail(progress));
         }
     }
 

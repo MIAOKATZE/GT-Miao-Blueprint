@@ -134,7 +134,8 @@ final class HologramUiDiagnostics {
 
     String smokeAeReviewGui() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("UI smoke disabled");
-        NBTTagCompound fixture = (NBTTagCompound) ui.session.state().data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) ui.session.state()
+            .fullData();
         fixture.setString("session", ui.session.state().session + ":ae-review-fixture:" + System.nanoTime());
         fixture.setLong("planRevision", 77);
         fixture.setBoolean("blueprintAwaitingConfirmation", false);
@@ -484,7 +485,8 @@ final class HologramUiDiagnostics {
 
     NBTTagCompound smokeSnapshot() {
         HologramUiDiagnostics.requireInteractionSmoke();
-        return (NBTTagCompound) ui.session.state().data.copy();
+        return (NBTTagCompound) ui.session.state()
+            .fullData();
     }
 
     int[] smokeSelectedIndices() {
@@ -546,7 +548,8 @@ final class HologramUiDiagnostics {
 
     NBTTagCompound smokeCaptureMissingBuildClick() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
-        NBTTagCompound initial = (NBTTagCompound) ui.session.state().data.copy();
+        NBTTagCompound initial = (NBTTagCompound) ui.session.state()
+            .fullData();
         long reviewed = ui.review.confirmedRevision();
         this.capturedRenderSmokeAction = null;
         this.captureRenderSmokeAction = true;
@@ -720,7 +723,8 @@ final class HologramUiDiagnostics {
 
     String smokeCaptureV004Editor() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
-        NBTTagCompound fixture = (NBTTagCompound) ui.session.state().data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) ui.session.state()
+            .fullData();
         fixture.setBoolean("blueprintPreview", false);
         fixture.setBoolean("presetBrowseForPlacement", false);
         fixture.setBoolean("blueprintAwaitingConfirmation", false);
@@ -840,7 +844,8 @@ final class HologramUiDiagnostics {
 
     String smokeCaptureV004Tabs() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
-        NBTTagCompound fixture = (NBTTagCompound) ui.session.state().data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) ui.session.state()
+            .fullData();
         String fixtureSession = java.util.UUID
             .nameUUIDFromBytes(
                 ("gtmb-tabs:" + ui.session.state().session).getBytes(java.nio.charset.StandardCharsets.UTF_8))
@@ -960,7 +965,8 @@ final class HologramUiDiagnostics {
             HologramMuiProbeInput.renderFixture(again, 0, 0, 0);
             if (!again.ui.library.libraryDrawer() || !again.ui.review.confirmation())
                 throw new IllegalStateException("Placement review changed the remembered tab or bypassed materials");
-            NBTTagCompound beforeCancel = (NBTTagCompound) again.ui.session.state().data.copy();
+            NBTTagCompound beforeCancel = (NBTTagCompound) again.ui.session.state()
+                .fullData();
             NBTTagCompound beforeCancelAction = again.ui.diagnostics.capturedRenderSmokeAction;
             if (again.ui.identity.deidentificationDrawer()) {
                 again.ui.diagnostics.smokeControlPoint(212);
@@ -968,7 +974,9 @@ final class HologramUiDiagnostics {
                 again.ui.router.keyTyped('\0', Keyboard.KEY_ESCAPE);
                 if (again.ui.identity.deidentificationDrawer() || !again.ui.review.confirmation()
                     || !again.ui.library.libraryDrawer()
-                    || !beforeCancel.equals(again.ui.session.state().data)
+                    || !beforeCancel.equals(
+                        again.ui.session.state()
+                            .fullData())
                     || again.ui.diagnostics.capturedRenderSmokeAction != beforeCancelAction)
                     throw new IllegalStateException(
                         "Identity cancellation changed the source, review nonce, pending materials or operation");
@@ -979,7 +987,9 @@ final class HologramUiDiagnostics {
             HologramMuiProbeInput.renderFixture(again, 0, 0, 0);
             if (again.ui.review.confirmation() || again.ui.identity.deidentificationDrawer()
                 || !again.ui.library.libraryDrawer()
-                || !beforeCancel.equals(again.ui.session.state().data)
+                || !beforeCancel.equals(
+                    again.ui.session.state()
+                        .fullData())
                 || again.ui.diagnostics.capturedRenderSmokeAction != beforeCancelAction)
                 throw new IllegalStateException("Material cancellation changed the source, review nonce or operation");
             again.ui.diagnostics.smokeClickDrawnControl(149);
@@ -1045,7 +1055,9 @@ final class HologramUiDiagnostics {
     void smokeAssertPlacementConfirmationDispatch() {
         for (boolean blueprints : new boolean[] { false, true }) {
             HologramScreen probe = new HologramScreen(
-                new HologramState((NBTTagCompound) ui.session.state().data.copy()));
+                new HologramState(
+                    (NBTTagCompound) ui.session.state()
+                        .fullData()));
             probe.ui.diagnostics.captureRenderSmokeAction = true;
             probe.ui.library.libraryDrawer(blueprints);
             // These background surfaces can remain selected while the modal covers their controls.
@@ -1148,7 +1160,8 @@ final class HologramUiDiagnostics {
     String smokeProcessingFlowContext() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
         HologramUiDiagnostics.smokeLibraryNavigationFences();
-        NBTTagCompound fixture = (NBTTagCompound) ui.session.state().data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) ui.session.state()
+            .fullData();
         fixture.setString("session", "processing-ui:" + ui.session.state().session);
         fixture.setString("openPurpose", "blueprintEdit");
         fixture.setBoolean("virtual", true);
@@ -1400,7 +1413,8 @@ final class HologramUiDiagnostics {
 
     String smokeCaptureLibraryWorkflow() {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke")) throw new IllegalStateException("Render smoke disabled");
-        NBTTagCompound fixture = (NBTTagCompound) ui.session.state().data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) ui.session.state()
+            .fullData();
         fixture.setString("session", "smoke-library:" + ui.session.state().session);
         fixture.setString("openPurpose", "");
         fixture.setLong("placementReviewNonce", 0);

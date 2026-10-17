@@ -32,17 +32,22 @@ final class HologramAreaDeclarations {
     }
 
     static HologramSession areaDeclarationSession(HologramSession s, HologramArea area, String id) {
+        Map<String, HologramSession> sessions = HologramWorkspace.AREA_STRUCTURES
+            .computeIfAbsent(s.player.getUniqueID(), ignored -> new HashMap<>());
+        return areaDeclarationSession(s, area, id, sessions);
+    }
+
+    /** Import preparation owns a separate cache until its final atomic publication. */
+    static HologramSession areaDeclarationSession(HologramSession s, HologramArea area, String id,
+        Map<String, HologramSession> sessions) {
         HologramArea.Structure structure = area.structures.get(id);
         if (structure == null || structure.capture == null
             || s.player.worldObj.getTileEntity(structure.x, structure.y, structure.z)
                 != structure.machine.getBaseMetaTileEntity())
             return null;
-        Map<String, HologramSession> sessions = HologramWorkspace.AREA_STRUCTURES
-            .computeIfAbsent(s.player.getUniqueID(), ignored -> new HashMap<>());
         HologramSession cached = sessions.get(id);
         if (cached != null && cached.capture == structure.capture) return cached;
-        HologramSession source = HologramWorkspace
-            .create(s.player, structure.x, structure.y, structure.z, true, s.side);
+        HologramSession source = new HologramSession(s.player, structure.x, structure.y, structure.z, true, s.side);
         source.areaStructureId = id;
         source.main = structure.capture.trigger.stackSize;
         source.mainExplicit = false;

@@ -63,6 +63,10 @@ final class HologramPresets {
         int defaultDamage;
         int damage, count = 1, x, y, z, facing = -1;
         boolean controller;
+        transient boolean frozenBlockResolved;
+        transient Block frozenBlock;
+        transient Boolean metadataIdentityBoundary;
+        transient java.util.Set<Integer> frozenSensorSlots;
 
         ItemStack stack() {
             Object found = item == null ? null : Item.itemRegistry.getObject(item);
@@ -75,6 +79,10 @@ final class HologramPresets {
         }
 
         Block block() {
+            if (HologramSnapshotMetadataSource.detached()) {
+                if (!frozenBlockResolved) throw new IllegalStateException("Metadata block identity was not frozen");
+                return frozenBlock;
+            }
             Object found = block == null ? null : Block.blockRegistry.getObject(block);
             return found instanceof Block && (found != Blocks.air || "minecraft:air".equals(block)) ? (Block) found
                 : null;

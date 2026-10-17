@@ -67,7 +67,10 @@ public final class HologramNetwork {
     static void clearServerQueues() {
         actionGate.clear();
         receiptGate.clear();
+        for (Outbox box : outgoing.values()) retire(box);
         outgoing.clear();
+        HologramSnapshotEncoding.clear();
+        HologramSnapshotPreparation.clear();
         cutOutgoing.clear();
         HologramBusyReplies.clear();
     }
@@ -459,42 +462,175 @@ public final class HologramNetwork {
             return;
         }
         if (tag.getBoolean("capturePending")) return;
-        try {
-            if (tag.hasKey("progress", 10)) tag.getCompoundTag("progress")
-                .setLong("sequence", progressSequence.incrementAndGet());
-            byte[] bytes = compressSnapshot(tag);
-            if (tag.hasKey("cells", 9))
-                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.FULL_CELLS_COMPRESSED_BYTES, bytes.length);
-            if (bytes.length > HologramSnapshotAssembly.MAX_BYTES)
-                throw new IllegalArgumentException("hologram snapshot byte budget");
-            Outbox box = outgoing.get(player.getUniqueID());
-            String session = tag.getString("session");
-            if (box == null || box.player != player || !box.session.equals(session) || tag.getBoolean("cancelled")) {
-                if (box != null && box.snapshots.peekFirst() != null && box.snapshots.peekFirst().libraryInitial)
-                    HologramLibraryFacade.cancelDownloadAllowance(HologramLibraryFacade.actorId(box.player));
-                box = new Outbox(player, session);
-                outgoing.put(player.getUniqueID(), box);
+        // Public callers retain ownership; the internal prepared-full path explicitly transfers it.
+        SnapshotTicket ticket = reserveState(player, tag.getString("session"), tag.getBoolean("cancelled"));
+        if (ticket != null) completeOwnedState(ticket, (NBTTagCompound) tag.copy(), () -> true, () -> {});
+    }
+
+    /** Reserve FIFO position before building a full DTO, so later ACKs cannot cross its baseline. */
+    static SnapshotTicket reserveState(EntityPlayerMP player, String session, boolean cancelled) {
+        if (channel == null) return null;
+        Outbox box = outgoing.get(player.getUniqueID());
+        if (box == null || box.player != player || !box.session.equals(session) || cancelled) {
+            if (box != null) retire(box);
+            box = new Outbox(player, session);
+            outgoing.put(player.getUniqueID(), box);
+        }
+        int queued = 0;
+        for (Outbox current : outgoing.values()) queued += current.snapshots.size();
+        if (queued >= 32 || box.snapshots.size() >= 8) {
+            outgoing.remove(player.getUniqueID());
+            for (OutgoingSnapshot queuedSnapshot : box.snapshots) queuedSnapshot.failed = true;
+            retire(box);
+            transportFailure(player, session, new IllegalStateException("snapshot preparation queue full"));
+            return null;
+        }
+        OutgoingSnapshot snapshot = new OutgoingSnapshot(snapshotSequence.incrementAndGet());
+        box.snapshots.addLast(snapshot);
+        return new SnapshotTicket(box, snapshot);
+    }
+
+    /** The caller relinquishes every mutable reference in owned until the main-thread ready callback. */
+    static void completeOwnedState(SnapshotTicket ticket, NBTTagCompound owned,
+        java.util.function.BooleanSupplier valid, Runnable ready) {
+        if (!ticket.current()) return;
+        if (owned.hasKey("progress", 10)) owned.getCompoundTag("progress")
+            .setLong("sequence", progressSequence.incrementAndGet());
+        OutgoingSnapshot previous = null;
+        for (OutgoingSnapshot queued : ticket.box.snapshots) {
+            if (queued == ticket.snapshot) break;
+            previous = queued;
+        }
+        if (previous != null && previous.encoding == null
+            && previous.owned != null
+            && canCoalesceMetadata(previous.owned, owned)) {
+            ticket.box.snapshots.remove(previous);
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_COALESCED, 1);
+        }
+        ticket.snapshot.initialize(owned, valid, ready);
+    }
+
+    /** Full baselines, deltas and ACKs represent ordered effects and must never replace each other. */
+    static boolean canCoalesceMetadata(NBTTagCompound previous, NBTTagCompound next) {
+        return metadataOnly(previous) && metadataOnly(next)
+            && previous.getString("session")
+                .equals(next.getString("session"))
+            && previous.getLong("uiSequence") == next.getLong("uiSequence")
+            && previous.getLong("batchSeq") == next.getLong("batchSeq")
+            && previous.getLong("planRevision") == next.getLong("planRevision")
+            && previous.getString("phase")
+                .equals(next.getString("phase"))
+            && previous.getInteger("job") == next.getInteger("job");
+    }
+
+    private static boolean metadataOnly(NBTTagCompound state) {
+        return !state.hasKey("cells", 9) && !"cellDelta".equals(state.getString("snapshotKind"))
+            && !state.getBoolean("open")
+            && !state.getBoolean("hints")
+            && !state.getBoolean("settingsOnly")
+            && !state.getBoolean("cancelled")
+            && !state.getBoolean("libraryInitialSnapshot")
+            && state.getIntArray("ackIndices").length == 0
+            && state.getIntArray("ack").length == 0;
+    }
+
+    static void cancelState(SnapshotTicket ticket) {
+        if (ticket != null && ticket.current()) {
+            outgoing.remove(ticket.box.player.getUniqueID());
+            retire(ticket.box);
+        }
+    }
+
+    static final class SnapshotTicket {
+
+        final Outbox box;
+        final OutgoingSnapshot snapshot;
+
+        SnapshotTicket(Outbox box, OutgoingSnapshot snapshot) {
+            this.box = box;
+            this.snapshot = snapshot;
+        }
+
+        boolean failed() {
+            return snapshot.failed;
+        }
+
+        boolean current() {
+            return outgoing.get(box.player.getUniqueID()) == box && box.snapshots.contains(snapshot);
+        }
+    }
+
+    private static void retire(Outbox box) {
+        for (OutgoingSnapshot snapshot : box.snapshots) {
+            if (snapshot.encoding != null) snapshot.encoding.cancel();
+            snapshot.owned = null;
+            snapshot.valid = null;
+            snapshot.ready = null;
+            snapshot.bytes = null;
+            snapshot.libraryHash = null;
+        }
+        if (box.snapshots.peekFirst() != null && box.snapshots.peekFirst().libraryInitial)
+            HologramLibraryFacade.cancelDownloadAllowance(HologramLibraryFacade.actorId(box.player));
+        box.snapshots.clear();
+    }
+
+    static void transportFailure(EntityPlayerMP player, String session, Exception failure) {
+        HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_DROPPED, 1);
+        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot could not be queued", failure);
+        if (channel != null && progressConnected(player)) {
+            NBTTagCompound state = new NBTTagCompound();
+            state.setBoolean("transportError", true);
+            state.setString("session", session);
+            channel.sendTo(new State(state), player);
+        }
+    }
+
+    /** Existing transport tick consumes worker results; workers never execute callbacks. */
+    private static void tickEncoding() {
+        Iterator<Outbox> boxes = outgoing.values()
+            .iterator();
+        while (boxes.hasNext()) {
+            Outbox box = boxes.next();
+            if (box.player.worldObj != box.world || box.player.dimension != box.dimension
+                || !progressConnected(box.player)) {
+                retire(box);
+                boxes.remove();
+                continue;
             }
-            OutgoingSnapshot previous = box.snapshots.peekLast();
-            boolean replace = previous != null && previous.canReplace(tag);
-            long replacedBytes = replace ? previous.bytes.length : 0;
-            if (box.pendingBytes - replacedBytes + bytes.length > HologramSnapshotAssembly.MAX_BYTES)
-                throw new IllegalArgumentException("hologram queued snapshot byte budget");
-            if (replace) {
-                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_COALESCED, 1);
-                box.snapshots.removeLast();
-                box.pendingBytes -= previous.bytes.length;
+            OutgoingSnapshot snapshot = box.snapshots.peekFirst();
+            if (snapshot == null || snapshot.bytes != null || snapshot.owned == null) continue;
+            if (!snapshot.valid.getAsBoolean()) {
+                retire(box);
+                boxes.remove();
+                continue;
             }
-            box.snapshots.addLast(new OutgoingSnapshot(snapshotSequence.incrementAndGet(), bytes, tag));
-            box.pendingBytes += bytes.length;
+            if (snapshot.encoding == null) {
+                snapshot.encoding = HologramSnapshotEncoding.submit(snapshot.owned);
+                continue;
+            }
+            HologramSnapshotEncoding.Job encoding = snapshot.encoding;
+            if (!encoding.done) continue;
+            if (encoding.failure != null || encoding.cancelled
+                || encoding.bytes == null
+                || box.pendingBytes + encoding.bytes.length > HologramSnapshotAssembly.MAX_BYTES) {
+                Exception failure = encoding.failure != null ? encoding.failure
+                    : new IllegalArgumentException("hologram queued snapshot byte budget");
+                snapshot.failed = true;
+                retire(box);
+                boxes.remove();
+                transportFailure(box.player, box.session, failure);
+                continue;
+            }
+            snapshot.bytes = encoding.bytes;
+            snapshot.libraryHash = snapshot.libraryInitial ? encoding.hash : null;
+            box.pendingBytes += snapshot.bytes.length;
+            if (snapshot.owned.hasKey("cells", 9)) HologramRuntimeMetrics
+                .add(HologramRuntimeMetrics.Counter.FULL_CELLS_COMPRESSED_BYTES, snapshot.bytes.length);
+            snapshot.ready.run();
+            snapshot.ready = null;
+            snapshot.owned = null;
+            snapshot.valid = null;
             HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_QUEUED, 1);
-        } catch (IOException | RuntimeException e) {
-            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_DROPPED, 1);
-            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot could not be queued", e);
-            NBTTagCompound failure = new NBTTagCompound();
-            failure.setBoolean("transportError", true);
-            failure.setString("session", tag.getString("session"));
-            channel.sendTo(new State(failure), player);
         }
     }
 
@@ -534,40 +670,24 @@ public final class HologramNetwork {
     private static final class OutgoingSnapshot {
 
         final long sequence;
-        final byte[] bytes;
-        final long uiSequence, batchSequence, revision;
-        final String phase;
-        final int job;
-        final boolean opening;
-        final boolean libraryInitial;
-        final byte[] libraryHash;
+        byte[] bytes, libraryHash;
+        boolean libraryInitial, failed;
+        NBTTagCompound owned;
+        java.util.function.BooleanSupplier valid;
+        Runnable ready;
+        HologramSnapshotEncoding.Job encoding;
         int offset, index;
         boolean queueNotified;
 
-        OutgoingSnapshot(long sequence, byte[] bytes, NBTTagCompound tag) {
+        OutgoingSnapshot(long sequence) {
             this.sequence = sequence;
-            this.bytes = bytes;
-            uiSequence = tag.getLong("uiSequence");
-            batchSequence = tag.getLong("batchSeq");
-            revision = tag.getLong("planRevision");
-            phase = tag.getString("phase");
-            job = tag.getInteger("job");
-            opening = tag.getBoolean("open") || tag.getBoolean("hints") || tag.getBoolean("settingsOnly");
-            libraryInitial = tag.getBoolean("libraryInitialSnapshot");
-            libraryHash = libraryInitial ? HologramLibraryProtocol.digest()
-                .digest(bytes) : null;
         }
 
-        boolean canReplace(NBTTagCompound tag) {
-            return offset == 0 && !opening
-                && !tag.getBoolean("open")
-                && !tag.getBoolean("hints")
-                && !tag.getBoolean("settingsOnly")
-                && uiSequence == tag.getLong("uiSequence")
-                && batchSequence == tag.getLong("batchSeq")
-                && revision == tag.getLong("planRevision")
-                && phase.equals(tag.getString("phase"))
-                && job == tag.getInteger("job");
+        void initialize(NBTTagCompound owned, java.util.function.BooleanSupplier valid, Runnable ready) {
+            this.owned = owned;
+            this.valid = valid;
+            this.ready = ready;
+            libraryInitial = owned.getBoolean("libraryInitialSnapshot");
         }
     }
 
@@ -587,6 +707,8 @@ public final class HologramNetwork {
         }
 
         private void tickTransfers() {
+            HologramSnapshotPreparation.pruneRetired();
+            tickEncoding();
             Iterator<CutOutbox> cuts = cutOutgoing.values()
                 .iterator();
             while (cuts.hasNext()) {
@@ -620,7 +742,7 @@ public final class HologramNetwork {
             java.util.List<Outbox> initial = new java.util.ArrayList<>();
             for (Outbox box : outgoing.values()) {
                 OutgoingSnapshot first = box.snapshots.peekFirst();
-                if (first != null && first.libraryInitial) initial.add(box);
+                if (first != null && first.bytes != null && first.libraryInitial) initial.add(box);
             }
             if (!initial.isEmpty()) {
                 int start = publicSnapshotCursor++ % initial.size();
@@ -676,7 +798,7 @@ public final class HologramNetwork {
                     iterator.remove();
                     continue;
                 }
-                if (snapshot.libraryInitial) continue;
+                if (snapshot.bytes == null || snapshot.libraryInitial) continue;
                 int end = Math.min(snapshot.bytes.length, snapshot.offset + HologramSnapshotAssembly.CHUNK_BYTES);
                 channel.sendTo(
                     new Fragment(
@@ -928,6 +1050,7 @@ public final class HologramNetwork {
 
         Action(NBTTagCompound tag) {
             super(tag);
+            this.tag.setInteger("clientSnapshotProtocol", 1);
         }
     }
 

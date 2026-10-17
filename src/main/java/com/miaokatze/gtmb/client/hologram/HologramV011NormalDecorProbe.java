@@ -199,7 +199,7 @@ final class HologramV011NormalDecorProbe {
                 .copy());
         receipt.setTag("ownerDiskAck", ack.copy());
         receipt.setTag("finalSaveOutcome", outcome.copy());
-        receipt.setTag("actualSnapshot", state.data.copy());
+        receipt.setTag("actualSnapshot", state.fullData());
         return receipt;
     }
 

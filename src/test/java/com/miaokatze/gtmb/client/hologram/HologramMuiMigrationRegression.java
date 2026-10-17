@@ -25,6 +25,7 @@ public final class HologramMuiMigrationRegression {
     private HologramMuiMigrationRegression() {}
 
     public static void run() {
+        semanticNativeGuidance();
         SimpleAssert.eq(
             "gtmb:textures/gui/pocket/POCKET_C2_panel.png",
             HologramMuiTheme.PANEL.location.toString(),
@@ -72,6 +73,70 @@ public final class HologramMuiMigrationRegression {
                 "HologramUiPosition", "HologramUiProcessing", "HologramUiNbtEditor" }) inspect(BASE + type, inspected);
         } catch (IOException failure) {
             throw new AssertionError("Cannot inspect actual migration classes", failure);
+        }
+    }
+
+    private static void semanticNativeGuidance() {
+        int[] oldAccents = { 0xef7b7b, 0x68dded, 0x86baff, 0x80efaa };
+        int[] colors = { HologramUiAccent.WARNING, HologramUiAccent.SUGGESTION, HologramUiAccent.INFORMATION,
+            HologramUiAccent.NEXT };
+        for (int i = 0; i < oldAccents.length; i++) {
+            SimpleAssert.eq(
+                colors[i],
+                HologramUiAccent.textColor(oldAccents[i], true),
+                "native highlighted text preserves the distinct guidance semantic " + i);
+            SimpleAssert.eq(
+                colors[i],
+                HologramUiAccent.borderColor(oldAccents[i], true),
+                "the solid frame uses the same semantic color as its label " + i);
+            SimpleAssert.that(
+                colors[i] != HologramMuiTheme.TITLE,
+                "highlighted actions never collapse into the ordinary orange trim");
+            SimpleAssert.eq(
+                0,
+                HologramUiAccent.borderColor(oldAccents[i], false),
+                "an unavailable action cannot advertise itself as an active next step");
+        }
+        SimpleAssert.that(
+            HologramUiAccent.BORDER_WIDTH >= 2,
+            "semantic guidance covers both pixels of the existing orange button edge");
+        try {
+            int[] calls = new int[3];
+            reader(BASE + "HologramMuiCanvasScreen$NativeButton").accept(new ClassVisitor(9 << 16) {
+
+                @Override
+                public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                    return new MethodVisitor(9 << 16) {
+
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String name, String desc, boolean itf) {
+                            if (owner.equals(BASE + "HologramMuiTheme") && name.equals("guidanceBackground"))
+                                calls[0]++;
+                            if (owner.equals(BASE + "HologramUiAccent") && name.equals("textColor")) calls[1]++;
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            reader(BASE + "HologramMuiTheme").accept(new ClassVisitor(9 << 16) {
+
+                @Override
+                public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                    if (!n.startsWith("lambda$guidanceBackground")) return null;
+                    return new MethodVisitor(9 << 16) {
+
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String name, String desc, boolean itf) {
+                            if (owner.equals("com/cleanroommc/modularui/drawable/GuiDraw") && name.equals("drawRect"))
+                                calls[2]++;
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            SimpleAssert.eq(2, calls[0], "actual native normal and hover backgrounds both bind the semantic frame");
+            SimpleAssert.eq(1, calls[1], "actual native overlay reads the semantic text color");
+            SimpleAssert.eq(4, calls[2], "actual guidance background draws all four solid frame edges");
+        } catch (IOException failure) {
+            throw new AssertionError("Cannot inspect native guidance rendering", failure);
         }
     }
 

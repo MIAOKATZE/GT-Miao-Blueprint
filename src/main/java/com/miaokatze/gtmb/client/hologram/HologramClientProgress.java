@@ -69,6 +69,7 @@ final class HologramClientProgress {
         entry.tracker.update(
             identity,
             event.getString("phase"),
+            event.getString("detail"),
             event.getLong("done"),
             event.getLong("total"),
             event.getString("unit"),

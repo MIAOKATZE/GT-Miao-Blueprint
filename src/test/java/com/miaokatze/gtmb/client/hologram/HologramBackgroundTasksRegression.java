@@ -3,6 +3,8 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.ArrayList;
 import java.util.List;
 
+import net.minecraft.nbt.NBTTagCompound;
+
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Executable task lifetime tests; no source-text matching or GUI implementation mirrors. */
@@ -11,6 +13,8 @@ public final class HologramBackgroundTasksRegression {
     private HologramBackgroundTasksRegression() {}
 
     public static void run() {
+        presentationValues();
+        freshScreenBoundary();
         List<String> events = new ArrayList<>();
         HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
 
@@ -120,5 +124,121 @@ public final class HologramBackgroundTasksRegression {
         SimpleAssert.that(
             owner.finishReceipt("server", "session-D:40", HologramTaskOwner.Result.SUCCESS, "original job finished"),
             "the original job can truthfully complete after its pause was rejected");
+    }
+
+    private static void presentationValues() {
+        NBTTagCompound library = new NBTTagCompound();
+        library.setBoolean("blueprintTab", true);
+        library.setInteger("libraryOffset", 17);
+        library.setString("sourceSwitchNonce", "server-owned-proposal");
+        NBTTagCompound review = new NBTTagCompound();
+        review.setLong("placementReviewNonce", 94);
+        review.setString("transactionId", "active-save-review");
+        NBTTagCompound values = new NBTTagCompound();
+        values.setTag("library", library);
+        values.setTag("review", review);
+        HologramBackgroundUiState saved = new HologramBackgroundUiState("workspace-a", 8, values);
+        library.setInteger("libraryOffset", 0);
+        review.setLong("placementReviewNonce", 0);
+        SimpleAssert.that(saved.matches("workspace-a", 8), "the original owner can restore presentation values");
+        SimpleAssert.that(
+            !saved.matches("workspace-b", 8) && !saved.matches("workspace-a", 9),
+            "a different session or newer worker cannot restore an older presentation");
+        NBTTagCompound first = saved.values();
+        SimpleAssert.eq(
+            17,
+            first.getCompoundTag("library")
+                .getInteger("libraryOffset"),
+            "browser scroll is detached from the disposed presentation's mutable values");
+        SimpleAssert.that(
+            first.getCompoundTag("library")
+                .getBoolean("blueprintTab"),
+            "reopen retains the business tab rather than choosing a background page");
+        SimpleAssert.eq(
+            94L,
+            first.getCompoundTag("review")
+                .getLong("placementReviewNonce"),
+            "capturing presentation does not erase its review identity");
+        first.getCompoundTag("review")
+            .setString("transactionId", "modified-copy");
+        SimpleAssert.eq(
+            "active-save-review",
+            saved.values()
+                .getCompoundTag("review")
+                .getString("transactionId"),
+            "repeated fresh screens receive independent review presentation copies");
+
+        HologramProcessingFlow flow = new HologramProcessingFlow(new NBTTagCompound(), false, true);
+        flow.requirements(48);
+        flow.tendency(true);
+        flow.next();
+        flow.values()
+            .setInteger("deidentificationLevel", 3);
+        flow.choose();
+        flow.next();
+        flow.offset = 12;
+        HologramProcessingFlow restored = HologramProcessingFlow.restoreBackgroundUiState(flow.backgroundUiState());
+        SimpleAssert.that(
+            restored != flow && restored.values() != flow.values(),
+            "processing review resumes in a fresh business model without keeping the old screen");
+        SimpleAssert.eq(flow.stage, restored.stage, "processing review resumes its original step");
+        SimpleAssert.eq(12, restored.offset, "processing review resumes its original scroll");
+        SimpleAssert.eq(flow.policy(), restored.policy(), "processing choices and confirmed prefix are preserved");
+        SimpleAssert.that(
+            restored.fullReview() && restored.requiredStages() == 48 && !restored.complete(),
+            "reopen preserves full review and never implicitly submits or completes the business action");
+        restored.values()
+            .setInteger("deidentificationLevel", 9);
+        SimpleAssert.eq(
+            3,
+            flow.values()
+                .getInteger("deidentificationLevel"),
+            "fresh review edits cannot modify the detached model");
+    }
+
+    private static void freshScreenBoundary() {
+        final int[] freshScreens = { 0 }, outboundActions = { 0 };
+        String owner = "com/miaokatze/gtmb/client/hologram/";
+        try (java.io.InputStream source = HologramBackgroundTasksRegression.class.getClassLoader()
+            .getResourceAsStream(owner + "HologramBackgroundTasks.class")) {
+            if (source == null) throw new java.io.IOException("missing production background owner");
+            new org.objectweb.asm.ClassReader(source)
+                .accept(new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM5) {
+
+                    @Override
+                    public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String descriptor,
+                        String signature, String[] exceptions) {
+                        if (!"reopen".equals(name)) return null;
+                        return new org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM5) {
+
+                            @Override
+                            public void visitTypeInsn(int opcode, String type) {
+                                if (opcode == org.objectweb.asm.Opcodes.NEW && (owner + "HologramScreen").equals(type))
+                                    freshScreens[0]++;
+                                SimpleAssert.that(
+                                    !type.endsWith("HologramBackgroundScreen"),
+                                    "reopen allocates the business workstation without a dedicated background screen");
+                            }
+
+                            @Override
+                            public void visitMethodInsn(int opcode, String type, String method, String descriptor,
+                                boolean isInterface) {
+                                if ("sendAction".equals(method) || "command".equals(method)
+                                    || "beginLibrary".equals(method)) outboundActions[0]++;
+                            }
+                        };
+                    }
+                }, org.objectweb.asm.ClassReader.SKIP_DEBUG | org.objectweb.asm.ClassReader.SKIP_FRAMES);
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("cannot inspect production reopen boundary", failure);
+        }
+        SimpleAssert.eq(1, freshScreens[0], "every normal reopen constructs a fresh business screen after disposal");
+        SimpleAssert.eq(0, outboundActions[0], "presentation reattachment cannot repeat the original business action");
+        for (java.lang.reflect.Field field : HologramBackgroundUiState.class.getDeclaredFields()) {
+            Class<?> type = field.getType();
+            SimpleAssert.that(
+                type == String.class || type == long.class || type == NBTTagCompound.class,
+                "detached presentation contains pure values without retaining disposed UI objects: " + field.getName());
+        }
     }
 }
