@@ -123,8 +123,7 @@ final class HologramCellPolicy {
     }
 
     static ItemStack targetFor(HologramSession s, HologramCapture.Cell c, int index) {
-        if (s.localPlanPending || HologramSessionPolicy.authoring(s))
-            return HologramEssentia.shellMaterial(draftTarget(s, c, index));
+        if (s.localPlanPending) return HologramEssentia.shellMaterial(draftTarget(s, c, index));
         if (index >= 0 && index < s.planTargets.size()) {
             ItemStack target = s.planTargets.get(index);
             return target == null ? null : HologramEssentia.shellMaterial(target);

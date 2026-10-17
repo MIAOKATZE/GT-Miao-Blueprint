@@ -22,9 +22,9 @@ public final class V0110LoadedLatencyProbe {
     private final List<Envelope> envelopes=new ArrayList<Envelope>();
     private File output;
     private Object mc, actor, metrics;
-    private Consumer<Object> receiver;
+    private Consumer<Object> receiver,progressReceiver;
     private boolean client,server,done,originalMetrics,metricsReady,ready,chunks,preRequestMatched,localApi,awaitingCancelAuthority;
-    private long cancelRequestNanos,cancelRequestOrdinal,cancelOperationNumber;
+    private long cancelRequestNanos,cancelRequestOrdinal,cancelOperationNumber,cancelBaselineSequence;
     private boolean loadedRun,observingRender;
     private int loadedStep;
     private long settingsDrawnAt,promptExpectedSequence,promptBaselineRevision;
@@ -37,8 +37,8 @@ public final class V0110LoadedLatencyProbe {
     private PrintWriter tickLog,stageLog,requestLog;
     private volatile String transportFailure="";
     private static final class Envelope {
-        long ordinal,at; String session; int[] points;
-        boolean selecting,hasSelection,fragment,error,selectionOnly,progressOnly,partial,cellDelta;
+        long ordinal,at,selectionSequence; String session,channel; int[] points;
+        boolean selecting,hasSelection,fragment,error,selectionOnly,workspaceUiOnly,progressOnly,partial,cellDelta;
         int cellRows,fragmentIndex,fragmentTotal;
         long transportSequence;
     }
@@ -130,11 +130,11 @@ public final class V0110LoadedLatencyProbe {
             observeInstalled();
             if (!operation.isEmpty()) { check(System.nanoTime()-requested<(operation.equals("finishAreaSelection")?1800000000000L:loadedRun?300000000000L:120000000000L),"request timeout "+operation); pulse(); return; }
             if(awaitingCancelAuthority) {
-                Object state=get(Class.forName(CLIENT+"HologramClient"),"state");
-                if(state!=null&&!bool(get(state,"data"),"areaSelecting")&&rx.get()>cancelRequestOrdinal) {
+                if(cancelAuthorityInstalled()) {
                     awaitingCancelAuthority=false;
                     measurements.setProperty("request."+cancelOperationNumber+".cancelAuthoritySettledNanos",String.valueOf(System.nanoTime()));
                     measurements.setProperty("request."+cancelOperationNumber+".cancelAuthoritySettledElapsedNanos",String.valueOf(System.nanoTime()-cancelRequestNanos));
+                    synchronized(envelopes){envelopes.clear();}
                     store("client-latency.properties",measurements);
                 } else {check(System.nanoTime()-cancelRequestNanos<120000000000L,"actual server cancellation cleanup timeout");pulse();return;}
             }
@@ -168,8 +168,9 @@ public final class V0110LoadedLatencyProbe {
         check(Arrays.equals((int[])call(selection,"indices"),new int[]{0})&&(Integer)call(preview,"selected")==0,"real UI selection contains only actual cell zero");
         Object state=get(Class.forName(CLIENT+"HologramClient"),"state");promptBaselineRevision=(Long)call(get(state,"data"),"func_74763_f","planRevision");
         Object flags=construct("net.minecraft.nbt.NBTTagCompound");call(flags,"func_74783_a","indices",new int[]{0});call(flags,"func_74778_a","prompt",promptValue);
+        long sequenceBefore=(Long)get(session,"sequence");
         call(session,"send","editCellFlags",flags,true);promptExpectedSequence=(Long)get(session,"sequence");
-        check(promptExpectedSequence>0,"actual production UI sequence allocated");
+        check(promptExpectedSequence>sequenceBefore,"actual production UI send advanced its sequence");
         proof.setProperty("promptStimulus","actual current HologramUiSession.send editCellFlags with real UI selected cell zero; no pin/NBT command");
     }
     @SubscribeEvent(priority=EventPriority.LOWEST)public void naturalRender(TickEvent.RenderTickEvent e) {
@@ -187,22 +188,45 @@ public final class V0110LoadedLatencyProbe {
     private void installReceiver() throws Exception {
         final Object network=Class.forName(PRODUCT+"HologramNetwork");
         receiver=(Consumer<Object>)get(network,"receiver"); check(receiver!=null,"real product receiver");
-        member((Class<?>)network,"receiver").set(null,new Consumer<Object>() { public void accept(Object actual) {
+        progressReceiver=(Consumer<Object>)get(network,"progressReceiver");check(progressReceiver!=null,"real product inner-progress receiver");
+        try {
+            member((Class<?>)network,"receiver").set(null,observing(receiver,"receiver"));
+            member((Class<?>)network,"progressReceiver").set(null,observing(progressReceiver,"progressReceiver-inner"));
+        } catch(Exception failure){restoreReceiver();throw failure;}
+    }
+    private Consumer<Object> observing(final Consumer<Object> original,final String channel) {
+        return new Consumer<Object>() { public void accept(Object actual) {
             try {
                 Envelope v=new Envelope(); v.ordinal=rx.incrementAndGet(); v.at=System.nanoTime();
+                v.channel=channel;
                 v.fragment=bool(actual,"transportFragment"); v.error=bool(actual,"transportError");
                 v.hasSelection=(Boolean)call(actual,"func_74764_b","areaSelecting"); v.selecting=bool(actual,"areaSelecting");
                 v.selectionOnly=bool(actual,"areaSelectionOnly"); v.points=(int[])call(actual,"func_74759_k","areaPoints"); v.session=str(actual,"session");
-                v.progressOnly=bool(actual,"progressOnly");v.partial=bool(actual,"partial");v.cellDelta=bool(actual,"cellDelta");
+                v.workspaceUiOnly=bool(actual,"workspaceUiOnly");v.selectionSequence=(Long)call(actual,"func_74763_f","areaSelectionSequence");
+                v.progressOnly=channel.equals("progressReceiver-inner")||bool(actual,"progressOnly");v.partial=bool(actual,"partial");v.cellDelta="cellDelta".equals(str(actual,"snapshotKind"));
                 v.cellRows=(Integer)call(call(actual,"func_150295_c","cells",10),"func_74745_c");
                 v.fragmentIndex=(Integer)call(actual,"func_74762_e","transportIndex");v.fragmentTotal=(Integer)call(actual,"func_74762_e","transportTotal");v.transportSequence=(Long)call(actual,"func_74763_f","transportSequence");
                 if (v.error) transportFailure=actual.toString();
                 synchronized(envelopes) { envelopes.add(v); if(envelopes.size()>4096) envelopes.remove(0); }
             } catch(Exception failure) { transportFailure="observer: "+failure; }
-            receiver.accept(actual); // Exactly the original actual packet is forwarded once.
-            try { call(mc,"func_152344_a",new Runnable() { public void run() { try { observeInstalled(); } catch(Throwable failure) { fail(failure); } } }); }
-            catch(Exception failure) { transportFailure="main observation scheduling: "+failure; }
-        }});
+            try { original.accept(actual); } // Exactly the original channel object is forwarded once.
+            finally {
+                try { call(mc,"func_152344_a",new Runnable() { public void run() { try { observeInstalled(); } catch(Throwable failure) { fail(failure); } } }); }
+                catch(Exception failure) { transportFailure="main observation scheduling: "+failure; }
+            }
+        }};
+    }
+    private boolean cancelAuthorityInstalled()throws Exception {
+        Object state=get(Class.forName(CLIENT+"HologramClient"),"state");
+        if(state==null||bool(get(state,"data"),"areaSelecting"))return false;
+        if(!localApi)return rx.get()>cancelRequestOrdinal;
+        long installed=(Long)call(get(state,"data"),"func_74763_f","areaSelectionSequence");
+        if(installed<=cancelBaselineSequence)return false;
+        String session=String.valueOf(get(state,"session"));
+        synchronized(envelopes){for(Envelope v:envelopes)if(v.ordinal>cancelRequestOrdinal&&v.at>=cancelRequestNanos
+            &&v.selectionOnly&&!v.workspaceUiOnly&&!v.selecting&&v.session.equals(session)
+            &&v.selectionSequence>cancelBaselineSequence&&v.selectionSequence<=installed)return true;}
+        return false;
     }
     private void issue(String action) throws Exception {
         operation=action; operationNumber++; ackAt=0; firstEnvelope=0;
@@ -212,6 +236,11 @@ public final class V0110LoadedLatencyProbe {
         metricBefore=metric(String.format("%03d-before",operationNumber));
         proof.setProperty("operation",action); proof.setProperty("operationNumber",String.valueOf(operationNumber));
         proof.setProperty("round",String.valueOf(round)); persist("RUNNING");
+        if(localApi&&action.equals("cancelAreaSelection")) {
+            Object state=get(Class.forName(CLIENT+"HologramClient"),"state");
+            cancelBaselineSequence=(Long)call(get(state,"data"),"func_74763_f","areaSelectionSequence");
+            measurements.setProperty("request."+operationNumber+".cancelBaselineAreaSelectionSequence",String.valueOf(cancelBaselineSequence));
+        }
         requestOrdinal=rx.get(); requested=System.nanoTime();
         if(action.equals("beginAreaSelection")) call(Class.forName(CLIENT+"HologramClient"),"beginAreaSelection");
         else if(action.equals("openSettings")) call(Class.forName(CLIENT+"HologramClient"),"openSettings");
@@ -302,7 +331,9 @@ public final class V0110LoadedLatencyProbe {
             int observed=0;
             for(Envelope v:envelopes)if(v.ordinal>requestOrdinal&&v.at>=requested) {
                 String row=prefix+".actualEnvelope."+(observed++);
-                measurements.setProperty(row+".kind",v.fragment?"transportFragment":v.progressOnly?"progressOnly":v.cellDelta?"cellDelta":v.partial?"partialDTO":"stateDTO");
+                measurements.setProperty(row+".channel",v.channel);
+                measurements.setProperty(row+".kind",v.fragment?"transportFragment":v.workspaceUiOnly?"workspaceUiOnly":v.selectionOnly?"areaSelectionOnly":v.progressOnly?"progressOnly":v.cellDelta?"cellDelta":v.partial?"partialDTO":"stateDTO");
+                measurements.setProperty(row+".areaSelectionSequence",String.valueOf(v.selectionSequence));
                 measurements.setProperty(row+".cellRows",String.valueOf(v.cellRows));measurements.setProperty(row+".transportSequence",String.valueOf(v.transportSequence));
                 measurements.setProperty(row+".fragmentIndex",String.valueOf(v.fragmentIndex));measurements.setProperty(row+".fragmentTotal",String.valueOf(v.fragmentTotal));
             }
@@ -310,7 +341,7 @@ public final class V0110LoadedLatencyProbe {
         }
         requestLog.println(operationNumber+"\t"+round+"\t"+(round<2)+"\t"+operation+"\t"+requested+"\t"+firstEnvelope+"\t"+ackAt+"\t"+(ackAt-requested)+"\t"+requestOrdinal+"\t"+rx.get()+"\t"+measurements.getProperty(prefix+".localImmediateMatched")+"\t"+(!local&&matched.selectionOnly)+"\t"+(local?"clientLocal":"installedAuthority")); requestLog.flush();
         String completed=operation; operation="";
-        synchronized(envelopes) { envelopes.clear(); }
+        if(!(completed.equals("cancelAreaSelection")&&local))synchronized(envelopes) { envelopes.clear(); }
         if(loadedRun) {
             checkLoadedClient();
             measurements.setProperty(prefix+".loadedCells",String.valueOf(cells));
@@ -320,7 +351,7 @@ public final class V0110LoadedLatencyProbe {
                 Object data=get(state,"data");proof.setProperty("loadedPromptAuthoritative","true");
                 proof.setProperty("promptBaselineRevision",String.valueOf(promptBaselineRevision));proof.setProperty("promptAuthoritativeRevision",String.valueOf(call(data,"func_74763_f","planRevision")));
                 proof.setProperty("promptAuthoritativeUiSequence",String.valueOf(call(data,"func_74763_f","uiSequence")));proof.setProperty("promptExpectedUiSequence",String.valueOf(promptExpectedSequence));
-                proof.setProperty("promptInstalledPartial",String.valueOf(bool(data,"partial")));proof.setProperty("promptInstalledCellDelta",String.valueOf(bool(data,"cellDelta")));
+                proof.setProperty("promptInstalledSnapshotKind",str(data,"snapshotKind"));
             }
             loadedStep++;if(loadedStep==7){proof.setProperty("loadedInteractionCompleted","true");phase=3;}
         } else if(completed.equals("finishAreaSelection")) {
@@ -462,7 +493,11 @@ public final class V0110LoadedLatencyProbe {
         restoreReceiver();metric("terminal");restoreMetrics();proof.setProperty("preferencesRestored","true");
         persist("PASS");done=true;closeLogs();call(mc,"func_71400_g");
     }
-    private void restoreReceiver() throws Exception {if(receiver!=null){member(Class.forName(PRODUCT+"HologramNetwork"),"receiver").set(null,receiver);receiver=null;}}
+    private void restoreReceiver() throws Exception {
+        Class<?> network=Class.forName(PRODUCT+"HologramNetwork");
+        try {if(receiver!=null){member(network,"receiver").set(null,receiver);receiver=null;}}
+        finally {if(progressReceiver!=null){member(network,"progressReceiver").set(null,progressReceiver);progressReceiver=null;}}
+    }
     private void restoreMetrics() throws Exception {if(metricsReady){call(metrics,"setEnabled",originalMetrics);metricsReady=false;}proof.setProperty("metricsRestored","true");}
     private void pulse() throws Exception {if(System.nanoTime()-heartbeat>1000000000L){heartbeat=System.nanoTime();persist("RUNNING");}}
     private void fail(Throwable failure) {
