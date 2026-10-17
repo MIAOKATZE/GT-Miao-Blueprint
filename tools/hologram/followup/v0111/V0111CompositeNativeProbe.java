@@ -3,6 +3,8 @@ package gtmb.v0111.probe;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
@@ -133,6 +135,7 @@ public final class V0111CompositeNativeProbe {
             }
             if(seedMode&&!(Boolean)call(bridge,"lightingInstalled")&&"true".equals(read("composite-client.properties").getProperty("clientLightingBeforeSampled")))call(bridge,"installLighting");
             if (seedMode) call(bridge,"tick");
+            if(seedMode)persistAeSamples();
             Object report = call(bridge,"report");
             if (!"true".equals(proof.getProperty("fixtureReady")) && bool(report,"actualNetty") && (Boolean)call(bridge,"ready")) {
                 if (!seedMode) manifest = call(Class.forName("com.miaokatze.gtmb.testlab.TestLab"),"compositeManifest");
@@ -1101,13 +1104,27 @@ public final class V0111CompositeNativeProbe {
     }
     private void writeNbt(String name,Object value)throws Exception {
         Path target=receiptPath(name),temporary=receiptPath(name+".tmp");
-        try{call(Class.forName("net.minecraft.nbt.CompressedStreamTools"),"func_74795_b",value,temporary.toFile());atomicReceiptMove(temporary,target);}
+        try{
+            try(DataOutputStream stream=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(temporary.toFile()),64*1024))){call(Class.forName("net.minecraft.nbt.CompressedStreamTools"),"func_74800_a",value,stream);}
+            atomicReceiptMove(temporary,target);
+        }
         catch(Exception failure){Throwable cause=failure;while(cause instanceof java.lang.reflect.InvocationTargetException&&cause.getCause()!=null)cause=cause.getCause();if(cause instanceof IOException)throw new ReceiptIoException("write NBT "+name,(IOException)cause);throw failure;}
+    }
+    private void persistAeSamples()throws Exception {
+        for(String kind:new String[]{"source","self","share","raw"}){
+            Object sample=call(bridge,"pendingAeSample",kind);if(sample==null)continue;
+            String name="composite-"+kind+"-ae-network.nbt";Path target=receiptPath(name);
+            check(!Files.exists(target),"fixed AE sample artifact written only once");
+            writeNbt(name,sample);
+            byte[] actual=Files.readAllBytes(target);
+            call(bridge,"commitAeSample",kind,name,hash(actual),(long)actual.length);
+        }
     }
     private Path receiptPath(String name)throws IOException {
         String base=name.endsWith(".tmp")?name.substring(0,name.length()-4):name;
         check(Arrays.asList("composite-client.properties","composite-server.properties","composite-client-timing.properties","composite-server-timing.properties","fixture-request.properties",
             "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-source-baseline.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
+            "composite-source-ae-network.nbt","composite-self-ae-network.nbt","composite-share-ae-network.nbt","composite-raw-ae-network.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
             "composite-self-private-import.nbt","composite-share-private-import.nbt",
             "composite-self-blocked-control.nbt","composite-share-blocked-control.nbt","composite-raw-blocked-control.nbt",

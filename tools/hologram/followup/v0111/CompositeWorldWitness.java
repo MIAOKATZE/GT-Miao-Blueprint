@@ -13,6 +13,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * The same test-only fixture witness is used with 0.1.9, 0.1.10 and the candidate.
@@ -44,6 +46,11 @@ public final class CompositeWorldWitness {
     private boolean lightingInstalled;
     private final long lightingStarted=System.nanoTime();
     private final List<int[]> lightingPoints=new ArrayList<int[]>();
+    private final Map<String,Object> pendingAeSamples=new LinkedHashMap<String,Object>();
+    private final List<int[]> quantumExpected=new ArrayList<int[]>();
+    private final Map<String,Long> quantumStarted=new LinkedHashMap<String,Long>(),quantumLastTick=new LinkedHashMap<String,Long>();
+    private boolean quantumEnumerated;
+    private static final String QUANTUM_TILE="com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode";
 
     public CompositeWorldWitness(Object world,Object actor,Object manifest,Object seedReceipt)throws Exception {
         this.world=world;this.actor=actor;this.manifest=manifest;this.source=ints(manifest,"source");this.bankOrigin=ints(manifest,"bank");result=nbt();
@@ -53,6 +60,13 @@ public final class CompositeWorldWitness {
         Object gameType=call(get(actor,"field_71134_c"),"func_73081_b");
         check((Integer)call(gameType,"func_77148_a")==0,"actual native GameType SURVIVAL(0)");
         putInt(result,"actualNativeGameType",0);
+        long quantumPreloadStarted=System.nanoTime();int quantumPreloadChunks=0;
+        for(int cx=source[0]>>4;cx<=(source[0]+39)>>4;cx++)for(int cz=source[2]>>4;cz<=(source[2]+39)>>4;cz++){
+            Object chunk=call(get(world,"field_73059_b"),"func_73158_c",cx,cz);
+            check(chunk!=null&&!Class.forName("net.minecraft.world.chunk.EmptyChunk").isInstance(chunk)&&existingChunk(cx<<4,cz<<4)==chunk,"native source fixture chunk is actually resident before quantum roster enumeration");quantumPreloadChunks++;
+        }
+        putInt(result,"quantumSourcePreloadChunks",quantumPreloadChunks);putLong(result,"quantumSourcePreloadNanos",System.nanoTime()-quantumPreloadStarted);
+        putText(result,"quantumSourcePreloadScope","once before timing, explicit native loadChunk for only manifest source40-cube; actual resident identity verified; no ticket/lease increase");
         prepareLighting();
         Object stone=call(get(Class.forName("net.minecraft.block.Block"),"field_149771_c"),"func_82594_a","minecraft:stone");
         for(String kind:new String[]{"self","share","raw"}){
@@ -98,6 +112,7 @@ public final class CompositeWorldWitness {
         if(euLedger!=null)euLedger.tick();
         if(!lightingInstalled){check(System.nanoTime()-lightingStarted<30_000_000_000L,"30-second lighting setup deadline awaiting actual client before sample");return;}
         if(baselineCursor==0&&!lightingPropagated())return;
+        if(baselineCursor==0&&!quantumReady("source",source))return;
         if(baselineCursor<64000){
             baselineLastWorldTick=(Long)call(world,"func_82737_E");
             if(baselineScanTicks++==0)baselineFirstWorldTick=baselineLastWorldTick;
@@ -108,7 +123,7 @@ public final class CompositeWorldWitness {
             }
             if(baselineCursor==64000){
                 tag(result,"lightingAfter",lightingSnapshot());
-                tag(result,"sourceAEAtBaselineComplete",aeSnapshot(source,"source-after-independent-baseline-before-business"));
+                captureAeSample("source",source,"source-after-independent-baseline-before-business");
                 putInt(result,"sourceVolume",baselineCursor);putInt(result,"sourceNonAirBlocks",sourceNonAirBlocks);
                 putInt(result,"sourceAirBlocks",baselineCursor-sourceNonAirBlocks);putInt(result,"expectedBlueprintCells",sourceNonAirBlocks);
                 putText(result,"sourceFingerprintAlgorithm",SOURCE_FINGERPRINT_ALGORITHM);
@@ -118,13 +133,14 @@ public final class CompositeWorldWitness {
             return;
         }
         if(!checking.isEmpty()) {
-            if(awaitingFormation){if(!formedTarget())return;tag(result,checking+"AEAfterNativeFormation",aeSnapshot(target,checking+"-after-natural-formation-before-world-oracle"));awaitingFormation=false;}
+            if(awaitingFormation){if(!formedTarget()||!quantumReady(checking,target))return;captureAeSample(checking,target,checking+"-after-natural-formation-before-world-oracle");awaitingFormation=false;putText(result,"status","CHECK_WORLD_"+checking);}
             for(int n=0;n<256&&cursor<64000;n++,cursor++) {
                 Object expected=normalize(baseline.get(cursor),checking,true),actual=normalize(read(target,cursor),checking,false);
                 if(has(expected,"tile"))tiles++;
                 if(!expected.equals(actual)&&mismatches.size()<16)mismatches.add(cursor+": expected="+abbreviate(expected)+" actual="+abbreviate(actual));
                 if(checking.equals("raw")){Object sourceCell=read(source,cursor);if(text(sourceCell,"block").equals("minecraft:air")&&!has(sourceCell,"tile"))sourceAir++;}
             }
+            putInt(result,"oracleComparedCells",cursor);putInt(result,"oracleTotalCells",64000);
             if(cursor==64000){String kind=checking;checking="";putInt(result,kind+"ComparedCells",cursor);putInt(result,kind+"ComparedTiles",tiles);putInt(result,kind+"SourceAirCells",sourceAir);putText(result,kind+"Mismatches",mismatches.toString());putLong(result,kind+"PostcheckNanos",System.nanoTime()-operationStarted);check(mismatches.isEmpty(),"independent "+kind+" native data mismatch: "+mismatches);if(kind.equals("raw"))check(sourceAir==64000,"raw source independently empty at every selected cell");putBool(result,kind+"Passed",true);putText(result,"status","READY");}
         }
         observeSave();
@@ -132,6 +148,99 @@ public final class CompositeWorldWitness {
 
     public boolean ready(){return baselineCursor==64000&&checking.isEmpty();}
     public boolean lightingInstalled(){return lightingInstalled;}
+
+    /** Read only existing chunk TE maps; never call a lazy native getTileEntity/getNode getter. */
+    private Object existingChunk(int x,int z)throws Exception {
+        Object chunks=get(get(world,"field_73059_b"),"field_73244_f");
+        Object chunk=call(chunks,"func_76164_a",call(Class.forName("net.minecraft.world.ChunkCoordIntPair"),"func_77272_a",x>>4,z>>4));
+        return chunk==null||Class.forName("net.minecraft.world.chunk.EmptyChunk").isInstance(chunk)?null:chunk;
+    }
+    private Map<String,Object> existingTiles(int[] origin)throws Exception {
+        Map<String,Object> found=new LinkedHashMap<String,Object>();
+        for(int cx=origin[0]>>4;cx<=(origin[0]+39)>>4;cx++)for(int cz=origin[2]>>4;cz<=(origin[2]+39)>>4;cz++){
+            Object chunk=existingChunk(cx<<4,cz<<4);if(chunk==null)return null;
+            for(Object tile:((Map<?,?>)get(chunk,"field_150816_i")).values()){
+                int x=(Integer)get(tile,"field_145851_c"),y=(Integer)get(tile,"field_145848_d"),z=(Integer)get(tile,"field_145849_e");
+                if(x>=origin[0]&&x<origin[0]+40&&y>=origin[1]&&y<origin[1]+40&&z>=origin[2]&&z<origin[2]+40)found.put((x-origin[0])+","+(y-origin[1])+","+(z-origin[2]),tile);
+            }
+        }
+        return found;
+    }
+    private boolean quantumReady(String kind,int[] origin)throws Exception {
+        long now=System.nanoTime(),tick=(Long)call(world,"func_82737_E");
+        if(!quantumStarted.containsKey(kind))quantumStarted.put(kind,now);
+        Object report=compound(result,kind+"QuantumReadiness");
+        check(now-quantumStarted.get(kind)<180_000_000_000L,"180-second native quantum readiness deadline "+kind+": "+report);
+        if(quantumLastTick.containsKey(kind)&&tick-quantumLastTick.get(kind)<20)return false;
+        quantumLastTick.put(kind,tick);long readStarted=System.nanoTime();
+        Map<String,Object> tiles=existingTiles(origin);String missing="";int complete=0,seen=0;
+        if(tiles==null)missing="one or more required 40-cube chunks are not real loaded chunks";
+        if(!quantumEnumerated&&tiles!=null){
+            int total=0,skipped=0;
+            for(Map.Entry<String,Object> entry:tiles.entrySet())if(entry.getValue().getClass().getName().equals(QUANTUM_TILE)){
+                total++;Object tile=entry.getValue();
+                if((Integer)get(tile,"anchorDim")==Integer.MIN_VALUE){skipped++;continue;}
+                quantumExpected.add(new int[]{(Integer)get(tile,"field_145851_c")-source[0],(Integer)get(tile,"field_145848_d")-source[1],(Integer)get(tile,"field_145849_e")-source[2]});
+            }
+            check(!quantumExpected.isEmpty(),"independent native source contains configured quantum nodes");quantumEnumerated=true;
+            putText(result,"quantumEnumerationSource","original real loaded source chunkTileEntityMap values inside manifest 40-cube, before baseline; exact native QN class; configured iff native anchorDim != Integer.MIN_VALUE, irrespective of linked/connection");
+            putInt(result,"quantumSourceTotal",total);putInt(result,"quantumExpectedConfigured",quantumExpected.size());putInt(result,"quantumSkippedUnconfigured",skipped);putText(result,"quantumSkippedReason","native anchorDim == Integer.MIN_VALUE only");
+        }
+        if(tiles!=null&&quantumEnumerated)for(int[] offset:quantumExpected){
+            String position=offset[0]+","+offset[1]+","+offset[2];Object tile=tiles.get(position);
+            String reason=tile==null?"expected quantum TE missing":!tile.getClass().getName().equals(QUANTUM_TILE)?"expected exact native QN class, got "+tile.getClass().getName():"";
+            if(reason.isEmpty()){seen++;reason=quantumPendingReason(tile);}
+            if(reason.isEmpty())complete++;else if(missing.isEmpty())missing="offset "+position+" world "+(origin[0]+offset[0])+","+(origin[1]+offset[1])+","+(origin[2]+offset[2])+": "+reason;
+        }
+        java.util.Set<Object> grids=Collections.newSetFromMap(new java.util.IdentityHashMap<Object,Boolean>());int pathPending=0;
+        if(tiles!=null)for(int[] offset:quantumExpected){Object tile=tiles.get(offset[0]+","+offset[1]+","+offset[2]);if(tile==null||!tile.getClass().getName().equals(QUANTUM_TILE))continue;Object proxy=get(tile,"gridProxy"),node=proxy==null?null:get(proxy,"node");if(node!=null&&get(node,"myGrid")!=null)grids.add(get(node,"myGrid"));}
+        for(Object grid:grids){String reason=quantumPathPending(grid);if(!reason.isEmpty()){pathPending++;if(missing.isEmpty())missing=reason;}}
+        boolean ready=quantumEnumerated&&tiles!=null&&complete==quantumExpected.size()&&pathPending==0;
+        putInt(report,"expectedConfigured",quantumExpected.size());putInt(report,"seenExactNativeNodes",seen);putInt(report,"completeNativeConnections",complete);putText(report,"firstMissing",missing);putBool(report,"ready",ready);
+        putInt(report,"distinctActualQnGrids",grids.size());putInt(report,"pathPendingGrids",pathPending);
+        putLong(report,"sampleWorldTick",tick);putLong(report,"waitNanos",now-quantumStarted.get(kind));putLong(report,"deadlineNanos",180_000_000_000L);putInt(report,"samplePeriodNaturalTicks",20);
+        putLong(report,"readCalls",has(report,"readCalls")?(Long)call(report,"func_74763_f","readCalls")+1:1);
+        putLong(report,"totalReadNanos",(has(report,"totalReadNanos")?(Long)call(report,"func_74763_f","totalReadNanos"):0)+System.nanoTime()-readStarted);
+        putText(report,"scope","test-only pure native connection readiness before baseline or after natural formation; no native tick/checkStructure/bridge creation; not product CUT/PASTE timing or an AE identity/config oracle");tag(result,kind+"QuantumReadiness",report);
+        putText(result,"status",ready?(kind.equals("source")?"BASELINE":"CHECK_WORLD_"+kind):"WAIT_NATIVE_QUANTUM_"+kind);return ready;
+    }
+    private String quantumPendingReason(Object tile)throws Exception {
+        if((Integer)get(tile,"anchorDim")==Integer.MIN_VALUE)return "native anchor no longer configured";
+        Object proxy=get(tile,"gridProxy"),core=proxy==null?null:get(proxy,"node");
+        if(core==null||!(Boolean)get(proxy,"isReady"))return "native proxy/core not ready; offline="+get(tile,"offlineReason");
+        Object edge=get(tile,"connection"),relay=get(tile,"bridgeRelayNode"),targetNode=get(tile,"bridgeTargetNode"),anchor=get(tile,"anchorConnection");
+        if(edge==null)return "native connection absent; offline="+get(tile,"offlineReason");
+        if(relay==null){
+            Object a=call(edge,"a"),b=call(edge,"b");targetNode=a==core?b:b==core?a:null;
+            if(!quantumEdge(edge,core,targetNode))return "direct native edge lacks exact endpoints/two-sided membership";
+        }else{
+            if(!quantumEdge(edge,core,relay))return "core-relay edge lacks exact endpoints/two-sided membership";
+            if(!quantumEdge(anchor,relay,targetNode))return "relay-target edge lacks exact endpoints/two-sided membership";
+            Object block=call(relay,"getGridBlock");
+            if(!block.getClass().getName().equals("com.miaokatze.gtswn.common.quantum.QuantumNodeBridgeRelay")||get(block,"owner")!=tile||get(block,"node")!=relay)return "native relay owner/attachment mismatch";
+            if(!get(core,"playerID").equals(get(relay,"playerID")))return "native relay owner player mismatch";
+            Object location=get(block,"location");
+            if(location==null||!get(location,"dimId").equals(get(tile,"anchorDim"))||!get(location,"x").equals(get(tile,"anchorX"))||!get(location,"y").equals(get(tile,"anchorY"))||!get(location,"z").equals(get(tile,"anchorZ")))return "native relay anchor location mismatch";
+        }
+        Object grid=get(core,"myGrid");if(grid==null||targetNode==null||grid!=get(targetNode,"myGrid")||relay!=null&&grid!=get(relay,"myGrid"))return "native core/relay/target do not share a non-null grid";
+        Object targetProxy=call(targetNode,"getGridBlock");
+        if(!Arrays.asList("appeng.me.helpers.AENetworkProxy","appeng.me.helpers.AENetworkProxyMultiblock").contains(targetProxy.getClass().getName()))return "native anchor target is not an AE proxy";
+        Object host=get(targetProxy,"gp");if(!Class.forName("net.minecraft.tileentity.TileEntity").isInstance(host))return "native anchor target host is not a tile";
+        if(get(host,"field_145850_b")==null||!get(get(get(host,"field_145850_b"),"field_73011_w"),"field_76574_g").equals(get(tile,"anchorDim"))||!get(host,"field_145851_c").equals(get(tile,"anchorX"))||!get(host,"field_145848_d").equals(get(tile,"anchorY"))||!get(host,"field_145849_e").equals(get(tile,"anchorZ")))return "native bridge target host does not match configured anchor coordinates";
+        return "";
+    }
+    private String quantumPathPending(Object grid)throws Exception {
+        if(!grid.getClass().getName().equals("appeng.me.Grid"))return "unsupported actual QN grid class "+grid.getClass().getName();
+        Object path=call(grid,"getCache",Class.forName("appeng.api.networking.pathing.IPathingGrid"));
+        if(path==null||!path.getClass().getName().equals("appeng.me.cache.PathGridCache"))return "actual QN grid lacks exact native PathGridCache";
+        boolean recalculate=(Boolean)get(path,"recalculateControllerNextTick"),update=(Boolean)get(path,"updateNetwork"),boot=(Boolean)get(path,"booting");String controller=String.valueOf(get(path,"controllerState"));
+        return recalculate||update||boot||controller.equals("CONTROLLER_CONFLICT")?"native path pending recalculateControllerNextTick="+recalculate+" updateNetwork="+update+" booting="+boot+" controllerState="+controller:"";
+    }
+    private static boolean quantumEdge(Object edge,Object a,Object b)throws Exception {
+        if(edge==null||a==null||b==null)return false;Object x=call(edge,"a"),y=call(edge,"b");
+        return ((x==a&&y==b)||(x==b&&y==a))&&quantumMember(a,edge)&&quantumMember(b,edge);
+    }
+    private static boolean quantumMember(Object node,Object edge)throws Exception {for(Object value:(Iterable<?>)call(node,"getConnections"))if(value==edge)return true;return false;}
 
     private void prepareLighting()throws Exception {
         putText(result,"lightingProfile",LIGHTING_PROFILE);
@@ -200,6 +309,23 @@ public final class CompositeWorldWitness {
     private Object aeSnapshot(int[] origin,String label)throws Exception {
         try{return CompositeAeNetworkObserver.snapshot(world,origin,label);}catch(Exception failure){Object out=nbt();putText(out,"sampleLabel",label);putText(out,"status","OBSERVER_UNAVAILABLE");putText(out,"failure",failure.toString());return out;}
     }
+    private void captureAeSample(String kind,int[] origin,String label)throws Exception {
+        check(!pendingAeSamples.containsKey(kind)&&!has(result,aeReportKey(kind)),"one detached AE sample per fixed boundary");
+        Object sample=aeSnapshot(origin,label);pendingAeSamples.put(kind,sample);
+        Object reference=nbt();putText(reference,"sampleLabel",label);putText(reference,"status","PENDING_ARTIFACT");tag(result,aeReportKey(kind),reference);
+    }
+    private static String aeReportKey(String kind){check(Arrays.asList("source","self","share","raw").contains(kind),"fixed AE sample kind");return kind.equals("source")?"sourceAEAtBaselineComplete":kind+"AEAfterNativeFormation";}
+    /** Detached observation is borrowed once by the server receipt writer; never embedded in report(). */
+    public Object pendingAeSample(String kind){aeReportKey(kind);return pendingAeSamples.get(kind);}
+    public void commitAeSample(String kind,String artifact,String sha256,long bytes)throws Exception {
+        Object sample=pendingAeSamples.get(kind);check(sample!=null,"actual pending AE artifact");
+        check(artifact.equals("composite-"+kind+"-ae-network.nbt")&&sha256.matches("[0-9a-f]{64}")&&bytes>0,"actual fixed native AE artifact receipt");
+        Object reference=nbt();putText(reference,"status","ARTIFACT_COMMITTED");putText(reference,"artifact",artifact);putText(reference,"sha256",sha256);putLong(reference,"bytes",bytes);putText(reference,"sampleLabel",text(sample,"sampleLabel"));
+        for(String key:new String[]{"nodes","edges","grids","unknowns"})putInt(reference,key+"Count",has(sample,key)?(Integer)call(call(sample,"func_74781_a",key),"func_74745_c"):0);
+        if(has(sample,"status"))putText(reference,"observationStatus",text(sample,"status"));
+        if(has(sample,"failure"))putText(reference,"observationFailure",text(sample,"failure"));
+        tag(result,aeReportKey(kind),reference);pendingAeSamples.remove(kind);
+    }
     public Object report()throws Exception{return call(result,"func_74737_b");}
     /** Detached original World samples, captured over the baseline scan rather than read again at shutdown. */
     public Object baselineSnapshot()throws Exception {
@@ -264,7 +390,7 @@ public final class CompositeWorldWitness {
     }
 
     public void checkRaw()throws Exception{startCheck("raw");}
-    private void startCheck(String kind)throws Exception{check(ready(),"one oracle operation");checking=kind;target=ints(manifest,kind);cursor=tiles=sourceAir=0;mismatches.clear();awaitingFormation=true;operationStarted=System.nanoTime();putText(result,"status","WAIT_NATIVE_FORMATION_"+kind);}
+    private void startCheck(String kind)throws Exception{check(ready(),"one oracle operation");checking=kind;target=ints(manifest,kind);cursor=tiles=sourceAir=0;mismatches.clear();awaitingFormation=true;operationStarted=System.nanoTime();putInt(result,"oracleComparedCells",0);putInt(result,"oracleTotalCells",64000);putText(result,"status","WAIT_NATIVE_FORMATION_"+kind);}
     public void complete()throws Exception{check(ready(),"oracle completion");for(String kind:new String[]{"self","share","raw"})check(bool(result,kind+"Passed"),"all actual world postchecks");for(String kind:new String[]{"self","share"})check(bool(compound(result,kind+"SaveCommit"),"ownerCommit"),"actual production owner Save commit");putText(result,"status","PASS");}
     public void completeScenario(String kind)throws Exception{check(Arrays.asList("self","share","raw").contains(kind),"explicit supported scenario");check(ready()&&bool(result,kind+"Passed"),"actual independent selected scenario postcheck");if(!kind.equals("raw"))check(bool(compound(result,kind+"SaveCommit"),"ownerCommit"),"actual owner Save commit");putText(result,"scenario",kind);putText(result,"status","PASS");}
     public void close()throws Exception{
@@ -275,6 +401,7 @@ public final class CompositeWorldWitness {
         putText(result,"fixtureEuCredits",fixtureEuCredits.toString());putText(result,"fixtureEuConsumed",fixtureEuCredits.subtract(remaining).toString());putText(result,"fixtureEuReturned",remaining.toString());
         putBool(result,"fixtureEuCleanup",((BigInteger)call(wireless,"getUserEU",owner)).signum()==0);
         baseline.clear();
+        pendingAeSamples.clear();
     }
 
     private void observeSave()throws Exception {Object s=call(product("HologramWorkspace"),"find",call(actor,"func_110124_au"));if(s==null)return;if(!(Boolean)get(s,"blueprintOperationSuccess")||(Boolean)get(s,"blueprintDirty")||!String.valueOf(get(s,"blueprintSaveReceipt")).isEmpty())return;String json=String.valueOf(get(s,"blueprintSaveJsonSha256")),png=String.valueOf(get(s,"blueprintSavePreviewSha256"));if(json.isEmpty()||png.isEmpty())return;String identity=get(s,"id")+":"+json;if(identity.equals(saved))return;saved=identity;Object policy=get(s,"processingPolicy");if(policy==null)return;String kind=String.valueOf(get(policy,"tendency"));Object row=nbt();putText(row,"session",String.valueOf(get(s,"id")));putText(row,"localId",String.valueOf(get(s,"blueprintSaveLocalId")));putText(row,"jsonSha256",json);putText(row,"pngSha256",png);putBool(row,"ownerCommit",true);tag(result,kind+"SaveCommit",row);putBool(result,kind+"NativeSave",true);}

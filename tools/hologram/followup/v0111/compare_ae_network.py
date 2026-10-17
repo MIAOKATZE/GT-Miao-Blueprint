@@ -6,6 +6,7 @@ No source identities or nonzero energy are removed. Exit 0 means the evidence wa
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import gzip
 import hashlib
 import io
@@ -117,8 +118,9 @@ def flag(value):
 
 def validate(snapshot):
     require(isinstance(snapshot, dict), 'evidence must be a compound/object')
-    require(snapshot.get('schemaVersion') == 1, 'unsupported observer schema')
-    require(snapshot.get('algorithm') == 'ae-native-graph-v1', 'unsupported graph algorithm')
+    version = snapshot.get('schemaVersion')
+    require(version in (1, 2), 'unsupported observer schema')
+    require(snapshot.get('algorithm') == 'ae-native-graph-v' + str(version), 'unsupported graph algorithm')
     require(snapshot.get('scope') == 'raw-observation-only', 'only raw graph scope is admitted')
     require(flag(snapshot.get('evidenceOnly')) and not flag(snapshot.get('authorizesPass')), 'evidence must not authorize PASS')
     require(snapshot.get('dimension') == 1048578 and snapshot.get('size') == [40, 40, 40], 'wrong fixture dimensions')
@@ -145,6 +147,8 @@ def validate(snapshot):
                 require(integer(node.get('g')), 'missing exact node g')
             else:
                 require(snapshot['unknowns'], 'missing GridStorage cannot have complete coverage')
+            if version == 2:
+                flag(node.get('persistedPort'))
         nodes[node['key']] = node
     require(snapshot.get('nodeCount') == len(nodes), 'node count mismatch')
     require(snapshot.get('internalNodeCount') == sum(flag(n['internal']) for n in nodes.values()), 'internal-node count mismatch')
@@ -177,6 +181,12 @@ def validate(snapshot):
                                               for k in grid['members']), 'node storage differs from its grid storage')
         else:
             require(snapshot['unknowns'], 'missing grid storage cannot have complete coverage')
+        if version == 2:
+            if flag(grid.get('pathCacheKnown')):
+                flag(grid.get('networkBooting'))
+                require(isinstance(grid.get('controllerState'), str), 'missing native controller state')
+            else:
+                require(snapshot['unknowns'], 'unknown path cache cannot have complete coverage')
         grids[grid['observedGrid']] = grid
     require(set(membership) == set(nodes), 'nodes missing their original grid grouping')
     require(snapshot.get('selectedGridCount') == len(grids), 'selected-grid count mismatch')
@@ -194,7 +204,83 @@ def validate(snapshot):
         identity = (edge['a'], edge['b'], edge['directionA'], edge['directionB'], directional)
         require(identity not in edge_set, 'duplicate native edge')
         edge_set.add(identity)
+    if version == 2:
+        validate_runtime_ports(snapshot, nodes, membership, edge_set)
     return nodes, grids, edge_set
+
+
+RELAY = 'com.miaokatze.gtswn.common.quantum.QuantumNodeBridgeRelay'
+QUANTUM_NODE = 'com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode'
+
+
+def validate_runtime_ports(snapshot, nodes, membership, edges):
+    endpoint_pairs = {(a, b) for a, b, *_ in edges}
+
+    def connected(a, b):
+        return tuple(sorted((a, b))) in endpoint_pairs
+
+    for key, node in nodes.items():
+        if not node.get('located'):
+            continue
+        if node.get('machineClass') == RELAY:
+            require(not flag(node['persistedPort']) and node.get('portPath') == '@runtime/quantumBridgeRelay',
+                    'runtime relay cannot impersonate a persisted NBT port')
+            owner, target = node.get('relayOwnerPort'), node.get('relayTargetPort')
+            flags = [flag(node.get(name)) for name in ('relayAttachmentMatches', 'relayLocalEdgeLive',
+                     'relayAnchorEdgeLive', 'relaySameGrid', 'relayAnchorLocationMatches', 'relayTopologyComplete',
+                     'relayOwnerPlayerMatches')]
+            if owner not in nodes or target not in nodes:
+                require(snapshot['unknowns'] and not flags[5], 'relay endpoints missing without incomplete coverage')
+                continue
+            require(nodes[owner].get('machineClass') == QUANTUM_NODE, 'relay owner port is not an exact quantum node')
+            require(flag(node['relayLocalEdgeLive']) == connected(key, owner)
+                    and flag(node['relayAnchorEdgeLive']) == connected(key, target), 'relay edge facts disagree with original edges')
+            grouped = membership[key] == membership[owner] == membership[target]
+            require(flag(node['relaySameGrid']) == grouped, 'relay grouping disagrees with original graph')
+            require(flag(node['relayOwnerPlayerMatches']) == (node['p'] == nodes[owner]['p']), 'relay actor fact disagrees with exact p')
+            for axis in ('dimension', 'x', 'y', 'z'):
+                require(node.get(axis) == nodes[owner].get(axis), 'runtime relay structural coordinate is not its real owner')
+            anchor_matches = all(node.get('relayAnchor' + name) == nodes[target].get(field)
+                                 for name, field in [('Dimension', 'dimension'), ('X', 'x'), ('Y', 'y'), ('Z', 'z')])
+            require(flag(node['relayAnchorLocationMatches']) == anchor_matches, 'relay native location disagrees with actual target')
+            complete = all(flags[:5])
+            require(flags[5] == complete, 'relay complete flag disagrees with recorded native facts')
+            require(complete or snapshot['unknowns'], 'incomplete relay cannot have complete coverage')
+        bridge = node.get('quantumBridge')
+        if bridge is not None:
+            require(node.get('machineClass') == QUANTUM_NODE and isinstance(bridge, dict), 'quantum facts on an unrelated host')
+            for name in ('hasAnchor', 'linkedByExistingMembership', 'connectionPresent', 'relayPresent',
+                         'coreConnectionLive', 'proxyReady', 'clientLinkedCache'):
+                flag(bridge.get(name))
+            require(isinstance(bridge.get('offlineReason'), str), 'missing native quantum offline reason')
+            for name in ('anchorDimension', 'anchorX', 'anchorY', 'anchorZ', 'lastMaintenanceTick', 'reconnectBackoff'):
+                require(integer(bridge.get(name)), 'missing native quantum ' + name)
+            require(flag(bridge['hasAnchor']) == (bridge['anchorDimension'] != -(1 << 31)), 'quantum anchor presence mismatch')
+            if bridge['relayPresent'] and bridge['relayPort'] not in nodes:
+                require(snapshot['unknowns'], 'quantum relay not included in existing node roster')
+
+
+def native_readiness(snapshot, nodes, grids):
+    if snapshot['schemaVersion'] != 2:
+        return dict(available=False, reason='legacy observation did not record relay ownership or native path/bridge readiness',
+                    necessaryConditionsAtSample=False, provesStableWindow=False)
+    internal = {k: n for k, n in nodes.items() if n['internal'] and n.get('quantumBridge') is not None}
+    anchored = {k: n for k, n in internal.items() if n['quantumBridge']['hasAnchor']}
+    unlinked = [dict(port=k, facts=n['quantumBridge']) for k, n in anchored.items()
+                if not n['quantumBridge']['linkedByExistingMembership'] or not n['quantumBridge']['proxyReady']]
+    booting = [g['observedGrid'] for g in grids.values() if g.get('networkBooting')]
+    path_unknown = [g['observedGrid'] for g in grids.values() if not g.get('pathCacheKnown')]
+    conflicts = [g['observedGrid'] for g in grids.values() if g.get('controllerState') == 'CONTROLLER_CONFLICT']
+    relay_actor_mismatches = [k for k, n in nodes.items() if n.get('machineClass') == RELAY and not n.get('relayOwnerPlayerMatches')]
+    return dict(available=True, internalQuantumNodes=len(internal), internalAnchoredQuantumNodes=len(anchored),
+                internalUnlinkedOrNotReady=unlinked, bootingGrids=booting, unknownPathGrids=path_unknown,
+                controllerConflictGrids=conflicts, relayActorMismatches=relay_actor_mismatches,
+                necessaryConditionsAtSample=bool(snapshot['coverageComplete'] and anchored and not unlinked
+                                               and not booting and not path_unknown and not conflicts and not relay_actor_mismatches),
+                provesStableWindow=False,
+                limitations=['expected anchored-node roster must come from independent World/manifest evidence',
+                             'one ready sample cannot prove an unchanged graph over a full native maintenance window',
+                             'the global native connection budget and backoff are never advanced or overridden'])
 
 
 def extra_rows(grids):
@@ -234,13 +320,26 @@ def compare(before, after):
             group_identities.append(dict(members=members, before=old.get('g'), after=new.get('g'),
                                          beforePresent=bool(old['gPresent']), afterPresent=bool(new['gPresent'])))
     before_extra, after_extra = extra_rows(bg), extra_rows(ag)
+    before_located = {k for k, n in bn.items() if n.get('located')}
+    after_located = {k for k, n in an.items() if n.get('located')}
+    before_located_edges = {edge for edge in be if edge[0] in before_located and edge[1] in before_located}
+    after_located_edges = {edge for edge in ae if edge[0] in after_located and edge[1] in after_located}
+    located_groups = dict(before=sorted(tuple(sorted(k for k in g['members'] if k in before_located)) for g in bg.values()),
+                          after=sorted(tuple(sorted(k for k in g['members'] if k in after_located)) for g in ag.values()))
+    transitions = {}
+    for key in common:
+        if bn[key].get('located') and an[key].get('located'):
+            pair = (bn[key].get('g'), an[key].get('g'))
+            transitions.setdefault(pair, []).append(key)
     covered = bool(before['coverageComplete'] and after['coverageComplete'])
     sampled = before['internalNodeCount'] > 0 and after['internalNodeCount'] > 0
     extra_zero = covered and sampled and all(row['energyCacheKnown'] and row.get('finite') and row.get('zero')
                                              for row in before_extra + after_extra)
     return dict(
         status='EVIDENCE_ONLY', evidenceOnly=True, authorizesPass=False, scope='raw-isomorphism-only',
-        algorithm='ae-native-graph-v1',
+        algorithm='ae-native-graph-comparison-v2',
+        inputAlgorithms=dict(before=before['algorithm'], after=after['algorithm']),
+        sameObservationSchema=before['algorithm'] == after['algorithm'],
         beforeSample=dict(label=before['sampleLabel'], worldTick=before['worldTick'], origin=before['origin']),
         afterSample=dict(label=after['sampleLabel'], worldTick=after['worldTick'], origin=after['origin']),
         coverageComplete=covered, bothSamplesHaveInternalNodes=sampled,
@@ -254,6 +353,16 @@ def compare(before, after):
         gridIdentityDifferences=group_identities,
         extraZeroAtBothObservedInstants=extra_zero,
         liveExtra=dict(before=before_extra, after=after_extra),
+        allRecordedGridExtrasZero=bool(before_extra and after_extra and all(row['energyCacheKnown'] and row.get('finite') and row.get('zero')
+                                                                         for row in before_extra + after_extra)),
+        locatedPortSetsEqual=before_located == after_located,
+        locatedEdgeSetsEqual=before_located_edges == after_located_edges,
+        locatedGridGroupsEqual=located_groups['before'] == located_groups['after'],
+        locatedGridGroups=located_groups,
+        nativeGridTransitions=[dict(before=old, after=new, ports=ports) for (old, new), ports in
+                               sorted(transitions.items(), key=lambda item: (str(item[0]), item[1]))],
+        legacyUnknownKinds=dict(before=dict(Counter(before['unknowns'])), after=dict(Counter(after['unknowns']))),
+        nativeReadiness=dict(before=native_readiness(before, bn, bg), after=native_readiness(after, an, ag)),
         limitations=[
             'g differences remain explicit evidence; no native NBT field is removed or approved here',
             'a matching graph does not prove inventory, config, patterns, owner permissions or energy conservation',

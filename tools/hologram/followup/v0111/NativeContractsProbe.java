@@ -158,8 +158,11 @@ public final class NativeContractsProbe {
         check(Class.forName("net.minecraftforge.common.util.FakePlayer").isInstance(actor), "actual Forge FakePlayer required");
         Object inventory = field(actor, "field_71071_by").get(actor);
         Class<?> stackType = Class.forName("net.minecraft.item.ItemStack");
-        Object slots = Array.newInstance(stackType, 36);
-        field(inventory, "field_70462_a").set(inventory, slots);
+        Object slots = field(inventory, "field_70462_a").get(inventory);
+        check(slots instanceof Object[] && Array.getLength(slots) >= 2, "native main inventory has fixture capacity");
+        // Native mods may extend the inventory before ContainerPlayer captures its armor/offhand indices.
+        // Replacing it with a vanilla-sized array corrupts those indices; clear the actual array in place.
+        java.util.Arrays.fill((Object[]) slots, null);
         field(inventory, "field_70461_c").setInt(inventory, 0);
         Object capabilities = field(actor, "field_71075_bZ").get(actor);
         field(capabilities, "field_75098_d").setBoolean(capabilities, false);
@@ -174,7 +177,15 @@ public final class NativeContractsProbe {
         Array.set(slots, 0, stackType.getConstructor(Class.forName("net.minecraft.item.Item")).newInstance(projector));
         check(!field(capabilities, "field_75098_d").getBoolean(capabilities)
             && Integer.valueOf(0).equals(call(call(manager, "func_73081_b"), "func_77148_a")), "native survival FakePlayer setup");
-        proof.setProperty("actorSetup", "Forge FakePlayerFactory; existing suite UUID/name; 36 slots; current0; native Survival; registered projector");
+        Object nativeContainer = field(actor, "field_71069_bz").get(actor);
+        call(nativeContainer, "func_75142_b"); // Read the unchanged native slot mapping, as normal resource refresh does.
+        proof.setProperty("actorSetup", "Forge FakePlayerFactory; existing suite UUID/name; original native inventory array/container retained; current0; native Survival; registered projector");
+        proof.setProperty("nativeActorMainInventoryLength", String.valueOf(Array.getLength(slots)));
+        proof.setProperty("nativeActorArmorInventoryLength", String.valueOf(Array.getLength(field(inventory, "field_70460_b").get(inventory))));
+        proof.setProperty("nativeActorInventorySize", String.valueOf(call(inventory, "func_70302_i_")));
+        proof.setProperty("nativeActorContainerSlots", String.valueOf(((List<?>) field(nativeContainer, "field_75151_b").get(nativeContainer)).size()));
+        proof.setProperty("nativeActorInventoryShapePreserved", "true");
+        proof.setProperty("nativeActorContainerRefresh", "PASS");
         proof.setProperty("nativeActorGameType", "0");
         proof.setProperty("nativeActorCreative", "false");
         return actor;

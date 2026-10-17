@@ -29,16 +29,17 @@ public final class CompositeAeNetworkObserver {
         "appeng.tile.misc.TileStorageReshuffle", "appeng.tile.misc.TilePatternOptimizationMatrix",
         "appeng.tile.networking.TileEnergyAcceptor", "appeng.tile.networking.TileEnergyCell",
         "appeng.tile.networking.TileDenseEnergyCell", "appeng.tile.networking.TileController",
+        "appeng.tile.networking.TileWireless",
         "com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode",
         "com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel");
     private static final Set<String> GT_MACHINES = names(
         "gregtech.common.tileentities.machines.MTEHatchInputBusME",
         "gregtech.common.tileentities.machines.MTEHatchInputME",
-        "gregtech.common.tileentities.machines.MTEHatchOutputBusME",
-        "gregtech.common.tileentities.machines.MTEHatchOutputME",
+        "gregtech.common.tileentities.machines.outputme.MTEHatchOutputBusME",
+        "gregtech.common.tileentities.machines.outputme.MTEHatchOutputME",
         "gregtech.common.tileentities.machines.MTEHatchCraftingInputME");
     private static final Set<String> PARTS = names(
-        "appeng.parts.networking.PartCable", "appeng.parts.reporting.PartTerminal",
+        "appeng.parts.networking.PartCable", "appeng.parts.networking.PartCableGlass", "appeng.parts.reporting.PartTerminal",
         "appeng.parts.reporting.PartPatternTerminal",
         "appeng.parts.misc.PartToggleBus", "appeng.parts.networking.PartQuartzFiber",
         "appeng.parts.p2p.PartP2PTunnelME");
@@ -49,6 +50,8 @@ public final class CompositeAeNetworkObserver {
         "appeng.tile.networking.TileCableBus", "appeng.parts.layers.LayerIEnergyConnected_TileCableBus");
     private static final Set<String> PROXIES = names(
         "appeng.me.helpers.AENetworkProxy", "appeng.me.helpers.AENetworkProxyMultiblock");
+    private static final String QUANTUM_NODE = "com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode";
+    private static final String QUANTUM_RELAY = "com.miaokatze.gtswn.common.quantum.QuantumNodeBridgeRelay";
 
     private final Object world;
     private final int[] origin;
@@ -122,6 +125,8 @@ public final class CompositeAeNetworkObserver {
             }
             selectedCount++;
             for (Node node : graph.members) {
+                if (node.quantumOwner != null) describeQuantumMembership(node);
+                if (node.relayOwner != null) describeRelayMembership(node);
                 if (!node.problems.isEmpty()) unknowns.addAll(node.problems);
                 if (!keys.add(node.key)) unknowns.add("duplicate structural port key: " + node.key);
                 if (node.internal) internalCount++;
@@ -160,7 +165,7 @@ public final class CompositeAeNetworkObserver {
         }
         Object issues = list();
         for (String problem : unknowns) append(issues, construct("net.minecraft.nbt.NBTTagString", problem));
-        putInt(result, "schemaVersion", 1); putText(result, "algorithm", "ae-native-graph-v1");
+        putInt(result, "schemaVersion", 2); putText(result, "algorithm", "ae-native-graph-v2");
         putText(result, "scope", "raw-observation-only"); putText(result, "sampleLabel", label);
         putBool(result, "evidenceOnly", true); putBool(result, "authorizesPass", false);
         putText(result, "serverThread", Thread.currentThread().getName());
@@ -187,6 +192,7 @@ public final class CompositeAeNetworkObserver {
         if (storage == null) node.problems.add("existing native node has no GridStorage");
         else putLong(node.row, "g", (Long) call(storage, "getID"));
         Object proxy = call(value, "getGridBlock");
+        if (QUANTUM_RELAY.equals(proxy.getClass().getName())) return describeRelay(node, proxy);
         if (!PROXIES.contains(proxy.getClass().getName())) {
             node.problems.add("unsupported proxy class " + proxy.getClass().getName());
             return node;
@@ -227,6 +233,17 @@ public final class CompositeAeNetworkObserver {
             if (!"proxy".equals(port)) node.problems.add(machineClass + ": unsupported GT proxy root " + port);
             if (tile != null) metaId = ((Number) get(tile, "mID")).intValue();
         } else node.problems.add("unsupported proxy machine class " + machineClass);
+        if (QUANTUM_NODE.equals(machineClass)) {
+            node.quantumOwner = machine;
+            if (get(machine, "gridProxy") != proxy || get(proxy, "node") != value)
+                node.problems.add("quantum node proxy does not own this existing node");
+        }
+        putBool(node.row, "persistedPort", true);
+        return finishHost(node, tile, machineClass, proxy.getClass().getName(), path, partClass, partItem, side, damage, metaId);
+    }
+
+    private Node finishHost(Node node, Object tile, String machineClass, String proxyClass, String path,
+        String partClass, String partItem, int side, int damage, int metaId) throws Exception {
         if (tile == null) { node.problems.add(machineClass + ": no existing host tile"); return node; }
         Object tileWorld = get(tile, "field_145850_b");
         if (tileWorld == null) { node.problems.add(machineClass + ": host has no existing world"); return node; }
@@ -242,10 +259,103 @@ public final class CompositeAeNetworkObserver {
         putInt(node.row, "dimension", dimension); putInt(node.row, "x", x); putInt(node.row, "y", y); putInt(node.row, "z", z);
         putInt(node.row, "relativeX", kx); putInt(node.row, "relativeY", ky); putInt(node.row, "relativeZ", kz);
         putText(node.row, "hostTileClass", tile.getClass().getName()); putText(node.row, "machineClass", machineClass);
-        putText(node.row, "proxyClass", proxy.getClass().getName()); putText(node.row, "portPath", path);
+        putText(node.row, "proxyClass", proxyClass); putText(node.row, "portPath", path);
         putInt(node.row, "metaTileId", metaId); putInt(node.row, "side", side);
         putText(node.row, "partClass", partClass); putText(node.row, "partItem", partItem); putInt(node.row, "partDamage", damage);
         return node;
+    }
+
+    /** Relay IGridBlock is a runtime port owned by a quantum TE, not an AENetworkProxy or a saved NBT root. */
+    private Node describeRelay(Node node, Object relay) throws Exception {
+        Object owner = get(relay, "owner");
+        if (owner == null || !QUANTUM_NODE.equals(owner.getClass().getName())) {
+            node.problems.add("quantum relay has no exact native quantum-node owner");
+            return node;
+        }
+        node.relayOwner = owner;
+        node.relay = relay;
+        if (get(relay, "node") != node.value || get(owner, "bridgeRelayNode") != node.value)
+            node.problems.add("quantum relay attachment/owner identity mismatch");
+        Object location = get(relay, "location");
+        if (location == null || !"appeng.api.util.DimensionalCoord".equals(location.getClass().getName()))
+            node.problems.add("quantum relay has no exact stored native anchor location");
+        else {
+            putInt(node.row, "relayAnchorDimension", (Integer) get(location, "dimId"));
+            putInt(node.row, "relayAnchorX", (Integer) get(location, "x"));
+            putInt(node.row, "relayAnchorY", (Integer) get(location, "y"));
+            putInt(node.row, "relayAnchorZ", (Integer) get(location, "z"));
+        }
+        putBool(node.row, "persistedPort", false);
+        // Structural identity follows the real owner at its relative position. Native relay location remains absolute.
+        return finishHost(node, owner, QUANTUM_RELAY, QUANTUM_RELAY, "@runtime/quantumBridgeRelay", "", "", -1, -1, -1);
+    }
+
+    private void describeRelayMembership(Node relayNode) throws Exception {
+        Object owner = relayNode.relayOwner, proxy = get(owner, "gridProxy");
+        Object ownNode = proxy == null ? null : get(proxy, "node");
+        Object target = get(owner, "bridgeTargetNode"), connection = get(owner, "connection"), anchor = get(owner, "anchorConnection");
+        Node own = nodes.get(ownNode), peer = nodes.get(target);
+        boolean attached = get(relayNode.relay, "node") == relayNode.value && get(owner, "bridgeRelayNode") == relayNode.value;
+        boolean local = edgeBetween(connection, ownNode, relayNode.value);
+        boolean remote = edgeBetween(anchor, relayNode.value, target);
+        boolean grouped = ownNode != null && target != null && get(ownNode, "myGrid") == get(relayNode.value, "myGrid")
+            && get(target, "myGrid") == get(relayNode.value, "myGrid");
+        boolean anchorLocation = peer != null && peer.located
+            && getInt(relayNode.row, "relayAnchorDimension") == getInt(peer.row, "dimension")
+            && getInt(relayNode.row, "relayAnchorX") == getInt(peer.row, "x")
+            && getInt(relayNode.row, "relayAnchorY") == getInt(peer.row, "y")
+            && getInt(relayNode.row, "relayAnchorZ") == getInt(peer.row, "z");
+        putText(relayNode.row, "relayOwnerPort", own == null ? "" : own.key);
+        putText(relayNode.row, "relayTargetPort", peer == null ? "" : peer.key);
+        putBool(relayNode.row, "relayAttachmentMatches", attached);
+        putBool(relayNode.row, "relayLocalEdgeLive", local); putBool(relayNode.row, "relayAnchorEdgeLive", remote);
+        putBool(relayNode.row, "relaySameGrid", grouped); putBool(relayNode.row, "relayAnchorLocationMatches", anchorLocation);
+        putBool(relayNode.row, "relayOwnerPlayerMatches", ownNode != null
+            && get(ownNode, "playerID").equals(get(relayNode.value, "playerID")));
+        boolean complete = attached && local && remote && grouped && anchorLocation && own != null && peer != null;
+        putBool(relayNode.row, "relayTopologyComplete", complete);
+        if (!complete) relayNode.problems.add(relayNode.key + ": native relay attachment, two live edges, anchor location or shared grid is incomplete");
+    }
+
+    /** Reproduce only the server's pure membership predicates, without its isLinked()->getNode() getter. */
+    private void describeQuantumMembership(Node node) throws Exception {
+        Object owner = node.quantumOwner, connection = get(owner, "connection"), anchor = get(owner, "anchorConnection");
+        Object relay = get(owner, "bridgeRelayNode"), target = get(owner, "bridgeTargetNode");
+        int dimension = (Integer) get(owner, "anchorDim");
+        boolean hasAnchor = dimension != Integer.MIN_VALUE;
+        if (relay != null && !nodes.containsKey(relay)) node.problems.add(node.key + ": quantum relay pointer is absent from existing grid nodes");
+        if (target != null && !nodes.containsKey(target)) node.problems.add(node.key + ": quantum target pointer is absent from existing grid nodes");
+        boolean coreLive = contains(node.value, connection);
+        boolean linked = coreLive && (relay == null || target != null && contains(relay, connection)
+            && contains(relay, anchor) && contains(target, anchor)
+            && get(node.value, "myGrid") == get(relay, "myGrid") && get(node.value, "myGrid") == get(target, "myGrid"));
+        Object row = nbt();
+        putBool(row, "hasAnchor", hasAnchor); putInt(row, "anchorDimension", dimension);
+        putInt(row, "anchorX", (Integer) get(owner, "anchorX")); putInt(row, "anchorY", (Integer) get(owner, "anchorY"));
+        putInt(row, "anchorZ", (Integer) get(owner, "anchorZ"));
+        putBool(row, "linkedByExistingMembership", linked); putBool(row, "connectionPresent", connection != null);
+        putBool(row, "relayPresent", relay != null); putBool(row, "coreConnectionLive", coreLive);
+        putText(row, "relayPort", nodes.containsKey(relay) ? nodes.get(relay).key : "");
+        putText(row, "targetPort", nodes.containsKey(target) ? nodes.get(target).key : "");
+        putText(row, "offlineReason", ((Enum<?>) get(owner, "offlineReason")).name());
+        putBool(row, "proxyReady", (Boolean) get(get(owner, "gridProxy"), "isReady"));
+        putBool(row, "clientLinkedCache", (Boolean) get(owner, "clientLinked"));
+        putLong(row, "lastMaintenanceTick", (Long) get(owner, "lastMaintenanceTick"));
+        putInt(row, "reconnectBackoff", (Integer) get(owner, "reconnectBackoff"));
+        tag(node.row, "quantumBridge", row);
+    }
+
+    private static boolean contains(Object node, Object edge) throws Exception {
+        if (node == null || edge == null) return false;
+        if (!"appeng.me.GridNode".equals(node.getClass().getName()) || !"appeng.me.GridConnection".equals(edge.getClass().getName())) return false;
+        for (Object existing : (Iterable<?>) call(node, "getConnections")) if (existing == edge) return true;
+        return false;
+    }
+
+    private static boolean edgeBetween(Object edge, Object a, Object b) throws Exception {
+        if (edge == null || a == null || b == null || !"appeng.me.GridConnection".equals(edge.getClass().getName())) return false;
+        Object x = call(edge, "a"), y = call(edge, "b");
+        return ((x == a && y == b) || (x == b && y == a)) && contains(a, edge) && contains(b, edge);
     }
 
     private Object describeGrid(Graph graph) throws Exception {
@@ -278,12 +388,21 @@ public final class CompositeAeNetworkObserver {
             putInt(row, "energyProviderEntries", providers);
             if (providers != 0) unknowns.add("grid[" + graph.index + "]: energy-provider coupling outside GridConnection is not yet validated");
         }
+        Object path = call(graph.value, "getCache", Class.forName("appeng.api.networking.pathing.IPathingGrid"));
+        boolean pathKnown = path != null && "appeng.me.cache.PathGridCache".equals(path.getClass().getName());
+        putBool(row, "pathCacheKnown", pathKnown);
+        if (pathKnown) {
+            // Both .1080 methods return existing scalar fields, not repath/update calls.
+            putBool(row, "networkBooting", (Boolean) call(path, "isNetworkBooting"));
+            putText(row, "controllerState", ((Enum<?>) call(path, "getControllerState")).name());
+        } else unknowns.add("grid[" + graph.index + "]: exact PathGridCache unavailable");
         return row;
     }
 
     private static final class Node {
         final Object value, row;
         final List<String> problems = new ArrayList<String>();
+        Object quantumOwner, relayOwner, relay;
         boolean located, internal;
         String key = "";
         Node(Object value, Object row) { this.value = value; this.row = row; }
@@ -304,6 +423,7 @@ public final class CompositeAeNetworkObserver {
     private static void putBool(Object tag, String key, boolean value) throws Exception { call(tag, "func_74757_a", key, value); }
     private static void tag(Object tag, String key, Object value) throws Exception { call(tag, "func_74782_a", key, value); }
     private static void append(Object tag, Object value) throws Exception { call(tag, "func_74742_a", value); }
+    private static int getInt(Object tag, String key) throws Exception { return (Integer) call(tag, "func_74762_e", key); }
     private static void check(boolean condition, String message) { if (!condition) throw new IllegalStateException("Composite AE observer: " + message); }
     private static Object get(Object object, String name) throws Exception {
         Class<?> type = object instanceof Class ? (Class<?>) object : object.getClass();

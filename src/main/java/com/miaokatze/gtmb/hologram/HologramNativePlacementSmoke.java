@@ -44,13 +44,26 @@ public final class HologramNativePlacementSmoke {
         Object liveStorage = world.mapStorage;
         EntityPlayerMP player = FakePlayerFactory
             .get(world, new GameProfile(UUID.fromString("776dddb0-84e0-46b8-8521-9962604f8c11"), "GTMBNativePlace"));
-        player.inventory.mainInventory = new ItemStack[36];
+        // Backhand extends this array before the native container captures its slot indices.
+        // Preserve both the array shape and the existing container; only clear this fixture's items.
+        java.util.Arrays.fill(player.inventory.mainInventory, null);
         player.inventory.currentItem = 0;
         player.capabilities.isCreativeMode = false;
         player.capabilities.allowEdit = true;
         player.theItemInWorldManager.setGameType(net.minecraft.world.WorldSettings.GameType.SURVIVAL);
         player.inventory.mainInventory[0] = new ItemStack(
             (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector"));
+        player.inventoryContainer.detectAndSendChanges();
+        require(
+            !player.capabilities.isCreativeMode
+                && player.theItemInWorldManager.getGameType() == net.minecraft.world.WorldSettings.GameType.SURVIVAL,
+            "native_survival_inventory_shape_main_" + player.inventory.mainInventory.length
+                + "_armor_"
+                + player.inventory.armorInventory.length
+                + "_size_"
+                + player.inventory.getSizeInventory()
+                + "_container_"
+                + player.inventoryContainer.inventorySlots.size());
         detachedReportingParts();
         basicMachineFacingRestore(world, player);
         idleAeHosts();
@@ -1181,13 +1194,14 @@ public final class HologramNativePlacementSmoke {
     }
 
     private static ItemStack[] inventory(EntityPlayerMP player) {
-        ItemStack[] copy = new ItemStack[36];
+        ItemStack[] copy = new ItemStack[player.inventory.mainInventory.length];
         for (int i = 0; i < copy.length; i++)
             if (player.inventory.mainInventory[i] != null) copy[i] = player.inventory.mainInventory[i].copy();
         return copy;
     }
 
     private static boolean sameInventory(ItemStack[] before, EntityPlayerMP player) {
+        if (before.length != player.inventory.mainInventory.length) return false;
         for (int i = 1; i < before.length; i++)
             if (!ItemStack.areItemStacksEqual(before[i], player.inventory.mainInventory[i])) return false;
         return true;
