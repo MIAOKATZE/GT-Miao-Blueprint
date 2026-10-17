@@ -4,6 +4,8 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -157,34 +159,61 @@ final class HologramCutWorld {
             tiles.add(tile);
         }
         HologramCutLighting lighting = new HologramCutLighting();
-        // Detach all inventories before changing any block, including replaced destination inventories.
+        Set<TileEntity> previousTiles = Collections.newSetFromMap(new IdentityHashMap<>());
+        // Remove every old host from lookup before any native teardown can re-enter a neighboring lookup.
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
             lighting.capture(chunk);
-            TileEntity previous = world.getTileEntity(x, y, z);
-            chunk.removeTileEntity(x & 15, y, z & 15);
-            if (previous != null) world.loadedTileEntityList.remove(previous);
+            TileEntity previous = chunk.chunkTileEntityMap.remove(new ChunkPosition(x & 15, y, z & 15));
+            if (previous != null) previousTiles.add(previous);
         }
+        // Vanilla replaces the block before teardown. Keep the whole selection air while old networks disconnect:
+        // a reentrant native getter must not create an empty host from either an old or a new destination block.
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
             ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
-            Block replacement = air ? Blocks.air : Block.getBlockFromName(cell.getString("block"));
-            if (sections[y >> 4] == null) {
-                if (replacement == Blocks.air) continue;
+            if (sections[y >> 4] == null) continue;
+            sections[y >> 4].func_150818_a(x & 15, y & 15, z & 15, Blocks.air);
+            sections[y >> 4].setExtBlockMetadata(x & 15, y & 15, z & 15, 0);
+        }
+        IOException teardownFailure = null;
+        try {
+            for (TileEntity previous : previousTiles) {
+                try {
+                    previous.invalidate();
+                } catch (RuntimeException | LinkageError failure) {
+                    if (teardownFailure == null) teardownFailure = new IOException("原生方块实体拆卸失败，完整剪切记录已保留", failure);
+                    else if (teardownFailure.getSuppressed().length < 8) teardownFailure.addSuppressed(failure);
+                }
+            }
+        } finally {
+            if (!previousTiles.isEmpty()) world.loadedTileEntityList.removeIf(previousTiles::contains);
+        }
+        if (teardownFailure != null) throw teardownFailure;
+        // Old callbacks have finished before any replacement tile is attached; teardown cannot remove a new host.
+        if (!air) for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
+            Chunk chunk = world.getChunkFromChunkCoords(x >> 4, z >> 4);
+            ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+            Block replacement = Block.getBlockFromName(cell.getString("block"));
+            if (sections[y >> 4] == null && replacement != Blocks.air) {
                 sections[y >> 4] = new ExtendedBlockStorage((y >> 4) << 4, !world.provider.hasNoSky);
                 lighting.sectionCreated(chunk, y >> 4);
             }
-            sections[y >> 4].func_150818_a(x & 15, y & 15, z & 15, replacement);
-            sections[y >> 4].setExtBlockMetadata(x & 15, y & 15, z & 15, air ? 0 : cell.getInteger("meta"));
-        }
-        for (TileEntity tile : tiles) if (tile != null) {
-            tile.setWorldObj(world);
-            world.getChunkFromChunkCoords(tile.xCoord >> 4, tile.zCoord >> 4)
-                .addTileEntity(tile);
+            if (sections[y >> 4] != null) {
+                sections[y >> 4].func_150818_a(x & 15, y & 15, z & 15, replacement);
+                sections[y >> 4].setExtBlockMetadata(x & 15, y & 15, z & 15, cell.getInteger("meta"));
+            }
+            TileEntity tile = tiles.get(i);
+            if (tile != null) {
+                tile.setWorldObj(world);
+                chunk.addTileEntity(tile);
+            }
         }
         // Native loading must finish before serialization: AE defers its saved node NBT until onReady.
         // All blocks/tiles are attached first, so each part sees the complete restored structure.

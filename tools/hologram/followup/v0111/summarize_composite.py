@@ -33,6 +33,8 @@ def summarize(case):
                                ("allow_nether", "allow_flight", "view_distance", "testlab_force_lease_ceiling",
                                 "client_Xmx", "server_Xmx")},
                                "pause_on_lost_focus_applied": client.get("pauseOnLostFocusApplied"),
+                               "lighting_profile": client.get("lightingProfile", "legacy-dark-v1"),
+                               "server_lighting_profile": server.get("lightingProfile", "legacy-dark-v1"),
                                "native_eu_ledger_enabled": receipt.get("native_eu_ledger_profile", {}).get("enabled", False),
                                "cut_disk_diagnostics_enabled": receipt.get("cut_disk_diagnostics", {}).get("enabled", False)},
         "seed_files": receipt.get("seed_files"),
@@ -75,6 +77,9 @@ def main():
                                                      for row in cases))
     shared["no_cut_disk_diagnostic_overhead"] = bool(cases and all(
         not row["native_environment"]["cut_disk_diagnostics_enabled"] for row in cases))
+    shared["lighting_profile_agrees_on_both_sides"] = bool(cases and all(
+        row["native_environment"]["lighting_profile"] == row["native_environment"]["server_lighting_profile"]
+        for row in cases))
     comparable = all(shared.values())
     comparisons = []
     baselines = {}

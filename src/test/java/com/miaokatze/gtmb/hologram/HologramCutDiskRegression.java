@@ -164,6 +164,7 @@ public final class HologramCutDiskRegression {
             rejected(() -> missingTile.verifyCell(-2, 200, 19, cell, false, tile), "missing native inventory on disk");
             syntheticSaveObservationContract(world, writer, reader, cell, tile);
             oneShotNativeWriter(world, writer, reader, cell);
+            reentrantNativeTeardown(world);
             initializedMetadata(world, reader);
             // RegionFileCache owns open handles. Do not globally clear other tests' or a running world's cache.
             directory.toFile()
@@ -450,6 +451,144 @@ public final class HologramCutDiskRegression {
     }
 
     @SuppressWarnings("unchecked")
+    private static void reentrantNativeTeardown(FixtureWorld world) throws Exception {
+        String id = "gtmb_test_reentrant_teardown";
+        Map<String, Class<?>> types = (Map<String, Class<?>>) ReflectionHelper
+            .findField(TileEntity.class, "nameToClassMap", "field_145855_i")
+            .get(null);
+        Map<Class<?>, String> names = (Map<Class<?>, String>) ReflectionHelper
+            .findField(TileEntity.class, "classToNameMap", "field_145853_j")
+            .get(null);
+        Class<?> previousType = types.put(id, ReentrantDetachChest.class);
+        String previousName = names.put(ReentrantDetachChest.class, id);
+        Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
+        boolean wasLoaded = chunk.isChunkLoaded;
+        chunk.isChunkLoaded = true;
+        world.synthesizeMissingTile = true;
+        world.synthesizedTiles = 0;
+        try {
+            ReentrantDetachChest[] original = seedTeardownChests(world, chunk, Items.diamond, 7);
+            NBTTagCompound entry = HologramCutEntry.capture(world, -2, 200, 19, 2, 1, 1, null);
+            NBTTagCompound untouched = (NBTTagCompound) entry.copy();
+            HologramCutWorld.apply(world, entry, -2, 200, 19, true);
+            for (ReentrantDetachChest previous : original) {
+                SimpleAssert.eq(1, previous.invalidateCalls, "each original host receives native invalidate once");
+                SimpleAssert.that(
+                    previous.sawAir && previous.lookupsAbsent && previous.isInvalid(),
+                    "native teardown sees the entire removed selection as air with no lookup-created hosts");
+                SimpleAssert.that(
+                    !world.loadedTileEntityList.contains(previous),
+                    "invalidated original leaves native tick list");
+            }
+            SimpleAssert
+                .eq(0, world.synthesizedTiles, "native teardown cannot lazily create empty original inventories");
+            for (int index = 0; index < 2; index++) {
+                HologramCutWorld.selectedTile(
+                    world,
+                    -2 + index,
+                    200,
+                    19,
+                    entry.getTagList("cells", 10)
+                        .getCompoundTagAt(index),
+                    true);
+            }
+            SimpleAssert.that(untouched.equals(entry), "cut retains every original raw inventory in its entry");
+
+            ReentrantDetachChest[] displaced = seedTeardownChests(world, chunk, Items.emerald, 3);
+            HologramCutWorld.apply(world, entry, -2, 200, 19, false);
+            for (ReentrantDetachChest previous : displaced) {
+                SimpleAssert
+                    .eq(1, previous.invalidateCalls, "replaced destination host also receives native invalidate once");
+                SimpleAssert.that(
+                    previous.sawAir && previous.lookupsAbsent,
+                    "destination teardown finishes while replacement hosts are still hidden");
+            }
+            SimpleAssert
+                .eq(0, world.synthesizedTiles, "destination teardown cannot create premature replacement hosts");
+            for (int index = 0; index < 2; index++) {
+                NBTTagCompound cell = entry.getTagList("cells", 10)
+                    .getCompoundTagAt(index);
+                TileEntity restored = HologramCutWorld.selectedTile(world, -2 + index, 200, 19, cell, false);
+                SimpleAssert.that(
+                    restored != displaced[index] && !restored.isInvalid()
+                        && world.loadedTileEntityList.contains(restored),
+                    "old teardown cannot remove or invalidate the new host");
+                NBTTagCompound actual = new NBTTagCompound();
+                restored.writeToNBT(actual);
+                SimpleAssert.that(
+                    HologramCutWorld.sameNbt(HologramCutEntry.relocatedTile(cell, -2 + index, 200, 19), actual),
+                    "replacement host retains the complete original inventory and raw native fields");
+            }
+            SimpleAssert.that(untouched.equals(entry), "native replacement teardown does not mutate the raw record");
+            ReentrantDetachChest[] failing = new ReentrantDetachChest[2];
+            for (int index = 0; index < 2; index++) {
+                failing[index] = (ReentrantDetachChest) chunk.chunkTileEntityMap
+                    .get(new ChunkPosition(14 + index, 200, 3));
+                failing[index].observeTeardown = true;
+            }
+            failing[0].failAfterLookup = true;
+            rejected(
+                () -> HologramCutWorld.apply(world, entry, -2, 200, 19, true),
+                "a native invalidation exception keeps the transaction incomplete");
+            for (ReentrantDetachChest previous : failing) {
+                SimpleAssert
+                    .eq(1, previous.invalidateCalls, "other original hosts still invalidate after a callback fails");
+                SimpleAssert.that(
+                    !world.loadedTileEntityList.contains(previous),
+                    "failed teardown still removes every captured original from the tick list");
+            }
+            SimpleAssert.that(untouched.equals(entry), "failed teardown retains all original raw inventory data");
+        } finally {
+            chunk.isChunkLoaded = wasLoaded;
+            world.synthesizeMissingTile = false;
+            if (previousType == null) types.remove(id);
+            else types.put(id, previousType);
+            if (previousName == null) names.remove(ReentrantDetachChest.class);
+            else names.put(ReentrantDetachChest.class, previousName);
+        }
+    }
+
+    private static ReentrantDetachChest[] seedTeardownChests(FixtureWorld world, Chunk chunk,
+        net.minecraft.item.Item item, int count) {
+        ReentrantDetachChest[] tiles = new ReentrantDetachChest[2];
+        for (int index = 0; index < 2; index++) {
+            ReentrantDetachChest tile = new ReentrantDetachChest();
+            tile.setInventorySlotContents(4, new ItemStack(item, count + index));
+            tile.setWorldObj(world);
+            tile.xCoord = -2 + index;
+            tile.yCoord = 200;
+            tile.zCoord = 19;
+            tile.observeTeardown = true;
+            chunk.getBlockStorageArray()[12].func_150818_a(14 + index, 8, 3, Blocks.chest);
+            chunk.getBlockStorageArray()[12].setExtBlockMetadata(14 + index, 8, 3, 5);
+            chunk.chunkTileEntityMap.put(new ChunkPosition(14 + index, 200, 3), tile);
+            world.loadedTileEntityList.add(tile);
+            tiles[index] = tile;
+        }
+        return tiles;
+    }
+
+    public static final class ReentrantDetachChest extends TileEntityChest {
+
+        boolean observeTeardown;
+        boolean failAfterLookup;
+        int invalidateCalls;
+        boolean sawAir, lookupsAbsent;
+
+        @Override
+        public void invalidate() {
+            super.invalidate();
+            if (!observeTeardown) return;
+            invalidateCalls++;
+            World world = getWorldObj();
+            sawAir = world.getBlock(-2, 200, 19) == Blocks.air && world.getBlock(-1, 200, 19) == Blocks.air;
+            lookupsAbsent = world.getTileEntity(xCoord, yCoord, zCoord) == null
+                && world.getTileEntity(xCoord == -2 ? -1 : -2, yCoord, zCoord) == null;
+            if (failAfterLookup) throw new IllegalStateException("synthetic native invalidation failure");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     private static void initializedMetadata(FixtureWorld world, HologramCutWorld.DiskReader reader) throws Exception {
         String id = "gtmb_test_cut_metadata_on_ready";
         Map<String, Class<?>> types = (Map<String, Class<?>>) ReflectionHelper
@@ -619,6 +758,7 @@ public final class HologramCutDiskRegression {
 
         Map<Long, Chunk> chunks;
         boolean synthesizeMissingTile;
+        int synthesizedTiles;
 
         private FixtureWorld() {
             super(null, null, "cut disk fixture", 0, null, null);
@@ -649,13 +789,14 @@ public final class HologramCutDiskRegression {
             Chunk chunk = getChunkFromChunkCoords(x >> 4, z >> 4);
             ChunkPosition position = new ChunkPosition(x & 15, y, z & 15);
             TileEntity tile = chunk.chunkTileEntityMap.get(position);
-            if (tile == null && synthesizeMissingTile) {
+            if (tile == null && synthesizeMissingTile && getBlock(x, y, z).hasTileEntity(getBlockMetadata(x, y, z))) {
                 tile = new TileEntityChest();
                 tile.setWorldObj(this);
                 tile.xCoord = x;
                 tile.yCoord = y;
                 tile.zCoord = z;
                 chunk.chunkTileEntityMap.put(position, tile);
+                synthesizedTiles++;
             }
             return tile;
         }

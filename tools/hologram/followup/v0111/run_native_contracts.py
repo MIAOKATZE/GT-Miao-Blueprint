@@ -1,4 +1,4 @@
-"""ROOT-only, fresh-world dedicated-server native API contracts; never 64k business acceptance."""
+"""ROOT-only placement-compatibility helper contracts; legacy full suite and 64k business are not covered."""
 
 import argparse
 import hashlib
@@ -18,7 +18,9 @@ import run_composite as common
 
 ROOT, BUILD, FIXTURE, OUTPUTS = common.ROOT, common.BUILD, common.FIXTURE, common.OUTPUTS
 LEAF = "native-contracts.properties"
-SCOPE = "FakePlayer and real installed FML/registry/native API contracts only; no real-Netty 64k business claim"
+SUITE = "placement-compatibility"
+HELPERS = "detachedReportingParts,idleAeHosts,basicMachineFacingRestore"
+SCOPE = "Three existing placement compatibility native helpers with actual Forge FakePlayer; legacy full suite and real-Netty 64k business are not covered"
 
 
 def atomic_replace(source, target):
@@ -94,6 +96,7 @@ def arguments(output, world_name, product_sha, addon_sha):
     tokens += ["-Xms1G", "-Xmx6G", *common.common_flags(output, False, 0),
                "-Dgtmb.hologram.smoketest=false", "-Dgtmb.hologram.extendedCompatibilitySmoke=false",
                "-Dgtmb.hologram.backgroundProbe=false", "-Dgtmb.v0111.nativeContractsOnly=true",
+               "-Dgtmb.v0111.nativeContractsSuite=" + SUITE,
                "-Dgtmb.v0111.nativeContractsWorld=" + world_name,
                "-Dgtmb.v0111.nativeContractsProductSha256=" + product_sha,
                "-Dgtmb.v0111.nativeContractsAddonSha256=" + addon_sha,
@@ -151,7 +154,8 @@ def run(args):
     argfile = output / "server.args"
     common.write_argfile(argfile, arguments(output, world_name, common.sha(product), common.sha(addon)))
     command = [str(java), "@" + str(argfile)]
-    result = {"name": args.name, "status": "RUNNING", "scope": SCOPE, "fixture": str(fixture),
+    result = {"name": args.name, "status": "RUNNING", "scope": SCOPE, "suite": SUITE,
+              "selected_helpers": HELPERS.split(","), "full_suite_invoked": False, "fixture": str(fixture),
               "output": str(output), "world": str(world), "world_name": world_name, "port": common.PORT,
               "server_Xmx": "6G", "client_started": False, "realNetty64kBusinessClaim": False,
               "user_instance_modified": False, "seed_worlds_copied": False, "existing_worlds_deleted": False,
@@ -233,6 +237,9 @@ def run(args):
             result.update(status="FAIL", failure_kind=evidence.get("failureKind", "PRODUCT_OR_ASSERTION"), failure=evidence.get("failure", evidence.get("receiptFailure", "Native suite failed")))
         elif process.returncode == 0 and all(evidence.get(key) == value for key, value in {
                 "status": "PASS", "invocationComplete": "true", "shutdownRequested": "true",
+                "suite": SUITE, "selectedHelpers": HELPERS, "fullSuiteInvoked": "false",
+                "nativeActorGameType": "0", "nativeActorCreative": "false",
+                "helper.detachedReportingParts": "PASS", "helper.idleAeHosts": "PASS", "helper.basicMachineFacingRestore": "PASS",
                 "noRealPlayersBefore": "true", "noRealPlayersAfter": "true", "worldName": world_name,
                 "productSha256": result["normal_sha256"], "addonSha256": result["addon_sha256"],
                 "realNetty64kBusinessClaim": "false"}.items()):

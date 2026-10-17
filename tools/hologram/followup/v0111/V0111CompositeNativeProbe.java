@@ -73,6 +73,10 @@ public final class V0111CompositeNativeProbe {
     private Object rawRenderStateWitness, rawRenderSession;
     private long rawPreviewStarted, rawRenderStarted, rawFramesBefore;
     private int rawNaturalFrames, rawWorldEvents, rawGlStateChecks, rawGlStateMismatches;
+    private String lightWaitKey="", lightingGlLabel="", lightingGlBefore="";
+    private long lightWaitStarted;
+    private Object lightingGlWitness;
+    private int baselineLightingFrames, previewLightingFrames;
     private static final long PHASE_LIMIT = 1800_000_000_000L, OVERALL_LIMIT = 10800_000_000_000L;
 
     @Mod.EventHandler
@@ -92,6 +96,7 @@ public final class V0111CompositeNativeProbe {
         proof.setProperty("scope", "40x40x40 actual world; real Netty area import/processing/Save/placement/raw cut; natural rendered MUI stage choices and Save; independently checked client JSON/PNG/owner commit and server material/world oracle; no OS input");
         proof.setProperty("requestedSourceVolume", "64000"); proof.setProperty("preferencesRestored", "true"); proof.setProperty("configRestored", "true");
         proof.setProperty("scenario",scenario);
+        proof.setProperty("lightingProfile",seedMode?CompositeWorldWitness.LIGHTING_PROFILE:"legacy-dark-v1");
         FMLCommonHandler.instance().bus().register(this);
         if (client) MinecraftForge.EVENT_BUS.register(new RawWorldListener(this));
         persist("RUNNING");
@@ -126,6 +131,7 @@ public final class V0111CompositeNativeProbe {
                 bridge = call(Class.forName("com.miaokatze.gtmb.hologram.HologramCompositeLabBridge"),"current");
                 if (bridge == null) return;
             }
+            if(seedMode&&!(Boolean)call(bridge,"lightingInstalled")&&"true".equals(read("composite-client.properties").getProperty("clientLightingBeforeSampled")))call(bridge,"installLighting");
             if (seedMode) call(bridge,"tick");
             Object report = call(bridge,"report");
             if (!"true".equals(proof.getProperty("fixtureReady")) && bool(report,"actualNetty") && (Boolean)call(bridge,"ready")) {
@@ -250,6 +256,7 @@ public final class V0111CompositeNativeProbe {
         else { at=ints(manifest,kind.equals("self")?"source":kind.equals("share")?"self":"share"); x=at[0]+20.5; y=at[1]+40; z=at[2]+39.5; }
         call(get(actor,"field_71135_a"),"func_147364_a",x,y,z,180f,0f);
         call(call(host,"func_71203_ab"),"func_72358_d",actor);
+        if(seedMode)proof.setProperty("serverLightingAtMove."+kind,String.valueOf(CompositeWorldWitness.actorLight(world,actor)));
     }
 
     private void loadFixture(Object world,String kind)throws Exception {
@@ -279,6 +286,13 @@ public final class V0111CompositeNativeProbe {
             if(world==null||player==null) { check(!entered,"lost actual test connection/world");pulse();return; }
             entered=true;
             if(phase==1) {
+                if(seedMode&&!"true".equals(proof.getProperty("clientLightingBeforeSampled"))){
+                    if(!"beforeFixtureLighting".equals(lightWaitKey)){lightWaitKey="beforeFixtureLighting";lightWaitStarted=System.nanoTime();}
+                    Object before=CompositeWorldWitness.actorLight(world,player);
+                    check(System.nanoTime()-lightWaitStarted<30_000_000_000L,"30-second actual client before-light loaded-chunk deadline: "+before);
+                    if(!bool(compound(before,"feet"),"realChunkAvailable")||!bool(compound(before,"eye"),"realChunkAvailable"))return;
+                    recordClientLight("beforeFixtureLighting",world,player);proof.setProperty("clientLightingBeforeSampled","true");persist("RUNNING");
+                }
                 if(!"true".equals(peer.getProperty("fixtureReady")))return;
                 if(prepareOnly&&!"true".equals(peer.getProperty("seedArtifactsWritten")))return;
                 manifest=readNbt("composite-manifest.nbt");if(manifest==null)return;
@@ -293,6 +307,7 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==2) {
                 if(!ack(peer))return;
+                if(seedMode&&!clientLightReady("source-before-"+kind(),world,player))return;
                 if(!observeAreaInput(player,null)){pulse();return;}
                 call(clientType("HologramClient"),"beginAreaSelection");
                 Object begun=get(clientType("HologramClient"),"state");
@@ -337,6 +352,7 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==13) {
                 if(!ack(peer))return;
+                if(seedMode&&!clientLightReady(kind()+"-before-private",world,player))return;
                 if(!isScreen(gui)){call(clientType("HologramClient"),"openSettings");return;}
                 Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");
                 if(!naturalUiReady(gui,gen)||busy()||bool(ui,"busy"))return;
@@ -461,6 +477,7 @@ public final class V0111CompositeNativeProbe {
     private void raw(Properties peer)throws Exception {
         if(phase==30){
             if(!ack(peer))return;
+            if(seedMode&&!clientLightReady("raw-before-cut",get(mc,"field_71441_e"),get(mc,"field_71439_g")))return;
             Object cut=get(clientType("HologramCutClient"),"INSTANCE");
             if((Boolean)call(cut,"busy"))return;
             Object request=nbt();putText(request,"action","cut");cutRequest=java.util.UUID.randomUUID().toString();rawId=cutRequest;
@@ -555,6 +572,7 @@ public final class V0111CompositeNativeProbe {
 
     /** Observe the actual product subscriber; this listener never invokes update/render or installs a session. */
     private void rawWorldBefore() {
+        lightingWorldBefore();
         rawRenderStateWitness=null;
         if(!client||done||phase!=36)return;
         try {
@@ -567,6 +585,7 @@ public final class V0111CompositeNativeProbe {
     }
 
     private void rawWorldAfter() {
+        lightingWorldAfter();
         if(rawRenderStateWitness==null||done||phase!=36)return;
         try {
             rawWorldEvents++;
@@ -579,6 +598,69 @@ public final class V0111CompositeNativeProbe {
             proof.setProperty("raw.previewGlStateMismatches",String.valueOf(rawGlStateMismatches));
         } catch(Throwable failure){fail(failure);}
         finally{rawRenderStateWitness=null;}
+    }
+
+    private void recordClientLight(String label,Object world,Object player)throws Exception {
+        Object sample=CompositeWorldWitness.actorLight(world,player);
+        proof.setProperty("clientLighting."+label,String.valueOf(sample));
+        // Read the actual CPU array uploaded by vanilla updateLightmap; no texture/gamma mutation.
+        try{
+            int[] colors=(int[])get(get(mc,"field_71460_t"),"field_78504_Q");Object feet=compound(sample,"feet");
+            int index=integer(feet,"sky")*16+integer(feet,"block");
+            proof.setProperty("clientLightmap."+label,"index="+index+",argb="+Integer.toHexString(colors[index])+",corners="+Integer.toHexString(colors[0])+","+Integer.toHexString(colors[15])+","+Integer.toHexString(colors[240])+","+Integer.toHexString(colors[255]));
+            proof.setProperty("clientGamma."+label,String.valueOf(get(get(mc,"field_71474_y"),"field_74333_Y")));
+            proof.setProperty("clientNightVision."+label,String.valueOf(call(player,"func_82165_m",16)));
+        }catch(Exception unavailable){proof.setProperty("clientLightmap."+label,"UNAVAILABLE: "+unavailable);}
+    }
+
+    private boolean clientLightReady(String label,Object world,Object player)throws Exception {
+        if(!label.equals(lightWaitKey)){lightWaitKey=label;lightWaitStarted=System.nanoTime();recordClientLight(label+"-arrival",world,player);}
+        Object sample=CompositeWorldWitness.actorLight(world,player);
+        boolean lit=integer(compound(sample,"feet"),"block")>0&&integer(compound(sample,"eye"),"block")>0;
+        check(System.nanoTime()-lightWaitStarted<30_000_000_000L,"30-second native client block-light/WorldLast observation deadline at "+label+": "+sample+" baselineFrames="+baselineLightingFrames);
+        if(!lit||baselineLightingFrames<8)return false;
+        recordClientLight(label+"-ready",world,player);proof.setProperty("clientLightingReady."+label,"true");return true;
+    }
+
+    /** Eight bounded natural whole-event samples before business and during actual raw preview. */
+    private void lightingWorldBefore(){
+        lightingGlWitness=null;
+        if(!client||done||!seedMode||mc==null)return;
+        try{
+            if(get(mc,"field_71441_e")==null||get(mc,"field_71439_g")==null||get(mc,"field_71462_r")!=null)return;
+            boolean preview=phase==36;
+            if(preview?previewLightingFrames>=8:(!(phase==1||phase==2||phase==30)||baselineLightingFrames>=8))return;
+            Object cut=get(clientType("HologramCutClient"),"INSTANCE");
+            if(preview?get(cut,"rawPreview")==null:get(cut,"rawPreview")!=null)return;
+            if(!preview){Object light=CompositeWorldWitness.actorLight(get(mc,"field_71441_e"),get(mc,"field_71439_g"));if(integer(compound(light,"feet"),"block")<=0||integer(compound(light,"eye"),"block")<=0)return;}
+            lightingGlLabel=preview?"rawPreview":"beforeBusiness";
+            lightingGlBefore=namedRenderState();
+            lightingGlWitness=construct("com.miaokatze.gtmb.client.hologram.HologramCutRawPreviewScope$StateWitness");
+        }catch(Throwable unavailable){proof.setProperty("lightingGlObservation","UNAVAILABLE: "+unavailable);}
+    }
+    private void lightingWorldAfter(){
+        if(lightingGlWitness==null)return;
+        try{
+            String after=namedRenderState();boolean equal=(Boolean)call(lightingGlWitness,"matches");
+            int index=lightingGlLabel.equals("rawPreview")?++previewLightingFrames:++baselineLightingFrames;
+            proof.setProperty("lightingWorldLast."+lightingGlLabel+"."+index+".before",lightingGlBefore);
+            proof.setProperty("lightingWorldLast."+lightingGlLabel+"."+index+".after",after);
+            proof.setProperty("lightingWorldLast."+lightingGlLabel+"."+index+".wholeEventStateMatches",String.valueOf(equal));
+            proof.setProperty("lightingWorldLast."+lightingGlLabel+".frames",String.valueOf(index));
+            proof.setProperty("lightingWorldLast.scope","natural HIGHEST-to-LOWEST whole Forge WorldLast; other mods included; named read-only GL and native CTM state witness; no pixel or sole-renderer PASS inference");
+        }catch(Throwable unavailable){proof.setProperty("lightingGlObservation","UNAVAILABLE: "+unavailable);}
+        finally{lightingGlWitness=null;}
+    }
+    private String namedRenderState()throws Exception {
+        Class<?> gl=Class.forName("org.lwjgl.opengl.GL11"),helper=Class.forName("net.minecraft.client.renderer.OpenGlHelper");
+        StringBuilder out=new StringBuilder("brightnessX=").append(get(helper,"lastBrightnessX")).append(",brightnessY=").append(get(helper,"lastBrightnessY"));
+        int[] names={0x84e0,0x84e1,0x0ba0,0x0b72,0x0b74,0x0be1,0x0be0,0x8069};
+        String[] labels={"activeTexture","clientTexture","matrixMode","depthWrite","depthFunc","blendSrc","blendDst","activeUnitTexture2D"};
+        for(int i=0;i<names.length;i++)out.append(',').append(labels[i]).append('=').append(call(gl,"glGetInteger",names[i]));
+        for(int name:new int[]{0x0b50,0x0b60,0x0be2,0x0bc0,0x0b71,0x0c11})out.append(",enabled:").append(Integer.toHexString(name)).append('=').append(call(gl,"glIsEnabled",name));
+        java.nio.FloatBuffer values=java.nio.ByteBuffer.allocateDirect(16).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+        call(gl,"glGetFloat",0x0b00,values);out.append(",color=");for(int i=0;i<4;i++)out.append(values.get(i)).append('/');
+        return out.toString();
     }
 
     /** Client event types stay outside the dedicated-server listener's declared methods. */

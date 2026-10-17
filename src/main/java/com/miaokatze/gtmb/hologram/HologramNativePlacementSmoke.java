@@ -14,6 +14,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.util.FakePlayerFactory;
 import net.minecraftforge.event.world.BlockEvent;
@@ -427,8 +429,20 @@ public final class HologramNativePlacementSmoke {
         try {
             player.rotationYaw = 180;
             player.rotationPitch = 0;
+            // provideChunk may return EmptyChunk while this pack throttles generation. Its writes
+            // report success but reads stay air, so load and verify the actual fixture chunks first.
+            for (int chunkX = sourceX >> 4; chunkX <= (568 >> 4); chunkX++) {
+                Chunk loaded = world.theChunkProviderServer.loadChunk(chunkX, z >> 4);
+                require(
+                    loaded != null && !(loaded instanceof EmptyChunk)
+                        && loaded.xPosition == chunkX
+                        && loaded.zPosition == (z >> 4)
+                        && loaded.isChunkLoaded
+                        && world.theChunkProviderServer.chunkExists(chunkX, z >> 4)
+                        && world.getChunkFromChunkCoords(chunkX, z >> 4) == loaded,
+                    "basic_facing_genuine_loaded_fixture_chunk_" + chunkX);
+            }
             for (int x = sourceX; x <= 568; x += 4) {
-                world.getChunkFromBlockCoords(x, z);
                 require(world.isAirBlock(x, y, z), "basic_facing_fresh_position_" + x);
             }
             require(

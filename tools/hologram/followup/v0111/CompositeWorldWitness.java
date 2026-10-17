@@ -20,6 +20,7 @@ import java.util.List;
  * Production import/process/Save/payment/placement/raw operations still arrive from the connected client.
  */
 public final class CompositeWorldWitness {
+    public static final String LIGHTING_PROFILE="vanilla-block-light-v1";
     private final Object world, actor, manifest, result;
     private final int[] source, bankOrigin;
     private final List<Object> baseline = new ArrayList<Object>(), stock = new ArrayList<Object>(), fluids = new ArrayList<Object>();
@@ -40,6 +41,9 @@ public final class CompositeWorldWitness {
     private int baselineScanTicks;
     private long baselineFirstWorldTick, baselineLastWorldTick;
     private CompositeEuLedger euLedger;
+    private boolean lightingInstalled;
+    private final long lightingStarted=System.nanoTime();
+    private final List<int[]> lightingPoints=new ArrayList<int[]>();
 
     public CompositeWorldWitness(Object world,Object actor,Object manifest,Object seedReceipt)throws Exception {
         this.world=world;this.actor=actor;this.manifest=manifest;this.source=ints(manifest,"source");this.bankOrigin=ints(manifest,"bank");result=nbt();
@@ -49,6 +53,7 @@ public final class CompositeWorldWitness {
         Object gameType=call(get(actor,"field_71134_c"),"func_73081_b");
         check((Integer)call(gameType,"func_77148_a")==0,"actual native GameType SURVIVAL(0)");
         putInt(result,"actualNativeGameType",0);
+        prepareLighting();
         Object stone=call(get(Class.forName("net.minecraft.block.Block"),"field_149771_c"),"func_82594_a","minecraft:stone");
         for(String kind:new String[]{"self","share","raw"}){
             int[] at=ints(manifest,kind);check((Boolean)call(world,"func_147437_c",at[0],at[1]+39,at[2]),"fresh fixed target safety pad");
@@ -91,6 +96,8 @@ public final class CompositeWorldWitness {
 
     public void tick()throws Exception {
         if(euLedger!=null)euLedger.tick();
+        if(!lightingInstalled){check(System.nanoTime()-lightingStarted<30_000_000_000L,"30-second lighting setup deadline awaiting actual client before sample");return;}
+        if(baselineCursor==0&&!lightingPropagated())return;
         if(baselineCursor<64000){
             baselineLastWorldTick=(Long)call(world,"func_82737_E");
             if(baselineScanTicks++==0)baselineFirstWorldTick=baselineLastWorldTick;
@@ -100,6 +107,8 @@ public final class CompositeWorldWitness {
                 inspectPhysicalMinimum(row);staticSourceDigest.update(canonicalBytes(normalize(row,"raw",true)));
             }
             if(baselineCursor==64000){
+                tag(result,"lightingAfter",lightingSnapshot());
+                tag(result,"sourceAEAtBaselineComplete",aeSnapshot(source,"source-after-independent-baseline-before-business"));
                 putInt(result,"sourceVolume",baselineCursor);putInt(result,"sourceNonAirBlocks",sourceNonAirBlocks);
                 putInt(result,"sourceAirBlocks",baselineCursor-sourceNonAirBlocks);putInt(result,"expectedBlueprintCells",sourceNonAirBlocks);
                 putText(result,"sourceFingerprintAlgorithm",SOURCE_FINGERPRINT_ALGORITHM);
@@ -109,7 +118,7 @@ public final class CompositeWorldWitness {
             return;
         }
         if(!checking.isEmpty()) {
-            if(awaitingFormation){if(!formedTarget())return;awaitingFormation=false;}
+            if(awaitingFormation){if(!formedTarget())return;tag(result,checking+"AEAfterNativeFormation",aeSnapshot(target,checking+"-after-natural-formation-before-world-oracle"));awaitingFormation=false;}
             for(int n=0;n<256&&cursor<64000;n++,cursor++) {
                 Object expected=normalize(baseline.get(cursor),checking,true),actual=normalize(read(target,cursor),checking,false);
                 if(has(expected,"tile"))tiles++;
@@ -122,6 +131,75 @@ public final class CompositeWorldWitness {
     }
 
     public boolean ready(){return baselineCursor==64000&&checking.isEmpty();}
+    public boolean lightingInstalled(){return lightingInstalled;}
+
+    private void prepareLighting()throws Exception {
+        putText(result,"lightingProfile",LIGHTING_PROFILE);
+        lightingPoints.add(new int[]{bankOrigin[0]+32,bankOrigin[1]+2,bankOrigin[2]+28});
+        lightingPoints.add(new int[]{bankOrigin[0]-1,bankOrigin[1]+2,bankOrigin[2]+20});
+        for(String kind:new String[]{"self","share","raw"}){int[] at=ints(manifest,kind);lightingPoints.add(new int[]{at[0]-1,at[1]+41,at[2]-1});}
+        for(int[] at:lightingPoints)for(int n=0;n<3;n++)outsideOracle(at[0],at[1]-n,at[2]);
+        tag(result,"lightingBefore",lightingSnapshot());
+        putText(result,"lightingScope","five finite vanilla glowstone blocks, each with stone and cobblestone below, outside all four 40-cubes and the 32-cube bank; native chunk load/setBlock/propagation only; no provider, gamma, night vision, held tool or oracle change");
+    }
+
+    /** Only the peer's real pre-light client sample authorizes this fixture-only setup, before timing. */
+    public void installLighting()throws Exception {
+        check(!lightingInstalled,"one lighting fixture installation");
+        Object registry=get(Class.forName("net.minecraft.block.Block"),"field_149771_c");
+        Object rows=listTag();
+        for(int[] at:lightingPoints)for(int n=0;n<3;n++){
+            int x=at[0],y=at[1]-n,z=at[2];outsideOracle(x,y,z);
+            Object chunk=call(get(world,"field_73059_b"),"func_73158_c",x>>4,z>>4);
+            check(chunk!=null&&!Class.forName("net.minecraft.world.chunk.EmptyChunk").isInstance(chunk),"lighting explicit native loadChunk returned a real chunk");
+            check((Boolean)call(world,"func_147437_c",x,y,z),"new lighting/reference coordinate must be native air");
+            String id=n==0?"minecraft:glowstone":n==1?"minecraft:stone":"minecraft:cobblestone";
+            Object block=call(registry,"func_82594_a",id);
+            check((Boolean)call(world,"func_147465_d",x,y,z,block,0,3),"native lighting/reference setBlock");
+            check(call(world,"func_147439_a",x,y,z)==block&&(Integer)call(world,"func_72805_g",x,y,z)==0,"lighting/reference actual block and metadata readback after loadChunk");
+            Object row=lightAt(world,x,y,z);putText(row,"installedBlock",id);append(rows,row);
+        }
+        tag(result,"lightingInstalledBlocks",rows);lightingInstalled=true;
+    }
+
+    private void outsideOracle(int x,int y,int z)throws Exception {
+        for(String name:new String[]{"source","self","share","raw","bank"}){int[] at=ints(manifest,name);int size=name.equals("bank")?32:40;check(x<at[0]||x>=at[0]+size||y<at[1]||y>=at[1]+size||z<at[2]||z>=at[2]+size,"lighting must stay outside "+name);}
+    }
+    private Object lightingSnapshot()throws Exception {
+        Object out=nbt(),rows=listTag();for(int[] at:lightingPoints)append(rows,lightAt(world,at[0],at[1],at[2]));tag(out,"points",rows);tag(out,"actor",actorLight(world,actor));putLong(out,"worldTick",(Long)call(world,"func_82737_E"));return out;
+    }
+    private boolean lightingPropagated()throws Exception {
+        boolean ready=true;
+        for(int[] at:lightingPoints)ready&=integer(lightAt(world,at[0],at[1],at[2]),"block")>0;
+        Object current=actorLight(world,actor);ready&=integer(compound(current,"feet"),"block")>0&&integer(compound(current,"eye"),"block")>0;
+        if(!ready)check(System.nanoTime()-lightingStarted<30_000_000_000L,"30-second server native lighting propagation deadline: "+lightingSnapshot());
+        if(ready)putBool(result,"lightingNativePropagationReady",true);return ready;
+    }
+    public static Object actorLight(Object world,Object actor)throws Exception {
+        int x=(int)Math.floor((Double)get(actor,"field_70165_t")),y=(int)Math.floor((Double)get(actor,"field_70163_u")),z=(int)Math.floor((Double)get(actor,"field_70161_v"));
+        int eye=(int)Math.floor((Double)get(actor,"field_70163_u")+((Number)call(actor,"func_70047_e")).doubleValue());
+        Object out=nbt();tag(out,"feet",lightAt(world,x,y,z));tag(out,"eye",lightAt(world,x,eye,z));
+        Object provider=get(world,"field_73011_w");putBool(out,"hasNoSky",(Boolean)get(provider,"field_76576_e"));
+        float[] table=(float[])get(provider,"field_76573_f");putText(out,"brightnessTable0",String.valueOf(table[0]));putText(out,"brightnessTable15",String.valueOf(table[15]));return out;
+    }
+    private static Object lightAt(Object world,int x,int y,int z)throws Exception {
+        Object out=nbt();putInt(out,"x",x);putInt(out,"y",y);putInt(out,"z",z);
+        boolean client=(Boolean)get(world,"field_72995_K");Object provider=call(world,"func_72863_F");
+        Object chunks=get(provider,client?"field_73236_b":"loadedChunkHashMap");
+        Object chunk=call(chunks,"func_76164_a",call(Class.forName("net.minecraft.world.ChunkCoordIntPair"),"func_77272_a",x>>4,z>>4));
+        boolean valid=y>=0&&y<256&&Math.abs((long)x)<30000000&&Math.abs((long)z)<30000000;
+        boolean real=valid&&chunk!=null&&!Class.forName("net.minecraft.world.chunk.EmptyChunk").isInstance(chunk);
+        putBool(out,"coordinateValid",valid);putBool(out,"loaded",chunk!=null);putBool(out,"realChunkAvailable",real);
+        if(!real){putInt(out,"block",-1);putInt(out,"sky",-1);putInt(out,"packed",-1);putText(out,"sampleStatus","UNAVAILABLE: no native real loaded chunk; no light/Anvil inference");return out;}
+        String method=client?"func_72925_a":"func_72972_b";
+        int block=(Integer)call(world,method,enumValue("net.minecraft.world.EnumSkyBlock","Block"),x,y,z);
+        int sky=(Boolean)get(get(world,"field_73011_w"),"field_76576_e")?0:(Integer)call(world,method,enumValue("net.minecraft.world.EnumSkyBlock","Sky"),x,y,z);
+        putInt(out,"block",block);putInt(out,"sky",sky);putInt(out,"packed",client?(Integer)call(world,"func_72802_i",x,y,z,0):(sky<<20|block<<4));
+        putText(out,"packedBasis",client?"native client World.getLightBrightnessForSkyBlocks":"native server saved sky/block values packed as sky<<20|block<<4; client-only brightness getter is not available on dedicated server");return out;
+    }
+    private Object aeSnapshot(int[] origin,String label)throws Exception {
+        try{return CompositeAeNetworkObserver.snapshot(world,origin,label);}catch(Exception failure){Object out=nbt();putText(out,"sampleLabel",label);putText(out,"status","OBSERVER_UNAVAILABLE");putText(out,"failure",failure.toString());return out;}
+    }
     public Object report()throws Exception{return call(result,"func_74737_b");}
     /** Detached original World samples, captured over the baseline scan rather than read again at shutdown. */
     public Object baselineSnapshot()throws Exception {
