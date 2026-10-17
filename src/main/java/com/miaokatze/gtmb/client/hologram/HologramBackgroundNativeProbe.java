@@ -83,8 +83,8 @@ public final class HologramBackgroundNativeProbe {
                 receipt.setBoolean("reopenedWithoutRestart", HologramBackgroundTasks.token() == token);
                 stage = 2;
             } else if (stage == 2) {
-                if (firstScreen.smokeRenderGeneration() == 0) return;
-                receipt.setLong("actualNativeProgressFrames", firstScreen.smokeRenderGeneration());
+                if (firstScreen.ui.canvas.renderGeneration() == 0) return;
+                receipt.setLong("actualNativeProgressFrames", firstScreen.ui.canvas.renderGeneration());
                 net.minecraft.util.ScreenShotHelper.saveScreenshot(
                     mc.mcDataDir,
                     "v0110-background-workstation.png",
@@ -105,7 +105,7 @@ public final class HologramBackgroundNativeProbe {
                 receipt.setBoolean("freshPanelAfterDispose", true);
                 stage = 3;
             } else if (stage == 3) {
-                if (firstScreen.smokeRenderGeneration() == 0) return;
+                if (firstScreen.ui.canvas.renderGeneration() == 0) return;
                 firstScreen.ui.router.closeRoot();
                 stage = 4;
             } else if (stage == 4) {
