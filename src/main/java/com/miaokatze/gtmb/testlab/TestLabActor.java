@@ -8,15 +8,19 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.world.Teleporter;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.FakePlayerFactory;
 
@@ -76,8 +80,32 @@ final class TestLabActor {
             originalYaw = player.rotationYaw;
             originalPitch = player.rotationPitch;
             TestLabZone bank = config.zone("composite-bank");
-            for (int dx = 1; dx <= 3; dx++) for (int dz = 19; dz <= 21; dz++)
-                world.setBlock(bank.x + dx, bank.y, bank.z + dz, net.minecraft.init.Blocks.glass, 0, 3);
+            // Actor admission precedes the facility lease; ordinary provideChunk may return EmptyChunk here.
+            for (int cx = (bank.x + 1) >> 4; cx <= (bank.x + 3) >> 4; cx++)
+                for (int cz = (bank.z + 19) >> 4; cz <= (bank.z + 21) >> 4; cz++) {
+                    Chunk chunk = world.theChunkProviderServer.loadChunk(cx, cz);
+                    if (chunk == null || chunk instanceof EmptyChunk
+                        || !chunk.isChunkLoaded
+                        || chunk.xPosition != cx
+                        || chunk.zPosition != cz)
+                        throw new IllegalStateException("Composite actor platform chunk did not load natively");
+                }
+            for (int dx = 1; dx <= 3; dx++)
+                for (int dz = 19; dz <= 21; dz++) world.setBlock(bank.x + dx, bank.y, bank.z + dz, Blocks.glass, 0, 3);
+            // EmptyChunk accepts writes without storing blocks, so check the actual world before transferring.
+            for (int dx = 1; dx <= 3; dx++)
+                for (int dz = 19; dz <= 21; dz++) if (world.getBlock(bank.x + dx, bank.y, bank.z + dz) != Blocks.glass)
+                    throw new IllegalStateException("Composite actor platform glass did not persist");
+            if (world
+                .func_147461_a(
+                    AxisAlignedBB.getBoundingBox(
+                        bank.x + 2.2,
+                        bank.y + 0.99,
+                        bank.z + 20.2,
+                        bank.x + 2.8,
+                        bank.y + 1.01,
+                        bank.z + 20.8))
+                .isEmpty()) throw new IllegalStateException("Composite actor platform has no supporting collision");
             transfer(world, bank.x + 2.5, bank.y + 1, bank.z + 20.5);
         } else {
             id = UUID.nameUUIDFromBytes(("gtmb-testlab-agent:" + owner).getBytes(StandardCharsets.UTF_8));

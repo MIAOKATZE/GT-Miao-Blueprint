@@ -15,6 +15,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.ChunkCoordIntPair;
+import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
@@ -61,6 +63,7 @@ final class TestLabCompositeFixture {
     private final Set<String> roles = new HashSet<>();
     private final NBTTagList devices = new NBTTagList(), wirelessHatches = new NBTTagList();
     private NBTTagCompound patternReceipt = new NBTTagCompound();
+    private final NBTTagList links = new NBTTagList();
 
     TestLabCompositeFixture(TestLabRuntime runtime) {
         this.runtime = runtime;
@@ -429,33 +432,73 @@ final class TestLabCompositeFixture {
     }
 
     void link(int index) throws Exception {
-        NBTTagCompound extra = extras.getCompoundTagAt(index);
-        int[] at = extra.getIntArray("position");
-        BaseMetaTileEntity host = (BaseMetaTileEntity) runtime.world()
-            .getTileEntity(at[0], at[1], at[2]);
+        BaseMetaTileEntity host = null;
+        int eligible = 0;
+        for (int candidate = 0; candidate < extras.tagCount(); candidate++) {
+            int[] position = extras.getCompoundTagAt(candidate)
+                .getIntArray("position");
+            BaseMetaTileEntity actual = (BaseMetaTileEntity) runtime.world()
+                .getTileEntity(position[0], position[1], position[2]);
+            // Registry order includes real steam machines. GTSWN correctly rejects their zero EU capacity/voltage.
+            if (actual.getEUCapacity() <= 0 || (actual.getInputVoltage() <= 0 && actual.getOutputVoltage() <= 0))
+                continue;
+            if (eligible++ == index) {
+                host = actual;
+                break;
+            }
+        }
+        TestLabTasks.require(host != null, "Four native electrical extra machines are required for link terminals");
+        runtime.requireOwned(host.xCoord, host.yCoord, host.zCoord, 1, 1, 1);
         if (host.hasCoverAtSide(ForgeDirection.UP)) host.detachCover(ForgeDirection.UP);
         Class<?> list = Class.forName("com.miaokatze.gtswn.common.api.enums.GTSWNItemList");
         Object entry = java.lang.Enum.valueOf(list.asSubclass(java.lang.Enum.class), "Wireless_Energy_Tap");
         ItemStack terminal = (ItemStack) list.getMethod("get", int.class)
             .invoke(entry, 1);
         TestLabTasks.require(
-            terminal.getItem()
-                .onItemUseFirst(
-                    terminal,
-                    runtime.actor().player,
-                    runtime.world(),
-                    at[0],
-                    at[1],
-                    at[2],
-                    ForgeDirection.UP.ordinal(),
-                    .5F,
-                    .5F,
-                    .5F),
-            "Native link terminal interaction failed");
+            terminal.getItemDamage() == 0 && !terminal.hasTagCompound(),
+            "Fresh actual link terminal must start in native energy-input mode");
+        ItemStack originalHeld = runtime.actor().player.getHeldItem();
+        boolean originalSneaking = runtime.actor().player.isSneaking();
+        try {
+            runtime.actor().player.inventory.setInventorySlotContents(0, terminal);
+            runtime.actor().player.setSneaking(false);
+            TestLabTasks.require(
+                terminal.getItem()
+                    .onItemUseFirst(
+                        terminal,
+                        runtime.actor().player,
+                        runtime.world(),
+                        host.xCoord,
+                        host.yCoord,
+                        host.zCoord,
+                        ForgeDirection.UP.ordinal(),
+                        .5F,
+                        .5F,
+                        .5F),
+                "Native link terminal interaction failed");
+        } finally {
+            runtime.actor().player.inventory.setInventorySlotContents(0, originalHeld);
+            runtime.actor().player.setSneaking(originalSneaking);
+        }
         TestLabTasks.require(
             host.hasCoverAtSide(ForgeDirection.UP) && host.getCoverAtSide(ForgeDirection.UP)
-                .isValid(),
-            "Native link terminal did not install actual cover");
+                .isValid()
+                && host.getCoverAtSide(ForgeDirection.UP)
+                    .getClass()
+                    .getName()
+                    .equals("com.miaokatze.gtswn.common.covers.GTswn_Cover_EnergyWireless"),
+            "Native link terminal did not install the actual configured energy cover");
+        NBTTagCompound row = new NBTTagCompound();
+        row.setIntArray("position", new int[] { host.xCoord, host.yCoord, host.zCoord });
+        row.setLong("nativeEUCapacity", host.getEUCapacity());
+        row.setLong("nativeInputVoltage", host.getInputVoltage());
+        row.setLong("nativeOutputVoltage", host.getOutputVoltage());
+        row.setInteger("side", ForgeDirection.UP.ordinal());
+        row.setTag("nativeTerminal", terminal.writeToNBT(new NBTTagCompound()));
+        NBTTagCompound nativeCover = new NBTTagCompound();
+        CoverRegistry.writeCoverToNbt(host.getCoverAtSide(ForgeDirection.UP), nativeCover);
+        row.setTag("nativeCover", nativeCover);
+        links.appendTag(row);
         if (index == 0) runtime.actor().player.inventory.setInventorySlotContents(31, terminal);
     }
 
@@ -647,11 +690,26 @@ final class TestLabCompositeFixture {
         out.setTag("additionalGt", extras.copy());
         out.setTag("devices", devices.copy());
         out.setTag("patternFixture", patternReceipt.copy());
+        out.setTag("nativeLinks", links.copy());
         out.setTag("wirelessHatches", wirelessHatches.copy());
         out.setInteger("distinctExtraRoles", roles.size() + AE_DEVICES.length + EIO_DEVICES.length);
         NBTTagList live = new NBTTagList();
         for (MTEMultiBlockBase machine : machines) {
+            BaseMetaTileEntity base = (BaseMetaTileEntity) machine.getBaseMetaTileEntity();
             NBTTagCompound row = new NBTTagCompound();
+            row.setIntArray("position", new int[] { base.xCoord, base.yCoord, base.zCoord });
+            row.setLong("timer", base.getTimer());
+            row.setInteger("startUpCheck", machine.getmStartUpCheck());
+            row.setBoolean("invalid", base.isInvalid());
+            row.setBoolean("tickDisabled", base.isTickDisabled());
+            row.setBoolean(
+                "worldTileMatches",
+                runtime.world()
+                    .getTileEntity(base.xCoord, base.yCoord, base.zCoord) == base);
+            row.setBoolean("tickListContains", runtime.world().loadedTileEntityList.contains(base));
+            Chunk chunk = (Chunk) runtime.world().theChunkProviderServer.loadedChunkHashMap
+                .getValueByKey(ChunkCoordIntPair.chunkXZ2Int(base.xCoord >> 4, base.zCoord >> 4));
+            row.setBoolean("chunkLoaded", chunk != null && chunk.isChunkLoaded);
             row.setBoolean("formed", machine.mMachine);
             row.setInteger("progress", machine.mProgresstime);
             row.setInteger("maxProgress", machine.mMaxProgresstime);

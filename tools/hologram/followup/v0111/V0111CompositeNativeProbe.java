@@ -3,10 +3,13 @@ package gtmb.v0111.probe;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
+import java.nio.file.FileSystemException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
@@ -35,13 +38,17 @@ public final class V0111CompositeNativeProbe {
     private int phase, ticks, stage, choice, flow, requestSequence, acknowledged, groupIndex;
     private long started, phaseStarted, heartbeat, generation = -1, longFlowStarted;
     private long wholeFlowStarted, processingStarted;
+    private long nativeLabProgressAt;
     private String fixtureRequest = "", fixtureKind = "", cutRequest = "", rawId = "";
     private Object lastCut;
     private Consumer<Object> originalCut;
     private Consumer<Object> originalProgress;
-    private boolean cutWitnessInstalled, progressWitnessInstalled;
+    private Consumer<Object> originalLibraryProbe;
+    private boolean cutWitnessInstalled, progressWitnessInstalled, libraryProbeInstalled;
     private final List<Object> incomingCuts = java.util.Collections.synchronizedList(new ArrayList<Object>());
     private final List<Object> incomingCutProgress = java.util.Collections.synchronizedList(new ArrayList<Object>());
+    private final List<Object> incomingPrivateReplies = java.util.Collections.synchronizedList(new ArrayList<Object>());
+    private String privateLocalId="", privatePreviousPreset="", privateTransfer="";
     private int rawPreviewProgressStart;
     private int observedCuts;
     private boolean seedMode, prepareOnly;
@@ -85,6 +92,7 @@ public final class V0111CompositeNativeProbe {
         try {
             check(System.nanoTime() - started < OVERALL_LIMIT, "bounded server overall deadline");
             Object host = call(Class.forName("net.minecraft.server.MinecraftServer"), "func_71276_C");
+            if(!seedMode&&commandStarted)observeNativeLabFailure();
             List<?> players = (List<?>) get(call(host,"func_71203_ab"),"field_72404_b");
             check(players.size() <= 1, "one configured isolated test actor");
             if (players.isEmpty()) return;
@@ -154,7 +162,7 @@ public final class V0111CompositeNativeProbe {
                 call(call(host,"func_71187_D"),"func_71556_a",host,"gtmbtestlab stop");
                 proof.setProperty("clientVerdict","PREPARED");persist("PREPARED");done=true;call(host,"func_71263_m");return;
             }
-            if ("FAIL".equals(peer.getProperty("status"))) throw new IllegalStateException("Client: "+peer.getProperty("failure"));
+            if ("FAIL".equals(peer.getProperty("status"))) {proof.setProperty("failureKind",peer.getProperty("failureKind","PRODUCT_OR_ASSERTION"));throw new IllegalStateException("Client: "+peer.getProperty("failure"));}
             if ("PASS".equals(peer.getProperty("status"))) {
                 check("PASS".equals(str(report,"status")),"server independent oracle complete PASS");
                 if(seedMode){call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));}
@@ -162,6 +170,55 @@ public final class V0111CompositeNativeProbe {
             }
             pulse();
         } catch(Throwable failure) { fail(failure); }
+    }
+
+    private void observeNativeLabFailure()throws Exception {
+        Class<?> laboratory=Class.forName("com.miaokatze.gtmb.testlab.TestLab");
+        Object status=call(laboratory,"status");String state=str(status,"state");
+        if(!"FAIL".equals(state)&&!"CANCELLED".equals(state)){observeNativeLabProgress(laboratory,status);return;}
+        Object report=call(laboratory,"report");
+        check("composite".equals(str(status,"runKind"))&&"composite".equals(str(report,"kind")),"terminal laboratory report belongs to this composite task");
+        String detail=str(report,"detail"),stage=str(report,"compositeStage"),run=str(report,"runId");
+        proof.setProperty("failureKind","FIXTURE_SETUP");proof.setProperty("nativeLabState",state);
+        proof.setProperty("nativeLabDetail",detail);proof.setProperty("nativeLabRunId",run);
+        proof.setProperty("nativeLabStage",stage);proof.setProperty("nativeLabCursor",String.valueOf(integer(report,"compositeCursor")));
+        NativeFixtureFailure failure=new NativeFixtureFailure("Native composite task "+state+" run="+run+" stage="+stage+": "+detail);
+        // An evidence-write error is secondary to the already observed native task failure.
+        try{writeNbt("composite-native-lab-failure.nbt",report);}catch(Exception io){proof.setProperty("secondaryReceiptFailure",io.toString());failure.addSuppressed(io);}
+        throw failure;
+    }
+
+    private void observeNativeLabProgress(Class<?> laboratory,Object status)throws Exception {
+        if(seedMode||"true".equals(proof.getProperty("fixtureReady")))return;
+        long now=System.nanoTime();if(now-nativeLabProgressAt<2_000_000_000L)return;nativeLabProgressAt=now;
+        Object report=call(laboratory,"report"),fixture=compound(report,"fixture"),machines=list(fixture,"liveMachines");
+        int formed=0,idle=0,formedIdle=0,firstUnformedIndex=-1;Object firstUnformed=null;
+        for(int index=0;index<count(machines);index++){
+            Object row=at(machines,index);boolean isFormed=bool(row,"formed"),isIdle=integer(row,"progress")==0&&integer(row,"maxProgress")==0;
+            if(isFormed)formed++;if(isIdle)idle++;if(isFormed&&isIdle)formedIdle++;
+            if(!isFormed&&firstUnformed==null){firstUnformed=row;firstUnformedIndex=index;}
+        }
+        proof.setProperty("nativeLabFirstUnformedIndex",String.valueOf(firstUnformedIndex));
+        proof.setProperty("nativeLabFirstUnformedPosition",firstUnformed==null?"NONE":Arrays.toString(ints(firstUnformed,"position")));
+        for(String key:new String[]{"timer","startUpCheck","invalid","tickDisabled","worldTileMatches","tickListContains","chunkLoaded"}){
+            String value="NOT_REPORTED";
+            if(firstUnformed!=null&&(Boolean)call(firstUnformed,"func_74764_b",key))
+                value=key.equals("timer")||key.equals("startUpCheck")?String.valueOf(number(firstUnformed,key)):String.valueOf(bool(firstUnformed,key));
+            proof.setProperty("nativeLabFirstUnformed."+key,value);
+        }
+        proof.setProperty("nativeLabState",str(status,"state"));proof.setProperty("nativeLabStage",str(report,"compositeStage"));
+        proof.setProperty("nativeLabCursor",String.valueOf(integer(report,"compositeCursor")));proof.setProperty("nativeLabRunId",str(status,"runId"));
+        proof.setProperty("nativeLabLiveMachines",String.valueOf(count(machines)));proof.setProperty("nativeLabFormedMachines",String.valueOf(formed));
+        proof.setProperty("nativeLabIdleByZeroProgress",String.valueOf(idle));proof.setProperty("nativeLabFormedIdleByZeroProgress",String.valueOf(formedIdle));
+        proof.setProperty("nativeLabNaturalFormedIdle",String.valueOf(bool(fixture,"naturalFormedIdle")));
+        if(actor!=null){
+            proof.setProperty("nativeActorY",String.valueOf(get(actor,"field_70163_u")));
+            proof.setProperty("nativeActorCreative",String.valueOf(get(get(actor,"field_71075_bZ"),"field_75098_d")));
+            proof.setProperty("nativeActorAlive",String.valueOf(call(actor,"func_70089_S")));
+            proof.setProperty("nativeActorGameType",String.valueOf(call(call(get(actor,"field_71134_c"),"func_73081_b"),"func_77148_a")));
+        }
+        proof.setProperty("nativeLabProgressScope","2-second detached native status/report summary during fixture preparation only; idle count means progress=maxProgress=0; naturalFormedIdle is the native strict aggregate; no machine checks, formation writes or full-NBT disk polling");
+        persist("RUNNING");
     }
 
     private void move(Object host,String kind) throws Exception {
@@ -190,7 +247,7 @@ public final class V0111CompositeNativeProbe {
             check(System.nanoTime()-phaseStarted<PHASE_LIMIT,"phase timeout "+phase);
             Properties peer=read("composite-server.properties");
             if(!clientVerdict.isEmpty()) {if("COMPLETE".equals(peer.getProperty("status"))||"PREPARED".equals(peer.getProperty("status"))){boolean cleaned=disconnectAndReleaseClientDimension();persist(clientVerdict);if(cleaned){done=true;call(mc,"func_71400_g");}}return;}
-            check(!"FAIL".equals(peer.getProperty("status")),"server failure: "+peer.getProperty("failure",""));
+            if("FAIL".equals(peer.getProperty("status"))){proof.setProperty("failureKind",peer.getProperty("failureKind","PRODUCT_OR_ASSERTION"));throw new IllegalStateException("server failure: "+peer.getProperty("failure",""));}
             if(mc==null)mc=call(Class.forName("net.minecraft.client.Minecraft"),"func_71410_x");
             Object gui=get(mc,"field_71462_r"), player=get(mc,"field_71439_g"), world=get(mc,"field_71441_e"); ticks++;
             if(phase==0) {
@@ -221,6 +278,7 @@ public final class V0111CompositeNativeProbe {
             }
             // A standalone clipboard flow has no ordinary blueprint state to hydrate.
             if(phase>=30) {raw(peer);if(clientVerdict.isEmpty())pulse();return;}
+            if(phase==14)observePrivateUpload(peer);
             Object state=get(clientType("HologramClient"),"state"), data=state==null?null:get(state,"data");
             if(state==null)return;
             if(phase==3) {
@@ -251,12 +309,37 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==13) {
                 if(!ack(peer))return;
-                Object request=nbt();putText(request,"presetId",str(data,"blueprintSavedId"));
-                check(!str(request,"presetId").isEmpty(),"saved production private preset identity");
-                uiSend(gui,"choosePlacementPreset",request);longFlowStarted=System.nanoTime();groupIndex=0;advance(14);return;
+                if(!isScreen(gui)){call(clientType("HologramClient"),"openSettings");return;}
+                Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");
+                if(gen<=generation||busy()||bool(ui,"busy"))return;
+                if(!bool(ui,"blueprintTab")||!bool(ui,"library")){click(gui,ui,149,gen);return;}
+                if(bool(ui,"public")){click(gui,ui,201,gen);return;}
+                privateLocalId=peer.getProperty(kind()+"LocalId","");
+                check(!privateLocalId.isEmpty(),"actual saved client private-file identity");
+                // Native successful Save selects its committed local row; wait for its real catalog refresh.
+                Object library=get(clientType("HologramLibraryClient"),"INSTANCE");
+                if(!privateLocalId.equals(call(library,"selected",false))||!privateLocalId.equals(str(call(library,"selectedRow",false),"id")))return;
+                privatePreviousPreset=str(data,"blueprintSavedId");privateTransfer="";incomingPrivateReplies.clear();
+                longFlowStarted=System.nanoTime();click(gui,ui,141,gen);
+                proof.setProperty(kind()+"PrivateLoadLocalId",privateLocalId);proof.setProperty(kind()+"PrivateLoadButton","141 actual private-library MUI dispatch");
+                groupIndex=0;advance(14);return;
             }
             if(phase==14) {
                 if(!bool(data,"virtualPlacement")||bool(data,"virtualLocked")||busy())return;
+                Object imported=privateReply("privateImported",privateTransfer);if(imported==null)return;
+                check(!privateTransfer.isEmpty()&&privateTransfer.equals(str(imported,"transfer")),"actual native privateImported transfer ACK");
+                check(str(imported,"id").startsWith("private_")&&!privatePreviousPreset.equals(str(imported,"id")),"private file upload created a new owner-bound server draft");
+                if(!str(imported,"id").equals(str(data,"selectedPresetId"))||!privateLocalId.equals(str(data,"libraryLocalId")))return;
+                check(((List<?>)get(state,"cells")).size()==64000,"actual saved private artifact rehydrated all 64000 cells before target lock");
+                if(!timing.containsKey(kind()+".privateLoadNanos")){
+                    Object admission=privateReply("privateReady",privateTransfer);check(admission!=null,"actual native privateBegin admission ACK");
+                    Object evidence=nbt(),chunks=construct("net.minecraft.nbt.NBTTagList");
+                    synchronized(incomingPrivateReplies){for(Object reply:incomingPrivateReplies)if("chunkAck".equals(str(reply,"op"))&&privateTransfer.equals(str(reply,"transfer")))call(chunks,"func_74742_a",call(reply,"func_74737_b"));}
+                    call(evidence,"func_74782_a","privateReady",call(admission,"func_74737_b"));call(evidence,"func_74782_a","chunkAcks",chunks);call(evidence,"func_74782_a","privateImported",call(imported,"func_74737_b"));
+                    writeNbt("composite-"+kind()+"-private-import.nbt",evidence);proof.setProperty(kind()+"PrivateChunkAcks",String.valueOf(count(chunks)));
+                    timing.setProperty(kind()+".privateLoadNanos",String.valueOf(System.nanoTime()-longFlowStarted));
+                    proof.setProperty(kind()+"PrivateLoadAcknowledged","true");
+                }
                 Object bindings=compound(data,"networkBindings"), groups=list(bindings,"groups");
                 if(flow==1&&groupIndex<count(groups)) {
                     Object group=at(groups,groupIndex++);Object request=nbt();putText(request,"group",str(group,"id"));putInt(request,"slot",33);
@@ -447,6 +530,27 @@ public final class V0111CompositeNativeProbe {
         public void after(RenderWorldLastEvent event){owner.rawWorldAfter();}
     }
 
+    private void observePrivateUpload(Properties peer)throws Exception {
+        if(!privateTransfer.isEmpty())return;
+        Object library=get(clientType("HologramLibraryClient"),"INSTANCE"),outgoing=get(library,"outgoing");
+        if(outgoing==null||!"private".equals(get(library,"outgoingOp")))return;
+        check(privateLocalId.equals(get(library,"outgoingLocal")),"native private upload reads the actual saved local file");
+        byte[] bytes=(byte[])outgoing;
+        Object artifact=call(product("HologramBlueprintArtifact"),"decode",bytes);
+        check(peer.getProperty(kind()+"JsonSha256","").equals(hash((byte[])get(artifact,"json"))),"native private upload contains the committed JSON bytes");
+        check(peer.getProperty(kind()+"PngSha256","").equals(hash((byte[])get(artifact,"png"))),"native private upload contains the committed PNG bytes");
+        privateTransfer=(String)get(library,"outgoingId");check(!privateTransfer.isEmpty(),"real native private transfer identity");
+        proof.setProperty(kind()+"PrivateTransferId",privateTransfer);proof.setProperty(kind()+"PrivateArtifactBytes",String.valueOf(bytes.length));
+        proof.setProperty(kind()+"PrivateArtifactSha256",hash(bytes));
+        proof.setProperty(kind()+"PrivateLoadScope","actual private-library141 action; native store.artifact reads JSON+PNG pair, privateBegin/chunks and owner-bound privateImported ACK; no cached-draft activation");
+    }
+
+    private Object privateReply(String operation,String transfer)throws Exception {
+        if(transfer.isEmpty())return null;
+        synchronized(incomingPrivateReplies){for(Object reply:incomingPrivateReplies)if(operation.equals(str(reply,"op"))&&transfer.equals(str(reply,"transfer")))return reply;}
+        return null;
+    }
+
     private Object localSelection(Object data)throws Exception {try{return call(clientType("HologramClient"),"localAreaSelection");}catch(NoSuchMethodException old){return data;}}
 
     /** Historical TestLab.init registers a provider but leaves its dimension mapping to serverStarting. */
@@ -567,10 +671,17 @@ public final class V0111CompositeNativeProbe {
             try{if("cut".equals(str(value,"scope"))&&"download".equals(str(value,"phase")))incomingCutProgress.add(value);}catch(Exception error){throw new IllegalStateException("Cannot observe native cut fragment",error);}
             if(originalProgress!=null)originalProgress.accept(value);
         });progressWitnessInstalled=true;
+        // The existing post-delivery observer leaves the actual library receiver and its request/ACK handling intact.
+        originalLibraryProbe=(Consumer<Object>)get(product("HologramNetwork"),"libraryProbeReceiver");
+        member(product("HologramNetwork"),"libraryProbeReceiver").set(null,(Consumer<Object>)value->{
+            try{if(Arrays.asList("privateReady","chunkAck","privateImported").contains(str(value,"op")))incomingPrivateReplies.add(value);}catch(Exception error){throw new IllegalStateException("Cannot observe native private-library ACK",error);}
+            if(originalLibraryProbe!=null)originalLibraryProbe.accept(value);
+        });libraryProbeInstalled=true;
     }
     private void restoreCutWitness()throws Exception {
         if(client&&cutWitnessInstalled){member(product("HologramNetwork"),"cutReceiver").set(null,originalCut);originalCut=null;cutWitnessInstalled=false;}
         if(client&&progressWitnessInstalled){member(product("HologramNetwork"),"progressReceiver").set(null,originalProgress);originalProgress=null;progressWitnessInstalled=false;}
+        if(client&&libraryProbeInstalled){member(product("HologramNetwork"),"libraryProbeReceiver").set(null,originalLibraryProbe);originalLibraryProbe=null;libraryProbeInstalled=false;}
     }
     private Object cutReply(String request)throws Exception {synchronized(incomingCuts){for(Object reply:incomingCuts)if(request.equals(str(reply,"requestId")))return reply;}return null;}
     private static boolean isScreen(Object gui){return gui!=null&&gui.getClass().getName().equals("com.miaokatze.gtmb.client.hologram.HologramScreen");}
@@ -579,11 +690,73 @@ public final class V0111CompositeNativeProbe {
     private void advance(int next)throws Exception {long now=System.nanoTime();timing.setProperty(kind()+".phase."+phase+".nanos",String.valueOf(now-phaseStarted));phase=next;phaseStarted=now;persist("RUNNING");}
     private void pulse()throws Exception {if(System.nanoTime()-heartbeat<2_000_000_000L)return;heartbeat=System.nanoTime();persist("RUNNING");}
     private void persist(String status)throws Exception {proof.setProperty("status",status);proof.setProperty("phase",String.valueOf(phase));proof.setProperty("flow",kind());proof.setProperty("phaseElapsedNanos",String.valueOf(System.nanoTime()-phaseStarted));proof.setProperty("elapsedNanos",String.valueOf(System.nanoTime()-started));store(client?"composite-client.properties":"composite-server.properties",proof);store(client?"composite-client-timing.properties":"composite-server-timing.properties",timing);}
-    private void fail(Throwable failure){while(failure instanceof java.lang.reflect.InvocationTargetException&&failure.getCause()!=null)failure=failure.getCause();failure.printStackTrace();try{proof.setProperty("failure",failure.toString());proof.setProperty("failurePhase",String.valueOf(phase));if(client){try{restoreCutWitness();}catch(Exception cleanup){proof.setProperty("cutWitnessCleanupFailure",cleanup.toString());}try{disconnectAndReleaseClientDimension();}catch(Exception cleanup){proof.setProperty("clientDimensionMappingCleanupFailure",cleanup.toString());}}if(server&&seedMode&&bridge!=null){try{call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));}catch(Exception cleanup){proof.setProperty("fixtureCleanupFailure",cleanup.toString());}}persist("FAIL");}catch(Exception nested){nested.printStackTrace();}done=true;try{if(client&&mc!=null)call(mc,"func_71400_g");if(server)call(call(Class.forName("net.minecraft.server.MinecraftServer"),"func_71276_C"),"func_71263_m");}catch(Exception ignored){}}
+    private void fail(Throwable failure){
+        while(failure instanceof java.lang.reflect.InvocationTargetException&&failure.getCause()!=null)failure=failure.getCause();
+        failure.printStackTrace();
+        try{
+            if(!proof.containsKey("failureKind"))proof.setProperty("failureKind",failure instanceof ReceiptIoException?"TEST_IO":failure instanceof NativeFixtureFailure?"FIXTURE_SETUP":"PRODUCT_OR_ASSERTION");
+            if(!proof.containsKey("failure")){proof.setProperty("failure",failure.toString());proof.setProperty("failurePhase",String.valueOf(phase));}
+            if(client){try{restoreCutWitness();}catch(Exception cleanup){proof.setProperty("cutWitnessCleanupFailure",cleanup.toString());}try{disconnectAndReleaseClientDimension();}catch(Exception cleanup){proof.setProperty("clientDimensionMappingCleanupFailure",cleanup.toString());}}
+            if(server&&seedMode&&bridge!=null){try{call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));}catch(Exception cleanup){proof.setProperty("fixtureCleanupFailure",cleanup.toString());}}
+            persist("FAIL");
+        }catch(Exception nested){proof.setProperty("secondaryReceiptFailure",nested.toString());nested.printStackTrace();}
+        done=true;
+        try{if(client&&mc!=null)call(mc,"func_71400_g");if(server)call(call(Class.forName("net.minecraft.server.MinecraftServer"),"func_71276_C"),"func_71263_m");}catch(Exception ignored){}
+    }
     private File file(String name){return new File(output,name);}
-    private Properties read(String name)throws Exception {Properties p=new Properties();if(file(name).isFile())try(FileInputStream in=new FileInputStream(file(name))){p.load(in);}catch(java.io.FileNotFoundException transientReplacement){return new Properties();}return p;}
-    private void store(String name,Properties value)throws Exception {File temporary=file(name+".tmp");try(FileOutputStream stream=new FileOutputStream(temporary)){value.store(stream,"actual native composite witness");stream.getFD().sync();}Files.move(temporary.toPath(),file(name).toPath(),StandardCopyOption.REPLACE_EXISTING);}
-    private void writeNbt(String name,Object value)throws Exception {File temporary=file(name+".tmp");call(Class.forName("net.minecraft.nbt.CompressedStreamTools"),"func_74795_b",value,temporary);Files.move(temporary.toPath(),file(name).toPath(),StandardCopyOption.REPLACE_EXISTING);}
+    private Properties read(String name)throws Exception {
+        Properties properties=new Properties();Path receipt=receiptPath(name);
+        // Windows NIO opens with read/write/delete sharing by default; do not use legacy FileInputStream here.
+        try(InputStream stream=Files.newInputStream(receipt)){properties.load(stream);}
+        catch(java.nio.file.NoSuchFileException absent){return new Properties();}
+        catch(IOException failure){throw new ReceiptIoException("read "+name,failure);}
+        return properties;
+    }
+    private void store(String name,Properties value)throws Exception {
+        Path target=receiptPath(name),temporary=receiptPath(name+".tmp");
+        try{
+            try(FileOutputStream stream=new FileOutputStream(temporary.toFile())){value.store(stream,"actual native composite witness");stream.getFD().sync();}
+            atomicReceiptMove(temporary,target);
+        }catch(IOException failure){throw new ReceiptIoException("store "+name,failure);}
+    }
+    private void writeNbt(String name,Object value)throws Exception {
+        Path target=receiptPath(name),temporary=receiptPath(name+".tmp");
+        try{call(Class.forName("net.minecraft.nbt.CompressedStreamTools"),"func_74795_b",value,temporary.toFile());atomicReceiptMove(temporary,target);}
+        catch(Exception failure){Throwable cause=failure;while(cause instanceof java.lang.reflect.InvocationTargetException&&cause.getCause()!=null)cause=cause.getCause();if(cause instanceof IOException)throw new ReceiptIoException("write NBT "+name,(IOException)cause);throw failure;}
+    }
+    private Path receiptPath(String name)throws IOException {
+        String base=name.endsWith(".tmp")?name.substring(0,name.length()-4):name;
+        check(Arrays.asList("composite-client.properties","composite-server.properties","composite-client-timing.properties","composite-server-timing.properties","fixture-request.properties",
+            "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
+            "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
+            "composite-self-private-import.nbt","composite-share-private-import.nbt").contains(base),"fixed native receipt name required");
+        Path path=file(name).toPath().toAbsolutePath().normalize();
+        check(path.getParent().equals(output.toPath())&&!Files.isSymbolicLink(path),"receipt remains directly inside the already admitted case directory");
+        return path;
+    }
+    private void atomicReceiptMove(Path temporary,Path target)throws IOException {
+        for(int attempt=0;;attempt++){
+            try{Files.move(temporary,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);return;}
+            catch(IOException failure){
+                if(attempt>=7||!windowsSharingViolation(failure))throw failure;
+                proof.setProperty("receiptAtomicMoveSharingRetries",String.valueOf(Integer.parseInt(proof.getProperty("receiptAtomicMoveSharingRetries","0"))+1));
+                try{Thread.sleep(25);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();failure.addSuppressed(interrupted);throw failure;}
+            }
+        }
+    }
+    private static boolean windowsSharingViolation(IOException failure){
+        if(!System.getProperty("os.name","").startsWith("Windows")||!(failure instanceof FileSystemException))return false;
+        String reason=((FileSystemException)failure).getReason();
+        return "The process cannot access the file because it is being used by another process.".equals(reason)
+            ||"The process cannot access the file because it is being used by another process".equals(reason)
+            ||"另一个程序正在使用此文件，进程无法访问。".equals(reason);
+    }
+    private static final class ReceiptIoException extends IOException {
+        ReceiptIoException(String operation,IOException cause){super("Test receipt I/O "+operation+": "+cause,cause);}
+    }
+    private static final class NativeFixtureFailure extends IllegalStateException {
+        NativeFixtureFailure(String detail){super(detail);}
+    }
     private Object readNbt(String name)throws Exception {return file(name).isFile()?call(Class.forName("net.minecraft.nbt.CompressedStreamTools"),"func_74797_a",file(name)):null;}
     private static Object nbt()throws Exception{return construct("net.minecraft.nbt.NBTTagCompound");}
     private static Object compound(Object tag,String key)throws Exception{return call(tag,"func_74775_l",key);}

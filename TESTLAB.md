@@ -140,7 +140,12 @@ Additional source contents include twenty GT single-block recipe-map roles with 
 covers, three copies of each of 24 AE device definitions (including interfaces, crafting devices,
 independent drives/chests with physical cells), three copies of 12 EnderIO device registrations, forty
 actual AE cable multipart hosts with real attached terminals, four GTSWN information panels with native
-owner/monitor configuration, and four GT machines linked through the actual GTSWN link terminal. Native
+owner/monitor configuration, and four GT machines linked through the actual GTSWN link terminal. Link hosts are selected from real
+placed electrical machines with nonzero native EU capacity and voltage; steam machines remain in the
+additional-device mix and are not treated as electrical link hosts. The native terminal is actually held
+in the main hand, used without sneaking at the center of the UP face, and must install the specific
+valid GTSWN energy cover. Native terminal/cover NBT, target coordinates, capacity and voltage are reported;
+there is no direct cover-NBT installation fallback. Native
 bound quantum-terminal interactions create the gateway nodes next to the configured ME devices.
 A separate real GT crafting-input ME hatch and AE interface contain actual encoded processing patterns.
 An actual placed AE pattern-terminal part encodes sulfur plus oxygen into sulfur-dioxide output, consuming

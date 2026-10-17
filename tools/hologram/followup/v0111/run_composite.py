@@ -68,6 +68,24 @@ class IntegrityFailure(RuntimeError):
     pass
 
 
+class FixtureFailure(IntegrityFailure):
+    pass
+
+
+class ReceiptFailure(RuntimeError):
+    pass
+
+
+def native_probe_failure(role, receipt):
+    message = role + ": " + receipt.get("failure", "Native probe reported FAIL")
+    category = receipt.get("failureKind", "PRODUCT_OR_ASSERTION")
+    if category == "TEST_IO":
+        return ReceiptFailure(message)
+    if category == "FIXTURE_SETUP":
+        return FixtureFailure(message)
+    return ProductFailure(message)
+
+
 def within(path, parent, *, exists=False):
     """Resolve junctions/symlinks before every intended file or directory operation."""
     resolved = standard_namespace(Path(path).resolve(strict=exists))
@@ -191,7 +209,7 @@ def server_arguments(output, large, cells):
 def changed_server_properties(original, world):
     lines = original.decode("latin-1").splitlines()
     changes = {"level-name": world, "server-ip": "127.0.0.1", "server-port": str(PORT),
-               "online-mode": "false", "max-players": "1", "gamemode": "0", "force-gamemode": "true", "view-distance": "12"}
+               "online-mode": "false", "max-players": "1", "gamemode": "0", "force-gamemode": "true", "allow-flight": "true", "view-distance": "12"}
     for key, value in changes.items():
         lines = [line for line in lines if not re.match(r"\s*" + re.escape(key) + r"\s*[=:]", line)]
         lines.append(f"{key}={value}")
@@ -418,6 +436,7 @@ def run(args):
         "client_Xmx": "4096M", "server_Xmx": "6G", "client_peak_rss_bytes": 0,
         "commands": commands, "argfiles_sha256": {"client": sha(client_args), "server": sha(server_args)},
         "view_distance": 12, "testlab_force_lease_ceiling": 32, "port": PORT, "started_unix": time.time(), "timeout_seconds": timeout_seconds,
+        "allow_flight": True, "allow_flight_scope": "Uniform test server setting disables vanilla floating kicks only; native GameType0, player capabilities, resource debits and budgets remain asserted unchanged",
         "dependency_hashes": {role: {path.name: sha(path)
                                       for path in sorted((fixture / role / "mods").iterdir())
                                       if path.is_file() and path.suffix.casefold() == ".jar"
@@ -503,7 +522,7 @@ def run(args):
         while not re.search(r"Done \([0-9.,]+s\)!", (output / "server.log").read_text(encoding="utf-8", errors="replace")):
             peer = properties(output / "composite-server.properties")
             if peer.get("status") == "FAIL":
-                raise ProductFailure(peer.get("failure", "Server native probe failed during startup"))
+                raise native_probe_failure("server", peer)
             if (output / "abort.request").exists():
                 raise InterruptedError("Root requested shutdown through abort.request")
             if server.poll() is not None:
@@ -541,7 +560,7 @@ def run(args):
                         raise ProductFailure(f"Actual native limit/resource failure ({role}): {limit[0][:2048]}")
             for role, receipt in (("client", evidence), ("server", peer)):
                 if receipt.get("status") == "FAIL":
-                    raise ProductFailure(role + ": " + receipt.get("failure", "Native probe reported FAIL"))
+                    raise native_probe_failure(role, receipt)
             if (output / "abort.request").exists():
                 raise InterruptedError("Root requested shutdown through abort.request")
             if all(process.poll() is not None for process in processes.values()):
@@ -580,6 +599,10 @@ def run(args):
             raise ProductFailure("Latency case deadline expired: incomplete measurement, never PASS")
     except BaseException as error:
         result["status"] = "FAIL" if isinstance(error, (ProductFailure, IntegrityFailure)) else "INCONCLUSIVE"
+        result["failure_kind"] = ("TEST_IO" if isinstance(error, ReceiptFailure) else
+                                  "FIXTURE_SETUP" if isinstance(error, FixtureFailure) else
+                                  "PRODUCT_OR_ASSERTION" if isinstance(error, ProductFailure) else
+                                  "TEST_INTEGRITY" if isinstance(error, IntegrityFailure) else "RUNNER_ENVIRONMENT")
         result["failure"] = f"{type(error).__name__}: {error}"
     finally:
         # Only handles created by this runner are stopped; pre-existing JVMs were rejected before mutation.
