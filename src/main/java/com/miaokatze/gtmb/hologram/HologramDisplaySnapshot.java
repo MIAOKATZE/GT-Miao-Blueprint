@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -14,7 +13,6 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import gregtech.api.covers.CoverRegistry;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.BaseMetaPipeEntity;
-import gregtech.api.util.HatchElementBuilder;
 import gregtech.common.covers.Cover;
 
 /** Detached native render payloads and GT visual data; no load/tick hook or shared prototype mutation. */
@@ -149,7 +147,7 @@ final class HologramDisplaySnapshot {
 
     static void applyCasing(IStructureElement<?> element, NBTTagCompound display) {
         if (element == null) return;
-        int casing = casingIndex(element);
+        int casing = HologramHatchCasing.index(element);
         if (casing >= 0) {
             display.setInteger("texturePage", casing >> 7);
             display.setInteger("textureIndex", casing & 127);
@@ -161,7 +159,7 @@ final class HologramDisplaySnapshot {
         throws java.io.IOException {
         if (!(gregtech.common.blocks.ItemMachines
             .getMetaTileEntity(stack) instanceof gregtech.api.metatileentity.implementations.MTEHatch)
-            || casingIndex(element) < 0) return tileNbt;
+            || HologramHatchCasing.index(element) < 0) return tileNbt;
         NBTTagCompound saved = HologramBlueprintNbt.decode(tileNbt);
         if (saved == null) {
             saved = new NBTTagCompound();
@@ -285,22 +283,5 @@ final class HologramDisplaySnapshot {
             } catch (ReflectiveOperationException | RuntimeException ignored) {}
         }
         return null;
-    }
-
-    private static int casingIndex(IStructureElement<?> element) {
-        for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
-            Method factory = part.getClass()
-                .getEnclosingMethod();
-            if (factory == null || factory.getDeclaringClass() != HatchElementBuilder.class
-                || !"build".equals(factory.getName())) continue;
-            try {
-                Field enclosing = part.getClass()
-                    .getDeclaredField("this$0");
-                if (enclosing.getType() != HatchElementBuilder.class) continue;
-                enclosing.setAccessible(true);
-                return ((HatchElementBuilder<?>) enclosing.get(part)).getCasingIndex();
-            } catch (ReflectiveOperationException | RuntimeException ignored) {}
-        }
-        return -1;
     }
 }
