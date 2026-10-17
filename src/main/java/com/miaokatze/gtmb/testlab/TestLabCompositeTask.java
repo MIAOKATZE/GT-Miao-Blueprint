@@ -31,6 +31,10 @@ final class TestLabCompositeTask implements TestLabTasks.Task {
 
     public int step() throws Exception {
         if (phase == 0) {
+            TestLabTasks.require(
+                net.minecraft.server.MinecraftServer.getServer()
+                    .getAllowNether(),
+                "Forge 1.7.10 disables all nonzero dimension native ticks; enable allow-nether=true for this opt-in lab");
             runtime.useZone(
                 runtime.config()
                     .zone("composite-source"));

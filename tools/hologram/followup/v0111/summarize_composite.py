@@ -29,6 +29,9 @@ def summarize(case):
         "native_seed_playerdata_sha256": receipt.get("native_seed_playerdata_sha256"),
         "server_library_config_sha256": receipt.get("before_files", {}).get("server-library-config", {}).get("sha256"),
         "dependency_hashes": receipt.get("dependency_hashes"),
+        "native_environment": {key: receipt.get(key) for key in
+                               ("allow_nether", "allow_flight", "view_distance", "testlab_force_lease_ceiling",
+                                "client_Xmx", "server_Xmx")},
         "seed_files": receipt.get("seed_files"),
         "fixture_static_source_sha256": server.get("fixtureStaticSourceSha256"),
         "endpoints": {}, "cleanup": {key: receipt.get(key) for key in
@@ -59,6 +62,9 @@ def main():
     shared["dependency_hashes"] = bool(cases and all(row["dependency_hashes"] and
                                                     row["dependency_hashes"] == cases[0]["dependency_hashes"]
                                                     for row in cases))
+    shared["native_environment"] = bool(cases and all(row["native_environment"]["allow_nether"] is True and
+                                                     row["native_environment"] == cases[0]["native_environment"]
+                                                     for row in cases))
     comparable = all(shared.values())
     comparisons = []
     baselines = {}

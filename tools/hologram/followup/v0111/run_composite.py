@@ -209,7 +209,7 @@ def server_arguments(output, large, cells):
 def changed_server_properties(original, world):
     lines = original.decode("latin-1").splitlines()
     changes = {"level-name": world, "server-ip": "127.0.0.1", "server-port": str(PORT),
-               "online-mode": "false", "max-players": "1", "gamemode": "0", "force-gamemode": "true", "allow-flight": "true", "view-distance": "12"}
+               "online-mode": "false", "max-players": "1", "gamemode": "0", "force-gamemode": "true", "allow-flight": "true", "allow-nether": "true", "view-distance": "12"}
     for key, value in changes.items():
         lines = [line for line in lines if not re.match(r"\s*" + re.escape(key) + r"\s*[=:]", line)]
         lines.append(f"{key}={value}")
@@ -437,6 +437,7 @@ def run(args):
         "commands": commands, "argfiles_sha256": {"client": sha(client_args), "server": sha(server_args)},
         "view_distance": 12, "testlab_force_lease_ceiling": 32, "port": PORT, "started_unix": time.time(), "timeout_seconds": timeout_seconds,
         "allow_flight": True, "allow_flight_scope": "Uniform test server setting disables vanilla floating kicks only; native GameType0, player capabilities, resource debits and budgets remain asserted unchanged",
+        "allow_nether": True, "allow_nether_scope": "Forge 1.7.10 gates all nonzero-dimension world.tick/updateEntities behind this setting; uniform true admits actual native TestLab machine ticks, never manual ticks or formation writes",
         "dependency_hashes": {role: {path.name: sha(path)
                                       for path in sorted((fixture / role / "mods").iterdir())
                                       if path.is_file() and path.suffix.casefold() == ".jar"
