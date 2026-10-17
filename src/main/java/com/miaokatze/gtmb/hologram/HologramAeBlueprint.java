@@ -156,6 +156,8 @@ public final class HologramAeBlueprint {
             "misc.TileQuartzGrowthAccelerator",
             "misc.TileSkyCompass",
             "misc.TileLightDetector",
+            "misc.TilePatternOptimizationMatrix",
+            "misc.TileStorageReshuffle",
             "grindstone.TileCrank")) schema(name);
         // The exact idle writer is portable; nonempty CPU inventory, jobs and callbacks remain blocked.
         for (String name : Arrays.asList(
@@ -1416,10 +1418,21 @@ public final class HologramAeBlueprint {
                     HologramNetworkBindings.CAPTURE_ANCHOR,
                     "internalCurrentPower"));
             known.add(GTSWN_NETWORK_SAFETY);
-            for (Settings setting : Settings.values()) known.add(setting.name());
-            for (Inventory inventory : schema.inventories) known.add(inventory.root);
             String type = host.getClass()
                 .getName();
+            if (type.equals(TILE + "misc.TileStorageReshuffle")) known.addAll(
+                Arrays.asList(
+                    "INCLUDE_SUBNETS",
+                    "INSERT_ORDER",
+                    "CELL_HEALTH_SORT",
+                    "SORT_DIRECTION",
+                    "typeFilters",
+                    "cantInject",
+                    "extracted",
+                    "injectQueue"));
+            else if (!type.equals(TILE + "misc.TilePatternOptimizationMatrix"))
+                for (Settings setting : Settings.values()) known.add(setting.name());
+            for (Inventory inventory : schema.inventories) known.add(inventory.root);
             if (type.equals(TILE + "misc.TileInterface"))
                 known.addAll(Arrays.asList("priority", "pointAt", "waitingToSend", "inv"));
             if (type.equals(TILE + "storage.TileDrive") || type.equals(TILE + "storage.TileChest"))
@@ -1605,6 +1618,8 @@ public final class HologramAeBlueprint {
         static void cleanHost(Work work, NBTTagCompound data, Object host, String[] prefix) throws IOException {
             String type = host.getClass()
                 .getName();
+            if (prefix.length == 0 && type.equals(TILE + "misc.TileStorageReshuffle"))
+                idleReshuffle(work, data, (appeng.tile.misc.TileStorageReshuffle) host);
             if (prefix.length == 0 && host instanceof TileEntity) gtswnTileConfiguration(work, data);
             if (prefix.length == 0 && type.equals(TILE + "networking.TileEnergyAcceptor") && data.hasKey("inv")) {
                 work.roots.add("inv");
@@ -1862,6 +1877,78 @@ public final class HologramAeBlueprint {
                 // False core prevents the native class from copying a cluster's previous state.
                 data.setBoolean("core", false);
             }
+        }
+
+        /** Native 1080 sums all three custody lists on load; none is a free sample or a redundant alias. */
+        private static void idleReshuffle(Work work, NBTTagCompound data, appeng.tile.misc.TileStorageReshuffle host)
+            throws IOException {
+            for (String key : Arrays.asList("cantInject", "extracted", "injectQueue")) {
+                if (!data.hasKey(key)) continue;
+                retainedClearSlot(work, key);
+                boolean empty = false;
+                if (data.hasKey(key, 9)) {
+                    NBTTagList list = (NBTTagList) data.getTag(key);
+                    empty = list.tagCount() == 0 && (list.func_150303_d() == 0 || list.func_150303_d() == 10);
+                }
+                if (!empty) work.issue(
+                    "reshuffle_buffer_unpriced",
+                    "blocker",
+                    key,
+                    "Physical reshuffle cargo is retained but cannot be paid exactly; explicitly clear this blueprint buffer or empty the source and recapture");
+            }
+            for (Settings setting : host.getConfigManager()
+                .getSettings()) {
+                String key = setting.name();
+                if (!data.hasKey(key)) continue;
+                boolean valid = false;
+                if (data.hasKey(key, 8)) {
+                    for (Enum<?> value : host.getConfigManager()
+                        .getSetting(setting)
+                        .getDeclaringClass()
+                        .getEnumConstants())
+                        valid |= value.name()
+                            .equals(data.getString(key));
+                }
+                if (!valid) {
+                    retainedClearSlot(work, key);
+                    work.issue(
+                        "reshuffle_config_invalid",
+                        "blocker",
+                        key,
+                        "Invalid native reshuffle setting is retained; explicitly clear it to use the native default");
+                }
+            }
+            if (!data.hasKey("typeFilters")) return;
+            boolean valid = data.hasKey("typeFilters", 9);
+            if (valid) {
+                NBTTagList list = (NBTTagList) data.getTag("typeFilters");
+                valid = list.tagCount() <= 512 && (list.func_150303_d() == 0 || list.func_150303_d() == 10);
+                Set<String> seen = new HashSet<>();
+                for (int i = 0; valid && i < list.tagCount(); i++) {
+                    NBTTagCompound row = list.getCompoundTagAt(i);
+                    valid = row.func_150296_c()
+                        .size() == 2 && row.hasKey("typeId", 8)
+                        && row.hasKey("value", 1)
+                        && row.getByte("value") >= 0
+                        && row.getByte("value") <= 1
+                        && appeng.api.storage.data.AEStackTypeRegistry.getType(row.getString("typeId")) != null
+                        && seen.add(row.getString("typeId"));
+                }
+            }
+            if (!valid) {
+                retainedClearSlot(work, "typeFilters");
+                work.issue(
+                    "reshuffle_config_invalid",
+                    "blocker",
+                    "typeFilters",
+                    "Invalid native type filters are retained; explicitly clear them to use the native defaults");
+            }
+        }
+
+        private static void retainedClearSlot(Work work, String key) throws IOException {
+            work.roots.add(key);
+            if (work.slots.size() >= MAX_SLOTS) throw new IOException("AE preview slot budget exceeded");
+            work.slots.add(new Slot(key, "readonly", 0, "clearQueue", null, new String[] { key }, -1, null));
         }
 
         /** Exact idle CPU writer state. Nonempty inventory/tasks/outputs are still a resource blocker. */

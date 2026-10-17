@@ -31,13 +31,10 @@ import net.minecraft.world.chunk.storage.AnvilChunkLoader;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import net.minecraft.world.chunk.storage.RegionFileCache;
 import net.minecraft.world.gen.ChunkProviderServer;
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.world.ChunkDataEvent;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
-import cpw.mods.fml.common.eventhandler.EventPriority;
-import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Real native chunk serialization/readback; stale disk and changed payloads must never authorize a commit. */
@@ -165,7 +162,7 @@ public final class HologramCutDiskRegression {
             }
             HologramCutWorld.SavedChunk missingTile = reader.read(world, -1, 1);
             rejected(() -> missingTile.verifyCell(-2, 200, 19, cell, false, tile), "missing native inventory on disk");
-            observedNativeSave(world, writer, reader, cell, tile);
+            syntheticSaveObservationContract(world, writer, reader, cell, tile);
             initializedMetadata(world, reader);
             // RegionFileCache owns open handles. Do not globally clear other tests' or a running world's cache.
             directory.toFile()
@@ -215,22 +212,29 @@ public final class HologramCutDiskRegression {
             "deep native differences produce a bounded diagnostic");
     }
 
-    private static void observedNativeSave(FixtureWorld world, DirectSaveLoader writer,
+    /**
+     * This bootstrap has no FML event transformer. Inject synthetic callbacks at the test-only save queue boundary;
+     * retain real native chunk serialization and region I/O, without claiming to witness Forge event dispatch.
+     */
+    private static void syntheticSaveObservationContract(FixtureWorld world, DirectSaveLoader writer,
         HologramCutWorld.DiskReader reader, NBTTagCompound cell, NBTTagCompound expected) throws Exception {
         Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
         HologramCutWorld.NativeSaveObservation observation = new HologramCutWorld.NativeSaveObservation(world);
-        LateSaveMutator mutator = new LateSaveMutator(world, chunk, observation);
+        SyntheticLaterSaveCallback mutator = new SyntheticLaterSaveCallback(world, chunk, observation);
         Map<Long, NBTTagCompound> snapshots = new HashMap<>();
         snapshots.put(HologramCutWorld.tileKey(-2, 200, 19), expected);
-        MinecraftForge.EVENT_BUS.register(observation);
-        MinecraftForge.EVENT_BUS.register(mutator);
+        writer.syntheticCallback = root -> {
+            ChunkDataEvent.Save callback = new ChunkDataEvent.Save(chunk, root);
+            observation.onSave(callback);
+            mutator.onSave(callback);
+        };
         try {
             observation.save(writer, chunk, snapshots);
-            SimpleAssert.that(observation.observed(-2, 200, 19), "native event was observed for this exact save");
+            SimpleAssert.that(observation.observed(-2, 200, 19), "synthetic save callback was captured for this scope");
             NBTTagCompound nativeTile = observation.tile(-2, 200, 19);
             SimpleAssert.that(
                 nativeTile != null && nativeTile.hasKey("lateNativeDiagnostic", 8),
-                "native observation includes changes from handlers running after the observer");
+                "synthetic observation includes changes from the later callback");
             SimpleAssert
                 .that(!expected.hasKey("lateNativeDiagnostic"), "diagnostic observation never rewrites expected");
             HologramCutWorld.SavedChunk saved = reader.read(world, -1, 1);
@@ -246,27 +250,26 @@ public final class HologramCutDiskRegression {
             mutator.lastTile.removeTag("lateNativeDiagnostic");
             SimpleAssert.that(
                 nativeTile.hasKey("lateNativeDiagnostic"),
-                "changed native payload is detached from mutable save-event references");
+                "changed observed payload is detached from mutable synthetic callback references");
         } finally {
-            MinecraftForge.EVENT_BUS.unregister(mutator);
-            MinecraftForge.EVENT_BUS.unregister(observation);
+            writer.syntheticCallback = null;
         }
     }
 
-    public static final class LateSaveMutator {
+    private static final class SyntheticLaterSaveCallback {
 
         private final FixtureWorld world;
         private final Chunk chunk;
         private final HologramCutWorld.NativeSaveObservation observation;
         NBTTagCompound lastTile;
 
-        LateSaveMutator(FixtureWorld world, Chunk chunk, HologramCutWorld.NativeSaveObservation observation) {
+        SyntheticLaterSaveCallback(FixtureWorld world, Chunk chunk,
+            HologramCutWorld.NativeSaveObservation observation) {
             this.world = world;
             this.chunk = chunk;
             this.observation = observation;
         }
 
-        @SubscribeEvent(priority = EventPriority.LOWEST)
         public void onSave(ChunkDataEvent.Save event) throws InterruptedException {
             if (event.world != world || event.getChunk() != chunk) return;
             lastTile = event.getData()
@@ -400,6 +403,8 @@ public final class HologramCutDiskRegression {
     /** Keep the native writer but replace its async queue with synchronous region I/O in this short-lived harness. */
     private static final class DirectSaveLoader extends AnvilChunkLoader {
 
+        SyntheticSaveCallback syntheticCallback;
+
         DirectSaveLoader(java.io.File directory) {
             super(directory);
         }
@@ -408,11 +413,17 @@ public final class HologramCutDiskRegression {
         protected void addChunkToPending(ChunkCoordIntPair coordinate, NBTTagCompound root) {
             try (DataOutputStream output = RegionFileCache
                 .getChunkOutputStream(chunkSaveLocation, coordinate.chunkXPos, coordinate.chunkZPos)) {
+                if (syntheticCallback != null) syntheticCallback.accept(root);
                 CompressedStreamTools.write(root, output);
-            } catch (IOException failure) {
+            } catch (Exception failure) {
                 throw new IllegalStateException("native cut regression disk write", failure);
             }
         }
+    }
+
+    private interface SyntheticSaveCallback {
+
+        void accept(NBTTagCompound root) throws Exception;
     }
 
     private static final class FixtureWorld extends WorldServer {

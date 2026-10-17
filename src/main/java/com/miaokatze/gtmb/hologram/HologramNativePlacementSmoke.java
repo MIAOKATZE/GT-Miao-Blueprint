@@ -51,6 +51,7 @@ public final class HologramNativePlacementSmoke {
             (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector"));
         detachedReportingParts();
         basicMachineFacingRestore(world, player);
+        idleAeHosts();
         stateAndControllerPlacement(world, player);
         rfSchema();
         int kind = 0;
@@ -222,6 +223,142 @@ public final class HologramNativePlacementSmoke {
         require(kind == 6, "all_six_mods_required");
         fmpAeLifecycle(world, player);
         System.out.println(PREFIX + "FINAL PASS mods=" + kind);
+    }
+
+    private static void idleAeHosts() throws Exception {
+        for (String name : new String[] { "BlockPatternOptimizationMatrix", "BlockStorageReshuffle" }) {
+            Block block = Block.getBlockFromName("appliedenergistics2:tile." + name);
+            require(block != null, "idle_ae_host_registered_" + name);
+            TileEntity original = block.createTileEntity(null, 0);
+            if (original instanceof appeng.tile.misc.TileStorageReshuffle) {
+                appeng.tile.misc.TileStorageReshuffle reshuffle = (appeng.tile.misc.TileStorageReshuffle) original;
+                reshuffle.getTypeFilters()
+                    .setEnabled(appeng.util.item.AEItemStackType.ITEM_STACK_TYPE, false);
+                reshuffle.getConfigManager()
+                    .putSetting(appeng.api.config.Settings.INCLUDE_SUBNETS, appeng.api.config.YesNo.NO);
+            }
+            NBTTagCompound source = new NBTTagCompound();
+            original.writeToNBT(source);
+            NBTTagCompound before = (NBTTagCompound) source.copy();
+            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, 0, source);
+            require(
+                analysis.supported && !analysis.blocking && before.equals(source),
+                "native_idle_ae_host_retained_" + name);
+            ItemStack primary = HologramAeBlueprint.blockSample(block, 0);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.id = "native-idle-" + name;
+            preset.name = preset.id;
+            preset.controllerType = "area";
+            HologramPresets.Cell saved = HologramPresets.cell(primary, 0, 0, 0, -1, false);
+            saved.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
+            saved.metadata = 0;
+            saved.tileNbt = HologramBlueprintNbt.encodeCaptured(source);
+            preset.cells.add(saved);
+            HologramAePolicy.Draft draft = HologramAePolicy.sanitize(preset);
+            require(
+                !draft.blocking && !draft.preset.cells.get(0).excluded,
+                "idle_ae_host_never_automatically_excluded_" + name);
+            TileEntity restored = HologramNativePlacement.adapter(block)
+                .create(block, 0, analysis.payload(), HologramResourceWorld.create(block, 0));
+            require(
+                restored.getClass()
+                    .equals(original.getClass()),
+                "idle_ae_host_native_factory_" + name);
+            HologramBlueprintResources.Plan plan = HologramAeBlueprint.resourcePlan(block, 0, source, primary);
+            require(plan.items.isEmpty() && plan.fluids.isEmpty(), "idle_ae_host_only_charges_primary_shell_" + name);
+            if (!(original instanceof appeng.tile.misc.TileStorageReshuffle)) continue;
+            NBTTagCompound actual = new NBTTagCompound();
+            restored.writeToNBT(actual);
+            for (String key : new String[] { "typeFilters", "INCLUDE_SUBNETS", "INSERT_ORDER", "CELL_HEALTH_SORT",
+                "SORT_DIRECTION" })
+                require(
+                    source.getTag(key)
+                        .equals(actual.getTag(key)),
+                    "reshuffle_native_configuration_roundtrip_" + key);
+            String[] buffers = { "cantInject", "extracted", "injectQueue" };
+            for (boolean fluid : new boolean[] { false, true }) {
+                for (long amount : new long[] { 1L, (long) Integer.MAX_VALUE + 1L, Long.MAX_VALUE }) {
+                    appeng.api.storage.data.IAEStack<?> stack = fluid
+                        ? appeng.util.item.AEFluidStack.create(
+                            new net.minecraftforge.fluids.FluidStack(net.minecraftforge.fluids.FluidRegistry.WATER, 1))
+                        : appeng.util.item.AEItemStack.create(new ItemStack(net.minecraft.init.Items.iron_ingot));
+                    stack.setStackSize(amount);
+                    NBTTagCompound row = appeng.util.Platform.writeStackNBT(stack, new NBTTagCompound(), true);
+                    NBTTagCompound buffered = (NBTTagCompound) source.copy();
+                    for (String key : buffers) {
+                        net.minecraft.nbt.NBTTagList list = new net.minecraft.nbt.NBTTagList();
+                        list.appendTag(row.copy());
+                        buffered.setTag(key, list);
+                    }
+                    HologramAeBlueprint.Analysis blocked = HologramAeBlueprint.analyze(block, 0, buffered);
+                    require(
+                        blocked.supported && blocked.blocking,
+                        "reshuffle_physical_buffers_block_without_host_exclusion");
+                    for (String key : buffers) require(
+                        buffered.getTag(key)
+                            .equals(
+                                blocked.payload()
+                                    .getTag(key)),
+                        "unpaid_buffer_preserves_exact_native_nbt_" + key);
+                    HologramPresets.Preset bufferedPreset = HologramPresets.copy(preset);
+                    bufferedPreset.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(buffered);
+                    HologramAePolicy.Draft bufferedDraft = HologramAePolicy.sanitize(bufferedPreset);
+                    require(
+                        bufferedDraft.blocking && !bufferedDraft.preset.cells.get(0).excluded,
+                        "unpaid_reshuffle_draft_keeps_blocking_cell_in_construction_scope");
+                    NBTTagCompound retained = HologramBlueprintNbt
+                        .nativePayload(HologramBlueprintNbt.decode(bufferedDraft.preset.cells.get(0).tileNbt));
+                    for (String key : buffers) require(
+                        retained.getTag(key)
+                            .equals(buffered.getTag(key)),
+                        "draft_processing_preserves_unpaid_custody_root_" + key);
+                    if (!fluid && amount == 1L) {
+                        TileEntity nativeRead = block.createTileEntity(null, 0);
+                        nativeRead.readFromNBT((NBTTagCompound) buffered.copy());
+                        NBTTagCompound nativeWritten = new NBTTagCompound();
+                        nativeRead.writeToNBT(nativeWritten);
+                        require(
+                            nativeWritten.getTagList("cantInject", 10)
+                                .tagCount() == 1
+                                && nativeWritten.getTagList("cantInject", 10)
+                                    .getCompoundTagAt(0)
+                                    .getLong("Cnt") == 3L,
+                            "native_reshuffle_reader_adds_all_three_lists_without_alias_deduplication");
+                    }
+                    boolean denied = false;
+                    try {
+                        HologramAeBlueprint.resourcePlan(block, 0, buffered, primary);
+                    } catch (java.io.IOException expected) {
+                        denied = true;
+                    }
+                    require(denied, "reshuffle_nonempty_buffers_cannot_be_restored_free");
+                    for (int i = 0; i < buffers.length; i++) {
+                        blocked = HologramAeBlueprint.updateSlot(block, 0, blocked.payload(), buffers[i], null);
+                        require(
+                            !blocked.payload()
+                                .hasKey(buffers[i]) && blocked.blocking == (i < buffers.length - 1),
+                            "explicit_clear_removes_only_selected_custody_buffer_" + buffers[i]);
+                    }
+                    require(
+                        buffered.getTag("injectQueue") != null && before.equals(source),
+                        "blueprint_buffer_clear_never_changes_source");
+                }
+            }
+            NBTTagCompound malformed = (NBTTagCompound) source.copy();
+            malformed.setString("cantInject", "invalid");
+            malformed.setInteger("INCLUDE_SUBNETS", 0);
+            malformed.setString("typeFilters", "invalid");
+            HologramAeBlueprint.Analysis blocked = HologramAeBlueprint.analyze(block, 0, malformed);
+            require(
+                blocked.blocking && blocked.payload()
+                    .getTag("cantInject")
+                    .equals(malformed.getTag("cantInject")),
+                "malformed_reshuffle_data_retained_for_explicit_review");
+            for (String key : new String[] { "cantInject", "INCLUDE_SUBNETS", "typeFilters" })
+                blocked = HologramAeBlueprint.updateSlot(block, 0, blocked.payload(), key, null);
+            require(!blocked.blocking, "existing_clear_slot_flow_resolves_retained_reshuffle_blockers");
+        }
     }
 
     private static void detachedReportingParts() throws Exception {
