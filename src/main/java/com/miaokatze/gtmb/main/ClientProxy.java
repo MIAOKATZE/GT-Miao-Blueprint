@@ -6,6 +6,11 @@ import com.miaokatze.gtmb.client.hologram.HologramInteractionClientSmoke;
 public final class ClientProxy extends CommonProxy {
 
     @Override
+    public boolean hologramTaskBusy() {
+        return com.miaokatze.gtmb.client.hologram.HologramBackgroundTasks.busy();
+    }
+
+    @Override
     public void preInit() {
         super.preInit();
         com.miaokatze.gtmb.hologram.HologramLibraryFacade

@@ -27,6 +27,9 @@ import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 public final class HologramInteractionSmoke {
 
     private EntityPlayerMP player;
+    private final long startupBudgetNanos = Math
+        .max(60L, Math.min(3600L, Long.getLong("gtmb.hologram.nativeStartupSeconds", 1800L))) * 1000000000L;
+    private long startupStarted;
     private File receipts;
     private boolean failed;
     private int ticks, lastPlaced = -1, lastStock = -1;
@@ -65,7 +68,12 @@ public final class HologramInteractionSmoke {
         if (failed || event.phase != TickEvent.Phase.END) return;
         MinecraftServer server = MinecraftServer.getServer();
         try {
-            if (++ticks > 18000) throw new IllegalStateException("real interaction timeout");
+            long now = System.nanoTime();
+            if (player == null) {
+                if (startupStarted == 0) startupStarted = now;
+                if (now - startupStarted > startupBudgetNanos)
+                    throw new IllegalStateException("real interaction real-client startup timeout");
+            } else if (++ticks > 18000) throw new IllegalStateException("real interaction timeout");
             WorldServer world = server.worldServerForDimension(0);
             if (!world.getWorldInfo()
                 .getWorldName()
@@ -247,7 +255,7 @@ public final class HologramInteractionSmoke {
                 sources.appendTag(row);
             }
             n.setTag("aeActualSourceCells", sources);
-            java.lang.reflect.Field areaMap = HologramService.class.getDeclaredField("AREAS");
+            java.lang.reflect.Field areaMap = HologramWorkspace.class.getDeclaredField("AREAS");
             areaMap.setAccessible(true);
             HologramArea area = (HologramArea) ((java.util.Map<?, ?>) areaMap.get(null)).get(player.getUniqueID());
             if (area != null) {
@@ -405,7 +413,7 @@ public final class HologramInteractionSmoke {
             aeProbe.assertVirtualEpoch("actual natural import busy/cancel inputs");
             if (new File(receipts, "ae-busy-check-cancel.txt").isFile()) {
                 Object cancelled = interactionSession();
-                java.lang.reflect.Field areas = HologramService.class.getDeclaredField("AREAS");
+                java.lang.reflect.Field areas = HologramWorkspace.class.getDeclaredField("AREAS");
                 areas.setAccessible(true);
                 HologramArea currentArea = (HologramArea) ((java.util.Map<?, ?>) areas.get(null))
                     .get(player.getUniqueID());
@@ -502,22 +510,38 @@ public final class HologramInteractionSmoke {
     }
 
     private Object interactionSession() throws Exception {
-        java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        java.lang.reflect.Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         return ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
     }
 
-    private java.util.Map<String, Integer> aeInventory() {
+    private java.util.Map<String, Integer> aeInventory() throws Exception {
         java.util.Map<String, Integer> result = new java.util.LinkedHashMap<>();
         for (ItemStack item : player.inventory.mainInventory) if (item != null && item != player.getHeldItem())
             result.merge(aeItemKey(item), item.stackSize, Integer::sum);
         return result;
     }
 
-    private static String aeItemKey(ItemStack item) {
-        NBTTagCompound tag = item.writeToNBT(new NBTTagCompound());
+    private static String aeItemKey(ItemStack item) throws Exception {
+        NBTTagCompound tag = (NBTTagCompound) item.writeToNBT(new NBTTagCompound())
+            .copy();
         tag.removeTag("Count");
-        return tag.toString();
+        // Compound iteration order is not item identity. Reuse the pure typed wire writer without
+        // encodeCanonical's registry projection; every nested field, numeric type and list order remains exact.
+        java.lang.reflect.Method canonical = HologramBlueprintNbt.class.getDeclaredMethod(
+            "writeCanonicalPayload",
+            net.minecraft.nbt.NBTBase.class,
+            java.io.DataOutput.class,
+            int.class);
+        canonical.setAccessible(true);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.io.DataOutputStream output = new java.io.DataOutputStream(bytes)) {
+            output.writeByte(10);
+            output.writeUTF("");
+            canonical.invoke(null, tag, output, 0);
+        }
+        return java.util.Base64.getEncoder()
+            .encodeToString(bytes.toByteArray());
     }
 
     @SubscribeEvent(priority = cpw.mods.fml.common.eventhandler.EventPriority.LOWEST)
@@ -601,7 +625,7 @@ public final class HologramInteractionSmoke {
 
     /** Observe authoritative locked capture coordinates; client claims never choose the receipt's world cells. */
     private void observeBlueprintSession(NBTTagCompound receipt) throws Exception {
-        java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        java.lang.reflect.Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
         if (session == null) return;
@@ -678,7 +702,7 @@ public final class HologramInteractionSmoke {
     public void blueprintPlaced(net.minecraftforge.event.world.BlockEvent.PlaceEvent event) throws Exception {
         if (player == null || event.player != player
             || event.world.getBlock(event.x, event.y, event.z) != net.minecraft.init.Blocks.stone) return;
-        java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        java.lang.reflect.Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
         if (session == null || !((Boolean) sessionField(session, "virtualPlacement"))

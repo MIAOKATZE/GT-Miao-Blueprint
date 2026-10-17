@@ -101,6 +101,16 @@ final class HologramProcessingFlow {
         return chosen[stage] || optional();
     }
 
+    boolean explicitChoice() {
+        return chosen[stage];
+    }
+
+    int guidanceAccent(int id) {
+        if (id == 234) return 0xef7b7b;
+        if (!chosen() && (id == 232 || id == 233)) return 0x68dded;
+        return chosen() && id == 231 ? 0x80efaa : 0;
+    }
+
     void requirements(int stages) {
         requiredStages = stages & 63;
     }
@@ -163,6 +173,41 @@ final class HologramProcessingFlow {
     boolean complete() {
         for (boolean choice : confirmed) if (!choice) return false;
         return true;
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setTag("policy", policy.copy());
+        state.setInteger("stage", stage);
+        state.setInteger("offset", offset);
+        state.setInteger("requiredStages", requiredStages);
+        state.setBoolean("fullReview", fullReview);
+        int choices = 0, confirmations = 0, explicitChoices = 0;
+        for (int i = 0; i < STAGES.length; i++) {
+            if (chosen[i]) choices |= 1 << i;
+            if (confirmed[i]) confirmations |= 1 << i;
+            if (explicit[i]) explicitChoices |= 1 << i;
+        }
+        state.setInteger("chosen", choices);
+        state.setInteger("confirmed", confirmations);
+        state.setInteger("explicit", explicitChoices);
+        return state;
+    }
+
+    static HologramProcessingFlow restoreBackgroundUiState(NBTTagCompound state) {
+        HologramProcessingFlow flow = new HologramProcessingFlow(state.getCompoundTag("policy"));
+        flow.policy = (NBTTagCompound) state.getCompoundTag("policy")
+            .copy();
+        flow.stage = Math.max(0, Math.min(STAGES.length - 1, state.getInteger("stage")));
+        flow.offset = Math.max(0, state.getInteger("offset"));
+        flow.requiredStages = state.getInteger("requiredStages") & 63;
+        flow.fullReview = state.getBoolean("fullReview");
+        for (int i = 0; i < STAGES.length; i++) {
+            flow.chosen[i] = (state.getInteger("chosen") & 1 << i) != 0;
+            flow.confirmed[i] = (state.getInteger("confirmed") & 1 << i) != 0;
+            flow.explicit[i] = (state.getInteger("explicit") & 1 << i) != 0;
+        }
+        return flow;
     }
 
     void toggle(String list, String value) {

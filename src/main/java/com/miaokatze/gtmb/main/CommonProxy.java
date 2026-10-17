@@ -13,6 +13,11 @@ import cpw.mods.fml.common.FMLCommonHandler;
 /** 专用服务器入口；客户端类只由客户端代理加载。 */
 public class CommonProxy {
 
+    /** Common item rendering never links the client task owner on a dedicated server. */
+    public boolean hologramTaskBusy() {
+        return false;
+    }
+
     private static volatile boolean engineReady;
 
     public static boolean isEngineReady() {
@@ -34,6 +39,8 @@ public class CommonProxy {
             .register(new HologramLifecycle());
         HologramSmokeTest.registerIfEnabled();
         HologramInteractionSmoke.registerIfEnabled();
+        com.miaokatze.gtmb.hologram.HologramCutNativeSmoke.install();
+        com.miaokatze.gtmb.hologram.HologramCutNativeServerProbe.install();
         com.miaokatze.gtmb.hologram.HologramV011InteractionFixture.install();
         com.miaokatze.gtmb.hologram.HologramV011WorldSmoke.install();
         com.miaokatze.gtmb.hologram.HologramV011WorkbenchFixture.install();
@@ -42,6 +49,7 @@ public class CommonProxy {
     }
 
     public void serverStopping() {
+        com.miaokatze.gtmb.hologram.HologramCutService.clear();
         HologramService.clear();
         ServerTaskScheduler.clear();
     }

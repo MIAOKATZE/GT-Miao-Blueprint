@@ -22,6 +22,76 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "coordinate_free_hatch_profiles_match_complete_role_combinations",
+            HologramHatchProfilesRegression::run);
+        cases.put(
+            "configuration_presets_persist_detached_combinations_and_exact_successful_receipts",
+            com.miaokatze.gtmb.client.hologram.HologramConfigurationPresetsRegression::run);
+        cases.put(
+            "background_tasks_survive_ui_close_and_fence_late_results",
+            com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression::run);
+        cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
+        cases.put(
+            "area_resource_planning_is_resumable_and_matches_sync_results",
+            HologramResourcePlannerRegression::run);
+        cases.put(
+            "snapshot_publication_preserves_fifo_and_cancels_stale_generations",
+            HologramSnapshotPublishRegression::run);
+        cases.put(
+            "client_progress_is_factual_session_bound_and_render_only",
+            com.miaokatze.gtmb.client.hologram.HologramProgressRegression::run);
+        cases.put(
+            "client_job_deltas_are_ordered_bounded_and_display_only",
+            com.miaokatze.gtmb.client.hologram.HologramJobVisualRegression::run);
+        cases.put(
+            "configured_testlab_is_inert_by_default_and_owns_bounded_facilities",
+            com.miaokatze.gtmb.testlab.TestLabRegression::run);
+        cases.put(
+            "testlab_blueprint_bridge_requires_owned_loaded_survival_fixtures",
+            HologramTestLabBlueprintRegression::run);
+        cases.put(
+            "dynamic_structure_definitions_are_frozen_per_capture_and_resumed_across_pieces",
+            HologramDynamicDefinitionRegression::run);
+        cases.put("community_extension_registrations_and_detached_snapshot_processing", () -> {
+            try {
+                HologramCommunityApiRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("cut_clipboard_preserves_raw_data_atomic_storage_and_packet_budgets", HologramCutRegression::run);
+        cases.put("cut_native_tile_read_has_world_and_preserves_registry_payload", HologramCutTilesRegression::run);
+        cases.put(
+            "cut_native_disk_readback_rejects_stale_blocks_tiles_and_relocated_chunks",
+            HologramCutDiskRegression::run);
+        cases.put("cut_pose_geometry_raw_directions_and_extension_lifecycle", HologramCutTransformRegression::run);
+        cases.put("cut_raw_preview_preserves_payload_in_detached_world", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramCutRawPreviewRegression.run();
+            } catch (ReflectiveOperationException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put(
+            "cut_input_switcher_queue_priority_and_cancel",
+            com.miaokatze.gtmb.client.hologram.HologramCutInputRegression::run);
+        cases.put(
+            "cut_idle_sync_and_lost_ack_recovery_never_replay_world_edits",
+            com.miaokatze.gtmb.client.hologram.HologramCutRequestRegression::run);
+        cases.put("cut_directory_reads_survive_tool_context_races", HologramCutContextRegression::run);
+        cases.put(
+            "workstation_modal_input_and_session_bound_ack_tickets",
+            com.miaokatze.gtmb.client.hologram.HologramUiModuleRegression::run);
+        cases.put(
+            "workstation_host_ports_are_explicit_and_do_not_share_minecraft_method_names",
+            com.miaokatze.gtmb.client.hologram.HologramUiHostRegression::run);
+        cases.put(
+            "projector_family_uses_native_mui2_controls_and_shared_pocket_textures",
+            com.miaokatze.gtmb.client.hologram.HologramMuiMigrationRegression::run);
+        cases.put(
+            "cut_storage_preview_fences_selection_lifecycle_and_late_raw_replies",
+            com.miaokatze.gtmb.client.hologram.HologramCutStoragePreviewRegression::run);
+        cases.put(
             "preview_camera_wasd_follows_orientation_and_normalizes_motion",
             com.miaokatze.gtmb.client.hologram.HologramPreviewCameraRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
@@ -124,6 +194,7 @@ public final class HologramRegressionTest {
         cases.put("native_channel_casing_and_batch_compatibility", HologramCompatibilityRegression::run);
         cases.put("channel_wrapped_declarations_are_expanded", HologramRegressionTest::wrappedDeclarations);
         cases.put("clipboard_edits_preserve_automatic_source_and_other_cells", HologramServiceEditRegression::run);
+        cases.put("stable_module_edits_use_sparse_history_resources_and_cell_deltas", HologramLocalEditRegression::run);
         cases.put("preset_updates_keep_identity_and_persist_atomically", HologramPresetPersistenceRegression::run);
         cases.put(
             "blueprint_nbt_sharing_missing_dependencies_and_legacy_storage",
@@ -236,7 +307,7 @@ public final class HologramRegressionTest {
                 .invoke(null, unsafe, world, actor, "DraftOwner");
             reconnect = (net.minecraft.entity.player.EntityPlayerMP) factory
                 .invoke(null, unsafe, world, actor, "DraftOwner");
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(
                 net.minecraft.entity.player.EntityPlayerMP.class,
                 int.class,
@@ -246,7 +317,7 @@ public final class HologramRegressionTest {
                 int.class);
             constructor.setAccessible(true);
             Object session = constructor.newInstance(owner, 0, 64, 0, false, 2);
-            java.lang.reflect.Field sessionMap = HologramService.class.getDeclaredField("SESSIONS");
+            java.lang.reflect.Field sessionMap = HologramWorkspace.class.getDeclaredField("SESSIONS");
             sessionMap.setAccessible(true);
             sessions = (Map<java.util.UUID, Object>) sessionMap.get(null);
             previous = sessions.put(actor, session);

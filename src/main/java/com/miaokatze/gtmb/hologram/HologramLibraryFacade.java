@@ -30,6 +30,7 @@ public final class HologramLibraryFacade {
     private static final ArrayBlockingQueue<Inbound> inbound = new ArrayBlockingQueue<>(64);
     private static final ConcurrentHashMap<UUID, AtomicInteger> pending = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<UUID, SavedResult> savedResults = new ConcurrentHashMap<>();
+    private static final HologramRequestGate callbacks = new HologramRequestGate(2, 16);
     private static volatile PrivateReceiver privateReceiver;
     private static volatile BiConsumer<EntityPlayerMP, NBTTagCompound> draftReceiver;
 
@@ -133,7 +134,7 @@ public final class HologramLibraryFacade {
             AtomicInteger count = pending.get(owner);
             if (count == null) {
                 if (pending.size() >= 64) {
-                    error(player, "服务器蓝图库请求繁忙，请稍后重试");
+                    HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
                     return;
                 }
                 count = new AtomicInteger();
@@ -141,17 +142,18 @@ public final class HologramLibraryFacade {
             }
             if (count.incrementAndGet() > 4) {
                 count.decrementAndGet();
+                HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
                 return;
             }
             if (!inbound.offer(new Inbound(player, (NBTTagCompound) request.copy(), count))) {
                 if (count.decrementAndGet() == 0) pending.remove(owner, count);
-                error(player, "服务器蓝图库请求繁忙，请稍后重试");
+                HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
             }
         }
     }
 
     static void importPrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) {
-        ServerTaskScheduler.scheduleServerTask(() -> {
+        scheduleLibraryCallback(player, request, () -> {
             PrivateReceiver receiver = privateReceiver;
             if (enabled() && receiver != null && HologramLibraryService.sessionCurrent(player, request)) {
                 try {
@@ -160,34 +162,46 @@ public final class HologramLibraryFacade {
                     result.setString("id", id == null ? "" : id);
                     result.setString("session", request.getString("session"));
                     result.setString("transfer", request.getString("transfer"));
+                    result.setLong("clientTaskToken", request.getLong("clientTaskToken"));
                     HologramNetwork.sendLibraryReply(player, result);
                 } catch (IOException | RuntimeException failure) {
-                    error(player, failure.getMessage());
+                    error(player, failure.getMessage(), request.getLong("clientTaskToken"));
                 }
-            } else error(player, "Blueprint session changed; reopen and retry");
+            } else error(player, "Blueprint session changed; reopen and retry", request.getLong("clientTaskToken"));
         });
     }
 
     static void exportDraft(EntityPlayerMP player, NBTTagCompound request) {
-        ServerTaskScheduler.scheduleServerTask(() -> {
+        scheduleLibraryCallback(player, request, () -> {
             BiConsumer<EntityPlayerMP, NBTTagCompound> receiver = draftReceiver;
             if (enabled() && receiver != null && HologramLibraryService.sessionCurrent(player, request))
                 receiver.accept(player, request);
-            else error(player, "Blueprint session changed; reopen and retry");
+            else error(player, "Blueprint session changed; reopen and retry", request.getLong("clientTaskToken"));
         });
     }
 
     static void draftPrepared(EntityPlayerMP player, NBTTagCompound request, byte[] json, String name) {
-        ServerTaskScheduler.scheduleServerTask(() -> {
+        scheduleLibraryCallback(player, request, () -> {
             try {
                 if (!HologramLibraryService.draftCurrent(player, request))
                     throw new IOException("Blueprint save source changed; retry");
+                String jsonHash = HologramBlueprintArtifact.hash(json);
                 if (!request.getString("saveReceipt")
-                    .isEmpty()
-                    && !HologramService.libraryDraftPrepared(player, request, HologramBlueprintArtifact.hash(json)))
+                    .isEmpty() && !HologramService.libraryDraftPrepared(player, request, jsonHash))
                     throw new IOException("Blueprint save receipt changed; retry");
                 HologramServerLibrary current = library;
                 if (current == null) throw new IOException("Blueprint library stopped");
+                if (!request.getString("saveReceipt")
+                    .isEmpty()) {
+                    NBTTagCompound proof = (NBTTagCompound) request.copy();
+                    proof.setString("localId", request.getString("replaceLocalId"));
+                    proof.setString("jsonSha256", jsonHash);
+                    proof.setString("previewSha256", "");
+                    proof.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                    proof.setBoolean("localSaveReceipt", true);
+                    rememberSavedResult(player, proof);
+                }
+                // Publish the result capability before the worker can advertise the download.
                 current.draft(player, request, json, name);
             } catch (IOException | RuntimeException failure) {
                 draftPreparationFailed(player, request, failure.getMessage());
@@ -198,17 +212,17 @@ public final class HologramLibraryFacade {
     /** Failed encoding/download admission retires only the still-current issued owner capability. */
     static void draftPreparationFailed(EntityPlayerMP player, NBTTagCompound request, String message) {
         NBTTagCompound proof = (NBTTagCompound) request.copy();
-        ServerTaskScheduler.scheduleServerTask(() -> {
+        scheduleLibraryCallback(player, proof, () -> {
             if (!HologramLibraryService.draftCurrent(player, proof)) return;
             if (!proof.getString("saveReceipt")
                 .isEmpty()) HologramService.librarySaveCancelled(player, proof);
-            error(player, message);
+            error(player, message, proof.getLong("clientTaskToken"));
         });
     }
 
     static void verifySavedPreview(EntityPlayerMP player, NBTTagCompound request,
         HologramBlueprintArtifact.Artifact artifact) {
-        ServerTaskScheduler.scheduleServerTask(() -> {
+        scheduleLibraryCallback(player, request, () -> {
             try {
                 if (!HologramLibraryService.saveCurrent(player, request) || !HologramService.libraryPreviewVerified(
                     player,
@@ -218,6 +232,7 @@ public final class HologramLibraryFacade {
                     throw new IOException("Blueprint preview source or receipt changed");
                 NBTTagCompound verified = HologramLibraryProtocol.reply("previewVerified");
                 verified.setString("transfer", request.getString("transfer"));
+                verified.setLong("clientTaskToken", request.getLong("clientTaskToken"));
                 verified.setString("saveReceipt", request.getString("saveReceipt"));
                 verified.setString("jsonSha256", HologramBlueprintArtifact.hash(artifact.json));
                 verified.setString("previewSha256", HologramBlueprintArtifact.hash(artifact.png));
@@ -228,9 +243,53 @@ public final class HologramLibraryFacade {
                 rememberSavedResult(player, verified);
                 HologramNetwork.sendLibraryReply(player, verified);
             } catch (IOException | RuntimeException failure) {
-                error(player, failure.getMessage());
+                error(player, failure.getMessage(), request.getLong("clientTaskToken"));
             }
         });
+    }
+
+    /** Worker mailboxes release their slots before these callbacks execute, so pending admission must live here too. */
+    static boolean scheduleLibraryCallback(EntityPlayerMP player, NBTTagCompound request, Runnable callback) {
+        return scheduleLibraryCallback(player, request, callback, ServerTaskScheduler::scheduleServerTask);
+    }
+
+    static boolean scheduleLibraryCallback(EntityPlayerMP player, NBTTagCompound request, Runnable callback,
+        java.util.function.Consumer<Runnable> enqueue) {
+        HologramRequestGate.Lease lease = callbacks.acquire(player);
+        if (lease == null) {
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.LIBRARY_CALLBACK_REJECTED, 1);
+            HologramBusyReplies.rejectLibraryCallback(player, request);
+            return false;
+        }
+        try {
+            callbackDepth();
+            enqueue.accept(() -> {
+                try {
+                    if (lease.active() && HologramNetwork.progressConnected(player)) callback.run();
+                } finally {
+                    lease.close();
+                    callbackDepth();
+                }
+            });
+            return true;
+        } catch (RuntimeException rejected) {
+            lease.close();
+            callbackDepth();
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.LIBRARY_CALLBACK_REJECTED, 1);
+            HologramBusyReplies.rejectLibraryCallback(player, request);
+            return false;
+        } catch (Error failed) {
+            lease.close();
+            callbackDepth();
+            throw failed;
+        }
+    }
+
+    private static void callbackDepth() {
+        if (!HologramRuntimeMetrics.isEnabled()) return;
+        int depth = callbacks.size();
+        HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.LIBRARY_CALLBACK_DEPTH, depth);
+        HologramRuntimeMetrics.highWater(HologramRuntimeMetrics.Counter.LIBRARY_CALLBACK_HIGH_WATER, depth);
     }
 
     /** One owner-bound result per peer resolves cancel/ACK races without retaining preview payloads. */
@@ -240,12 +299,20 @@ public final class HologramLibraryFacade {
         if (!savedResults.containsKey(owner) && savedResults.size() >= 64)
             throw new IOException("Blueprint save result queue is busy");
         SavedResult next = new SavedResult(player, verified), previous = savedResults.put(owner, next);
-        if (previous != null && "pending".equals(previous.outcome)) {
+        if (previous != null && "pending".equals(previous.outcome) && !previous.matches(player, verified)) {
             previous.outcome = "saveRejected";
             previous.finishedAtNanos = System.nanoTime();
             previous.message = "Blueprint save was replaced before its disk ACK";
             previous.send();
         }
+    }
+
+    /** The server already owns the JSON digest; private PNG bytes remain on their owner's client. */
+    static boolean localSaveWritten(EntityPlayerMP player, NBTTagCompound acknowledgement) {
+        SavedResult result = savedResults.get(actorId(player));
+        return result != null && "pending".equals(result.outcome)
+            && result.matches(player, acknowledgement)
+            && result.bindLocalPreview(acknowledgement);
     }
 
     static void savedResult(EntityPlayerMP player, NBTTagCompound acknowledgement, boolean committed, String message) {
@@ -266,6 +333,7 @@ public final class HologramLibraryFacade {
         if (cancel) HologramService.librarySaveCancelled(player, request);
         SavedResult result = savedResults.get(actorId(player));
         if (result == null || !result.matches(player, request)) return;
+        result.bindLocalPreview(request);
         if ("pending".equals(result.outcome)) {
             if (!HologramLibraryService.saveCurrent(player, request)) {
                 result.outcome = "saveRejected";
@@ -293,6 +361,7 @@ public final class HologramLibraryFacade {
                 : request.getString("replaceLocalId");
             return actor == player && proof.getString("saveReceipt")
                 .equals(request.getString("saveReceipt"))
+                && proof.getLong("clientTaskToken") == request.getLong("clientTaskToken")
                 && request.hasKey("planRevision", 4)
                 && proof.getString("session")
                     .equals(request.getString("session"))
@@ -302,7 +371,21 @@ public final class HologramLibraryFacade {
                 && (!request.hasKey("jsonSha256", 8) || proof.getString("jsonSha256")
                     .equals(request.getString("jsonSha256")))
                 && (!request.hasKey("previewSha256", 8) || proof.getString("previewSha256")
-                    .equals(request.getString("previewSha256")));
+                    .equals(request.getString("previewSha256"))
+                    || proof.getBoolean("localSaveReceipt") && proof.getString("previewSha256")
+                        .isEmpty());
+        }
+
+        boolean bindLocalPreview(NBTTagCompound request) {
+            if (!proof.getBoolean("localSaveReceipt")
+                || request.getInteger("artifactVersion") != HologramBlueprintArtifact.VERSION
+                || !request.getString("previewSha256")
+                    .matches("[a-f0-9]{64}"))
+                return false;
+            String previous = proof.getString("previewSha256");
+            if (!previous.isEmpty() && !previous.equals(request.getString("previewSha256"))) return false;
+            proof.setString("previewSha256", request.getString("previewSha256"));
+            return true;
         }
 
         void send() {
@@ -347,11 +430,17 @@ public final class HologramLibraryFacade {
 
     public static void downloadDraft(EntityPlayerMP player, HologramPresets.Preset preset, String session,
         long revision, String replaceLocalId, String saveReceipt) throws IOException {
+        downloadDraft(player, preset, session, revision, replaceLocalId, saveReceipt, 0L);
+    }
+
+    public static void downloadDraft(EntityPlayerMP player, HologramPresets.Preset preset, String session,
+        long revision, String replaceLocalId, String saveReceipt, long clientTaskToken) throws IOException {
         NBTTagCompound request = HologramLibraryProtocol.request("exportDraft");
         request.setString("session", session);
         request.setLong("planRevision", revision);
         request.setString("replaceLocalId", replaceLocalId == null ? "" : replaceLocalId);
         request.setString("saveReceipt", saveReceipt == null ? "" : saveReceipt);
+        request.setLong("clientTaskToken", Math.max(0L, clientTaskToken));
         HologramServerLibrary current = library;
         if (current == null) throw new IOException("Server library is still loading");
         current.prepareDraft(player, request, preset);
@@ -377,8 +466,13 @@ public final class HologramLibraryFacade {
     }
 
     public static void error(EntityPlayerMP player, String message) {
+        error(player, message, 0L);
+    }
+
+    public static void error(EntityPlayerMP player, String message, long clientTaskToken) {
         NBTTagCompound tag = HologramLibraryProtocol.reply("error");
         tag.setString("message", message);
+        tag.setLong("clientTaskToken", clientTaskToken);
         HologramNetwork.sendLibraryReply(player, tag);
     }
 
@@ -388,6 +482,8 @@ public final class HologramLibraryFacade {
         inbound.clear();
         pending.clear();
         savedResults.clear();
+        callbacks.clear();
+        callbackDepth();
         if (previous != null) previous.stop();
     }
 
@@ -423,18 +519,20 @@ public final class HologramLibraryFacade {
                     resolveSavedResult(next.player, next.request, "cancel".equals(op));
                     if ("saveStatus".equals(op)) continue;
                 }
-                if ("quickBootstrap".equals(op) || "quickCancel".equals(op)) {
+                if ("quickBootstrap".equals(op) || "quickCancel".equals(op) || "quickFallback".equals(op)) {
                     if ("quickBootstrap".equals(op)) HologramLibraryService.quickBootstrap(next.player, next.request);
+                    else if ("quickFallback".equals(op))
+                        HologramLibraryService.quickFallback(next.player, next.request);
                     else HologramLibraryService.quickCancel(next.player, next.request);
                     continue;
                 }
                 if (("privateBegin".equals(op) || "exportDraft".equals(op))
                     && !HologramLibraryService.sessionCurrent(next.player, next.request)) {
-                    error(next.player, "蓝图会话已变更，请重新打开后重试");
+                    error(next.player, "蓝图会话已变更，请重新打开后重试", next.request.getLong("clientTaskToken"));
                     continue;
                 }
                 if ("previewBegin".equals(op) && !HologramLibraryService.saveCurrent(next.player, next.request)) {
-                    error(next.player, "蓝图保存来源已变更，请重新保存");
+                    error(next.player, "蓝图保存来源已变更，请重新保存", next.request.getLong("clientTaskToken"));
                     continue;
                 }
                 current.submit(next.player, next.request, isAdmin(next.player));

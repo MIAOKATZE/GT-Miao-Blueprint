@@ -8,6 +8,8 @@ public final class HologramAreaRegression {
     private HologramAreaRegression() {}
 
     public static void run() {
+        HologramAreaPreparationRegression.run();
+        HologramSnapshotMetadataRegression.run();
         try {
             HologramArea area = new HologramArea();
             area.point(2, 3, 64, 3, "replace");
@@ -38,6 +40,17 @@ public final class HologramAreaRegression {
             pending.point(2, 8, 64, 8, "add");
             pending.undoRegion();
             SimpleAssert.that(pending.points().length == 0, "undo also clears a lone right-first mark");
+            HologramAreaSelection local = new HologramAreaSelection();
+            local.readSnapshot(area.snapshot());
+            SimpleAssert.that(
+                java.util.Arrays.equals(area.bounds(), local.bounds()),
+                "pure client selection roundtrips the same final import bounds");
+            HologramArea imported = new HologramArea();
+            imported.readSnapshot(local.snapshot());
+            SimpleAssert.that(
+                !imported.contains(1, 64, 1) == !area.contains(1, 64, 1)
+                    && imported.contains(6, 64, 3) == area.contains(6, 64, 3),
+                "final server geometry preserves composite membership exactly");
             int[] bounds = area.bounds();
             SimpleAssert.that(
                 bounds[0] == 0 && bounds[1] == 64

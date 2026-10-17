@@ -599,7 +599,7 @@ public final class HologramCompatibilitySmoke {
     }
 
     private static Object session(EntityPlayerMP player) throws Exception {
-        Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessions.setAccessible(true);
         return ((Map<?, ?>) sessions.get(null)).get(player.getUniqueID());
     }

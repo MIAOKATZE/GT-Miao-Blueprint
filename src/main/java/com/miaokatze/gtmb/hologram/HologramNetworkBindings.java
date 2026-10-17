@@ -216,10 +216,24 @@ final class HologramNetworkBindings {
 
     /** Group by captured network anchor before erasing it. No source dimension/coordinates survive this projection. */
     static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset) throws IOException {
+        return sanitize(preset, null);
+    }
+
+    /** A non-null frozen map makes this path detached: missing anchors use their coordinate tuple, never a world. */
+    static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset, Map<String, String> networks)
+        throws IOException {
+        return sanitize(preset, networks, HologramAePolicy.PreparationProgress.NONE);
+    }
+
+    static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset, Map<String, String> networks,
+        HologramAePolicy.PreparationProgress progress) throws IOException {
         List<HologramAePolicy.Issue> changes = new ArrayList<>();
         Map<Object, String> groups = new LinkedHashMap<>();
         int next = 1;
+        int completed = 0;
+        long total = 2L * preset.cells.size();
         for (HologramPresets.Cell cell : preset.cells) {
+            progress.update("networks", completed++, total);
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (tag != null && tag.hasKey(GROUP)) {
                 String group = group(tag);
@@ -231,6 +245,7 @@ final class HologramNetworkBindings {
             }
         }
         for (HologramPresets.Cell cell : preset.cells) {
+            progress.update("networks", completed++, total);
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             NBTTagCompound item = HologramBlueprintNbt.decode(cell.itemNbt);
             boolean removedReferences = HologramNetworkSchemas.removeExternalReferences(cell.block(), cell.damage, tag);
@@ -250,10 +265,12 @@ final class HologramNetworkBindings {
             NBTTagCompound anchor = node && tag.hasKey("anchorDim") ? tag
                 : tag.hasKey(CAPTURE_ANCHOR, 10) ? tag.getCompoundTag(CAPTURE_ANCHOR) : null;
             if (anchor != null) {
-                Object key = capturedNetworkKey(anchor);
                 // A reviewed author classification owns the logical slot; source anchors only seed
                 // unclassified captures and remain independently recorded for private placement.
                 if (!tag.hasKey(GROUP)) {
+                    String coordinate = anchorKey(anchor, NODE_ANCHOR);
+                    Object key = networks == null ? capturedNetworkKey(anchor)
+                        : networks.getOrDefault(coordinate, "coordinates:" + coordinate);
                     String local = groups.get(key);
                     if (local == null) {
                         local = "q" + next++;
@@ -303,7 +320,23 @@ final class HologramNetworkBindings {
                 ? HologramBlueprintNbt.encodeCanonical(cell.block(), tag)
                 : HologramBlueprintNbt.encodeCaptured(tag);
         }
+        progress.update("networks", completed, total);
         return changes;
+    }
+
+    /** Server-thread snapshot of a captured anchor's grid identity, converted to an opaque local token. */
+    static void captureNetwork(HologramPresets.Cell cell, Map<String, String> networks, Map<Object, String> identities)
+        throws IOException {
+        NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
+        if (tag == null || tag.hasKey(GROUP)) return;
+        NBTTagCompound anchor = node(cell.block()) && tag.hasKey("anchorDim") ? tag
+            : tag.hasKey(CAPTURE_ANCHOR, 10) ? tag.getCompoundTag(CAPTURE_ANCHOR) : null;
+        if (anchor == null) return;
+        String coordinate = anchorKey(anchor, NODE_ANCHOR);
+        if (networks.containsKey(coordinate)) return;
+        Object identity = capturedNetworkKey(anchor);
+        String token = identities.computeIfAbsent(identity, ignored -> "network:" + identities.size());
+        networks.put(coordinate, token);
     }
 
     private static Object capturedNetworkKey(NBTTagCompound anchor) throws IOException {
@@ -492,14 +525,39 @@ final class HologramNetworkBindings {
 
     static NBTTagCompound snapshot(HologramPresets.Preset preset, EntityPlayerMP player, State bindings)
         throws IOException {
-        NBTTagCompound result = new NBTTagCompound();
-        result.setBoolean("nativeAuthority", false);
-        result.setBoolean("terminalSecurityChecked", false);
-        Map<String, NBTTagCompound> groups = new LinkedHashMap<>();
-        if (preset != null) for (HologramPresets.Cell cell : preset.cells) {
-            if (cell.excluded) continue;
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (tag == null || !tag.hasKey(GROUP)) continue;
+        SnapshotTask task = new SnapshotTask(player, bindings);
+        if (preset != null) for (HologramPresets.Cell cell : preset.cells) task.add(cell.tileNbt, cell.excluded);
+        while (!task.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        return task.result;
+    }
+
+    /** World/security checks stay on the owner thread; each cell, group and inventory slot is a checkpoint. */
+    static final class SnapshotTask {
+
+        private final EntityPlayerMP player;
+        private final State bindings;
+        private final Map<String, NBTTagCompound> groups = new LinkedHashMap<>();
+        final NBTTagCompound result = new NBTTagCompound();
+        private final NBTTagList rows = new NBTTagList(), candidates = new NBTTagList();
+        private java.util.Iterator<NBTTagCompound> iterator;
+        private boolean terminalBinding, complete;
+        private int slot, groupDone;
+
+        SnapshotTask(EntityPlayerMP player, State bindings) {
+            this.player = player;
+            this.bindings = bindings;
+            result.setBoolean("nativeAuthority", false);
+            result.setBoolean("terminalSecurityChecked", false);
+        }
+
+        void add(String encoded, boolean excluded) throws IOException {
+            if (excluded) return;
+            add(HologramBlueprintNbt.decode(encoded));
+        }
+
+        /** Owner-thread decoded input is read only; every cell still performs its native binding checks. */
+        void add(NBTTagCompound tag) throws IOException {
+            if (tag == null || !tag.hasKey(GROUP)) return;
             String id = group(tag);
             NBTTagCompound row = groups.get(id);
             if (row == null) {
@@ -526,16 +584,39 @@ final class HologramNetworkBindings {
             }
             row.setInteger("cells", row.getInteger("cells") + 1);
         }
-        NBTTagList rows = new NBTTagList();
-        for (NBTTagCompound row : groups.values()) rows.appendTag(row);
-        result.setTag("groups", rows);
-        boolean terminalBinding = false;
-        for (NBTTagCompound row : groups.values()) terminalBinding |= row.getBoolean("terminalBinding");
-        result.setBoolean("terminalBinding", terminalBinding);
-        NBTTagList candidates = new NBTTagList();
-        for (int slot = 0; terminalBinding && slot < player.inventory.mainInventory.length; slot++) {
+
+        boolean step(int maxWork, long deadline) throws IOException {
+            if (iterator == null) iterator = groups.values()
+                .iterator();
+            for (int work = 0; work < maxWork && !complete; work++) {
+                if (work > 0 && System.nanoTime() >= deadline) return false;
+                if (iterator.hasNext()) {
+                    NBTTagCompound row = iterator.next();
+                    rows.appendTag(row);
+                    terminalBinding |= row.getBoolean("terminalBinding");
+                    groupDone++;
+                } else if (terminalBinding && slot < player.inventory.mainInventory.length) appendInventory(slot++);
+                else {
+                    result.setTag("groups", rows);
+                    result.setBoolean("terminalBinding", terminalBinding);
+                    result.setTag("inventory", candidates);
+                    complete = true;
+                }
+            }
+            return complete;
+        }
+
+        long done() {
+            return groupDone + slot;
+        }
+
+        long total() {
+            return groups.size() + (terminalBinding ? player.inventory.mainInventory.length : 0);
+        }
+
+        private void appendInventory(int slot) throws IOException {
             ItemStack stack = player.inventory.mainInventory[slot];
-            if (stack == null || stack.getItem() == null || stack.stackSize <= 0) continue;
+            if (stack == null || stack.getItem() == null || stack.stackSize <= 0) return;
             NBTTagCompound row = new NBTTagCompound();
             row.setInteger("slot", slot);
             row.setString("name", stack.getDisplayName());
@@ -551,8 +632,6 @@ final class HologramNetworkBindings {
             }
             candidates.appendTag(row);
         }
-        result.setTag("inventory", candidates);
-        return result;
     }
 
     static void validate(NBTTagCompound payload, EntityPlayerMP player, State state) throws IOException {
