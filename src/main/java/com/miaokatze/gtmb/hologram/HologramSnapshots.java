@@ -602,11 +602,17 @@ final class HologramSnapshots {
 
     /** Opening an unchanged workspace is independent of material reports and native preview construction. */
     static void sendUi(HologramSession s) {
+        sendUi(s, null);
+    }
+
+    /** An explicit library refresh can attach its already-read labels without rebuilding the structure snapshot. */
+    static void sendUi(HologramSession s, NBTTagList presets) {
         if (s.cancelled) {
             send(s);
             return;
         }
         NBTTagCompound state = areaSelection(s);
+        if (presets != null) state.setTag("presets", presets);
         state.setBoolean("workspaceUiOnly", true);
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
@@ -797,6 +803,7 @@ final class HologramSnapshots {
         state.setBoolean("presetActive", s.presetEnabled || !s.autoTargets.isEmpty());
 
         state.setLong("configurationAcceptedSequence", s.configurationAcceptedSequence);
+        state.setLong("blueprintClientTaskToken", s.blueprintClientTaskToken);
         boolean editable = s.job != 1 && s.job != 2 && !s.capturePending && s.capture != null && !s.capture.incomplete;
         state.setBoolean("editCanUndo", editable && !s.undoEdits.isEmpty());
         state.setBoolean("editCanRedo", editable && !s.redoEdits.isEmpty());

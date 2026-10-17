@@ -52,13 +52,15 @@ final class HologramLibraryWorkflow {
             || s.job == 1
             || s.job == 2
             || HologramSessionPolicy.blockedByAreaImport(s)) return;
+        net.minecraft.nbt.NBTTagList labels = null;
         if (!HologramLibraryFacade.enabled()) try {
             HologramPresets.refreshLocalArtifacts();
+            labels = HologramPresets.labels();
             s.status = "蓝图库已重新读取本地文件";
         } catch (java.io.IOException failure) {
             s.status = "蓝图库刷新失败：" + failure.getMessage();
         }
-        HologramSnapshots.sendUi(s);
+        HologramSnapshots.sendUi(s, labels);
     }
 
     /** Correlates a disposable client task; owner/session/receipt checks remain the authorization boundary. */

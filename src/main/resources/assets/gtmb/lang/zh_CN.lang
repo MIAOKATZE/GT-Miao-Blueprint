@@ -251,7 +251,7 @@ gtmb.hologram.cut.storage.camera=拖动旋转 · 滚轮缩放
 gtmb.hologram.cut.storage.timeout=预览超时，请点击重试同步。
 gtmb.hologram.cut.storage.unavailable=预览暂不可用：
 gtmb.hologram.cut.storage.framebuffer=三维预览需要帧缓冲支持，仍可选择放置结构。
-gtmb.hologram.cut.savedHint=剪切已存储，可继续框选下一份；Esc 退出，工作区可查看剪切列表。
+gtmb.hologram.cut.savedHint=剪切已存储，可继续框选下一份；Shift + 右击打开剪切列表查看。
 
 gtmb.hologram.worldGuideSelectionBoth=左键选点1 · 右键选点2
 gtmb.hologram.worldGuideSelectionFirst=左键选点1
@@ -259,7 +259,7 @@ gtmb.hologram.worldGuideSelectionSecond=右键选点2
 gtmb.hologram.worldGuideSelectionDone=已选定
 gtmb.hologram.worldGuideSelectionMore=更多选区 · 左键选点1 · 右键选点2
 gtmb.hologram.worldGuideSelectionEdit=左右键调整当前框两角 · Shift+Alt+右击开启更多选区
-gtmb.hologram.worldGuideSelectionKeys=方向键移动 · Alt+上下升降 · 滚轮切换当前框 · Delete 删除 · Ctrl+Z 撤销
+gtmb.hologram.worldGuideSelectionKeys=方向键移动 · Alt+上下升降 · 滚轮切物品栏 · Delete 删除 · Ctrl+Z 撤销
 gtmb.hologram.progress.area.declaration_memberships=整理声明格与结构归属
 gtmb.hologram.progress.area.networks=读取网络归组
 gtmb.hologram.progress.area.canonicalize=整理蓝图数据

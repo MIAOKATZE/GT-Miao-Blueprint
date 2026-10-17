@@ -14,11 +14,47 @@ public final class HologramGuidanceRegression {
 
     public static void run() {
         savedLibraryAndAuthorWorkspace();
+        parsedAuthorWorkspace();
         exactBindingAcknowledgement();
         bindingFailuresAndUserSelection();
         completedAndPreservedNetworks();
         optionalHatchPresetsKeepCurrentPlanReviewable();
         committedSaveGuidanceLifecycle();
+    }
+
+    private static void parsedAuthorWorkspace() {
+        NBTTagCompound source = state();
+        source.setBoolean("blueprintProcessingRequired", true);
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(new NBTTagCompound());
+        source.setTag("cells", cells);
+        HologramState parsed = new HologramState(source);
+        check(
+            !parsed.data.hasKey("cells") && parsed.cells.size() == 1,
+            "the real parser keeps cells in its typed collection instead of metadata");
+        check(HologramGuidance.authorWorkspace(source), "raw unsaved source cells still identify an author workspace");
+        check(
+            HologramGuidance.authorWorkspace(parsed),
+            "parsed unsaved cells identify authoring even without dirty or opening-purpose flags");
+        check(
+            !HologramGuidance.authorWorkspace(parsed.data),
+            "the raw NBT overload does not invent cells missing from its supplied tree");
+        check(
+            HologramGuidance.next(parsed, -1, true, false)
+                .contains("处理流程"),
+            "the real parsed guidance directs an unsaved draft into its required processing flow");
+        source.setBoolean("blueprintSaved", true);
+        check(
+            !HologramGuidance.authorWorkspace(new HologramState(source)),
+            "typed cells alone do not turn a clean saved blueprint into authoring");
+        source.setString("openPurpose", "blueprintEdit");
+        check(
+            HologramGuidance.authorWorkspace(new HologramState(source)),
+            "explicit editing still enters authoring for a saved parsed blueprint");
+        source.setBoolean("virtualPlacement", true);
+        check(
+            !HologramGuidance.authorWorkspace(new HologramState(source)),
+            "a parsed placement snapshot keeps the existing placement exclusion");
     }
 
     private static void committedSaveGuidanceLifecycle() {

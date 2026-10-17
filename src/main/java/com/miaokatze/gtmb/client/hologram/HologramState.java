@@ -477,7 +477,7 @@ final class HologramState {
         final String networkGroup;
         final NBTTagCompound specialHint;
         final List<String> structureIds;
-        final boolean anchor, iconOnly, excluded, missingBlock, sourceMissing;
+        final boolean anchor, iconOnly, excluded, missingBlock, sourceMissing, inScope;
         final boolean candidateComplete;
         final String candidateBoundary;
         final ItemStack actualStack, targetStack;
@@ -513,6 +513,7 @@ final class HologramState {
             exactIdentity = n.getString("exactIdentity");
             renderKind = n.getString("renderKind");
             operation = n.getString("operation");
+            inScope = n.getBoolean("inScope");
             prompt = n.getString("prompt");
             networkGroup = n.getString("networkGroup");
             specialHint = (NBTTagCompound) n.getCompoundTag("specialHint")

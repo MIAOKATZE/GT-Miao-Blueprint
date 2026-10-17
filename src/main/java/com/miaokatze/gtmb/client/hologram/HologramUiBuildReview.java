@@ -5,6 +5,7 @@ import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -53,6 +54,10 @@ final class HologramUiBuildReview {
 
     private String lastReviewedScope = "";
 
+    private List<HologramState.Cell> countedCells;
+
+    private int countedOperations;
+
     boolean retainsPlacementReview(HologramState next) {
         return this.placementReviewContext.retain(
             next.session,
@@ -86,19 +91,7 @@ final class HologramUiBuildReview {
             .forceReview(ui.session.state().data, this.confirmedRevision) ? "缺料 · 再次确认仅放已有"
                 : placement ? "蓝图放置预检 · " + ui.session.state().data.getString("virtualPresetName") : "材料与改动";
         ui.canvas.text(this.lastConfirmationTitle, 50, 68, 315, 0xf5e4b9);
-        int operations = 0, recovery = 0;
-        NBTTagList rows = ui.session.state().data.getTagList("cells", 10);
-        for (int i = 0; i < rows.tagCount(); i++) {
-            NBTTagCompound row = rows.getCompoundTagAt(i);
-            String operation = row.getString("operation");
-            if (row.getBoolean("inScope")
-                && (operation.equals("PLACE") || operation.equals("REPLACE") || operation.equals("REMOVE"))
-                && (row.getString("status")
-                    .equals("pending")
-                    || row.getString("status")
-                        .equals("missing")))
-                operations++;
-        }
+        int operations = operationCount(), recovery = 0;
         NBTTagList recovered = ui.session.state().data.getTagList("recovery", 10);
         for (int i = 0; i < recovered.tagCount(); i++) recovery += recovered.getCompoundTagAt(i)
             .getInteger("expected");
@@ -276,26 +269,7 @@ final class HologramUiBuildReview {
         ui.canvas.button(54, 50, 232, 146, 17, placement ? "取消放置" : "返回", true, mx, my);
         this.lastConfirmationAction = HologramPlacementConfirmation
             .confirmationAction(ui.session.state().data, this.confirmedRevision, placement);
-        ui.canvas.button(
-            55,
-            203,
-            232,
-            162,
-            17,
-            this.lastConfirmationAction,
-            ui.session.editable()
-                && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
-                && this.confirmedRevision == ui.session.revision()
-                && HologramPlacementConfirmation.cacheReviewMatches(ui.session.state().data, this.reviewedCacheQuote)
-                && HologramPlacementConfirmation.networksReady(ui.session.state().data)
-                && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")
-                    || HologramPlacementConfirmation.canBuild(ui.session.state().data, this.confirmedRevision))
-                && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")
-                    || !ui.session.state().data.getBoolean("virtual")
-                    || ui.session.state().data.getBoolean("virtualPlacement")
-                        && ui.session.state().data.getBoolean("virtualLocked")),
-            mx,
-            my);
+        ui.canvas.button(55, 203, 232, 162, 17, this.lastConfirmationAction, confirmationAllowed(operations), mx, my);
         if (placement) {
             int x = HologramScreenLayout.COMPACT_PANEL_X;
             drawRect(x, 60, x + HologramScreenLayout.COMPACT_PANEL_WIDTH, 314, 0xff172f36);
@@ -333,6 +307,33 @@ final class HologramUiBuildReview {
                 mx,
                 my);
         }
+    }
+
+    int operationCount() {
+        List<HologramState.Cell> cells = ui.session.state().cells;
+        // Parsed cell pages are immutable; metadata-only updates and rendered frames reuse this count.
+        if (countedCells == cells) return countedOperations;
+        int operations = 0;
+        // Geometry lives in the parsed cell pages, not in the metadata-only NBT view.
+        for (HologramState.Cell cell : cells) if (cell.inScope
+            && ("PLACE".equals(cell.operation) || "REPLACE".equals(cell.operation) || "REMOVE".equals(cell.operation))
+            && ("pending".equals(cell.status) || "missing".equals(cell.status))) operations++;
+        countedCells = cells;
+        return countedOperations = operations;
+    }
+
+    boolean confirmationAllowed(int operations) {
+        return ui.session.editable()
+            && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
+            && this.confirmedRevision == ui.session.revision()
+            && HologramPlacementConfirmation.cacheReviewMatches(ui.session.state().data, this.reviewedCacheQuote)
+            && HologramPlacementConfirmation.networksReady(ui.session.state().data)
+            && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")
+                || HologramPlacementConfirmation.canBuild(ui.session.state().data, this.confirmedRevision))
+            && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")
+                || !ui.session.state().data.getBoolean("virtual")
+                || ui.session.state().data.getBoolean("virtualPlacement")
+                    && ui.session.state().data.getBoolean("virtualLocked"));
     }
 
     boolean placementReviewActive() {

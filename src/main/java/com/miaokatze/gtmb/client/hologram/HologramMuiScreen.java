@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import org.lwjgl.input.Keyboard;
 
+import com.cleanroommc.modularui.api.UpOrDown;
 import com.cleanroommc.modularui.api.layout.IViewportStack;
 import com.cleanroommc.modularui.screen.GuiScreenWrapper;
 import com.cleanroommc.modularui.screen.ModularPanel;
@@ -59,6 +60,8 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         return false;
     }
 
+    protected void muiActivity() {}
+
     private static final class ProjectorScreen extends ModularScreen {
 
         private HologramMuiScreen owner;
@@ -69,6 +72,7 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
 
         @Override
         public boolean onKeyPressed(char character, int key) {
+            owner.muiActivity();
             if (owner.muiKeyBefore(character, key)) return true;
             if (key == Keyboard.KEY_ESCAPE && owner.muiKey(character, key)) return true;
             if (super.onKeyPressed(character, key)) return true;
@@ -77,7 +81,32 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
 
         @Override
         public boolean onMousePressed(int button) {
+            owner.muiActivity();
             return owner.muiMouseBefore(button) || super.onMousePressed(button);
+        }
+
+        @Override
+        public boolean onKeyRelease(char character, int key) {
+            owner.muiActivity();
+            return super.onKeyRelease(character, key);
+        }
+
+        @Override
+        public boolean onMouseRelease(int button) {
+            owner.muiActivity();
+            return super.onMouseRelease(button);
+        }
+
+        @Override
+        public boolean onMouseDrag(int button, long elapsed) {
+            owner.muiActivity();
+            return super.onMouseDrag(button, elapsed);
+        }
+
+        @Override
+        public boolean onMouseScroll(UpOrDown direction, int amount) {
+            owner.muiActivity();
+            return super.onMouseScroll(direction, amount);
         }
 
     }

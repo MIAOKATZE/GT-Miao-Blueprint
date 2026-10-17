@@ -85,6 +85,49 @@ final class HologramLibraryClient {
     private NBTTagCompound lastSaveTransition = new NBTTagCompound();
     private int saveTraceEvents, downloadProgressMarker, uploadProgressMarker;
     private long backgroundTaskToken;
+    private SaveCommand draftSave;
+
+    /** The save request remains owned while the server is asking for its AE review. */
+    static final class SaveCommand {
+
+        final long task;
+        final String session, operation;
+        long sequence;
+
+        SaveCommand(long task, String session, long sequence, String operation) {
+            this.task = task;
+            this.session = session;
+            this.sequence = sequence;
+            this.operation = operation;
+        }
+
+        boolean matches(NBTTagCompound snapshot, long currentTask) {
+            return task == currentTask && session.equals(snapshot.getString("session"))
+                && task == snapshot.getLong("blueprintClientTaskToken")
+                && snapshot.hasKey("uiSequence", 4)
+                && sequence == snapshot.getLong("uiSequence")
+                && operation.equals(snapshot.getString("blueprintOperation"));
+        }
+
+        boolean failed(NBTTagCompound snapshot, long currentTask) {
+            return matches(snapshot, currentTask) && snapshot.hasKey("blueprintOperationSuccess", 1)
+                && !snapshot.getBoolean("blueprintOperationSuccess")
+                && !snapshot.getBoolean("blueprintSavePending")
+                && !snapshot.getBoolean("snapshotPending")
+                && !snapshot.getBoolean("workspaceUiOnly")
+                && !reviewPending(snapshot, task);
+        }
+
+        static boolean reviewPending(NBTTagCompound snapshot, long task) {
+            NBTTagCompound review = snapshot.getCompoundTag("aeSaveReview");
+            return task > 0 && review.getLong("clientTaskToken") == task
+                && snapshot.getString("session")
+                    .equals(review.getString("session"))
+                && snapshot.getLong("planRevision") == review.getLong("planRevision")
+                && !review.getString("transactionId")
+                    .isEmpty();
+        }
+    }
 
     /** Waiting for an exact source is bounded independently of byte-progressing transfers. */
     static final class SaveProgress {
@@ -327,7 +370,7 @@ final class HologramLibraryClient {
             libraryWorld = mc.theWorld;
             libraryActor = currentActor;
             connection = current;
-            generation++;
+            advanceGeneration();
             server = new NBTTagList();
             selectedServer = "";
             config = new NBTTagCompound();
@@ -559,7 +602,7 @@ final class HologramLibraryClient {
             outgoingId = "";
             ready = inFlight = false;
         }
-        generation++;
+        advanceGeneration();
         quickBytes = null;
         quickFallback = null;
         quickLocal = quickSession = "";
@@ -573,7 +616,8 @@ final class HologramLibraryClient {
     void refreshLocal() {
         if (store == null || loading) return;
         loading = true;
-        String operation = "local:" + generation;
+        long token = generation;
+        String operation = "local:" + token;
         localCatalogProgress.update(operation, "library.index", 0, 0, "", false, System.nanoTime());
         work(() -> {
             NBTTagList labels = new NBTTagList();
@@ -592,14 +636,23 @@ final class HologramLibraryClient {
                 row.setBoolean("mine", true);
                 labels.appendTag(row);
             }
-            main(() -> {
-                local = labels;
-                if (selectedRow(false).getString("id")
-                    .isEmpty()) selectedLocal = "";
-                loading = false;
-                localCatalogProgress.finish(operation, System.nanoTime());
-            });
+            main(() -> finishLocalRefresh(token, operation, labels));
         });
+    }
+
+    private void finishLocalRefresh(long token, String operation, NBTTagList labels) {
+        if (token != generation) return;
+        local = labels;
+        if (selectedRow(false).getString("id")
+            .isEmpty()) selectedLocal = "";
+        loading = false;
+        localCatalogProgress.finish(operation, System.nanoTime());
+    }
+
+    private void advanceGeneration() {
+        generation++;
+        loading = false;
+        localCatalogProgress.clear();
     }
 
     void refreshServer(int value) {
@@ -774,7 +827,38 @@ final class HologramLibraryClient {
     private void finishBackgroundTask(long token, boolean success, String detail) {
         if (token == 0 || token != backgroundTaskToken) return;
         backgroundTaskToken = 0;
+        draftSave = null;
         HologramBackgroundTasks.finishLibrary(token, success, detail);
+    }
+
+    void saveCommand(String session, long sequence, String operation) {
+        if (!draftPending || backgroundTaskToken == 0) return;
+        if ("confirmAeSave".equals(operation)) {
+            if (draftSave != null && draftSave.task == backgroundTaskToken
+                && draftSave.session.equals(session)
+                && sequence > draftSave.sequence) draftSave.sequence = sequence;
+        } else if (saveOperation(operation))
+            draftSave = new SaveCommand(backgroundTaskToken, session, sequence, operation);
+    }
+
+    static boolean saveOperation(String operation) {
+        return "saveBlueprint".equals(operation) || "saveBlueprintAs".equals(operation)
+            || "saveBlueprintReplace".equals(operation)
+            || "savePreset".equals(operation)
+            || "updatePreset".equals(operation)
+            || "exportDraft".equals(operation);
+    }
+
+    /** Installed snapshots reach the task owner even when its business screen is closed. */
+    boolean snapshot(HologramState next) {
+        if (!draftPending || draftSave == null) return false;
+        if (draftSave.failed(next.data, backgroundTaskToken)) {
+            String message = next.data.getString("status");
+            finishDraftReview(message.isEmpty() ? "蓝图保存失败，请保持当前蓝图并重试" : message);
+            return false;
+        }
+        return draftSave.matches(next.data, backgroundTaskToken)
+            && SaveCommand.reviewPending(next.data, backgroundTaskToken);
     }
 
     int page() {
@@ -796,6 +880,7 @@ final class HologramLibraryClient {
         preparing = true;
         draftPending = true;
         downloadExpected = true;
+        saveCommand(state.session, state.data.getLong("uiSequence"), "exportDraft");
         saveProgress.clear();
         lastActivity = System.nanoTime();
         captureActor();
@@ -818,11 +903,15 @@ final class HologramLibraryClient {
     }
 
     void cancelDraftReview() {
+        finishDraftReview("蓝图保存已取消");
+    }
+
+    private void finishDraftReview(String message) {
         if (!draftPending || incoming != null) return;
-        finishBackgroundTask(backgroundTaskToken, false, "蓝图保存已取消");
+        finishBackgroundTask(backgroundTaskToken, false, message);
         draftPending = downloadExpected = preparing = false;
         transferProgress.clear();
-        status = "蓝图保存已取消";
+        status = message;
     }
 
     void expectDraftDownload() {
@@ -973,7 +1062,7 @@ final class HologramLibraryClient {
             HologramNetwork.sendLibrary(request);
             lastSaveStatus = System.nanoTime();
         }
-        generation++;
+        advanceGeneration();
         saveProgress.clear();
         downloadExpected = false;
         draftPending = false;

@@ -205,6 +205,7 @@ public final class HologramBackgroundTasks {
             }
             return;
         }
+        if (libraryTask()) HologramLibraryClient.INSTANCE.saveCommand(sessionId, sequence, op);
         if (libraryTask() && ("confirmAeSave".equals(op) || "cancelAeSave".equals(op))) reviewSubmitted = true;
         if (libraryTask() && "cancelAeSave".equals(op)) HologramLibraryClient.INSTANCE.cancelDraftReview();
         if (!("processBlueprint".equals(op) || "scan".equals(op)
@@ -245,16 +246,7 @@ public final class HologramBackgroundTasks {
         return libraryTask() && !reviewSubmitted
             && context != null
             && !context.data.getBoolean("blueprintSavePending")
-            && context.data.getCompoundTag("aeSaveReview")
-                .getLong("clientTaskToken") == OWNER.token()
-            && context.session.equals(
-                context.data.getCompoundTag("aeSaveReview")
-                    .getString("session"))
-            && context.data.getLong("planRevision") == context.data.getCompoundTag("aeSaveReview")
-                .getLong("planRevision")
-            && !context.data.getCompoundTag("aeSaveReview")
-                .getString("transactionId")
-                .isEmpty();
+            && HologramLibraryClient.SaveCommand.reviewPending(context.data, OWNER.token());
     }
 
     static boolean awaitingSourceReview() {
@@ -325,6 +317,7 @@ public final class HologramBackgroundTasks {
 
     static void snapshot(HologramState next) {
         if (context != null && context.session.equals(next.session)) context = next;
+        if (libraryTask() && HologramLibraryClient.INSTANCE.snapshot(next)) reviewSubmitted = false;
         NBTTagCompound data = next.data;
         if (!busy() && (data.getInteger("job") == 1 || data.getInteger("job") == 2)) {
             if (OWNER.begin("server", next.session + ":" + data.getLong("uiSequence"), "施工任务") != 0) {

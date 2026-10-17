@@ -38,12 +38,8 @@ final class HologramUiNetworkBindings {
     }
 
     String selectedNetworkGroup() {
-        NBTTagList cells = ui.session.state().data.getTagList("cells", 10);
-        for (int i = 0; i < cells.tagCount(); i++) {
-            NBTTagCompound row = cells.getCompoundTagAt(i);
-            if (row.getInteger("index") == ui.preview.selected()) return row.getString("networkGroup");
-        }
-        return "";
+        HologramState.Cell cell = ui.session.selectedCell();
+        return cell == null ? "" : cell.networkGroup;
     }
 
     void loadNetworkHintField() {

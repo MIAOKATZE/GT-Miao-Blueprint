@@ -251,7 +251,7 @@ gtmb.hologram.cut.storage.camera=Drag to rotate · Wheel to zoom
 gtmb.hologram.cut.storage.timeout=Preview timed out. Use Retry sync.
 gtmb.hologram.cut.storage.unavailable=Preview unavailable:
 gtmb.hologram.cut.storage.framebuffer=3D preview requires framebuffer support. Placement remains available.
-gtmb.hologram.cut.savedHint=Cut stored; select the next region. Esc exits; the cut list remains available from the workspace.
+gtmb.hologram.cut.savedHint=Cut stored; select the next region. Shift + right-click opens the cut list.
 
 gtmb.hologram.worldGuideSelectionBoth=Left: point 1 · Right: point 2
 gtmb.hologram.worldGuideSelectionFirst=Left: point 1
@@ -259,7 +259,7 @@ gtmb.hologram.worldGuideSelectionSecond=Right: point 2
 gtmb.hologram.worldGuideSelectionDone=Selected
 gtmb.hologram.worldGuideSelectionMore=More boxes · Left: point 1 · Right: point 2
 gtmb.hologram.worldGuideSelectionEdit=Left/right: adjust current corners · Shift+Alt+right: more boxes
-gtmb.hologram.worldGuideSelectionKeys=Arrows: move · Alt+Up/Down: vertical · Scroll: current box · Delete: remove · Ctrl+Z: undo
+gtmb.hologram.worldGuideSelectionKeys=Arrows: move · Alt+Up/Down: vertical · Scroll: hotbar · Delete: remove · Ctrl+Z: undo
 gtmb.hologram.progress.area.declaration_memberships=Index declared cells and memberships
 gtmb.hologram.progress.area.networks=Capture network groups
 gtmb.hologram.progress.area.canonicalize=Prepare blueprint data

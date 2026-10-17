@@ -123,6 +123,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected void activateNative(int id) {
+        ui.shortcuts.activity();
         ui.memory.initialEditHint(ui.memory.savedEditHint(false));
         ui.memory.rememberGuidance();
         ui.router.activate(id);
@@ -146,6 +147,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             && key != org.lwjgl.input.Keyboard.KEY_NUMPADENTER) return false;
         ui.router.keyTyped(character, key);
         return true;
+    }
+
+    @Override
+    protected void muiActivity() {
+        ui.shortcuts.activity();
     }
 
     @Override

@@ -669,6 +669,23 @@ public final class HologramSnapshotPublishRegression {
             SimpleAssert.that(
                 selectionReceipt().getBoolean("workspaceHasCapture") && !HologramSnapshotPreparation.pending(s),
                 "opening a million-cell draft emits only UI facts");
+            SimpleAssert.that(
+                !selectionReceipt().hasKey("presets"),
+                "ordinary workspace openings do not load or republish the local catalog");
+            NBTTagList catalog = new NBTTagList();
+            NBTTagCompound saved = new NBTTagCompound();
+            saved.setString("id", "existing-local-blueprint");
+            saved.setString("name", "Existing local blueprint");
+            catalog.appendTag(saved);
+            HologramSnapshots.sendUi(s, catalog);
+            SimpleAssert.eq(
+                catalog,
+                selectionReceipt().getTagList("presets", 10),
+                "an explicit library refresh publishes its labels on the actual lightweight wire receipt");
+            SimpleAssert.that(
+                !selectionReceipt().hasKey("cells") && !HologramSnapshotPreparation.pending(s),
+                "catalog publication does not read million-cell geometry or prepare a full snapshot");
+            s.openPurpose = "blueprintBrowse";
             HologramSnapshotPreparation.start(s);
             NBTTagCompound invalidPoint = new NBTTagCompound();
             invalidPoint.setString("session", s.id);

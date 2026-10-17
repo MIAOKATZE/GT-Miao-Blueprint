@@ -97,7 +97,7 @@ final class HologramUiPreview {
 
     int previewHeight() {
         return HologramScreenLayout
-            .previewHeight(ui.library.libraryDrawer(), HologramGuidance.authorWorkspace(ui.session.state().data));
+            .previewHeight(ui.library.libraryDrawer(), HologramGuidance.authorWorkspace(ui.session.state()));
     }
 
     void drawPreview(int mx, int my) {
@@ -151,6 +151,7 @@ final class HologramUiPreview {
         ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().minY, mx, my);
         ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().maxY, mx, my);
         if (this.selection.size() > 0) ui.canvas.text("选中 " + this.selection.size() + " 格", 186, 61, 100, 0xffe59b);
+        if (!ui.library.libraryDrawer()) ui.preview.drawMoveHandleControl(mx, my);
         if (!ui.library.libraryDrawer()) {
             ui.canvas.button(14, 38, 282, 66, 17, "复位视角", true, mx, my);
             ui.canvas.button(15, 106, 282, 74, 17, HologramClient.worldPreview ? "世界投影 ✓" : "世界投影 ×", true, mx, my);
@@ -219,6 +220,31 @@ final class HologramUiPreview {
             && ui.session.state().data.getBoolean("supported")
             && ui.session.editable()
             && this.selection.movable(ui.session.state());
+    }
+
+    void drawMoveHandleControl(int mx, int my) {
+        ui.canvas.button(
+            147,
+            310,
+            55,
+            126,
+            17,
+            "移动轴 (G) " + (this.moveHandles ? "✓" : "×"),
+            ui.preview.canMoveSelection() && ui.preview.previewInteractive(),
+            mx,
+            my);
+    }
+
+    String moveHandleReason() {
+        if (HologramBackgroundTasks.busy()) return "后台任务正在处理当前蓝图，完成后可使用移动轴。";
+        if (!ui.session.state().data.getBoolean("virtual")) return "真实控制器模式不能移动规划坐标；返回区域总览或打开蓝图后，完整选中结构再移动。";
+        if (!ui.session.editable()) return ui.session.editingReason();
+        if (!ui.session.state().data.getBoolean("supported")) return "结构尚未完整载入，暂不能移动。";
+        if (!ui.session.state().data.getBoolean("geometryEditable")) return "当前蓝图尚未开放坐标编辑。";
+        if (this.selection.size() == 0) return "先点击结构轮廓完整选中结构，或选择可独立编辑的方块。";
+        if (!this.selection.movable(ui.session.state())) return "当前选区未包含完整结构；点击结构轮廓整选后可使用移动轴。";
+        if (!ui.preview.previewInteractive()) return "先关闭当前编辑窗口，再使用预览中的移动轴。";
+        return this.moveHandles ? "移动轴已开启；拖动彩色轴移动，按住 Ctrl 开始拖动即复制。" : "移动轴已关闭；点击此按钮或按 G 重新显示。";
     }
 
     int[] emptyVoxelAt(int mx, int my) {
@@ -778,7 +804,8 @@ final class HologramUiPreview {
                 if (ui.session.editable()) HologramClient.beginAreaSelection();
                 return true;
             case 147:
-                this.moveHandles = !this.moveHandles;
+                if (ui.preview.canMoveSelection() && ui.preview.previewInteractive())
+                    this.moveHandles = !this.moveHandles;
                 return true;
             case 108:
                 ui.preview.editAction("editUndo");
@@ -1139,6 +1166,10 @@ final class HologramUiPreview {
 
     boolean allLayers() {
         return this.allLayers;
+    }
+
+    boolean boxSelecting() {
+        return this.boxSelecting;
     }
 
     boolean boxSelecting(boolean value) {

@@ -343,7 +343,7 @@ final class HologramUiDiagnostics {
         result.setIntArray(
             "confirmationBounds",
             ui.review.confirmation() ? ui.review.lastConfirmationBounds() : new int[0]);
-        result.setBoolean("authorWorkspace", HologramGuidance.authorWorkspace(ui.session.state().data));
+        result.setBoolean("authorWorkspace", HologramGuidance.authorWorkspace(ui.session.state()));
         result.setBoolean("selectedSavedBlueprint", ui.library.selectedPresetExists());
         result.setString("cacheReviewSummary", ui.review.lastCacheReviewSummary());
         result.setBoolean("emptyCacheReview", ui.review.lastEmptyCacheReview());

@@ -168,8 +168,8 @@ final class HologramUiMemory {
             if ((id == 149 || id == 130) && !ui.library.libraryDrawer() && !this.initialEditHint) return 0x80efaa;
             if (id == 148 && ui.library.libraryDrawer() && this.savedEditHint && !this.structureVisited)
                 return 0x68dded;
-            if (id == 220 && HologramGuidance.authorWorkspace(ui.session.state().data)
-                && !ui.processing.processingReady()) return 0x80efaa;
+            if (id == 220 && HologramGuidance.authorWorkspace(ui.session.state()) && !ui.processing.processingReady())
+                return 0x80efaa;
             if ((id == 140 || id == 221) && ui.library.libraryDrawer()
                 && ui.processing.processingReady()
                 && ui.session.state().data.getBoolean("blueprintDirty")) return 0x80efaa;

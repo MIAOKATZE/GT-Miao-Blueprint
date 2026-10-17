@@ -29,6 +29,7 @@ public final class HologramClientLibraryRegression {
             exerciseSaveReadbackReuse();
             exerciseSaveMessages();
             exerciseSaveRequest();
+            HologramLibrarySaveLifecycleRegression.run();
             exerciseQuickFence();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);

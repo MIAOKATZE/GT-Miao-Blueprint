@@ -99,6 +99,8 @@ final class HologramUiLibrary {
 
     private int deferredLibraryAction = -1;
 
+    private String deferredLibraryTargetId = "";
+
     private boolean discardReview;
 
     private boolean discardConfirmed;
@@ -182,11 +184,20 @@ final class HologramUiLibrary {
     void acceptSourceSwitchProposal() {
         NBTTagCompound proposal = ui.session.state().data.getCompoundTag("discardTargetAction");
         String operation = proposal.getString("op");
+        if (operation.isEmpty() && presetSwitchOperation(ui.session.state().data.getString("discardTargetOp"))) {
+            proposal = new NBTTagCompound();
+            proposal.setString("op", ui.session.state().data.getString("discardTargetOp"));
+            proposal.setString("presetId", ui.session.state().data.getString("discardTargetId"));
+            operation = proposal.getString("op");
+        }
         if (ui.session.state().data.getBoolean("discardConfirmationRequired")
-            && ("openController".equals(operation) || "importArea".equals(operation))) {
+            && ("openController".equals(operation) || "importArea".equals(operation)
+                || presetSwitchOperation(operation) && !proposal.getString("presetId")
+                    .isEmpty())) {
             this.sourceSwitchProposal = (NBTTagCompound) proposal.copy();
             this.discardReview = true;
             this.deferredLibraryAction = -1;
+            this.deferredLibraryTargetId = "";
         } else if (this.sourceSwitchProposal != null) {
             this.sourceSwitchProposal = null;
             this.discardReview = false;
@@ -557,7 +568,7 @@ final class HologramUiLibrary {
 
     void drawBlueprintWorkbench(int mx, int my) {
         ui.canvas.drawLocalPlanProgress(41, 260, 395, mx, my);
-        if (!HologramGuidance.authorWorkspace(ui.session.state().data)) {
+        if (!HologramGuidance.authorWorkspace(ui.session.state())) {
             drawRect(35, HologramScreenLayout.LIBRARY_FOOTER_Y, 442, 259, 0xf0172f36);
             ui.canvas.text(
                 ui.library.selectedPresetExists() ? "已保存蓝图 · 点击绿色“放置所选蓝图”进入世界定位" : "从右侧列表选择已保存蓝图",
@@ -652,8 +663,8 @@ final class HologramUiLibrary {
         ui.canvas.text(
             this.overwriteReview ? "目标：" + this.overwriteTarget
                 : this.sourceSwitchProposal != null
-                    ? "将导入："
-                        + ("openController".equals(this.sourceSwitchProposal.getString("op")) ? "新控制器结构" : "新的框选区域")
+                    ? "将导入：" + ("openController".equals(this.sourceSwitchProposal.getString("op")) ? "新控制器结构"
+                        : "importArea".equals(this.sourceSwitchProposal.getString("op")) ? "新的框选区域" : "所选蓝图")
                     : "取消可返回编辑并先保存蓝图",
             96,
             163,
@@ -887,6 +898,7 @@ final class HologramUiLibrary {
             }
             this.discardReview = this.overwriteReview = ui.processing.processingPresetSaveReview(false);
             this.deferredLibraryAction = -1;
+            this.deferredLibraryTargetId = "";
             return true;
         }
         return false;
@@ -927,17 +939,63 @@ final class HologramUiLibrary {
                 NBTTagCompound proposal = (NBTTagCompound) this.sourceSwitchProposal.copy();
                 this.sourceSwitchProposal = null;
                 proposal.setBoolean("confirmDiscard", true);
-                ui.session.send(proposal.getString("op"), proposal, true);
+                if (presetSwitchOperation(proposal.getString("op")))
+                    sendPresetSwitch(proposal.getString("op"), proposal.getString("presetId"), true);
+                else ui.session.send(proposal.getString("op"), proposal, true);
                 return true;
             }
             this.discardConfirmed = true;
             int action = this.deferredLibraryAction;
+            String target = this.deferredLibraryTargetId;
             this.deferredLibraryAction = -1;
-            ui.router.activate(action);
+            this.deferredLibraryTargetId = "";
+            if (action == 139 || action == 141 || action >= 14000 && action < 15000) {
+                if (target.isEmpty()) ui.session.notice("所选蓝图已变化，请重新选择");
+                else sendPresetSwitch(
+                    action == 139 ? "editPreset" : action == 141 ? "choosePlacementPreset" : "previewPreset",
+                    target,
+                    true);
+            } else ui.router.activate(action);
             this.discardConfirmed = false;
             return true;
         }
         return false;
+    }
+
+    private static boolean presetSwitchOperation(String operation) {
+        return "previewPreset".equals(operation) || "editPreset".equals(operation)
+            || "choosePlacementPreset".equals(operation);
+    }
+
+    private void sendPresetSwitch(String operation, String target, boolean confirmDiscard) {
+        if ("editPreset".equals(operation)) {
+            blueprintTab = libraryDrawer = true;
+            if (presetNameField != null) presetNameField.setFocused(false);
+        }
+        if (HologramLibraryClient.dedicated()) {
+            HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+            // Public IDs already carry their namespace; a refreshed view cannot redirect a confirmed local target.
+            boolean publicTarget = target.startsWith("public_");
+            publicLibrary = publicTarget;
+            library.select(publicTarget, target);
+            if (!"choosePlacementPreset".equals(operation))
+                rememberLibraryNavigation(target, "editPreset".equals(operation) ? "blueprintEdit" : "blueprintBrowse");
+            else cancelLibraryNavigation();
+            if (!publicTarget) {
+                library.sendLocal(
+                    ui.session.state(),
+                    "editPreset".equals(operation) ? "edit"
+                        : "choosePlacementPreset".equals(operation) ? "place" : "preview",
+                    false,
+                    confirmDiscard);
+                return;
+            }
+        }
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("presetId", target);
+        request.setBoolean("confirmDiscard", confirmDiscard);
+        keepLibraryOffset = true;
+        ui.session.send(operation, request, true);
     }
 
     boolean toggleOverwriteMode(int id) {
@@ -960,6 +1018,8 @@ final class HologramUiLibrary {
             if (!ui.session.editable()) return true;
             this.discardReview = true;
             this.deferredLibraryAction = id;
+            this.deferredLibraryTargetId = "";
+            this.sourceSwitchProposal = null;
             return true;
         }
         boolean rowSelection = id >= 14000 && id < 15000;
@@ -969,6 +1029,15 @@ final class HologramUiLibrary {
             && !this.discardConfirmed) {
             this.discardReview = true;
             this.deferredLibraryAction = id;
+            this.sourceSwitchProposal = null;
+            if (rowSelection) this.deferredLibraryTargetId = (HologramLibraryClient.dedicated()
+                ? HologramLibraryClient.INSTANCE.rows(this.publicLibrary)
+                : ui.session.state().data.getTagList("presets", 10)).getCompoundTagAt(id - 14000)
+                    .getString("id");
+            else this.deferredLibraryTargetId = id == 139 || id == 141
+                ? HologramLibraryClient.dedicated() ? HologramLibraryClient.INSTANCE.selected(this.publicLibrary)
+                    : ui.session.state().data.getString("selectedPresetId")
+                : "";
             return true;
         }
         if (this.overwriteMode && id >= 14000 && id < 15000) {
@@ -1254,10 +1323,23 @@ final class HologramUiLibrary {
             waiting,
             !HologramDraftNameMemory.sameSource(ui.session.state().data, next.data),
             canonical,
-            presetSaveSequence >= 0 && next.data.getLong("uiSequence") >= presetSaveSequence
-                && !next.data.getBoolean("blueprintSavePending"),
+            saveAcknowledged(next.data, presetSaveSequence),
             offset,
             ui.session.state().data.getString("selectedPresetId"));
+    }
+
+    private static boolean saveAcknowledged(NBTTagCompound snapshot, long sequence) {
+        String operation = snapshot.getString("blueprintOperation");
+        return sequence >= 0 && snapshot.hasKey("uiSequence", 4)
+            && snapshot.getLong("uiSequence") == sequence
+            && (HologramLibraryClient.saveOperation(operation) || "deletePreset".equals(operation))
+            && !snapshot.getBoolean("blueprintSavePending")
+            && !snapshot.getBoolean("snapshotPending")
+            && !snapshot.getBoolean("workspaceUiOnly")
+            && !HologramLibraryClient.SaveCommand.reviewPending(
+                snapshot,
+                snapshot.getCompoundTag("aeSaveReview")
+                    .getLong("clientTaskToken"));
     }
 
     void restoreSession(HologramState next, SnapshotTransition change) {
@@ -1281,7 +1363,6 @@ final class HologramUiLibrary {
         }
         boolean saved = change.saveAck && !newSession;
         if (saved) {
-            if (!next.data.getBoolean("blueprintOperationSuccess")) HologramLibraryClient.INSTANCE.cancelDraftReview();
             presetSaveSequence = -1;
             libraryResult = next.data.getString("status");
             ui.session.notice(libraryResult);
@@ -1428,6 +1509,7 @@ final class HologramUiLibrary {
         state.setString("overwriteTarget", overwriteTarget);
         state.setString("overwriteName", overwriteName);
         state.setInteger("deferredLibraryAction", deferredLibraryAction);
+        state.setString("deferredLibraryTargetId", deferredLibraryTargetId);
         state.setBoolean("discardReview", discardReview);
         state.setBoolean("discardConfirmed", discardConfirmed);
         state.setBoolean("keepLibraryOffset", keepLibraryOffset);
@@ -1454,6 +1536,7 @@ final class HologramUiLibrary {
         overwriteTarget = state.getString("overwriteTarget");
         overwriteName = state.getString("overwriteName");
         deferredLibraryAction = state.getInteger("deferredLibraryAction");
+        deferredLibraryTargetId = state.getString("deferredLibraryTargetId");
         discardReview = state.getBoolean("discardReview");
         discardConfirmed = state.getBoolean("discardConfirmed");
         keepLibraryOffset = state.getBoolean("keepLibraryOffset");
@@ -1482,6 +1565,7 @@ final class HologramUiLibrary {
             discardReview = false;
             discardConfirmed = false;
             deferredLibraryAction = -1;
+            deferredLibraryTargetId = "";
         }
         // A source proposal may have arrived while the screen was closed. The current server snapshot wins.
         acceptSourceSwitchProposal();

@@ -475,11 +475,11 @@ final class HologramUiProcessing {
     boolean activateProcessing(int id) {
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         if (id == 297) {
-            if (HologramGuidance.authorWorkspace(ui.session.state().data) && ui.session.editable()) reopenProcessing();
+            if (HologramGuidance.authorWorkspace(ui.session.state()) && ui.session.editable()) reopenProcessing();
             return true;
         }
         if (id == 220) {
-            if (!HologramGuidance.authorWorkspace(ui.session.state().data)) return true;
+            if (!HologramGuidance.authorWorkspace(ui.session.state())) return true;
             openProcessing(ui.session.state().data.getBoolean("processingResumeAllowed"));
             reprocessCurrent = false;
             return true;

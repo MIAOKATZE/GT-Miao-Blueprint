@@ -370,12 +370,6 @@ final class HologramCutClient {
         selection = null;
     }
 
-    boolean selectionWheel(int wheel) {
-        if (!selecting() || !held() || mc().currentScreen != null || selection == null) return false;
-        selection.cycle(wheel > 0 ? -1 : 1);
-        return true;
-    }
-
     NBTTagCompound selectionSnapshot() {
         return selecting() && held() && selection != null ? selection.snapshot() : null;
     }
@@ -774,7 +768,7 @@ final class HologramCutClient {
             lines.add(
                 HologramClient.text(
                     "worldGuideSelectionKeys",
-                    "Arrows: move · Alt+Up/Down: vertical · Scroll: current box · Delete: remove · Ctrl+Z: undo"));
+                    "Arrows: move · Alt+Up/Down: vertical · Scroll: hotbar · Delete: remove · Ctrl+Z: undo"));
         }
         if (active() && !selecting()) {
             lines.add(poseSummary());

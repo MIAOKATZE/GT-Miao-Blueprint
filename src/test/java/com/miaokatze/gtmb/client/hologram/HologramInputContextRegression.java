@@ -10,6 +10,7 @@ public final class HologramInputContextRegression {
     public static void run() {
         HologramWorldTargetRegression.run();
         selectionHints();
+        controllerProjectionContext();
         Object world = new Object(), item = new Object(), stack = new Object();
         HologramInputContext context = new HologramInputContext();
         HologramWorldFlow.UsePressFence fence = new HologramWorldFlow.UsePressFence();
@@ -51,6 +52,39 @@ public final class HologramInputContextRegression {
             HologramWorldGuide.highlight("区域框选 · Ctrl+Shift 减选 · Esc 退出", "\u00a7b")
                 .contains("\u00a7eCtrl+Shift\u00a7r\u00a7b"),
             "world guidance colors complete shortcuts without splitting their modifiers");
+    }
+
+    private static void controllerProjectionContext() {
+        net.minecraft.nbt.NBTTagCompound data = new net.minecraft.nbt.NBTTagCompound();
+        data.setString("session", "controller-preview");
+        HologramState idle = new HologramState(data);
+        SimpleAssert.that(
+            !HologramInputContext.worldProjection(idle, false, false),
+            "closing the controller UI and switching tools immediately hides its cached world ghost");
+        SimpleAssert.that(
+            HologramInputContext.worldProjection(idle, true, false),
+            "holding the projector preserves its enabled world preview");
+        SimpleAssert.that(
+            HologramInputContext.worldProjection(idle, false, true),
+            "the related projector UI retains the controller preview context");
+        for (int job : new int[] { 1, 2 }) {
+            data.setInteger("job", job);
+            SimpleAssert.that(
+                HologramInputContext.worldProjection(new HologramState(data), false, false),
+                "active and paused construction retain their existing world projection lifetime");
+        }
+        for (int job : new int[] { 3, 4, 5 }) {
+            data.setInteger("job", job);
+            SimpleAssert.that(
+                !HologramInputContext.worldProjection(new HologramState(data), false, false),
+                "terminal controller jobs do not retain an abandoned tool projection");
+        }
+        data.setBoolean("virtual", true);
+        data.setBoolean("virtualPlacement", true);
+        data.setInteger("job", 0);
+        SimpleAssert.that(
+            HologramInputContext.worldProjection(new HologramState(data), false, false),
+            "virtual blueprint placement still uses its existing placement-specific visibility gates");
     }
 
     private static void selectionHints() {

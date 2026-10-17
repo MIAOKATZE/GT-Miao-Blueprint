@@ -294,18 +294,7 @@ public final class HologramClient {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
         if (HologramBackgroundTasks.busy()) return;
-        if (event.dwheel != 0 && projectorWorld() && !altHeld()) {
-            if (HologramCutClient.INSTANCE.selectionWheel(event.dwheel)) {
-                event.setCanceled(true);
-                return;
-            }
-            if (localArea != null && areaProjectorWorld() && !localAreaFinishing) {
-                localArea.cycle(event.dwheel > 0 ? -1 : 1);
-                localAreaView = null;
-                event.setCanceled(true);
-                return;
-            }
-        }
+        // Plain wheel retains the vanilla hotbar; only Alt-distance adjustment owns a wheel event.
         if (event.dwheel == 0 || !projectorWorld()
             || !HologramCutClient.INSTANCE.aiming()
                 && (worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
@@ -434,7 +423,7 @@ public final class HologramClient {
             lines.add(
                 text(
                     "worldGuideSelectionKeys",
-                    "Arrows: move · Alt+Up/Down: vertical · Scroll: current box · Delete: remove · Ctrl+Z: undo"));
+                    "Arrows: move · Alt+Up/Down: vertical · Scroll: hotbar · Delete: remove · Ctrl+Z: undo"));
         }
         if (stage == HologramWorldFlow.Stage.MOVING || stage == HologramWorldFlow.Stage.AREA) {
             int[] anchor = stage == HologramWorldFlow.Stage.AREA ? areaSelectionAnchor() : movingAnchor(state);
@@ -1151,7 +1140,7 @@ public final class HologramClient {
             if (mc.currentScreen instanceof HologramSettingsScreen && same)
                 ((HologramSettingsScreen) mc.currentScreen).updateState(next);
             else mc.displayGuiScreen(new HologramSettingsScreen(next));
-        } else if (nbt.getBoolean("virtual") && nbt.getBoolean("virtualPlacement") && !nbt.getBoolean("open")) {
+        } else if (HologramPlacementReviewContext.returnToWorld(nbt)) {
             if (mc.currentScreen instanceof HologramScreen) {
                 HologramScreen screen = (HologramScreen) mc.currentScreen;
                 if (same && screen.retainsPlacementReview(next)) screen.updateState(next);
@@ -1288,6 +1277,10 @@ public final class HologramClient {
             HologramAreaOverlay.render(state, event.partialTicks);
         if (!worldPreview || state.data.getInteger("job") == 4) return;
         if (state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement")) return;
+        if (!HologramInputContext.worldProjection(
+            state,
+            com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(mc.thePlayer.getHeldItem()),
+            mc.currentScreen instanceof HologramScreen || mc.currentScreen instanceof HologramSettingsScreen)) return;
         // Avoid stale projection after disconnect/reconnect or travelling away from the target.
         if (state.distanceSquared(mc.thePlayer.posX, mc.thePlayer.posY, mc.thePlayer.posZ) > 4096
             && !(state.data.getBoolean("virtual") && state.data.getBoolean("moving"))) return;

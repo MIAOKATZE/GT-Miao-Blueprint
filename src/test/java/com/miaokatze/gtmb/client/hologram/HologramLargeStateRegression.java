@@ -33,6 +33,55 @@ public final class HologramLargeStateRegression {
         preparation(state);
         regionInvalidation();
         areaSelectionReceipts(state);
+        localCatalogReceipts();
+    }
+
+    private static void localCatalogReceipts() {
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setString("session", "empty-workspace");
+        receipt.setString("generation", "empty-workspace");
+        receipt.setBoolean("areaSelectionOnly", true);
+        receipt.setBoolean("workspaceUiOnly", true);
+        receipt.setBoolean("open", true);
+        receipt.setLong("areaSelectionSequence", 1);
+        HologramState shell = HologramState.apply(null, receipt);
+        SimpleAssert.eq(
+            0,
+            shell.data.getTagList("presets", 10)
+                .tagCount(),
+            "new UI shell has no cached catalog");
+
+        NBTTagCompound refreshed = (NBTTagCompound) receipt.copy();
+        refreshed.setBoolean("open", false);
+        refreshed.setLong("areaSelectionSequence", 2);
+        NBTTagList labels = new NBTTagList();
+        NBTTagCompound saved = new NBTTagCompound();
+        saved.setString("id", "saved-before-world-reload");
+        labels.appendTag(saved);
+        refreshed.setTag("presets", labels);
+        HologramState listed = HologramState.apply(shell, refreshed);
+        SimpleAssert.eq(
+            labels,
+            listed.data.getTagList("presets", 10),
+            "explicit catalog refresh fills an empty shell through the real lightweight merge");
+        SimpleAssert.that(
+            listed.cells == shell.cells && listed.parsedCells == 0 && !listed.data.getBoolean("snapshotPending"),
+            "catalog labels do not request or reparse world geometry");
+
+        receipt.setLong("areaSelectionSequence", 3);
+        receipt.setString("status", "蓝图库刷新失败：fixture read error");
+        HologramState failed = HologramState.apply(listed, receipt);
+        SimpleAssert.eq(
+            labels,
+            failed.data.getTagList("presets", 10),
+            "a later refresh failure without labels preserves the last known catalog");
+        refreshed.setLong("areaSelectionSequence", 4);
+        refreshed.setTag("presets", new NBTTagList());
+        SimpleAssert.eq(
+            0,
+            HologramState.apply(failed, refreshed).data.getTagList("presets", 10)
+                .tagCount(),
+            "a successful explicitly empty catalog remains distinguishable from refresh failure");
     }
 
     private static void areaSelectionReceipts(HologramState full) {

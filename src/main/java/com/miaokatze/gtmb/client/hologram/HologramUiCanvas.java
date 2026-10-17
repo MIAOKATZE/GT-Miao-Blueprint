@@ -201,6 +201,7 @@ final class HologramUiCanvas {
     }
 
     String disabledReason(int id) {
+        if (id == 147) return ui.preview.moveHandleReason();
         if (localPlanBlockedControl(id)) return localPlanReason(ui.session.state().data);
         if (HologramBackgroundTasks.busy() && id != 990 && id != 991 && id != 992)
             return "后台任务正在处理当前蓝图，请等待完成或主动取消任务后继续编辑。";
@@ -246,6 +247,9 @@ final class HologramUiCanvas {
 
     String controlHelp(int id) {
         switch (id) {
+            case 147:
+                return ui.preview.canMoveSelection() && ui.preview.previewInteractive() ? ui.preview.moveHandleReason()
+                    : "显示或隐藏移动轴（G）；仅移动蓝图规划，不立即施工。";
             case 146:
                 return "编辑当前所选格的提示词；支持 Ctrl 多选、Shift 框选，可切换全局、方块或提示区范围。";
             case 148:

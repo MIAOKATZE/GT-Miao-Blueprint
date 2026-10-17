@@ -23,6 +23,7 @@ final class HologramUiRouter {
     }
 
     void initGui() {
+        ui.shortcuts.activity();
         ui.library.prepareInitialization();
         Keyboard.enableRepeatEvents(true);
         ui.shortcuts.loadBindings();
@@ -132,6 +133,7 @@ final class HologramUiRouter {
     }
 
     void drawScreen(int mouseX, int mouseY, float ticks) {
+        ui.shortcuts.observePointer(mouseX, mouseY);
         ui.preview.movePreviewCamera();
         ui.host.renderBackground();
         int mx = ui.canvas.localX(mouseX), my = ui.canvas.localY(mouseY);
@@ -449,7 +451,7 @@ final class HologramUiRouter {
                                 : ui.review.constructionScopeHint())
                     : guidance;
             if (!ui.library.libraryDrawer() && !ui.review.confirmation()
-                && HologramGuidance.authorWorkspace(ui.session.state().data)
+                && HologramGuidance.authorWorkspace(ui.session.state())
                 && ui.session.state().data.getBoolean("virtual"))
                 footerGuide = ui.memory.initialEditHint() ? "可微调蓝图结构；点击、选格或修改后前往蓝图设置" : "结构调整完成后，前往蓝图设置处理并保存";
             ui.canvas.text(footerGuide, 35, 306, HologramUiCanvas.viewportWidth - 4, 0x8bdddf);
@@ -486,6 +488,7 @@ final class HologramUiRouter {
                 ui.library.drawBlueprintSwitchReview(mx, my);
             }
             if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) drawTaskStatus(mx, my);
+            ui.shortcuts.drawIdleHints();
             if (ui.canvas.tooltip() != null && !ui.library.saveGuidanceOpen())
                 ui.host.renderTooltip(ui.canvas.tooltip(), mx, my, ui.host.font());
         } finally {
@@ -530,6 +533,7 @@ final class HologramUiRouter {
     }
 
     void mouseClicked(int x, int y, int button) {
+        ui.shortcuts.activity();
         int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (button == 0) for (Control control : ui.canvas.controls())
@@ -590,16 +594,19 @@ final class HologramUiRouter {
     }
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
+        ui.shortcuts.activity();
         if (HologramBackgroundTasks.busy()) return;
         ui.preview.mouseClickMove(x, y, button, elapsed);
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
+        ui.shortcuts.activity();
         if (HologramBackgroundTasks.busy()) return;
         ui.preview.mouseMovedOrUp(x, y, button);
     }
 
     void handleMouseInput() {
+        ui.shortcuts.activity();
         if (HologramBackgroundTasks.busy()) return;
 
         if (ui.bindings.networkDrawer()) return;
@@ -672,6 +679,7 @@ final class HologramUiRouter {
     }
 
     void keyTyped(char c, int key) {
+        ui.shortcuts.activity();
         if (ui.library.consumeSaveGuidanceKey(key)) return;
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) closeRoot();
