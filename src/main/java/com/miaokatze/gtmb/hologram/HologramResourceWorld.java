@@ -172,6 +172,13 @@ final class HologramResourceWorld extends World {
     }
 
     @Override
+    public int getBlockLightOpacity(int x, int y, int z) {
+        // Reporting parts query neighboring opacity while their native reader attaches them. World's default
+        // implementation dereferences a real Chunk, which this read-only, single-cell world never provides.
+        return getBlock(x, y, z).getLightOpacity(this, x, y, z);
+    }
+
+    @Override
     public TileEntity getTileEntity(int x, int y, int z) {
         return blockExists(x, y, z) ? tile : null;
     }

@@ -16,6 +16,7 @@ public final class HologramAnnotationMarkersRegression {
         quantumGroupsRoundTrip();
         blockerSeveritySurvivesAggregation();
         resourceBlockersHaveIndependentMarker();
+        markerPlacementStaysInsidePreview();
         NBTTagCompound data = new NBTTagCompound();
         data.setString("blueprintPrompt", "Foundation first");
         NBTTagList cells = new NBTTagList();
@@ -53,6 +54,43 @@ public final class HologramAnnotationMarkersRegression {
         SimpleAssert.that(
             structure.contains(100, 80) && !structure.contains(120, 80),
             "only the miniature marker opens its annotation tooltip");
+    }
+
+    private static void markerPlacementStaysInsidePreview() {
+        for (boolean author : new boolean[] { false, true }) {
+            int bottom = HologramScreenLayout.VIEWPORT_Y + HologramScreenLayout.previewHeight(true, author);
+            List<HologramAnnotationMarkers.Marker> shown = new java.util.ArrayList<>();
+            boolean overflow = false;
+            for (int index = 0; index < 20; index++) {
+                HologramAnnotationMarkers.Marker marker = new HologramAnnotationMarkers.Marker(
+                    "cell:" + index,
+                    "native issue",
+                    "details remain in the full report",
+                    null);
+                marker.x = 100;
+                marker.y = 80;
+                if (HologramAnnotationMarkers.place(marker, shown, bottom)) {
+                    SimpleAssert.that(marker.y + 7 <= bottom, "collision layout never enters the footer");
+                    for (HologramAnnotationMarkers.Marker previous : shown) SimpleAssert
+                        .that(Math.abs(marker.y - previous.y) >= 14, "visible icons stay independently clickable");
+                    shown.add(marker);
+                } else overflow = true;
+            }
+            SimpleAssert.that(!shown.isEmpty() && overflow, "dense issues exhaust preview space without escaping it");
+        }
+        List<HologramAnnotationMarkers.Marker> unsorted = new java.util.ArrayList<>();
+        for (int y : new int[] { 130, 100, 115 }) {
+            HologramAnnotationMarkers.Marker previous = new HologramAnnotationMarkers.Marker("cell:" + y, "", "", null);
+            previous.x = 100;
+            previous.y = y;
+            unsorted.add(previous);
+        }
+        HologramAnnotationMarkers.Marker shifted = new HologramAnnotationMarkers.Marker("new", "", "", null);
+        shifted.x = 100;
+        shifted.y = 105;
+        SimpleAssert.that(HologramAnnotationMarkers.place(shifted, unsorted, 219), "available lower slot is found");
+        SimpleAssert
+            .eq(145, shifted.y, "a shift rechecks earlier icons instead of colliding with an already visited row");
     }
 
     private static void quantumGroupsRoundTrip() {

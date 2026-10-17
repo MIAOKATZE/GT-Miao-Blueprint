@@ -95,7 +95,13 @@ final class HologramUiPreview {
 
     private long pendingSelectionSequence = -1;
 
+    int previewHeight() {
+        return HologramScreenLayout
+            .previewHeight(ui.library.libraryDrawer(), HologramGuidance.authorWorkspace(ui.session.state().data));
+    }
+
     void drawPreview(int mx, int my) {
+        int height = previewHeight();
         HologramRenderer.selection = this.selection;
         HologramRenderer.showEmptyCells = this.inventory || ui.position.positionDrawer()
             || ui.preview.airSelectionHeld();
@@ -105,7 +111,7 @@ final class HologramUiPreview {
             HologramUiCanvas.viewportX,
             HologramUiCanvas.viewportY,
             HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth,
-            HologramUiCanvas.viewportY + HologramUiCanvas.viewportHeight,
+            HologramUiCanvas.viewportY + height,
             0xff0c1e28);
         int factor = new net.minecraft.client.gui.ScaledResolution(
             ui.host.minecraft(),
@@ -115,18 +121,17 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         GL11.glScissor(
             Math.round((ui.canvas.originX() + HologramUiCanvas.viewportX * ui.canvas.scale()) * factor),
-            ui.host.minecraft().displayHeight - Math.round(
-                (ui.canvas.originY()
-                    + (HologramUiCanvas.viewportY + HologramUiCanvas.viewportHeight) * ui.canvas.scale()) * factor),
+            ui.host.minecraft().displayHeight - Math
+                .round((ui.canvas.originY() + (HologramUiCanvas.viewportY + height) * ui.canvas.scale()) * factor),
             Math.round(HologramUiCanvas.viewportWidth * ui.canvas.scale() * factor),
-            Math.round(HologramUiCanvas.viewportHeight * ui.canvas.scale() * factor));
+            Math.round(height * ui.canvas.scale() * factor));
         try {
             this.hovered = HologramRenderer.preview(
                 ui.session.state(),
                 HologramUiCanvas.viewportX,
                 HologramUiCanvas.viewportY,
                 HologramUiCanvas.viewportWidth,
-                HologramUiCanvas.viewportHeight,
+                height,
                 this.yaw,
                 this.pitch,
                 this.zoom,
@@ -601,7 +606,9 @@ final class HologramUiPreview {
 
     boolean previewBlockedAt(int x, int y) {
         if (!ui.annotations.pinnedAnnotation()
-            .isEmpty() && ui.canvas.inViewport(x, y) && y >= 219 && y < 279) return true;
+            .isEmpty() && ui.canvas.inViewport(x, y)
+            && y >= ui.annotations.pinnedAnnotationTop()
+            && y < ui.annotations.pinnedAnnotationTop() + 60) return true;
         if (this.inventory) return x >= 157 && x < 405 && y >= 59 && y < 257;
         return ui.canvas.inPanel(x, y);
     }

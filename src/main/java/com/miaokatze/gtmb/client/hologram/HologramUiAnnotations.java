@@ -118,6 +118,7 @@ final class HologramUiAnnotations {
             this.annotationMarkers = HologramAnnotationMarkers.collect(ui.session.state());
         }
         this.visibleMarkers.clear();
+        int markerBottom = Math.min(267, HologramUiCanvas.viewportY + ui.preview.previewHeight());
         int globalMarkerSlot = 0;
         for (HologramAnnotationMarkers.Marker marker : this.annotationMarkers) {
             if (marker.bounds == null) {
@@ -133,11 +134,8 @@ final class HologramUiAnnotations {
                     || marker.x >= HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 8
                     || marker.y < 80
                     || marker.y >= 261) continue;
-                // Keep nearby markers independently clickable without covering the annotated voxel.
-                for (HologramAnnotationMarkers.Marker shown : this.visibleMarkers)
-                    if (Math.abs(marker.x - shown.x) < 14 && Math.abs(marker.y - shown.y) < 14) marker.y += 15;
-                if (marker.y >= 261) continue;
             }
+            if (!HologramAnnotationMarkers.place(marker, this.visibleMarkers, markerBottom)) continue;
             this.visibleMarkers.add(marker);
             int x = marker.x, y = marker.y;
             int color = marker.blocker ? 0xffff3b35
@@ -177,23 +175,24 @@ final class HologramUiAnnotations {
                 .listFormattedStringToWidth(pinned.prompt, HologramUiCanvas.viewportWidth - 20);
             this.pinnedAnnotationOffset = Math
                 .max(0, Math.min(this.pinnedAnnotationOffset, Math.max(0, lines.size() - 4)));
+            int panelTop = pinnedAnnotationTop();
             drawRect(
                 HologramUiCanvas.viewportX + 1,
-                219,
+                panelTop,
                 HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 1,
-                279,
+                panelTop + 60,
                 0xf0172f36);
             ui.canvas.text(
                 pinned.title + " · 滚轮查看 · Esc 收起",
                 HologramUiCanvas.viewportX + 8,
-                224,
+                panelTop + 5,
                 HologramUiCanvas.viewportWidth
                     - (pinned.key.startsWith("ae:") || pinned.key.startsWith("resource:") ? 108 : 32),
                 0xffe59b);
             if (pinned.key.startsWith("ae:")) ui.canvas.button(
                 184,
                 HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 104,
-                221,
+                panelTop + 2,
                 78,
                 15,
                 "AE 全部详情",
@@ -203,7 +202,7 @@ final class HologramUiAnnotations {
             if (pinned.key.startsWith("resource:")) ui.canvas.button(
                 297,
                 HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 104,
-                221,
+                panelTop + 2,
                 78,
                 15,
                 "处理阻塞",
@@ -212,18 +211,23 @@ final class HologramUiAnnotations {
                 my);
             drawRect(
                 HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 20,
-                221,
+                panelTop + 2,
                 HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 5,
-                234,
+                panelTop + 15,
                 0xff344d51);
-            ui.canvas.text("×", HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 16, 224, 9, 0xffe59b);
+            ui.canvas
+                .text("×", HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 16, panelTop + 5, 9, 0xffe59b);
             for (int i = 0; i < 4 && i + this.pinnedAnnotationOffset < lines.size(); i++) ui.canvas.text(
                 lines.get(i + this.pinnedAnnotationOffset),
                 HologramUiCanvas.viewportX + 8,
-                237 + i * 10,
+                panelTop + 18 + i * 10,
                 HologramUiCanvas.viewportWidth - 16,
                 0xb9d5d4);
         }
+    }
+
+    int pinnedAnnotationTop() {
+        return HologramScreenLayout.annotationPanelTop(ui.preview.previewHeight());
     }
 
     boolean toggleAnnotationAt(int mx, int my) {
@@ -234,8 +238,8 @@ final class HologramUiAnnotations {
             }
         if (!this.pinnedAnnotation.isEmpty() && mx >= HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 20
             && mx < HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 5
-            && my >= 221
-            && my < 234) {
+            && my >= pinnedAnnotationTop() + 2
+            && my < pinnedAnnotationTop() + 15) {
             this.pinnedAnnotation = "";
             return true;
         }
@@ -423,7 +427,9 @@ final class HologramUiAnnotations {
     }
 
     boolean consumePinnedAnnotationWheel(int wheel, int mx, int my) {
-        if (!this.pinnedAnnotation.isEmpty() && ui.canvas.inViewport(mx, my) && my >= 219 && my < 279) {
+        if (!this.pinnedAnnotation.isEmpty() && ui.canvas.inViewport(mx, my)
+            && my >= pinnedAnnotationTop()
+            && my < pinnedAnnotationTop() + 60) {
             this.pinnedAnnotationOffset = Math.max(0, this.pinnedAnnotationOffset + (wheel > 0 ? -1 : 1));
             return true;
         }

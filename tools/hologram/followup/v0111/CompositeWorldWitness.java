@@ -62,7 +62,13 @@ public final class CompositeWorldWitness {
             call(inventory,"func_70299_a",entry[0],stack);
         }
         Object projector=call(get(Class.forName("net.minecraft.item.Item"),"field_150901_e"),"func_82594_a","gtmb:neko_hologram_projector");
-        call(inventory,"func_70299_a",0,construct("net.minecraft.item.ItemStack",projector));set(inventory,"field_70461_c",0);
+        Object projectorStack=construct("net.minecraft.item.ItemStack",projector);
+        Object fixtureMaterials=construct("com.miaokatze.gtmb.hologram.HologramMaterials$Settings");
+        set(fixtureMaterials,"main",false);set(fixtureMaterials,"containers",false);set(fixtureMaterials,"me",true);
+        call(product("HologramMaterials"),"write",projectorStack,fixtureMaterials);
+        checkOnlyMeSettings(call(product("HologramMaterials"),"read",projectorStack),"new fixture projector roundtrip");
+        call(inventory,"func_70299_a",0,projectorStack);set(inventory,"field_70461_c",0);
+        putText(result,"materialSourceSetup","fixture presets only-ME through normal HologramMaterials.Settings/write on the fresh held projector before product sessions, import, target lock or quotes; source-selection UI is not exercised");
         call(get(actor,"field_71069_bz"),"func_75142_b");
         Object paymentReceipt=compound(seedReceipt,"paymentReceipt");
         int[] drivePosition=ints(paymentReceipt,"physicalDrivePosition");
@@ -135,6 +141,8 @@ public final class CompositeWorldWitness {
     }
     public void fundPlacement(String kind)throws Exception {
         check(funded.isEmpty(),"one finite supply outstanding");Object s=session();check((Boolean)get(s,"virtualPlacement")&&(Boolean)get(s,"virtualLocked"),"actual locked product placement");
+        checkOnlyMeSettings(get(s,"materialSettings"),"actual session before funding");
+        checkOnlyMeSettings(call(product("HologramMaterials"),"read",call(actor,"func_70694_bm")),"held projector before funding");
         int[] at=ints(manifest,kind);check((Integer)get(s,"x")==at[0]&&(Integer)get(s,"y")==at[1]&&(Integer)get(s,"z")==at[2],"exact canonical target");
         call(product("HologramResourcePlanner"),"refreshPlan",s);Object quote=get(s,"blueprintTotalResources");check(quote!=null,"actual server total quote");
         verifyPhysicalMinimum(quote,kind);
@@ -142,9 +150,7 @@ public final class CompositeWorldWitness {
         check(empty(itemMonitor)&&empty(fluidMonitor),"native finite bank begins empty");
         bankBefore=stockSnapshot();euBefore=(BigInteger)call(Class.forName("gregtech.common.misc.WirelessNetworkManager"),"getUserEU",call(actor,"func_110124_au"));wirelessBefore=wirelessStored();euQuote=(BigInteger)get(quote,"energy");
         if(Boolean.getBoolean(CompositeEuLedger.PROPERTY)){
-            Object settings=get(s,"materialSettings");set(settings,"main",false);set(settings,"containers",false);set(settings,"me",true);
-            call(product("HologramMaterials"),"write",call(actor,"func_70694_bm"),settings);
-            set(s,"materialContext",construct("com.miaokatze.gtmb.hologram.HologramMaterials$Context",actor,settings));
+            check(get(s,"materialContext")!=null,"normal refreshPlan established the actual material context before observation");
             euLedger=new CompositeEuLedger(world,actor,s,source,bankOrigin,at,euQuote);euLedger.begin();
             putText(result,"nativeEuLedgerProfile","opt-in native GTSWN hook; extra GTSWN-TEST dimension/listeners; no native scenario or UI kit; not comparable to historical gate=false environment");
         }
@@ -153,10 +159,15 @@ public final class CompositeWorldWitness {
         for(Object item:(List<?>)get(quote,"items")){Object offered=call(Class.forName("appeng.util.item.AEItemStack"),"create",call(item,"func_77946_l"));check(call(itemMonitor,"injectItems",offered,modulate,actionSource)==null,"finite exact item supply accepted");stock.add(call(offered,"copy"));}
         for(Object cost:(List<?>)get(quote,"fluids")){Object offered=call(Class.forName("appeng.util.item.AEFluidStack"),"create",call(get(cost,"stack"),"copy"));call(offered,"setStackSize",get(cost,"amount"));check(call(fluidMonitor,"injectItems",offered,modulate,actionSource)==null,"finite exact fluid supply accepted");fluids.add(call(offered,"copy"));}
         if(euQuote.signum()>0){check((Boolean)call(Class.forName("gregtech.common.misc.WirelessNetworkManager"),"addEUToGlobalEnergyMap",call(actor,"func_110124_au"),euQuote),"finite exact EU supply accepted");fixtureEuCredits=fixtureEuCredits.add(euQuote);}
-        Object settings=get(s,"materialSettings");set(settings,"main",false);set(settings,"containers",false);set(settings,"me",true);call(product("HologramMaterials"),"write",call(actor,"func_70694_bm"),settings);set(s,"materialContext",construct("com.miaokatze.gtmb.hologram.HologramMaterials$Context",actor,settings));
         call(product("HologramResourcePlanner"),"refreshPlan",s);call(product("HologramSnapshots"),"send",s);
+        checkOnlyMeSettings(get(s,"materialSettings"),"actual session after normal plan refresh");
+        checkOnlyMeSettings(call(product("HologramMaterials"),"read",call(actor,"func_70694_bm")),"held projector after funding");
         check((Integer)get(s,"planMissing")==0,"actual finite ME bank made complete plan payable: "+get(s,"status"));
         funded=kind;tag(result,kind+"FundedStock",stockSnapshot());putText(result,kind+"QuotedEU",euQuote.toString());
+    }
+
+    private static void checkOnlyMeSettings(Object settings,String scope)throws Exception {
+        check(!(Boolean)get(settings,"main")&&!(Boolean)get(settings,"containers")&&(Boolean)get(settings,"me"),"only-ME fixture material sources retained: "+scope);
     }
 
     public void checkPlacement(String kind)throws Exception {

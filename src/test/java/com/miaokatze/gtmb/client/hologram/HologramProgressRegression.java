@@ -123,7 +123,113 @@ public final class HologramProgressRegression {
             HologramClientProgress.view("server", "area-details").detail,
             "server detail arrives without an additional progress poll or command");
         HologramClientProgress.clear();
+        constructionProgressOwnership();
         saveReceiptBusyResolution();
+    }
+
+    private static void constructionProgressOwnership() {
+        NBTTagCompound job = event("construction", 1, 4, "", "running");
+        job.setLong("planRevision", 9);
+        job.setString("phase", "job");
+        job.setLong("done", 250);
+        job.setLong("total", 1000);
+        HologramClientProgress.receive(job);
+        long started = HologramClientProgress.view("server", "construction").startedAt;
+        NBTTagCompound metadata = (NBTTagCompound) job.copy();
+        metadata.setLong("sequence", 2);
+        metadata.setString("phase", "snapshot.prepare");
+        metadata.setString("detail", "metadata");
+        metadata.setLong("done", 0);
+        metadata.setLong("total", 0);
+        HologramClientProgress.receive(metadata);
+        HologramProgress value = HologramClientProgress.view("server", "construction");
+        SimpleAssert.eq("job", value.phase, "same-owner metadata cannot replace the actual construction phase");
+        SimpleAssert.eq(25, value.percent(), "construction keeps its measured count while metadata is prepared");
+        SimpleAssert.eq(started, value.startedAt, "child snapshot progress cannot restart the construction timer");
+        SimpleAssert.that(
+            HologramClientProgress.matches(metadata),
+            "the admitted child observation retains its receipt identity");
+        job.setLong("sequence", 3);
+        job.setLong("done", 500);
+        HologramClientProgress.receive(job);
+        SimpleAssert.eq(
+            50,
+            HologramClientProgress.view("server", "construction")
+                .percent(),
+            "later actual job counts continue updating");
+        metadata.setLong("sequence", 2);
+        HologramClientProgress.receive(metadata);
+        SimpleAssert.that(
+            !HologramClientProgress.matches(metadata),
+            "an older transport sequence cannot become the latest receipt");
+        job.setLong("sequence", 4);
+        job.setLong("planRevision", 8);
+        job.setLong("done", 900);
+        HologramClientProgress.receive(job);
+        SimpleAssert.eq(
+            50,
+            HologramClientProgress.view("server", "construction")
+                .percent(),
+            "a newer packet from an older plan cannot replace current job progress");
+        NBTTagCompound staleSnapshot = new NBTTagCompound();
+        staleSnapshot.setString("session", "construction");
+        staleSnapshot.setLong("uiSequence", 4);
+        staleSnapshot.setLong("planRevision", 8);
+        staleSnapshot.setInteger("job", 3);
+        HologramClientProgress.snapshot(staleSnapshot);
+        SimpleAssert.that(
+            !HologramClientProgress.view("server", "construction").complete,
+            "an old plan's final snapshot cannot complete current construction");
+        staleSnapshot.setLong("uiSequence", 5);
+        staleSnapshot.setLong("planRevision", 9);
+        HologramClientProgress.snapshot(staleSnapshot);
+        SimpleAssert.that(
+            !HologramClientProgress.view("server", "construction").complete,
+            "a different command's final snapshot cannot finish the displayed job");
+        metadata.setLong("sequence", 1);
+        metadata.setLong("uiSequence", 5);
+        metadata.setLong("planRevision", 10);
+        HologramClientProgress.receive(metadata);
+        SimpleAssert.eq(
+            "snapshot.prepare",
+            HologramClientProgress.view("server", "construction").phase,
+            "a new command has its own preparation and never borrows the preceding job");
+        job.setLong("sequence", 100);
+        HologramClientProgress.receive(job);
+        SimpleAssert.eq(
+            "snapshot.prepare",
+            HologramClientProgress.view("server", "construction").phase,
+            "an old command cannot steal the next command's presentation");
+        job.setLong("sequence", 2);
+        job.setLong("uiSequence", 5);
+        job.setLong("planRevision", 10);
+        job.setLong("done", 100);
+        HologramClientProgress.receive(job);
+        SimpleAssert.eq(
+            10,
+            HologramClientProgress.view("server", "construction")
+                .percent(),
+            "the new owner's real job replaces only its own preparation");
+        metadata.setLong("sequence", 3);
+        HologramClientProgress.receive(metadata);
+        job.setLong("sequence", 4);
+        job.setString("outcome", "partial");
+        HologramClientProgress.receive(job);
+        SimpleAssert.that(
+            HologramClientProgress.view("server", "construction") == null,
+            "partial construction also clears its child preparation instead of showing a running snapshot");
+        metadata.setString("session", "replacement");
+        metadata.setLong("uiSequence", 1);
+        metadata.setLong("planRevision", 1);
+        HologramClientProgress.receive(metadata);
+        SimpleAssert.that(
+            HologramClientProgress.view("server", "construction") == null,
+            "a replacement session cannot expose the preceding session's job");
+        SimpleAssert.eq(
+            "snapshot.prepare",
+            HologramClientProgress.view("server", "replacement").phase,
+            "a replacement session starts from its own observed preparation");
+        HologramClientProgress.clear();
     }
 
     private static void saveReceiptBusyResolution() {

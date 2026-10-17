@@ -486,6 +486,18 @@ final class HologramWorldTransactions {
                     ownerHost.setOwnerName(s.player.getCommandSenderName());
                 }
                 boolean blueprintTileDataApplied = false;
+                boolean emptyAeNativeShell = nativePlacement && HologramAeBlueprint.supportsEmptyNativeShell(c.block);
+                NBTTagCompound selectedCacheTile = cachedPayload == null ? null
+                    : cachePaid ? cachedPayload.tilePaid : cachedPayload.tileEmpty;
+                boolean requiredNetworkBinding = selectedCacheTile != null
+                    && selectedCacheTile.hasKey(HologramNetworkBindings.GROUP);
+                boolean restoreBlueprintTileData = s.virtual && s.virtualPreset.schema >= 2
+                    && sealedPlacement == null
+                    && !c.tileNbt.isEmpty()
+                    && selectedCacheTile != null
+                    && (s.virtualPreset.retainNbt || HologramSessionPolicy.placementRetainCovers(s)
+                        || emptyAeNativeShell
+                        || requiredNetworkBinding);
                 if (sealedPlacement != null) {
                     if (placedTile == null || !HologramRecovery.supported(placedTile))
                         throw new java.io.IOException("封存设备没有可验证的完整状态恢复路径");
@@ -521,6 +533,7 @@ final class HologramWorldTransactions {
                 }
                 if (direction != null && direction >= 0
                     && placedTile instanceof IGregTechTileEntity
+                    && !restoreBlueprintTileData
                     && (!HologramRecovery.hasSeal(pin) || s.facingPins.containsKey(HologramValues.position(c)))) {
                     IGregTechTileEntity gt = (IGregTechTileEntity) placedTile;
                     if (c.anchor || !gt.getMetaTileEntity()
@@ -532,11 +545,6 @@ final class HologramWorldTransactions {
                 }
                 if (s.virtual && s.virtualPreset.schema < 2 && "templateController".equals(c.role))
                     applyVirtualControllerAlignment(s, placedTile);
-                boolean emptyAeNativeShell = nativePlacement && HologramAeBlueprint.supportsEmptyNativeShell(c.block);
-                NBTTagCompound selectedCacheTile = cachedPayload == null ? null
-                    : cachePaid ? cachedPayload.tilePaid : cachedPayload.tileEmpty;
-                boolean requiredNetworkBinding = selectedCacheTile != null
-                    && selectedCacheTile.hasKey(HologramNetworkBindings.GROUP);
                 if (s.virtual && s.virtualPreset.schema >= 2
                     && sealedPlacement == null
                     && !c.tileNbt.isEmpty()
@@ -578,6 +586,11 @@ final class HologramWorldTransactions {
                         blueprintTileDataApplied = true;
                         if (direction != null && direction >= 0 && placedTile instanceof IGregTechTileEntity) {
                             IGregTechTileEntity gt = (IGregTechTileEntity) placedTile;
+                            // Basic machines restore a distinct main-facing from NBT. Validate their output-facing
+                            // against that restored state, rather than the temporary item-placement defaults.
+                            if (c.anchor || !gt.getMetaTileEntity()
+                                .isFacingValid(ForgeDirection.getOrientation(direction)))
+                                throw new IllegalStateException("blueprint facing rejected");
                             gt.setFrontFacing(ForgeDirection.getOrientation(direction));
                             if (gt.getFrontFacing()
                                 .ordinal() != direction) throw new IllegalStateException("blueprint front rejected");

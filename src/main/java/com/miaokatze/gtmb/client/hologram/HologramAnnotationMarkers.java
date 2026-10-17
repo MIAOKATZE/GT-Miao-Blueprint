@@ -131,6 +131,23 @@ final class HologramAnnotationMarkers {
                 true));
     }
 
+    /** Keep the complete icon/hit target inside the preview even after repeated collision shifts. */
+    static boolean place(Marker marker, List<Marker> shown, int bottom) {
+        if (marker.y - 7 < HologramScreenLayout.VIEWPORT_Y) return false;
+        while (marker.y + 7 <= bottom) {
+            boolean collision = false;
+            for (Marker previous : shown) {
+                if (Math.abs(marker.x - previous.x) < 14 && Math.abs(marker.y - previous.y) < 14) {
+                    marker.y = previous.y + 15;
+                    collision = true;
+                    break;
+                }
+            }
+            if (!collision) return true;
+        }
+        return false;
+    }
+
     static final class Marker {
 
         final String key, title, prompt;

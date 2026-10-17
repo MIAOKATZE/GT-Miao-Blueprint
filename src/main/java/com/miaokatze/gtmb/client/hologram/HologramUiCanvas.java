@@ -515,7 +515,7 @@ final class HologramUiCanvas {
     boolean inViewport(int x, int y) {
         return x >= HologramUiCanvas.viewportX && x < HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth
             && y >= HologramUiCanvas.viewportY
-            && y < HologramUiCanvas.viewportY + HologramUiCanvas.viewportHeight;
+            && y < HologramUiCanvas.viewportY + ui.preview.previewHeight();
     }
 
     boolean inPanel(int x, int y) {

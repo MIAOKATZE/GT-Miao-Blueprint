@@ -557,7 +557,7 @@ final class HologramUiLibrary {
     void drawBlueprintWorkbench(int mx, int my) {
         ui.canvas.drawLocalPlanProgress(41, 260, 395, mx, my);
         if (!HologramGuidance.authorWorkspace(ui.session.state().data)) {
-            drawRect(35, 239, 442, 259, 0xf0172f36);
+            drawRect(35, HologramScreenLayout.LIBRARY_FOOTER_Y, 442, 259, 0xf0172f36);
             ui.canvas.text(
                 ui.library.selectedPresetExists() ? "已保存蓝图 · 点击绿色“放置所选蓝图”进入世界定位" : "从右侧列表选择已保存蓝图",
                 41,
@@ -570,7 +570,7 @@ final class HologramUiLibrary {
             ui.config.drawResetButton(302, 282, 134, mx, my);
             return;
         }
-        drawRect(35, 219, 442, 259, 0xf0172f36);
+        drawRect(35, HologramScreenLayout.LIBRARY_AUTHOR_FOOTER_Y, 442, 259, 0xf0172f36);
         ui.canvas.text(
             ui.library.blueprintSaveState() + " · "
                 + (ui.session.state().data.getBoolean("blueprintDirectSave") ? "无需处理，可直接保存"

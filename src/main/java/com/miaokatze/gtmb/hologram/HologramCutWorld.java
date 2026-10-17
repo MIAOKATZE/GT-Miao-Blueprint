@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -22,6 +23,11 @@ import net.minecraft.world.chunk.storage.AnvilChunkLoader;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import net.minecraft.world.chunk.storage.RegionFileCache;
 import net.minecraft.world.storage.ThreadedFileIOBase;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.world.ChunkDataEvent;
+
+import cpw.mods.fml.common.eventhandler.EventPriority;
+import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 
 /** Direct section replacement deliberately bypasses Block.breakBlock, placement hooks, and inventory drops. */
 final class HologramCutWorld {
@@ -248,7 +254,19 @@ final class HologramCutWorld {
             chunks
                 .add(world.getChunkFromChunkCoords((ox + cell.getInteger("x")) >> 4, (oz + cell.getInteger("z")) >> 4));
         }
-        for (Chunk chunk : chunks) loader.saveChunk(world, chunk);
+        NativeSaveObservation observation = Boolean.getBoolean("gtmb.cutDiskDiagnostics")
+            ? new NativeSaveObservation(world)
+            : null;
+        if (observation == null) {
+            for (Chunk chunk : chunks) loader.saveChunk(world, chunk);
+        } else {
+            MinecraftForge.EVENT_BUS.register(observation);
+            try {
+                for (Chunk chunk : chunks) observation.save(loader, chunk, expectedTiles);
+            } finally {
+                MinecraftForge.EVENT_BUS.unregister(observation);
+            }
+        }
         ThreadedFileIOBase.threadedIOInstance.waitForFinish();
         Map<Long, SavedChunk> disk = new LinkedHashMap<>();
         Set<String> regions = new LinkedHashSet<>();
@@ -262,7 +280,15 @@ final class HologramCutWorld {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
             disk.get(key(x >> 4, z >> 4))
-                .verifyCell(x, y, z, cell, air, expectedTiles.get(tileKey(x, y, z)));
+                .verifyCell(
+                    x,
+                    y,
+                    z,
+                    cell,
+                    air,
+                    expectedTiles.get(tileKey(x, y, z)),
+                    observation != null && observation.observed(x, y, z),
+                    observation == null ? null : observation.tile(x, y, z));
         }
         for (String name : regions) try (RandomAccessFile region = new RandomAccessFile(
             new java.io.File(new java.io.File(loader.chunkSaveLocation, "region"), name),
@@ -270,6 +296,110 @@ final class HologramCutWorld {
                 region.getFD()
                     .sync();
             }
+    }
+
+    /** Opt-in diagnostic evidence only; the independent live snapshot remains the strict commit condition. */
+    public static final class NativeSaveObservation {
+
+        private final WorldServer world;
+        private final Thread thread = Thread.currentThread();
+        private final Map<Long, NBTTagCompound> tiles = new LinkedHashMap<>();
+        private Chunk activeChunk;
+        private NBTTagCompound root;
+
+        NativeSaveObservation(WorldServer world) {
+            this.world = world;
+        }
+
+        @SubscribeEvent(priority = EventPriority.HIGHEST)
+        public void onSave(ChunkDataEvent.Save event) {
+            if (Thread.currentThread() == thread && event.world == world && event.getChunk() == activeChunk)
+                root = event.getData();
+        }
+
+        void save(AnvilChunkLoader loader, Chunk chunk, Map<Long, NBTTagCompound> expected) throws Exception {
+            activeChunk = chunk;
+            root = null;
+            try {
+                loader.saveChunk(world, chunk);
+                if (root == null) return; // Observation availability must not change the strict disk verdict.
+                // Keep the event's reference until saveChunk returns: later handlers may edit its final payload.
+                NBTTagList saved = root.getCompoundTag("Level")
+                    .getTagList("TileEntities", 10);
+                for (int index = 0; index < saved.tagCount(); index++) {
+                    NBTTagCompound tile = saved.getCompoundTagAt(index);
+                    long key = tileKey(tile.getInteger("x"), tile.getInteger("y"), tile.getInteger("z"));
+                    if (!expected.containsKey(key)) continue;
+                    NBTTagCompound snapshot = expected.get(key);
+                    // Matching payloads reuse an immutable existing snapshot. Copy only diagnostic differences.
+                    tiles.put(key, sameNbt(snapshot, tile) ? snapshot : (NBTTagCompound) tile.copy());
+                }
+                for (Map.Entry<Long, NBTTagCompound> entry : expected.entrySet()) {
+                    NBTTagCompound tile = entry.getValue();
+                    if ((tile.getInteger("x") >> 4) == chunk.xPosition && (tile.getInteger("z") >> 4) == chunk.zPosition
+                        && !tiles.containsKey(entry.getKey())) tiles.put(entry.getKey(), null);
+                }
+            } finally {
+                activeChunk = null;
+                root = null;
+            }
+        }
+
+        boolean observed(int x, int y, int z) {
+            return tiles.containsKey(tileKey(x, y, z));
+        }
+
+        NBTTagCompound tile(int x, int y, int z) {
+            return tiles.get(tileKey(x, y, z));
+        }
+    }
+
+    /** Bounded structural diagnostics: paths and tag types only, never inventory/identity/string values. */
+    static String firstNbtDifference(net.minecraft.nbt.NBTBase expected, net.minecraft.nbt.NBTBase actual) {
+        return firstNbtDifference(expected, actual, "$", 0);
+    }
+
+    private static String firstNbtDifference(net.minecraft.nbt.NBTBase expected, net.minecraft.nbt.NBTBase actual,
+        String path, int depth) {
+        if (sameNbt(expected, actual)) return "equal";
+        String reason = "value";
+        if (expected == null || actual == null) reason = "missing";
+        else if (expected.getId() != actual.getId()) reason = "type";
+        else if (depth >= 32) reason = "depth-limit";
+        else if (expected instanceof NBTTagCompound) {
+            NBTTagCompound first = (NBTTagCompound) expected, second = (NBTTagCompound) actual;
+            Set<String> keys = new TreeSet<>();
+            for (Object key : first.func_150296_c()) keys.add((String) key);
+            for (Object key : second.func_150296_c()) keys.add((String) key);
+            for (String key : keys) {
+                String next = path + "/" + diagnosticKey(key);
+                String difference = firstNbtDifference(first.getTag(key), second.getTag(key), next, depth + 1);
+                if (!"equal".equals(difference)) return difference;
+            }
+        } else if (expected instanceof NBTTagList) {
+            NBTTagList first = (NBTTagList) expected.copy(), second = (NBTTagList) actual.copy();
+            if (first.tagCount() != second.tagCount()) reason = "length";
+            else for (int index = 0; first.tagCount() > 0; index++) {
+                String difference = firstNbtDifference(
+                    first.removeTag(0),
+                    second.removeTag(0),
+                    path + "[" + index + "]",
+                    depth + 1);
+                if (!"equal".equals(difference)) return difference;
+            }
+        }
+        return "path=" + (path.length() <= 160 ? path : path.substring(0, 157) + "...")
+            + " expectedType="
+            + (expected == null ? "missing" : expected.getId())
+            + " actualType="
+            + (actual == null ? "missing" : actual.getId())
+            + " reason="
+            + reason;
+    }
+
+    private static String diagnosticKey(String key) {
+        String bounded = key.length() <= 48 ? key : key.substring(0, 45) + "...";
+        return bounded.replaceAll("[^A-Za-z0-9_:.-]", "?");
     }
 
     /** Native floating-point writers canonicalize NaN; 1.7 tag.equals rejects its own valid roundtrip. */
@@ -319,6 +449,11 @@ final class HologramCutWorld {
 
         void verifyCell(int x, int y, int z, NBTTagCompound cell, boolean air, NBTTagCompound expectedTile)
             throws IOException {
+            verifyCell(x, y, z, cell, air, expectedTile, false, null);
+        }
+
+        void verifyCell(int x, int y, int z, NBTTagCompound cell, boolean air, NBTTagCompound expectedTile,
+            boolean nativeObserved, NBTTagCompound nativeTile) throws IOException {
             Block expectedBlock = air ? Blocks.air : Block.getBlockFromName(cell.getString("block"));
             Block actualBlock = blocks.getBlock(x & 15, y, z & 15);
             int expectedMetadata = air ? 0 : cell.getInteger("meta");
@@ -338,9 +473,20 @@ final class HologramCutWorld {
                     + ":"
                     + actualMetadata);
             NBTTagCompound tile = tiles.get(tileKey(x, y, z));
-            if (expectedTile == null) {
-                if (tile != null) throw new IOException("剪切世界实体未完整存盘");
-            } else if (!sameNbt(expectedTile, tile)) throw new IOException("方块实体存盘读回与本次世界快照不一致，记录已保留");
+            if (!sameNbt(expectedTile, tile)) throw new IOException(
+                "方块实体存盘读回与本次世界快照不一致，记录已保留 at [" + x
+                    + ","
+                    + y
+                    + ","
+                    + z
+                    + "]"
+                    + " snapshot/disk="
+                    + firstNbtDifference(expectedTile, tile)
+                    + (nativeObserved
+                        ? " snapshot/native=" + firstNbtDifference(expectedTile, nativeTile)
+                            + " native/disk="
+                            + firstNbtDifference(nativeTile, tile)
+                        : " native=unobserved"));
         }
     }
 
@@ -379,7 +525,7 @@ final class HologramCutWorld {
         return ((long) x << 32) ^ (z & 0xffffffffL);
     }
 
-    private static long tileKey(int x, int y, int z) {
+    static long tileKey(int x, int y, int z) {
         return ((x & 0x3ffffffL) << 34) | ((z & 0x3ffffffL) << 8) | (y & 255L);
     }
 }

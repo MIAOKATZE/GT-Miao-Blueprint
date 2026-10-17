@@ -31,9 +31,13 @@ import net.minecraft.world.chunk.storage.AnvilChunkLoader;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import net.minecraft.world.chunk.storage.RegionFileCache;
 import net.minecraft.world.gen.ChunkProviderServer;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.world.ChunkDataEvent;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
+import cpw.mods.fml.common.eventhandler.EventPriority;
+import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Real native chunk serialization/readback; stale disk and changed payloads must never authorize a commit. */
@@ -118,7 +122,22 @@ public final class HologramCutDiskRegression {
                 .getCompoundTagAt(0)
                 .getCompoundTag("tag")
                 .setString("nativeOwner", "unsaved-changed-owner");
-            rejected(() -> saved.verifyCell(-2, 200, 19, cell, false, changedTile), "stale raw native tile");
+            IOException tileMismatch = rejected(
+                () -> saved.verifyCell(-2, 200, 19, cell, false, changedTile),
+                "stale raw native tile");
+            SimpleAssert.that(
+                tileMismatch.getMessage()
+                    .contains("[-2,200,19]")
+                    && tileMismatch.getMessage()
+                        .contains("path=$/Items[0]/tag/nativeOwner")
+                    && tileMismatch.getMessage()
+                        .contains("expectedType=8 actualType=8")
+                    && !tileMismatch.getMessage()
+                        .contains("unsaved-changed-owner")
+                    && !tileMismatch.getMessage()
+                        .contains("retained-original"),
+                "tile mismatch reports structural evidence without exposing native item or owner values");
+            diagnosticBoundaries(tile, changedTile);
             rejected(() -> saved.verifyCell(-2, 200, 19, cell, false, null), "unexpected remaining disk tile");
             rejected(() -> saved.verifyCell(-2, 200, 19, cell, true, null), "uncleared source on disk");
             cell.setString("block", "minecraft:stone");
@@ -146,12 +165,120 @@ public final class HologramCutDiskRegression {
             }
             HologramCutWorld.SavedChunk missingTile = reader.read(world, -1, 1);
             rejected(() -> missingTile.verifyCell(-2, 200, 19, cell, false, tile), "missing native inventory on disk");
+            observedNativeSave(world, writer, reader, cell, tile);
             initializedMetadata(world, reader);
             // RegionFileCache owns open handles. Do not globally clear other tests' or a running world's cache.
             directory.toFile()
                 .deleteOnExit();
         } catch (Exception failure) {
             throw new AssertionError("native cut disk verification", failure);
+        }
+    }
+
+    private static void diagnosticBoundaries(NBTTagCompound original, NBTTagCompound changed) {
+        NBTTagCompound differentType = (NBTTagCompound) changed.copy();
+        differentType.getTagList("Items", 10)
+            .getCompoundTagAt(0)
+            .getCompoundTag("tag")
+            .setInteger("nativeOwner", 1);
+        SimpleAssert.that(
+            HologramCutWorld.firstNbtDifference(differentType, original)
+                .contains("expectedType=3 actualType=8 reason=type"),
+            "diagnostic distinguishes numeric and string tags");
+        SimpleAssert.that(
+            HologramCutWorld.firstNbtDifference(original, null)
+                .contains("path=$ expectedType=10 actualType=missing reason=missing"),
+            "missing tile has an explicit type");
+        NBTTagCompound first = new NBTTagCompound(), second = new NBTTagCompound();
+        String hostileKey = new String(new char[512]).replace('\0', 'k') + "\n";
+        first.setString(hostileKey, "private-value-never-print");
+        second.setInteger(hostileKey, 1);
+        String bounded = HologramCutWorld.firstNbtDifference(first, second);
+        SimpleAssert.that(
+            bounded.length() < 260 && !bounded.contains("\n") && !bounded.contains("private-value"),
+            "diagnostic bounds and sanitizes long keys without printing tag values");
+        first = new NBTTagCompound();
+        second = new NBTTagCompound();
+        NBTTagCompound a = first, b = second;
+        for (int depth = 0; depth < 40; depth++) {
+            NBTTagCompound nextA = new NBTTagCompound(), nextB = new NBTTagCompound();
+            a.setTag("next", nextA);
+            b.setTag("next", nextB);
+            a = nextA;
+            b = nextB;
+        }
+        a.setInteger("tail", 1);
+        b.setInteger("tail", 2);
+        bounded = HologramCutWorld.firstNbtDifference(first, second);
+        SimpleAssert.that(
+            bounded.length() < 260 && bounded.contains("reason=depth-limit"),
+            "deep native differences produce a bounded diagnostic");
+    }
+
+    private static void observedNativeSave(FixtureWorld world, DirectSaveLoader writer,
+        HologramCutWorld.DiskReader reader, NBTTagCompound cell, NBTTagCompound expected) throws Exception {
+        Chunk chunk = world.getChunkFromChunkCoords(-1, 1);
+        HologramCutWorld.NativeSaveObservation observation = new HologramCutWorld.NativeSaveObservation(world);
+        LateSaveMutator mutator = new LateSaveMutator(world, chunk, observation);
+        Map<Long, NBTTagCompound> snapshots = new HashMap<>();
+        snapshots.put(HologramCutWorld.tileKey(-2, 200, 19), expected);
+        MinecraftForge.EVENT_BUS.register(observation);
+        MinecraftForge.EVENT_BUS.register(mutator);
+        try {
+            observation.save(writer, chunk, snapshots);
+            SimpleAssert.that(observation.observed(-2, 200, 19), "native event was observed for this exact save");
+            NBTTagCompound nativeTile = observation.tile(-2, 200, 19);
+            SimpleAssert.that(
+                nativeTile != null && nativeTile.hasKey("lateNativeDiagnostic", 8),
+                "native observation includes changes from handlers running after the observer");
+            SimpleAssert
+                .that(!expected.hasKey("lateNativeDiagnostic"), "diagnostic observation never rewrites expected");
+            HologramCutWorld.SavedChunk saved = reader.read(world, -1, 1);
+            IOException mismatch = rejected(
+                () -> saved.verifyCell(-2, 200, 19, cell, false, expected, true, nativeTile),
+                "diagnostic native payload must not authorize a changed tile");
+            SimpleAssert.that(
+                mismatch.getMessage()
+                    .contains("snapshot/native=path=$/lateNativeDiagnostic")
+                    && mismatch.getMessage()
+                        .contains("native/disk=equal"),
+                "strict failure identifies a difference before disk serialization");
+            mutator.lastTile.removeTag("lateNativeDiagnostic");
+            SimpleAssert.that(
+                nativeTile.hasKey("lateNativeDiagnostic"),
+                "changed native payload is detached from mutable save-event references");
+        } finally {
+            MinecraftForge.EVENT_BUS.unregister(mutator);
+            MinecraftForge.EVENT_BUS.unregister(observation);
+        }
+    }
+
+    public static final class LateSaveMutator {
+
+        private final FixtureWorld world;
+        private final Chunk chunk;
+        private final HologramCutWorld.NativeSaveObservation observation;
+        NBTTagCompound lastTile;
+
+        LateSaveMutator(FixtureWorld world, Chunk chunk, HologramCutWorld.NativeSaveObservation observation) {
+            this.world = world;
+            this.chunk = chunk;
+            this.observation = observation;
+        }
+
+        @SubscribeEvent(priority = EventPriority.LOWEST)
+        public void onSave(ChunkDataEvent.Save event) throws InterruptedException {
+            if (event.world != world || event.getChunk() != chunk) return;
+            lastTile = event.getData()
+                .getCompoundTag("Level")
+                .getTagList("TileEntities", 10)
+                .getCompoundTagAt(0);
+            lastTile.setString("lateNativeDiagnostic", "never-log-this-value");
+            observation.onSave(new ChunkDataEvent.Save(new Chunk(world, 0, 1), new NBTTagCompound()));
+            Thread otherThread = new Thread(
+                () -> observation.onSave(new ChunkDataEvent.Save(chunk, new NBTTagCompound())));
+            otherThread.start();
+            otherThread.join();
         }
     }
 

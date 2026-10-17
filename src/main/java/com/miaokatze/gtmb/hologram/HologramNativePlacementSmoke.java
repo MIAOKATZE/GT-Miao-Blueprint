@@ -49,6 +49,8 @@ public final class HologramNativePlacementSmoke {
         player.theItemInWorldManager.setGameType(net.minecraft.world.WorldSettings.GameType.SURVIVAL);
         player.inventory.mainInventory[0] = new ItemStack(
             (Item) Item.itemRegistry.getObject("gtmb:neko_hologram_projector"));
+        detachedReportingParts();
+        basicMachineFacingRestore(world, player);
         stateAndControllerPlacement(world, player);
         rfSchema();
         int kind = 0;
@@ -220,6 +222,138 @@ public final class HologramNativePlacementSmoke {
         require(kind == 6, "all_six_mods_required");
         fmpAeLifecycle(world, player);
         System.out.println(PREFIX + "FINAL PASS mods=" + kind);
+    }
+
+    private static void detachedReportingParts() throws Exception {
+        HologramResourceWorld opaque = HologramResourceWorld.create(net.minecraft.init.Blocks.stone, 0);
+        require(
+            opaque.getBlockLightOpacity(0, 64, 0) == net.minecraft.init.Blocks.stone.getLightOpacity()
+                && opaque.getBlockLightOpacity(0, 64, -1) == 0,
+            "detached_opacity_reads_only_its_single_block_and_air_neighbors");
+        Block block = Block.getBlockFromName("appliedenergistics2:tile.BlockCableBus");
+        require(block != null, "reporting_parts_native_cable_host_registered");
+        ItemStack[] terminals = { appeng.api.AEApi.instance()
+            .definitions()
+            .parts()
+            .terminal()
+            .maybeStack(1)
+            .get(),
+            appeng.api.AEApi.instance()
+                .definitions()
+                .parts()
+                .patternTerminal()
+                .maybeStack(1)
+                .get() };
+        for (ItemStack terminal : terminals) {
+            NBTTagCompound seed = new NBTTagCompound();
+            seed.setString("id", "BlockCableBus");
+            seed.setInteger("x", 16);
+            seed.setInteger("y", 64);
+            seed.setInteger("z", 16);
+            seed.setTag("def:2", terminal.writeToNBT(new NBTTagCompound()));
+            seed.setTag("extra:2", new NBTTagCompound());
+            seed.setTag(
+                "def:6",
+                appeng.api.AEApi.instance()
+                    .definitions()
+                    .parts()
+                    .cableGlass()
+                    .stack(appeng.api.util.AEColor.Transparent, 1)
+                    .writeToNBT(new NBTTagCompound()));
+            seed.setTag("extra:6", new NBTTagCompound());
+            NBTTagCompound before = (NBTTagCompound) seed.copy();
+            HologramResourceWorld detached = HologramResourceWorld.create(block, 0);
+            TileEntity tile = HologramNativePlacement.adapter(block)
+                .create(block, 0, seed, detached);
+            require(tile instanceof appeng.tile.networking.TileCableBus, "reporting_part_native_factory_retains_host");
+            appeng.tile.networking.TileCableBus host = (appeng.tile.networking.TileCableBus) tile;
+            appeng.api.parts.IPart part = host.getPart(net.minecraftforge.common.util.ForgeDirection.NORTH);
+            require(
+                part != null && part.getItemStack(appeng.api.parts.PartItemStack.World)
+                    .isItemEqual(terminal)
+                    && host.getPart(net.minecraftforge.common.util.ForgeDirection.UNKNOWN) != null
+                    && tile.getWorldObj() == detached
+                    && before.equals(seed),
+                "native_reporting_part_reader_needs_no_real_chunks_" + terminal.getItemDamage());
+        }
+    }
+
+    private static void basicMachineFacingRestore(WorldServer world, EntityPlayerMP player) throws Exception {
+        Block block = gregtech.api.GregTechAPI.sBlockMachines;
+        ItemStack primary = new ItemStack(block, 1, 103);
+        require(
+            gregtech.common.blocks.ItemMachines
+                .getMetaTileEntity(primary) instanceof gregtech.api.metatileentity.implementations.MTEBasicMachine,
+            "facing_fixture_uses_actual_registered_basic_machine");
+        int sourceX = 544, y = 88, z = 160;
+        float oldYaw = player.rotationYaw, oldPitch = player.rotationPitch;
+        try {
+            player.rotationYaw = 180;
+            player.rotationPitch = 0;
+            for (int x = sourceX; x <= 568; x += 4) {
+                world.getChunkFromBlockCoords(x, z);
+                require(world.isAirBlock(x, y, z), "basic_facing_fresh_position_" + x);
+            }
+            require(
+                ((gregtech.common.blocks.ItemMachines) primary.getItem())
+                    .placeBlockAt(primary.copy(), player, world, sourceX, y, z, 1, .5F, .5F, .5F, 0),
+                "basic_facing_native_source_placement");
+            gregtech.api.interfaces.tileentity.IGregTechTileEntity source = (gregtech.api.interfaces.tileentity.IGregTechTileEntity) world
+                .getTileEntity(sourceX, y, z);
+            gregtech.api.metatileentity.implementations.MTEBasicMachine basic = (gregtech.api.metatileentity.implementations.MTEBasicMachine) source
+                .getMetaTileEntity();
+            require(
+                basic.mMainFacing == net.minecraftforge.common.util.ForgeDirection.SOUTH
+                    && !basic.isFacingValid(net.minecraftforge.common.util.ForgeDirection.SOUTH),
+                "actor_yaw_180_initializes_main_south_which_rejects_output_south");
+            basic.setMainFacing(net.minecraftforge.common.util.ForgeDirection.NORTH);
+            source.setFrontFacing(net.minecraftforge.common.util.ForgeDirection.SOUTH);
+            NBTTagCompound retained = snapshot((TileEntity) source);
+            require(
+                retained.getInteger("mMainFacing") == 2 && retained.getShort("mFacing") == 3,
+                "basic_native_source_has_distinct_main_north_and_output_south");
+            for (int scenario = 0; scenario < 3; scenario++) {
+                int x = 560 + scenario * 4;
+                HologramCapture.Cell target = cell(
+                    block,
+                    world.getBlockMetadata(sourceX, y, z),
+                    retained,
+                    primary,
+                    x,
+                    y,
+                    z);
+                Object session = session(player, target, primary);
+                @SuppressWarnings("unchecked")
+                Map<Integer, Integer> facings = (Map<Integer, Integer>) get(session, "planFacings");
+                facings.put(0, scenario == 1 ? 2 : 3);
+                if (scenario == 2) {
+                    target.tileNbt = "";
+                    ((HologramPresets.Preset) get(session, "virtualPreset")).cells.get(0).tileNbt = "";
+                }
+                fill(player, java.util.Collections.singletonList(primary), false);
+                ItemStack[] before = inventory(player);
+                boolean placed = operate(session, target);
+                if (scenario == 0) {
+                    require(
+                        placed && "placed".equals(target.status),
+                        "basic_full_nbt_restores_before_output_validation");
+                    NBTTagCompound actual = snapshot(world.getTileEntity(x, y, z));
+                    require(
+                        actual.getInteger("mID") == primary.getItemDamage() && actual.getInteger("mMainFacing") == 2
+                            && actual.getShort("mFacing") == 3
+                            && materialsCount(player) == 0,
+                        "basic_main_and_output_restored_with_exactly_one_paid_shell");
+                } else require(
+                    !placed && world.isAirBlock(x, y, z)
+                        && world.getTileEntity(x, y, z) == null
+                        && sameInventory(before, player),
+                    scenario == 1 ? "invalid_output_equal_to_restored_main_rolls_back_and_refunds"
+                        : "omitted_nbt_keeps_native_facing_validation_and_refunds");
+            }
+        } finally {
+            player.rotationYaw = oldYaw;
+            player.rotationPitch = oldPitch;
+        }
     }
 
     /** Regression for real area imports whose item, world state, or GT controller metadata differ. */

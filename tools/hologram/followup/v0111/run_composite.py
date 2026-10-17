@@ -440,6 +440,8 @@ def run(args):
     server_tokens[server_tokens.index("-jar"):server_tokens.index("-jar")] = mode_flags
     if args.native_eu_ledger:
         server_tokens.insert(server_tokens.index("-jar"), "-Dgtmb.v0111.nativeEuLedger=true")
+    if args.cut_disk_diagnostics:
+        server_tokens.insert(server_tokens.index("-jar"), "-Dgtmb.cutDiskDiagnostics=true")
     targets = {
         "server-properties": within(fixture / "server/server.properties", fixture, exists=True),
         "server-library-config": within(fixture / "server/config/gtmb/server-blueprint-library.cfg", fixture),
@@ -498,6 +500,10 @@ def run(args):
                                       and not path.name.casefold().startswith("gtmb")}
                               for role in ("client", "server")},
         "before_files": backups, "processes": {}, "moved_originals": [], "installed": [],
+        "cut_disk_diagnostics": {
+            "enabled": args.cut_disk_diagnostics,
+            "scope": "server-only native serialization observer; extra diagnostic work, not a performance comparison profile" if args.cut_disk_diagnostics else "default production path; no extra native-save observer",
+        },
         "native_eu_ledger_profile": {
             "enabled": args.native_eu_ledger,
             "comparability": "new explicit test-only environment; not directly comparable to historical startup gate=false" if args.native_eu_ledger else "historical default observer-disabled path",
@@ -589,6 +595,7 @@ def run(args):
                           "configs": result["staged_config_inputs"], "arguments": result["argfiles_sha256"],
                           "dependencies": result["dependency_hashes"], "product_sha256": result["normal_sha256"],
                           "addon_sha256": result["addon_sha256"], "native_eu_ledger": args.native_eu_ledger}
+        profile_inputs["cut_disk_diagnostics"] = args.cut_disk_diagnostics
         result["effective_profile_inputs"] = profile_inputs
         result["effective_profile_sha256"] = hashlib.sha256(json.dumps(profile_inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         publish()
@@ -902,6 +909,8 @@ def main():
     parser.add_argument("--scenario", choices=("all", "self", "share", "raw"), default="all")
     parser.add_argument("--native-eu-ledger", action="store_true",
                         help="Opt in to a new uniform server-side GTSWN startup-gate profile and independent EU observer; not historical-environment comparable; raw EU is NOT_OBSERVED")
+    parser.add_argument("--cut-disk-diagnostics", action="store_true",
+                        help="Enable the server-only native-save observer for diagnosis; extra work excludes this case from performance comparisons")
     parser.add_argument("--seed-world", type=Path)
     parser.add_argument("--seed-manifest", type=Path)
     parser.add_argument("--seed-receipt", type=Path)

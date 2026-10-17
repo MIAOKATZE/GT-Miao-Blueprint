@@ -13,8 +13,9 @@ final class HologramClientProgress {
     private static final class Entry {
 
         final HologramProgress.Tracker tracker = new HologramProgress.Tracker();
+        final HologramProgress.Tracker preparation = new HologramProgress.Tracker();
         String session = "", request = "";
-        long sequence = Long.MIN_VALUE, command = -1;
+        long sequence = Long.MIN_VALUE, command = -1, revision = -1;
     }
 
     private static final Map<String, Entry> views = new HashMap<>();
@@ -47,15 +48,23 @@ final class HologramClientProgress {
         }
         if (entry == null || newSession) entry = new Entry();
         if (command >= 0 && entry.command >= 0 && command < entry.command) return;
+        long revision = event.hasKey("planRevision", 4) ? event.getLong("planRevision") : -1;
+        if ("server".equals(scope) && entry.revision >= 0 && revision < entry.revision) return;
         long sequence = event.getLong("sequence");
         if (command <= entry.command && sequence < entry.sequence) return;
+        if ("server".equals(scope) && (command != entry.command || revision > entry.revision)) {
+            entry.tracker.clear();
+            entry.preparation.clear();
+        }
         entry.session = session;
         entry.request = request;
         entry.command = command;
         entry.sequence = sequence;
+        entry.revision = revision;
         views.put(scope, entry);
         if ("partial".equals(event.getString("outcome")) || "stopped".equals(event.getString("outcome"))) {
             entry.tracker.clear();
+            entry.preparation.clear();
             return;
         }
         String identity = request;
@@ -66,7 +75,11 @@ final class HologramClientProgress {
                 + event.getString("phase")
                     .split("\\.")[0]
             : scope + ":" + sequence;
-        entry.tracker.update(
+        // Snapshot metadata is a child publication of this command, not the world worker itself.
+        // Keep its latest observation without overwriting an admitted job/capture/area observation.
+        HologramProgress.Tracker target = "server".equals(scope) && event.getString("phase")
+            .startsWith("snapshot.") ? entry.preparation : entry.tracker;
+        target.update(
             identity,
             event.getString("phase"),
             event.getString("detail"),
@@ -82,6 +95,7 @@ final class HologramClientProgress {
         if (entry == null || !session.isEmpty() && !session.equals(entry.session)) return null;
         long now = System.nanoTime();
         HologramProgress value = entry.tracker.view(now);
+        if (value == null && "server".equals(scope)) value = entry.preparation.view(now);
         if (value != null && !"server".equals(scope)
             && !"decode".equals(value.phase)
             && now - value.observedAt > 15000000000L) return null;
@@ -93,13 +107,18 @@ final class HologramClientProgress {
         String session = state.getString("session");
         Entry entry = views.get("server");
         HologramProgress value = view("server", session);
-        if (value == null || state.getLong("uiSequence") < entry.command) return;
+        if (value == null || state.getLong("uiSequence") != entry.command
+            || entry.revision >= 0
+                && (!state.hasKey("planRevision", 4) || state.getLong("planRevision") != entry.revision))
+            return;
         boolean finished = value.phase.startsWith("capture") && !state.getBoolean("capturePending")
             || value.phase.startsWith("area.") && state.getBoolean("areaImported") && !state.getBoolean("areaImporting")
             || "job".equals(value.phase) && state.getInteger("job") == 3;
         if (finished && !value.complete) entry.tracker.finish(System.nanoTime());
-        if ("job".equals(value.phase) && (state.getInteger("job") == 4 || state.getInteger("job") == 5))
+        if ("job".equals(value.phase) && (state.getInteger("job") == 4 || state.getInteger("job") == 5)) {
             entry.tracker.clear();
+            entry.preparation.clear();
+        }
     }
 
     static void clear() {
@@ -111,7 +130,10 @@ final class HologramClientProgress {
         if (!failure.hasKey("uiSequence", 4)) return;
         Entry current = views.get("server");
         if (current != null && current.session.equals(failure.getString("session"))
-            && current.command == failure.getLong("uiSequence")) current.tracker.clear();
+            && current.command == failure.getLong("uiSequence")) {
+            current.tracker.clear();
+            current.preparation.clear();
+        }
     }
 
     static long sequence(String scope) {

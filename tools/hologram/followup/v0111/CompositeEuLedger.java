@@ -24,6 +24,7 @@ public final class CompositeEuLedger {
     private final Map<String, Long> counts = new LinkedHashMap<String, Long>();
     private final Map<UUID, UUID> owners = new LinkedHashMap<UUID, UUID>();
     private final List<String> diagnostics = new ArrayList<String>();
+    private final List<String> planWarnings = new ArrayList<String>(), intrinsicSources = new ArrayList<String>();
     private final UUID actorOwner, leader;
     private final BigInteger construction;
     private BigInteger before = BigInteger.ZERO, cacheEu = BigInteger.ZERO;
@@ -55,7 +56,7 @@ public final class CompositeEuLedger {
             require(!(Boolean)call(persisted,"func_74764_b",key),"actor has native test UI kit recovery data: "+key);
         require(((Integer)get(get(world,"field_73011_w"),"field_76574_g"))==1048578,"explicit GTMB fixture dimension only");
         owners.put(actorOwner,leader);inspectOwners(false);
-        quote();
+        freezeCacheMetadata();quote();
         // This observer proves the EU account only; it must not assert AE-account payment from EU events.
         require(cacheAe.signum()==0,"NOT_SUPPORTED: cache quote uses native AE bank; an independent AE receipt observer is required");
         Class<?> sink=Class.forName(PROBES+"$Sink");
@@ -71,6 +72,28 @@ public final class CompositeEuLedger {
         for(UUID owner:owners.keySet())call(probes,"addOwner",owner);
         inspectOwners(false);
         before=balance();
+    }
+
+    private void freezeCacheMetadata() throws Exception {
+        Object warnings,sources;
+        try{warnings=get(session,"blueprintEnergyWarnings");sources=get(session,"blueprintIntrinsicSources");}
+        catch(NoSuchFieldException absent){throw new IllegalStateException("Native EU ledger NOT_SUPPORTED: product has no typed cache warning/intrinsic-source plan metadata",absent);}
+        require(warnings instanceof List<?> && sources instanceof List<?>,"invalid native cache plan metadata types");
+        for(Object warning:(List<?>)warnings){require(warning instanceof String,"invalid native cache warning type");planWarnings.add((String)warning);}
+        require(planWarnings.isEmpty(),"planned cache omissions are not accepted: "+planWarnings);
+        for(Object source:(List<?>)sources){
+            require(source instanceof String,"invalid native intrinsic source type");
+            String value=(String)source;
+            require(value.equals("EnderIO native creative capacitor bank")||value.equals("AE native creative energy provider"),"unknown native intrinsic source enum: "+value);
+            intrinsicSources.add(value);
+        }
+    }
+
+    private String noticeOutcome(String notice) {
+        if(notice.isEmpty())return "NONE";
+        // Exact producer token only: insufficient/omitted/composite notices can never match this branch.
+        if(notice.equals("保留原生固有能源")&&!intrinsicSources.isEmpty())return "NATIVE_INTRINSIC_DEFAULTS";
+        return "REJECTED";
     }
 
     private void quote() throws Exception {
@@ -174,7 +197,10 @@ public final class CompositeEuLedger {
             put(out,"bankBefore",before.toString());put(out,"bankAfter",after.toString());put(out,"bankDelta",after.subtract(before).toString());
             put(out,"nativeSignedSum",all.toString());put(out,"constructionQuoteEU",construction.toString());put(out,"cacheQuoteEU",cacheEu.toString());
             put(out,"cacheQuoteAE",cacheAe.toPlainString());put(out,"cacheQuoteRoutes",quoteSources);put(out,"ownerLeaderMap",owners.toString());
-            put(out,"cacheNotice",String.valueOf(get(session,"blueprintEnergyNotice")));
+            String notice=(String)get(session,"blueprintEnergyNotice"),noticeOutcome=noticeOutcome(notice);
+            put(out,"cacheNotice",notice);put(out,"cacheNoticeOutcome",noticeOutcome);
+            put(out,"frozenPlanWarnings",planWarnings.toString());put(out,"frozenIntrinsicSources",intrinsicSources.toString());
+            put(out,"intrinsicBoundary","exact chosen native creative block/material capability; no exemption for other demand on the same cell; all quoted cache EU still requires real payment");
             put(out,"nativeEnergyCoverCount",Integer.toString(nativeEnergyCoverCount));
             put(out,"materialTransferAE","NOT_OBSERVED: no native AE-fee observer; ordinary AE transfer fees are outside this EU-account settlement claim");
             put(out,"materialAeRouteSeen",Boolean.toString(materialAeRouteSeen));
@@ -189,7 +215,7 @@ public final class CompositeEuLedger {
             require(sums.get("SUPPLY").equals(supplied),"native finite supply differs from recorded supply");
             require(sums.get("CONSTRUCTION").equals(construction.negate()),"native construction debit differs from complete placement quote");
             require(sums.get("CACHE").equals(cacheEu.negate()),"native cache debit differs from per-cell quote; empty-cache fallback is not accepted");
-            require(String.valueOf(get(session,"blueprintEnergyNotice")).isEmpty(),"product reported a cache fallback/omission/migration notice; complete ordinary cache restoration claim is refused");
+            require(!noticeOutcome.equals("REJECTED"),"product cache notice is not empty or an exact native-intrinsic token backed by frozen known sources; fallback/omission/migration is refused");
             require(sums.get("TRANSACTION_REFUND").signum()==0&&sums.get("CONSTRUCTION_REFUND").signum()==0,"complete placement requires no transaction refunds");
             require(sums.get("NATIVE_COVER_REMOVAL").signum()==0,"ordinary placement window unexpectedly refunded a removed native cover buffer");
             require(sums.get("TRANSFER").signum()<=0,"invalid positive material-transfer charge");

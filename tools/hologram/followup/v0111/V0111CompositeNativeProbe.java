@@ -897,6 +897,16 @@ public final class V0111CompositeNativeProbe {
             call(report,"func_74782_a","nativeTaskWitness",call(task,"func_74737_b"));
             for(String key:new String[]{"status","uiSequence","planRevision","processingPresetOperation","processingPresetOperationSuccess","blueprintProcessingComplete","processing","resourceReview","resourceBlockers","rootReport","blueprintOperation","blueprintOperationSuccess","blueprintSavePending","job","jobPartialPlacement","jobMissingCells","jobProtectedCells","jobUnsupportedCells","jobSkippedCells","progress"})
                 if((Boolean)call(data,"func_74764_b",key))call(report,"func_74782_a",key,call(call(data,"func_74781_a",key),"func_74737_b"));
+            Object failedCells=construct("net.minecraft.nbt.NBTTagList");int failedCount=0;
+            for(Object cell:(List<?>)get(state,"cells")){
+                if(!Arrays.asList("unsupported","protected","blocked","missing").contains(String.valueOf(get(cell,"status"))))continue;
+                failedCount++;if(count(failedCells)>=128)continue;Object row=nbt();
+                for(String key:new String[]{"index","x","y","z","dx","dy","dz","meta","wantMeta"})putInt(row,key,((Number)get(cell,key)).intValue());
+                for(String key:new String[]{"id","wantId","status","operation","sourceClass","sourceWarning"}){String value=String.valueOf(get(cell,key));putText(row,key,value.substring(0,Math.min(value.length(),512)));}
+                call(failedCells,"func_74742_a",row);
+            }
+            call(report,"func_74782_a","failedClientCells",failedCells);putInt(report,"failedClientCellCount",failedCount);
+            putText(report,"failedClientCellScope","actual published client cells at terminal failure; at most128 scalar samples, no native tile or item NBT; not an independent server-world oracle");
             Object gui=get(mc,"field_71462_r");if(isScreen(gui))call(report,"func_74782_a","smokeUI",call(gui,"smokeLibraryUiState"));
             String name="composite-"+kind()+"-terminal-failure.nbt";writeNbt(name,report);proof.setProperty("nativeTerminalFailureReport",name);
         }catch(Exception diagnostic){proof.setProperty("nativeTerminalFailureReportError",diagnostic.toString());failure.addSuppressed(diagnostic);}
@@ -944,6 +954,12 @@ public final class V0111CompositeNativeProbe {
             Object screen=get(mc,"field_71462_r");proof.setProperty("nativeClientScreen",screen==null?"NONE":screen.getClass().getName());
             proof.setProperty("nativeBackgroundBusy",String.valueOf(busy()));
             Object actualState=get(clientType("HologramClient"),"state");proof.setProperty("nativeBlueprintDirty",actualState==null?"NO_STATE":String.valueOf(bool(get(actualState,"data"),"blueprintDirty")));
+            if(actualState!=null){
+                Object data=get(actualState,"data"),progress=compound(data,"progress");
+                proof.setProperty("nativeJob",String.valueOf(integer(data,"job")));
+                proof.setProperty("nativeProgressPhase",str(progress,"phase"));
+                for(String key:new String[]{"done","total","uiSequence","planRevision","sequence"})proof.setProperty("nativeProgress."+key,String.valueOf(number(progress,key)));
+            }
             if(isScreen(screen)){
                 proof.setProperty("nativeDiscardReview",String.valueOf(get(get(get(screen,"ui"),"library"),"discardReview")));
                 Boolean guidance=nativeSaveGuidanceOpen(screen);proof.setProperty("nativeSaveGuidanceOpen",guidance==null?"ABSENT_NATIVE_API":String.valueOf(guidance));
