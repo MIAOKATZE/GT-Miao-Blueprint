@@ -6,6 +6,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.nio.file.Files;
@@ -65,6 +67,16 @@ public final class CompositeWorldWitness {
     private boolean rawAeChartEnabled;
     private final Map<String,Object> pendingPlacementInputs=new LinkedHashMap<String,Object>();
     private final Map<String,Map<String,String>> placementInputHashes=new LinkedHashMap<String,Map<String,String>>();
+    private Object selfSourceGraph,pendingSelfEmbeddingProof;
+    private CompositeAeSelfCopyProof.Proof selfExpectedProof;
+    private boolean selfEmbeddingProofAttempted;
+    private final Map<String,Object> placementImportBindings=new LinkedHashMap<String,Object>(),pendingPlacementAudits=new LinkedHashMap<String,Object>();
+    private Object[] ordinarySavedRows,ordinaryCaptureRows;
+    private Object ordinaryContext,ordinaryAuditRows,ordinaryObservations;
+    private String ordinaryKind="";
+    private int ordinaryCompared,ordinaryScopeMissing,ordinaryWorldMismatches,ordinarySourceIncomplete;
+    private boolean ordinaryConfigKnown,ordinaryChartEnabled;
+    private int ordinarySampleInterval,ordinaryCoverInterval;
 
     public CompositeWorldWitness(Object world,Object actor,Object manifest,Object seedReceipt)throws Exception {
         this.world=world;this.actor=actor;this.manifest=manifest;this.source=ints(manifest,"source");this.bankOrigin=ints(manifest,"bank");result=nbt();
@@ -130,7 +142,8 @@ public final class CompositeWorldWitness {
         if(baselineCursor==0&&!quantumReady("source",source))return;
         if(baselineCursor<64000){
             baselineLastWorldTick=(Long)call(world,"func_82737_E");
-            if(baselineScanTicks++==0)baselineFirstWorldTick=baselineLastWorldTick;
+            if(baselineScanTicks++==0){baselineFirstWorldTick=baselineLastWorldTick;
+                try{Class<?> config=Class.forName("com.miaokatze.gtswn.config.Config");ordinaryChartEnabled=(Boolean)get(config,"aeChartEnabled");ordinarySampleInterval=(Integer)get(config,"aeSampleInterval");ordinaryCoverInterval=(Integer)get(config,"interactionRateTicks");ordinaryConfigKnown=true;}catch(Exception unavailable){ordinaryConfigKnown=false;}}
             for(int n=0;n<256&&baselineCursor<64000;n++,baselineCursor++){
                 Object row=read(source,baselineCursor);baseline.add(row);
                 if(!text(row,"block").equals("minecraft:air"))sourceNonAirBlocks++;
@@ -167,13 +180,14 @@ public final class CompositeWorldWitness {
                     if(rawGridProof!=null)call(rawGridProof,"rewriteExpectedGridIds",expected,cursor);
                     relocateRootTile(expected,target,cursor);
                     rawNativeSemantics(expected,actual,cursor);
-                }else{expected=normalize(baseline.get(cursor),checking,true);actual=normalize(read(target,cursor),checking,false);}
+                }else{Object nativeActual=read(target,cursor);auditOrdinaryCell(nativeActual,cursor);expected=normalize(baseline.get(cursor),checking,true);actual=normalize(nativeActual,checking,false);}
                 if(has(expected,"tile"))tiles++;
                 if(!typedEqual(expected,actual)&&mismatches.size()<16)mismatches.add(cursor+": expected="+abbreviate(expected)+" actual="+abbreviate(actual));
                 if(checking.equals("raw")){Object sourceCell=read(source,cursor);if(text(sourceCell,"block").equals("minecraft:air")&&!has(sourceCell,"tile"))sourceAir++;}
             }
             putInt(result,"oracleComparedCells",cursor);putInt(result,"oracleTotalCells",64000);
             if(cursor==64000){String kind=checking;checking="";putInt(result,kind+"ComparedCells",cursor);putInt(result,kind+"ComparedTiles",tiles);putInt(result,kind+"SourceAirCells",sourceAir);putText(result,kind+"Mismatches",mismatches.toString());putLong(result,kind+"PostcheckNanos",System.nanoTime()-operationStarted);if(kind.equals("raw")){Object evidence=nbt();tag(evidence,"differences",rawPostDifferences);tag(evidence,"semanticObservations",rawSemanticObservations);putInt(evidence,"completedCells",cursor);putBool(evidence,"scanComplete",true);putText(evidence,"boundary","Full cut payload to sampled post-native World, before root relocation, grid proof, or semantic evaluation; sample spans natural ticks and is later than commit.");pendingRawSamples.put("postnative-differences",evidence);}
+                if(!kind.equals("raw"))finishOrdinaryAudit(kind,true);
                 if(kind.equals("raw"))check(rawGridProof!=null,"strict AE raw relocation proof unavailable: "+text(result,"rawAEProofFailure"));check(mismatches.isEmpty(),"independent "+kind+" native data mismatch: "+mismatches);if(kind.equals("raw"))check(sourceAir==64000,"raw source independently empty at every selected cell");putBool(result,kind+"Passed",true);putText(result,"status","READY");}
         }
         observeSave();
@@ -338,7 +352,7 @@ public final class CompositeWorldWitness {
     private void boundedCounter(Object before,Object after,String key,int index)throws Exception {
         if(!has(before,key)||!has(after,key))return;Object a=call(before,"func_74781_a",key),b=call(after,"func_74781_a",key);if(((Byte)call(a,"func_74732_a")).intValue()!=4||((Byte)call(b,"func_74732_a")).intValue()!=4)return;
         long from=(Long)call(a,"func_150291_c"),to=(Long)call(b,"func_150291_c"),elapsed=(Long)call(world,"func_82737_E")-rawSourceGraphTick;
-        if(to!=from&&from>=0&&to>=from&&to-from<=elapsed){Object row=semanticObservation(index,"GT BaseMetaTileEntity root /tile/mTotalRunTime is native multiblock server elapsed ticks; monotone delta bounded by independently sampled pre-CUT to current World tick interval");putLong(row,"before",from);putLong(row,"after",to);putLong(row,"maximumElapsedTicks",elapsed);tag(before,key,call(b,"func_74737_b"));}
+        if(to!=from&&from>=0&&to>=from&&to-from<=elapsed){Object row=semanticObservation(index,"GT BaseMetaTileEntity root /tile/mTotalRunTime is native multiblock server elapsed ticks; monotone delta bounded by independently sampled source-boundary to current World tick interval");putLong(row,"before",from);putLong(row,"after",to);putLong(row,"maximumElapsedTicks",elapsed);tag(before,key,call(b,"func_74737_b"));}
     }
     private void panelSampleSemantics(Object before,Object after,int index)throws Exception {
         String key="lastAESampleTick";if(!has(before,key)||!has(after,key))return;Object a=call(before,"func_74781_a",key),b=call(after,"func_74781_a",key);if(((Byte)call(a,"func_74732_a")).intValue()!=4||((Byte)call(b,"func_74732_a")).intValue()!=4)return;
@@ -347,7 +361,7 @@ public final class CompositeWorldWitness {
         Object host=existingTileAt(target[0]+index%40,target[1]+index/1600,target[2]+index/40%40);if(host==null||!host.getClass().getName().equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel"))return;
         Object controller=get(host,"controller");if(controller==null||!controller.getClass().getName().equals("com.miaokatze.gtswn.common.panel.AEMonitorController"))return;
         if(rawAeChartEnabled&&(Boolean)get(config,"aeChartEnabled")&&interval==rawAeSampleInterval&&interval>0&&from>=-1&&to>=rawSourceGraphTick&&to<=now&&to>from&&(from<0||to-from>=interval)&&((Long)get(controller,"lastAESampleTick")).longValue()==to){
-            Object row=semanticObservation(index,"Exact GTSWN AEMonitorController.tickSampling: aeChartEnabled, interval positive, changed Long /tile/lastAESampleTick equals existing native controller timestamp, monotone sampling interval, new total-World-time lies between independently observed pre-CUT and sample ticks; no other panel fields changed by this predicate");putLong(row,"before",from);putLong(row,"after",to);putInt(row,"aeSampleInterval",interval);tag(before,key,call(b,"func_74737_b"));
+            Object row=semanticObservation(index,"Exact GTSWN AEMonitorController.tickSampling: aeChartEnabled, interval positive, changed Long /tile/lastAESampleTick equals existing native controller timestamp, monotone sampling interval, new total-World-time lies between independently observed source-boundary and sample ticks; no other panel fields changed by this predicate");putLong(row,"before",from);putLong(row,"after",to);putInt(row,"aeSampleInterval",interval);tag(before,key,call(b,"func_74737_b"));
         }
     }
     private void wirelessCoverTimerSemantics(Object before,Object after,int index)throws Exception {
@@ -363,7 +377,7 @@ public final class CompositeWorldWitness {
             int side=integer(a,"s");if(side<0||side>=6)continue;Object cover=call(host,"getCoverAtSide",enumValue("net.minecraftforge.common.util.ForgeDirection",new String[]{"DOWN","UP","NORTH","SOUTH","WEST","EAST"}[side]));
             if(cover==null||!cover.getClass().getName().equals("com.miaokatze.gtswn.common.covers.GTswn_Cover_EnergyWireless")||((Integer)call(cover,"getCoverID")).intValue()!=integer(a,"id")||((Integer)call(cover,"getTickRate")).intValue()!=1||((Long)get(cover,"ticksSinceLastRefill")).longValue()!=to)continue;
             if(call(get(cover,"coveredTile"),"get")!=host)continue;long minimumTicks=(to-from+interval)%interval;if(minimumTicks>elapsed)continue;
-            Object row=semanticObservation(index,"Exact live GTswn_Cover_EnergyWireless class/side/id bound to this GT host; doCoverThings ticks once per server tick, increments Long /tile/gt.covers[c]/d/ticksSinceLastRefill and wraps to zero at actual Config.interactionRateTicks. Modulo advance fits pre-CUT-to-sample tick interval; every other cover tag including all energy/configuration is typed-identical.");putInt(row,"coverListIndex",c);putInt(row,"coverId",integer(a,"id"));putInt(row,"side",side);putInt(row,"interactionRateTicks",interval);putLong(row,"before",from);putLong(row,"after",to);putLong(row,"minimumElapsedTicks",minimumTicks);putLong(row,"maximumElapsedTicks",elapsed);tag(ad,key,call(bv,"func_74737_b"));
+            Object row=semanticObservation(index,"Exact live GTswn_Cover_EnergyWireless class/side/id bound to this GT host; doCoverThings ticks once per server tick, increments Long /tile/gt.covers[c]/d/ticksSinceLastRefill and wraps to zero at actual Config.interactionRateTicks. Modulo advance fits the independently bounded source-to-sample tick interval; every other cover tag including all energy/configuration is typed-identical.");putInt(row,"coverListIndex",c);putInt(row,"coverId",integer(a,"id"));putInt(row,"side",side);putInt(row,"interactionRateTicks",interval);putLong(row,"before",from);putLong(row,"after",to);putLong(row,"minimumElapsedTicks",minimumTicks);putLong(row,"maximumElapsedTicks",elapsed);tag(ad,key,call(bv,"func_74737_b"));
         }
     }
 
@@ -528,23 +542,32 @@ public final class CompositeWorldWitness {
         try{return CompositeAeNetworkObserver.snapshot(world,origin,label);}catch(Exception failure){Object out=nbt();putText(out,"sampleLabel",label);putText(out,"status","OBSERVER_UNAVAILABLE");putText(out,"failure",failure.toString());return out;}
     }
     private void captureAeSample(String kind,int[] origin,String label)throws Exception {
-        publishAeSample(kind,aeSnapshot(origin,label));
+        Object sample=aeSnapshot(origin,label);
+        if(has(sample,"grids"))rawGraphPathReady(sample,kind); // Detached facts only; no new readiness wait or product validation.
+        publishAeSample(kind,sample);
+        if(kind.equals("self"))captureSelfEmbeddingProof(sample);
     }
     private void publishAeSample(String kind,Object sample)throws Exception {
         check(!pendingAeSamples.containsKey(kind)&&!has(result,aeReportKey(kind)),"one detached AE sample per fixed boundary");
         pendingAeSamples.put(kind,sample);
         if(kind.equals("rawCutSource"))rawSourceGraph=sample;if(kind.equals("raw"))rawTargetGraph=sample;
+        if(kind.equals("source"))selfSourceGraph=sample; // Retain this original reference once; no graph recapture/copy.
         Object reference=nbt();putText(reference,"sampleLabel",text(sample,"sampleLabel"));putText(reference,"status","PENDING_ARTIFACT");tag(result,aeReportKey(kind),reference);
     }
     /** All detached sample groups, including isolated/outer groups, must match current registered native grids. */
     private boolean rawGraphPathReady(Object sample,String kind)throws Exception {
         Object report=nbt(),rows=listTag();tag(report,"groups",rows);putLong(report,"sampleWorldTick",(Long)call(world,"func_82737_E"));
+        putText(report,"format","ae-path-facts-v1");putText(report,"snapshotCanonicalSha256",digest(canonicalBytes(sample)));putText(report,"snapshotHashAlgorithm",SOURCE_FINGERPRINT_ALGORITHM);
+        putLong(report,"snapshotWorldTick",(Long)call(sample,"func_74763_f","worldTick"));tag(report,"origin",call(call(sample,"func_74781_a","origin"),"func_74737_b"));putInt(report,"dimension",integer(sample,"dimension"));
         Object groups=call(sample,"func_150295_c","grids",10);java.util.Set<Long> expected=new HashSet<Long>();
         for(int i=0;i<size(groups);i++){Object group=entry(groups,i);requireType(call(group,"func_74781_a","g"),4,"graph/grids/g");check(expected.add((Long)call(group,"func_74763_f","g")),"unique source/target selected graph ids");}
         boolean ready=!expected.isEmpty();java.util.Set<Long> found=new HashSet<Long>();
         for(Object grid:(Iterable<?>)call(get(Class.forName("appeng.hooks.TickHandler"),"INSTANCE"),"getGridList")){
             Object storage=get(grid,"myStorage");if(storage==null)continue;long id=(Long)call(storage,"getID");if(!expected.contains(id))continue;check(found.add(id),"native selected grid ids are unique");
-            Object row=nbt();putLong(row,"g",id);String reason=quantumPathPending(grid);putText(row,"pendingReason",reason);putBool(row,"ready",reason.isEmpty());append(rows,row);ready&=reason.isEmpty();
+            Object row=nbt();putLong(row,"g",id);String reason=quantumPathPending(grid);putText(row,"pendingReason",reason);putBool(row,"ready",reason.isEmpty());
+            putText(row,"gridClass",grid.getClass().getName());Object path=call(grid,"getCache",Class.forName("appeng.api.networking.pathing.IPathingGrid"));
+            if(path!=null&&path.getClass().getName().equals("appeng.me.cache.PathGridCache")){putText(row,"pathClass",path.getClass().getName());for(String flag:new String[]{"recalculateControllerNextTick","updateNetwork","booting"})putBool(row,flag,(Boolean)get(path,flag));putText(row,"controllerState",String.valueOf(get(path,"controllerState")));}
+            append(rows,row);ready&=reason.isEmpty();
         }
         ready&=found.equals(expected);putInt(report,"expectedGroups",expected.size());putInt(report,"observedNativeGroups",found.size());putBool(report,"ready",ready);putText(report,"scope","Every grid in this exact same-tick detached graph, including outer/isolated grids; actual native PathGridCache recalculateControllerNextTick, updateNetwork, booting false and no controller conflict. Existing registry/storage/cache reads only.");tag(result,kind+"AllGraphPathReadiness",report);return ready;
     }
@@ -559,6 +582,50 @@ public final class CompositeWorldWitness {
         if(has(sample,"status"))putText(reference,"observationStatus",text(sample,"status"));
         if(has(sample,"failure"))putText(reference,"observationFailure",text(sample,"failure"));
         tag(result,aeReportKey(kind),reference);pendingAeSamples.remove(kind);
+    }
+    /** Same natural target-sample tick, diagnostics only. The existing World oracle never consumes this proof. */
+    private void captureSelfEmbeddingProof(Object targetGraph)throws Exception {
+        check(!selfEmbeddingProofAttempted&&pendingSelfEmbeddingProof==null,"one self embedding evidence boundary");selfEmbeddingProofAttempted=true;
+        long started=System.nanoTime();Object actorFacts=null,evidence;
+        Object sourceFacts=has(result,"sourceAllGraphPathReadiness")?compound(result,"sourceAllGraphPathReadiness"):null;
+        Object targetFacts=has(result,"selfAllGraphPathReadiness")?compound(result,"selfAllGraphPathReadiness"):null;
+        try {
+            actorFacts=CompositeAeSelfCopyProof.observeExistingActor(actor);
+            tag(result,"selfActorRegistryFacts",call(actorFacts,"func_74737_b"));
+            CompositeAeSelfCopyProof.Proof proof=CompositeAeSelfCopyProof.prepare(selfSourceGraph,targetGraph,source,ints(manifest,"self"),actorFacts,sourceFacts,targetFacts);
+            evidence=proof.receipt();selfExpectedProof=proof;
+        } catch(Exception failure) {
+            evidence=nbt();putText(evidence,"status","UNKNOWN");tag(evidence,"failure",selfEmbeddingFailure(failure));
+            if(actorFacts==null){actorFacts=nbt();putText(actorFacts,"status","UNKNOWN");tag(actorFacts,"failure",selfEmbeddingFailure(failure));tag(result,"selfActorRegistryFacts",call(actorFacts,"func_74737_b"));}
+            tag(evidence,"actorRegistryFacts",call(actorFacts,"func_74737_b"));
+            if(sourceFacts!=null)tag(evidence,"sourcePathFacts",call(sourceFacts,"func_74737_b"));else putText(evidence,"sourcePathFactsStatus","UNKNOWN: original source same-tick facts unavailable");
+            if(targetFacts!=null)tag(evidence,"targetPathFacts",call(targetFacts,"func_74737_b"));else putText(evidence,"targetPathFactsStatus","UNKNOWN: original target same-tick facts unavailable");
+            putBool(evidence,"sourceGraphAvailable",selfSourceGraph!=null);
+        } finally {selfSourceGraph=null;}
+        putText(evidence,"evidenceFormat","self-ae-embedding-observation-v1");putBool(evidence,"authorizesPass",false);putBool(evidence,"authorizesWholeWorldPass",false);
+        putBool(evidence,"appliedToWorldOracle",false);putText(evidence,"sourceGraphArtifact","composite-source-ae-network.nbt");putText(evidence,"targetGraphArtifact","composite-self-ae-network.nbt");
+        putLong(evidence,"observationWorldTick",(Long)call(world,"func_82737_E"));putLong(evidence,"readOnlyNanos",System.nanoTime()-started);
+        putText(evidence,"boundary","Once at the already captured naturally formed self target graph; original source graph and same-tick raw path facts only. No native wait, replay, expected-row patch or World oracle change.");
+        putText(evidence,"sourceFingerprintScope","Historical normalized source digests are not this proof's native graph binding and never authorize strict World or asset equality.");
+        pendingSelfEmbeddingProof=evidence;
+        Object summary=nbt();putText(summary,"status",text(evidence,"status"));putBool(summary,"authorizesPass",false);putBool(summary,"authorizesWholeWorldPass",false);putBool(summary,"appliedToWorldOracle",false);
+        putText(summary,"artifactStatus","PENDING_ARTIFACT");putLong(summary,"observationWorldTick",(Long)call(world,"func_82737_E"));
+        for(String key:new String[]{"sourcePorts","targetPorts","originalRetainedPorts","newTargetPorts","newRuntimePChanges","newRuntimeGChanges","reviewedPersistedPorts","expectedDirectedEdges","actualDirectedEdges","completeTargetGroups"})if(has(evidence,key))putInt(summary,key,integer(evidence,key));
+        if(has(evidence,"failure"))tag(summary,"failure",call(compound(evidence,"failure"),"func_74737_b"));
+        tag(result,"selfAEEmbeddingProof",summary);
+    }
+    private static Object selfEmbeddingFailure(Exception failure)throws Exception {
+        Object out=nbt();putText(out,"exceptionClass",failure.getClass().getName());putText(out,"reason",failure.toString());
+        StringWriter trace=new StringWriter();failure.printStackTrace(new PrintWriter(trace));String value=trace.toString();Object chunks=listTag();
+        for(int from=0;from<value.length();from+=12000)append(chunks,construct("net.minecraft.nbt.NBTTagString",value.substring(from,Math.min(value.length(),from+12000))));
+        tag(out,"completeStackTraceChunks",chunks);return out;
+    }
+    /** Borrow once for the fixed Probe writer; never put a large proof in the every-tick report copy. */
+    public Object pendingSelfEmbeddingProof(){return pendingSelfEmbeddingProof;}
+    public void commitSelfEmbeddingProof(String artifact,String sha256,long bytes)throws Exception {
+        check(pendingSelfEmbeddingProof!=null&&artifact.equals("composite-self-ae-embedding-proof.nbt")&&sha256.matches("[0-9a-f]{64}")&&bytes>0,"one actual fixed self embedding artifact receipt");
+        Object summary=compound(result,"selfAEEmbeddingProof");putText(summary,"artifactStatus","ARTIFACT_COMMITTED");putText(summary,"artifact",artifact);putText(summary,"sha256",sha256);putLong(summary,"bytes",bytes);tag(result,"selfAEEmbeddingProof",summary);
+        pendingSelfEmbeddingProof=null;
     }
     public Object report()throws Exception{return call(result,"func_74737_b");}
     /** Detached original World samples, captured over the baseline scan rather than read again at shutdown. */
@@ -628,9 +695,127 @@ public final class CompositeWorldWitness {
         catch(Exception failure){putText(comparison,"status","UNKNOWN");putText(comparison,"reason",failure.toString());}tag(result,kind+"PlacementInputComparison",comparison);
     }
 
+    /** Fixture-only original ACK/JSON observation, not a product request or caller assertion of success. */
+    public void bindPlacementImport(String kind,Object evidence)throws Exception {
+        check(Arrays.asList("self","share").contains(kind)&&!placementImportBindings.containsKey(kind),"one original ordinary import observation");
+        Object out=nbt();putBool(out,"bound",false);putText(out,"status","UNKNOWN");
+        try {
+            Object s=session(),ack=compound(evidence,"privateImported"),save=compound(evidence,"serverSaveCommit"),actualSave=compound(result,kind+"SaveCommit");
+            String owner=String.valueOf(call(call(actor,"func_146103_bH"),"getId")),id=text(ack,"id"),local=text(evidence,"localId"),json=text(evidence,"uploadedJsonSha256");
+            check(get(s,"player")==actor&&get(s,"libraryWorld")==world,"actual server actor/session World binding");
+            for(String key:new String[]{"transfer","localId","selectedPresetId","ownerUUID","uploadedJsonSha256"})requireType(call(evidence,"func_74781_a",key),8,"ordinary import/"+key);
+            for(String key:new String[]{"op","id","session","transfer"})requireType(call(ack,"func_74781_a",key),8,"privateImported/"+key);
+            check(text(ack,"op").equals("privateImported")&&!text(ack,"session").isEmpty()&&id.startsWith("private_"),"original privateImported ACK shape");
+            check(!text(evidence,"transfer").isEmpty()&&text(evidence,"transfer").equals(text(ack,"transfer")),"actual upload transfer identity");
+            check(owner.equals(text(evidence,"ownerUUID"))&&owner.equals(String.valueOf(call(actor,"func_110124_au"))),"actual server GameProfile and client owner UUID agree");
+            check(id.equals(text(evidence,"selectedPresetId"))&&id.equals(String.valueOf(get(get(s,"libraryPrivatePreset"),"id")))&&id.equals(String.valueOf(get(get(s,"virtualPreset"),"id"))),"native copied private preset identity");
+            check(!local.isEmpty()&&local.equals(String.valueOf(get(s,"libraryLocalId")))&&local.equals(text(actualSave,"localId")),"actual saved local ID carried into placement");
+            check(typedEqual(save,actualSave)&&bool(actualSave,"ownerCommit")&&json.matches("[0-9a-f]{64}")&&json.equals(text(actualSave,"jsonSha256")),"server owner SaveCommit equals observed outgoing JSON byte hash");
+            requireType(call(evidence,"func_74781_a","uploadedJsonBytes"),4,"ordinary JSON byte length");check((Long)call(evidence,"func_74763_f","uploadedJsonBytes")>0,"actual observed JSON byte length");
+            tag(out,"privateImported",call(ack,"func_74737_b"));tag(out,"serverSaveCommit",call(actualSave,"func_74737_b"));
+            for(String key:new String[]{"transfer","localId","selectedPresetId","ownerUUID","uploadedJsonSha256","uploadedJsonBytes"})tag(out,key,call(call(evidence,"func_74781_a",key),"func_74737_b"));
+            putText(out,"placementSession",String.valueOf(get(s,"id")));putText(out,"status","BOUND");putBool(out,"bound",true);
+            putText(out,"boundary","ACK session is the original library request session; native choosePlacementPreset creates a new placement session and copyLibraryIntent carries the exact private id/local id. JSON SHA hashes original uploaded JSON bytes, not a container or receipt artifact. Server actor/GameProfile/session ownership and current native private/virtual ids are checked independently.");
+        }catch(Exception failure){putText(out,"reason",failure.toString());}
+        placementImportBindings.put(kind,out);tag(result,kind+"PlacementImportBinding",call(out,"func_74737_b"));
+    }
+    private int ordinaryIndex(int x,int y,int z,int[] origin)throws Exception {
+        long dx=(long)x-origin[0],dy=(long)y-origin[1],dz=(long)z-origin[2];check(dx>=0&&dx<40&&dy>=0&&dy<40&&dz>=0&&dz<40,"ordinary source coordinate outside manifest target cube");return (int)(dx+40*dz+1600*dy);
+    }
+    private Object ordinaryDecodedRow(int index,String block,int meta,String encoded)throws Exception {
+        check(block!=null&&!block.isEmpty(),"raw source DTO has no explicit registered block");Object row=nbt();putText(row,"block",block);putInt(row,"meta",meta);
+        if(has(baseline.get(index),"tileClass"))putText(row,"tileClass",text(baseline.get(index),"tileClass"));
+        if(encoded!=null&&!encoded.isEmpty()){
+            check(encoded.length()<=((1024*1024+2)/3)*4,"ordinary encoded NBT exceeds observed production source limit");byte[] compressed=java.util.Base64.getDecoder().decode(encoded);check(compressed.length<=1024*1024,"ordinary compressed NBT limit");
+            try(java.io.InputStream input=new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(compressed))){byte[] buffer=new byte[8192];int total=0,count;while((count=input.read(buffer))!=-1){check(count<=4*1024*1024-total,"ordinary expanded NBT limit");total+=count;}}
+            Object decoded=call(Class.forName("net.minecraft.nbt.CompressedStreamTools"),"func_152457_a",compressed,construct("net.minecraft.nbt.NBTSizeTracker",16L*1024*1024));requireType(decoded,10,"ordinary raw tileNbt root");tag(row,"tile",decoded);
+            if(!has(row,"tileClass"))putText(row,"tileClass","UNKNOWN_NO_BASELINE_NATIVE_HOST");
+        }return row;
+    }
+    private void freezeOrdinaryExpected(String kind,Object s)throws Exception {
+        ordinaryKind=kind;ordinarySavedRows=new Object[64000];ordinaryCaptureRows=new Object[64000];ordinaryContext=nbt();ordinaryAuditRows=listTag();ordinaryObservations=listTag();ordinaryCompared=ordinaryScopeMissing=ordinaryWorldMismatches=ordinarySourceIncomplete=0;
+        putText(ordinaryContext,"kind",kind);tag(ordinaryContext,"sourceOrigin",construct("net.minecraft.nbt.NBTTagIntArray",source.clone()));tag(ordinaryContext,"targetOrigin",construct("net.minecraft.nbt.NBTTagIntArray",ints(manifest,kind)));
+        putText(ordinaryContext,"actorUUID",String.valueOf(call(call(actor,"func_146103_bH"),"getId")));putText(ordinaryContext,"actorName",String.valueOf(call(actor,"func_70005_c_")));
+        putBool(ordinaryContext,"inputBindingComplete",false);putBool(ordinaryContext,"finalChoicesBound",false);putBool(ordinaryContext,"identityPose",false);
+        try {
+            Object preset=get(s,"libraryPrivatePreset"),virtual=get(s,"virtualPreset"),binding=placementImportBindings.get(kind);int[] at=ints(manifest,kind);
+            check(get(s,"player")==actor&&get(s,"libraryWorld")==world&&(Boolean)get(s,"virtualLocked")&&(Boolean)get(s,"virtualPlacement"),"native locked owner placement context");
+            check((Integer)get(s,"x")==at[0]&&(Integer)get(s,"y")==at[1]&&(Integer)get(s,"z")==at[2],"fund session and native capture use exact manifest target origin");
+            boolean importBound=binding!=null&&bool(binding,"bound")&&text(binding,"placementSession").equals(String.valueOf(get(s,"id")));
+            if(!importBound)putText(ordinaryContext,"scopeFailure","actual import ACK/JSON/owner binding unavailable or different placement session; rows are still compared without permission to claim a World match");
+            check(String.valueOf(get(preset,"id")).equals(String.valueOf(get(virtual,"id"))),"native selected private/virtual preset identity");
+            if(importBound)check(String.valueOf(get(preset,"id")).equals(text(binding,"selectedPresetId")),"frozen selected preset identity");
+            putBool(ordinaryContext,"retainNbt",(Boolean)get(virtual,"retainNbt"));Object coverOverride=get(s,"placementRetainCovers");putBool(ordinaryContext,"retainCovers",coverOverride==null?(Boolean)get(virtual,"retainCovers"):(Boolean)coverOverride);
+            Object keys=(Boolean)get(s,"placementNbtCustomized")?get(s,"placementNbtKeys"):get(virtual,"retainedNbtKeys");putBool(ordinaryContext,"allNbtSelected",keys==null);
+            int level=(Boolean)get(s,"placementDeidentificationChosen")?(Integer)get(s,"placementDeidentificationLevel"):(Integer)get(virtual,"deidentificationLevel");putInt(ordinaryContext,"deidentificationLevel",level);putInt(ordinaryContext,"aePolicyVersion",(Integer)get(virtual,"aePolicyVersion"));
+            int presetCount=0,captureCount=0;
+            for(Object cell:(List<?>)get(preset,"cells")){
+                check(!(Boolean)get(cell,"excluded"),"excluded selected source cell is outside finite ordinary scope");
+                long x=(long)at[0]+(Integer)get(cell,"x"),y=(long)at[1]+(Integer)get(cell,"y"),z=(long)at[2]+(Integer)get(cell,"z");check(x==(int)x&&y==(int)y&&z==(int)z,"preset coordinate overflow");int index=ordinaryIndex((int)x,(int)y,(int)z,at);
+                check(ordinarySavedRows[index]==null,"duplicate selected saved coordinate");ordinarySavedRows[index]=ordinaryDecodedRow(index,(String)get(cell,"block"),(Integer)get(cell,"metadata"),(String)get(cell,"tileNbt"));presetCount++;
+            }
+            for(Object cell:(List<?>)get(get(s,"capture"),"cells")){
+                check(!(Boolean)get(cell,"excluded"),"excluded capture source cell");int index=ordinaryIndex((Integer)get(cell,"x"),(Integer)get(cell,"y"),(Integer)get(cell,"z"),at);check(ordinaryCaptureRows[index]==null,"duplicate actual capture coordinate");
+                Object block=get(cell,"block");String registry=block==null?"":String.valueOf(call(get(Class.forName("net.minecraft.block.Block"),"field_149771_c"),"func_148750_c",block));ordinaryCaptureRows[index]=ordinaryDecodedRow(index,registry,(Integer)get(cell,"meta"),(String)get(cell,"tileNbt"));captureCount++;
+            }
+            int boundAir=0;
+            for(int i=0;i<64000;i++)if(ordinarySavedRows[i]==null||ordinaryCaptureRows[i]==null){
+                check(ordinarySavedRows[i]==null&&ordinaryCaptureRows[i]==null&&text(baseline.get(i),"block").equals("minecraft:air")&&!has(baseline.get(i),"tile"),"missing ordinary non-air source or mismatched selected/capture coverage at "+i);
+                ordinarySavedRows[i]=baseline.get(i);ordinaryCaptureRows[i]=baseline.get(i);boundAir++;
+            }
+            check(presetCount==sourceNonAirBlocks&&captureCount==sourceNonAirBlocks,"complete non-air source DTO coordinate coverage");
+            putBool(ordinaryContext,"identityPose",true);putBool(ordinaryContext,"inputBindingComplete",importBound);putInt(ordinaryContext,"boundAirCells",boundAir);putInt(ordinaryContext,"selectedCells",presetCount);putInt(ordinaryContext,"captureCells",captureCount);
+            putText(ordinaryContext,"classBindingBasis","Native baseline class at the same source cube index; all selected/capture registered block/meta and actual native tile tags remain independently audited. No class is inferred by creating a tile.");
+            putText(ordinaryContext,"placementSession",String.valueOf(get(s,"id")));putLong(ordinaryContext,"frozenPlanRevision",(Long)get(s,"planRevision"));putLong(ordinaryContext,"frozenWorldTick",(Long)call(world,"func_82737_E"));
+        }catch(Exception failure){putText(ordinaryContext,"scopeFailure",failure.toString());}
+        Object summary=nbt();putText(summary,"status",bool(ordinaryContext,"inputBindingComplete")?"FROZEN_INPUT_ROWS":"UNKNOWN_INPUT_SCOPE");putBool(summary,"authorizesPass",false);if(has(ordinaryContext,"scopeFailure"))putText(summary,"scopeFailure",text(ordinaryContext,"scopeFailure"));tag(result,kind+"ExpectedWorldAudit",summary);
+    }
+    private void bindFinalOrdinaryChoices(String kind,Object s)throws Exception {
+        if(!kind.equals(ordinaryKind)||ordinaryContext==null)return;Object comparison=compound(result,kind+"PlacementInputComparison");
+        boolean bound=bool(ordinaryContext,"inputBindingComplete")&&bool(comparison,"sameObservedInputSections")&&text(ordinaryContext,"placementSession").equals(String.valueOf(get(s,"id")))&&(Long)get(s,"configurationAcceptedSequence")>=0&&(Long)get(s,"placementReviewNonce")>0;
+        putBool(ordinaryContext,"finalChoicesBound",bound);putLong(ordinaryContext,"completedPlanRevision",(Long)get(s,"planRevision"));putLong(ordinaryContext,"configurationAcceptedSequence",(Long)get(s,"configurationAcceptedSequence"));putLong(ordinaryContext,"placementReviewNonce",(Long)get(s,"placementReviewNonce"));
+        putText(ordinaryContext,"choiceBoundary","Original pre-funding input section hashes equal the independently reread completed-job sections, same server placement session and real accepted configuration/review sequence. This is a boundary observation, not continuous instrumentation of the job.");
+    }
+    private void auditOrdinaryCell(Object actual,int index)throws Exception {
+        if(!checking.equals(ordinaryKind)||ordinaryContext==null)return;Object receipt;
+        try {
+            if(ordinarySavedRows[index]==null||ordinaryCaptureRows[index]==null)throw new IllegalStateException("original selected/capture row unavailable");
+            CompositePlacementExpected.Decision decision=CompositePlacementExpected.prepare(baseline.get(index),ordinarySavedRows[index],ordinaryCaptureRows[index],ordinaryContext,index,checking.equals("self")?selfExpectedProof:null);
+            receipt=decision.compare(actual);boolean scope=decision.scopeAccepted();if(!scope)ordinaryScopeMissing++;if(!decision.sourcePolicyAuditComplete())ordinarySourceIncomplete++;
+            boolean equal=bool(receipt,"equal");
+            if(scope&&!equal&&ordinaryConfigKnown){Object adjusted=decision.expectedRow();ordinaryNativeSemantics(adjusted,actual,index);Object residual=listTag();collectDifferences(adjusted,actual,"",index,residual);tag(receipt,"residualAfterNativePredicates",residual);equal=size(residual)==0;}
+            putBool(receipt,"fullWorldMatchAfterIndependentNativePredicates",scope&&equal);if(!equal)ordinaryWorldMismatches++;
+            if(!scope||!equal||size(call(receipt,"func_150295_c","sourcePolicyAudit",10))>0||size(call(receipt,"func_150295_c","finitePatches",10))>0||size(call(receipt,"func_150295_c","expectedToActual",10))>0)append(ordinaryAuditRows,receipt);
+        }catch(Exception failure){ordinaryScopeMissing++;receipt=nbt();putInt(receipt,"index",index);putText(receipt,"status","UNKNOWN");putText(receipt,"reason",failure.toString());
+            Object fallback=call(baseline.get(index),"func_74737_b");relocateRootTile(fallback,target,index);Object differences=listTag();collectDifferences(fallback,actual,"",index,differences);tag(receipt,"unboundBaselineToActual",differences);if(size(differences)>0)ordinaryWorldMismatches++;
+            putText(receipt,"comparisonBoundary","Complete native baseline diagnostic only; missing original selected/capture row forbids scope acceptance and no finite selected-state patch is inferred.");append(ordinaryAuditRows,receipt);}
+        ordinaryCompared++; // No new business check: the historical oracle below remains authoritative for this run.
+    }
+    private void ordinaryNativeSemantics(Object expected,Object actual,int index)throws Exception {
+        long oldTick=rawSourceGraphTick;boolean oldChart=rawAeChartEnabled;int oldSample=rawAeSampleInterval,oldCover=rawCoverInteractionInterval;Object oldObservations=rawSemanticObservations;
+        int start=size(ordinaryObservations);
+        try{rawSourceGraphTick=baselineFirstWorldTick;rawAeChartEnabled=ordinaryChartEnabled;rawAeSampleInterval=ordinarySampleInterval;rawCoverInteractionInterval=ordinaryCoverInterval;rawSemanticObservations=ordinaryObservations;rawNativeSemantics(expected,actual,index);
+            for(int i=start;i<size(ordinaryObservations);i++){Object row=entry(ordinaryObservations,i);putText(row,"inputScope","ordinary-original-native-baseline");putLong(row,"baselineFirstWorldTick",baselineFirstWorldTick);putLong(row,"baselineLastWorldTick",baselineLastWorldTick);}}
+        finally{rawSourceGraphTick=oldTick;rawAeChartEnabled=oldChart;rawAeSampleInterval=oldSample;rawCoverInteractionInterval=oldCover;rawSemanticObservations=oldObservations;}
+    }
+    private void finishOrdinaryAudit(String kind,boolean complete)throws Exception {
+        if(!kind.equals(ordinaryKind)||ordinaryContext==null||pendingPlacementAudits.containsKey(kind))return;Object out=nbt();tag(out,"context",ordinaryContext);tag(out,"nonemptyRows",ordinaryAuditRows);tag(out,"nativeSemanticObservations",ordinaryObservations);
+        putText(out,"format","ordinary-native-expected-audit-v1");putBool(out,"authorizesPass",false);putBool(out,"scanComplete",complete&&ordinaryCompared==64000);putInt(out,"comparedCells",ordinaryCompared);putInt(out,"scopeUnresolvedCells",ordinaryScopeMissing);putInt(out,"worldMismatchCells",ordinaryWorldMismatches);putInt(out,"sourcePolicyIncompleteCells",ordinarySourceIncomplete);putBool(out,"sourcePolicyAuditComplete",ordinarySourceIncomplete==0);
+        boolean match=complete&&ordinaryCompared==64000&&ordinaryScopeMissing==0&&ordinaryWorldMismatches==0;putBool(out,"fullWorldMatch",match);putText(out,"worldResultStatus",!complete||ordinaryScopeMissing>0?"UNKNOWN_SCOPE_OR_INCOMPLETE":match?"FULL_NATIVE_TYPED_MATCH":"FAIL_UNPROVED_WORLD_DIFFERENCE");
+        putText(out,"boundary","Independent full native baseline plus explicit frozen selected-state/identity/root patches; every actual native tag is compared with its type. Original baseline and input artifacts are referenced, not duplicated. Full raw helper differences precede exact independent native predicate adjustments; ordinary clock bounds/config were captured with the baseline, never default RAW state. Intermediate source-policy audit is independent. Old oracle and original case outcomes remain unchanged; share has no identity exception without a separate proof. No creative RF default exception.");
+        pendingPlacementAudits.put(kind,out);Object summary=nbt();for(String key:new String[]{"format","scanComplete","comparedCells","scopeUnresolvedCells","worldMismatchCells","sourcePolicyIncompleteCells","fullWorldMatch","worldResultStatus"})tag(summary,key,call(call(out,"func_74781_a",key),"func_74737_b"));putBool(summary,"authorizesPass",false);putText(summary,"artifactStatus","PENDING_ARTIFACT");tag(result,kind+"ExpectedWorldAudit",summary);
+        ordinarySavedRows=ordinaryCaptureRows=null;ordinaryContext=ordinaryAuditRows=ordinaryObservations=null;ordinaryKind="";
+    }
+    public void exposePlacementAuditsAfterFailure()throws Exception {if(ordinaryContext!=null)finishOrdinaryAudit(ordinaryKind,false);}
+    public Object pendingPlacementWorldAudit(String kind){return pendingPlacementAudits.get(kind);}
+    public void commitPlacementWorldAudit(String kind,String artifact,String sha256,long bytes)throws Exception {
+        check(pendingPlacementAudits.containsKey(kind)&&artifact.equals("composite-"+kind+"-world-expected-audit.nbt")&&sha256.matches("[0-9a-f]{64}")&&bytes>0,"one fixed ordinary expected-world audit artifact receipt");Object summary=compound(result,kind+"ExpectedWorldAudit");putText(summary,"artifactStatus","ARTIFACT_COMMITTED");putText(summary,"artifact",artifact);putText(summary,"sha256",sha256);putLong(summary,"bytes",bytes);pendingPlacementAudits.remove(kind);
+    }
+
     public void fundPlacement(String kind)throws Exception {
         check(funded.isEmpty(),"one finite supply outstanding");Object s=session();check((Boolean)get(s,"virtualPlacement")&&(Boolean)get(s,"virtualLocked"),"actual locked product placement");
         freezePlacementInputs(kind,s);
+        freezeOrdinaryExpected(kind,s);
         if(kind.equals("share"))captureShareBankBeforePlacement();
         checkOnlyMeSettings(get(s,"materialSettings"),"actual session before funding");
         checkOnlyMeSettings(call(product("HologramMaterials"),"read",call(actor,"func_70694_bm")),"held projector before funding");
@@ -677,6 +862,7 @@ public final class CompositeWorldWitness {
     public void checkPlacement(String kind)throws Exception {
         check(kind.equals(funded),"same actual funded placement");Object s=session();check((Integer)get(s,"job")==3&&(Integer)get(s,"cursor")==((List<?>)get(s,"work")).size(),"actual product job terminal");
         comparePlacementInputs(kind,s);
+        bindFinalOrdinaryChoices(kind,s);
         Object ledger=nbt(),itemRows=listTag(),fluidRows=listTag();
         for(Object quoted:stock){long supplied=(Long)call(quoted,"getStackSize"),remaining=remaining(itemMonitor,quoted);check(remaining==0,"exact independently observed native item balance exhausted");Object row=nbt();call(quoted,"writeToNBT",row);putLong(row,"supplied",supplied);putLong(row,"remaining",remaining);putLong(row,"nativeDebited",supplied-remaining);append(itemRows,row);}
         for(Object quoted:fluids){long supplied=(Long)call(quoted,"getStackSize"),remaining=remaining(fluidMonitor,quoted);check(remaining==0,"exact independently observed native fluid balance exhausted");Object row=nbt();call(quoted,"writeToNBT",row);putLong(row,"supplied",supplied);putLong(row,"remaining",remaining);putLong(row,"nativeDebited",supplied-remaining);append(fluidRows,row);}
@@ -695,6 +881,7 @@ public final class CompositeWorldWitness {
     public void complete()throws Exception{check(ready(),"oracle completion");for(String kind:new String[]{"self","share","raw"})check(bool(result,kind+"Passed"),"all actual world postchecks");for(String kind:new String[]{"self","share"})check(bool(compound(result,kind+"SaveCommit"),"ownerCommit"),"actual production owner Save commit");putText(result,"status","PASS");}
     public void completeScenario(String kind)throws Exception{check(Arrays.asList("self","share","raw").contains(kind),"explicit supported scenario");check(ready()&&bool(result,kind+"Passed"),"actual independent selected scenario postcheck");if(!kind.equals("raw"))check(bool(compound(result,kind+"SaveCommit"),"ownerCommit"),"actual owner Save commit");putText(result,"scenario",kind);putText(result,"status","PASS");}
     public void close()throws Exception{
+        exposePlacementAuditsAfterFailure();
         if(euLedger!=null){euLedger.close();euLedger=null;putText(result,"nativeEuLedgerInterrupted","window stopped before settlement; no PASS claimed");}
         Class<?> wireless=Class.forName("gregtech.common.misc.WirelessNetworkManager");Object owner=call(actor,"func_110124_au");BigInteger remaining=(BigInteger)call(wireless,"getUserEU",owner);
         check(remaining.signum()>=0&&remaining.compareTo(fixtureEuCredits)<=0,"isolated fixture EU cleanup balance bounded by actual native credits");
@@ -703,6 +890,8 @@ public final class CompositeWorldWitness {
         putBool(result,"fixtureEuCleanup",((BigInteger)call(wireless,"getUserEU",owner)).signum()==0);
         baseline.clear();
         pendingAeSamples.clear();
+        selfSourceGraph=null;
+        selfExpectedProof=null;
     }
 
     private void observeSave()throws Exception {Object s=call(product("HologramWorkspace"),"find",call(actor,"func_110124_au"));if(s==null)return;if(!(Boolean)get(s,"blueprintOperationSuccess")||(Boolean)get(s,"blueprintDirty")||!String.valueOf(get(s,"blueprintSaveReceipt")).isEmpty())return;String json=String.valueOf(get(s,"blueprintSaveJsonSha256")),png=String.valueOf(get(s,"blueprintSavePreviewSha256"));if(json.isEmpty()||png.isEmpty())return;String identity=get(s,"id")+":"+json;if(identity.equals(saved))return;saved=identity;Object policy=get(s,"processingPolicy");if(policy==null)return;String kind=String.valueOf(get(policy,"tendency"));Object row=nbt();putText(row,"session",String.valueOf(get(s,"id")));putText(row,"localId",String.valueOf(get(s,"blueprintSaveLocalId")));putText(row,"jsonSha256",json);putText(row,"pngSha256",png);putBool(row,"ownerCommit",true);tag(result,kind+"SaveCommit",row);putBool(result,kind+"NativeSave",true);}

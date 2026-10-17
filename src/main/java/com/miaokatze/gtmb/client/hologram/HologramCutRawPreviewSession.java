@@ -51,6 +51,8 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 final class HologramCutRawPreviewSession {
 
     private static final int REGION_SIZE = 8, CACHED_REGIONS = 64, COMPILE_PER_FRAME = 192;
+    private static final boolean CHECK_RENDER_STATE = Boolean.getBoolean("gtmb.hologram.cutNativeClient")
+        || Boolean.getBoolean("gtmb.hologram.cutRenderStateWitness");
     private final Map<String, Region> REGIONS = new LinkedHashMap<>();
     private final Map<String, Region> RESIDENT = new LinkedHashMap<>(16, .75f, true);
     private final Map<String, String> FAILURES = new LinkedHashMap<>();
@@ -147,7 +149,7 @@ final class HologramCutRawPreviewSession {
     private void renderRegions(List<Region> visible, Set<String> pinned, double dx, double dy, double dz,
         float partialTicks) {
         Minecraft mc = Minecraft.getMinecraft();
-        HologramCutRawPreviewScope.StateWitness witness = Boolean.getBoolean("gtmb.hologram.cutNativeClient")
+        HologramCutRawPreviewScope.StateWitness witness = CHECK_RENDER_STATE
             ? new HologramCutRawPreviewScope.StateWitness()
             : null;
         HologramCutRawPreviewScope.RenderState frame = new HologramCutRawPreviewScope.RenderState();

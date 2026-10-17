@@ -189,6 +189,17 @@ final class HologramUiNetworkBindings {
             my);
     }
 
+    /** Native MUI buttons do not bubble through the scene's mouse-modal chain. */
+    boolean consumeNativeControl(int id) {
+        if (!networkDrawer) return false;
+        for (Control control : ui.canvas.controls()) if (control.id == id) {
+            if (control.enabled) activateNetworkBinding(id);
+            return true;
+        }
+        // The visible drawer owns even stale/underlying controls, just like consumeBindingsMouse.
+        return true;
+    }
+
     void activateNetworkBinding(int id) {
         if (id == 197 || id == 201) {
             if (id == 197 && !HologramPlacementConfirmation.networksReady(ui.session.state().data)) return;

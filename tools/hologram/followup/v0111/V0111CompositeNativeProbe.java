@@ -57,8 +57,13 @@ public final class V0111CompositeNativeProbe {
     private final List<Object> incomingCutProgress = java.util.Collections.synchronizedList(new ArrayList<Object>());
     private final List<Object> incomingPrivateReplies = java.util.Collections.synchronizedList(new ArrayList<Object>());
     private String privateLocalId="", privatePreviousPreset="", privateTransfer="";
+    private String privateUploadedJsonSha256="";
+    private int privateUploadedJsonBytes;
+    private boolean privateImportBindingRequested;
     private String pendingBindingGroup="";
     private long pendingBindingRevision;
+    private long networkReviewSequence=-1,networkReviewRevision,networkReviewStarted;
+    private String networkReviewSession="";
     private int rawPreviewProgressStart;
     private int observedCuts;
     private boolean seedMode, prepareOnly;
@@ -69,6 +74,9 @@ public final class V0111CompositeNativeProbe {
     private int clientDimensionId, clientProviderId;
     private long clientDimensionCleanupStarted;
     private boolean clientDisconnectInitiated;
+    private boolean clientExitModeConsumed,serverWitnessCloseAttempted;
+    private String serverExitVerdict="";
+    private long serverExitStarted;
     private Boolean previousPauseOnLostFocus;
     private boolean clientPreferencesRestored;
     private boolean displayActiveUnavailable;
@@ -113,6 +121,7 @@ public final class V0111CompositeNativeProbe {
         try {
             check(System.nanoTime() - started < OVERALL_LIMIT, "bounded server overall deadline");
             Object host = call(Class.forName("net.minecraft.server.MinecraftServer"), "func_71276_C");
+            if(!serverExitVerdict.isEmpty()){awaitNativeClientExit(host);return;}
             if(!seedMode&&commandStarted)observeNativeLabFailure();
             List<?> players = (List<?>) get(call(host,"func_71203_ab"),"field_72404_b");
             check(players.size() <= 1, "one configured isolated test actor");
@@ -171,6 +180,12 @@ public final class V0111CompositeNativeProbe {
                 check(sequence == acknowledged + 1,"fixture control sequence must be contiguous");
                 String action = command.getProperty("action",""), kind = command.getProperty("kind","");
                 if (action.equals("move")) move(host,kind);
+                else if(action.equals("bindImport")){
+                    check(seedMode&&Arrays.asList("self","share").contains(kind),"fixed independent placement import binding");
+                    Object evidence=readNbt("composite-"+kind+"-private-import.nbt"),nativeReport=call(bridge,"report");
+                    if(evidence!=null&&(Boolean)call(nativeReport,"func_74764_b",kind+"SaveCommit"))call(evidence,"func_74782_a","serverSaveCommit",call(compound(nativeReport,kind+"SaveCommit"),"func_74737_b"));
+                    call(bridge,"bindPlacementImport",kind,evidence);
+                }
                 else if (action.equals("fund")) {call(bridge,"fundPlacement",kind);persistPlacementInputs();}
                 else if (action.equals("check")) call(bridge,"checkPlacement",kind);
                 else if (action.equals("rawPrepare")) {check(seedMode,"server-owned durable raw witness requires seeded independent baseline");if(!(Boolean)call(bridge,"prepareRawCut")){writeNbt("composite-server-oracle.nbt",call(bridge,"report"));pulse();return;}persistAeSamples();}
@@ -196,19 +211,41 @@ public final class V0111CompositeNativeProbe {
             Properties peer=read("composite-client.properties");
             if (prepareOnly && "PREPARED".equals(peer.getProperty("status"))) {
                 call(call(host,"func_71187_D"),"func_71556_a",host,"gtmbtestlab stop");
-                proof.setProperty("clientVerdict","PREPARED");persist("PREPARED");done=true;call(host,"func_71263_m");return;
+                publishServerCompletion("PREPARED");return;
             }
             if ("FAIL".equals(peer.getProperty("status"))) {proof.setProperty("failureKind",peer.getProperty("failureKind","PRODUCT_OR_ASSERTION"));throw new IllegalStateException("Client: "+peer.getProperty("failure"));}
             if ("PASS".equals(peer.getProperty("status"))) {
                 check("PASS".equals(str(report,"status")),"server independent oracle complete PASS");
-                if(seedMode){call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));}
-                proof.setProperty("clientVerdict","PASS"); persist("COMPLETE"); done=true; call(host,"func_71263_m"); return;
+                closeServerWitness();publishServerCompletion("PASS");return;
             }
             pulse();
         } catch(Throwable failure) {
+            if(seedMode&&bridge!=null)try{persistPlacementWorldAudits();}catch(Throwable evidence){failure.addSuppressed(evidence);}
+            if(seedMode&&bridge!=null)try{persistSelfEmbeddingProof();}catch(Throwable evidence){failure.addSuppressed(evidence);}
             if(seedMode&&bridge!=null)try{call(bridge,"retainRawFailureEvidence");persistAeSamples();persistRawSamples();}catch(Throwable evidence){failure.addSuppressed(evidence);}
             fail(failure);
         }
+    }
+
+    private void closeServerWitness()throws Exception {
+        if(!seedMode||bridge==null||serverWitnessCloseAttempted)return;
+        serverWitnessCloseAttempted=true;proof.setProperty("fixtureWitnessCloseAttempted","true");
+        call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));proof.setProperty("fixtureWitnessClosed","true");
+    }
+    private void publishServerCompletion(String verdict)throws Exception {
+        serverExitVerdict=verdict;serverExitStarted=System.nanoTime();proof.setProperty("clientVerdict",verdict);
+        proof.setProperty("nativeExitPhase","AWAIT_CLIENT_DISCONNECT_AND_MAPPING_CLEANUP");persist(verdict.equals("PASS")?"COMPLETE":"PREPARED");
+    }
+    private void awaitNativeClientExit(Object host)throws Exception {
+        Properties peer=read("composite-client.properties");
+        check(!"FAIL".equals(peer.getProperty("status")),"client native exit failed: "+peer.getProperty("failure",""));
+        check(System.nanoTime()-serverExitStarted<30_000_000_000L,"30-second server wait for actual client disconnect and mapping cleanup");
+        boolean absent=((List<?>)get(call(host,"func_71203_ab"),"field_72404_b")).isEmpty();
+        if(serverExitVerdict.equals(peer.getProperty("status"))&&"true".equals(peer.getProperty("clientNativeExitConfirmed"))&&"true".equals(peer.getProperty("clientDimensionMappingCleanupComplete"))&&absent){
+            proof.setProperty("nativeExitPhase","CLIENT_DISCONNECTED_MAPPING_CLEAN_SHUTDOWN");proof.setProperty("nativeClientExitAcknowledged","true");
+            persist(serverExitVerdict.equals("PASS")?"COMPLETE":"PREPARED");done=true;call(host,"func_71263_m");return;
+        }
+        if(System.nanoTime()-heartbeat>=2_000_000_000L){heartbeat=System.nanoTime();proof.setProperty("nativeExitPlayerAbsent",String.valueOf(absent));persist(serverExitVerdict.equals("PASS")?"COMPLETE":"PREPARED");}
     }
 
     private void observeNativeLabFailure()throws Exception {
@@ -381,7 +418,7 @@ public final class V0111CompositeNativeProbe {
                 // Native successful Save selects its committed local row; wait for its real catalog refresh.
                 Object library=get(clientType("HologramLibraryClient"),"INSTANCE");
                 if(!privateLocalId.equals(call(library,"selected",false))||!privateLocalId.equals(str(call(library,"selectedRow",false),"id")))return;
-                privatePreviousPreset=str(data,"blueprintSavedId");privateTransfer="";incomingPrivateReplies.clear();
+                privatePreviousPreset=str(data,"blueprintSavedId");privateTransfer="";privateUploadedJsonSha256="";privateUploadedJsonBytes=0;privateImportBindingRequested=false;incomingPrivateReplies.clear();
                 longFlowStarted=System.nanoTime();long previousTask=nativeTaskWatermark();click(gui,ui,141,gen);
                 watchNativeTask("private",false,previousTask);
                 proof.setProperty(kind()+"PrivateLoadLocalId",privateLocalId);proof.setProperty(kind()+"PrivateLoadButton","141 actual private-library MUI dispatch");
@@ -413,10 +450,14 @@ public final class V0111CompositeNativeProbe {
                     Object evidence=nbt(),chunks=construct("net.minecraft.nbt.NBTTagList");
                     synchronized(incomingPrivateReplies){for(Object reply:incomingPrivateReplies)if("chunkAck".equals(str(reply,"op"))&&privateTransfer.equals(str(reply,"transfer")))call(chunks,"func_74742_a",call(reply,"func_74737_b"));}
                     call(evidence,"func_74782_a","uploadReady",call(admission,"func_74737_b"));call(evidence,"func_74782_a","chunkAcks",chunks);call(evidence,"func_74782_a","privateImported",call(imported,"func_74737_b"));
+                    putText(evidence,"transfer",privateTransfer);putText(evidence,"localId",privateLocalId);putText(evidence,"selectedPresetId",str(data,"selectedPresetId"));putText(evidence,"ownerUUID",String.valueOf(call(player,"func_110124_au")));
+                    if(!privateUploadedJsonSha256.isEmpty()){putText(evidence,"uploadedJsonSha256",privateUploadedJsonSha256);putInt(evidence,"uploadedJsonBytes",privateUploadedJsonBytes);}
                     writeNbt("composite-"+kind()+"-private-import.nbt",evidence);proof.setProperty(kind()+"PrivateChunkAcks",String.valueOf(count(chunks)));
                     timing.setProperty(kind()+".privateLoadNanos",String.valueOf(System.nanoTime()-longFlowStarted));
                     proof.setProperty(kind()+"PrivateLoadAcknowledged","true");
                 }
+                if(!privateImportBindingRequested){fixture("bindImport",kind());privateImportBindingRequested=true;return;}
+                if(!ack(peer))return;
                 Object bindings=compound(data,"networkBindings"), groups=list(bindings,"groups");
                 if(!pendingBindingGroup.isEmpty()){
                     boolean accepted=false;
@@ -455,9 +496,14 @@ public final class V0111CompositeNativeProbe {
                 if(flow==0){flow=1;stage=choice=0;fixture("move","source");advance(2);}
                 else {fixture("move","raw");advance(30);}return;
             }
+            if(phase==17||phase==18){
+                proof.setProperty(kind()+"PlacementReviewScreen",gui==null?"NONE":gui.getClass().getName());
+                check(System.nanoTime()-(networkReviewSequence>=0?networkReviewStarted:phaseStarted)<60_000_000_000L,"60-second native placement/network-review deadline: "+proof.getProperty(kind()+"PlacementReviewScreen")+" networkRequested="+bool(data,"networkBindingRequested")+" pendingConfirm="+networkReviewSequence+" status="+str(data,"status"));
+            }
             if(!isScreen(gui)) {if(phase>=7&&phase<=11)call(clientType("HologramClient"),"openSettings");return;}
             Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");
             if(!naturalUiReady(gui,gen)||busy())return;
+            if((phase==17||phase==18)&&confirmNativeNetworkReview(gui,ui,state,data,gen))return;
             if(phase==7) {
                 if(!bool(ui,"blueprintTab")||!bool(ui,"library")){click(gui,ui,149,gen);return;}
                 processingStarted=System.nanoTime();click(gui,ui,220,gen);stage=choice=0;advance(8);
@@ -584,6 +630,7 @@ public final class V0111CompositeNativeProbe {
             check(number(inspection,"staticRendered")>0&&integer(inspection,"displayLists")>0,"natural WorldLast compiled real visible native block geometry");
             check(number(inspection,"ghostComposites")>=8,"natural WorldLast executed native ghost compositing on multiple frames");
             check(rawGlStateChecks>=8,"native CTM state witness observed multiple natural world frames");
+            observeLocalRenderStateWitness(inspection);
             writeNbt("composite-raw-preview-render.nbt",inspection);
             proof.setProperty("raw.previewWorldLastEvents",String.valueOf(rawWorldEvents));
             proof.setProperty("raw.previewNaturalRendererFrames",String.valueOf(rawNaturalFrames));
@@ -602,6 +649,25 @@ public final class V0111CompositeNativeProbe {
         if(phase==32){Object reply=cutReply(cutRequest);if(reply==null)return;check(bool(reply,"success"),str(reply,"message"));timing.setProperty("raw.pasteNanos",String.valueOf(System.nanoTime()-longFlowStarted));timing.setProperty("raw.longFlowProductCompleteNanos",String.valueOf(System.nanoTime()-wholeFlowStarted));fixture("rawCheck","raw");advance(33);return;}
         if(phase==33){if(!ack(peer)||!"true".equals(peer.getProperty("rawPassed")))return;timing.setProperty("raw.longFlowVerifiedNanos",String.valueOf(System.nanoTime()-wholeFlowStarted));fixture("complete","");advance(34);return;}
         if(phase==34){if(!ack(peer))return;proof.setProperty("scenarioVerified",scenario);if(scenario.equals("all")||scenario.equals("raw"))proof.setProperty("rawPaidWorldVerified","true");restoreCutWitness();persist("PASS");clientVerdict="PASS";}
+    }
+
+    private void observeLocalRenderStateWitness(Object inspection)throws Exception {
+        if(!Boolean.getBoolean("gtmb.hologram.cutRenderStateWitness"))return;
+        proof.setProperty("raw.localRenderStateWitnessRequested","true");
+        Object enabled;
+        try{enabled=get(clientType("HologramCutRawPreviewSession"),"CHECK_RENDER_STATE");}
+        catch(NoSuchFieldException|ClassNotFoundException unavailable){proof.setProperty("raw.localWitnessUnavailable",unavailable.toString());return;}
+        if(!(enabled instanceof Boolean)){proof.setProperty("raw.localWitnessUnavailable","native CHECK_RENDER_STATE field is not boolean");return;}
+        check((Boolean)enabled,"actual native local render state witness opt-in is enabled");
+        if(!(Boolean)call(inspection,"func_150297_b","ghostStateChecks",4)||!(Boolean)call(inspection,"func_150297_b","ghostStateMismatches",4)){
+            proof.setProperty("raw.localWitnessUnavailable","native inspection lacks exact long ghostStateChecks/ghostStateMismatches");return;
+        }
+        long checks=number(inspection,"ghostStateChecks"),mismatches=number(inspection,"ghostStateMismatches");
+        proof.setProperty("raw.localGhostStateChecks",String.valueOf(checks));proof.setProperty("raw.localGhostStateMismatches",String.valueOf(mismatches));
+        proof.setProperty("raw.localRenderStateWitnessScope","actual production ghost-render before/after StateWitness; separate from the whole Forge WorldLast event; no pixel PASS inference");
+        if(checks<8||mismatches!=0)writeNbt("composite-raw-preview-render.nbt",inspection);
+        check(checks>=8&&mismatches==0,"actual product-local ghost state witness requires >=8 checks and zero mismatches: checks="+checks+" mismatches="+mismatches);
+        proof.setProperty("raw.localRenderStateWitnessVerified","true");
     }
 
     /** Observe the actual product subscriber; this listener never invokes update/render or installs a session. */
@@ -717,11 +783,13 @@ public final class V0111CompositeNativeProbe {
         check(privateLocalId.equals(get(library,"outgoingLocal")),"native private upload reads the actual saved local file");
         byte[] bytes=(byte[])outgoing;
         Object artifact=call(product("HologramBlueprintArtifact"),"decode",bytes);
-        check(peer.getProperty(kind()+"JsonSha256","").equals(hash((byte[])get(artifact,"json"))),"native private upload contains the committed JSON bytes");
+        byte[] uploadedJson=(byte[])get(artifact,"json");privateUploadedJsonSha256=hash(uploadedJson);privateUploadedJsonBytes=uploadedJson.length;
+        check(peer.getProperty(kind()+"JsonSha256","").equals(privateUploadedJsonSha256),"native private upload contains the committed JSON bytes");
         check(peer.getProperty(kind()+"PngSha256","").equals(hash((byte[])get(artifact,"png"))),"native private upload contains the committed PNG bytes");
         privateTransfer=(String)get(library,"outgoingId");check(!privateTransfer.isEmpty(),"real native private transfer identity");
         proof.setProperty(kind()+"PrivateTransferId",privateTransfer);proof.setProperty(kind()+"PrivateArtifactBytes",String.valueOf(bytes.length));
         proof.setProperty(kind()+"PrivateArtifactSha256",hash(bytes));
+        proof.setProperty(kind()+"PrivateUploadedJsonSha256",privateUploadedJsonSha256);proof.setProperty(kind()+"PrivateUploadedJsonBytes",String.valueOf(privateUploadedJsonBytes));
         proof.setProperty(kind()+"PrivateLoadScope","actual private-library141 action; native store.artifact reads JSON+PNG pair, privateBegin/chunks and owner-bound privateImported ACK; no cached-draft activation");
     }
 
@@ -812,13 +880,21 @@ public final class V0111CompositeNativeProbe {
 
     private boolean disconnectAndReleaseClientDimension()throws Exception {
         if(!client)return true;
+        if(clientDimensionCleanupStarted==0)clientDimensionCleanupStarted=System.nanoTime();
+        check(System.nanoTime()-clientDimensionCleanupStarted<30_000_000_000L,"30-second native client disconnect/world/mapping cleanup deadline");
         if(!clientDisconnectInitiated){
-            clientDisconnectInitiated=true;clientDimensionCleanupStarted=System.nanoTime();
-            if(mc!=null&&get(mc,"field_71441_e")!=null){
+            if(mc!=null&&get(mc,"field_71441_e")!=null&&nativeClientChannelOpen()){
                 // Invoke the real menu branch: quitting packet, world unload, then MainMenu in one native action.
                 // Loading null with no replacement screen leaves Freecam's ordinary mouse-look path with no player.
+                Object cut=get(clientType("HologramCutClient"),"INSTANCE");boolean before=(Boolean)call(cut,"cutMode");
                 Object menu=construct("net.minecraft.client.gui.GuiIngameMenu");call(mc,"func_147108_a",menu);
-                check(get(mc,"field_71462_r")==menu,"actual native pause menu opened for disconnect");
+                Object actual=get(mc,"field_71462_r");boolean after=(Boolean)call(cut,"cutMode");
+                proof.setProperty("clientExitScreenAfterMenu",actual==null?"NONE":actual.getClass().getName());proof.setProperty("clientExitCutModeBefore",String.valueOf(before));proof.setProperty("clientExitCutModeAfter",String.valueOf(after));
+                if(actual!=menu){
+                    if(get(mc,"field_71441_e")==null||!nativeClientChannelOpen()){clientDisconnectInitiated=true;proof.setProperty("clientDisconnectAction","native remote disconnect overtook menu opening; observe natural world unload");return false;}
+                    if(before&&!after&&actual==null&&!clientExitModeConsumed){clientExitModeConsumed=true;proof.setProperty("clientExitFirstEscape","native GuiOpen consumed active cutMode true->false; wait next natural tick before second pause-menu request");return false;}
+                    throw new IllegalStateException("connected native pause menu replaced without the exact cutMode escape transition: "+proof.getProperty("clientExitScreenAfterMenu"));
+                }
                 Object disconnect=null;
                 for(Object button:(List<?>)get(menu,"field_146292_n"))if((Integer)get(button,"field_146127_k")==1){disconnect=button;break;}
                 check(disconnect!=null,"actual native disconnect button exists");call(menu,"func_146284_a",disconnect);
@@ -827,9 +903,11 @@ public final class V0111CompositeNativeProbe {
                 if(mc!=null&&get(mc,"field_71462_r")==null)call(mc,"func_147108_a",construct("net.minecraft.client.gui.GuiMainMenu"));
                 proof.setProperty("clientDisconnectAction","world already unloaded by native connection; preserve native screen or open main menu if absent");
             }
+            clientDisconnectInitiated=true;proof.setProperty("clientDisconnectInitiated","true");
             proof.setProperty("clientDisconnectWait","return to ordinary client ticks before observing native mapping cleanup; no synchronous wait or lifecycle callback injection");
             return false;
         }
+        if(mc!=null&&(get(mc,"field_71441_e")!=null||nativeClientChannelOpen())){proof.setProperty("clientDisconnectWait","await actual native channel close and world unload on ordinary ticks");return false;}
         if(productClientMappingLifecycle) {
             Object status=call(Class.forName("com.miaokatze.gtmb.testlab.TestLab"),"status");
             if(bool(status,"clientDimensionMapped")) {
@@ -838,7 +916,7 @@ public final class V0111CompositeNativeProbe {
             }
             check(!(Boolean)call(Class.forName("net.minecraftforge.common.DimensionManager"),"isDimensionRegistered",clientDimensionId),"product native disconnection removed its own test mapping");
             proof.setProperty("clientDimensionMappingCleanup","production native disconnection event observed");
-            proof.setProperty("clientDimensionMappingCleanupComplete","true");return true;
+            proof.setProperty("clientDimensionMappingCleanupComplete","true");proof.setProperty("clientNativeExitConfirmed","true");return true;
         }
         if(clientDimensionMappingOwned) {
             Class<?> dimensions=Class.forName("net.minecraftforge.common.DimensionManager");
@@ -851,8 +929,10 @@ public final class V0111CompositeNativeProbe {
             proof.setProperty("clientDimensionMappingReleased","true");
         } else proof.setProperty("clientDimensionMappingCleanup","pre-existing historical mapping not modified by addon");
         proof.setProperty("clientDimensionMappingCleanupComplete","true");
+        proof.setProperty("clientNativeExitConfirmed","true");
         return true;
     }
+    private boolean nativeClientChannelOpen()throws Exception {return admittedClientConnection!=null&&(Boolean)call(admittedClientConnection,"func_150724_d");}
 
     @SubscribeEvent
     public void nativeClientDisconnected(FMLNetworkEvent.ClientDisconnectionFromServerEvent event){
@@ -964,6 +1044,34 @@ public final class V0111CompositeNativeProbe {
         Object controls=list(ui,"drawnControls");for(int i=0;i<count(controls);i++){Object control=at(controls,i);if(integer(control,"id")==id)return control;}return null;
     }
     private boolean drawnControlReady(Object ui,int id)throws Exception {Object control=drawnControl(ui,id);return control!=null&&bool(control,"enabled");}
+    /** Confirm only the actual native binding drawer, through its drawn MUI control and sequenced ACK. */
+    private boolean confirmNativeNetworkReview(Object gui,Object ui,Object state,Object data,long gen)throws Exception {
+        boolean drawer=bool(ui,"networkDrawer"),requested=bool(data,"networkBindingRequested");
+        if(!drawer&&!requested&&networkReviewSequence<0)return false;
+        long pending=nativePendingSequence(gui),revision=number(data,"planRevision"),sequence=number(data,"uiSequence");
+        proof.setProperty(kind()+"NetworkReviewDrawer",String.valueOf(drawer));proof.setProperty(kind()+"NetworkReviewRequested",String.valueOf(requested));
+        proof.setProperty(kind()+"NetworkReviewPendingSequence",String.valueOf(pending));proof.setProperty(kind()+"NetworkReviewUiSequence",String.valueOf(sequence));
+        Object groups=list(compound(data,"networkBindings"),"groups");String unbound="";
+        for(int i=0;i<count(groups);i++){Object group=at(groups,i);if(!bool(group,"bound")){unbound=str(group,"id")+": "+str(group,"reason");break;}}
+        proof.setProperty(kind()+"NetworkReviewGroups",String.valueOf(count(groups)));proof.setProperty(kind()+"NetworkReviewFirstUnbound",unbound);
+        if(networkReviewSequence>=0){
+            check(networkReviewSession.equals(get(state,"session")),"native network confirmation remains in its actual session");
+            if(sequence<networkReviewSequence||pending>=0||drawer||requested)return true;
+            check(unbound.isEmpty()&&bool(ui,"networkGroupsReady")&&revision>=networkReviewRevision,"native network confirmation ACK retains all bound groups and a current plan revision");
+            proof.setProperty(kind()+"NetworkReviewAcknowledgedSequence",String.valueOf(sequence));proof.setProperty(kind()+"NetworkReviewAcknowledgedRevision",String.valueOf(revision));
+            networkReviewSequence=-1;return false;
+        }
+        if(!drawer||pending>=0)return true;
+        check(unbound.isEmpty()&&bool(ui,"networkGroupsReady"),"actual native binding wizard refuses unbound groups: "+unbound);
+        if(!drawnControlReady(ui,197))return true;
+        networkReviewSession=String.valueOf(get(state,"session"));networkReviewRevision=revision;
+        click(gui,ui,197,gen);
+        networkReviewSequence=nativePendingSequence(gui);networkReviewStarted=System.nanoTime();
+        check(networkReviewSequence>sequence,"actual enabled197 dispatched a new native closeNetworkBindings sequence");
+        proof.setProperty(kind()+"NetworkReviewConfirmation","actual visible enabled197 via MUI press/release; native closeNetworkBindings");
+        proof.setProperty(kind()+"NetworkReviewConfirmSequence",String.valueOf(networkReviewSequence));proof.setProperty(kind()+"NetworkReviewConfirmRevision",String.valueOf(revision));
+        return true;
+    }
     private Object nativeAeReview(Object gui)throws Exception {return call(clientType("HologramUiDiagnostics"),"readDiagnosticField",gui,"aeReview");}
     private long nativePendingSequence(Object gui)throws Exception {return (Long)call(clientType("HologramUiDiagnostics"),"readDiagnosticField",gui,"pendingSequence");}
     private Object nativeAeReviewObservation(Object gui)throws Exception {
@@ -1113,7 +1221,7 @@ public final class V0111CompositeNativeProbe {
             if(!proof.containsKey("failure")){proof.setProperty("failure",failure.toString());proof.setProperty("failurePhase",String.valueOf(phase));}
             if(client){try{restoreCutWitness();}catch(Exception cleanup){proof.setProperty("cutWitnessCleanupFailure",cleanup.toString());}try{disconnectAndReleaseClientDimension();}catch(Exception cleanup){proof.setProperty("clientDimensionMappingCleanupFailure",cleanup.toString());}}
             if(client){try{restoreClientPreferences("probe-failure");}catch(Exception cleanup){proof.setProperty("clientPreferencesRestoreFailure",cleanup.toString());}}
-            if(server&&seedMode&&bridge!=null){try{call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));}catch(Exception cleanup){proof.setProperty("fixtureCleanupFailure",cleanup.toString());}}
+            if(server&&seedMode&&bridge!=null){try{closeServerWitness();}catch(Exception cleanup){proof.setProperty("fixtureCleanupFailure",cleanup.toString());}}
             persist("FAIL");
         }catch(Exception nested){proof.setProperty("secondaryReceiptFailure",nested.toString());nested.printStackTrace();}
         done=true;
@@ -1152,12 +1260,28 @@ public final class V0111CompositeNativeProbe {
             byte[] actual=Files.readAllBytes(target);
             call(bridge,"commitAeSample",kind,name,hash(actual),(long)actual.length);
         }
+        persistSelfEmbeddingProof();
+        persistPlacementWorldAudits();
+    }
+    private void persistSelfEmbeddingProof()throws Exception {
+        Object sample=call(bridge,"pendingSelfEmbeddingProof");if(sample==null)return;
+        String name="composite-self-ae-embedding-proof.nbt";Path target=receiptPath(name);
+        check(!Files.exists(target),"fixed self AE embedding proof written only once");writeNbt(name,sample);
+        byte[] actual=Files.readAllBytes(target);call(bridge,"commitSelfEmbeddingProof",name,hash(actual),(long)actual.length);
     }
     private void persistRawSamples()throws Exception {
         for(String kind:new String[]{"durable-entry","baseline-to-cut-differences","postnative-differences","ae-relocation-proof"}){
             Object sample=call(bridge,"pendingRawSample",kind);if(sample==null)continue;
             String name="composite-raw-"+kind+".nbt";Path target=receiptPath(name);check(!Files.exists(target),"raw evidence artifact written only once");writeNbt(name,sample);
             byte[] bytes=Files.readAllBytes(target);call(bridge,"commitRawSample",kind,name,hash(bytes),(long)bytes.length);
+        }
+    }
+    private void persistPlacementWorldAudits()throws Exception {
+        for(String kind:new String[]{"self","share"}){
+            Object sample=call(bridge,"pendingPlacementWorldAudit",kind);if(sample==null)continue;
+            String name="composite-"+kind+"-world-expected-audit.nbt";Path target=receiptPath(name);
+            check(!Files.exists(target),"fixed ordinary expected world audit written only once");writeNbt(name,sample);
+            byte[] actual=Files.readAllBytes(target);call(bridge,"commitPlacementWorldAudit",kind,name,hash(actual),(long)actual.length);
         }
     }
     private void persistPlacementInputs()throws Exception {
@@ -1175,6 +1299,8 @@ public final class V0111CompositeNativeProbe {
             "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-source-baseline.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
             "composite-source-ae-network.nbt","composite-self-ae-network.nbt","composite-share-ae-network.nbt","composite-raw-ae-network.nbt",
             "composite-shareBank-ae-network.nbt","composite-self-placement-inputs.nbt","composite-share-placement-inputs.nbt",
+            "composite-self-ae-embedding-proof.nbt",
+            "composite-self-world-expected-audit.nbt","composite-share-world-expected-audit.nbt",
             "composite-rawCutSource-ae-network.nbt","composite-raw-cut-ack.nbt","composite-raw-durable-entry.nbt","composite-raw-baseline-to-cut-differences.nbt","composite-raw-postnative-differences.nbt","composite-raw-ae-relocation-proof.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
             "composite-self-private-import.nbt","composite-share-private-import.nbt",

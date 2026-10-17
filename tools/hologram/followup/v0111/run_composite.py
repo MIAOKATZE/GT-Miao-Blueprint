@@ -442,6 +442,8 @@ def run(args):
         server_tokens.insert(server_tokens.index("-jar"), "-Dgtmb.v0111.nativeEuLedger=true")
     if args.cut_disk_diagnostics:
         server_tokens.insert(server_tokens.index("-jar"), "-Dgtmb.cutDiskDiagnostics=true")
+    if args.render_state_witness:
+        client_tokens.insert(client_tokens.index("-cp"), "-Dgtmb.hologram.cutRenderStateWitness=true")
     targets = {
         "server-properties": within(fixture / "server/server.properties", fixture, exists=True),
         "server-library-config": within(fixture / "server/config/gtmb/server-blueprint-library.cfg", fixture),
@@ -503,6 +505,10 @@ def run(args):
         "cut_disk_diagnostics": {
             "enabled": args.cut_disk_diagnostics,
             "scope": "server-only native serialization observer; extra diagnostic work, not a performance comparison profile" if args.cut_disk_diagnostics else "default production path; no extra native-save observer",
+        },
+        "render_state_witness_profile": {
+            "enabled": args.render_state_witness,
+            "scope": "opt-in client preview before/after GL readback; extra diagnostic work, not player preview performance" if args.render_state_witness else "default preview path; no local GL readback requested",
         },
         "native_eu_ledger_profile": {
             "enabled": args.native_eu_ledger,
@@ -911,6 +917,8 @@ def main():
                         help="Opt in to a new uniform server-side GTSWN startup-gate profile and independent EU observer; not historical-environment comparable; raw EU is NOT_OBSERVED")
     parser.add_argument("--cut-disk-diagnostics", action="store_true",
                         help="Enable the server-only native-save observer for diagnosis; extra work excludes this case from performance comparisons")
+    parser.add_argument("--render-state-witness", action="store_true",
+                        help="Enable preview-local client GL state readbacks without launching the separate legacy CUT smoke; extra work excludes preview timing from performance comparisons")
     parser.add_argument("--seed-world", type=Path)
     parser.add_argument("--seed-manifest", type=Path)
     parser.add_argument("--seed-receipt", type=Path)

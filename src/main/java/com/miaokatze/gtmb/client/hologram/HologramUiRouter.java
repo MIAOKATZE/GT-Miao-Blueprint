@@ -798,6 +798,7 @@ final class HologramUiRouter {
         if (ui.processing.activateProcessing(id)) return;
         if (ui.library.prepareLibraryNavigation(id)) return;
         if (ui.identity.activateDeidentification(id)) return;
+        if (ui.bindings.consumeNativeControl(id)) return;
         if (ui.library.activateClientLibrary(id)) return;
         if (ui.nbt.resetNetworksControl(id)) return;
         if (ui.bindings.openBindingsControl(id)) return;

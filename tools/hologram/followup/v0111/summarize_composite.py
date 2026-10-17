@@ -39,7 +39,8 @@ def summarize(case):
                                "lighting_profile": client.get("lightingProfile", "legacy-dark-v1"),
                                "server_lighting_profile": server.get("lightingProfile", "legacy-dark-v1"),
                                "native_eu_ledger_enabled": receipt.get("native_eu_ledger_profile", {}).get("enabled", False),
-                               "cut_disk_diagnostics_enabled": receipt.get("cut_disk_diagnostics", {}).get("enabled", False)},
+                               "cut_disk_diagnostics_enabled": receipt.get("cut_disk_diagnostics", {}).get("enabled", False),
+                               "render_state_witness_enabled": receipt.get("render_state_witness_profile", {}).get("enabled", False)},
         "seed_files": receipt.get("seed_files"),
         "fixture_static_source_sha256": server.get("fixtureStaticSourceSha256"),
         "source_volume": server.get("actualSourceVolume"),
@@ -80,6 +81,8 @@ def main():
                                                      for row in cases))
     shared["no_cut_disk_diagnostic_overhead"] = bool(cases and all(
         not row["native_environment"]["cut_disk_diagnostics_enabled"] for row in cases))
+    shared["no_preview_gl_readback_overhead"] = bool(cases and all(
+        not row["native_environment"]["render_state_witness_enabled"] for row in cases))
     shared["lighting_profile_agrees_on_both_sides"] = bool(cases and all(
         row["native_environment"]["lighting_profile"] == row["native_environment"]["server_lighting_profile"]
         for row in cases))

@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -17,6 +18,7 @@ public final class HologramUiModuleRegression {
         localPlanConsumersWaitWithoutLockingEditing();
         outgoingSelectionScope();
         switchReviewOwnsOverlappingLibraryRows();
+        nativeBindingDrawerControls();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -92,6 +94,96 @@ public final class HologramUiModuleRegression {
                 HologramUiTabMemory.openingTab(opening, true),
                 "the explicit " + purpose + " opening overrides remembered structure navigation");
         }
+    }
+
+    private static void nativeBindingDrawerControls() {
+        HologramUiModules ui = new HologramUiModules(null);
+        NBTTagCompound data = new NBTTagCompound(), bindings = new NBTTagCompound();
+        data.setString("session", "native-binding-router");
+        data.setLong("uiSequence", 3);
+        NBTTagList groups = new NBTTagList();
+        for (int i = 0; i < 10; i++) {
+            NBTTagCompound group = new NBTTagCompound();
+            group.setString("id", "q" + i);
+            group.setBoolean("bound", i != 0);
+            groups.appendTag(group);
+        }
+        bindings.setTag("groups", groups);
+        data.setTag("networkBindings", bindings);
+        try {
+            HologramState snapshot = new HologramState(data);
+            setUiField(ui.session, "state", snapshot);
+            groups = snapshot.data.getCompoundTag("networkBindings")
+                .getTagList("groups", 10);
+            setUiField(ui.session, "sequence", 3L);
+            setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
+            SimpleAssert.that(
+                !ui.bindings.consumeNativeControl(197) && !ui.bindings.consumeNativeControl(201),
+                "a hidden binding drawer does not intercept another page's reused control ids");
+            ui.bindings.networkDrawer(true);
+            for (int id : new int[] { 197, 198, 199, 201, 60001, 61033 }) ui.canvas.controls()
+                .add(new HologramUiCanvas.Control(id, 0, 0, 20, 20, true));
+            ui.router.activate(197);
+            SimpleAssert.that(ui.bindings.networkDrawer(), "an unbound group still refuses native confirm197");
+            SimpleAssert.eq(-1L, ui.session.pendingSequence(), "refused group confirmation emits no command");
+            ui.router.activate(60001);
+            SimpleAssert.eq(1, ui.bindings.networkGroupIndex(), "native group row reaches the binding handler");
+            ui.router.activate(199);
+            SimpleAssert.eq(5, ui.bindings.networkGroupOffset(), "native next-page control reaches the drawer");
+            ui.router.activate(198);
+            SimpleAssert.eq(0, ui.bindings.networkGroupOffset(), "native previous-page control reaches the drawer");
+            ui.router.activate(61033);
+            SimpleAssert.eq(-1L, ui.session.pendingSequence(), "preserved group refuses terminal rebinding");
+            ui.router.activate(55);
+            SimpleAssert.eq(-1L, ui.session.pendingSequence(), "drawer consumes an underlying build control");
+            groups.getCompoundTagAt(0)
+                .setBoolean("bound", true);
+            ui.canvas.controls()
+                .set(0, new HologramUiCanvas.Control(197, 0, 0, 20, 20, false));
+            ui.router.activate(197);
+            SimpleAssert.that(ui.bindings.networkDrawer(), "a disabled native confirm remains inert");
+            ui.canvas.controls()
+                .set(0, new HologramUiCanvas.Control(197, 0, 0, 20, 20, true));
+            ui.router.activate(197);
+            NBTTagCompound confirmation = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(!ui.bindings.networkDrawer(), "native confirm closes the actual local drawer");
+            SimpleAssert.eq(
+                "closeNetworkBindings",
+                confirmation.getString("op"),
+                "native confirm emits the existing backend operation");
+            SimpleAssert.eq(
+                "native-binding-router",
+                confirmation.getString("session"),
+                "confirmation retains the actual session");
+            SimpleAssert.eq(4L, ui.session.pendingSequence(), "native confirm starts a fresh sequenced ACK ticket");
+            ui.session.pendingSequence(-1);
+            ui.bindings.networkDrawer(true);
+            groups.getCompoundTagAt(0)
+                .setBoolean("bound", false);
+            setUiField(ui.diagnostics, "capturedRenderSmokeAction", null);
+            ui.router.activate(201);
+            NBTTagCompound cancel = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(!ui.bindings.networkDrawer(), "native cancel201 can leave an incomplete drawer");
+            SimpleAssert
+                .eq("closeNetworkBindings", cancel.getString("op"), "native cancel uses the original close operation");
+            SimpleAssert.eq(5L, ui.session.pendingSequence(), "cancel receives its own subsequent ACK ticket");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot inspect the actual composed binding dispatch", failure);
+        }
+    }
+
+    private static Object uiField(Object owner, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = owner.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(owner);
+    }
+
+    private static void setUiField(Object owner, String name, Object value) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = owner.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(owner, value);
     }
 
     private static void switchReviewOwnsOverlappingLibraryRows() {
