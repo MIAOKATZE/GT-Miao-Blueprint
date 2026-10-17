@@ -57,6 +57,7 @@ final class HologramLibraryClient {
     private int serverCatalogReplies;
     private long pendingConfigRevision = -1;
     private byte[] outgoing;
+    private HologramLibraryProtocol.UploadWindow uploadWindow;
     private int nextChunk, sentBytes, incomingTotal, incomingIndex, page, pages = 1;
     private boolean ready, inFlight, loading, preparing;
     private HologramLibraryDownload.Assembly incoming;
@@ -402,20 +403,21 @@ final class HologramLibraryClient {
             cancel();
             status = "传输超时，请重试";
         }
-        if (outgoing != null && ready
-            && !inFlight
-            && nextChunk * HologramLibraryProtocol.CHUNK_BYTES < outgoing.length) {
-            int offset = nextChunk * HologramLibraryProtocol.CHUNK_BYTES;
+        while (outgoing != null && ready && uploadWindow != null && uploadWindow.canSend()) {
+            int index = uploadWindow.nextSent();
+            int offset = index * HologramLibraryProtocol.CHUNK_BYTES;
             NBTTagCompound chunk = request(outgoingOp + "Chunk");
             chunk.setString("transfer", outgoingId);
-            chunk.setInteger("index", nextChunk);
+            chunk.setLong("clientTaskToken", uploadWindow.task());
+            chunk.setInteger("index", index);
             chunk.setByteArray(
                 "data",
                 Arrays.copyOfRange(
                     outgoing,
                     offset,
                     Math.min(offset + HologramLibraryProtocol.CHUNK_BYTES, outgoing.length)));
-            inFlight = true;
+            uploadWindow.sent(index);
+            inFlight = uploadWindow.inFlight();
             HologramNetwork.sendLibrary(chunk);
         }
     }
@@ -553,6 +555,7 @@ final class HologramLibraryClient {
             cancel.setString("transfer", outgoingId);
             if (dedicated()) HologramNetwork.sendLibrary(cancel);
             outgoing = null;
+            uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
         }
@@ -873,6 +876,7 @@ final class HologramLibraryClient {
                 if (upload && !replaceId.isEmpty()) begin.setString("replaceId", replaceId);
                 status = upload ? "上传中 · 等待服务器接收" : "传输中 · " + actionLabel(action);
                 lastActivity = System.nanoTime();
+                uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
                 HologramNetwork.sendLibrary(begin);
             });
         });
@@ -974,6 +978,7 @@ final class HologramLibraryClient {
         downloadExpected = false;
         draftPending = false;
         outgoing = null;
+        uploadWindow = null;
         if (incoming != null) incoming.cancel();
         incoming = null;
         outgoingId = incomingId = "";
@@ -987,7 +992,12 @@ final class HologramLibraryClient {
         if (("error".equals(op) || "downloadBegin".equals(op)
             || "downloadChunk".equals(op)
             || "downloadDone".equals(op)) && !matchesTransferTask(reply)) return;
-        lastActivity = System.nanoTime();
+        if (!("chunkAck".equals(op) || "uploadReady".equals(op)
+            || "privateReady".equals(op)
+            || "previewReady".equals(op)
+            || "uploaded".equals(op)
+            || "privateImported".equals(op)
+            || "previewVerified".equals(op))) lastActivity = System.nanoTime();
         if ("saveCommitted".equals(op) || "saveRejected".equals(op)) {
             finishDiskSave(reply, "saveCommitted".equals(op));
         } else if ("quickBootstrap".equals(op)) {
@@ -1033,6 +1043,7 @@ final class HologramLibraryClient {
             begin.setBoolean("quickPlace", true);
             begin.setString("quickToken", token);
             status = "快捷放置 · 正在传输上一张客户端蓝图";
+            uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
             HologramNetwork.sendLibrary(begin);
         } else if ("quickPlacement".equals(op)) {
             if (!matchesTransferTask(reply) || !quick.placement(
@@ -1066,9 +1077,18 @@ final class HologramLibraryClient {
             else if (confirmsWrite) status = "服务器设置已确认 · 修订 " + config.getLong("configRevision");
             if (confirmsWrite) configWritePending = false;
         } else if ("uploadReady".equals(op) || "privateReady".equals(op) || "previewReady".equals(op)) {
-            if (matchesOutgoing(reply)) ready = true;
+            if (!matchesOutgoing(reply) || uploadWindow == null) return;
+            try {
+                if (uploadWindow.ready(reply)) {
+                    ready = true;
+                    lastActivity = System.nanoTime();
+                }
+            } catch (java.io.IOException invalid) {
+                failSave(invalid.getMessage(), invalid);
+            }
         } else if ("previewVerified".equals(op)) {
-            if (!matchesOutgoing(reply) || pendingSaveAck == null
+            if (!matchesOutgoing(reply) || !completedUpload(reply)
+                || pendingSaveAck == null
                 || !pendingSaveAck.getString("saveReceipt")
                     .equals(reply.getString("saveReceipt"))
                 || !pendingSaveAck.getString("jsonSha256")
@@ -1085,6 +1105,7 @@ final class HologramLibraryClient {
             long token = generation;
             pendingSaveAck = null;
             outgoing = null;
+            uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
             preparing = true;
@@ -1115,7 +1136,15 @@ final class HologramLibraryClient {
         } else if ("chunkAck".equals(op)) {
             if (!matchesOutgoing(reply)) return;
             int previousBytes = sentBytes;
-            nextChunk = reply.getInteger("nextIndex");
+            if (uploadWindow == null) return;
+            try {
+                if (!uploadWindow.acknowledge(reply)) return;
+            } catch (java.io.IOException invalid) {
+                failSave(invalid.getMessage(), invalid);
+                return;
+            }
+            lastActivity = System.nanoTime();
+            nextChunk = uploadWindow.acknowledged();
             sentBytes = Math.min(outgoing.length, nextChunk * HologramLibraryProtocol.CHUNK_BYTES);
             if (pendingSaveAck != null && sentBytes > previousBytes) {
                 saveProgress.progress(System.nanoTime());
@@ -1125,13 +1154,14 @@ final class HologramLibraryClient {
                     traceSave("preview_upload_progress_" + marker);
                 }
             }
-            inFlight = false;
+            inFlight = uploadWindow.inFlight();
         } else if ("uploaded".equals(op) || "privateImported".equals(op)) {
-            if (!matchesOutgoing(reply)) return;
+            if (!matchesOutgoing(reply) || !completedUpload(reply)) return;
             long completedTask = backgroundTaskToken;
             boolean quickUpload = outgoingQuick;
             boolean uploaded = "uploaded".equals(op);
             outgoing = null;
+            uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
             status = uploaded ? "已上传至服务器蓝图库" : "蓝图已传输，服务器正在打开预览";
@@ -1342,6 +1372,17 @@ final class HologramLibraryClient {
         }
     }
 
+    private boolean completedUpload(NBTTagCompound reply) {
+        try {
+            if (uploadWindow == null || !uploadWindow.complete(reply)) return false;
+            lastActivity = System.nanoTime();
+            return true;
+        } catch (java.io.IOException invalid) {
+            failSave(invalid.getMessage(), invalid);
+            return false;
+        }
+    }
+
     private boolean matchesOutgoing(NBTTagCompound reply) {
         return matchesTransferTask(reply) && outgoing != null
             && (!reply.hasKey("transfer") || outgoingId.equals(reply.getString("transfer")));
@@ -1536,7 +1577,8 @@ final class HologramLibraryClient {
             : store.savedPath(saved)
                 .toString();
         main(() -> {
-            if (token != generation || reviewedSave && !saveSourceCurrent(token, session, revision)) return;
+            if (token != generation || originalBackgroundToken != backgroundTaskToken
+                || reviewedSave && !saveSourceCurrent(token, session, revision)) return;
             if (!reviewedSave) {
                 progressCompleted();
                 selectedLocal = saved;
@@ -1580,6 +1622,7 @@ final class HologramLibraryClient {
             lastActivity = System.nanoTime();
             saveProgress.progress(lastActivity);
             traceSave("preview_upload_begin");
+            uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
             HologramNetwork.sendLibrary(begin);
         });
     }

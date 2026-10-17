@@ -7,7 +7,6 @@ import java.nio.file.Paths;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -27,8 +26,13 @@ public final class HologramLibraryFacade {
     private static volatile HologramServerLibrary library;
     private static volatile Path clientGameDirectory;
     private static boolean initialized;
-    private static final ArrayBlockingQueue<Inbound> inbound = new ArrayBlockingQueue<>(64);
-    private static final ConcurrentHashMap<UUID, AtomicInteger> pending = new ConcurrentHashMap<>();
+    private static final ArrayBlockingQueue<Inbound> inbound = new ArrayBlockingQueue<>(
+        HologramLibraryProtocol.INBOUND_REQUESTS);
+    private static final ConcurrentHashMap<UUID, HologramLibraryProtocol.RequestQuota> pending = new ConcurrentHashMap<>();
+    private static final HologramLibraryProtocol.RequestQuota inboundQuota = new HologramLibraryProtocol.RequestQuota(
+        HologramLibraryProtocol.ACTIVE_UPLOADS * HologramLibraryProtocol.MAX_UPLOAD_WINDOW,
+        HologramLibraryProtocol.INBOUND_REQUESTS,
+        HologramLibraryProtocol.INBOUND_REQUESTS);
     private static final ConcurrentHashMap<UUID, SavedResult> savedResults = new ConcurrentHashMap<>();
     private static final HologramRequestGate callbacks = new HologramRequestGate(2, 16);
     private static volatile PrivateReceiver privateReceiver;
@@ -131,22 +135,40 @@ public final class HologramLibraryFacade {
             || "saveResultConsumed".equals(operation))) return;
         synchronized (pending) {
             UUID owner = actorId(player);
-            AtomicInteger count = pending.get(owner);
-            if (count == null) {
+            boolean chunk = HologramLibraryProtocol.uploadChunk(request);
+            HologramServerLibrary current = library;
+            boolean admitted = chunk && current != null && current.uploadAdmitted(player, request);
+            HologramLibraryProtocol.RequestQuota quota = pending.get(owner);
+            if (quota == null) {
                 if (pending.size() >= 64) {
                     HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
                     return;
                 }
-                count = new AtomicInteger();
-                pending.put(owner, count);
+                quota = new HologramLibraryProtocol.RequestQuota();
+                pending.put(owner, quota);
             }
-            if (count.incrementAndGet() > 4) {
-                count.decrementAndGet();
+            if (!quota.acquire(chunk, admitted)) {
+                if (quota.empty()) pending.remove(owner, quota);
                 HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
                 return;
             }
-            if (!inbound.offer(new Inbound(player, (NBTTagCompound) request.copy(), count))) {
-                if (count.decrementAndGet() == 0) pending.remove(owner, count);
+            if (!inboundQuota.acquire(chunk, admitted)) {
+                quota.release(chunk);
+                if (quota.empty()) pending.remove(owner, quota);
+                HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
+                return;
+            }
+            boolean offered = false;
+            try {
+                offered = inbound.offer(new Inbound(player, (NBTTagCompound) request.copy(), quota, chunk));
+            } finally {
+                if (!offered) {
+                    quota.release(chunk);
+                    inboundQuota.release(chunk);
+                    if (quota.empty()) pending.remove(owner, quota);
+                }
+            }
+            if (!offered) {
                 HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.LIBRARY);
             }
         }
@@ -479,8 +501,11 @@ public final class HologramLibraryFacade {
     public static synchronized void stop() {
         HologramServerLibrary previous = library;
         library = null;
-        inbound.clear();
-        pending.clear();
+        synchronized (pending) {
+            inbound.clear();
+            pending.clear();
+            inboundQuota.clear();
+        }
         savedResults.clear();
         callbacks.clear();
         callbackDepth();
@@ -507,7 +532,9 @@ public final class HologramLibraryFacade {
                 Inbound next = inbound.poll();
                 if (next == null) break;
                 synchronized (pending) {
-                    if (next.count.decrementAndGet() == 0) pending.remove(actorId(next.player), next.count);
+                    next.quota.release(next.chunk);
+                    inboundQuota.release(next.chunk);
+                    if (next.quota.empty()) pending.remove(actorId(next.player), next.quota);
                 }
                 String op = next.request.getString("op");
                 if ("saveResultConsumed".equals(op)) {
@@ -544,12 +571,15 @@ public final class HologramLibraryFacade {
 
         final EntityPlayerMP player;
         final NBTTagCompound request;
-        final AtomicInteger count;
+        final HologramLibraryProtocol.RequestQuota quota;
+        final boolean chunk;
 
-        Inbound(EntityPlayerMP player, NBTTagCompound request, AtomicInteger count) {
+        Inbound(EntityPlayerMP player, NBTTagCompound request, HologramLibraryProtocol.RequestQuota quota,
+            boolean chunk) {
             this.player = player;
             this.request = request;
-            this.count = count;
+            this.quota = quota;
+            this.chunk = chunk;
         }
     }
 }

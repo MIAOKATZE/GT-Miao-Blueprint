@@ -63,6 +63,8 @@ public final class CompositeWorldWitness {
     private long rawSourceGraphTick;
     private int rawAeSampleInterval,rawCoverInteractionInterval;
     private boolean rawAeChartEnabled;
+    private final Map<String,Object> pendingPlacementInputs=new LinkedHashMap<String,Object>();
+    private final Map<String,Map<String,String>> placementInputHashes=new LinkedHashMap<String,Map<String,String>>();
 
     public CompositeWorldWitness(Object world,Object actor,Object manifest,Object seedReceipt)throws Exception {
         this.world=world;this.actor=actor;this.manifest=manifest;this.source=ints(manifest,"source");this.bankOrigin=ints(manifest,"bank");result=nbt();
@@ -353,7 +355,7 @@ public final class CompositeWorldWitness {
         Object host=existingTileAt(target[0]+index%40,target[1]+index/1600,target[2]+index/40%40);if(host==null||!host.getClass().getName().equals("gregtech.api.metatileentity.BaseMetaTileEntity"))return;
         long elapsed=(Long)call(world,"func_82737_E")-rawSourceGraphTick;int interval=(Integer)get(Class.forName("com.miaokatze.gtswn.config.Config"),"interactionRateTicks");if(interval!=rawCoverInteractionInterval||interval<=0||elapsed<0)return;
         for(int c=0;c<size(aa);c++){
-            Object a=entry(aa,c),b=entry(bb,c);if(!has(a,"d")||!has(b,"d"))continue;Object ad=compound(a,"d"),bd=compound(b,"d");String key="ticksSinceLastRefill";if(!has(ad,key)||!has(bd,key))continue;
+            Object a=entry(aa,c),b=entry(bb,c);Object ad=call(a,"func_74781_a","d"),bd=call(b,"func_74781_a","d");if(ad==null||bd==null||((Byte)call(ad,"func_74732_a")).intValue()!=10||((Byte)call(bd,"func_74732_a")).intValue()!=10)continue;String key="ticksSinceLastRefill";if(!has(ad,key)||!has(bd,key))continue;
             Object av=call(ad,"func_74781_a",key),bv=call(bd,"func_74781_a",key);if(((Byte)call(av,"func_74732_a")).intValue()!=4||((Byte)call(bv,"func_74732_a")).intValue()!=4)continue;long from=(Long)call(av,"func_150291_c"),to=(Long)call(bv,"func_150291_c");if(from==to||from<0||from>=interval||to<0||to>=interval)continue;
             Object ac=call(a,"func_74737_b"),bc=call(b,"func_74737_b");remove(compound(ac,"d"),key);remove(compound(bc,"d"),key);if(!typedEqual(ac,bc))continue; // Every cover identity/configuration and stored/fractional EU field remains exact.
             if(!bool(ad,"configured")||integer(ad,"voltage")<=0||(Long)call(ad,"func_74763_f","capacity")<=0||!has(ad,"amperageDecimal"))continue;
@@ -575,8 +577,60 @@ public final class CompositeWorldWitness {
         putText(out,"sourceSha256",text(result,"sourceSha256"));putText(out,"staticSourceSha256",text(result,"staticSourceSha256"));
         return out;
     }
+    /** Original server inputs only: no product projection, native factory/writer or expected-world construction. */
+    private Object placementInputs(String kind,Object s)throws Exception {
+        Object out=nbt(),unknowns=listTag(),context=nbt(),choices=nbt(),rows=listTag();tag(out,"unknowns",unknowns);tag(out,"context",context);tag(out,"choices",choices);tag(out,"captureCells",rows);
+        putText(out,"format","placement-input-evidence-v1");putText(out,"kind",kind);putBool(out,"authorizesPass",false);putLong(out,"observedWorldTick",(Long)call(world,"func_82737_E"));putText(out,"boundary","Read-only server input DTO/field observation, not final selectedCacheTile, payment outcome, expected World NBT or proof of client saved/uploaded payload equality. Raw tileNbt/itemNbt strings are retained without decoding or filtering. Null is {javaNull:1b}; lists/arrays use elements[].value; maps use sorted mapEntries[].key/value; strings over 16000 UTF16 units use javaStringChunks[].value concatenation to preserve full strings within native writeUTF bounds.");
+        putText(context,"actorUUID",String.valueOf(call(product("HologramLibraryFacade"),"actorId",actor)));putText(context,"actorName",String.valueOf(call(actor,"func_70005_c_")));tag(context,"ownerSaveCommit",call(compound(result,kind+"SaveCommit"),"func_74737_b"));
+        for(String name:new String[]{"id","toolId","slot","libraryLocalId","blueprintSource","blueprintClientTaskToken","planRevision","placementReviewNonce","configurationAcceptedSequence","blueprintSaveLocalId","blueprintSaveJsonSha256","blueprintSavePreviewSha256","blueprintSaveSelectedPresetId"})placementField(context,s,name,unknowns,"context/"+name);
+        for(String name:new String[]{"libraryPrivatePreset","virtualPreset"})placementField(out,s,name,unknowns,name);
+        for(String name:new String[]{"x","y","z","dimension","side","facing","main","mode","scope","layer","noHatches","mainExplicit","hatchTier","hatchDowngrade","channels","materialSettings","retainedNbtKeys","placementNbtKeys","placementNbtCustomized","placementRetainCovers","placementDeidentificationChosen","placementDeidentificationLevel","processingPolicy","networkBindingRequested","pins","coordinatePins","autoTargets","frozenAutoTargets","facingPins","planFacings","planTargets"})placementField(choices,s,name,unknowns,"choices/"+name);
+        try{Object capture=get(s,"capture");int index=0;for(Object cell:(List<?>)get(capture,"cells")){Object row=nbt();putInt(row,"captureIndex",index++);for(String name:new String[]{"x","y","z","block","meta","blueprintBlock","blueprintItem","blueprintDamage","excluded","tileNbt","itemNbt","structureId","structureIds","structureTargets","anchor","userPosition","role","actualFacing","elementTrigger"})placementField(row,cell,name,unknowns,"captureCells["+(index-1)+"]/"+name);append(rows,row);}}
+        catch(Exception failure){placementUnknown(unknowns,"captureCells",failure.toString());}
+        Object qt=nbt();tag(choices,"quantumSelections",qt);
+        try{Object bindings=get(s,"networkBindings");Object inventory=get(actor,"field_71071_by"),live=get(inventory,"field_70462_a");for(Map.Entry<?,?> selected:((Map<?,?>)get(bindings,"selected")).entrySet()){String group=String.valueOf(selected.getKey());Object row=nbt(),selection=selected.getValue();tag(row,"selected",placementValue(selection,unknowns,"QT/"+group,0));int slot=(Integer)get(selection,"slot");putInt(row,"slot",slot);if(slot>=0&&slot<Array.getLength(live))tag(row,"liveSlot",placementValue(Array.get(live,slot),unknowns,"QT/"+group+"/liveSlot",0));else placementUnknown(unknowns,"QT/"+group,"selected inventory slot outside actual native array");tag(qt,group,row);}}
+        catch(Exception failure){placementUnknown(unknowns,"quantumSelections",failure.toString());}
+        putInt(out,"unknownCount",size(unknowns));putText(out,"status",size(unknowns)==0?"OBSERVED":"OBSERVED_WITH_UNKNOWNS");return out;
+    }
+    private static void placementField(Object out,Object owner,String name,Object unknowns,String path)throws Exception {
+        try{tag(out,name,placementValue(get(owner,name),unknowns,path,0));}catch(Exception failure){placementUnknown(unknowns,path,failure.toString());Object missing=nbt();putBool(missing,"unavailable",true);tag(out,name,missing);}
+    }
+    private static void placementUnknown(Object unknowns,String path,String reason)throws Exception {Object row=nbt();putText(row,"path",path);putText(row,"reason",reason);append(unknowns,row);}
+    private static Object placementValue(Object value,Object unknowns,String path,int depth)throws Exception {
+        Object out=nbt();if(value==null){putBool(out,"javaNull",true);return out;}if(depth>32){placementUnknown(unknowns,path,"DTO nesting beyond evidence scope");putText(out,"unavailableType",value.getClass().getName());return out;}
+        if(value instanceof String){String text=(String)value;if(text.length()<=16000)return construct("net.minecraft.nbt.NBTTagString",text);Object chunks=listTag();tag(out,"javaStringChunks",chunks);putInt(out,"utf16CodeUnits",text.length());for(int start=0;start<text.length();start+=16000){Object row=nbt();putText(row,"value",text.substring(start,Math.min(text.length(),start+16000)));append(chunks,row);}return out;}
+        if(value instanceof Boolean)return construct("net.minecraft.nbt.NBTTagByte",(byte)((Boolean)value?1:0));
+        if(value instanceof Byte)return construct("net.minecraft.nbt.NBTTagByte",value);if(value instanceof Short)return construct("net.minecraft.nbt.NBTTagShort",value);
+        if(value instanceof Integer)return construct("net.minecraft.nbt.NBTTagInt",value);if(value instanceof Long)return construct("net.minecraft.nbt.NBTTagLong",value);
+        if(value instanceof Float)return construct("net.minecraft.nbt.NBTTagFloat",value);if(value instanceof Double)return construct("net.minecraft.nbt.NBTTagDouble",value);
+        if(value instanceof Enum<?>){putText(out,"javaEnumClass",value.getClass().getName());putText(out,"name",((Enum<?>)value).name());return out;}
+        if(Class.forName("net.minecraft.nbt.NBTBase").isInstance(value))return call(value,"func_74737_b");
+        if(Class.forName("net.minecraft.item.ItemStack").isInstance(value)){Object item=call(value,"func_77973_b");putText(out,"item",String.valueOf(call(get(Class.forName("net.minecraft.item.Item"),"field_150901_e"),"func_148750_c",item)));putText(out,"itemNativeClass",item==null?"<null>":item.getClass().getName());putInt(out,"damage",(Integer)call(value,"func_77960_j"));putInt(out,"count",(Integer)get(value,"field_77994_a"));tag(out,"tag",placementValue(call(value,"func_77978_p"),unknowns,path+"/tag",depth+1));return out;}
+        if(Class.forName("net.minecraft.block.Block").isInstance(value)){putText(out,"block",String.valueOf(call(get(Class.forName("net.minecraft.block.Block"),"field_149771_c"),"func_148750_c",value)));putText(out,"nativeClass",value.getClass().getName());return out;}
+        if(value instanceof Map<?,?>){Object entries=listTag();tag(out,"mapEntries",entries);List<Object> names=new ArrayList<Object>(((Map<?,?>)value).keySet());for(Object key:names)if(!(key instanceof String)&&!(key instanceof Integer)){placementUnknown(unknowns,path,"unsupported map key "+(key==null?"null":key.getClass().getName()));putText(out,"unavailableType",value.getClass().getName());return out;}Collections.sort(names,(a,b)->(a.getClass().getName()+":"+a).compareTo(b.getClass().getName()+":"+b));for(Object key:names){Object row=nbt();tag(row,"key",placementValue(key,unknowns,path+"/key",depth+1));tag(row,"value",placementValue(((Map<?,?>)value).get(key),unknowns,path+"/"+key,depth+1));append(entries,row);}return out;}
+        if(value instanceof List<?>||value.getClass().isArray()){Object elements=listTag();tag(out,"elements",elements);int length=value instanceof List<?>?((List<?>)value).size():Array.getLength(value);for(int i=0;i<length;i++){Object row=nbt();tag(row,"value",placementValue(value instanceof List<?>?((List<?>)value).get(i):Array.get(value,i),unknowns,path+"["+i+"]",depth+1));append(elements,row);}return out;}
+        String cls=value.getClass().getName();boolean dto=cls.startsWith("com.miaokatze.gtmb.hologram.HologramPresets$")||cls.startsWith("com.miaokatze.gtmb.hologram.HologramBlueprintProcessing$")||cls.equals("com.miaokatze.gtmb.hologram.HologramBlueprintVersions$Metadata")||cls.equals("com.miaokatze.gtmb.hologram.HologramAePolicy$Issue")||cls.equals("com.miaokatze.gtmb.hologram.HologramNetworkBindings$Selection")||cls.equals("com.miaokatze.gtmb.hologram.HologramMaterials$Settings");
+        if(!dto){placementUnknown(unknowns,path,"unsupported DTO type "+cls);putText(out,"unavailableType",cls);return out;}
+        for(Field field:value.getClass().getDeclaredFields()){int flags=field.getModifiers();if(java.lang.reflect.Modifier.isStatic(flags)||java.lang.reflect.Modifier.isTransient(flags)||field.isSynthetic())continue;try{field.setAccessible(true);tag(out,field.getName(),placementValue(field.get(value),unknowns,path+"/"+field.getName(),depth+1));}catch(Exception failure){placementUnknown(unknowns,path+"/"+field.getName(),failure.toString());}}
+        return out;
+    }
+    private Map<String,String> placementHashes(Object input)throws Exception {Map<String,String> hashes=new LinkedHashMap<String,String>();for(String section:new String[]{"libraryPrivatePreset","virtualPreset","captureCells","choices"}){Object value=call(input,"func_74781_a",section);hashes.put(section,value==null?"UNAVAILABLE":digest(canonicalBytes(value)));}return hashes;}
+    private void freezePlacementInputs(String kind,Object s)throws Exception {
+        if(!Arrays.asList("self","share").contains(kind)||placementInputHashes.containsKey(kind))return;
+        try{Object snapshot=placementInputs(kind,s);Map<String,String> hashes=placementHashes(snapshot);placementInputHashes.put(kind,hashes);pendingPlacementInputs.put(kind,snapshot);Object summary=nbt();putText(summary,"status",text(snapshot,"status"));putInt(summary,"unknownCount",integer(snapshot,"unknownCount"));putBool(summary,"authorizesPass",false);for(Map.Entry<String,String> entry:hashes.entrySet())putText(summary,entry.getKey()+"Sha256",entry.getValue());tag(result,kind+"PlacementInputsBeforeFunding",summary);}
+        catch(Exception failure){Object evidence=nbt();putText(evidence,"status","UNKNOWN");putText(evidence,"reason",failure.toString());putBool(evidence,"authorizesPass",false);pendingPlacementInputs.put(kind,evidence);tag(result,kind+"PlacementInputsBeforeFunding",call(evidence,"func_74737_b"));}
+    }
+    /** Borrow exactly once for the Probe's future fixed-name artifact writer; no large payload in report(). */
+    public Object takePlacementInputs(String kind){return pendingPlacementInputs.remove(kind);}
+    private void comparePlacementInputs(String kind,Object s)throws Exception {
+        if(!placementInputHashes.containsKey(kind))return;Object comparison=nbt();putBool(comparison,"authorizesPass",false);
+        try{Object after=placementInputs(kind,s);Map<String,String> current=placementHashes(after),before=placementInputHashes.get(kind);Object sections=listTag();tag(comparison,"sections",sections);boolean equal=true;for(String section:before.keySet()){Object row=nbt();putText(row,"section",section);putText(row,"beforeSha256",before.get(section));putText(row,"afterSha256",current.get(section));boolean same=before.get(section).equals(current.get(section));putBool(row,"equal",same);equal&=same;append(sections,row);}putBool(comparison,"sameObservedInputSections",equal);putText(comparison,"scope","After actual job completion, not an exact pre-confirmation observation; publication/progress context is recorded separately and excluded from stable-input hashes. Equality with unknown fields does not establish complete coverage.");putInt(comparison,"afterUnknownCount",integer(after,"unknownCount"));tag(comparison,"afterContext",compound(after,"context"));tag(comparison,"afterUnknowns",call(after,"func_150295_c","unknowns",10));}
+        catch(Exception failure){putText(comparison,"status","UNKNOWN");putText(comparison,"reason",failure.toString());}tag(result,kind+"PlacementInputComparison",comparison);
+    }
+
     public void fundPlacement(String kind)throws Exception {
         check(funded.isEmpty(),"one finite supply outstanding");Object s=session();check((Boolean)get(s,"virtualPlacement")&&(Boolean)get(s,"virtualLocked"),"actual locked product placement");
+        freezePlacementInputs(kind,s);
         if(kind.equals("share"))captureShareBankBeforePlacement();
         checkOnlyMeSettings(get(s,"materialSettings"),"actual session before funding");
         checkOnlyMeSettings(call(product("HologramMaterials"),"read",call(actor,"func_70694_bm")),"held projector before funding");
@@ -622,6 +676,7 @@ public final class CompositeWorldWitness {
 
     public void checkPlacement(String kind)throws Exception {
         check(kind.equals(funded),"same actual funded placement");Object s=session();check((Integer)get(s,"job")==3&&(Integer)get(s,"cursor")==((List<?>)get(s,"work")).size(),"actual product job terminal");
+        comparePlacementInputs(kind,s);
         Object ledger=nbt(),itemRows=listTag(),fluidRows=listTag();
         for(Object quoted:stock){long supplied=(Long)call(quoted,"getStackSize"),remaining=remaining(itemMonitor,quoted);check(remaining==0,"exact independently observed native item balance exhausted");Object row=nbt();call(quoted,"writeToNBT",row);putLong(row,"supplied",supplied);putLong(row,"remaining",remaining);putLong(row,"nativeDebited",supplied-remaining);append(itemRows,row);}
         for(Object quoted:fluids){long supplied=(Long)call(quoted,"getStackSize"),remaining=remaining(fluidMonitor,quoted);check(remaining==0,"exact independently observed native fluid balance exhausted");Object row=nbt();call(quoted,"writeToNBT",row);putLong(row,"supplied",supplied);putLong(row,"remaining",remaining);putLong(row,"nativeDebited",supplied-remaining);append(fluidRows,row);}
@@ -836,7 +891,7 @@ public final class CompositeWorldWitness {
         for (int i = 0; i < types.length; i++) {
             if (values[i] == null) { if (types[i].isPrimitive()) return false; continue; }
             Class<?> t = types[i];
-            if (t.isPrimitive()) t = t == int.class ? Integer.class : t == long.class ? Long.class : t == float.class ? Float.class : t == double.class ? Double.class : t == boolean.class ? Boolean.class : t == char.class ? Character.class : t;
+            if (t.isPrimitive()) t = t == int.class ? Integer.class : t == long.class ? Long.class : t == float.class ? Float.class : t == double.class ? Double.class : t == boolean.class ? Boolean.class : t == byte.class ? Byte.class : t == short.class ? Short.class : t == char.class ? Character.class : t;
             if (!t.isInstance(values[i])) return false;
         }
         return true;

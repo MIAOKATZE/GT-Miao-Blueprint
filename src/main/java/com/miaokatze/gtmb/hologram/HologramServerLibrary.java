@@ -8,7 +8,6 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -51,7 +50,7 @@ final class HologramServerLibrary {
     private long storedBytes, reservedBytes, downloadBytes, catalogRevision = 1;
     private int activeDownloads;
     private int activeUploads, cursor;
-    private final HologramLibraryProtocol.FairBudget uploadBudget = new HologramLibraryProtocol.FairBudget();
+    private final HologramLibraryProtocol.FairBudget uploadBudget = new HologramLibraryProtocol.FairBudget(true);
     private final HologramLibraryProtocol.FairBudget downloadBudget = new HologramLibraryProtocol.FairBudget();
 
     HologramServerLibrary(Path directory, Path configFile) {
@@ -116,12 +115,28 @@ final class HologramServerLibrary {
             peers.put(peer.owner, peer);
         }
         peer.admin = admin;
-        // One in-flight chunk plus at most three controls. Neither Netty nor the main scheduler can grow a queue.
-        if (peer.requests.size() >= 4) {
+        if (!peer.requests.offer(request, admitted(peer, request))) {
             error(peer, "Server library request queue is busy; retry later", request.getLong("clientTaskToken"));
-            return;
         }
-        peer.requests.addLast((NBTTagCompound) request.copy());
+    }
+
+    /** Immutable transfer identity plus volatile admission, without native world access on Netty. */
+    synchronized boolean uploadAdmitted(EntityPlayerMP player, NBTTagCompound request) {
+        if (!available()) return false;
+        Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+        return peer != null && peer.player == player && admitted(peer, request);
+    }
+
+    private boolean admitted(Peer peer, NBTTagCompound request) {
+        Upload upload = peer.upload;
+        if (closed || !peer.online
+            || upload == null
+            || !upload.valid
+            || !HologramLibraryProtocol.uploadChunk(request)
+            || !upload.transfer.equals(request.getString("transfer"))
+            || upload.request.getLong("clientTaskToken") != request.getLong("clientTaskToken")) return false;
+        String op = request.getString("op");
+        return upload.privateUpload == "privateChunk".equals(op) && upload.previewUpload == "previewChunk".equals(op);
     }
 
     synchronized void heartbeat() {
@@ -240,37 +255,70 @@ final class HologramServerLibrary {
                 }
                 continue;
             }
-            NBTTagCompound request;
+            NBTTagCompound control;
             synchronized (this) {
-                request = peer.requests.peekFirst();
+                control = peer.requests.pollControl();
             }
-            if (request != null) {
-                String op = request.getString("op");
+            if (control != null) process(peer, control);
+        }
+        // Every peer gets one opportunity per round; no UUID can drain the shared bucket first.
+        for (int pass = 0; pass < 4; pass++) {
+            boolean progressed = false;
+            for (int n = 0; n < round.size(); n++) {
+                Peer peer = round.get((start + n) % round.size());
+                NBTTagCompound request;
+                synchronized (this) {
+                    request = peer.requests.peekChunk();
+                }
+                if (request == null || !peer.online) continue;
                 int length = request.getByteArray("data").length;
-                boolean chunk = "uploadChunk".equals(op) || "privateChunk".equals(op) || "previewChunk".equals(op);
-                if (!chunk || length == 0
-                    || length > HologramLibraryProtocol.CHUNK_BYTES
-                    || uploadBudget.take(peer.owner, length, config.view().uploadKiB * 1024, now)) {
-                    synchronized (this) {
-                        peer.requests.pollFirst();
-                    }
-                    try {
-                        handle(peer, request);
-                    } catch (IOException | RuntimeException invalid) {
-                        if (chunk || "uploadBegin".equals(op) || "privateBegin".equals(op) || "previewBegin".equals(op))
-                            abort(peer);
-                        error(peer, invalid.getMessage(), request.getLong("clientTaskToken"));
-                    }
+                if (length > 0 && length <= HologramLibraryProtocol.CHUNK_BYTES
+                    && !uploadBudget.take(peer.owner, length, config.view().uploadKiB * 1024, System.nanoTime()))
+                    continue;
+                synchronized (this) {
+                    request = peer.requests.pollChunk();
+                }
+                if (request != null) {
+                    process(peer, request);
+                    progressed = true;
                 }
             }
+            if (!progressed) break;
+        }
+        for (Peer peer : round) {
+            flushUploadAck(peer);
             try {
-                sendDownload(peer, now);
+                sendDownload(peer, now); // Downloads retain their existing once-per-50ms pump semantics.
             } catch (RuntimeException failure) {
                 long clientTaskToken = taskToken(peer);
                 clearDownload(peer);
                 error(peer, failure.getMessage(), clientTaskToken);
             }
         }
+    }
+
+    private void process(Peer peer, NBTTagCompound request) {
+        try {
+            handle(peer, request);
+        } catch (IOException | RuntimeException invalid) {
+            String op = request.getString("op");
+            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op)
+                || "privateBegin".equals(op)
+                || "previewBegin".equals(op)) abort(peer);
+            error(peer, invalid.getMessage(), request.getLong("clientTaskToken"));
+        }
+    }
+
+    private void flushUploadAck(Peer peer) {
+        Upload upload = peer.upload;
+        if (upload == null || !upload.valid || !upload.ackPending) return;
+        upload.ackPending = false;
+        NBTTagCompound ack = HologramLibraryProtocol.reply("chunkAck");
+        ack.setLong("clientTaskToken", upload.request.getLong("clientTaskToken"));
+        ack.setString("transfer", upload.transfer);
+        ack.setInteger("index", upload.index - 1);
+        ack.setInteger("nextIndex", upload.index);
+        send(peer, ack);
     }
 
     private void handle(Peer peer, NBTTagCompound request) throws IOException {
@@ -343,7 +391,8 @@ final class HologramServerLibrary {
             if (!replace.isEmpty()) owned(peer.owner, replace);
             else checkQuota(peer.owner, countOwned(peer.owner), config.view().maxUploads);
         }
-        if (activeUploads >= 4 || request.getInteger("total") > MAX_RESERVED_BYTES - reservedBytes)
+        if (activeUploads >= HologramLibraryProtocol.ACTIVE_UPLOADS
+            || request.getInteger("total") > MAX_RESERVED_BYTES - reservedBytes)
             throw new IOException("Server upload queue is busy; retry later");
         Files.createDirectories(directory);
         Path temp = Files.createTempFile(directory, "incoming-", ".tmp");
@@ -354,20 +403,22 @@ final class HologramServerLibrary {
             Files.deleteIfExists(temp);
             throw failure;
         }
-        peer.upload = upload;
+        synchronized (this) {
+            peer.upload = upload;
+        }
         reservedBytes += upload.total;
         activeUploads++;
         NBTTagCompound ready = HologramLibraryProtocol.reply(previewUpload ? "previewReady" : "uploadReady");
         ready.setLong("clientTaskToken", request.getLong("clientTaskToken"));
         ready.setString("transfer", upload.transfer);
         ready.setInteger("nextIndex", 0);
+        ready.setInteger("uploadWindow", HologramLibraryProtocol.MAX_UPLOAD_WINDOW);
         send(peer, ready);
     }
 
     private void append(Peer peer, NBTTagCompound request) throws IOException {
         Upload upload = peer.upload;
-        if (upload == null || !upload.transfer.equals(request.getString("transfer")))
-            throw new IOException("Unknown upload");
+        if (upload == null || !admitted(peer, request)) throw new IOException("Unknown upload");
         boolean privateChunk = "privateChunk".equals(request.getString("op"));
         boolean previewChunk = "previewChunk".equals(request.getString("op"));
         if (privateChunk != upload.privateUpload || previewChunk != upload.previewUpload)
@@ -395,14 +446,7 @@ final class HologramServerLibrary {
                 else publish(peer, upload, blueprint, artifact.png);
             }
             abort(peer);
-        } else {
-            NBTTagCompound ack = HologramLibraryProtocol.reply("chunkAck");
-            ack.setLong("clientTaskToken", upload.request.getLong("clientTaskToken"));
-            ack.setString("transfer", upload.transfer);
-            ack.setInteger("index", upload.index - 1);
-            ack.setInteger("nextIndex", upload.index);
-            send(peer, ack);
-        }
+        } else upload.ackPending = true;
     }
 
     private void publish(Peer peer, Upload upload, HologramPresets.Preset blueprint, byte[] preview)
@@ -744,8 +788,14 @@ final class HologramServerLibrary {
     }
 
     private void abort(Peer peer) {
-        Upload upload = peer.upload;
-        if (upload == null) return;
+        Upload upload;
+        synchronized (this) {
+            upload = peer.upload;
+            if (upload == null) return;
+            upload.valid = false;
+            peer.upload = null;
+            peer.requests.discard(upload.transfer, upload.request.getLong("clientTaskToken"));
+        }
         try {
             upload.output.close();
             Files.deleteIfExists(upload.temp);
@@ -754,7 +804,6 @@ final class HologramServerLibrary {
         }
         reservedBytes -= upload.total;
         activeUploads--;
-        peer.upload = null;
         uploadBudget.cancel(peer.owner);
     }
 
@@ -810,7 +859,7 @@ final class HologramServerLibrary {
         final EntityPlayerMP player;
         final UUID owner;
         final String name;
-        final ArrayDeque<NBTTagCompound> requests = new ArrayDeque<>();
+        final HologramLibraryProtocol.RequestQueue requests = new HologramLibraryProtocol.RequestQueue();
         volatile boolean online = true, admin;
         volatile Upload upload;
         volatile Download download;
@@ -833,6 +882,7 @@ final class HologramServerLibrary {
         final OutputStream output;
         final MessageDigest digest = HologramLibraryProtocol.digest();
         int offset, index;
+        boolean ackPending;
         long lastActivity = System.nanoTime();
         volatile boolean valid = true;
 

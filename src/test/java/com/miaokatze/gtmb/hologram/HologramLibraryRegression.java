@@ -45,6 +45,8 @@ public final class HologramLibraryRegression {
 
     public static void run() throws Exception {
         protocolAndThrottle();
+        uploadWindowAndMailboxes();
+        uploadAdmissionLifecycle();
         downloads();
         downloadReservations();
         taskCorrelation();
@@ -412,6 +414,303 @@ public final class HologramLibraryRegression {
         save.setLong("clientTaskToken", 92);
         HologramLibraryWorkflow.captureClientTaskToken(session, save);
         SimpleAssert.eq(92L, session.blueprintClientTaskToken, "new save replaces the old task correlation");
+    }
+
+    private static NBTTagCompound uploadReply(String transfer, long task, int next) {
+        NBTTagCompound reply = HologramLibraryProtocol.reply("chunkAck");
+        reply.setString("transfer", transfer);
+        reply.setLong("clientTaskToken", task);
+        reply.setInteger("index", next - 1);
+        reply.setInteger("nextIndex", next);
+        return reply;
+    }
+
+    private static void uploadWindowAndMailboxes() throws Exception {
+        int slice = HologramLibraryProtocol.CHUNK_BYTES;
+        String transfer = UUID.randomUUID()
+            .toString();
+        NBTTagCompound ready = uploadReply(transfer, 71, 0);
+        HologramLibraryProtocol.UploadWindow legacy = new HologramLibraryProtocol.UploadWindow(transfer, 71, slice + 1);
+        SimpleAssert.that(legacy.ready(ready), "old server ready without optional credit is accepted");
+        legacy.sent(0);
+        SimpleAssert.that(!legacy.canSend(), "old server retains exactly one outstanding chunk");
+        SimpleAssert
+            .that(legacy.acknowledge(uploadReply(transfer, 71, 1)), "old server individual ACK opens one credit");
+        legacy.sent(1);
+        SimpleAssert.that(legacy.complete(uploadReply(transfer, 71, 2)), "final receipt needs no last chunk ACK");
+        NBTTagCompound noTransfer = uploadReply(transfer, 71, 2);
+        noTransfer.removeTag("transfer");
+        SimpleAssert.that(!legacy.complete(noTransfer), "missing transfer cannot complete an otherwise matching task");
+
+        NBTTagCompound badReady = uploadReply(transfer, 71, 0);
+        badReady.setString("uploadWindow", "8");
+        denied(
+            () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
+            "ready credit must be an NBT Int");
+        badReady.setInteger("uploadWindow", 9);
+        denied(
+            () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
+            "ready credit cannot exceed the hard window");
+        badReady.setInteger("uploadWindow", 8);
+        badReady.setInteger("nextIndex", 1);
+        denied(
+            () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
+            "partial resume is not silently introduced");
+        NBTTagCompound previewBegin = HologramLibraryProtocol.request("previewBegin");
+        previewBegin.setString("transfer", transfer);
+        previewBegin.setInteger("total", slice);
+        previewBegin.setLong("clientTaskToken", 71);
+        previewBegin.setLong("clientTaskToken", 92); // Actual previewBegin restores the original save task token.
+        HologramLibraryProtocol.UploadWindow preview = new HologramLibraryProtocol.UploadWindow(previewBegin);
+        SimpleAssert
+            .eq(92L, preview.task(), "sender binds the actual Begin override rather than ambient background state");
+        SimpleAssert
+            .that(!preview.ready(uploadReply(transfer, 71, 0)), "ambient other task cannot start preview sender");
+        SimpleAssert.that(preview.ready(uploadReply(transfer, 92, 0)), "original preview task accepts matching ready");
+        preview.sent(0);
+        SimpleAssert.that(!preview.complete(uploadReply(transfer, 71, 1)), "old-task final cannot complete preview");
+        SimpleAssert
+            .that(preview.complete(uploadReply(transfer, 92, 1)), "preview final binds the original task and transfer");
+
+        ready.setInteger("uploadWindow", 8);
+        HologramLibraryProtocol.UploadWindow sender = new HologramLibraryProtocol.UploadWindow(
+            transfer,
+            71,
+            20 * slice);
+        SimpleAssert.that(sender.ready(ready), "new server advertises bounded credit without a protocol bump");
+        while (sender.canSend()) sender.sent(sender.nextSent());
+        SimpleAssert.eq(8, sender.nextSent(), "one tick fills exactly eight credits");
+        boolean sendRejected = false;
+        try {
+            sender.sent(9);
+        } catch (IllegalStateException expected) {
+            sendRejected = true;
+        }
+        SimpleAssert
+            .that(sendRejected && sender.nextSent() == 8, "out-of-order send cannot change the actual sender cursor");
+        SimpleAssert.that(!sender.ready(ready), "duplicate ready cannot rewind a live transfer");
+        SimpleAssert.that(!sender.acknowledge(uploadReply(transfer, 72, 4)), "other task ACK cannot release credit");
+        SimpleAssert.that(
+            !sender.acknowledge(
+                uploadReply(
+                    UUID.randomUUID()
+                        .toString(),
+                    71,
+                    4)),
+            "other transfer ACK cannot release credit");
+        SimpleAssert.eq(0, sender.acknowledged(), "cross-scope ACKs leave the acknowledgement cursor unchanged");
+        SimpleAssert.that(!sender.canSend(), "cross-scope ACKs do not grant send credit");
+        denied(() -> sender.acknowledge(uploadReply(transfer, 71, 9)), "future ACK cannot confirm unsent data");
+        NBTTagCompound malformed = uploadReply(transfer, 71, 4);
+        malformed.setInteger("index", 1);
+        denied(() -> sender.acknowledge(malformed), "ACK index must agree with cumulative nextIndex");
+        SimpleAssert.that(sender.acknowledge(uploadReply(transfer, 71, 4)), "cumulative ACK releases four credits");
+        SimpleAssert
+            .that(!sender.acknowledge(uploadReply(transfer, 71, 4)), "duplicate ACK grants no additional credit");
+        SimpleAssert.that(!sender.acknowledge(uploadReply(transfer, 71, 2)), "late ACK never moves backward");
+        while (sender.canSend()) sender.sent(sender.nextSent());
+        SimpleAssert.eq(12, sender.nextSent(), "only newly acknowledged credit is replenished");
+        denied(() -> sender.complete(uploadReply(transfer, 71, 20)), "completion cannot skip unsent chunks");
+        HologramLibraryProtocol.UploadWindow oldClient = new HologramLibraryProtocol.UploadWindow(
+            transfer,
+            71,
+            slice + 1);
+        SimpleAssert.that(oldClient.ready(ready), "new server ready is readable by an individual sender");
+        oldClient.sent(0);
+        SimpleAssert.that(
+            oldClient.acknowledge(uploadReply(transfer, 71, 1)),
+            "new server ACK remains valid after just one received chunk");
+        oldClient.sent(1);
+        SimpleAssert.that(
+            oldClient.complete(uploadReply(transfer, 71, 2)),
+            "individual sender still receives final completion");
+
+        HologramLibraryProtocol.RequestQuota quota = new HologramLibraryProtocol.RequestQuota();
+        SimpleAssert.that(!quota.acquire(true, false), "no data admitted before an actual ready transfer");
+        SimpleAssert.eq(0, quota.chunks, "rejected admission consumes no data quota");
+        for (int i = 0; i < 8; i++) SimpleAssert.that(quota.acquire(true, true), "admitted data fits its fixed window");
+        SimpleAssert.that(!quota.acquire(true, true), "ninth data request is rejected");
+        for (int i = 0; i < 4; i++)
+            SimpleAssert.that(quota.acquire(false, false), "data cannot consume control reserve");
+        SimpleAssert
+            .that(!quota.acquire(false, false), "fifth control cannot grow the previous control attack surface");
+        for (int i = 0; i < 8; i++) quota.release(true);
+        for (int i = 0; i < 4; i++) quota.release(false);
+        SimpleAssert.that(quota.empty(), "balanced completion releases both independent scopes");
+        denied(() -> quota.release(true), "release underflow is detected");
+        SimpleAssert.that(quota.empty(), "underflow rejection does not mutate either quota scope");
+        quota.clear();
+        HologramLibraryProtocol.RequestQuota global = new HologramLibraryProtocol.RequestQuota(32, 64, 64);
+        for (int i = 0; i < 32; i++)
+            SimpleAssert.that(global.acquire(true, true), "four active windows fit global data allowance");
+        SimpleAssert.that(!global.acquire(true, true), "global data cannot fill the reserved control half");
+        SimpleAssert.eq(32, global.chunks, "failed global acquire does not change the scope counter");
+        for (int i = 0; i < 32; i++)
+            SimpleAssert.that(global.acquire(false, false), "global data reserves half the mailbox for controls");
+        SimpleAssert.that(!global.acquire(false, false), "global total remains exactly 64 queued requests");
+
+        HologramLibraryProtocol.RequestQueue queue = new HologramLibraryProtocol.RequestQueue();
+        NBTTagCompound data = uploadReply(transfer, 71, 1);
+        data.setString("op", "privateChunk");
+        SimpleAssert.that(!queue.offer(data, false), "worker mailbox also requires admitted data");
+        for (int i = 0; i < 8; i++) SimpleAssert.that(queue.offer(data, true), "worker data window is bounded");
+        SimpleAssert.that(!queue.offer(data, true), "worker refuses a ninth data chunk");
+        NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+        SimpleAssert.that(queue.offer(cancel, false), "cancel fits even while data credits are full");
+        SimpleAssert.that(queue.pollControl() != null, "low-rate data cannot head-of-line block cancel");
+        queue.discard(transfer, 72);
+        SimpleAssert.that(queue.peekChunk() != null, "other task revocation leaves this task's data alone");
+        queue.discard(transfer, 71);
+        SimpleAssert.that(queue.isEmpty(), "revocation purges matching queued data");
+
+        int rate = 1024 * 1024, delivered = 0;
+        HologramLibraryProtocol.Budget upload = new HologramLibraryProtocol.Budget(true);
+        upload.take(slice, rate, 1);
+        for (int tick = 1; tick <= 20; tick++) {
+            for (int pass = 0; pass < 4; pass++)
+                if (upload.take(slice, rate, 1L + tick * 50000000L)) delivered += slice;
+            SimpleAssert
+                .that(delivered <= (long) rate * tick / 20, "bounded drain never exceeds administrator aggregate rate");
+        }
+        SimpleAssert.eq(rate, delivered, "four rounds plus upload burst can sustain 1 MiB/s at 50ms polls");
+        HologramLibraryProtocol.Budget low = new HologramLibraryProtocol.Budget(true);
+        low.take(slice, 128 * 1024, 1);
+        int burst = 0;
+        for (int i = 0; i < 8; i++) if (low.take(slice, 128 * 1024, 1000000001L)) burst++;
+        SimpleAssert.eq(2, burst, "existing 128 KiB upload retains the original two-chunk burst");
+        HologramLibraryProtocol.Budget download = new HologramLibraryProtocol.Budget();
+        download.take(slice, rate, 1);
+        burst = 0;
+        for (int i = 0; i < 8; i++) if (download.take(slice, rate, 50000001L)) burst++;
+        SimpleAssert.eq(2, burst, "download burst remains unchanged even at a high administrator setting");
+        HologramLibraryProtocol.FairBudget fair = new HologramLibraryProtocol.FairBudget(true);
+        UUID[] owners = { UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID() };
+        int[] served = new int[4];
+        delivered = 0;
+        for (int tick = 0; tick <= 200; tick++) {
+            long now = 1L + tick * 50000000L;
+            for (int pass = 0; pass < 4; pass++) for (int n = 0; n < 4; n++) {
+                int owner = (tick + n) % 4;
+                if (fair.take(owners[owner], slice, rate, now)) {
+                    served[owner]++;
+                    delivered += slice;
+                }
+            }
+            SimpleAssert
+                .that(delivered <= (long) rate * tick / 20, "multiple owners share one global upload allowance");
+        }
+        for (int count : served) SimpleAssert.that(count >= 120, "bounded rounds cannot starve any active owner");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void uploadAdmissionLifecycle() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-upload-window-");
+        HologramServerLibrary store = new HologramServerLibrary(root.resolve("library"), root.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            EntityPlayerMP actor = player(UUID.randomUUID(), "WindowPublisher");
+            Object peer = peer(actor);
+            synchronized (store) {
+                ((java.util.Map<UUID, Object>) get(store, "peers")).put(HologramLibraryFacade.actorId(actor), peer);
+            }
+            runWorker(store, () -> {
+                String transfer = UUID.randomUUID()
+                    .toString();
+                NBTTagCompound begin = HologramLibraryProtocol.request("uploadBegin");
+                begin.setString("transfer", transfer);
+                begin.setLong("clientTaskToken", 31);
+                begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                begin.setInteger("total", 12 * HologramLibraryProtocol.CHUNK_BYTES + 1);
+                begin.setString("hash", repeat('a', 64));
+                handle(store, peer, begin);
+                NBTTagCompound chunk = uploadReply(transfer, 31, 1);
+                chunk.setString("op", "uploadChunk");
+                chunk.setByteArray("data", new byte[HologramLibraryProtocol.CHUNK_BYTES]);
+                SimpleAssert.that(store.uploadAdmitted(actor, chunk), "ready publishes actual owner-bound admission");
+                chunk.setLong("clientTaskToken", 30);
+                SimpleAssert
+                    .that(!store.uploadAdmitted(actor, chunk), "old task cannot use the current transfer admission");
+                chunk.setLong("clientTaskToken", 31);
+                chunk.setString("op", "privateChunk");
+                SimpleAssert.that(!store.uploadAdmitted(actor, chunk), "different upload purpose cannot use admission");
+                chunk.setString("op", "uploadChunk");
+                handle(store, peer, chunk);
+                Object partial = get(peer, "upload");
+                SimpleAssert.that(
+                    (Boolean) get(partial, "ackPending"),
+                    "one received old-client chunk schedules an ACK without waiting for a batch");
+                invoke(store, "flushUploadAck", peer);
+                SimpleAssert
+                    .that(!(Boolean) get(partial, "ackPending"), "pump flush publishes old-client individual ACK");
+                chunk.setInteger("index", 1);
+                handle(store, peer, chunk);
+                chunk.setInteger("index", 2);
+                handle(store, peer, chunk);
+                SimpleAssert.eq(
+                    3,
+                    (Integer) get(partial, "index"),
+                    "each contiguous received chunk advances native upload index once");
+                SimpleAssert.that(
+                    (Boolean) get(partial, "ackPending"),
+                    "multiple data chunks retain one pending cumulative ACK");
+                invoke(store, "flushUploadAck", peer);
+                SimpleAssert.that(
+                    !(Boolean) get(partial, "ackPending"),
+                    "one flush consumes the cumulative ACK without changing transfer data");
+                for (int i = 0; i < 8; i++) {
+                    chunk.setInteger("index", i + 3);
+                    store.submit(actor, chunk, false);
+                }
+                HologramLibraryProtocol.RequestQueue mailbox = (HologramLibraryProtocol.RequestQueue) get(
+                    peer,
+                    "requests");
+                SimpleAssert
+                    .that(!mailbox.offer(chunk, true), "real peer data mailbox is full after eight submissions");
+                NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+                cancel.setString("transfer", transfer);
+                cancel.setLong("clientTaskToken", 31);
+                store.submit(actor, cancel, false);
+                NBTTagCompound queuedControl = mailbox.pollControl();
+                SimpleAssert.that(queuedControl != null, "real full data mailbox still accepts cancel");
+                handle(store, peer, queuedControl);
+                SimpleAssert.that(
+                    get(peer, "upload") == null && mailbox.isEmpty(),
+                    "actual cancel atomically revokes and purges data");
+                SimpleAssert.that(!store.uploadAdmitted(actor, chunk), "cancelled transfer has no further admission");
+                String replacement = UUID.randomUUID()
+                    .toString();
+                begin.setString("transfer", replacement);
+                begin.setLong("clientTaskToken", 32);
+                handle(store, peer, begin);
+                handle(store, peer, cancel);
+                chunk.setString("transfer", replacement);
+                chunk.setLong("clientTaskToken", 32);
+                SimpleAssert
+                    .that(store.uploadAdmitted(actor, chunk), "late old cancellation cannot revoke replacement task");
+                Object current = get(peer, "upload");
+                set(current, "lastActivity", System.nanoTime() - HologramLibraryProtocol.TIMEOUT_NANOS - 1);
+                Method pump = HologramServerLibrary.class.getDeclaredMethod("pump");
+                pump.setAccessible(true);
+                pump.invoke(store);
+                SimpleAssert.that(
+                    get(peer, "upload") == null && !store.uploadAdmitted(actor, chunk),
+                    "actual timeout revokes admission");
+                SimpleAssert.eq(
+                    0,
+                    ((Number) get(store, "reservedBytes")).intValue(),
+                    "cancel and timeout release every reserved byte");
+                SimpleAssert
+                    .eq(0, (Integer) get(store, "activeUploads"), "cancel and timeout release every active slot");
+                handle(store, peer, begin);
+                set(peer, "online", false);
+                SimpleAssert
+                    .that(!store.uploadAdmitted(actor, chunk), "offline identity immediately loses upload admission");
+                pump.invoke(store);
+                SimpleAssert.that(get(peer, "upload") == null, "offline pump cleans its active transfer");
+            });
+        } finally {
+            store.stop();
+        }
     }
 
     private static void configuration() throws Exception {

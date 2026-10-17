@@ -66,6 +66,10 @@ New servers default to a shared upload limit of **1024 KiB/s (1 MiB/s)** and dow
 
 新安装默认全服聚合上传限速 **1024 KiB/s（1 MiB/s）**、下载限速 **128 KiB/s**。管理员可在服务器蓝图库的设置中调整；已有配置值保留。
 
+Updated clients and servers pipeline blueprint uploads to reduce round-trip waits. Connections to older servers retain the compatible single-chunk transfer.
+
+客户端与服务端均更新后，蓝图上传会连续发送分片并合并回执，减少往返等待；连接旧服务端时仍兼容原单片传输。
+
 Detailed controls, private/shared processing and resource rules: [GTMB Guide / 完整操作、私用分享与资源规则](https://miaokatze.com/wiki?mod=gtmb). Find and share blueprints at the [Blueprint Library / 蓝图站](https://miaokatze.com/blueprints).
 
 Community integrations / 社区扩展：[Public API & module contracts / 公共 API 与模块契约](API.md).

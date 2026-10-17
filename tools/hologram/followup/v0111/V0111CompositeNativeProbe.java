@@ -57,6 +57,8 @@ public final class V0111CompositeNativeProbe {
     private final List<Object> incomingCutProgress = java.util.Collections.synchronizedList(new ArrayList<Object>());
     private final List<Object> incomingPrivateReplies = java.util.Collections.synchronizedList(new ArrayList<Object>());
     private String privateLocalId="", privatePreviousPreset="", privateTransfer="";
+    private String pendingBindingGroup="";
+    private long pendingBindingRevision;
     private int rawPreviewProgressStart;
     private int observedCuts;
     private boolean seedMode, prepareOnly;
@@ -162,13 +164,14 @@ public final class V0111CompositeNativeProbe {
                     proof.setProperty("seedArtifactsWritten","true");persist("RUNNING");
                 }
             }
+            boolean fixtureCommandAcknowledged = false;
             Properties command = read("fixture-request.properties");
             int sequence = Integer.parseInt(command.getProperty("sequence","0"));
             if (sequence > acknowledged && manifest != null) {
                 check(sequence == acknowledged + 1,"fixture control sequence must be contiguous");
                 String action = command.getProperty("action",""), kind = command.getProperty("kind","");
                 if (action.equals("move")) move(host,kind);
-                else if (action.equals("fund")) call(bridge,"fundPlacement",kind);
+                else if (action.equals("fund")) {call(bridge,"fundPlacement",kind);persistPlacementInputs();}
                 else if (action.equals("check")) call(bridge,"checkPlacement",kind);
                 else if (action.equals("rawPrepare")) {check(seedMode,"server-owned durable raw witness requires seeded independent baseline");if(!(Boolean)call(bridge,"prepareRawCut")){writeNbt("composite-server-oracle.nbt",call(bridge,"report"));pulse();return;}persistAeSamples();}
                 else if (action.equals("rawCapture")) {try{call(bridge,"captureRawCut",readNbt("composite-raw-cut-ack.nbt"));}finally{persistRawSamples();}}
@@ -176,7 +179,7 @@ public final class V0111CompositeNativeProbe {
                 else if (action.equals("rawCheck")) call(bridge,"checkRaw");
                 else if (action.equals("complete")) {if(seedMode&&!scenario.equals("all"))call(bridge,"completeScenario",scenario);else call(bridge,"complete");}
                 else throw new IllegalStateException("Unknown fixture-only control: "+action);
-                acknowledged = sequence; proof.setProperty("fixtureAcknowledged",String.valueOf(sequence)); persist("RUNNING");
+                acknowledged = sequence; proof.setProperty("fixtureAcknowledged",String.valueOf(sequence)); fixtureCommandAcknowledged = true;
             }
             if(seedMode)persistRawSamples();
             report = call(bridge,"report"); writeNbt("composite-server-oracle.nbt",report);
@@ -189,6 +192,7 @@ public final class V0111CompositeNativeProbe {
                     proof.setProperty(kind+"JsonSha256",str(commit,"jsonSha256")); proof.setProperty(kind+"PngSha256",str(commit,"pngSha256"));
                 }
             }
+            if(fixtureCommandAcknowledged)persist("RUNNING");
             Properties peer=read("composite-client.properties");
             if (prepareOnly && "PREPARED".equals(peer.getProperty("status"))) {
                 call(call(host,"func_71187_D"),"func_71556_a",host,"gtmbtestlab stop");
@@ -381,7 +385,7 @@ public final class V0111CompositeNativeProbe {
                 longFlowStarted=System.nanoTime();long previousTask=nativeTaskWatermark();click(gui,ui,141,gen);
                 watchNativeTask("private",false,previousTask);
                 proof.setProperty(kind()+"PrivateLoadLocalId",privateLocalId);proof.setProperty(kind()+"PrivateLoadButton","141 actual private-library MUI dispatch");
-                groupIndex=0;advance(14);return;
+                groupIndex=0;pendingBindingGroup="";advance(14);return;
             }
             if(phase==14) {
                 if(isScreen(gui)){
@@ -414,15 +418,22 @@ public final class V0111CompositeNativeProbe {
                     proof.setProperty(kind()+"PrivateLoadAcknowledged","true");
                 }
                 Object bindings=compound(data,"networkBindings"), groups=list(bindings,"groups");
+                if(!pendingBindingGroup.isEmpty()){
+                    boolean accepted=false;
+                    for(int g=0;g<count(groups);g++){Object row=at(groups,g);if(pendingBindingGroup.equals(str(row,"id"))&&bool(row,"bound"))accepted=true;}
+                    if(!accepted||number(data,"planRevision")<=pendingBindingRevision)return;
+                    proof.setProperty(kind()+"BindingAcknowledged."+pendingBindingGroup,String.valueOf(number(data,"planRevision")));pendingBindingGroup="";
+                }
                 if(flow==1&&groupIndex<count(groups)) {
                     Object group=at(groups,groupIndex++);Object request=nbt();putText(request,"group",str(group,"id"));putInt(request,"slot",33);
+                    pendingBindingGroup=str(group,"id");pendingBindingRevision=number(data,"planRevision");
                     networkOp(state,"bindBlueprintNetwork",request);return;
                 }
                 int[] target=ints(manifest,kind());Object request=worldRequest(state,"confirmVirtualPosition");
                 putInt(request,"x",target[0]);putInt(request,"y",target[1]);putInt(request,"z",target[2]);putInt(request,"side",1);
                 call(product("HologramNetwork"),"sendAction",request);advance(15);return;
             }
-            if(phase==15) {if(!bool(data,"virtualLocked")||busy())return;fixture("fund",kind());advance(16);return;}
+            if(phase==15) {if(!bool(data,"virtualLocked")||busy()){check(System.nanoTime()-phaseStarted<30_000_000_000L,"native position lock not acknowledged: "+str(data,"status"));return;}fixture("fund",kind());advance(16);return;}
             if(phase==16) {
                 if(!ack(peer))return;
                 Object request=worldRequest(state,"useAir");call(product("HologramNetwork"),"sendAction",request);advance(17);return;
@@ -1065,6 +1076,8 @@ public final class V0111CompositeNativeProbe {
             if(actualState!=null){
                 Object data=get(actualState,"data"),progress=compound(data,"progress");
                 proof.setProperty("nativeJob",String.valueOf(integer(data,"job")));
+                proof.setProperty("nativeStatus",str(data,"status"));proof.setProperty("nativePlanRevision",String.valueOf(number(data,"planRevision")));
+                proof.setProperty("nativeVirtualPlacement",String.valueOf(bool(data,"virtualPlacement")));proof.setProperty("nativeVirtualLocked",String.valueOf(bool(data,"virtualLocked")));
                 proof.setProperty("nativeProgressPhase",str(progress,"phase"));
                 for(String key:new String[]{"done","total","uiSequence","planRevision","sequence"})proof.setProperty("nativeProgress."+key,String.valueOf(number(progress,key)));
             }
@@ -1147,12 +1160,21 @@ public final class V0111CompositeNativeProbe {
             byte[] bytes=Files.readAllBytes(target);call(bridge,"commitRawSample",kind,name,hash(bytes),(long)bytes.length);
         }
     }
+    private void persistPlacementInputs()throws Exception {
+        for(String kind:new String[]{"self","share"}){
+            Object sample=call(bridge,"takePlacementInputs",kind);if(sample==null)continue;
+            String name="composite-"+kind+"-placement-inputs.nbt";Path target=receiptPath(name);
+            check(!Files.exists(target),"fixed placement input artifact written only once before funding acknowledgment");
+            writeNbt(name,sample);byte[] bytes=Files.readAllBytes(target);
+            proof.setProperty(kind+"PlacementInputsArtifact",name);proof.setProperty(kind+"PlacementInputsSha256",hash(bytes));proof.setProperty(kind+"PlacementInputsBytes",String.valueOf(bytes.length));
+        }
+    }
     private Path receiptPath(String name)throws IOException {
         String base=name.endsWith(".tmp")?name.substring(0,name.length()-4):name;
         check(Arrays.asList("composite-client.properties","composite-server.properties","composite-client-timing.properties","composite-server-timing.properties","fixture-request.properties",
             "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-source-baseline.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
             "composite-source-ae-network.nbt","composite-self-ae-network.nbt","composite-share-ae-network.nbt","composite-raw-ae-network.nbt",
-            "composite-shareBank-ae-network.nbt",
+            "composite-shareBank-ae-network.nbt","composite-self-placement-inputs.nbt","composite-share-placement-inputs.nbt",
             "composite-rawCutSource-ae-network.nbt","composite-raw-cut-ack.nbt","composite-raw-durable-entry.nbt","composite-raw-baseline-to-cut-differences.nbt","composite-raw-postnative-differences.nbt","composite-raw-ae-relocation-proof.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
             "composite-self-private-import.nbt","composite-share-private-import.nbt",
