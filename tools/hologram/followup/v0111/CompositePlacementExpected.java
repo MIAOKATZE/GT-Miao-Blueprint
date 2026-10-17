@@ -53,6 +53,13 @@ public final class CompositePlacementExpected {
     /** Optional independently constructed full native self-embedding proof; never a caller-provided LongMap. */
     public static Decision prepare(Object baseline, Object selectedSaved, Object selectedCapture,
         Object context, int index, CompositeAeSelfCopyProof.Proof selfProof) throws Exception {
+        return prepare(baseline, selectedSaved, selectedCapture, context, index, selfProof, null);
+    }
+
+    /** SHARE also needs the independently bound selected QT, canonical registry and complete bank/copy graph proof. */
+    public static Decision prepare(Object baseline, Object selectedSaved, Object selectedCapture,
+        Object context, int index, CompositeAeSelfCopyProof.Proof selfProof,
+        CompositeAeShareCopyProof.Proof shareProof) throws Exception {
         Decision d = new Decision(index);
         try {
             row(baseline); row(selectedSaved); row(selectedCapture); requireType(context, 10, "context");
@@ -62,12 +69,16 @@ public final class CompositePlacementExpected {
             String kind = string(context, "kind");
             if (!kind.equals("self") && !kind.equals("share")) d.reject("/context/kind", "unsupported scenario");
             if (selfProof != null && !kind.equals("self")) d.reject("/context/kind", "self embedding proof supplied outside self scope");
+            if (shareProof != null && !kind.equals("share")) d.reject("/context/kind", "share bank/QT proof supplied outside share scope");
             for (String flag : new String[] { "inputBindingComplete", "finalChoicesBound", "retainNbt",
                 "retainCovers", "allNbtSelected", "identityPose" })
                 if (!flag(context, flag)) d.unknown("/context/" + flag, "required explicit frozen input evidence missing");
             int level = integer(context, "deidentificationLevel", -1);
             if (kind.equals("self") && level != 1 || kind.equals("share") && level != 6)
                 d.unknown("/context/deidentificationLevel", "this finite checkpoint reviews self1/share6 only");
+            if (shareProof != null && level != 6) d.reject("/context/deidentificationLevel", "share proof requires exact share6 scope");
+            if (kind.equals("share") && shareProof == null)
+                d.unknown("/context/shareIdentityProof", "actual selected QT/canonical registry and full native bank/copy graph proof unavailable; unchanged baseline alone cannot prove share calibration");
             if (index < 0 || index >= 64000) d.reject("/index", "outside complete fixture volume");
             if (type(child(baseline, "tile")) == 10) {
                 int[] source = intArray(context, "sourceOrigin"); Object tile = child(baseline, "tile");
@@ -97,7 +108,7 @@ public final class CompositePlacementExpected {
                 if (rule == null) d.sourceReject(c.path, "unreviewed source-policy modification; original native tags retained in expected World");
             }
             d.selected = selectedCapture;
-            if (selfProof != null && kind.equals("self")) {
+            if (selfProof != null && kind.equals("self") && shareProof == null) {
                 try {
                     // Pass a detached copy: even a rejected proof must not change the native baseline expected values.
                     Object patched = selfProof.patchExpectedNodeIdentities(copy(d.expected), index); row(patched);
@@ -112,6 +123,26 @@ public final class CompositePlacementExpected {
                 } catch (Exception invalidProof) {
                     d.identityProofStatus = "REJECTED_BASELINE_IDENTITIES_RETAINED";
                     d.sourceUnknown("/nativeIdentityProof", "independent self proof rejected this original source row; g/p remain unchanged: " + invalidProof.toString());
+                }
+            }
+            if (shareProof != null && kind.equals("share") && level == 6 && selfProof == null) {
+                try {
+                    Object patched = shareProof.patchExpectedRow(copy(d.expected), index); row(patched);
+                    List<Change> changes = differences(d.expected, patched, "");
+                    for (Change c : changes) {
+                        int required = c.path.endsWith("/g") ? 4 : c.path.endsWith("/p") ? 3 : -1;
+                        if (required < 0 && d.cls.equals(QN)) {
+                            if (c.path.matches("/tile/(anchorDim|anchorX|anchorY|anchorZ)")) required = 3;
+                            else if (c.path.equals("/tile/anchorGeneration")) required = 8;
+                        }
+                        if (required < 0 || type(c.before) != required || type(c.after) != required)
+                            throw new IllegalStateException("share proof changed a field outside typed g/p or exact QN root anchor");
+                    }
+                    for (Change c : changes) d.recordPatch(c, "independent share graph/QT/canonical-registry proof; only native g/p and exact QN root anchor, source k/private NBT retained");
+                    d.expected = patched; d.identityProofStatus = "APPLIED_INDEPENDENT_SHARE_GRAPH_QT_REGISTRY";
+                } catch (Exception invalidProof) {
+                    d.identityProofStatus = "REJECTED_SHARE_BASELINE_RETAINED";
+                    d.unknown("/context/shareIdentityProof", "independent share proof rejected this original native row; original identities/anchors retained: " + invalidProof.toString());
                 }
             }
             if (type(child(baseline, "tile")) == 10 && type(child(selectedSaved, "tile")) == 10) {
@@ -143,7 +174,6 @@ public final class CompositePlacementExpected {
                         "/tile/" + "xyz".charAt(axis), "root-only identity-pose relocation");
                 }
             }
-            if (kind.equals("share")) d.sourceUnknown("/context/shareTargetProof", "paid share target/bank/terminal policy proof not implemented; no identity or private-NBT exception granted");
         } catch (Exception invalid) { d.reject("/", "malformed or unsupported explicit input: " + invalid.toString()); }
         return d;
     }

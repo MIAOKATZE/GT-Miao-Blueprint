@@ -9,6 +9,7 @@ import run_composite as native
 ENDPOINTS = tuple(f"{kind}.{stage}" for kind in ("self", "share")
                   for stage in ("importNanos", "processingNanos", "saveNanos", "privateLoadNanos", "placementNanos",
                                 "privatePlacementWorkflowNanos", "constructionConfirmToCompleteNanos",
+                                "admissionObservedNanos", "executionObservedNanos",
                                 "longFlowProductCompleteNanos", "longFlowVerifiedNanos")) + (
     "raw.cutNanos", "raw.previewHydrationNanos", "raw.previewRenderNanos", "raw.previewNanos",
     "raw.pasteNanos", "raw.longFlowProductCompleteNanos", "raw.longFlowVerifiedNanos")
@@ -52,9 +53,10 @@ def summarize(case):
     }
     for endpoint in ENDPOINTS:
         value = timing.get(endpoint)
+        observed = value is not None and value != "NOT_OBSERVED"
         result["endpoints"][endpoint] = {
-            "status": "COMPLETED" if value is not None else "NOT_REACHED",
-            "seconds": int(value) / 1e9 if value is not None else None,
+            "status": "COMPLETED" if observed else "NOT_OBSERVED" if value == "NOT_OBSERVED" else "NOT_REACHED",
+            "seconds": int(value) / 1e9 if observed else None,
         }
     native.save(case / "composite-summary.json", result)
     return result

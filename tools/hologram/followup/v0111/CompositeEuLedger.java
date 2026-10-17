@@ -34,6 +34,7 @@ public final class CompositeEuLedger {
     private Object nativeSession;
     private boolean active, finished;
     private boolean materialAeRouteSeen;
+    private long materialRouteObservedSamples, materialRouteContextAbsentSamples;
     private int nativeEnergyCoverCount;
     private volatile String failure = "";
     private String quoteSources = "";
@@ -120,8 +121,12 @@ public final class CompositeEuLedger {
         observeTransferRoute(get(session,"materialContext"));
     }
     private void observeTransferRoute(Object context)throws Exception {
+        // Authenticated actions intentionally invalidate the lazy context even when they only close a UI.
+        // Its absence is an observation gap, not evidence that either an AE or EU transfer route was used.
+        if(context==null){materialRouteContextAbsentSamples++;return;}
         Object bank=construct("com.miaokatze.gtmb.hologram.HologramEnergyNetwork",actor,get(context,"terminalKey"));
         materialAeRouteSeen|=(Boolean)call(bank,"aeAvailable");
+        materialRouteObservedSamples++;
     }
 
     private void observe(String type,String detail) {
@@ -203,7 +208,11 @@ public final class CompositeEuLedger {
             put(out,"intrinsicBoundary","exact chosen native creative block/material capability; no exemption for other demand on the same cell; all quoted cache EU still requires real payment");
             put(out,"nativeEnergyCoverCount",Integer.toString(nativeEnergyCoverCount));
             put(out,"materialTransferAE","NOT_OBSERVED: no native AE-fee observer; ordinary AE transfer fees are outside this EU-account settlement claim");
-            put(out,"materialAeRouteSeen",Boolean.toString(materialAeRouteSeen));
+            put(out,"materialAeRouteSeen",materialRouteObservedSamples==0?"UNKNOWN":Boolean.toString(materialAeRouteSeen));
+            put(out,"materialRouteObservedSamples",Long.toString(materialRouteObservedSamples));
+            put(out,"materialRouteContextAbsentSamples",Long.toString(materialRouteContextAbsentSamples));
+            put(out,"materialRouteCoverage",materialRouteObservedSamples==0?"NOT_OBSERVED":materialRouteContextAbsentSamples>0?"PARTIAL_CONTEXT_GAPS":"SAMPLED");
+            put(out,"materialRouteObservationBoundary","null lazy context means UNKNOWN for that sample; no route is inferred or context constructed; samples do not prove native AE transfer-fee settlement");
             put(out,"nativeCommitCount",Long.toString(nativeCommits));put(out,"nativeRejectCount",Long.toString(nativeRejects));
             put(out,"observedCommitCount",Long.toString(commits));put(out,"observedRejectCount",Long.toString(rejects));
             for(String category:CATEGORIES){put(out,category+"SignedEU",sums.get(category).toString());put(out,category+"Count",counts.get(category).toString());}

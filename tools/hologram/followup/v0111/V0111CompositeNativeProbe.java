@@ -43,7 +43,7 @@ public final class V0111CompositeNativeProbe {
     private long started, phaseStarted, heartbeat, generation = -1, longFlowStarted;
     private Object generationScreen;
     private Object guidanceAwaitingGui;
-    private long wholeFlowStarted, processingStarted, constructionStarted;
+    private long wholeFlowStarted, processingStarted, constructionStarted,constructionFirstRunningNanos,constructionFirstDoneNanos;
     private long nativeLabProgressAt;
     private long awaitedTaskToken, awaitedTaskSequence=-1;
     private String awaitedTaskKind="", awaitedTaskSession="";
@@ -220,8 +220,10 @@ public final class V0111CompositeNativeProbe {
             }
             pulse();
         } catch(Throwable failure) {
+            if(seedMode&&bridge!=null)try{call(bridge,"exposePlacementAuditsAfterFailure");}catch(Throwable evidence){failure.addSuppressed(evidence);}
             if(seedMode&&bridge!=null)try{persistPlacementWorldAudits();}catch(Throwable evidence){failure.addSuppressed(evidence);}
             if(seedMode&&bridge!=null)try{persistSelfEmbeddingProof();}catch(Throwable evidence){failure.addSuppressed(evidence);}
+            if(seedMode&&bridge!=null)try{persistShareEmbeddingProof();}catch(Throwable evidence){failure.addSuppressed(evidence);}
             if(seedMode&&bridge!=null)try{call(bridge,"retainRawFailureEvidence");persistAeSamples();persistRawSamples();}catch(Throwable evidence){failure.addSuppressed(evidence);}
             fail(failure);
         }
@@ -418,7 +420,7 @@ public final class V0111CompositeNativeProbe {
                 // Native successful Save selects its committed local row; wait for its real catalog refresh.
                 Object library=get(clientType("HologramLibraryClient"),"INSTANCE");
                 if(!privateLocalId.equals(call(library,"selected",false))||!privateLocalId.equals(str(call(library,"selectedRow",false),"id")))return;
-                privatePreviousPreset=str(data,"blueprintSavedId");privateTransfer="";privateUploadedJsonSha256="";privateUploadedJsonBytes=0;privateImportBindingRequested=false;incomingPrivateReplies.clear();
+                privatePreviousPreset=str(data,"blueprintSavedId");privateTransfer="";privateUploadedJsonSha256="";privateUploadedJsonBytes=0;privateImportBindingRequested=false;constructionStarted=constructionFirstRunningNanos=constructionFirstDoneNanos=0;incomingPrivateReplies.clear();
                 longFlowStarted=System.nanoTime();long previousTask=nativeTaskWatermark();click(gui,ui,141,gen);
                 watchNativeTask("private",false,previousTask);
                 proof.setProperty(kind()+"PrivateLoadLocalId",privateLocalId);proof.setProperty(kind()+"PrivateLoadButton","141 actual private-library MUI dispatch");
@@ -480,7 +482,19 @@ public final class V0111CompositeNativeProbe {
                 Object request=worldRequest(state,"useAir");call(product("HologramNetwork"),"sendAction",request);advance(17);return;
             }
             if(phase==19) {
-                if(integer(data,"job")!=3||busy())return;
+                int actualJob=integer(data,"job");
+                if(actualJob==1&&constructionFirstRunningNanos==0&&constructionFirstDoneNanos==0){
+                    constructionFirstRunningNanos=System.nanoTime();String first=String.valueOf(constructionFirstRunningNanos),admission=String.valueOf(constructionFirstRunningNanos-constructionStarted);
+                    timing.setProperty(kind()+".constructionFirstRunningNanos",first);timing.setProperty(kind()+".admissionObservedNanos",admission);
+                    proof.setProperty(kind()+".constructionFirstRunningNanos",first);proof.setProperty(kind()+".admissionObservedNanos",admission);
+                }
+                if(actualJob==3&&constructionFirstDoneNanos==0){
+                    constructionFirstDoneNanos=System.nanoTime();String execution=constructionFirstRunningNanos>0?String.valueOf(constructionFirstDoneNanos-constructionFirstRunningNanos):"NOT_OBSERVED";
+                    timing.setProperty(kind()+".executionObservedNanos",execution);proof.setProperty(kind()+".executionObservedNanos",execution);
+                    if(constructionFirstRunningNanos==0){for(String key:new String[]{"constructionFirstRunningNanos","admissionObservedNanos"}){timing.setProperty(kind()+"."+key,"NOT_OBSERVED");proof.setProperty(kind()+"."+key,"NOT_OBSERVED");}}
+                    proof.setProperty(kind()+"ConstructionObservationScope","client receipt boundary: actual55 input to first observed native data.job=1, then first observed data.job=3; includes network and server/client scheduling, not pure server execution time; original total confirmation-to-completion duration unchanged");
+                }
+                if(actualJob!=3||busy())return;
                 long finished=System.nanoTime();
                 timing.setProperty(kind()+".placementNanos",String.valueOf(finished-longFlowStarted)); // Historical alias includes private upload and review.
                 timing.setProperty(kind()+".privatePlacementWorkflowNanos",String.valueOf(finished-longFlowStarted));
@@ -493,7 +507,7 @@ public final class V0111CompositeNativeProbe {
                 proof.setProperty(kind()+"PaidWorldVerified","true");
                 timing.setProperty(kind()+".longFlowVerifiedNanos",String.valueOf(System.nanoTime()-wholeFlowStarted));
                 if(!scenario.equals("all")){fixture("complete",scenario);advance(34);return;}
-                if(flow==0){flow=1;stage=choice=0;fixture("move","source");advance(2);}
+                if(flow==0){flow=1;stage=choice=0;constructionStarted=constructionFirstRunningNanos=constructionFirstDoneNanos=0;fixture("move","source");advance(2);}
                 else {fixture("move","raw");advance(30);}return;
             }
             if(phase==17||phase==18){
@@ -543,7 +557,7 @@ public final class V0111CompositeNativeProbe {
                 if(drawnControlReady(ui,55)){proof.setProperty(kind()+"DirectPlacementReview","native final55 already drawn; no redundant50 dispatch");advance(18);return;}
                 if(!drawnControlReady(ui,50))return;
                 click(gui,ui,50,gen);advance(18);
-            } else if(phase==18) {if(!drawnControlReady(ui,55))return;long previousTask=nativeTaskWatermark();constructionStarted=System.nanoTime();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
+            } else if(phase==18) {if(!drawnControlReady(ui,55))return;long previousTask=nativeTaskWatermark();constructionFirstRunningNanos=constructionFirstDoneNanos=0;constructionStarted=System.nanoTime();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
             pulse();
         } catch(Throwable failure) {fail(failure);}
     }
@@ -1261,6 +1275,7 @@ public final class V0111CompositeNativeProbe {
             call(bridge,"commitAeSample",kind,name,hash(actual),(long)actual.length);
         }
         persistSelfEmbeddingProof();
+        persistShareEmbeddingProof();
         persistPlacementWorldAudits();
     }
     private void persistSelfEmbeddingProof()throws Exception {
@@ -1275,6 +1290,12 @@ public final class V0111CompositeNativeProbe {
             String name="composite-raw-"+kind+".nbt";Path target=receiptPath(name);check(!Files.exists(target),"raw evidence artifact written only once");writeNbt(name,sample);
             byte[] bytes=Files.readAllBytes(target);call(bridge,"commitRawSample",kind,name,hash(bytes),(long)bytes.length);
         }
+    }
+    private void persistShareEmbeddingProof()throws Exception {
+        Object sample=call(bridge,"pendingShareEmbeddingProof");if(sample==null)return;
+        String name="composite-share-ae-embedding-proof.nbt";Path target=receiptPath(name);
+        check(!Files.exists(target),"fixed share AE embedding proof written only once");writeNbt(name,sample);
+        byte[] actual=Files.readAllBytes(target);call(bridge,"commitShareEmbeddingProof",name,hash(actual),(long)actual.length);
     }
     private void persistPlacementWorldAudits()throws Exception {
         for(String kind:new String[]{"self","share"}){
@@ -1300,6 +1321,7 @@ public final class V0111CompositeNativeProbe {
             "composite-source-ae-network.nbt","composite-self-ae-network.nbt","composite-share-ae-network.nbt","composite-raw-ae-network.nbt",
             "composite-shareBank-ae-network.nbt","composite-self-placement-inputs.nbt","composite-share-placement-inputs.nbt",
             "composite-self-ae-embedding-proof.nbt",
+            "composite-share-ae-embedding-proof.nbt",
             "composite-self-world-expected-audit.nbt","composite-share-world-expected-audit.nbt",
             "composite-rawCutSource-ae-network.nbt","composite-raw-cut-ack.nbt","composite-raw-durable-entry.nbt","composite-raw-baseline-to-cut-differences.nbt","composite-raw-postnative-differences.nbt","composite-raw-ae-relocation-proof.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",

@@ -181,6 +181,40 @@ public final class CompositePlacementExpectedRegression {
             }
             Object actual = target(source); remove(tile(actual), "proxy"); match(d.compare(actual), false);
         });
+        run("null SHARE proof cannot certify calibration even when native tags match", () -> {
+            Object source = source(ORDINARY), scope = shareContext();
+            CompositePlacementExpected.Decision d = CompositePlacementExpected.prepare(source, copy(source), copy(source), scope, INDEX, null, null);
+            Object result = d.compare(target(source));
+            check(bool(result, "equal"), "zero typed differences still reported honestly");
+            check(!d.scopeAccepted() && d.sourcePolicyAuditComplete(), "missing share binding is scope, not an invented source-policy failure");
+            match(result, false);
+        });
+        run("null SHARE proof retains exact QN anchors generation and proxy g p k", () -> {
+            Object source = quantumSource();
+            for (String key : new String[] { "anchorDim", "anchorX", "anchorY", "anchorZ", "anchorGeneration" }) {
+                Object actual = target(source); put(tile(actual), key, key.equals("anchorGeneration") ? tag("String", "unproved-new-generation") : tag("Int", 999));
+                Object result = CompositePlacementExpected.prepare(source, copy(source), copy(source), shareContext(), INDEX, null, null).compare(actual);
+                match(result, false); Object delta = changeAt(result, "/tile/" + key);
+                check(number(child(delta, "beforeTagId")) == (key.equals("anchorGeneration") ? 8 : 3), "original native anchor type retained");
+            }
+            for (String key : new String[] { "g", "p", "k" }) {
+                Object actual = target(source); put(child(tile(actual), "proxy"), key, key.equals("p") ? tag("Int", 0) : tag("Long", 9999L));
+                Object result = CompositePlacementExpected.prepare(source, copy(source), copy(source), shareContext(), INDEX, null, null).compare(actual);
+                match(result, false); changeAt(result, "/tile/proxy/" + key);
+            }
+            Object actual = target(source); put(tile(actual), "anchorX", tag("Long", 100L));
+            Object result = CompositePlacementExpected.prepare(source, copy(source), copy(source), shareContext(), INDEX, null, null).compare(actual);
+            check(number(child(changeAt(result, "/tile/anchorX"), "afterTagId")) == 4, "anchor numeric-width mismatch is not coerced"); match(result, false);
+        });
+        run("wrong kind or level never supplies an implicit QN anchor patch", () -> {
+            Object source = quantumSource(), actual = target(source); put(tile(actual), "anchorX", tag("Int", 999));
+            Object self = CompositePlacementExpected.prepare(source, copy(source), copy(source), context(), INDEX, null, null).compare(actual);
+            check(bool(self, "scopeAccepted"), "self1 scope itself remains valid with null self proof"); match(self, false); changeAt(self, "/tile/anchorX");
+            Object wrongLevel = shareContext(); put(wrongLevel, "deidentificationLevel", tag("Int", 1));
+            match(CompositePlacementExpected.prepare(source, copy(source), copy(source), wrongLevel, INDEX, null, null).compare(actual), false);
+            Object wrongKind = context(); put(wrongKind, "kind", tag("String", "raw"));
+            match(CompositePlacementExpected.prepare(source, copy(source), copy(source), wrongKind, INDEX, null, null).compare(actual), false);
+        });
         run("returned snapshots and diff payloads are detached", () -> {
             Object source = source(ORDINARY), selected = copy(source), actual = target(source);
             CompositePlacementExpected.Decision d = prepare(source, selected, context());
@@ -226,6 +260,12 @@ public final class CompositePlacementExpectedRegression {
         put(out, "deidentificationLevel", tag("Int", 1)); put(out, "aePolicyVersion", tag("Int", 1));
         put(out, "sourceOrigin", tag("IntArray", new int[] { 100, 64, -300 })); put(out, "targetOrigin", tag("IntArray", new int[] { 200, 80, 400 }));
         put(out, "actorName", tag("String", "Actor")); put(out, "actorUUID", tag("String", "00000000-0000-0000-0000-000000000001")); return out;
+    }
+    private static Object shareContext() throws Exception { Object out = context(); put(out, "kind", tag("String", "share")); put(out, "deidentificationLevel", tag("Int", 6)); return out; }
+    private static Object quantumSource() throws Exception {
+        Object out = source("com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode"), tile = tile(out), proxy = compound();
+        put(tile, "anchorDim", tag("Int", 1048578)); put(tile, "anchorX", tag("Int", 100)); put(tile, "anchorY", tag("Int", 64)); put(tile, "anchorZ", tag("Int", -300)); put(tile, "anchorGeneration", tag("String", "original-generation"));
+        put(proxy, "g", tag("Long", 3005L)); put(proxy, "p", tag("Int", -1)); put(proxy, "k", tag("Long", 42L)); put(tile, "proxy", proxy); return out;
     }
     /** Independently specified target cell: fixture target origin200,80,400 plus dx17,dy1,dz1. */
     private static Object target(Object source) throws Exception { Object out = copy(source); put(tile(out), "x", tag("Int", 217)); put(tile(out), "y", tag("Int", 81)); put(tile(out), "z", tag("Int", 401)); return out; }

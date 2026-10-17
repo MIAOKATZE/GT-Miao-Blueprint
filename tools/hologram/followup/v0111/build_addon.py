@@ -33,7 +33,7 @@ def main():
     classes = args.output / 'classes'
     classes.mkdir()
     command = [str(args.javac.resolve()), '-source', '8', '-target', '8', '-encoding', 'UTF-8',
-               '-cp', str(args.fml_compile_jar.resolve()), '-d', str(classes.resolve()), str(source), str(source.with_name("CompositeWorldWitness.java")), str(source.with_name("CompositeEuLedger.java")), str(source.with_name("NativeContractsProbe.java")), str(source.with_name("CompositeAeNetworkObserver.java")), str(source.with_name("CompositeAeRawRelocation.java")), str(source.with_name("CompositeAeSelfCopyProof.java")), str(source.with_name("CompositePlacementExpected.java")), str(source.with_name("CompositePlacementExpectedRegression.java"))]
+               '-cp', str(args.fml_compile_jar.resolve()), '-d', str(classes.resolve()), str(source), str(source.with_name("CompositeWorldWitness.java")), str(source.with_name("CompositeEuLedger.java")), str(source.with_name("NativeContractsProbe.java")), str(source.with_name("CompositeAeNetworkObserver.java")), str(source.with_name("CompositeAeRawRelocation.java")), str(source.with_name("CompositeAeSelfCopyProof.java")), str(source.with_name("CompositeAeShareCopyProof.java")), str(source.with_name("CompositePlacementExpected.java")), str(source.with_name("CompositePlacementExpectedRegression.java"))]
     (args.output / 'compile-command.json').write_text(json.dumps(command, indent=2), encoding='utf-8')
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     (args.output / 'compile.log').write_bytes(result.stdout)
@@ -51,6 +51,7 @@ def main():
                    ae_network_observer_sha256=digest(source.with_name("CompositeAeNetworkObserver.java")),
                    ae_raw_relocation_sha256=digest(source.with_name("CompositeAeRawRelocation.java")),
                    ae_self_copy_proof_sha256=digest(source.with_name("CompositeAeSelfCopyProof.java")),
+                   ae_share_copy_proof_sha256=digest(source.with_name("CompositeAeShareCopyProof.java")),
                    placement_expected_sha256=digest(source.with_name("CompositePlacementExpected.java")),
                    placement_expected_regression_sha256=digest(source.with_name("CompositePlacementExpectedRegression.java")),
                    fml_compile_jar_sha256=digest(args.fml_compile_jar),
