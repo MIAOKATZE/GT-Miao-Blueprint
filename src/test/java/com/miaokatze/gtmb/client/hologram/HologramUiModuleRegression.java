@@ -102,7 +102,7 @@ public final class HologramUiModuleRegression {
     }
 
     private static void selectedParsedNetworkGroup() {
-        HologramUiModules ui = new HologramUiModules(null);
+        HologramUiModules ui = headlessUi();
         NBTTagCompound source = new NBTTagCompound();
         source.setString("session", "parsed-network-selection");
         NBTTagList cells = new NBTTagList();
@@ -137,7 +137,7 @@ public final class HologramUiModuleRegression {
 
     private static void controllerConstructionConfirmation() {
         try {
-            HologramUiModules ui = new HologramUiModules(null);
+            HologramUiModules ui = headlessUi();
             NBTTagCompound data = new NBTTagCompound();
             data.setString("session", "controller-hatch-preset");
             data.setString("generation", "controller-hatch-preset");
@@ -293,7 +293,7 @@ public final class HologramUiModuleRegression {
     }
 
     private static HologramUiModules librarySwitchUi() throws ReflectiveOperationException {
-        HologramUiModules ui = new HologramUiModules(null);
+        HologramUiModules ui = headlessUi();
         NBTTagCompound data = new NBTTagCompound();
         data.setString("session", "dirty-library-switch");
         data.setString("generation", "dirty-library-switch");
@@ -331,7 +331,7 @@ public final class HologramUiModuleRegression {
                     null,
                     ((sun.misc.Unsafe) unsafeField.get(null)).allocateInstance(net.minecraft.client.Minecraft.class));
             }
-            HologramUiModules ui = new HologramUiModules(null);
+            HologramUiModules ui = headlessUi();
             NBTTagCompound data = new NBTTagCompound();
             data.setString("session", "movement-control");
             data.setBoolean("virtual", true);
@@ -464,7 +464,7 @@ public final class HologramUiModuleRegression {
     }
 
     private static void nativeBindingDrawerControls() {
-        HologramUiModules ui = new HologramUiModules(null);
+        HologramUiModules ui = headlessUi();
         NBTTagCompound data = new NBTTagCompound(), bindings = new NBTTagCompound();
         data.setString("session", "native-binding-router");
         data.setLong("uiSequence", 3);
@@ -536,6 +536,77 @@ public final class HologramUiModuleRegression {
             SimpleAssert.eq(5L, ui.session.pendingSequence(), "cancel receives its own subsequent ACK ticket");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot inspect the actual composed binding dispatch", failure);
+        }
+    }
+
+    private static HologramUiModules headlessUi() {
+        try {
+            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            HologramScreen parent = (HologramScreen) ((sun.misc.Unsafe) unsafeField.get(null))
+                .allocateInstance(HologramScreen.class);
+            java.lang.reflect.Field fields = HologramMuiCanvasScreen.class.getDeclaredField("fields");
+            fields.setAccessible(true);
+            fields.set(parent, new ArrayList<HologramMuiTextField>());
+            return new HologramUiModules(new HeadlessHost(parent));
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot create headless workstation host", failure);
+        }
+    }
+
+    /** Supplies the real canvas parent cleanup boundary without constructing MUI, Minecraft, or a renderer. */
+    private static final class HeadlessHost implements HologramUiHost {
+
+        private final HologramScreen parent;
+
+        HeadlessHost(HologramScreen parent) {
+            this.parent = parent;
+        }
+
+        @Override
+        public net.minecraft.client.Minecraft minecraft() {
+            return net.minecraft.client.Minecraft.getMinecraft();
+        }
+
+        @Override
+        public net.minecraft.client.gui.FontRenderer font() {
+            throw new AssertionError("headless control test requested a renderer");
+        }
+
+        @Override
+        public int screenWidth() {
+            return HologramScreenLayout.WIDTH;
+        }
+
+        @Override
+        public int screenHeight() {
+            return HologramScreenLayout.HEIGHT;
+        }
+
+        @Override
+        public HologramScreen parent() {
+            return parent;
+        }
+
+        @Override
+        public void renderBackground() {
+            throw new AssertionError("headless control test requested background rendering");
+        }
+
+        @Override
+        public void renderText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y, int color) {
+            throw new AssertionError("headless control test requested text rendering");
+        }
+
+        @Override
+        public void renderCenteredText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y,
+            int color) {
+            throw new AssertionError("headless control test requested centered text rendering");
+        }
+
+        @Override
+        public void renderTooltip(List<String> rows, int x, int y, net.minecraft.client.gui.FontRenderer font) {
+            throw new AssertionError("headless control test requested tooltip rendering");
         }
     }
 
