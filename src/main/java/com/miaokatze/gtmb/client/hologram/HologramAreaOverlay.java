@@ -9,7 +9,7 @@ import net.minecraft.util.AxisAlignedBB;
 
 import org.lwjgl.opengl.GL11;
 
-/** Read-only bounded world overlay; the inclusive coordinates always come from the server mirror. */
+/** Read-only bounded overlay of local selection geometry or the last authoritative server mirror. */
 final class HologramAreaOverlay {
 
     static final class RenderWitness {
@@ -40,12 +40,19 @@ final class HologramAreaOverlay {
     }
 
     static void render(HologramState state, float partialTicks) {
+        render(state, partialTicks, HologramClient.areaProjectorWorld() ? HologramClient.areaSelectionAnchor() : null);
+    }
+
+    static void render(HologramState state, float partialTicks, int[] cursor) {
+        renderSelection(state, state.data, partialTicks, cursor);
+    }
+
+    static void renderSelection(HologramState state, NBTTagCompound selection, float partialTicks, int[] cursor) {
         Minecraft mc = Minecraft.getMinecraft();
         Entity camera = mc.renderViewEntity;
-        int[] points = state.data.getIntArray("areaPoints");
+        int[] points = selection.getIntArray("areaPoints");
         lastRenderWitness = null;
         if (camera == null) return;
-        int[] cursor = HologramClient.areaProjectorWorld() ? HologramClient.areaSelectionAnchor() : null;
         double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
         double py = camera.lastTickPosY + (camera.posY - camera.lastTickPosY) * partialTicks;
         double pz = camera.lastTickPosZ + (camera.posZ - camera.lastTickPosZ) * partialTicks;
@@ -57,10 +64,14 @@ final class HologramAreaOverlay {
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glDepthMask(false);
             GL11.glLineWidth(2);
-            NBTTagList regions = state.data.getTagList("areaRegions", 10);
+            NBTTagList regions = selection.getTagList("areaRegions", 10);
             for (int i = 0; i < regions.tagCount(); i++) {
                 NBTTagCompound region = regions.getCompoundTagAt(i);
-                if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, .8f);
+                boolean current = selection.hasKey("areaCurrentRegion", 3)
+                    && i == selection.getInteger("areaCurrentRegion");
+                GL11.glLineWidth(current ? 4 : 2);
+                if (current) GL11.glColor4f(.35f, .85f, 1, 1);
+                else if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, .8f);
                 else GL11.glColor4f(.35f, 1, .6f, .8f);
                 draw(
                     region.getInteger("minX"),
@@ -75,6 +86,7 @@ final class HologramAreaOverlay {
             }
             // A completed box is already part of areaRegions (including red subtraction boxes).
             if (points.length >= 3 && (points.length < 6 || regions.tagCount() == 0)) {
+                GL11.glLineWidth(2);
                 int bx = points[0], by = points[1], bz = points[2];
                 if (points.length >= 6) {
                     bx = points[3];

@@ -85,6 +85,17 @@ public final class HologramUiTabMemoryRegression {
             SimpleAssert.that(
                 !new HologramUiTabMemory(file.toFile()).blueprints(true),
                 "structure choice replaces the previous blueprint preference");
+            SimpleAssert.that(!memory.saveGuidanceSuppressed(), "save explanation starts enabled");
+            memory.suppressSaveGuidance();
+            HologramUiTabMemory restarted = new HologramUiTabMemory(file.toFile());
+            SimpleAssert.that(
+                restarted.saveGuidanceSuppressed() && !restarted.blueprints(true),
+                "do not show again survives a client restart without losing the selected workspace");
+            restarted.remember(true);
+            restarted = new HologramUiTabMemory(file.toFile());
+            SimpleAssert.that(
+                restarted.saveGuidanceSuppressed() && restarted.blueprints(false),
+                "changing tabs preserves the independently suppressed save explanation");
             Files.write(file, "tab=invalid".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             SimpleAssert.that(
                 !new HologramUiTabMemory(file.toFile()).blueprints(false),
@@ -92,6 +103,10 @@ public final class HologramUiTabMemoryRegression {
             HologramUiTabMemory unavailable = new HologramUiTabMemory(directory.toFile());
             unavailable.remember(true);
             SimpleAssert.that(unavailable.blueprints(false), "unwritable preferences remain available in memory");
+            unavailable.suppressSaveGuidance();
+            SimpleAssert.that(
+                unavailable.saveGuidanceSuppressed(),
+                "an unwritable preference still suppresses the explanation for this client run");
         } finally {
             Files.deleteIfExists(file);
             Files.deleteIfExists(file.getParent());

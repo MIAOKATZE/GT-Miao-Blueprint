@@ -44,7 +44,7 @@ public final class HologramWorldServiceRegression {
             player.capabilities.allowEdit = true;
             player.posY = 64;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -59,6 +59,7 @@ public final class HologramWorldServiceRegression {
             set(session, "blueprintAwaitingConfirmation", true);
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
+            preset.id = "world_confirmation_fixture";
             preset.name = "confirmation fixture";
             preset.controllerType = "area";
             preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 1, 0, 0, -1, false));
@@ -68,7 +69,7 @@ public final class HologramWorldServiceRegression {
             settings.containers = false;
             settings.me = false;
             set(session, "materialContext", new HologramMaterials.Context(player, settings));
-            Method populate = HologramService.class.getDeclaredMethod("populateVirtual", type);
+            Method populate = HologramBlueprintProjection.class.getDeclaredMethod("populateVirtual", type);
             populate.setAccessible(true);
             populate.invoke(null, session);
             unavailableQuickSelectionKeepsDraft(session, player);
@@ -76,7 +77,7 @@ public final class HologramWorldServiceRegression {
             cancelLockedPlacementKeepsDraft(session, player);
             controllerOpeningPurpose(session, player, world);
             replacementActorCannotReuseSession(unsafe, player, world, ctor);
-            Method action = HologramService.class
+            Method action = HologramAuthoringWorkflow.class
                 .getDeclaredMethod("blueprintAction", type, NBTTagCompound.class, String.class);
             action.setAccessible(true);
             NBTTagCompound request = new NBTTagCompound();
@@ -95,6 +96,10 @@ public final class HologramWorldServiceRegression {
             SimpleAssert.eq(0, get(session, "job"), "stale material plan cannot start construction");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             positionLockRequiresSeparateWorldReview(session, player, request, action);
+            placementPolicyIsIdempotentAndKeepsConfirmation(session, action);
+            resourceSchemaFailureIsVisible(player);
+            satisfiedPlanIsAnExplicitNoop(player, world);
+            request.setLong("planRevision", (Long) get(session, "planRevision"));
             request.setBoolean("forceExplicit", true);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
             SimpleAssert.eq(0, get(session, "job"), "first explicit force has no server authority");
@@ -123,10 +128,156 @@ public final class HologramWorldServiceRegression {
         }
     }
 
+    private static void placementPolicyIsIdempotentAndKeepsConfirmation(Object session, Method action)
+        throws ReflectiveOperationException {
+        long revision = (Long) get(session, "planRevision"), nonce = (Long) get(session, "placementReviewNonce");
+        HologramCapture capture = (HologramCapture) get(session, "capture");
+        int x = capture.cells.get(0).x, y = capture.cells.get(0).y, z = capture.cells.get(0).z;
+        NBTTagCompound configure = new NBTTagCompound();
+        configure.setString("session", (String) get(session, "id"));
+        configure.setLong("planRevision", revision);
+        configure.setLong("placementReviewNonce", nonce);
+        configure.setInteger("level", 1);
+        action.invoke(null, session, configure, "configurePlacementDeidentification");
+        long appliedRevision = (Long) get(session, "planRevision"),
+            appliedNonce = (Long) get(session, "placementReviewNonce");
+        SimpleAssert.eq(revision + 1, appliedRevision, "manual placement policy produces one reviewed material plan");
+        SimpleAssert.eq(nonce + 1, appliedNonce, "manual application replaces the old review nonce once");
+        SimpleAssert.eq(
+            true,
+            get(session, "placementDeidentificationChosen"),
+            "server acknowledges the placing player's own policy");
+        SimpleAssert.that(
+            get(session, "capture") == capture && capture.cells.get(0).x == x
+                && capture.cells.get(0).y == y
+                && capture.cells.get(0).z == z,
+            "deidentification retains the exact locked ghost capture and world coordinates");
+        SimpleAssert.eq(true, get(session, "virtualLocked"), "policy application keeps the target locked");
+        SimpleAssert.eq(
+            true,
+            get(session, "blueprintAwaitingConfirmation"),
+            "policy ACK still requires a real placement confirmation");
+        action.invoke(null, session, configure, "configurePlacementDeidentification");
+        SimpleAssert.eq(
+            appliedRevision,
+            get(session, "planRevision"),
+            "retrying the exact original packet is idempotent after its first ACK");
+        SimpleAssert.eq(
+            appliedNonce,
+            get(session, "placementReviewNonce"),
+            "a stale same-policy retry cannot expire the new review");
+        configure.setLong("planRevision", appliedRevision);
+        for (int i = 0; i < 20; i++) action.invoke(null, session, configure, "configurePlacementDeidentification");
+        SimpleAssert
+            .eq(appliedRevision, get(session, "planRevision"), "duplicate preference requests do not refresh the plan");
+        SimpleAssert.eq(
+            appliedNonce,
+            get(session, "placementReviewNonce"),
+            "duplicate preference requests do not revoke the reviewed nonce");
+        Object oldCompleted = get(session, "completed");
+        set(session, "job", 3);
+        set(session, "completed", 7);
+        String appliedStatus = (String) get(session, "status");
+        set(session, "status", "actual terminal world result");
+        action.invoke(null, session, configure, "configurePlacementDeidentification");
+        SimpleAssert.eq(3, get(session, "job"), "a duplicate policy cannot reset a completed world job to idle");
+        SimpleAssert.eq(7, get(session, "completed"), "a duplicate policy cannot erase actual completed-cell counts");
+        SimpleAssert.eq(
+            "actual terminal world result",
+            get(session, "status"),
+            "idempotent policy keeps actual rejection or completion feedback");
+        set(session, "job", 0);
+        set(session, "completed", oldCompleted);
+        set(session, "status", appliedStatus);
+        configure.setBoolean("forceExplicit", false);
+        action.invoke(null, session, configure, "confirmBlueprintPlacement");
+        SimpleAssert.eq(0, get(session, "job"), "a policy ACK does not invent successful world placement");
+        SimpleAssert.eq(
+            true,
+            get(session, "forcePlacementReady"),
+            "the genuine confirmation returns the actual missing-material gate");
+        SimpleAssert.that(
+            ((String) get(session, "status")).contains("再次点击施工"),
+            "confirmation returns an explicit shortage result the user can act on");
+        set(session, "forcePlacementReady", false);
+    }
+
+    private static void resourceSchemaFailureIsVisible(EntityPlayerMP player) {
+        try {
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 1);
+            session.virtual = session.virtualPlacement = session.virtualLocked = true;
+            session.materialSettings.main = session.materialSettings.containers = session.materialSettings.me = false;
+            session.materialContext = new HologramMaterials.Context(player, session.materialSettings);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.name = "resource schema rejection";
+            preset.controllerType = "area";
+            HologramPresets.Cell unsupported = HologramPresets.cell(new ItemStack(Blocks.chest), 1, 0, 0, -1, false);
+            NBTTagCompound raw = new NBTTagCompound();
+            raw.setString("id", "Chest");
+            raw.setTag("customAsset", new ItemStack(net.minecraft.init.Items.diamond).writeToNBT(new NBTTagCompound()));
+            unsupported.tileNbt = HologramBlueprintNbt.encodeCanonical(raw);
+            preset.cells.add(unsupported);
+            preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 2, 0, 0, -1, false));
+            session.virtualPreset = preset;
+            HologramBlueprintProjection.populateVirtual(session);
+            HologramCapture.Cell invalid = session.capture.cells.get(0);
+            SimpleAssert.that(
+                !invalid.resourceError.isEmpty() && invalid.resourceError.contains("customAsset"),
+                "the actual resource parser rejects an unaudited physical asset");
+            SimpleAssert.eq(
+                "pending",
+                session.capture.cells.get(1).status,
+                "the other real blueprint cell is independently placeable");
+            HologramPlacementJobs.start(session);
+            SimpleAssert.eq(0, session.job, "unsafe resource data blocks the entire world job before any writes");
+            SimpleAssert.that(
+                session.status.contains(invalid.resourceError) && !session.status.contains("背包无法容纳回收"),
+                "the user sees the actual resource schema failure rather than a false inventory-capacity diagnosis");
+            SimpleAssert.eq(0, session.completed, "rejected schema does not manufacture completed cells");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("resource rejection fixture", failure);
+        }
+    }
+
+    private static void satisfiedPlanIsAnExplicitNoop(EntityPlayerMP player,
+        HologramServiceEditRegression.ReadOnlyWorld world) {
+        net.minecraft.block.Block oldBlock = world.occupied;
+        int oldX = world.occupiedX;
+        net.minecraft.tileentity.TileEntity oldTile = world.occupant;
+        try {
+            world.occupied = Blocks.stone;
+            world.occupiedX = 1;
+            world.occupant = null;
+            HologramSession s = new HologramSession(player, 0, 64, 0, false, 1);
+            s.virtual = s.virtualPlacement = s.virtualLocked = true;
+            s.materialSettings.main = s.materialSettings.containers = s.materialSettings.me = false;
+            s.materialContext = new HologramMaterials.Context(player, s.materialSettings);
+            HologramPresets.Preset preset = new HologramPresets.Preset();
+            preset.schema = 2;
+            preset.name = "already satisfied world";
+            preset.controllerType = "area";
+            preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 1, 0, 0, -1, false));
+            s.virtualPreset = preset;
+            HologramBlueprintProjection.populateVirtual(s);
+            SimpleAssert.eq("satisfied", s.capture.cells.get(0).status, "native classifier sees the existing target");
+            HologramPlacementJobs.start(s);
+            SimpleAssert.eq(0, s.job, "a satisfied plan does not manufacture a running or completed job");
+            SimpleAssert.eq(0, s.completed, "NOOP does not claim a written cell");
+            SimpleAssert.that(
+                s.status.contains("已满足") && s.status.contains("未扣材料"),
+                "no-work confirmation explicitly explains that the target already exists without payment");
+        } finally {
+            world.occupied = oldBlock;
+            world.occupiedX = oldX;
+            world.occupant = oldTile;
+        }
+    }
+
     /** Exercise the actual block/air server entry points, retaining the intent during pending collection. */
     private static void controllerOpeningPurpose(Object session, EntityPlayerMP player,
         HologramServiceEditRegression.ReadOnlyWorld world) throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -184,7 +335,7 @@ public final class HologramWorldServiceRegression {
 
     private static void cancelLockedPlacementKeepsDraft(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -277,7 +428,7 @@ public final class HologramWorldServiceRegression {
     /** Pure guard coverage; full preset reload and fresh material contexts are exercised by the FML/socket suites. */
     private static void completedJobQuickPlacementGuards(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -364,7 +515,7 @@ public final class HologramWorldServiceRegression {
 
     private static void unavailableQuickSelectionKeepsDraft(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -428,7 +579,7 @@ public final class HologramWorldServiceRegression {
 
     private static void positionLockRequiresSeparateWorldReview(Object session, EntityPlayerMP player,
         NBTTagCompound request, Method action) throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -477,7 +628,8 @@ public final class HologramWorldServiceRegression {
             SimpleAssert
                 .that((Long) get(session, "placementReviewNonce") > nonce, "second right opens a fresh review nonce");
             SimpleAssert.eq(0, get(session, "job"), "opening material review never starts construction");
-            Method dismiss = HologramService.class.getDeclaredMethod("dismissPresetBrowse", session.getClass());
+            Method dismiss = HologramProjectorWorkflow.class
+                .getDeclaredMethod("dismissPresetBrowse", session.getClass());
             dismiss.setAccessible(true);
             dismiss.invoke(null, session);
             SimpleAssert.eq(
@@ -521,7 +673,7 @@ public final class HologramWorldServiceRegression {
             "replacement actor has the same nonnull player UUID");
         Object oldSession = constructor.newInstance(owner, 0, 64, 0, false, 2);
         set(oldSession, "open", true);
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
@@ -563,15 +715,15 @@ public final class HologramWorldServiceRegression {
         world.occupant = new TileEntityChest();
         TileEntityChest original = (TileEntityChest) world.occupant;
         Class<?> type = session.getClass();
-        Method populate = HologramService.class.getDeclaredMethod("populateVirtual", type);
+        Method populate = HologramBlueprintProjection.class.getDeclaredMethod("populateVirtual", type);
         populate.setAccessible(true);
         populate.invoke(null, session);
         HologramCapture.Cell cell = ((HologramCapture) get(session, "capture")).cells.get(0);
-        Method harvest = HologramService.class.getDeclaredMethod("recoverable", type, HologramCapture.Cell.class);
+        Method harvest = HologramCellPolicy.class.getDeclaredMethod("recoverable", type, HologramCapture.Cell.class);
         harvest.setAccessible(true);
         SimpleAssert
             .eq(false, harvest.invoke(null, session, cell), "ordinary chest has no destructive harvest authority");
-        Method classify = HologramService.class
+        Method classify = HologramPlanPolicy.class
             .getDeclaredMethod("classify", type, HologramCapture.Cell.class, int.class);
         classify.setAccessible(true);
         SimpleAssert.eq(
@@ -628,14 +780,14 @@ public final class HologramWorldServiceRegression {
         java.util.Set<Integer> selection = (java.util.Set<Integer>) get(session, "selectedIndices");
         selection.clear();
         selection.add(0);
-        Method scope = HologramService.class
+        Method scope = HologramSessionPolicy.class
             .getDeclaredMethod("inScope", session.getClass(), HologramCapture.Cell.class, int.class);
         scope.setAccessible(true);
         SimpleAssert.eq(
             true,
             scope.invoke(null, session, other, 1),
             "locked placement reviews the other structure even while inspecting one selected cell");
-        Method edit = HologramService.class
+        Method edit = HologramSessionPolicy.class
             .getDeclaredMethod("editableStructureCell", session.getClass(), HologramCapture.Cell.class);
         edit.setAccessible(true);
         SimpleAssert.eq(

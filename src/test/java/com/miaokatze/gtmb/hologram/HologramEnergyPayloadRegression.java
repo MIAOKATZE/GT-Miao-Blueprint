@@ -99,20 +99,75 @@ public final class HologramEnergyPayloadRegression {
             "ordinary buffer respects native target capacity and empty fallback");
         check(finite.demand.rf.equals(BigDecimal.valueOf(1000)), "tile and block-item aliases fund one actual bank");
         source.setInteger("storedEnergyRF", 17);
+        item = (NBTTagCompound) source.copy();
         HologramEnergyPayload.Prepared creative = (HologramEnergyPayload.Prepared) preparedConstructor
             .newInstance(source, item, schemaConstructor.newInstance("CREATIVE", 1000, true));
         check(
             creative.demand.empty() && !creative.intrinsicSource.isEmpty(),
             "verified native creative bank is an explicit intrinsic source");
         check(
-            creative.tilePaid.getInteger("storedEnergyRF") == 500
-                && creative.tileEmpty.getInteger("storedEnergyRF") == 500
-                && creative.itemPaid.getInteger("storedEnergyRF") == 500,
-            "creative default uses native half-capacity, independent of copied source balance");
+            creative.tilePaid.getInteger("storedEnergyRF") == 17 && creative.itemPaid.getInteger("storedEnergyRF") == 17
+                && creative.tileEmpty.getInteger("storedEnergyRF") == 0
+                && creative.itemEmpty.getInteger("storedEnergyRF") == 0,
+            "creative selected buffer is retained while explicit empty projection is zero");
         check(
             source.getInteger("storedEnergyRF") == 17 && source.getString("type")
                 .equals("CREATIVE"),
             "native projection leaves captured source unchanged");
+        source.setInteger("storedEnergyRF", 0);
+        HologramEnergyPayload.Prepared zero = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, source, schemaConstructor.newInstance("CREATIVE", 5000000, true));
+        check(
+            zero.tilePaid.hasKey("storedEnergyRF", 3) && zero.tilePaid.getInteger("storedEnergyRF") == 0
+                && zero.itemPaid.getInteger("storedEnergyRF") == 0
+                && zero.demand.empty(),
+            "SELF15 native Int0 stays zero rather than becoming the 2500000 RF catalog template");
+        source.setInteger("storedEnergyRF", 1000);
+        HologramEnergyPayload.Prepared full = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, null, schemaConstructor.newInstance("CREATIVE", 1000, true));
+        check(
+            full.tilePaid.getInteger("storedEnergyRF") == 1000 && full.demand.empty(),
+            "creative native capacity boundary is retained without buying finite RF");
+        source.setInteger("storedEnergyRF", 1001);
+        HologramEnergyPayload.Prepared above = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, null, schemaConstructor.newInstance("CREATIVE", 1000, true));
+        check(
+            above.tilePaid.getInteger("storedEnergyRF") == 1000 && above.tileEmpty.getInteger("storedEnergyRF") == 0,
+            "creative over-capacity data follows native clamp rather than generating half a bank");
+        source.setShort("storedEnergyRF", (short) 17);
+        HologramEnergyPayload.Prepared numeric = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, null, schemaConstructor.newInstance("CREATIVE", 1000, true));
+        check(
+            source.hasKey("storedEnergyRF", 2) && numeric.tilePaid.hasKey("storedEnergyRF", 3)
+                && numeric.tilePaid.getInteger("storedEnergyRF") == 17
+                && numeric.warnings.isEmpty(),
+            "native numeric reader accepts short RF and native writer normalizes it to Int without mutating source");
+        source.setInteger("storedEnergyRF", -1);
+        HologramEnergyPayload.Prepared negative = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, null, schemaConstructor.newInstance("CREATIVE", 1000, true));
+        check(
+            negative.tilePaid.getInteger("storedEnergyRF") == 0 && !negative.warnings.isEmpty(),
+            "negative creative RF is explicitly clamped to native zero");
+        source.setString("storedEnergyRF", "17");
+        HologramEnergyPayload.Prepared malformed = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, null, schemaConstructor.newInstance("CREATIVE", 1000, true));
+        check(
+            malformed.tilePaid.getInteger("storedEnergyRF") == 0 && !malformed.warnings.isEmpty(),
+            "nonnumeric creative RF is reported and never replaced with a template balance");
+        source.setDouble("storedEnergyRF", Double.NaN);
+        HologramEnergyPayload.Prepared nonfinite = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, null, schemaConstructor.newInstance("CREATIVE", 1000, true));
+        check(
+            nonfinite.tilePaid.getInteger("storedEnergyRF") == 0 && !nonfinite.warnings.isEmpty(),
+            "nonfinite creative RF cannot authorize a fabricated buffer");
+        source.setInteger("storedEnergyRF", 17);
+        HologramEnergyPayload.Prepared ordinary = (HologramEnergyPayload.Prepared) preparedConstructor
+            .newInstance(source, source, schemaConstructor.newInstance("SIMPLE", 1000, false));
+        check(
+            ordinary.demand.rf.equals(BigDecimal.valueOf(17)) && ordinary.intrinsicSource.isEmpty()
+                && ordinary.tilePaid.getInteger("storedEnergyRF") == 17
+                && ordinary.tileEmpty.getInteger("storedEnergyRF") == 0,
+            "same nonzero buffer on an actual finite variant still requires exact RF payment once");
     }
 
     private static void creativeAeProjection() throws Exception {

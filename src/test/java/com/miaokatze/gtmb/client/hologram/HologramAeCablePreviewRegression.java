@@ -97,7 +97,7 @@ public final class HologramAeCablePreviewRegression {
         scene.setTag("cells", rows);
         NBTTagCompound sourceBefore = (NBTTagCompound) scene.copy();
         HologramState state = new HologramState(scene);
-        NBTTagCompound snapshotBefore = (NBTTagCompound) state.data.copy();
+        NBTTagCompound snapshotBefore = (NBTTagCompound) state.fullData();
         HologramBlockAccess access = new HologramBlockAccess(state);
         @SuppressWarnings("unchecked")
         java.util.Map<String, TileEntity> tiles = (java.util.Map<String, TileEntity>) get(
@@ -131,7 +131,7 @@ public final class HologramAeCablePreviewRegression {
         }
         check(tiles.size() == length && prepared.size() == length, "every cached native chain tile was prepared once");
         check(
-            sourceBefore.equals(scene) && snapshotBefore.equals(state.data),
+            sourceBefore.equals(scene) && snapshotBefore.equals(state.fullData()),
             "long native chain source/snapshot unchanged");
         System.out.println(
             "AE-CABLE-LONGCHAIN " + host.getClass()

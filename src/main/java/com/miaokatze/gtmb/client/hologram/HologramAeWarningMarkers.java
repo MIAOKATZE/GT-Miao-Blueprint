@@ -19,7 +19,8 @@ final class HologramAeWarningMarkers {
                 "ae:report",
                 "AE 综合提示 · " + report.issues.size() + " 项",
                 summary(report.issues) + "\n点击固定后可打开完整分页详情。",
-                null));
+                null,
+                hasBlocker(report.issues)));
         Map<String, List<HologramAeReviewModel.Issue>> grouped = new LinkedHashMap<>();
         for (HologramAeReviewModel.Issue issue : report.issues) {
             if (!issue.location) continue;
@@ -48,7 +49,8 @@ final class HologramAeWarningMarkers {
                     "ae:" + entry.getKey(),
                     title,
                     summary(entry.getValue()) + "\n完整路径与处理入口见 AE 详情。",
-                    bounds));
+                    bounds,
+                    hasBlocker(entry.getValue())));
         }
         return result;
     }
@@ -64,6 +66,11 @@ final class HologramAeWarningMarkers {
             b[2] = Math.min(b[2], cell.dz);
             b[5] = Math.max(b[5], cell.dz);
         }
+    }
+
+    private static boolean hasBlocker(List<HologramAeReviewModel.Issue> issues) {
+        for (HologramAeReviewModel.Issue issue : issues) if ("blocker".equals(issue.severity)) return true;
+        return false;
     }
 
     private static String summary(List<HologramAeReviewModel.Issue> rows) {

@@ -351,10 +351,9 @@ public final class HologramLockedNudgeClientSmoke {
         try {
             Object bus = FMLCommonHandler.instance()
                 .bus();
-            java.lang.reflect.Field listeners = bus.getClass()
-                .getDeclaredField("listeners");
-            listeners.setAccessible(true);
-            for (Object listener : ((java.util.Map<?, ?>) listeners.get(bus)).keySet()) {
+
+            for (Object listener : ((java.util.Map<?, ?>) ((Object) HologramUiDiagnostics
+                .readDiagnosticField(bus, "listeners"))).keySet()) {
                 if (!(listener instanceof HologramClient)) continue;
                 Object context = observed(listener, "inputContext");
                 message.append(" clientContext={worldSame=")
@@ -403,10 +402,8 @@ public final class HologramLockedNudgeClientSmoke {
     }
 
     private static Object observed(Object target, String fieldName) throws ReflectiveOperationException {
-        java.lang.reflect.Field field = target.getClass()
-            .getDeclaredField(fieldName);
-        field.setAccessible(true);
-        return field.get(target);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(target, fieldName));
     }
 
     /** Copy the independent server publication byte-for-byte; never synthesize evidence from client NBT. */

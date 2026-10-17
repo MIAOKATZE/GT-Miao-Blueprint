@@ -12,6 +12,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramLibraryDownload;
 import com.miaokatze.gtmb.hologram.HologramLibraryProtocol;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 
@@ -25,6 +26,8 @@ public final class HologramLibrarySocketClientProbe {
     private long started;
     private int stage;
     private String transfer, publicId, downloadId, downloadHash;
+    private String downloadEncoding;
+    private int decodedTotal;
     private byte[] fixture;
     private int outgoingIndex, outgoingOffset, incomingIndex, incomingTotal;
     private ByteArrayOutputStream incoming;
@@ -98,6 +101,8 @@ public final class HologramLibrarySocketClientProbe {
             } else if (stage == 3 && "downloadBegin".equals(op) && publicId.equals(reply.getString("id"))) {
                 downloadId = reply.getString("transfer");
                 downloadHash = reply.getString("hash");
+                downloadEncoding = reply.getString("encoding");
+                decodedTotal = reply.getInteger("decodedTotal");
                 incomingTotal = reply.getInteger("total");
                 if (incomingTotal <= 0 || incomingTotal > HologramLibraryProtocol.MAX_BYTES)
                     throw new IllegalStateException("Invalid download size");
@@ -111,7 +116,10 @@ public final class HologramLibrarySocketClientProbe {
                     throw new IllegalStateException("Bad downloaded chunk");
                 incoming.write(bytes, 0, bytes.length);
             } else if (stage == 4 && "downloadDone".equals(op) && downloadId.equals(reply.getString("transfer"))) {
-                if (incoming.size() != incomingTotal || !hash(incoming.toByteArray()).equals(downloadHash))
+                if (incoming.size() != incomingTotal || !hash(
+                    HologramLibraryDownload
+                        .decode(incoming.toByteArray(), downloadEncoding, decodedTotal, downloadHash))
+                            .equals(downloadHash))
                     throw new IllegalStateException("Downloaded hash mismatch");
                 stage = 5;
                 begin(true);

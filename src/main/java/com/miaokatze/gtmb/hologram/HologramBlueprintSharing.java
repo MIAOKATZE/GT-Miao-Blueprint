@@ -21,7 +21,7 @@ import com.google.gson.JsonParser;
 /** Independent share files; client supplied names never become arbitrary filesystem paths. */
 final class HologramBlueprintSharing {
 
-    static final int MAX_BYTES = 8 * 1024 * 1024;
+    static final int MAX_BYTES = HologramBlueprintArtifact.MAX_JSON_BYTES;
     private static final Gson GSON = new GsonBuilder().create();
 
     private HologramBlueprintSharing() {}
@@ -100,7 +100,7 @@ final class HologramBlueprintSharing {
     }
 
     static void atomicWrite(Path file, byte[] bytes) throws IOException {
-        if (bytes.length > MAX_BYTES) throw new IOException("蓝图分享文件超过8MiB上限");
+        if (bytes.length > MAX_BYTES) throw new IOException("蓝图分享文件超过 " + MAX_BYTES / (1024 * 1024) + " MiB 上限");
         Path parent = file.toAbsolutePath()
             .getParent();
         Files.createDirectories(parent);

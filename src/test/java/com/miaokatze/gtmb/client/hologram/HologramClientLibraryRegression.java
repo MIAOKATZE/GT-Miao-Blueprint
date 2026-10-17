@@ -25,9 +25,54 @@ public final class HologramClientLibraryRegression {
     public static void run() {
         try {
             exercise();
+            exerciseCapacity();
+            exerciseSaveReadbackReuse();
+            exerciseSaveMessages();
+            exerciseSaveRequest();
             exerciseQuickFence();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
+        }
+    }
+
+    private static void exerciseCapacity() throws Exception {
+        SimpleAssert.eq(
+            32 * 1024 * 1024,
+            HologramClientLibrary.MAX_BYTES,
+            "client JSON budget matches the 32MiB artifact boundary");
+        Path game = Files.createTempDirectory("gtmb-client-library-capacity-");
+        try {
+            byte[] data = new byte[8 * 1024 * 1024 + 1];
+            java.util.Arrays.fill(data, (byte) ' ');
+            byte[] prefix = json("Above old capacity", "Alice");
+            System.arraycopy(prefix, 0, data, 0, prefix.length);
+            SimpleAssert.eq(
+                1,
+                HologramBlueprintPreview.snapshot(data)
+                    .getTagList("cells", 10)
+                    .tagCount(),
+                "JSON above the old 8MiB limit reaches detached native preview");
+            HologramClientLibrary library = new HologramClientLibrary(game);
+            String id = library.save(data, png(0xff335577), "");
+            HologramClientLibrary restarted = new HologramClientLibrary(game);
+            SimpleAssert.that(
+                java.util.Arrays.equals(data, restarted.read(id)),
+                "large private save reloads exact bytes for its owner acknowledgement");
+            SimpleAssert.eq(
+                1,
+                restarted.list()
+                    .size(),
+                "large saved pair remains discoverable after restart");
+            HologramBlueprintArtifact.Artifact bundle = HologramBlueprintArtifact.decode(restarted.artifact(id));
+            SimpleAssert.eq(
+                HologramBlueprintArtifact.hash(data),
+                bundle.jsonSha256,
+                "large private upload bundle retains saved JSON digest");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
         }
     }
 
@@ -224,6 +269,199 @@ public final class HologramClientLibraryRegression {
         }
     }
 
+    private static void exerciseSaveReadbackReuse() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-local-save-reuse-");
+        CountingPairs pairs = new CountingPairs();
+        HologramClientLibrary library = new HologramClientLibrary(game, pairs);
+        String id = "local_11111111-1111-1111-1111-111111111111";
+        try {
+            byte[] original = json("Original", null);
+            byte[] preview = png(0xff224466);
+            HologramClientLibrary.LocalSave saved = library.prepareLocalSave(original, preview, id, () -> true);
+            SimpleAssert.eq(1, pairs.writes, "private save performs one actual pair write");
+            SimpleAssert.eq(1, pairs.reads, "private save performs one actual pair readback");
+            SimpleAssert
+                .eq(HologramBlueprintArtifact.hash(original), saved.jsonHash, "receipt retains exact JSON digest");
+            SimpleAssert.eq(
+                HologramBlueprintArtifact
+                    .hash(Files.readAllBytes(HologramBlueprintArtifact.previewPath(library.savedPath(id)))),
+                saved.pngHash,
+                "receipt hashes the actual bound PNG on disk");
+            saved.write.commit();
+            library.list();
+            library.list();
+            SimpleAssert.eq(1, pairs.reads, "unchanged catalog refreshes reuse validated readback metadata");
+            Path path = library.savedPath(id);
+            java.nio.file.attribute.FileTime time = Files.getLastModifiedTime(path);
+            byte[] changed = original.clone();
+            String text = new String(changed, StandardCharsets.UTF_8).replace("Original", "Modified");
+            changed = text.getBytes(StandardCharsets.UTF_8);
+            SimpleAssert.eq(original.length, changed.length, "mutation preserves byte length");
+            Files.write(path, changed);
+            Files.setLastModifiedTime(path, time);
+            SimpleAssert.eq(
+                0,
+                library.list()
+                    .size(),
+                "same-size same-mtime JSON change invalidates PNG binding");
+            SimpleAssert.eq(2, pairs.reads, "changed content is actually revalidated");
+            Files.write(path, original);
+            library.list();
+            SimpleAssert.eq(3, pairs.reads, "restored pair is validated after invalidation");
+            Path pngPath = HologramBlueprintArtifact.previewPath(path);
+            byte[] originalPng = Files.readAllBytes(pngPath);
+            java.nio.file.attribute.FileTime pngTime = Files.getLastModifiedTime(pngPath);
+            byte[] corrupt = originalPng.clone();
+            corrupt[corrupt.length - 1] ^= 1;
+            Files.write(pngPath, corrupt);
+            Files.setLastModifiedTime(pngPath, pngTime);
+            SimpleAssert.eq(
+                0,
+                library.list()
+                    .size(),
+                "same-size same-mtime PNG damage invalidates metadata");
+            SimpleAssert.eq(4, pairs.reads, "changed PNG receives full validation");
+            Files.write(pngPath, originalPng);
+            library.list();
+            pairs.failRead = true;
+            reject(
+                () -> library.prepareLocalSave(json("Replaced", null), preview, id, () -> true),
+                "readback failure cannot acknowledge a save");
+            pairs.failRead = false;
+            SimpleAssert.that(
+                java.util.Arrays.equals(original, Files.readAllBytes(path)),
+                "failed readback restores the previous exact JSON");
+            SimpleAssert.that(
+                java.util.Arrays.equals(originalPng, Files.readAllBytes(pngPath)),
+                "failed readback restores the previous exact PNG");
+            java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
+            pairs.afterRead = () -> current.set(false);
+            reject(
+                () -> library.prepareLocalSave(json("Canceled", null), preview, id, current::get),
+                "source change after actual readback rejects the receipt");
+            SimpleAssert.that(
+                java.util.Arrays.equals(original, Files.readAllBytes(path)),
+                "source-change cancellation restores the old pair");
+            pairs.afterRead = null;
+            SimpleAssert.eq(
+                "Original",
+                library.list()
+                    .get(0).name,
+                "rollback does not leave cached replacement metadata");
+        } finally {
+            try (java.util.stream.Stream<Path> files = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) files.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static final class CountingPairs implements HologramClientLibrary.PairIo {
+
+        int writes, reads;
+        boolean failRead;
+        Runnable afterRead;
+
+        @Override
+        public HologramBlueprintArtifact.PairWrite write(Path path, byte[] json, byte[] png,
+            java.util.function.BooleanSupplier current) throws IOException {
+            writes++;
+            return HologramBlueprintArtifact.writePairPending(path, json, png, current);
+        }
+
+        @Override
+        public HologramBlueprintArtifact.Artifact read(Path path) throws IOException {
+            reads++;
+            if (failRead) throw new IOException("Injected readback failure");
+            HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(path);
+            if (afterRead != null) afterRead.run();
+            return actual;
+        }
+    }
+
+    private static void exerciseSaveMessages() throws ReflectiveOperationException {
+        HologramLibraryClient client = HologramLibraryClient.INSTANCE;
+        java.lang.reflect.Field status = HologramLibraryClient.class.getDeclaredField("status");
+        status.setAccessible(true);
+        String previous = (String) status.get(client);
+        try {
+            for (String message : new String[] { "正在生成真实结构预览 PNG", "JSON 与 PNG 已写入，正在确认蓝图库索引", "JSON 与结构预览 PNG 已校验保存",
+                "蓝图保存未提交，原 JSON 与 PNG 已恢复：保存已取消" }) {
+                status.set(client, message);
+                SimpleAssert.eq(message, client.status(), "actual status getter preserves localized save outcome");
+            }
+            status.set(client, "Invalid blueprint PNG size");
+            SimpleAssert
+                .eq("蓝图与预览图的保存校验未完成，请保持当前蓝图并重试", client.status(), "real English PNG diagnostic remains actionable");
+            status.set(client, "Pending blueprint artifact rollback failed");
+            SimpleAssert.eq(
+                "蓝图文件回退尚未完成，请核对 JSON 与预览图后重试",
+                client.status(),
+                "real English artifact rollback failure remains visible");
+        } finally {
+            status.set(client, previous);
+        }
+    }
+
+    private static void exerciseSaveRequest() throws ReflectiveOperationException {
+        HologramLibraryClient client = HologramLibraryClient.INSTANCE;
+        java.lang.reflect.Field task = HologramLibraryClient.class.getDeclaredField("backgroundTaskToken");
+        task.setAccessible(true);
+        long previous = task.getLong(client);
+        try {
+            net.minecraft.nbt.NBTTagCompound stateTag = new net.minecraft.nbt.NBTTagCompound();
+            stateTag.setString("session", "current-save-session");
+            stateTag.setLong("planRevision", 42);
+            stateTag.setBoolean("virtual", true);
+            stateTag.setString("libraryLocalId", "local_11111111-1111-1111-1111-111111111111");
+            HologramState state = new HologramState(stateTag);
+            net.minecraft.nbt.NBTTagCompound options = new net.minecraft.nbt.NBTTagCompound();
+            options.setString("name", "Actual Save request");
+            options.setString("op", "obsolete-operation");
+            options.setString("session", "old-session");
+            options.setLong("planRevision", 7);
+            options.setLong("clientTaskToken", 91);
+            options.setString("replaceLocalId", "old-local");
+            net.minecraft.nbt.NBTTagCompound policy = new net.minecraft.nbt.NBTTagCompound();
+            policy.setBoolean("retainCovers", true);
+            options.setTag("policy", policy);
+            net.minecraft.nbt.NBTTagCompound original = (net.minecraft.nbt.NBTTagCompound) options.copy();
+            task.setLong(client, 92);
+            net.minecraft.nbt.NBTTagCompound request = client.draftRequest(state, options, false);
+            SimpleAssert.eq("exportDraft", request.getString("op"), "actual Save uses the production export operation");
+            SimpleAssert.eq(state.session, request.getString("session"), "Save binds the current source session");
+            SimpleAssert.eq(42L, request.getLong("planRevision"), "Save binds the current source revision");
+            SimpleAssert.that(
+                com.miaokatze.gtmb.hologram.HologramLibraryDownload.taskMatches(92, request),
+                "the actual outgoing Save envelope is accepted by the current response correlation policy");
+            SimpleAssert.that(
+                !com.miaokatze.gtmb.hologram.HologramLibraryDownload.taskMatches(91, request),
+                "options from a cancelled save cannot carry their old token into a new save");
+            SimpleAssert.eq("", request.getString("localId"), "Save As cannot accidentally replace an old file");
+            SimpleAssert.eq("", request.getString("replaceLocalId"), "Save As overrides stale replacement options");
+            SimpleAssert.eq("Actual Save request", request.getString("name"), "author options reach the real request");
+            request.getCompoundTag("policy")
+                .setBoolean("retainCovers", false);
+            SimpleAssert
+                .eq(original, options, "request construction and later mutation leave caller options untouched");
+            net.minecraft.nbt.NBTTagCompound replacement = client.draftRequest(state, options, true);
+            SimpleAssert.eq(
+                stateTag.getString("libraryLocalId"),
+                replacement.getString("replaceLocalId"),
+                "explicit replacement uses the current draft identity");
+            task.setLong(client, 0);
+            boolean rejected = false;
+            try {
+                client.draftRequest(state, options, false);
+            } catch (IllegalStateException expected) {
+                rejected = true;
+            }
+            SimpleAssert.that(rejected, "a Save request cannot escape without task ownership");
+        } finally {
+            task.setLong(client, previous);
+        }
+    }
+
     private static void exerciseQuickFence() {
         HologramLibraryQuickState quick = new HologramLibraryQuickState();
         String first = quick.begin();
@@ -268,6 +506,26 @@ public final class HologramClientLibraryRegression {
         SimpleAssert.that(
             !quick.bootstrap(fourth, "fourth-session"),
             "Escape during disk loading prevents a later upload from starting");
+        String fallback = quick.begin();
+        SimpleAssert.that(quick.bootstrap(fallback, "fallback-bootstrap"), "fallback gets its own server capability");
+        SimpleAssert.that(
+            !quick.snapshotMatches(third, 21, 21) && !quick.snapshotMatches(fallback, 22, 21),
+            "old shortcut snapshot and old task token cannot complete a fresh background shortcut");
+        SimpleAssert.that(
+            !quick.placement(third, "fallback-bootstrap", "placed"),
+            "old fallback reply cannot replace the current session");
+        SimpleAssert.that(
+            quick.placement(fallback, "fallback-bootstrap", "placed"),
+            "current fallback reply binds the actual new placement session");
+        SimpleAssert.that(
+            !quick.commitLockedSession("fallback-bootstrap"),
+            "bootstrap or old locked session does not imply final placement");
+        SimpleAssert.that(
+            quick.snapshotMatches(fallback, 22, 22) && quick.commitLockedSession("placed"),
+            "matching task, quick capability and actual locked placement finish the background shortcut");
+        SimpleAssert.that(
+            !quick.placement(fallback, "fallback-bootstrap", "placed"),
+            "late fallback success cannot revive the completed task");
     }
 
     private interface Operation {

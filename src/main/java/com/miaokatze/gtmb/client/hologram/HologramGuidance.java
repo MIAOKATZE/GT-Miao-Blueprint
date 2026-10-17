@@ -86,4 +86,9 @@ final class HologramGuidance {
     static int modalAccent(int id, int confirmation, int cancellation) {
         return id == confirmation ? 0x80efaa : id == cancellation ? 0xef7b7b : 0;
     }
+
+    static int structureAccent(NBTTagCompound state, int id) {
+        if (state.getBoolean("virtual")) return 0;
+        return id == 50 || id == 94 && state.getBoolean("presetAvailable") ? 0x80efaa : 0;
+    }
 }

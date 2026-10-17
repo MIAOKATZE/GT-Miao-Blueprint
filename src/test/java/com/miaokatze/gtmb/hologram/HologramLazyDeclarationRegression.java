@@ -111,7 +111,7 @@ final class HologramLazyDeclarationRegression {
             "fixed declaration recovers the native inert GT++ frame");
         HologramCapture.Cell cell = new HologramCapture.Cell(declared, 0, 0, 0);
         cell.block = frame;
-        Method destructive = HologramService.class
+        Method destructive = HologramCellPolicy.class
             .getDeclaredMethod("destructive", HologramCapture.Cell.class, Block.class, int.class);
         destructive.setAccessible(true);
         SimpleAssert

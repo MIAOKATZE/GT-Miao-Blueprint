@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -14,7 +13,6 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import gregtech.api.covers.CoverRegistry;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.BaseMetaPipeEntity;
-import gregtech.api.util.HatchElementBuilder;
 import gregtech.common.covers.Cover;
 
 /** Detached native render payloads and GT visual data; no load/tick hook or shared prototype mutation. */
@@ -93,19 +91,24 @@ final class HologramDisplaySnapshot {
     /** The primary AE part material does not identify its CBC host; only the server's confirmed target may do so. */
     static NBTTagCompound target(net.minecraft.block.Block declaredHost, ItemStack stack, int facing,
         IStructureElement<?> element, String tileNbt, boolean retainCovers) {
-        NBTTagCompound display = new NBTTagCompound();
-        display.setInteger("color", -1);
-        if (facing >= 0 && facing < 6) display.setInteger("facing", facing);
-        applyCasing(element, display);
         NBTTagCompound saved = null;
-        if (HologramRecovery.hasSeal(stack)) saved = stack.getTagCompound()
-            .getCompoundTag(HologramRecovery.TAG)
-            .getCompoundTag("tile");
-        else if (tileNbt != null && !tileNbt.isEmpty()) {
+        if (tileNbt != null && !tileNbt.isEmpty()) {
             try {
                 saved = HologramBlueprintNbt.decode(tileNbt);
             } catch (java.io.IOException ignored) {}
         }
+        return targetPayload(declaredHost, stack, facing, element, saved, retainCovers);
+    }
+
+    /** The snapshot row already selected this detached payload; no transport encode/decode is needed in memory. */
+    static NBTTagCompound targetPayload(net.minecraft.block.Block declaredHost, ItemStack stack, int facing,
+        IStructureElement<?> element, NBTTagCompound saved, boolean retainCovers) {
+        NBTTagCompound display = new NBTTagCompound();
+        display.setInteger("color", -1);
+        if (facing >= 0 && facing < 6) display.setInteger("facing", facing);
+        if (HologramRecovery.hasSeal(stack)) saved = stack.getTagCompound()
+            .getCompoundTag(HologramRecovery.TAG)
+            .getCompoundTag("tile");
         net.minecraft.block.Block nativeBlock = stack == null ? null
             : net.minecraft.block.Block.getBlockFromItem(stack.getItem());
         boolean quantum = nativeBlock != null && nativeBlock.getClass()
@@ -143,7 +146,8 @@ final class HologramDisplaySnapshot {
     }
 
     static void applyCasing(IStructureElement<?> element, NBTTagCompound display) {
-        int casing = casingIndex(element);
+        if (element == null) return;
+        int casing = HologramHatchCasing.index(element);
         if (casing >= 0) {
             display.setInteger("texturePage", casing >> 7);
             display.setInteger("textureIndex", casing & 127);
@@ -155,7 +159,7 @@ final class HologramDisplaySnapshot {
         throws java.io.IOException {
         if (!(gregtech.common.blocks.ItemMachines
             .getMetaTileEntity(stack) instanceof gregtech.api.metatileentity.implementations.MTEHatch)
-            || casingIndex(element) < 0) return tileNbt;
+            || HologramHatchCasing.index(element) < 0) return tileNbt;
         NBTTagCompound saved = HologramBlueprintNbt.decode(tileNbt);
         if (saved == null) {
             saved = new NBTTagCompound();
@@ -279,22 +283,5 @@ final class HologramDisplaySnapshot {
             } catch (ReflectiveOperationException | RuntimeException ignored) {}
         }
         return null;
-    }
-
-    private static int casingIndex(IStructureElement<?> element) {
-        for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
-            Method factory = part.getClass()
-                .getEnclosingMethod();
-            if (factory == null || factory.getDeclaringClass() != HatchElementBuilder.class
-                || !"build".equals(factory.getName())) continue;
-            try {
-                Field enclosing = part.getClass()
-                    .getDeclaredField("this$0");
-                if (enclosing.getType() != HatchElementBuilder.class) continue;
-                enclosing.setAccessible(true);
-                return ((HatchElementBuilder<?>) enclosing.get(part)).getCasingIndex();
-            } catch (ReflectiveOperationException | RuntimeException ignored) {}
-        }
-        return -1;
     }
 }

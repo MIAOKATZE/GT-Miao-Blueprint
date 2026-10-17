@@ -71,7 +71,7 @@ public final class HologramCoordinateServiceSmoke {
                 .process(raw, policy, actor.dimension, sourceX, sourceY, sourceZ);
             session = session(actor, processed, sourceX, sourceY, sourceZ);
             actor.setPosition(sourceX + 32.5, sourceY, sourceZ + .5);
-            Method transform = HologramService.class.getDeclaredMethod(
+            Method transform = HologramWorldPlacementWorkflow.class.getDeclaredMethod(
                 "transformVirtual",
                 session.getClass(),
                 int.class,
@@ -264,7 +264,7 @@ public final class HologramCoordinateServiceSmoke {
 
     private static Object session(EntityPlayerMP actor, HologramPresets.Preset preset, int x, int y, int z)
         throws Exception {
-        Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Constructor<?> constructor = type
             .getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class, boolean.class, int.class);
         constructor.setAccessible(true);
@@ -284,7 +284,7 @@ public final class HologramCoordinateServiceSmoke {
     private static boolean operate(Object session, HologramCapture.Cell target) throws Exception {
         invoke("refreshPlan", session);
         HologramCapture capture = (HologramCapture) get(session, "capture");
-        Method operate = HologramService.class
+        Method operate = HologramWorldTransactions.class
             .getDeclaredMethod("operate", session.getClass(), HologramCapture.Cell.class, int.class);
         operate.setAccessible(true);
         return (Boolean) operate.invoke(null, session, target, capture.cells.indexOf(target));
@@ -300,7 +300,7 @@ public final class HologramCoordinateServiceSmoke {
 
     private static void existingPanels(Object session, HologramCapture.Cell target, WorldServer world,
         EntityPlayerMP actor, NBTTagCompound expected, NBTTagCompound evidence) throws Exception {
-        Method matches = HologramService.class.getDeclaredMethod(
+        Method matches = HologramCellPolicy.class.getDeclaredMethod(
             "targetMatches",
             session.getClass(),
             HologramCapture.Cell.class,
@@ -421,7 +421,7 @@ public final class HologramCoordinateServiceSmoke {
     }
 
     private static Object invoke(String name, Object session) throws Exception {
-        Method method = HologramService.class.getDeclaredMethod(name, session.getClass());
+        Method method = HologramEngineInspection.declaredMethod(name, session.getClass());
         method.setAccessible(true);
         return method.invoke(null, session);
     }

@@ -429,7 +429,7 @@ final class HologramLibraryUiSocketSmoke {
         clickedScreen = screen;
         clickedRender = screen.smokeRenderGeneration();
         try {
-            screen.smokeClickControl(id);
+            HologramMuiProbeInput.control(screen, id);
         } catch (RuntimeException failure) {
             NBTTagCompound observation = screen.smokeLibraryUiState();
             observation.setInteger("probeStage", stage);
@@ -453,26 +453,24 @@ final class HologramLibraryUiSocketSmoke {
     }
 
     private static void typeAt(HologramScreen screen, int x, int y, String text) throws Exception {
-        java.lang.reflect.Field originX = HologramScreen.class.getDeclaredField("originX"),
-            originY = HologramScreen.class.getDeclaredField("originY"),
-            scale = HologramScreen.class.getDeclaredField("scale");
-        originX.setAccessible(true);
-        originY.setAccessible(true);
-        scale.setAccessible(true);
-        screen.smokeClickAt(
-            originX.getInt(screen) + Math.round(x * scale.getFloat(screen)),
-            originY.getInt(screen) + Math.round(y * scale.getFloat(screen)),
+
+        HologramMuiProbeInput.click(
+            screen,
+            ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originX"))
+                + Math.round(x * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale"))),
+            ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
+                + Math.round(y * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale"))),
             0);
         java.lang.reflect.Field keys = Keyboard.class.getDeclaredField("keyDownBuffer");
         keys.setAccessible(true);
         java.nio.ByteBuffer buffer = (java.nio.ByteBuffer) keys.get(null);
         buffer.put(Keyboard.KEY_LCONTROL, (byte) 1);
         try {
-            screen.keyTyped((char) 1, Keyboard.KEY_A);
+            HologramMuiProbeInput.key(screen, (char) 1, Keyboard.KEY_A);
         } finally {
             buffer.put(Keyboard.KEY_LCONTROL, (byte) 0);
         }
-        for (char character : text.toCharArray()) screen.keyTyped(character, 0);
+        for (char character : text.toCharArray()) HologramMuiProbeInput.key(screen, character, 0);
     }
 
     private static void require(boolean condition, String label) {
