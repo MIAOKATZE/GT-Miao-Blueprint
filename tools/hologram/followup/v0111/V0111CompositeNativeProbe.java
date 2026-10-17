@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.FileSystemException;
 import java.nio.file.Path;
@@ -738,14 +739,17 @@ public final class V0111CompositeNativeProbe {
         for(int attempt=0;;attempt++){
             try{Files.move(temporary,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);return;}
             catch(IOException failure){
-                if(attempt>=7||!windowsSharingViolation(failure))throw failure;
-                proof.setProperty("receiptAtomicMoveSharingRetries",String.valueOf(Integer.parseInt(proof.getProperty("receiptAtomicMoveSharingRetries","0"))+1));
+                if(attempt>=7||!windowsTransientReceiptMoveFailure(failure))throw failure;
+                proof.setProperty("receiptAtomicMoveWindowsRetries",String.valueOf(Integer.parseInt(proof.getProperty("receiptAtomicMoveWindowsRetries","0"))+1));
                 try{Thread.sleep(25);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();failure.addSuppressed(interrupted);throw failure;}
             }
         }
     }
-    private static boolean windowsSharingViolation(IOException failure){
+    private static boolean windowsTransientReceiptMoveFailure(IOException failure){
         if(!System.getProperty("os.name","").startsWith("Windows")||!(failure instanceof FileSystemException))return false;
+        // NTFS replacement can transiently report ERROR_ACCESS_DENIED even for these owned writable receipts.
+        // Retry only the same admitted atomic move; a persistent ACL denial still fails after the bounded attempts.
+        if(failure instanceof AccessDeniedException)return true;
         String reason=((FileSystemException)failure).getReason();
         return "The process cannot access the file because it is being used by another process.".equals(reason)
             ||"The process cannot access the file because it is being used by another process".equals(reason)
