@@ -74,6 +74,12 @@ final class HologramNetworkBindings {
                     if (cursor.getType() != long.class) throw new NoSuchFieldException("incorporation cursor changed");
                     cursor.setAccessible(true);
                     anchor.setLong("lastAppliedMigration", cursor.getLong(entry));
+                    if (HologramGtswnQuantumAccess.anchorGenerationAware()) {
+                        Field generation = type.getField("anchorGeneration");
+                        if (generation.getType() != String.class)
+                            throw new NoSuchFieldException("incorporation generation changed");
+                        anchor.setString("anchorGeneration", (String) generation.get(entry));
+                    }
                 }
                 tag.setTag(CAPTURE_ANCHOR, anchor);
                 captureOriginal(tile.getWorldObj(), tag, anchor);
@@ -95,8 +101,11 @@ final class HologramNetworkBindings {
         if (HologramGtswnQuantumAccess.generationAware()) {
             if (!anchor.hasKey("lastAppliedMigration", 4) || anchor.getLong("lastAppliedMigration") < 0L)
                 throw new IOException("原量子网络迁移游标不可核验，请重新采集");
-            HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess
-                .follow(world, coordinates(anchor, NODE_ANCHOR), anchor.getLong("lastAppliedMigration"));
+            HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess.follow(
+                world,
+                coordinates(anchor, NODE_ANCHOR),
+                anchor.getLong("lastAppliedMigration"),
+                anchor.getString("anchorGeneration"));
             for (int i = 0; i < NODE_ANCHOR.length; i++) original.setInteger(NODE_ANCHOR[i], migrated.anchor[i]);
             WorldServer target = DimensionManager.getWorld(migrated.anchor[0]);
             TileEntity controller = target != null
@@ -104,6 +113,11 @@ final class HologramNetworkBindings {
                     ? target.getTileEntity(migrated.anchor[1], migrated.anchor[2], migrated.anchor[3])
                     : null;
             original.setInteger("version", 2);
+            if (HologramGtswnQuantumAccess.anchorGenerationAware()) {
+                if (!validOwnerField(anchor, "anchorGeneration", true)) throw new IOException("量子原网络世代格式无效");
+                original.setInteger("version", 3);
+                original.setString("anchorGeneration", migrated.generation);
+            }
             original.setLong("migrationCursor", migrated.cursor);
             original.setString(
                 "controllerIdentity",
@@ -121,11 +135,13 @@ final class HologramNetworkBindings {
         NBTTagCompound original = payload.getCompoundTag(ORIGINAL);
         int fields = original.func_150296_c()
             .size();
-        if (!original.hasKey("world", 8) || (fields != 5 && fields != 8)) throw new IOException("量子原网络描述字段无效");
-        if (fields == 8 && (!original.hasKey("version", 3) || original.getInteger("version") != 2
+        if (!original.hasKey("world", 8) || (fields != 5 && fields != 8 && fields != 9))
+            throw new IOException("量子原网络描述字段无效");
+        if (fields >= 8 && (!original.hasKey("version", 3) || original.getInteger("version") != (fields == 9 ? 3 : 2)
             || !original.hasKey("migrationCursor", 4)
             || original.getLong("migrationCursor") < 0L
             || !validOwnerField(original, "controllerIdentity", true))) throw new IOException("量子原网络世代或迁移描述无效");
+        if (fields == 9 && !validOwnerField(original, "anchorGeneration", true)) throw new IOException("量子原网络世代身份无效");
         try {
             if (!java.util.UUID.fromString(original.getString("world"))
                 .toString()
@@ -150,10 +166,17 @@ final class HologramNetworkBindings {
             if (HologramGtswnQuantumAccess.generationAware()) {
                 if (!original.hasKey("version", 3) || original.getString("controllerIdentity")
                     .isEmpty()) throw new IOException("原网络世代信息不可核验，请加载原控制器后重新采集；不能推断旧坐标上的新网络");
-                HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess
-                    .follow(player.worldObj, coordinates(original, NODE_ANCHOR), original.getLong("migrationCursor"));
+                if (HologramGtswnQuantumAccess.anchorGenerationAware() && original.getInteger("version") != 3)
+                    throw new IOException("旧蓝图缺少当前网络世代，请重新采集或明确改用自己的终端绑定");
+                HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess.follow(
+                    player.worldObj,
+                    coordinates(original, NODE_ANCHOR),
+                    original.getLong("migrationCursor"),
+                    original.getString("anchorGeneration"));
                 target = (NBTTagCompound) original.copy();
                 for (int i = 0; i < NODE_ANCHOR.length; i++) target.setInteger(NODE_ANCHOR[i], migrated.anchor[i]);
+                if (HologramGtswnQuantumAccess.anchorGenerationAware())
+                    target.setString("anchorGeneration", migrated.generation);
                 if (java.util.Arrays.equals(coordinates(original, NODE_ANCHOR), migrated.anchor)) {
                     WorldServer sourceWorld = DimensionManager.getWorld(migrated.anchor[0]);
                     TileEntity source = sourceWorld != null
@@ -216,10 +239,24 @@ final class HologramNetworkBindings {
 
     /** Group by captured network anchor before erasing it. No source dimension/coordinates survive this projection. */
     static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset) throws IOException {
+        return sanitize(preset, null);
+    }
+
+    /** A non-null frozen map makes this path detached: missing anchors use their coordinate tuple, never a world. */
+    static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset, Map<String, String> networks)
+        throws IOException {
+        return sanitize(preset, networks, HologramAePolicy.PreparationProgress.NONE);
+    }
+
+    static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset, Map<String, String> networks,
+        HologramAePolicy.PreparationProgress progress) throws IOException {
         List<HologramAePolicy.Issue> changes = new ArrayList<>();
         Map<Object, String> groups = new LinkedHashMap<>();
         int next = 1;
+        int completed = 0;
+        long total = 2L * preset.cells.size();
         for (HologramPresets.Cell cell : preset.cells) {
+            progress.update("networks", completed++, total);
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (tag != null && tag.hasKey(GROUP)) {
                 String group = group(tag);
@@ -231,6 +268,7 @@ final class HologramNetworkBindings {
             }
         }
         for (HologramPresets.Cell cell : preset.cells) {
+            progress.update("networks", completed++, total);
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             NBTTagCompound item = HologramBlueprintNbt.decode(cell.itemNbt);
             boolean removedReferences = HologramNetworkSchemas.removeExternalReferences(cell.block(), cell.damage, tag);
@@ -250,10 +288,12 @@ final class HologramNetworkBindings {
             NBTTagCompound anchor = node && tag.hasKey("anchorDim") ? tag
                 : tag.hasKey(CAPTURE_ANCHOR, 10) ? tag.getCompoundTag(CAPTURE_ANCHOR) : null;
             if (anchor != null) {
-                Object key = capturedNetworkKey(anchor);
                 // A reviewed author classification owns the logical slot; source anchors only seed
                 // unclassified captures and remain independently recorded for private placement.
                 if (!tag.hasKey(GROUP)) {
+                    String coordinate = anchorKey(anchor, NODE_ANCHOR);
+                    Object key = networks == null ? capturedNetworkKey(anchor)
+                        : networks.getOrDefault(coordinate, "coordinates:" + coordinate);
                     String local = groups.get(key);
                     if (local == null) {
                         local = "q" + next++;
@@ -289,6 +329,7 @@ final class HologramNetworkBindings {
                             cell.y,
                             cell.z));
                 }
+                if (validOwnerField(tag, "anchorGeneration", true)) tag.removeTag("anchorGeneration");
             }
             String tileId = tag.getString("id");
             if (tileId.equals("gtswn.network_info_panel")) {
@@ -303,7 +344,23 @@ final class HologramNetworkBindings {
                 ? HologramBlueprintNbt.encodeCanonical(cell.block(), tag)
                 : HologramBlueprintNbt.encodeCaptured(tag);
         }
+        progress.update("networks", completed, total);
         return changes;
+    }
+
+    /** Server-thread snapshot of a captured anchor's grid identity, converted to an opaque local token. */
+    static void captureNetwork(HologramPresets.Cell cell, Map<String, String> networks, Map<Object, String> identities)
+        throws IOException {
+        NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
+        if (tag == null || tag.hasKey(GROUP)) return;
+        NBTTagCompound anchor = node(cell.block()) && tag.hasKey("anchorDim") ? tag
+            : tag.hasKey(CAPTURE_ANCHOR, 10) ? tag.getCompoundTag(CAPTURE_ANCHOR) : null;
+        if (anchor == null) return;
+        String coordinate = anchorKey(anchor, NODE_ANCHOR);
+        if (networks.containsKey(coordinate)) return;
+        Object identity = capturedNetworkKey(anchor);
+        String token = identities.computeIfAbsent(identity, ignored -> "network:" + identities.size());
+        networks.put(coordinate, token);
     }
 
     private static Object capturedNetworkKey(NBTTagCompound anchor) throws IOException {
@@ -395,7 +452,12 @@ final class HologramNetworkBindings {
             if (!live.hasTagCompound() || !live.getTagCompound()
                 .getBoolean("QT_Bound")
                 || !anchorKey(live.getTagCompound(), TERMINAL_ANCHOR)
-                    .equals(anchorKey(selection.stack.getTagCompound(), TERMINAL_ANCHOR)))
+                    .equals(anchorKey(selection.stack.getTagCompound(), TERMINAL_ANCHOR))
+                || HologramGtswnQuantumAccess.anchorGenerationAware() && !live.getTagCompound()
+                    .getString("QT_AnchorGeneration")
+                    .equals(
+                        selection.stack.getTagCompound()
+                            .getString("QT_AnchorGeneration")))
                 throw new IOException("所选量子终端的目标网络已变化，请重新为该类群选择终端");
             return anchor(player, live); // Recheck only the selected network and structural availability.
         }
@@ -444,6 +506,8 @@ final class HologramNetworkBindings {
             && (!tag.hasKey("QT_LastAppliedMigration", 4) || tag.getLong("QT_LastAppliedMigration") < 0L))
             throw new IOException("量子终端迁移游标无效，请核对原生终端");
         if (tag.hasKey("QT_Bound") && !tag.hasKey("QT_Bound", 1)) throw new IOException("量子终端绑定标记类型无效");
+        if (tag.hasKey("QT_AnchorGeneration") && !validOwnerField(tag, "QT_AnchorGeneration", true))
+            throw new IOException("量子终端网络世代格式无效");
         if (tag.getBoolean("QT_Bound")) anchorKey(tag, TERMINAL_ANCHOR);
     }
 
@@ -478,6 +542,12 @@ final class HologramNetworkBindings {
                 .invoke(instance, x, y, z)) throw new IOException("锚点控制器尚未量子化，请先建立量子网络再绑定终端");
             if (!HologramGtswnQuantumAccess.currentController(world, x, y, z))
                 throw new IOException("量子控制器世代已变化，不能沿用被替换控制器的登记状态");
+            HologramGtswnQuantumAccess.checkAnchorGeneration(
+                world,
+                x,
+                y,
+                z,
+                tag.getString(fields == TERMINAL_ANCHOR ? "QT_AnchorGeneration" : "anchorGeneration"));
         } catch (IOException failure) {
             throw failure;
         } catch (Exception | LinkageError failure) {
@@ -487,19 +557,47 @@ final class HologramNetworkBindings {
         for (int i = 0; i < TERMINAL_ANCHOR.length; i++)
             clean.setInteger(TERMINAL_ANCHOR[i], tag.getInteger(fields[i]));
         clean.setBoolean("QT_Bound", true);
+        if (HologramGtswnQuantumAccess.anchorGenerationAware()) clean.setString(
+            "QT_AnchorGeneration",
+            tag.getString(fields == TERMINAL_ANCHOR ? "QT_AnchorGeneration" : "anchorGeneration"));
         return clean;
     }
 
     static NBTTagCompound snapshot(HologramPresets.Preset preset, EntityPlayerMP player, State bindings)
         throws IOException {
-        NBTTagCompound result = new NBTTagCompound();
-        result.setBoolean("nativeAuthority", false);
-        result.setBoolean("terminalSecurityChecked", false);
-        Map<String, NBTTagCompound> groups = new LinkedHashMap<>();
-        if (preset != null) for (HologramPresets.Cell cell : preset.cells) {
-            if (cell.excluded) continue;
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (tag == null || !tag.hasKey(GROUP)) continue;
+        SnapshotTask task = new SnapshotTask(player, bindings);
+        if (preset != null) for (HologramPresets.Cell cell : preset.cells) task.add(cell.tileNbt, cell.excluded);
+        while (!task.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        return task.result;
+    }
+
+    /** World/security checks stay on the owner thread; each cell, group and inventory slot is a checkpoint. */
+    static final class SnapshotTask {
+
+        private final EntityPlayerMP player;
+        private final State bindings;
+        private final Map<String, NBTTagCompound> groups = new LinkedHashMap<>();
+        final NBTTagCompound result = new NBTTagCompound();
+        private final NBTTagList rows = new NBTTagList(), candidates = new NBTTagList();
+        private java.util.Iterator<NBTTagCompound> iterator;
+        private boolean terminalBinding, complete;
+        private int slot, groupDone;
+
+        SnapshotTask(EntityPlayerMP player, State bindings) {
+            this.player = player;
+            this.bindings = bindings;
+            result.setBoolean("nativeAuthority", false);
+            result.setBoolean("terminalSecurityChecked", false);
+        }
+
+        void add(String encoded, boolean excluded) throws IOException {
+            if (excluded) return;
+            add(HologramBlueprintNbt.decode(encoded));
+        }
+
+        /** Owner-thread decoded input is read only; every cell still performs its native binding checks. */
+        void add(NBTTagCompound tag) throws IOException {
+            if (tag == null || !tag.hasKey(GROUP)) return;
             String id = group(tag);
             NBTTagCompound row = groups.get(id);
             if (row == null) {
@@ -526,16 +624,39 @@ final class HologramNetworkBindings {
             }
             row.setInteger("cells", row.getInteger("cells") + 1);
         }
-        NBTTagList rows = new NBTTagList();
-        for (NBTTagCompound row : groups.values()) rows.appendTag(row);
-        result.setTag("groups", rows);
-        boolean terminalBinding = false;
-        for (NBTTagCompound row : groups.values()) terminalBinding |= row.getBoolean("terminalBinding");
-        result.setBoolean("terminalBinding", terminalBinding);
-        NBTTagList candidates = new NBTTagList();
-        for (int slot = 0; terminalBinding && slot < player.inventory.mainInventory.length; slot++) {
+
+        boolean step(int maxWork, long deadline) throws IOException {
+            if (iterator == null) iterator = groups.values()
+                .iterator();
+            for (int work = 0; work < maxWork && !complete; work++) {
+                if (work > 0 && System.nanoTime() >= deadline) return false;
+                if (iterator.hasNext()) {
+                    NBTTagCompound row = iterator.next();
+                    rows.appendTag(row);
+                    terminalBinding |= row.getBoolean("terminalBinding");
+                    groupDone++;
+                } else if (terminalBinding && slot < player.inventory.mainInventory.length) appendInventory(slot++);
+                else {
+                    result.setTag("groups", rows);
+                    result.setBoolean("terminalBinding", terminalBinding);
+                    result.setTag("inventory", candidates);
+                    complete = true;
+                }
+            }
+            return complete;
+        }
+
+        long done() {
+            return groupDone + slot;
+        }
+
+        long total() {
+            return groups.size() + (terminalBinding ? player.inventory.mainInventory.length : 0);
+        }
+
+        private void appendInventory(int slot) throws IOException {
             ItemStack stack = player.inventory.mainInventory[slot];
-            if (stack == null || stack.getItem() == null || stack.stackSize <= 0) continue;
+            if (stack == null || stack.getItem() == null || stack.stackSize <= 0) return;
             NBTTagCompound row = new NBTTagCompound();
             row.setInteger("slot", slot);
             row.setString("name", stack.getDisplayName());
@@ -551,8 +672,6 @@ final class HologramNetworkBindings {
             }
             candidates.appendTag(row);
         }
-        result.setTag("inventory", candidates);
-        return result;
     }
 
     static void validate(NBTTagCompound payload, EntityPlayerMP player, State state) throws IOException {

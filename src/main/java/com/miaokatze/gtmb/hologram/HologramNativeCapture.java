@@ -68,6 +68,14 @@ public final class HologramNativeCapture {
         ADAPTERS.add(adapter);
     }
 
+    public static boolean unregister(Adapter adapter) {
+        return ADAPTERS.remove(adapter);
+    }
+
+    public static boolean unregisterConduit(ConduitAdapter adapter) {
+        return CONDUIT_ADAPTERS.remove(adapter);
+    }
+
     public static void registerConduit(ConduitAdapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("conduit capture adapter");
         CONDUIT_ADAPTERS.add(adapter);

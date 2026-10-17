@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 
+import net.minecraft.block.Block;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
@@ -100,7 +101,7 @@ public final class HologramAeNativeResourcesSmoke {
                             && row.getLong("Cnt") == quantity,
                         "official_queue_count_writer_" + type + "_" + fluid);
                     String label = "interface_" + type + "_" + fluid + "_" + quantity;
-                    if (quantity >= 0 && quantity <= Integer.MAX_VALUE) accepted(queued, label);
+                    if (quantity >= 0 && quantity <= Integer.MAX_VALUE) accepted(queued, label, fluid || quantity == 0);
                     else rejected(queued, label);
                 }
                 NBTTagCompound valid = queued(iface, fluid, 1L);
@@ -124,7 +125,9 @@ public final class HologramAeNativeResourcesSmoke {
             NBTTagCompound config = new NBTTagCompound();
             config.setLong("Cnt", Long.MAX_VALUE);
             extra(configuration).setTag("privateConfiguration", config);
-            accepted(configuration, "ordinary_cnt_configuration_preserved_" + type);
+            // Cnt in an unrelated configuration is not a precision-buffer error. The complete native schema
+            // independently blocks that unreviewed field; these two contracts must not be conflated.
+            accepted(configuration, "ordinary_cnt_configuration_preserved_" + type, true);
         }
 
         IPart ordinary = part(
@@ -136,7 +139,7 @@ public final class HologramAeNativeResourcesSmoke {
         NBTTagCompound unrelated = cableBus(ordinary);
         extra(unrelated).setDouble("OutputPacket", 123.0D);
         extra(unrelated).setString("waitingToSend", "ordinary configuration");
-        accepted(unrelated, "exact_official_part_identity_required");
+        accepted(unrelated, "exact_official_part_identity_required", true);
         System.out.println(PREFIX + "complete");
     }
 
@@ -188,13 +191,17 @@ public final class HologramAeNativeResourcesSmoke {
     }
 
     private static void accepted(NBTTagCompound payload, String label) throws IOException {
-        verify(payload, false, label);
-        verify(multipart(payload), false, label + "_fmp");
+        accepted(payload, label, false);
+    }
+
+    private static void accepted(NBTTagCompound payload, String label, boolean selectedPlanReject) throws IOException {
+        verify(payload, false, selectedPlanReject, label);
+        verify(multipart(payload), false, selectedPlanReject, label + "_fmp");
     }
 
     private static void rejected(NBTTagCompound payload, String label) throws IOException {
-        verify(payload, true, label);
-        verify(multipart(payload), true, label + "_fmp");
+        verify(payload, true, true, label);
+        verify(multipart(payload), true, true, label + "_fmp");
     }
 
     private static NBTTagCompound multipart(NBTTagCompound cable) {
@@ -207,7 +214,8 @@ public final class HologramAeNativeResourcesSmoke {
         return payload;
     }
 
-    private static void verify(NBTTagCompound payload, boolean reject, String label) throws IOException {
+    private static void verify(NBTTagCompound payload, boolean reject, boolean selectedPlanReject, String label)
+        throws IOException {
         // NBTTagDouble.equals compares with ==, so even a faithful NaN copy is unequal.
         // Compare the complete native serialization, including types and values, instead.
         byte[] before = serialized(payload);
@@ -226,21 +234,93 @@ public final class HologramAeNativeResourcesSmoke {
         require(
             Arrays.equals(before, serialized(payload)) && saved.equals(HologramBlueprintNbt.encodeCaptured(payload)),
             label + "_capture_unchanged");
+        Block block = nativeBlock(payload.hasKey("parts", 9));
         failed = false;
         try {
-            HologramBlueprintResources.plan(HologramBlueprintNbt.decode(saved));
+            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint
+                .analyze(block, 0, HologramBlueprintNbt.decode(saved));
+            require(analysis.supported, label + "_analysis_identifies_real_native_host");
+            failed = analysis.blocking;
         } catch (IOException expected) {
-            require(
-                expected.getMessage()
-                    .contains("AE2"),
-                label + "_explicit_selected_plan_ae_error");
+            require(nativePolicyError(expected), label + "_explicit_native_analysis_error: " + expected.getMessage());
             failed = true;
         }
-        require(failed == reject, label + "_selected_plan_result");
+        require(failed == selectedPlanReject, label + "_analysis_result");
+        require(
+            Arrays.equals(before, serialized(payload)) && saved.equals(HologramBlueprintNbt.encodeCaptured(payload)),
+            label + "_source_after_analysis_unchanged");
+        failed = false;
+        try {
+            // This is the actual service boundary: AE owns def/extra and Cnt queues; generic NBT scanning sees only
+            // the unhandled remainder. Native quantities, including fluids, must never masquerade as vanilla Count.
+            HologramBlueprintResources.Plan plan = HologramAeBlueprint
+                .resourcePlan(block, 0, HologramBlueprintNbt.decode(saved), null);
+            exactNativeCosts(payload, plan, label);
+        } catch (IOException expected) {
+            require(nativePolicyError(expected), label + "_explicit_selected_plan_ae_error: " + expected.getMessage());
+            failed = true;
+        }
+        require(failed == selectedPlanReject, label + "_selected_plan_result");
         require(
             Arrays.equals(before, serialized(payload)) && saved.equals(HologramBlueprintNbt.encodeCaptured(payload)),
             label + "_source_after_plan_unchanged");
+        failed = false;
+        try {
+            java.util.List<ItemStack> materials = HologramNativePlacement
+                .materials(block, 0, HologramBlueprintNbt.decode(saved));
+            exactNativeItemCosts(payload, materials, label + "_placement_materials");
+        } catch (IOException expected) {
+            require(nativePolicyError(expected), label + "_explicit_native_materials_error: " + expected.getMessage());
+            failed = true;
+        }
+        require(failed == selectedPlanReject, label + "_placement_materials_result");
+        require(
+            Arrays.equals(before, serialized(payload)) && saved.equals(HologramBlueprintNbt.encodeCaptured(payload)),
+            label + "_source_after_native_materials_unchanged");
         System.out.println(PREFIX + "PASS " + label);
+    }
+
+    private static Block nativeBlock(boolean multipart) {
+        String type = multipart ? "codechicken.multipart.BlockMultipart" : "appeng.block.networking.BlockCableBus";
+        for (Object raw : Block.blockRegistry) if (raw instanceof Block && raw.getClass()
+            .getName()
+            .equals(type)) return (Block) raw;
+        throw new IllegalStateException("Required native block unavailable: " + type);
+    }
+
+    private static void exactNativeCosts(NBTTagCompound payload, HologramBlueprintResources.Plan plan, String label)
+        throws IOException {
+        exactNativeItemCosts(payload, plan.items, label);
+        require(plan.fluids.isEmpty() && plan.energy.signum() == 0, label + "_no_unpriced_native_fluid_or_energy");
+    }
+
+    private static void exactNativeItemCosts(NBTTagCompound payload, java.util.List<ItemStack> materials, String label)
+        throws IOException {
+        NBTTagCompound cable = payload.hasKey("parts", 9) ? payload.getTagList("parts", 10)
+            .getCompoundTagAt(0) : payload;
+        ItemStack shell = ItemStack
+            .loadItemStackFromNBT(HologramBlueprintNbt.nativePayload(cable.getCompoundTag("def:2")));
+        require(shell != null, label + "_real_native_shell_identity");
+        long shellCount = 0, cargoCount = 0, otherCount = 0;
+        NBTTagList waiting = extra(cable).getTagList("waitingToSend", 10);
+        long expectedCargo = waiting.tagCount() == 0 ? 0
+            : waiting.getCompoundTagAt(0)
+                .getLong("Cnt");
+        for (ItemStack item : materials) {
+            if (item.isItemEqual(shell) && ItemStack.areItemStackTagsEqual(item, shell)) shellCount += item.stackSize;
+            else if (item.getItem() == Items.iron_ingot) cargoCount += item.stackSize;
+            else otherCount += item.stackSize;
+        }
+        require(
+            shellCount == 1 && cargoCount == expectedCargo && otherCount == 0,
+            label + "_actual_native_plan_shell_once_and_exact_queue_quantity_" + expectedCargo);
+    }
+
+    private static boolean nativePolicyError(IOException error) {
+        String message = error.getMessage();
+        return message != null && (message.contains("AE2") || "AE resource policy has unresolved issues".equals(message)
+            || "Unsupported native blueprint: AE resource policy has unresolved issues".equals(message)
+            || "Invalid Interface waiting buffer".equals(message));
     }
 
     private static byte[] serialized(NBTTagCompound payload) throws IOException {

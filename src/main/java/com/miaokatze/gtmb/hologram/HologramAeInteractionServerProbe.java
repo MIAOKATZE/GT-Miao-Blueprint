@@ -232,7 +232,7 @@ public final class HologramAeInteractionServerProbe {
 
     private void assertConfirmedPrivateFile(String stage) throws IOException {
         try {
-            java.lang.reflect.Field sessions = HologramService.class.getDeclaredField("SESSIONS");
+            java.lang.reflect.Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
             sessions.setAccessible(true);
             Object session = ((java.util.Map<?, ?>) sessions.get(null)).get(actor.getUniqueID());
             require(session != null, stage + ": missing actual server session");
@@ -293,9 +293,9 @@ public final class HologramAeInteractionServerProbe {
             .getDeclaredField("virtualPreset");
         presetField.setAccessible(true);
         HologramPresets.Preset preset = (HologramPresets.Preset) presetField.get(session);
-        java.lang.reflect.Method retainMethod = HologramService.class
+        java.lang.reflect.Method retainMethod = HologramSessionPolicy.class
             .getDeclaredMethod("placementRetainCovers", session.getClass());
-        java.lang.reflect.Method keysMethod = HologramService.class
+        java.lang.reflect.Method keysMethod = HologramSessionPolicy.class
             .getDeclaredMethod("placementKeys", session.getClass());
         retainMethod.setAccessible(true);
         keysMethod.setAccessible(true);

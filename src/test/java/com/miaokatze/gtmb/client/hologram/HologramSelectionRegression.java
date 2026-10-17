@@ -122,7 +122,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void snapshotShrinkRegression() {
-        NBTTagCompound largeTag = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound largeTag = (NBTTagCompound) volume().fullData();
         NBTTagList cells = largeTag.getTagList("cells", 10);
         for (int i = cells.tagCount(); i <= 153; i++) {
             NBTTagCompound cell = new NBTTagCompound();
@@ -173,7 +173,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void annotationRegression() {
-        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound data = (NBTTagCompound) volume().fullData();
         data.setString("blueprintPrompt", "Build foundation first");
         NBTTagList cells = data.getTagList("cells", 10);
         cells.getCompoundTagAt(0)
@@ -222,7 +222,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void replacementFamilyRegression() {
-        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound data = (NBTTagCompound) volume().fullData();
         NBTTagList cells = data.getTagList("cells", 10);
         cells.getCompoundTagAt(0)
             .setString("family", "coil");
@@ -246,7 +246,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void metaTileIdentityRegression() {
-        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound data = (NBTTagCompound) volume().fullData();
         NBTTagList cells = data.getTagList("cells", 10);
         for (int i = 0; i < 8; i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);

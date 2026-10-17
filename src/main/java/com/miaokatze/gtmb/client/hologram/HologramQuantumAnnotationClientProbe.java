@@ -1,7 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,17 +24,21 @@ public final class HologramQuantumAnnotationClientProbe {
         if (!((String) read(screen, "pinnedAnnotation")).isEmpty())
             throw new IllegalStateException("Quantum marker probe starts with the annotation surface unpinned");
         long sequence = (Long) read(screen, "sequence"), pending = (Long) read(screen, "pendingSequence");
-        screen.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
         @SuppressWarnings("unchecked")
         List<HologramAnnotationMarkers.Marker> visible = new ArrayList<>(
             (List<HologramAnnotationMarkers.Marker>) read(screen, "visibleMarkers"));
         int checked = 0;
         for (HologramAnnotationMarkers.Marker marker : visible) {
             if (!marker.key.startsWith("quantum:")) continue;
-            Method project = HologramScreen.class.getDeclaredMethod("smokePreviewPoint", int.class, int.class);
-            project.setAccessible(true);
-            int[] point = (int[]) project.invoke(screen, marker.x, marker.y);
-            screen.drawScreen(point[0], point[1], 0);
+
+            int[] point = (int[]) HologramUiDiagnostics.invokeDiagnostic(
+                screen,
+                "smokePreviewPoint",
+                new Class<?>[] { int.class, int.class },
+                marker.x,
+                marker.y);
+            HologramMuiProbeInput.renderFixture(screen, point[0], point[1], 0);
             Object tooltip = read(screen, "tooltip");
             if (tooltip == null || !tooltip.toString()
                 .contains(marker.title))
@@ -49,13 +51,11 @@ public final class HologramQuantumAnnotationClientProbe {
                     throw new IllegalStateException(
                         "Actual quantum marker hover omitted its group/member hint " + marker.key);
             }
-            screen.mouseClicked(point[0], point[1], 0);
-            screen.mouseMovedOrUp(point[0], point[1], 0);
-            screen.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.click(screen, point[0], point[1], 0);
+            HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
             if (!marker.key.equals(read(screen, "pinnedAnnotation")))
                 throw new IllegalStateException("Actual quantum marker click failed to pin " + marker.key);
-            screen.mouseClicked(point[0], point[1], 0);
-            screen.mouseMovedOrUp(point[0], point[1], 0);
+            HologramMuiProbeInput.click(screen, point[0], point[1], 0);
             if (!((String) read(screen, "pinnedAnnotation")).isEmpty())
                 throw new IllegalStateException("Actual quantum marker repeat click failed to unpin " + marker.key);
             checked++;
@@ -71,8 +71,7 @@ public final class HologramQuantumAnnotationClientProbe {
     }
 
     private static Object read(HologramScreen screen, String name) throws ReflectiveOperationException {
-        Field field = HologramScreen.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(screen);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(screen, name));
     }
 }

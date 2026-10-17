@@ -35,14 +35,14 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
 
     @Override
     public boolean hasEffect(ItemStack stack, int pass) {
-        return stack.hasTagCompound() && stack.getTagCompound()
-            .getBoolean("gtitHologramAreaSelecting");
+        return GTMiaoBlueprint.proxy != null && GTMiaoBlueprint.proxy.hologramTaskBusy();
     }
 
     @Override
     public boolean onBlockStartBreak(ItemStack stack, int x, int y, int z, EntityPlayer player) {
-        return stack.hasTagCompound() && stack.getTagCompound()
-            .getBoolean("gtitHologramAreaSelecting");
+        return GTMiaoBlueprint.proxy != null && GTMiaoBlueprint.proxy.hologramTaskBusy()
+            || stack.hasTagCompound() && stack.getTagCompound()
+                .getBoolean("gtitHologramAreaSelecting");
     }
 
     @Override

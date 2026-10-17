@@ -43,6 +43,26 @@ public final class HologramLayoutRegression {
         SimpleAssert.that(
             HologramScreenLayout.PANEL_Y + HologramScreenLayout.PANEL_HEIGHT < 285,
             "expanded properties end before execution footer");
+        SimpleAssert.eq(
+            HologramScreenLayout.VIEWPORT_HEIGHT,
+            HologramScreenLayout.previewHeight(false, true),
+            "ordinary structure preview keeps its original extent");
+        SimpleAssert.eq(
+            219,
+            HologramScreenLayout.annotationPanelTop(HologramScreenLayout.VIEWPORT_HEIGHT),
+            "ordinary pinned annotation keeps its original position");
+        for (boolean author : new boolean[] { false, true }) {
+            int footer = author ? HologramScreenLayout.LIBRARY_AUTHOR_FOOTER_Y : HologramScreenLayout.LIBRARY_FOOTER_Y;
+            int previewHeight = HologramScreenLayout.previewHeight(true, author);
+            SimpleAssert.eq(
+                footer,
+                HologramScreenLayout.VIEWPORT_Y + previewHeight,
+                "library model and selectable preview end before their actual footer");
+            SimpleAssert.that(previewHeight >= 180, "library preview retains useful model space");
+            SimpleAssert.that(
+                HologramScreenLayout.annotationPanelTop(previewHeight) + 60 <= footer,
+                "pinned annotation details also stay above the library status and progress rows");
+        }
         java.util.List<Integer> levels = java.util.Arrays.asList(1, 3, 8);
         SimpleAssert
             .eq(1, HologramTargetTiers.steppedTier(levels, -1, 1), "all tiers advances to lowest declared tier");

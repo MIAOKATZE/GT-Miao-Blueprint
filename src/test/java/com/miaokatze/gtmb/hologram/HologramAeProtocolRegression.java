@@ -334,7 +334,7 @@ public final class HologramAeProtocolRegression {
         player.inventory = new net.minecraft.entity.player.InventoryPlayer(player);
         player.capabilities = new net.minecraft.entity.player.PlayerCapabilities();
         player.inventory.mainInventory[0] = new net.minecraft.item.ItemStack(Blocks.stone);
-        Class<?> sessionType = Class.forName(HologramService.class.getName() + "$Session");
+        Class<?> sessionType = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         java.lang.reflect.Constructor<?> ctor = sessionType.getDeclaredConstructor(
             net.minecraft.entity.player.EntityPlayerMP.class,
             int.class,
@@ -378,7 +378,7 @@ public final class HologramAeProtocolRegression {
         targetsField.setAccessible(true);
         List<net.minecraft.item.ItemStack> targets = (List<net.minecraft.item.ItemStack>) targetsField.get(session);
         targets.add(new net.minecraft.item.ItemStack(net.minecraft.init.Items.paper));
-        Method rebind = HologramService.class.getDeclaredMethod(
+        Method rebind = HologramAuthoringWorkflow.class.getDeclaredMethod(
             "rebindAeShell",
             sessionType,
             HologramCapture.Cell.class,
@@ -443,7 +443,7 @@ public final class HologramAeProtocolRegression {
             sessionType,
             session,
             "player");
-        Field areasField = HologramService.class.getDeclaredField("AREAS");
+        Field areasField = HologramWorkspace.class.getDeclaredField("AREAS");
         areasField.setAccessible(true);
         java.util.Map<UUID, HologramArea> areas = (java.util.Map<UUID, HologramArea>) areasField.get(null);
         UUID actor = player.getUniqueID();
@@ -485,9 +485,9 @@ public final class HologramAeProtocolRegression {
         setValue(sessionType, session, "planRevision", 20L);
         setValue(sessionType, session, "uiSequence", 42L);
         String sessionId = (String) value(sessionType, session, "id");
-        Method select = HologramService.class
+        Method select = HologramAreaWorkflow.class
             .getDeclaredMethod("selectVirtualStructure", sessionType, NBTTagCompound.class);
-        Method ae = HologramService.class
+        Method ae = HologramAuthoringWorkflow.class
             .getDeclaredMethod("aeAction", sessionType, NBTTagCompound.class, String.class);
         select.setAccessible(true);
         ae.setAccessible(true);
@@ -562,7 +562,7 @@ public final class HologramAeProtocolRegression {
             sessionType,
             session,
             "player");
-        Field areasField = HologramService.class.getDeclaredField("AREAS");
+        Field areasField = HologramWorkspace.class.getDeclaredField("AREAS");
         areasField.setAccessible(true);
         java.util.Map<UUID, HologramArea> areas = (java.util.Map<UUID, HologramArea>) areasField.get(null);
         UUID actor = player.getUniqueID();
@@ -593,12 +593,12 @@ public final class HologramAeProtocolRegression {
             false,
             new HologramAePolicy.Draft(previousDraft, previousDraft.aeIssues),
             new NBTTagList());
-        Method begin = HologramService.class.getDeclaredMethod("startAreaImport", sessionType, HologramArea.class);
-        Method busy = HologramService.class.getDeclaredMethod("blockedByAreaImport", sessionType);
-        Method close = HologramService.class.getDeclaredMethod("cancelAreaImport", sessionType);
-        Method build = HologramService.class.getDeclaredMethod("directBuild", sessionType, boolean.class);
-        Method nativeBuild = HologramService.class.getDeclaredMethod("nativeBuild", sessionType);
-        Method move = HologramService.class
+        Method begin = HologramAreaWorkflow.class.getDeclaredMethod("startAreaImport", sessionType, HologramArea.class);
+        Method busy = HologramSessionPolicy.class.getDeclaredMethod("blockedByAreaImport", sessionType);
+        Method close = HologramAreaWorkflow.class.getDeclaredMethod("cancelAreaImport", sessionType);
+        Method build = HologramBuildPreparation.class.getDeclaredMethod("directBuild", sessionType, boolean.class);
+        Method nativeBuild = HologramBuildPreparation.class.getDeclaredMethod("nativeBuild", sessionType);
+        Method move = HologramWorldPlacementWorkflow.class
             .getDeclaredMethod("moveVirtual", sessionType, int.class, int.class, int.class, int.class);
         for (Method method : new Method[] { begin, busy, close, build, nativeBuild, move }) method.setAccessible(true);
         try {

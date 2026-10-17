@@ -115,7 +115,7 @@ final class HologramDecorationPreviewSmoke {
 
     static String verify(HologramState state, boolean current) {
         require(state.cells.size() == 8, "all native decoration witnesses must be present");
-        NBTTagCompound before = (NBTTagCompound) state.data.copy();
+        NBTTagCompound before = (NBTTagCompound) state.fullData();
         ReferenceAccess reference = new ReferenceAccess(state, current);
         HologramBlockRender.begin(state);
         StringBuilder result = new StringBuilder();
@@ -151,7 +151,7 @@ final class HologramDecorationPreviewSmoke {
         verifyUnsupportedNestedTile(state);
         verifyCarpenterContext(reference, state.cells.get(1));
         verifySlopeFamilies(state, current, result);
-        require(before.equals(state.data), "native source/control/render must preserve snapshot NBT");
+        require(before.equals(state.fullData()), "native source/control/render must preserve snapshot NBT");
         return result.toString();
     }
 
@@ -159,7 +159,7 @@ final class HologramDecorationPreviewSmoke {
     private static void verifySlopeFamilies(HologramState source, boolean current, StringBuilder receipt) {
         int[] shapes = { 0, 12, 28, 41, 45, 60, 64 };
         for (int shape : shapes) {
-            NBTTagCompound variant = (NBTTagCompound) source.data.copy();
+            NBTTagCompound variant = (NBTTagCompound) source.fullData();
             NBTTagCompound cell = variant.getTagList("cells", 10)
                 .getCompoundTagAt(1);
             for (String display : new String[] { "actualDisplay", "targetDisplay" }) cell.getCompoundTag(display)
@@ -332,7 +332,7 @@ final class HologramDecorationPreviewSmoke {
     }
 
     private static void verifyUnsupportedNestedTile(HologramState state) {
-        NBTTagCompound hostile = (NBTTagCompound) state.data.copy();
+        NBTTagCompound hostile = (NBTTagCompound) state.fullData();
         NBTTagCompound child = hostile.getTagList("cells", 10)
             .getCompoundTagAt(2)
             .getCompoundTag("targetDisplay")

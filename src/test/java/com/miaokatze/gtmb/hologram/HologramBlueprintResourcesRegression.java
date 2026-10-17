@@ -16,6 +16,8 @@ import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fluids.FluidStack;
 
+import com.miaokatze.gtmb.api.GTMBExtensions;
+import com.miaokatze.gtmb.api.ResourceContainers;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -41,10 +43,14 @@ public final class HologramBlueprintResourcesRegression {
         try {
             inventoryAndEnergy();
             configurationSamples();
+            gtswnNativeConfiguration();
+            nativeReservoirContainers();
             standalonePhysicalAssets();
             carpenterNamesNeverGrantAssetCredit();
             nativeItemDefaultsRemainPayable();
             fluidCostsAndSelectedKeys();
+            numberedFluidContainers();
+            registeredFluidContainerCodec();
             rejectionBeforePayment();
             bulkPayment();
             exactBulkContext();
@@ -58,6 +64,102 @@ public final class HologramBlueprintResourcesRegression {
         }
     }
 
+    private static void gtswnNativeConfiguration() throws Exception {
+        NBTTagCompound panel = new NBTTagCompound();
+        panel.setString("id", "gtswn.network_info_panel");
+        panel.setBoolean("GTSWN_NetworkSafetyEnabled", true);
+        NBTTagCompound sample = new ItemStack(Items.diamond, 64).writeToNBT(new NBTTagCompound());
+        panel.setTag("chartItem", sample);
+        NBTTagList monitored = new NBTTagList();
+        monitored.appendTag(new ItemStack(Items.emerald, 2).writeToNBT(new NBTTagCompound()));
+        panel.setTag("monitoredItems", monitored);
+        NBTTagCompound original = (NBTTagCompound) panel.copy();
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(panel).items.size(),
+            "native panel query templates are ghost identities, including their original sample quantity");
+        SimpleAssert.that(
+            panel.equals(original),
+            "panel query templates and all-TileEntity boolean remain byte-for-byte intact");
+        NBTTagCompound zero = (NBTTagCompound) panel.copy();
+        zero.getCompoundTag("chartItem")
+            .setByte("Count", (byte) 0);
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(zero).items.size(),
+            "native panel setter and reader also preserve a zero-quantity query marker without promoting it to an item");
+        SimpleAssert.that(
+            zero.getCompoundTag("chartItem")
+                .getByte("Count") == 0,
+            "zero marker is retained at its original quantity");
+        NBTTagCompound unrelated = (NBTTagCompound) panel.copy();
+        unrelated.setString("id", "other:inventory");
+        boolean rejected = false;
+        try {
+            HologramBlueprintResources.plan(unrelated);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert
+            .that(rejected, "the same sample names on an unrelated tile do not grant a free inventory exemption");
+        NBTTagCompound malformed = (NBTTagCompound) panel.copy();
+        malformed.getCompoundTag("chartItem")
+            .setLong("Cnt", 100L);
+        rejected = false;
+        try {
+            HologramBlueprintResources.plan(malformed);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "an extra hidden quantity in a query sample is not silently accepted");
+        malformed = (NBTTagCompound) panel.copy();
+        malformed.setInteger("GTSWN_NetworkSafetyEnabled", 1);
+        rejected = false;
+        try {
+            HologramBlueprintResources.plan(malformed);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "native global configuration requires the exact boolean byte schema");
+    }
+
+    private static void nativeReservoirContainers() throws Exception {
+        NBTTagCompound root = new NBTTagCompound(), water = new NBTTagCompound();
+        root.setString("id", "blockReservoirTileEntity");
+        water.setString("FluidName", "water");
+        water.setInteger("Amount", 0);
+        root.setTag("tank", water);
+        NBTTagCompound original = (NBTTagCompound) root.copy();
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(root).fluids.size(),
+            "native restricted water reservoir serializes a legitimate zero-amount FluidStack");
+        SimpleAssert
+            .that(root.equals(original), "zero-quantity native water identity is preserved without payload rewriting");
+        water.setInteger("Amount", 750);
+        root.setTag("regenTank", water.copy());
+        HologramBlueprintResources.Plan filled = HologramBlueprintResources.plan(root);
+        SimpleAssert.eq(1500L, filled.fluids.get(0).amount, "both main and regeneration water are real payable assets");
+        NBTTagCompound malformed = (NBTTagCompound) root.copy();
+        malformed.getCompoundTag("tank")
+            .setTag("contents", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
+        boolean rejected = false;
+        try {
+            HologramBlueprintResources.plan(malformed);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "unknown asset fields inside an otherwise native tank remain blocked");
+        root.setString("id", "other:tank");
+        rejected = false;
+        try {
+            HologramBlueprintResources.plan(root);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "native tank compatibility does not weaken unknown container rejection");
+    }
+
     /** Called by smoke after real FML/AE initialization; the monitor remains an explicit bounded fixture. */
     public static void runWithAe() {
         aeAssertions = 0;
@@ -67,6 +169,8 @@ public final class HologramBlueprintResourcesRegression {
                 appeng.core.AEConfig.instance != null && appeng.api.AEApi.instance() != null,
                 "server AE lifecycle is initialized before data stack and fluid ledger checks");
             taggedFluidRejection();
+            nativeNumberedFluidWriter();
+            HologramGtMeShadowRegression.craftingWithAe();
             fluidLedger();
             if (cpw.mods.fml.common.Loader.isModLoaded("CarpentersBlocks"))
                 HologramDecorMaterialsRegression.nativeCarpenterResources();
@@ -216,6 +320,240 @@ public final class HologramBlueprintResourcesRegression {
             HologramBlueprintNbt.decode(encoded)
                 .hasKey("mFluid"),
             "temporary downgrade preserves captured blueprint");
+    }
+
+    private static void numberedFluidContainers() throws Exception {
+        Fluid fluid = fixtureFluid("gtmb_numbered_fluid_fixture");
+        NBTTagCompound payload = new NBTTagCompound(), slots = emptyFluidSlots(6);
+        payload.setString("id", "fixture:numbered_fluid_host");
+        payload.setTag("FluidInv", slots);
+        NBTTagCompound untouched = (NBTTagCompound) payload.copy();
+        SimpleAssert.that(
+            HologramBlueprintResources.plan(payload).fluids.isEmpty(),
+            "six empty native numbered fluid slots are a valid empty resource container");
+        SimpleAssert.that(untouched.equals(payload), "empty numbered slot inspection preserves every source key");
+        slots.setTag("#1", aeFluidRow(fluid, 3_000_000_017L));
+        slots.setTag("#5", new FluidStack(fluid, 1250).writeToNBT(new NBTTagCompound()));
+        untouched = (NBTTagCompound) payload.copy();
+        HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(payload);
+        SimpleAssert.that(plan.items.isEmpty(), "AE Count=0 is a fluid codec marker, never a physical ItemStack");
+        SimpleAssert.eq(1, plan.fluids.size(), "matching native slot fluids aggregate by exact identity");
+        SimpleAssert.eq(3_000_001_267L, plan.fluids.get(0).amount, "native long Cnt is paid without integer clamping");
+        SimpleAssert.eq("FluidInv", plan.fluids.get(0).key, "material report retains the selected NBT root");
+        SimpleAssert.that(untouched.equals(payload), "filled numbered resource planning is copy-on-write");
+        NBTTagCompound deidentified = (NBTTagCompound) payload.copy();
+        deidentified.setString("mOwnerName", "fixture owner");
+        HologramDeidentification.project(deidentified, 3);
+        SimpleAssert.eq(
+            3_000_001_267L,
+            HologramBlueprintResources.plan(deidentified).fluids.get(0).amount,
+            "identity levels preserve retained physical fluid quantities");
+        String encoded = HologramBlueprintNbt.encodeCaptured(payload);
+        NBTTagCompound selected = HologramBlueprintNbt.forPlacement(
+            encoded,
+            UUID.randomUUID(),
+            "fixture",
+            0,
+            64,
+            0,
+            true,
+            false,
+            Arrays.asList("orientation_forward"));
+        SimpleAssert.that(
+            !selected.hasKey("FluidInv") && HologramBlueprintResources.plan(selected).fluids.isEmpty(),
+            "deselecting the numbered container removes both restoration and its complete fluid bill");
+        SimpleAssert.that(
+            HologramBlueprintNbt.decode(encoded)
+                .equals(untouched),
+            "temporary selection never edits the captured fluid container");
+
+        NBTTagCompound generic = new NBTTagCompound();
+        generic.setTag("OtherModFluidSlots", slots.copy());
+        SimpleAssert.eq(
+            3_000_001_267L,
+            HologramBlueprintResources.plan(generic).fluids.get(0).amount,
+            "the same exact numbered schema works independently of mod and container names");
+        NBTTagCompound unknown = new NBTTagCompound(), body = new NBTTagCompound();
+        body.setLong("opaque", 1);
+        unknown.setTag("OtherModFluidSlots", body);
+        reject(unknown, "OtherModFluidSlots");
+        unknown = new NBTTagCompound();
+        for (String key : Arrays.asList("#-1", "#00", "#512", "#1", "unknown")) {
+            body = new NBTTagCompound();
+            body.setTag(key, new NBTTagCompound());
+            unknown.setTag("FluidInv", body);
+            reject(unknown, "FluidInv");
+            unknown.removeTag("FluidInv");
+        }
+        for (int variant = 0; variant < 11; variant++) {
+            NBTTagCompound row = aeFluidRow(fluid, 17);
+            if (variant == 0) row.setInteger("Cnt", 17);
+            else if (variant == 1) row.setLong("Cnt", -1);
+            else if (variant == 2) row.setByte("Count", (byte) 1);
+            else if (variant == 3) row.setInteger("Count", 0);
+            else if (variant == 4) row.removeTag("FluidName");
+            else if (variant == 5) row.setString("FluidName", "gtmb_missing_native_fluid");
+            else if (variant == 6) row.setInteger("Amount", 17);
+            else if (variant == 7) row.setString("tag", "opaque fluid tag");
+            else if (variant == 8) row.setLong("Req", -1);
+            else if (variant == 9) row.setByte("Craft", (byte) 2);
+            else row.setTag("unpricedAsset", new NBTTagCompound());
+            NBTTagCompound invalid = new NBTTagCompound(), container = emptyFluidSlots(6);
+            container.setTag("#0", row);
+            invalid.setTag("FluidInv", container);
+            reject(invalid, "FluidInv");
+        }
+        NBTTagCompound malformed = new NBTTagCompound(), container = emptyFluidSlots(6);
+        container.setString("#0", "wrong native slot type");
+        malformed.setTag("FluidInv", container);
+        reject(malformed, "FluidInv");
+        container = emptyFluidSlots(2);
+        container.setTag("#0", aeFluidRow(fluid, Long.MAX_VALUE));
+        container.setTag("#1", aeFluidRow(fluid, 1));
+        malformed.setTag("FluidInv", container);
+        reject(malformed, "FluidInv");
+        NBTTagCompound tagged = aeFluidRow(fluid, 7), opaqueTag = new NBTTagCompound();
+        opaqueTag.setString("serial", "exact nested fluid identity");
+        tagged.setTag("tag", opaqueTag);
+        container = emptyFluidSlots(1);
+        container.setTag("#0", tagged);
+        NBTTagCompound originalTagged = (NBTTagCompound) container.copy();
+        FluidStack identity = ResourceContainers.numberedFluidSlots(container)
+            .get(0)
+            .identity();
+        SimpleAssert.that(identity.tag.equals(opaqueTag), "codec retains opaque native fluid identity tags");
+        identity.tag.setString("serial", "changed output");
+        SimpleAssert.that(container.equals(originalTagged), "returned fluid identities cannot mutate codec inputs");
+    }
+
+    private static NBTTagCompound emptyFluidSlots(int size) {
+        NBTTagCompound slots = new NBTTagCompound();
+        for (int i = 0; i < size; i++) slots.setTag("#" + i, new NBTTagCompound());
+        return slots;
+    }
+
+    /** Exact AEFluidStack.writeToNBT shape; real native writer equivalence is checked in runWithAe. */
+    private static NBTTagCompound aeFluidRow(Fluid fluid, long amount) {
+        NBTTagCompound row = new NBTTagCompound();
+        row.setString("FluidName", fluid.getName());
+        row.setByte("Count", (byte) 0);
+        row.setLong("Cnt", amount);
+        row.setLong("Req", 0);
+        row.setBoolean("Craft", false);
+        return row;
+    }
+
+    private static void nativeNumberedFluidWriter() throws Exception {
+        Fluid fluid = fixtureFluid("gtmb_native_numbered_fluid_fixture");
+        IAEFluidStack stack = AEFluidStack.create(new FluidStack(fluid, 1));
+        stack.setStackSize(3_000_000_017L);
+        NBTTagCompound actual = new NBTTagCompound();
+        stack.writeToNBT(actual);
+        aeThat(
+            actual.equals(aeFluidRow(fluid, 3_000_000_017L)),
+            "actual native AE long-fluid writer matches codec fixture");
+        NBTTagCompound payload = new NBTTagCompound(), slots = emptyFluidSlots(6);
+        slots.setTag("#4", actual);
+        payload.setTag("NativeFluidSlots", slots);
+        aeThat(
+            HologramBlueprintResources.plan(payload).fluids.get(0).amount == 3_000_000_017L,
+            "actual native AE Count=0/Cnt long writer is charged without loss");
+        Class<?> nativeInventory;
+        try {
+            nativeInventory = Class.forName("com.glodblock.github.inventory.AEFluidInventory");
+        } catch (ClassNotFoundException absent) {
+            System.out.println("[AE-FLUID-TEST] AE2FC native inventory scope unavailable: addon not installed");
+            return;
+        }
+        Class<?> handler = Class.forName("com.glodblock.github.inventory.IAEFluidInventory");
+        java.lang.reflect.Constructor<?> constructor = nativeInventory.getConstructor(handler, int.class, int.class);
+        Object empty = constructor.newInstance(null, 6, 16000);
+        NBTTagCompound nativePayload = new NBTTagCompound();
+        nativePayload.setInteger("priority", 73);
+        nativePayload.setString("BLOCK", "YES");
+        java.lang.reflect.Method write = nativeInventory.getMethod("writeToNBT", NBTTagCompound.class, String.class);
+        java.lang.reflect.Method read = nativeInventory.getMethod("readFromNBT", NBTTagCompound.class, String.class);
+        write.invoke(empty, nativePayload, "FluidInv");
+        aeThat(
+            nativePayload.getCompoundTag("FluidInv")
+                .equals(emptyFluidSlots(6)) && HologramBlueprintResources.plan(nativePayload).fluids.isEmpty(),
+            "actual AE2FC writer's six empty slots are valid and free of physical resources");
+        java.lang.reflect.Method set = nativeInventory.getMethod("setFluidInSlot", int.class, IAEFluidStack.class);
+        set.invoke(empty, 1, AEFluidStack.create(new FluidStack(fluid, 1250)));
+        set.invoke(empty, 5, AEFluidStack.create(new FluidStack(fluid, 2750)));
+        write.invoke(empty, nativePayload, "FluidInv");
+        NBTTagCompound original = (NBTTagCompound) nativePayload.copy();
+        aeThat(
+            HologramBlueprintResources.plan(nativePayload).fluids.get(0).amount == 4000L,
+            "actual AE2FC writer's nonempty slots have an exact physical fluid bill");
+        Object loaded = constructor.newInstance(null, 6, 16000);
+        read.invoke(loaded, nativePayload, "FluidInv");
+        NBTTagCompound roundtrip = (NBTTagCompound) nativePayload.copy();
+        write.invoke(loaded, roundtrip, "FluidInv");
+        aeThat(roundtrip.equals(original), "actual AE2FC public reader/writer preserves the full selected payload");
+        NBTTagCompound selected = HologramBlueprintNbt.forPlacement(
+            HologramBlueprintNbt.encodeCaptured(nativePayload),
+            UUID.randomUUID(),
+            "fixture",
+            0,
+            64,
+            0,
+            true,
+            false,
+            Arrays.asList("priority", "BLOCK"));
+        read.invoke(loaded, selected, "FluidInv");
+        write.invoke(loaded, selected, "FluidInv");
+        aeThat(
+            selected.getCompoundTag("FluidInv")
+                .equals(emptyFluidSlots(6)) && HologramBlueprintResources.plan(selected).fluids.isEmpty()
+                && selected.getInteger("priority") == 73
+                && "YES".equals(selected.getString("BLOCK")),
+            "explicit resource-root removal reloads natively empty slots while retaining unrelated configuration");
+        aeThat(nativePayload.equals(original), "native resource filtering never mutates the original selected input");
+    }
+
+    private static void registeredFluidContainerCodec() throws Exception {
+        Fluid fluid = fixtureFluid("gtmb_registered_fluid_codec_fixture");
+        NBTTagCompound payload = new NBTTagCompound(), wrapped = new NBTTagCompound();
+        NBTTagCompound slots = emptyFluidSlots(1);
+        slots.setTag("#0", aeFluidRow(fluid, 73));
+        wrapped.setTag("nativeSlots", slots);
+        payload.setString("id", "fixture:custom_fluid_host");
+        payload.setInteger("mID", 37);
+        payload.setTag("CustomFluidState", wrapped);
+        reject(payload, "CustomFluidState");
+        long before = ResourceContainers.generation();
+        NBTTagCompound original = (NBTTagCompound) payload.copy();
+        try (GTMBExtensions.Registration registration = ResourceContainers.register("test:fluid-container", context -> {
+            if (!context.nativeTileId.equals("fixture:custom_fluid_host") || context.machineId != 37
+                || !context.path.equals("CustomFluidState")) return null;
+            NBTTagCompound container = context.container();
+            if (container.func_150296_c()
+                .size() != 1 || !container.hasKey("nativeSlots", 10))
+                throw new IOException("unrecognized custom native container field");
+            List<ResourceContainers.FluidAmount> result = ResourceContainers
+                .numberedFluidSlots(container.getCompoundTag("nativeSlots"));
+            container.removeTag("nativeSlots");
+            return result;
+        })) {
+            SimpleAssert.that(
+                registration.active() && ResourceContainers.generation() > before,
+                "resource codec registration follows the public handle and invalidates cached quotes");
+            SimpleAssert.eq(
+                73L,
+                HologramBlueprintResources.plan(payload).fluids.get(0).amount,
+                "registered complete native container codec participates in production material accounting");
+            SimpleAssert
+                .that(payload.equals(original), "extension receives copies and cannot edit retained source NBT");
+            NBTTagCompound bad = (NBTTagCompound) payload.copy();
+            bad.getCompoundTag("CustomFluidState")
+                .setInteger("unknownAsset", 1);
+            reject(bad, "CustomFluidState");
+        }
+        SimpleAssert.that(
+            ResourceContainers.generation() > before + 1,
+            "closing the registration invalidates previous supported resource plans");
+        reject(payload, "CustomFluidState");
     }
 
     /** Explicit unit-test bank. Actual UUID/network Context payment is checked by EnergyNetworkSmoke. */
@@ -821,7 +1159,7 @@ public final class HologramBlueprintResourcesRegression {
         java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
-        Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Object session = unsafe.allocateInstance(type);
         for (Object[] entry : new Object[][] { { "player", player }, { "materialContext", context },
             { "virtual", true } }) {
@@ -834,13 +1172,13 @@ public final class HologramBlueprintResourcesRegression {
         java.lang.reflect.Field presetField = type.getDeclaredField("virtualPreset");
         presetField.setAccessible(true);
         presetField.set(session, preset);
-        java.lang.reflect.Method fuzzy = HologramService.class
+        java.lang.reflect.Method fuzzy = HologramMaterialAccess.class
             .getDeclaredMethod("fuzzyBlueprintShells", type, ItemStack.class);
         fuzzy.setAccessible(true);
         SimpleAssert.that(
             !(Boolean) fuzzy.invoke(null, session, sealed) && (Boolean) fuzzy.invoke(null, session, plain),
             "level one construction still applies exact sealed payment while allowing ordinary fuzzy shells");
-        java.lang.reflect.Method copyInventory = HologramService.class
+        java.lang.reflect.Method copyInventory = HologramMaterialAccess.class
             .getDeclaredMethod("copyInventory", net.minecraft.entity.player.EntityPlayerMP.class);
         copyInventory.setAccessible(true);
         ItemStack[] before = (ItemStack[]) copyInventory.invoke(null, player);
@@ -849,7 +1187,7 @@ public final class HologramBlueprintResourcesRegression {
             transaction.takeOneFuzzy(sealed, false),
             "real identical seal is physically reserved via exact fallback");
         SimpleAssert.eq(0, context.count(sealed, 64), "reservation removes the one paid sealed item");
-        java.lang.reflect.Method rollback = HologramService.class
+        java.lang.reflect.Method rollback = HologramWorldTransactions.class
             .getDeclaredMethod("rollbackMaterials", type, HologramMaterials.Transaction.class, ItemStack[].class);
         rollback.setAccessible(true);
         rollback.invoke(null, session, transaction, before);
@@ -894,7 +1232,7 @@ public final class HologramBlueprintResourcesRegression {
             SimpleAssert.that(
                 net.minecraft.item.Item.itemRegistry.getObject(registeredMaterial) == material,
                 "isolated controller material uses the actual Forge registry name");
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Object session = unsafe.allocateInstance(type);
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
@@ -913,13 +1251,13 @@ public final class HologramBlueprintResourcesRegression {
             controller.blueprintItem = registeredMaterial;
             controller.blueprintDamage = id;
             controller.meta = 0;
-            java.lang.reflect.Method draft = HologramService.class
+            java.lang.reflect.Method draft = HologramCellPolicy.class
                 .getDeclaredMethod("draftTarget", type, HologramCapture.Cell.class, int.class);
             draft.setAccessible(true);
-            java.lang.reflect.Method explicit = HologramService.class
+            java.lang.reflect.Method explicit = HologramCellPolicy.class
                 .getDeclaredMethod("explicitTarget", type, HologramCapture.Cell.class, int.class);
             explicit.setAccessible(true);
-            java.lang.reflect.Method warning = HologramService.class
+            java.lang.reflect.Method warning = HologramBlueprintData.class
                 .getDeclaredMethod("blueprintSourceWarning", HologramPresets.Preset.class, String.class);
             warning.setAccessible(true);
             SimpleAssert.eq(
@@ -1024,23 +1362,24 @@ public final class HologramBlueprintResourcesRegression {
                     field.setAccessible(true);
                     field.set(player, new com.mojang.authlib.GameProfile(new UUID(9, 8), "builder"));
                 }
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Object session = unsafe.allocateInstance(type);
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
             for (Object[] entry : new Object[][] { { "player", player }, { "virtual", true },
-                { "virtualPreset", preset }, { "capture", capture }, { "indexedCapture", capture },
-                { "cellIndices", indices }, { "planTargets", java.util.Collections.singletonList(sealed) },
+                { "virtualPlacement", true }, { "virtualPreset", preset }, { "capture", capture },
+                { "indexedCapture", capture }, { "cellIndices", indices },
+                { "planTargets", java.util.Collections.singletonList(sealed) },
                 { "networkBindings", new HologramNetworkBindings.State() } }) {
                 java.lang.reflect.Field field = type.getDeclaredField((String) entry[0]);
                 field.setAccessible(true);
                 field.set(session, entry[1]);
             }
-            java.lang.reflect.Method resources = HologramService.class
+            java.lang.reflect.Method resources = HologramCellPolicy.class
                 .getDeclaredMethod("resourcePlan", type, HologramCapture.Cell.class);
-            java.lang.reflect.Method cache = HologramService.class
+            java.lang.reflect.Method cache = HologramCellPolicy.class
                 .getDeclaredMethod("cachePlan", type, HologramCapture.Cell.class, int.class);
-            java.lang.reflect.Method covers = HologramService.class
+            java.lang.reflect.Method covers = HologramCellPolicy.class
                 .getDeclaredMethod("coverCosts", type, HologramCapture.Cell.class);
             resources.setAccessible(true);
             cache.setAccessible(true);

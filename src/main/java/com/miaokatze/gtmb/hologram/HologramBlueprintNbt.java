@@ -106,11 +106,20 @@ final class HologramBlueprintNbt {
     }
 
     private static String encode(NBTTagCompound tag, boolean rewriteOwnership) throws IOException {
+        return encode(tag, rewriteOwnership, true);
+    }
+
+    static String encodeData(NBTTagCompound tag) throws IOException {
+        return encode(tag, false, false);
+    }
+
+    private static String encode(NBTTagCompound tag, boolean rewriteOwnership, boolean resolveItems)
+        throws IOException {
         if (tag == null) return null;
         checkDepth(tag, 0);
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
         if (rewriteOwnership) rewrite(copy, null, "", false, false);
-        stableItems(copy, true);
+        if (resolveItems) stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(new GZIPOutputStream(new LimitedOutput(bytes, MAX_COMPRESSED)), MAX_EXPANDED))) {
@@ -201,13 +210,34 @@ final class HologramBlueprintNbt {
 
     static NBTTagCompound decode(String value) throws IOException {
         if (value == null || value.isEmpty()) return null;
+        if (HologramSnapshotDataContext.active()) return HologramSnapshotDataContext.decode(value);
+        NBTTagCompound tag = decodeData(value);
+        try {
+            stableItems(tag, false);
+            return tag;
+        } catch (RuntimeException invalid) {
+            throw new IOException("蓝图NBT编码无效", invalid);
+        }
+    }
+
+    /** In-memory equivalent of canonical transport's item/cover identity normalization. */
+    static void normalizeTransportItems(NBTTagCompound payload) throws IOException {
+        if (payload == null) return;
+        try {
+            stableItems(payload, true);
+        } catch (RuntimeException invalid) {
+            throw new IOException("蓝图NBT编码无效", invalid);
+        }
+    }
+
+    static NBTTagCompound decodeData(String value) throws IOException {
+        if (value == null || value.isEmpty()) return null;
         if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");
         try {
             byte[] bytes = Base64.getDecoder()
                 .decode(value);
             if (bytes.length > MAX_COMPRESSED) throw new IOException("蓝图压缩NBT超出上限");
             NBTTagCompound tag = HologramSnapshotCodec.decode(bytes, MAX_EXPANDED, 16L * 1024 * 1024);
-            stableItems(tag, false);
             return tag;
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图NBT编码无效", invalid);
@@ -247,7 +277,11 @@ final class HologramBlueprintNbt {
 
     static NBTTagCompound forPlacement(String value, UUID ownerUuid, String ownerName, int x, int y, int z,
         boolean retainNbt, boolean retainCovers, List<String> keys) throws IOException {
-        NBTTagCompound result = decode(value);
+        return forPlacement(decode(value), ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
+    }
+
+    private static NBTTagCompound forPlacement(NBTTagCompound result, UUID ownerUuid, String ownerName, int x, int y,
+        int z, boolean retainNbt, boolean retainCovers, List<String> keys) {
         if (result == null) return null;
         if (!retainNbt && !retainCovers && !result.hasKey(HologramNetworkBindings.GROUP)) return null;
         result = filter(result, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
@@ -285,6 +319,15 @@ final class HologramBlueprintNbt {
         return source == null ? null : encodeCanonical(block, filter(source, keys, retainCovers));
     }
 
+    /** Reuse the just-decoded owned payload for payment validation, AE routing and selection. */
+    static String filterDecoded(Block block, NBTTagCompound source, List<String> keys, boolean retainCovers)
+        throws IOException {
+        if (source == null) return null;
+        boolean canonical = HologramAeBlueprint.supports(block, source);
+        NBTTagCompound selected = filter(source, keys, retainCovers);
+        return canonical ? encodeCanonical(block, selected) : encodeCaptured(selected);
+    }
+
     /**
      * Last canonical assertion before costing/installation; target coordinates are the only actor-independent binding.
      */
@@ -292,7 +335,7 @@ final class HologramBlueprintNbt {
         int y, int z, boolean retainNbt, boolean retainCovers, List<String> keys) throws IOException {
         NBTTagCompound source = decode(value);
         if (!HologramAeBlueprint.supports(block, source))
-            return forPlacement(value, ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
+            return forPlacement(source, ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
         if (source == null) return null;
         NBTTagCompound selected = filter(source, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
         selected = canonicalActorPayload(block, selected, ownerUuid, ownerName, !retainCovers);

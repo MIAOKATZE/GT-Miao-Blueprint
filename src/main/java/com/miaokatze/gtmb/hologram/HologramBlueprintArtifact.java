@@ -38,7 +38,8 @@ public final class HologramBlueprintArtifact {
     public static final int VERSION = 1;
     public static final int WIDTH = 640;
     public static final int HEIGHT = 640;
-    public static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
+    public static final int MAX_JSON_BYTES = 32 * 1024 * 1024;
+    public static final int MAX_LIBRARY_JSON_BYTES = 128 * 1024 * 1024;
     public static final int MAX_PNG_BYTES = 4 * 1024 * 1024;
     public static final int HEADER_BYTES = 92;
     public static final int MAX_BYTES = HEADER_BYTES + MAX_JSON_BYTES + MAX_PNG_BYTES;
@@ -373,8 +374,8 @@ public final class HologramBlueprintArtifact {
     }
 
     private static void jsonBounds(byte[] json) throws IOException {
-        if (json == null || json.length == 0 || json.length > MAX_JSON_BYTES)
-            throw new IOException("Blueprint JSON must contain 1 byte through 8 MiB");
+        if (json == null || json.length == 0 || json.length > MAX_JSON_BYTES) throw new IOException(
+            "Blueprint JSON must contain 1 byte through " + MAX_JSON_BYTES / (1024 * 1024) + " MiB");
     }
 
     private static void requireCurrent(BooleanSupplier stillCurrent) throws IOException {

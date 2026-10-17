@@ -100,7 +100,7 @@ final class HologramPipeBlueprintSmoke {
             if (item != null) pipeMaterial.setTagCompound(HologramBlueprintNbt.nativePayload(item));
             player.inventory.mainInventory[1] = pipeMaterial.copy();
             player.inventory.mainInventory[2] = coverMaterial.copy();
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> constructor = type
                 .getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class);
             constructor.setAccessible(true);
@@ -131,7 +131,7 @@ final class HologramPipeBlueprintSmoke {
             require(
                 (Integer) get(session, "planMissing") == 0 && "pending".equals(cell.status),
                 "native_pipe_and_cover_have_exact_payable_plan");
-            Method operate = HologramService.class
+            Method operate = HologramWorldTransactions.class
                 .getDeclaredMethod("operateChecked", type, HologramCapture.Cell.class, int.class);
             operate.setAccessible(true);
             require(
@@ -220,7 +220,7 @@ final class HologramPipeBlueprintSmoke {
     }
 
     private static void invoke(String name, Class<?> type, Object session) throws Exception {
-        Method method = HologramService.class.getDeclaredMethod(name, type);
+        Method method = HologramEngineInspection.declaredMethod(name, type);
         method.setAccessible(true);
         method.invoke(null, session);
     }

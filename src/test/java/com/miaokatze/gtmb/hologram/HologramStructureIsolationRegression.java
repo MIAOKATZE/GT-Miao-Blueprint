@@ -66,7 +66,7 @@ final class HologramStructureIsolationRegression {
             player.capabilities.isCreativeMode = true;
             player.capabilities.allowEdit = true;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> constructor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -286,7 +286,7 @@ final class HologramStructureIsolationRegression {
     }
 
     private static Method method(String name, Class<?>... parameters) throws ReflectiveOperationException {
-        Method method = HologramService.class.getDeclaredMethod(name, parameters);
+        Method method = HologramEngineInspection.declaredMethod(name, parameters);
         method.setAccessible(true);
         return method;
     }
@@ -307,7 +307,7 @@ final class HologramStructureIsolationRegression {
 
     @SuppressWarnings("unchecked")
     private static Map<Object, Object> serviceMap(String name) throws ReflectiveOperationException {
-        Field field = HologramService.class.getDeclaredField(name);
+        Field field = HologramEngineInspection.declaredField(name);
         field.setAccessible(true);
         return (Map<Object, Object>) field.get(null);
     }

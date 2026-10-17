@@ -285,10 +285,20 @@ public final class HologramEnergyPayload {
             paid.setString("type", uid);
             empty.setString("type", uid);
             if (creative) {
-                // BlockCapBank.getSubBlocks creates the native creative variant at half its runtime capacity.
-                // Never copy the source balance or a source-selected capacitor-bank type.
-                paid.setInteger("storedEnergyRF", capacity / 2);
-                empty.setInteger("storedEnergyRF", capacity / 2);
+                // TileCapBank reads the actual numeric buffer and clamps it; the creative-tab
+                // half-full item is only a catalog template, never a native tile default.
+                int amount = 0;
+                if (paid.hasKey("storedEnergyRF")) {
+                    if (paid.hasKey("storedEnergyRF", 99) && Double.isFinite(paid.getDouble("storedEnergyRF"))) {
+                        int nativeAmount = paid.getInteger("storedEnergyRF");
+                        amount = Math.max(0, Math.min(capacity, nativeAmount));
+                        if (nativeAmount < 0)
+                            warnings.add(path + ".storedEnergyRF: negative native RF buffer clamped to zero");
+                    } else warnings.add(path + ".storedEnergyRF: invalid native RF buffer omitted");
+                }
+                paid.setInteger("storedEnergyRF", amount);
+                empty.setInteger("storedEnergyRF", 0);
+                // Infinite supply belongs to the paid native creative variant, not a finite RF purchase.
                 return 0;
             }
             int amount = 0;

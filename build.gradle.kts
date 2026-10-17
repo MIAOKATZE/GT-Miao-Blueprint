@@ -41,6 +41,18 @@ tasks.register<JavaExec>("runHologramTest") {
 
 tasks.named("check") { dependsOn("runHologramTest") }
 
+tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
+    group = "verification"
+    description = "Measures production validation reuse at 50k, 100k and 1m streamed cells; not a live-world benchmark."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramBlueprintValidationCacheRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    maxHeapSize = "4g"
+    val scratchDir = layout.buildDirectory.dir("hologram-validation-benchmark")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
 // The common service and native adapters need more heap for Checkstyle's complete syntax trees.
 tasks.withType<org.gradle.api.plugins.quality.Checkstyle>().configureEach {
     maxHeapSize = "2g"
@@ -57,6 +69,55 @@ tasks.register<JavaExec>("runIndustrialConstraintsTest") {
 }
 
 tasks.named("check") { dependsOn("runIndustrialConstraintsTest") }
+
+// Exercise the shipped SRG ABI: development classpaths cannot witness inherited MCP-name gaps.
+abstract class ReleaseGuiBridgeArguments : CommandLineArgumentProvider {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val normalJar: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val srgRuntime: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val forgeRuntime: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val muiRuntime: RegularFileProperty
+
+    override fun asArguments(): Iterable<String> = listOf(
+        normalJar.get().asFile.absolutePath,
+        srgRuntime.get().asFile.absolutePath,
+        forgeRuntime.get().asFile.absolutePath,
+        muiRuntime.get().asFile.absolutePath
+    )
+}
+
+val releaseGuiBridgeAsm = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8"))
+val releaseGuiMuiRuntime = configurations.detachedConfiguration(
+    dependencies.create("com.github.GTNewHorizons:ModularUI2:2.3.92-1.7.10")
+).apply { isTransitive = false }
+val releaseGuiNormalJar = tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfJar").flatMap { it.archiveFile }
+val releaseGuiSrgRuntime = layout.buildDirectory.file("rfg/srg_merged_minecraft.jar")
+val releaseGuiForgeRuntime = layout.buildDirectory.file("rfg/recompiled_minecraft-1.7.10.jar")
+tasks.register<JavaExec>("runReleaseGuiBridgeTest") {
+    group = "verification"
+    description = "Verifies the normal projector UI ABI against the pinned normal MUI2 and SRG runtimes."
+    dependsOn("reobfJar", "compileTestJava")
+    mainClass = "com.miaokatze.gtmb.client.hologram.HologramV016ReleaseGuiBridgeProbe"
+    // No main output/development engine is available to the isolated target loader.
+    classpath = sourceSets.getByName("test").output + releaseGuiBridgeAsm
+    argumentProviders.add(objects.newInstance(ReleaseGuiBridgeArguments::class.java).apply {
+        normalJar.set(releaseGuiNormalJar)
+        srgRuntime.set(releaseGuiSrgRuntime)
+        forgeRuntime.set(releaseGuiForgeRuntime)
+        muiRuntime.set(layout.file(providers.provider { releaseGuiMuiRuntime.singleFile }))
+    })
+}
+tasks.named("check") { dependsOn("runReleaseGuiBridgeTest") }
 
 val hologramCoexistence = providers.gradleProperty("hologramCoexistence").isPresent
 val hologramExtendedCompatibility = providers.gradleProperty("hologramExtendedCompatibility").isPresent

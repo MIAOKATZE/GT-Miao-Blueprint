@@ -150,8 +150,9 @@ public final class HologramV010GuiSmoke {
                 modalSelection = screen.smokeSelectedIndices();
                 set(screen, "libraryDrawer", true);
                 set(screen, "blueprintTab", true);
-                screen.drawScreen(0, 0, 0); // Build actual mouse hit controls; capture waits for normal rendered
-                                            // frames.
+                HologramMuiProbeInput.renderFixture(screen, 0, 0, 0); // Build actual mouse hit controls; capture waits
+                                                                      // for normal rendered
+                // frames.
                 click(screen.smokeControlPoint(211));
                 require(
                     (Boolean) field(screen, "deidentificationDrawer"),
@@ -171,7 +172,7 @@ public final class HologramV010GuiSmoke {
             } else if (stage == 10) {
                 click(screen.smokeControlPoint(213));
                 require(!(Boolean) field(screen, "deidentificationDrawer"), "actual remember button dismisses modal");
-                screen.drawScreen(0, 0, 0);
+                HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
                 click(screen.smokeControlPoint(211));
                 require(
                     (Integer) field(screen, "deidentificationLevel") == 0,
@@ -251,7 +252,7 @@ public final class HologramV010GuiSmoke {
     }
 
     private void probeMouseSelection() throws Exception {
-        screen.drawScreen(0, 0, 0);
+        HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
         Map<Integer, int[]> points = new LinkedHashMap<>();
         for (int y = HologramScreenLayout.VIEWPORT_Y + 8; y
             < HologramScreenLayout.VIEWPORT_Y + HologramScreenLayout.VIEWPORT_HEIGHT - 8; y += 3) {
@@ -307,7 +308,7 @@ public final class HologramV010GuiSmoke {
     }
 
     private void finishDeidentificationModal(Minecraft mc) throws Exception {
-        screen.keyTyped('\0', Keyboard.KEY_ESCAPE);
+        HologramMuiProbeInput.key(screen, '\0', Keyboard.KEY_ESCAPE);
         require(
             !(Boolean) field(screen, "deidentificationDrawer") && mc.currentScreen == screen,
             "actual Esc closes deidentification modal and retains editor");
@@ -328,8 +329,7 @@ public final class HologramV010GuiSmoke {
     }
 
     private void click(int[] point) {
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
     }
 
     private void captureAfterRender(String name) throws Exception {
@@ -522,17 +522,13 @@ public final class HologramV010GuiSmoke {
     }
 
     private static Object field(Object owner, String name) throws Exception {
-        Field field = owner.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(owner);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(owner, name));
     }
 
     private static void set(Object owner, String name, Object value) throws Exception {
-        Field field = owner.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(owner, value);
+
+        HologramUiDiagnostics.writeDiagnosticField(owner, name, value);
     }
 
     private static boolean contains(int[] values, int wanted) {

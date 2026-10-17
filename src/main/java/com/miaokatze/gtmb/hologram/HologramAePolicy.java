@@ -94,10 +94,30 @@ final class HologramAePolicy {
 
     /** Does not mutate the source draft, library cache, source stacks or any world. */
     static Draft sanitize(HologramPresets.Preset source) throws IOException {
-        HologramPresets.Preset result = HologramPresets.copy(source);
+        return sanitizeOwned(HologramPresets.copy(source), null, PreparationProgress.NONE);
+    }
+
+    interface PreparationProgress {
+
+        PreparationProgress NONE = (phase, completed, total) -> {};
+
+        void update(String phase, long completed, long total) throws IOException;
+    }
+
+    /** Caller transfers exclusive ownership. Frozen networks contain strings only and prohibit worker world access. */
+    static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
+        PreparationProgress progress) throws IOException {
+        return sanitizeOwned(result, networks, null, progress);
+    }
+
+    /** Frozen fallback identities keep registered native factories/resource callbacks on their documented thread. */
+    static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
+        Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress) throws IOException {
         result.deidentificationLevel = HologramDeidentification.level(result);
         // Native AE canonicalization and verified quantum binding necessarily rebuild identity.
+        int completed = 0;
         for (HologramPresets.Cell cell : result.cells) {
+            progress.update("identity", completed++, result.cells.size());
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
             if (HologramAeBlueprint.supports(cell.block(), payload) || HologramNetworkBindings.node(cell.block())
                 || HologramNetworkSchemas.removeExternalReferences(
@@ -108,8 +128,10 @@ final class HologramAePolicy {
                     || payload.hasKey(HologramNetworkBindings.GROUP)))
                 result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
         }
-        result = HologramDeidentification.apply(result, result.deidentificationLevel);
-        List<Issue> networkChanges = result.deidentificationLevel > 0 ? HologramNetworkBindings.sanitize(result)
+        progress.update("identity", completed, result.cells.size());
+        result = HologramDeidentification.applyOwned(result, result.deidentificationLevel, networks, progress);
+        List<Issue> networkChanges = result.deidentificationLevel > 0
+            ? HologramNetworkBindings.sanitize(result, networks, progress)
             : java.util.Collections.emptyList();
         Map<String, Issue> issues = new LinkedHashMap<>();
         for (Issue issue : networkChanges) add(issues, issue);
@@ -134,7 +156,9 @@ final class HologramAePolicy {
             }
         }
         boolean ae = false;
+        completed = 0;
         for (HologramPresets.Cell cell : result.cells) {
+            progress.update("ae", completed++, result.cells.size());
             Block block = cell.block();
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
             if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) add(
@@ -164,8 +188,17 @@ final class HologramAePolicy {
                     NBTTagCompound remainder = HologramAeBlueprint.withoutAeMultipart(analysis.payload());
                     if (remainder.getTagList("parts", 10)
                         .tagCount() > 0) {
-                        List<ItemStack> components = HologramNativePlacement.materials(block, cell.metadata, remainder);
-                        if (!components.isEmpty()) shell = components.get(0);
+                        if (nativeShells == null) {
+                            List<ItemStack> components = HologramNativePlacement
+                                .materials(block, cell.metadata, remainder);
+                            if (!components.isEmpty()) shell = components.get(0);
+                        } else {
+                            String position = cell.x + "," + cell.y + "," + cell.z;
+                            if (!nativeShells.containsKey(position))
+                                throw new IOException("Native shell fallback was not frozen");
+                            HologramPresets.Target frozen = nativeShells.get(position);
+                            shell = frozen == null ? null : frozen.stack();
+                        }
                     }
                 }
                 if (shell == null) {
@@ -224,6 +257,7 @@ final class HologramAePolicy {
                         cell.y,
                         cell.z));
         }
+        progress.update("ae", completed, result.cells.size());
         if (ae) {
             add(
                 issues,
@@ -258,7 +292,32 @@ final class HologramAePolicy {
         }
         result.aePolicyVersion = VERSION;
         result.aeIssues = new ArrayList<>(issues.values());
-        return new Draft(result, result.aeIssues);
+        progress.update("report", 0, 1);
+        Draft draft = new Draft(result, result.aeIssues);
+        progress.update("report", 1, 1);
+        return draft;
+    }
+
+    /** Server-thread preflight only for the rare mixed-multipart downgrade that needs native material callbacks. */
+    static void captureNativeShell(HologramPresets.Cell cell, Map<String, HologramPresets.Target> shells)
+        throws IOException {
+        Block block = cell.block();
+        if (block == null || !block.getClass()
+            .getName()
+            .equals("codechicken.multipart.BlockMultipart")) return;
+        NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+        if (!HologramAeBlueprint.supports(block, payload)) return;
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, cell.metadata, payload);
+        if (analysis.blocking || analysis.issues.stream()
+            .noneMatch(issue -> "unsupported_part".equals(issue.code) || "unsupported_part_item".equals(issue.code))
+            || HologramAeBlueprint.sampleIdentity(block, cell.metadata, analysis.payload()) != null) return;
+        NBTTagCompound remainder = HologramAeBlueprint.withoutAeMultipart(analysis.payload());
+        if (remainder.getTagList("parts", 10)
+            .tagCount() == 0) return;
+        List<ItemStack> materials = HologramNativePlacement.materials(block, cell.metadata, remainder);
+        shells.put(
+            cell.x + "," + cell.y + "," + cell.z,
+            materials.isEmpty() ? null : new HologramPresets.Target(materials.get(0)));
     }
 
     /** Complete draft costs, independent of current construction scope/world and never a reservation. */

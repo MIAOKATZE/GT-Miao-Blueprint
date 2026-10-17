@@ -47,41 +47,20 @@ public final class HologramAeContainerRegression {
         SimpleAssert.that(original.equals(snapshot), "DTO parsing never changes its snapshot");
         SimpleAssert.that(marker.allowed.equals("pattern"), "allowed list uses the common DTO contract");
 
-        HologramAeGhostContainer container = new HologramAeGhostContainer(model.slots);
+        HologramAeGhostContainer container = new HologramAeGhostContainer();
         SimpleAssert.eq(-1, container.windowId, "virtual container has no real player window");
-        SimpleAssert.eq(1, container.inventorySlots.size(), "no real backpack slots are installed");
+        SimpleAssert.eq(0, container.inventorySlots.size(), "MUI display widgets register no inventory slots");
         for (int mode = 0; mode <= 6; mode++) for (int button = 0; button <= 8; button++) {
             SimpleAssert.that(
                 container.slotClick(0, button, mode, null) == null,
                 "pickup/shift/hotbar/clone/drop/drag/pickup-all cannot extract an icon");
         }
         SimpleAssert.that(container.transferStackInSlot(null, 0) == null, "shift transfer is disabled");
-        SimpleAssert.that(
-            !container.getSlot(0)
-                .canTakeStack(null),
-            "display slots are not takeable");
-        SimpleAssert.that(
-            !container.getSlot(0)
-                .isItemValid(source),
-            "display slots are not real insertion slots");
-        SimpleAssert.that(
-            container.getSlot(0)
-                .decrStackSize(1) == null,
-            "decrement cannot yield an item");
-        SimpleAssert.that(
-            container.getSlot(0).inventory.getStackInSlotOnClosing(0) == null,
-            "closing cannot yield or return an item");
         container.putStackInSlot(0, null);
         container.putStacksInSlots(new ItemStack[] { null });
-        container.getSlot(0)
-            .putStack(null);
-        container.getSlot(0).inventory.setInventorySlotContents(0, null);
         container.onContainerClosed(null);
-        SimpleAssert.eq(
-            64,
-            container.getSlot(0)
-                .getStack().stackSize,
-            "all vanilla mutation routes preserve canonical marker");
+        SimpleAssert.eq(0, container.inventorySlots.size(), "vanilla mutation routes cannot install display slots");
+        SimpleAssert.eq(64, marker.stack().stackSize, "container close preserves the canonical marker DTO");
         SimpleAssert.eq(64, source.stackSize, "all container operations preserve the source item count");
 
         NBTTagCompound disabledTag = slot(source);

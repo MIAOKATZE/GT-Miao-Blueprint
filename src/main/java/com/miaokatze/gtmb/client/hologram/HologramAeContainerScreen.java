@@ -5,72 +5,216 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
-import net.minecraft.client.gui.GuiButton;
-import net.minecraft.client.gui.inventory.GuiContainer;
-import net.minecraft.client.renderer.RenderHelper;
-import net.minecraft.client.renderer.entity.RenderItem;
-import net.minecraft.inventory.Slot;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.inventory.Container;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.input.Keyboard;
-import org.lwjgl.input.Mouse;
-import org.lwjgl.opengl.GL11;
 
+import com.cleanroommc.modularui.api.IMuiScreen;
+import com.cleanroommc.modularui.api.UpOrDown;
+import com.cleanroommc.modularui.api.widget.Interactable;
+import com.cleanroommc.modularui.drawable.GuiDraw;
+import com.cleanroommc.modularui.factory.ClientGUI;
+import com.cleanroommc.modularui.integration.recipeviewer.RecipeViewerGhostIngredientSlot;
+import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.screen.ModularScreen;
+import com.cleanroommc.modularui.screen.RecipeViewerSettingsImpl;
+import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
+import com.cleanroommc.modularui.value.ObjectValue;
+import com.cleanroommc.modularui.widgets.ButtonWidget;
+import com.cleanroommc.modularui.widgets.ItemDisplayWidget;
+import com.cleanroommc.modularui.widgets.TextWidget;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 
-import codechicken.nei.guihook.GuiContainerManager;
+/** Native client MUI2 marker editor. Display widgets never register real inventory slots. */
+public final class HologramAeContainerScreen extends ModularScreen {
 
-/** Independent blueprint marker UI. All changes are SET/CLEAR requests; no vanilla inventory input executes. */
-public final class HologramAeContainerScreen extends GuiContainer {
-
+    private static HologramAeContainerScreen active;
     private final HologramScreen editor;
-    private final RenderItem icons = new RenderItem();
+    private final Minecraft mc = Minecraft.getMinecraft();
+    private Container playerContainer;
     private HologramAePreviewModel model;
-    private GuiContainerManager nei;
     private final Map<String, List<Integer>> groups = new LinkedHashMap<>();
     private final List<String> groupNames = new ArrayList<>();
     private final ArrayDeque<String> clearing = new ArrayDeque<>();
+    private final List<MarkerWidget> markers = new ArrayList<>();
+    private final List<ItemDisplayWidget> samples = new ArrayList<>();
+    private final Map<Integer, ButtonWidget<?>> controls = new LinkedHashMap<>();
     private int group, slotPage, selected = -1, backpackPage, issueOffset;
-    private long editSequence, pending = -1;
-    private long clearAfter;
+    private long editSequence, pending = -1, clearAfter;
     private String pendingSlot = "", notice = "";
     private ItemStack candidate, dragging;
     private boolean explicitReturn;
     private boolean compactHeight;
+    private TextWidget noticeLabel;
+    // Public dimensions preserve the live input probe's view of the actual wrapper.
+    int width, height;
 
     HologramAeContainerScreen(HologramScreen editor, NBTTagCompound snapshot) {
-        super(new HologramAeGhostContainer(new HologramAePreviewModel(snapshot).slots));
+        super("gtmb", HologramMuiTheme.panel("ae_markers", 256, 238));
         this.editor = editor;
         model = new HologramAePreviewModel(snapshot);
-        xSize = 256;
-        ySize = 238;
         regroup();
+        buildPanel();
+    }
+
+    static HologramAeContainerScreen from(GuiScreen screen) {
+        if (!(screen instanceof IMuiScreen)) return null;
+        ModularScreen modular = ((IMuiScreen) screen).getScreen();
+        return modular instanceof HologramAeContainerScreen ? (HologramAeContainerScreen) modular : null;
+    }
+
+    static HologramAeContainerScreen activeFor(HologramScreen editor) {
+        HologramAeContainerScreen screen = active();
+        return screen != null && screen.editor == editor ? screen : null;
+    }
+
+    static HologramAeContainerScreen active() {
+        if (active != null && active.getPanelManager()
+            .isDisposed()) active = null;
+        return active != null && !active.explicitReturn ? active : null;
+    }
+
+    static HologramAeContainerScreen activeForSession(String session) {
+        HologramAeContainerScreen screen = active();
+        return screen != null && screen.model.session.equals(session) ? screen : null;
+    }
+
+    void open() {
+        active = this;
+        playerContainer = mc.thePlayer == null ? null : mc.thePlayer.openContainer;
+        HologramAeNeiIntegration.register();
+        RecipeViewerSettingsImpl viewer = new RecipeViewerSettingsImpl();
+        viewer.enable();
+        // GuiManager owns constructClientOnly and creates GuiContainerWrapper. No custom Container bridge.
+        ClientGUI.open(this, viewer, HologramAeGhostContainer::new);
     }
 
     @Override
-    public void initGui() {
-        // GuiContainer.initGui binds player.openContainer. Never call it for a virtual preview.
+    public void onOpen() {
+        restorePlayerContainer();
+    }
+
+    private void restorePlayerContainer() {
+        // Vanilla GuiContainer.initGui binds its container before MUI2's InitGui.Post/onOpen.
+        // This editor owns no real slots, so keep the player's authoritative inventory window.
+        if (mc.thePlayer != null && playerContainer != null && mc.thePlayer.openContainer == getContainer())
+            mc.thePlayer.openContainer = playerContainer;
+    }
+
+    private void buildPanel() {
+        ModularPanel panel = getMainPanel();
+        panel.child(
+            HologramMuiTheme.label(
+                () -> "AE 蓝图容器 · 仅标记 · " + (slotPage + 1) + "/" + Math.max(1, (groupSlots().size() + 35) / 36),
+                8,
+                7,
+                240,
+                12,
+                0xfff0ddb3));
+        panel.child(
+            HologramMuiTheme.label(
+                () -> model.block + " [" + model.x + ", " + model.y + ", " + model.z + "]",
+                8,
+                21,
+                240,
+                12,
+                0xffd1bea0));
+        for (int i = 0; i < 6; i++) {
+            final int tab = i;
+            control(
+                100 + i,
+                () -> tab < groupNames.size() ? groupNames.get(tab) : "",
+                8 + i * 40,
+                36,
+                39,
+                20,
+                () -> tab < groupNames.size());
+        }
+        for (int i = 0; i < 36; i++) {
+            MarkerWidget marker = new MarkerWidget(i);
+            markers.add(marker);
+            panel.child(marker);
+        }
+        control(4, () -> "↑", 232, 62, 16, 18, () -> slotPage > 0);
+        control(5, () -> "↓", 232, 84, 16, 18, () -> (slotPage + 1) * 36 < groupSlots().size());
+        control(6, () -> "+", 232, 106, 16, 14, () -> amountEnabled(true));
+        control(7, () -> "−", 232, 122, 16, 14, () -> amountEnabled(false));
+        panel.child(
+            HologramMuiTheme.label(
+                () -> compactHeight ? "样本不消耗 · 元件内容不保留 · 警告 " + model.issues.size() : "样本不消耗；安装物品需从材料源支付",
+                8,
+                140,
+                240,
+                12,
+                0xffd1bea0));
+        panel.child(
+            HologramMuiTheme.label(() -> "元件内容不保留 · 警告 " + model.issues.size() + " 条（滚轮）", 8, 152, 240, 12, 0xfff2c976)
+                .setEnabledIf(w -> !compactHeight));
+        panel.child(
+            HologramMuiTheme
+                .label(() -> model.issues.isEmpty() ? "" : model.issues.get(issueOffset), 8, 164, 240, 12, 0xfff2c976)
+                .setEnabledIf(w -> !compactHeight)
+                .tooltipDynamic(t -> { if (!model.issues.isEmpty()) t.addLine(model.issues.get(issueOffset)); })
+                .tooltipAutoUpdate(true));
+        noticeLabel = HologramMuiTheme.label(
+            () -> pending >= 0 ? "等待服务端确认…" : notice.isEmpty() ? "NEI 拖入或选择背包样本，再点击槽位" : notice,
+            8,
+            176,
+            240,
+            12,
+            0xffd1bea0);
+        panel.child(noticeLabel);
+        for (int i = 0; i < 9; i++) {
+            final int column = i;
+            ItemDisplayWidget sample = new SampleWidget(column);
+            sample.item(new ObjectValue.Dynamic<>(ItemStack.class, () -> backpackSample(column), ignored -> {}))
+                .displayAmount(true)
+                .background(HologramMuiTheme.PANEL)
+                .pos(11 + i * 24, 189)
+                .size(18);
+            samples.add(sample);
+            panel.child(sample);
+        }
+        control(1, () -> "完成", 184, 212, 64, 20, () -> true);
+        control(2, () -> "清空此页", 8, 212, 74, 20, () -> pending < 0 && clearing.isEmpty());
+        control(3, () -> "背包样本 " + (backpackPage + 1) + "/4", 88, 212, 90, 20, () -> true);
+        refreshSlots();
+    }
+
+    private void control(int id, Supplier<String> text, int x, int y, int w, int h, BooleanSupplier enabled) {
+        ButtonWidget<?> button = HologramMuiTheme
+            .button(text, x, y, w, h, () -> { if (enabled.getAsBoolean()) action(id); })
+            .setEnabledIf(widget -> enabled.getAsBoolean());
+        controls.put(id, button);
+        getMainPanel().child(button);
+    }
+
+    private boolean amountEnabled(boolean increase) {
+        if (pending >= 0 || selected < 0 || selected >= model.slots.size()) return false;
+        HologramAePreviewModel.MarkSlot slot = model.slots.get(selected);
+        ItemStack stack = slot.stack();
+        return slot.enabled && stack != null
+            && (!increase || stack.stackSize < Math.min(slot.limit, stack.getMaxStackSize()));
+    }
+
+    @Override
+    public void onResize(int width, int height) {
+        this.width = width;
+        this.height = height;
         compactHeight = height < 262;
-        ySize = compactHeight ? 212 : 238;
-        guiLeft = (width - xSize) / 2;
-        guiTop = (height - 24 - ySize) / 2;
-        buttonList.clear();
-        Keyboard.enableRepeatEvents(true);
-        HologramAeNeiIntegration.register();
-        // NEI's public setWorldAndResolution transformer creates its manager after this initGui returns.
-        nei = null;
-        rebuildTabs();
-        int footerY = guiTop + (compactHeight ? 186 : 212);
-        buttonList.add(new GuiButton(1, guiLeft + 184, footerY, 64, 20, "完成"));
-        buttonList.add(new GuiButton(2, guiLeft + 8, footerY, 74, 20, "清空此页"));
-        buttonList.add(new GuiButton(3, guiLeft + 88, footerY, 90, 20, "背包样本 1/4"));
-        buttonList.add(new GuiButton(4, guiLeft + 232, guiTop + 62, 16, 18, "↑"));
-        buttonList.add(new GuiButton(5, guiLeft + 232, guiTop + 84, 16, 18, "↓"));
-        buttonList.add(new GuiButton(6, guiLeft + 232, guiTop + 106, 16, 14, "+"));
-        buttonList.add(new GuiButton(7, guiLeft + 232, guiTop + 122, 16, 14, "−"));
-        positionSlots();
+        getMainPanel().size(256, compactHeight ? 212 : 238);
+        noticeLabel.top(compactHeight ? 152 : 176);
+        for (int id = 1; id <= 3; id++) controls.get(id)
+            .top(compactHeight ? 186 : 212);
+        for (ItemDisplayWidget sample : samples) sample.top(backpackY() - 1);
+        super.onResize(width, height);
     }
 
     private void regroup() {
@@ -93,13 +237,6 @@ public final class HologramAeContainerScreen extends GuiContainer {
         slotPage = Math.min(slotPage, Math.max(0, (groupSlots().size() - 1) / 36));
     }
 
-    private void rebuildTabs() {
-        buttonList.removeIf(button -> ((GuiButton) button).id >= 100);
-        int tabWidth = Math.min(60, (xSize - 16) / Math.max(1, groupNames.size()));
-        for (int i = 0; i < groupNames.size(); i++) buttonList
-            .add(new GuiButton(100 + i, guiLeft + 8 + i * tabWidth, guiTop + 36, tabWidth - 2, 20, groupNames.get(i)));
-    }
-
     private List<Integer> groupSlots() {
         return groupNames.isEmpty() ? java.util.Collections.emptyList() : groups.get(groupNames.get(group));
     }
@@ -114,155 +251,24 @@ public final class HologramAeContainerScreen extends GuiContainer {
         return visibleSlots().size() == 10 ? 5 : 9;
     }
 
-    private void positionSlots() {
-        for (Object entry : inventorySlots.inventorySlots) {
-            Slot slot = (Slot) entry;
-            slot.xDisplayPosition = -10000;
-            slot.yDisplayPosition = -10000;
+    private void refreshSlots() {
+        for (int i = 0; i < markers.size(); i++) {
+            MarkerWidget marker = markers.get(i);
+            marker.pos(11 + i % columns() * 24, 61 + i / columns() * 18);
+            marker.setEnabled(i < visibleSlots().size());
+            marker.markTooltipDirty();
         }
+    }
+
+    private int visibleIndex(int cell) {
         List<Integer> visible = visibleSlots();
-        for (int i = 0; i < visible.size(); i++) {
-            Slot slot = inventorySlots.getSlot(visible.get(i));
-            slot.xDisplayPosition = 12 + i % columns() * 24;
-            slot.yDisplayPosition = 62 + i / columns() * 18;
-        }
-    }
-
-    @Override
-    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        // Draw manually: vanilla draw/input state and NEI's inventory mutation handlers never run.
-        drawDefaultBackground();
-        if (nei == null) nei = GuiContainerManager.getManager(this);
-        if (nei != null) nei.preDraw();
-        drawGuiContainerBackgroundLayer(partialTicks, mouseX, mouseY);
-        for (Object object : buttonList) ((GuiButton) object).drawButton(mc, mouseX, mouseY);
-        if (nei != null) {
-            // NEI removes the container translation internally; provide the same matrix as vanilla rendering.
-            GL11.glPushMatrix();
-            try {
-                GL11.glTranslatef(guiLeft, guiTop, 0);
-                nei.renderObjects(mouseX, mouseY);
-            } finally {
-                GL11.glPopMatrix();
-            }
-        }
-        int hit = slotAt(mouseX, mouseY);
-        if (hit >= 0) {
-            HologramAePreviewModel.MarkSlot slot = model.slots.get(hit);
-            List<String> tooltip = new ArrayList<>();
-            ItemStack stack = slot.stack();
-            if (stack != null) tooltip.add(stack.getDisplayName());
-            tooltip.add(slot.label);
-            tooltip.add(slot.role());
-            tooltip.add("允许：" + slot.allowed + " · 上限 " + slot.limit);
-            if (!slot.issueCode.isEmpty()) {
-                tooltip.add("问题：" + slot.issueCode);
-                tooltip.addAll(fontRendererObj.listFormattedStringToWidth("完整路径：" + slot.issuePath, 240));
-                tooltip.add("右键 / Shift / Delete 确认丢弃此问题对应的蓝图数据");
-                tooltip.add("原世界与源物品保持不变");
-            } else tooltip.add(slot.enabled ? "左键标记；右键 / Shift / Delete 清除" : "仅支持右键 / Shift / Delete 清除蓝图标记");
-            if (pendingSlot.equals(slot.id)) tooltip.add("等待服务端确认，显示仍为已确认标记");
-            drawHoveringText(tooltip, mouseX, mouseY, fontRendererObj);
-        } else if (inside(mouseX, mouseY, 0, issueY(), xSize, compactHeight ? 12 : 25) && !model.issues.isEmpty()) {
-            List<String> warning = fontRendererObj.listFormattedStringToWidth(model.issues.get(issueOffset), 240);
-            drawHoveringText(warning, mouseX, mouseY, fontRendererObj);
-        } else if (nei != null) nei.renderToolTips(mouseX, mouseY);
-        if (dragging != null) drawIcon(dragging, mouseX + 6, mouseY + 6);
-    }
-
-    @Override
-    protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY) {
-        drawRect(guiLeft, guiTop, guiLeft + xSize, guiTop + ySize, 0xf01b2630);
-        text("AE 蓝图容器 · 仅标记", 8, 9, 0x80dcee);
-        text(model.block + " [" + model.x + ", " + model.y + ", " + model.z + "]", 8, 23, 0xa9bcc5);
-        for (int index : visibleSlots()) {
-            HologramAePreviewModel.MarkSlot descriptor = model.slots.get(index);
-            Slot slot = inventorySlots.getSlot(index);
-            int x = guiLeft + slot.xDisplayPosition, y = guiTop + slot.yDisplayPosition;
-            int color = !descriptor.enabled ? 0xff46515a : "ghost".equals(descriptor.kind) ? 0xff38606e : 0xff635538;
-            if (descriptor.id.equals(pendingSlot)) color = 0xffc18d40;
-            if (!descriptor.issueCode.isEmpty()) color = 0xffbd7440;
-            if (index == selected) color = 0xff66bace;
-            drawRect(x - 1, y - 1, x + 17, y + 17, color);
-            drawRect(x, y, x + 16, y + 16, 0xff10191e);
-            drawIcon(descriptor.stack(), x, y);
-            if (!descriptor.issueCode.isEmpty()) fontRendererObj.drawString("!", x + 5, y + 4, 0xffc976);
-        }
-        if (compactHeight) text("样本不消耗 · 元件内容不保留 · 警告 " + model.issues.size(), 8, 140, 0xf2c976);
-        else {
-            text("样本不消耗；安装物品需从材料源支付", 8, 140, 0xa9bcc5);
-            text("元件内容不保留 · 警告 " + model.issues.size() + " 条（滚轮）", 8, 152, 0xf2c976);
-            if (!model.issues.isEmpty()) text(trim(model.issues.get(issueOffset), 240), 8, 164, 0xf2c976);
-        }
-        text(
-            pending >= 0 ? "等待服务端确认…" : trim(notice.isEmpty() ? "NEI 拖入或选择背包样本，再点击槽位" : notice, 240),
-            8,
-            compactHeight ? 152 : 176,
-            pending >= 0 ? 0xf2c976 : 0xa9bcc5);
-        for (int i = 0; i < 9; i++) {
-            int x = guiLeft + 12 + i * 24, y = guiTop + backpackY();
-            drawRect(x - 1, y - 1, x + 17, y + 17, 0xff35454f);
-            drawIcon(backpackSample(i), x, y);
-        }
-        for (Object object : buttonList) {
-            GuiButton button = (GuiButton) object;
-            if (button.id == 2) button.enabled = pending < 0 && clearing.isEmpty();
-            if (button.id == 3) button.displayString = "背包样本 " + (backpackPage + 1) + "/4";
-            if (button.id == 4 || button.id == 5) {
-                button.visible = groupSlots().size() > 36;
-                button.enabled = button.id == 4 ? slotPage > 0 : (slotPage + 1) * 36 < groupSlots().size();
-            }
-            if (button.id == 6 || button.id == 7) {
-                HologramAePreviewModel.MarkSlot current = selected < 0 ? null : model.slots.get(selected);
-                ItemStack marked = current == null ? null : current.stack();
-                button.enabled = pending < 0 && current != null
-                    && current.enabled
-                    && marked != null
-                    && (button.id == 7 || marked.stackSize < Math.min(current.limit, marked.getMaxStackSize()));
-            }
-            if (button.id >= 100) {
-                button.displayString = groupNames.get(button.id - 100);
-                if (button.id - 100 == group && groupSlots().size() > 36)
-                    button.displayString += " " + (slotPage + 1) + "/" + ((groupSlots().size() + 35) / 36);
-            }
-        }
-    }
-
-    private void drawIcon(ItemStack stack, int x, int y) {
-        if (stack == null) return;
-        RenderHelper.enableGUIStandardItemLighting();
-        GL11.glColor4f(1, 1, 1, 1);
-        icons.renderItemAndEffectIntoGUI(fontRendererObj, mc.getTextureManager(), stack.copy(), x, y);
-        icons.renderItemOverlayIntoGUI(fontRendererObj, mc.getTextureManager(), stack.copy(), x, y);
-        RenderHelper.disableStandardItemLighting();
-        GL11.glDisable(GL11.GL_LIGHTING);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-    }
-
-    private void text(String value, int x, int y, int color) {
-        fontRendererObj.drawString(value, guiLeft + x, guiTop + y, color);
-    }
-
-    private String trim(String value, int width) {
-        return fontRendererObj.trimStringToWidth(value, width);
+        return cell >= visible.size() ? -1 : visible.get(cell);
     }
 
     private ItemStack backpackSample(int column) {
         if (mc.thePlayer == null) return null;
         ItemStack stack = mc.thePlayer.inventory.getStackInSlot(backpackPage * 9 + column);
         return stack == null ? null : stack.copy();
-    }
-
-    private int slotAt(int x, int y) {
-        for (int index : visibleSlots()) {
-            Slot slot = inventorySlots.getSlot(index);
-            if (inside(x, y, slot.xDisplayPosition - 1, slot.yDisplayPosition - 1, 18, 18)) return index;
-        }
-        return -1;
-    }
-
-    private boolean inside(int x, int y, int left, int top, int w, int h) {
-        return x >= guiLeft + left && x < guiLeft + left + w && y >= guiTop + top && y < guiTop + top + h;
     }
 
     private int backpackY() {
@@ -273,74 +279,116 @@ public final class HologramAeContainerScreen extends GuiContainer {
         return compactHeight ? 139 : 151;
     }
 
-    @Override
-    protected void mouseClicked(int x, int y, int button) {
-        for (Object object : buttonList) {
-            GuiButton control = (GuiButton) object;
-            if (button == 0 && control.mousePressed(mc, x, y)) {
-                actionPerformed(control);
-                return;
-            }
-        }
-        int slot = slotAt(x, y);
-        if (slot >= 0) {
-            selected = slot;
-            if (button == 1 || isShiftKeyDown()) edit(slot, null);
-            else if (button == 0) {
-                ItemStack held = candidate;
-                if (held == null && mc.thePlayer != null) held = mc.thePlayer.inventory.getItemStack();
-                if (held == null && mc.thePlayer != null) held = mc.thePlayer.getHeldItem();
-                if (held == null) notice = "先从 NEI 或下方背包样本选择物品";
-                else edit(slot, held.copy());
-            }
-            return;
-        }
-        for (int i = 0; i < 9; i++) if (inside(x, y, 11 + i * 24, backpackY() - 1, 18, 18)) {
-            candidate = backpackSample(i);
-            dragging = candidate == null ? null : candidate.copy();
-            notice = candidate == null ? "此背包样本为空" : "已选择样本：" + candidate.getDisplayName();
-            return;
-        }
-        ItemStack sample = HologramAeNeiIntegration.sampleAt(x, y);
-        if (sample != null && button == 0) {
-            candidate = sample.copy();
-            dragging = sample.copy();
-            notice = "拖入槽位标记：" + sample.getDisplayName();
-            return;
-        }
-        HologramAeNeiIntegration.safeClick(x, y, button);
+    private int slotAt(int x, int y) {
+        for (MarkerWidget marker : markers) if (marker.isEnabled() && marker.getArea()
+            .contains(x, y)) return visibleIndex(marker.cell);
+        return -1;
     }
 
-    @Override
-    protected void mouseMovedOrUp(int x, int y, int button) {
-        if (button < 0) return;
-        ItemStack drop = dragging;
-        dragging = null;
-        if (drop != null && button == 0) acceptDrop(x, y, drop, button);
+    private void selectSlot(int index, int button) {
+        if (index < 0) return;
+        selected = index;
+        if (button == 1 || GuiScreen.isShiftKeyDown()) edit(index, null);
+        else if (button == 0) {
+            ItemStack held = candidate;
+            if (held == null && mc.thePlayer != null) held = mc.thePlayer.inventory.getItemStack();
+            if (held == null && mc.thePlayer != null) held = mc.thePlayer.getHeldItem();
+            if (held == null) notice = "先从 NEI 或下方背包样本选择物品";
+            else edit(index, held.copy());
+        }
     }
 
-    @Override
-    protected void mouseClickMove(int x, int y, int button, long elapsed) {}
-
-    @Override
-    protected void handleMouseClick(Slot slot, int id, int button, int mode) {}
-
-    @Override
-    protected boolean checkHotbarKeys(int key) {
-        return false;
-    }
-
-    /** Always consume drops on this virtual screen, including invalid/outside drops. */
+    /** Always consume virtual marker drops, including rejected/outside drops. */
     boolean acceptDrop(int x, int y, ItemStack stack, int button) {
         int slot = slotAt(x, y);
-        if (slot < 0) {
-            notice = "请拖入容器标记槽";
+        if (slot < 0) notice = "请拖入容器标记槽";
+        else {
+            selected = slot;
+            if (button == 1 || GuiScreen.isShiftKeyDown()) edit(slot, null);
+            else if (stack != null) edit(slot, stack.copy());
+        }
+        return true;
+    }
+
+    @Override
+    public boolean onMousePressed(int button) {
+        int x = getContext().getAbsMouseX(), y = getContext().getAbsMouseY();
+        if (getMainPanel().getArea()
+            .contains(x, y)) {
+            HologramAeNeiIntegration.releaseSearchFocus();
+            super.onMousePressed(button);
             return true;
         }
-        selected = slot;
-        if (button == 1 || isShiftKeyDown()) edit(slot, null);
-        else if (stack != null) edit(slot, stack.copy());
+        // Keep the existing display/search-only NEI contract; do not fall through to cheat/give handlers.
+        ItemStack sample = HologramAeNeiIntegration.sampleAt(x, y);
+        if (sample != null && button == 0) chooseSample(sample);
+        else HologramAeNeiIntegration.safeClick(x, y, button);
         return true;
+    }
+
+    @Override
+    public boolean onMouseRelease(int button) {
+        ItemStack drop = dragging;
+        dragging = null;
+        super.onMouseRelease(button);
+        if (drop != null && button == 0)
+            return acceptDrop(getContext().getAbsMouseX(), getContext().getAbsMouseY(), drop, button);
+        return true;
+    }
+
+    private void chooseSample(ItemStack sample) {
+        candidate = sample == null ? null : sample.copy();
+        dragging = candidate == null ? null : candidate.copy();
+        notice = candidate == null ? "此背包样本为空" : "已选择样本：" + candidate.getDisplayName();
+    }
+
+    @Override
+    public boolean onMouseScroll(UpOrDown direction, int amount) {
+        int x = getContext().getAbsMouseX(), y = getContext().getAbsMouseY();
+        int top = getMainPanel().getArea().y + issueY();
+        if (getMainPanel().getArea()
+            .contains(x, y) && y >= top && y < top + (compactHeight ? 12 : 25) && !model.issues.isEmpty())
+            issueOffset = Math
+                .max(0, Math.min(model.issues.size() - 1, issueOffset + (direction == UpOrDown.DOWN ? 1 : -1)));
+        else HologramAeNeiIntegration.safeScroll(x, y, direction == UpOrDown.DOWN ? -1 : 1);
+        return true;
+    }
+
+    @Override
+    public boolean onKeyPressed(char character, int key) {
+        if (key == Keyboard.KEY_ESCAPE || key == mc.gameSettings.keyBindInventory.getKeyCode()) {
+            returnToEditor(true);
+            return true;
+        }
+        if (HologramAeNeiIntegration.safeKey(character, key)) return true;
+        if ((key == Keyboard.KEY_DELETE || key == Keyboard.KEY_BACK) && selected >= 0) edit(selected, null);
+        // No hotbar, throw, pick-block, vanilla Container or NEI mutation key route.
+        return true;
+    }
+
+    void keyTyped(char character, int key) {
+        onKeyPressed(character, key);
+    }
+
+    @Override
+    public void onUpdate() {
+        super.onUpdate();
+        if (pending < 0 && !clearing.isEmpty() && System.nanoTime() >= clearAfter) clearNext();
+    }
+
+    @Override
+    public void drawForeground() {
+        super.drawForeground();
+        if (dragging != null) GuiDraw
+            .drawItem(dragging.copy(), getContext().getAbsMouseX() + 6, getContext().getAbsMouseY() + 6, 16, 16, 500);
+    }
+
+    // onClose also runs for NEI screen handoffs. Transaction state belongs to the preview session,
+    // so only the explicit completion/Escape path below sends aePreviewClose or clears its queue.
+    @Override
+    public void onClose() {
+        restorePlayerContainer();
+        HologramAeNeiIntegration.releaseSearchFocus();
     }
 
     private void edit(int index, ItemStack source) {
@@ -368,28 +416,27 @@ public final class HologramAeContainerScreen extends GuiContainer {
         HologramNetwork.sendAction(request);
     }
 
-    @Override
-    protected void actionPerformed(GuiButton button) {
-        if (button.id >= 100) {
-            group = button.id - 100;
+    private void action(int id) {
+        if (id >= 100) {
+            group = id - 100;
             slotPage = 0;
             selected = -1;
-            positionSlots();
-        } else if (button.id == 1) returnToEditor();
-        else if (button.id == 3) backpackPage = (backpackPage + 1) % 4;
-        else if (button.id == 4 || button.id == 5) {
+            refreshSlots();
+        } else if (id == 1) returnToEditor(true);
+        else if (id == 3) backpackPage = (backpackPage + 1) % 4;
+        else if (id == 4 || id == 5) {
             int lastPage = Math.max(0, (groupSlots().size() - 1) / 36);
-            slotPage = Math.max(0, Math.min(lastPage, slotPage + (button.id == 4 ? -1 : 1)));
+            slotPage = Math.max(0, Math.min(lastPage, slotPage + (id == 4 ? -1 : 1)));
             selected = -1;
-            positionSlots();
-        } else if ((button.id == 6 || button.id == 7) && selected >= 0) {
+            refreshSlots();
+        } else if ((id == 6 || id == 7) && selected >= 0) {
             ItemStack marked = model.slots.get(selected)
                 .stack();
             if (marked != null) {
-                marked.stackSize += button.id == 6 ? 1 : -1;
+                marked.stackSize += id == 6 ? 1 : -1;
                 edit(selected, marked.stackSize <= 0 ? null : marked);
             }
-        } else if (button.id == 2 && pending < 0) {
+        } else if (id == 2 && pending < 0) {
             for (int index : visibleSlots()) if (model.slots.get(index)
                 .stack() != null) clearing.add(model.slots.get(index).id);
             clearNext();
@@ -413,7 +460,7 @@ public final class HologramAeContainerScreen extends GuiContainer {
         if (!model.session.equals(next.session) || !model.token.equals(preview.getString("token"))) {
             clearing.clear();
             notice = "预览会话已失效";
-            mc.displayGuiScreen(editor);
+            returnToEditor(false);
             return;
         }
         HologramAePreviewModel canonical = new HologramAePreviewModel(preview);
@@ -434,110 +481,121 @@ public final class HologramAeContainerScreen extends GuiContainer {
             selected = i;
             break;
         }
-        inventorySlots = new HologramAeGhostContainer(model.slots);
         regroup();
-        rebuildTabs();
-        positionSlots();
+        refreshSlots();
         issueOffset = Math.min(issueOffset, Math.max(0, model.issues.size() - 1));
     }
 
-    @Override
-    protected void keyTyped(char character, int key) {
-        if (key == Keyboard.KEY_ESCAPE) {
-            returnToEditor();
-            return;
-        }
-        if (HologramAeNeiIntegration.safeKey(character, key)) return;
-        if (key == mc.gameSettings.keyBindInventory.getKeyCode()) {
-            returnToEditor();
-            return;
-        }
-        if ((key == Keyboard.KEY_DELETE || key == Keyboard.KEY_BACK) && selected >= 0) edit(selected, null);
-    }
-
-    @Override
-    public void handleMouseInput() {
-        // GuiScreen's dispatch is copied here; GuiContainer/NEI injected mutation routing is excluded.
-        int x = Mouse.getEventX() * width / mc.displayWidth;
-        int y = height - Mouse.getEventY() * height / mc.displayHeight - 1;
-        int button = Mouse.getEventButton();
-        if (Mouse.getEventButtonState()) mouseClicked(x, y, button);
-        else if (button >= 0) mouseMovedOrUp(x, y, button);
-        int wheel = Mouse.getEventDWheel();
-        if (wheel != 0) {
-            if (inside(x, y, 0, issueY(), xSize, compactHeight ? 12 : 25) && !model.issues.isEmpty())
-                issueOffset = Math.max(0, Math.min(model.issues.size() - 1, issueOffset + (wheel < 0 ? 1 : -1)));
-            else HologramAeNeiIntegration.safeScroll(x, y, wheel);
-        }
-    }
-
-    @Override
-    public void handleKeyboardInput() {
-        if (Keyboard.getEventKeyState()) keyTyped(Keyboard.getEventCharacter(), Keyboard.getEventKey());
-    }
-
-    @Override
-    public void updateScreen() {
-        // NEI 2.8.155 transformSubclasses inserts an unconditional super call when its bytecode is absent.
-        // Retain that bytecode behind a permanently false function so NEI recognizes it without executing it.
-        if (vanillaTickEnabled()) super.updateScreen();
-        if (nei != null) nei.updateScreen();
-        if (pending < 0 && !clearing.isEmpty() && System.nanoTime() >= clearAfter) clearNext();
-    }
-
-    private static boolean vanillaTickEnabled() {
-        return false;
-    }
-
-    private void returnToEditor() {
+    private void returnToEditor(boolean sendClose) {
         if (explicitReturn) return;
         explicitReturn = true;
         clearing.clear();
-        HologramNetwork.sendAction(model.action("aePreviewClose"));
-        mc.displayGuiScreen(editor);
+        if (active == this) active = null;
+        if (sendClose) HologramNetwork.sendAction(model.action("aePreviewClose"));
+        ClientGUI.open(editor);
     }
 
-    @Override
-    public void onGuiClosed() {
-        dragging = null;
-        Keyboard.enableRepeatEvents(false);
-        HologramAeNeiIntegration.releaseSearchFocus();
+    private final class MarkerWidget extends ItemDisplayWidget
+        implements Interactable, RecipeViewerGhostIngredientSlot<ItemStack> {
+
+        private final int cell;
+
+        MarkerWidget(int cell) {
+            this.cell = cell;
+            size(18).background(HologramMuiTheme.PANEL)
+                .displayAmount(true);
+            item(new ObjectValue.Dynamic<>(ItemStack.class, () -> {
+                int index = visibleIndex(cell);
+                return index < 0 ? null
+                    : model.slots.get(index)
+                        .stack();
+            }, ignored -> {}));
+            tooltipDynamic(t -> {
+                int index = visibleIndex(cell);
+                if (index < 0) return;
+                HologramAePreviewModel.MarkSlot slot = model.slots.get(index);
+                ItemStack stack = slot.stack();
+                if (stack != null) t.addLine(stack.getDisplayName());
+                t.addLine(slot.label);
+                t.addLine(slot.role());
+                t.addLine("允许：" + slot.allowed + " · 上限 " + slot.limit);
+                if (!slot.issueCode.isEmpty()) {
+                    t.addLine("问题：" + slot.issueCode);
+                    t.addLine("完整路径：" + slot.issuePath);
+                    t.addLine("右键 / Shift / Delete 确认丢弃此问题对应的蓝图数据");
+                } else t.addLine(slot.enabled ? "左键标记；右键 / Shift / Delete 清除" : "仅支持清除蓝图标记");
+                if (pendingSlot.equals(slot.id)) t.addLine("等待服务端确认，显示仍为已确认标记");
+            });
+            tooltipAutoUpdate(true);
+        }
+
+        @Override
+        public Result onMousePressed(int button) {
+            selectSlot(visibleIndex(cell), button);
+            return Result.SUCCESS;
+        }
+
+        @Override
+        public void drawForeground(ModularGuiContext context) {
+            super.drawForeground(context);
+            int index = visibleIndex(cell);
+            if (index < 0) return;
+            HologramAePreviewModel.MarkSlot slot = model.slots.get(index);
+            int color = !slot.enabled ? 0xff777164 : "ghost".equals(slot.kind) ? 0xff638b87 : 0xffa79060;
+            if (!slot.issueCode.isEmpty() || slot.id.equals(pendingSlot)) color = 0xffc18d40;
+            if (index == selected) color = 0xff80dcee;
+            GuiDraw.drawBorderInsideLTRB(0, 0, 18, 18, color);
+            if (!slot.issueCode.isEmpty()) mc.fontRenderer.drawString("!", 6, 5, 0xfff2c976);
+        }
+
+        @Override
+        public boolean handleDragAndDrop(ItemStack stack, int button) {
+            return acceptDrop(getArea().x + 8, getArea().y + 8, stack, button);
+        }
     }
 
-    @Override
-    public boolean doesGuiPauseGame() {
-        return false;
+    private final class SampleWidget extends ItemDisplayWidget implements Interactable {
+
+        private final int column;
+
+        SampleWidget(int column) {
+            this.column = column;
+        }
+
+        @Override
+        public Result onMousePressed(int button) {
+            if (button == 0) chooseSample(backpackSample(column));
+            return Result.SUCCESS;
+        }
     }
 
-    /** Read-only coordinates for isolated/live smoke drivers; navigation still uses the real mouse routes. */
     int[] smokeSlotPoint(String slotId) {
-        for (int index : visibleSlots()) if (model.slots.get(index).id.equals(slotId)) {
-            Slot slot = inventorySlots.getSlot(index);
-            return new int[] { guiLeft + slot.xDisplayPosition + 8, guiTop + slot.yDisplayPosition + 8 };
+        for (MarkerWidget marker : markers) {
+            int index = visibleIndex(marker.cell);
+            if (index >= 0 && model.slots.get(index).id.equals(slotId))
+                return new int[] { marker.getArea().x + 9, marker.getArea().y + 9 };
         }
         return null;
     }
 
     int[] smokeControlPoint(int id) {
-        for (Object object : buttonList) {
-            GuiButton button = (GuiButton) object;
-            if (button.id == id)
-                return new int[] { button.xPosition + button.width / 2, button.yPosition + button.height / 2 };
-        }
-        return null;
+        ButtonWidget<?> button = controls.get(id);
+        return button == null ? null
+            : new int[] { button.getArea().x + button.getArea().width / 2,
+                button.getArea().y + button.getArea().height / 2 };
     }
 
     boolean smokeControlEnabled(int id) {
-        for (Object object : buttonList) {
-            GuiButton button = (GuiButton) object;
-            if (button.id == id) return button.visible && button.enabled;
-        }
-        return false;
+        ButtonWidget<?> button = controls.get(id);
+        return button != null && button.isEnabled();
     }
 
     int[] smokeBackpackPoint(int column) {
-        if (column < 0 || column >= 9) return null;
-        return new int[] { guiLeft + 20 + column * 24, guiTop + backpackY() + 8 };
+        if (column < 0 || column >= samples.size()) return null;
+        return new int[] { samples.get(column)
+            .getArea().x + 9,
+            samples.get(column)
+                .getArea().y + 9 };
     }
 
     List<String> smokeGroups() {
@@ -560,9 +618,12 @@ public final class HologramAeContainerScreen extends GuiContainer {
         return backpackPage;
     }
 
-    /** No interception/capture: invokes the exact input methods that dispatch real GTMB requests. */
+    /** Dispatches the same native MUI2 event hooks used by physical input. */
     void smokeMouseButton(int x, int y, int button, boolean pressed) {
-        if (pressed) mouseClicked(x, y, button);
-        else mouseMovedOrUp(x, y, button);
+        getContext().updateState(x, y, 0);
+        // Use the native frame hook to collect hover targets at the probe's synthetic pointer.
+        onFrameUpdate();
+        if (pressed) onMousePressed(button);
+        else onMouseRelease(button);
     }
 }
