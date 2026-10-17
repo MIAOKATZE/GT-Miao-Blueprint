@@ -15,18 +15,15 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
-
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.BlockFrameBox;
 
 /** Server-owned region selection and resumable read-only world import. */
-final class HologramArea {
+final class HologramArea extends HologramAreaSelection {
 
     boolean selecting, imported, importing;
-    int[] first, second;
     int x, y, z, minX, minY, minZ, maxX, maxY, maxZ;
     HologramPresets.Preset blueprint;
     final Map<String, Structure> structures = new LinkedHashMap<>();
@@ -35,87 +32,23 @@ final class HologramArea {
     final java.util.Set<String> edited = new java.util.HashSet<>();
     final List<Structure> discovery = new ArrayList<>();
     int discoveryIndex;
+    private java.util.Iterator<Map.Entry<String, HologramCapture.Cell>> declarationMembers;
+    private int declarationMemberDone, declarationMemberTotal;
+    String importPhase = "blocks";
+    HologramAreaPreparation preparation;
+    HologramSession staging;
+    Map<String, HologramSession> declarationSessions = new java.util.HashMap<>();
+    int structureIndex, membershipIndex;
+    HologramBlueprintProjection.Population population;
+    HologramResourcePlanner.PlanTask planTask;
     long expandedNbt;
     String active = "";
-    String pointMode = "replace";
-    final List<Region> regions = new ArrayList<>();
-    final List<List<Region>> regionUndo = new ArrayList<>();
 
-    static final class Region {
-
-        final int minX, minY, minZ, maxX, maxY, maxZ;
-        final String mode;
-
-        Region(int[] a, int[] b, String mode) {
-            minX = Math.min(a[0], b[0]);
-            minY = Math.min(a[1], b[1]);
-            minZ = Math.min(a[2], b[2]);
-            maxX = Math.max(a[0], b[0]);
-            maxY = Math.max(a[1], b[1]);
-            maxZ = Math.max(a[2], b[2]);
-            this.mode = mode;
-        }
-
-        boolean contains(int x, int y, int z) {
-            return x >= minX && x <= maxX && y >= minY && y <= maxY && z >= minZ && z <= maxZ;
-        }
-    }
-
-    void point(int index, int xx, int yy, int zz, String mode) throws IOException {
-        if (!("replace".equals(mode) || "add".equals(mode) || "subtract".equals(mode)))
-            throw new IOException("区域组合模式无效");
-        if (index != 1 && index != 2) throw new IOException("区域角点无效");
-        boolean pending = (first == null) != (second == null);
-        boolean completes = pending && (index == 1 ? second != null : first != null);
-        if (completes && (regions.size() >= 128 || regionUndo.size() >= 128)) throw new IOException("区域组合过多，请撤销或完成");
-        // Either mouse button may start the next pair. Re-marking that same corner keeps its original mode.
-        if (!pending) {
-            first = null;
-            second = null;
-            pointMode = mode;
-        }
-        if (index == 1) first = new int[] { xx, yy, zz };
-        else second = new int[] { xx, yy, zz };
-        if (completes) {
-            regionUndo.add(new ArrayList<>(regions));
-            if ("replace".equals(pointMode)) regions.clear();
-            regions.add(new Region(first, second, pointMode));
-        }
-    }
-
-    void undoRegion() {
-        if (regionUndo.isEmpty()) {
-            first = null;
-            second = null;
-            return;
-        }
-        regions.clear();
-        regions.addAll(regionUndo.remove(regionUndo.size() - 1));
-        first = null;
-        second = null;
-    }
-
-    boolean contains(int xx, int yy, int zz) {
+    public boolean contains(int xx, int yy, int zz) {
         if (regions.isEmpty()) return xx >= minX && xx <= maxX && yy >= minY && yy <= maxY && zz >= minZ && zz <= maxZ;
         boolean selected = false;
         for (Region region : regions) if (region.contains(xx, yy, zz)) selected = !"subtract".equals(region.mode);
         return selected;
-    }
-
-    NBTTagList regionSnapshot() {
-        NBTTagList rows = new NBTTagList();
-        for (Region region : regions) {
-            NBTTagCompound row = new NBTTagCompound();
-            row.setInteger("minX", region.minX);
-            row.setInteger("minY", region.minY);
-            row.setInteger("minZ", region.minZ);
-            row.setInteger("maxX", region.maxX);
-            row.setInteger("maxY", region.maxY);
-            row.setInteger("maxZ", region.maxZ);
-            row.setString("mode", region.mode);
-            rows.appendTag(row);
-        }
-        return rows;
     }
 
     static final class Structure {
@@ -135,12 +68,8 @@ final class HologramArea {
         }
     }
 
-    void point(int index, int xx, int yy, int zz) {
-        if (index == 1) first = new int[] { xx, yy, zz };
-        if (index == 2) second = new int[] { xx, yy, zz };
-    }
-
     void begin(World world) throws IOException {
+        cancelImportWork();
         int[] bounds = bounds();
         minX = bounds[0];
         minY = bounds[1];
@@ -169,36 +98,28 @@ final class HologramArea {
         paletteKeys.clear();
         edited.clear();
         discoveryIndex = 0;
+        declarationMembers = null;
+        importPhase = "blocks";
+        preparation = null;
+        staging = null;
+        declarationSessions = new java.util.HashMap<>();
+        structureIndex = membershipIndex = 0;
+        population = null;
+        planTask = null;
         expandedNbt = 0;
         importing = true;
         imported = false;
     }
 
     /** Subtraction can only reduce the mask, so its exterior bounds never enlarge the source scan. */
-    int[] bounds() throws IOException {
-        if (regions.isEmpty()) {
-            if (first == null || second == null) throw new IOException("请先选择两个区域角点");
-            regions.add(new Region(first, second, "replace"));
-        }
-        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
-            Integer.MIN_VALUE };
-        for (Region region : regions) {
-            if ("subtract".equals(region.mode)) continue;
-            bounds[0] = Math.min(bounds[0], region.minX);
-            bounds[1] = Math.min(bounds[1], region.minY);
-            bounds[2] = Math.min(bounds[2], region.minZ);
-            bounds[3] = Math.max(bounds[3], region.maxX);
-            bounds[4] = Math.max(bounds[4], region.maxY);
-            bounds[5] = Math.max(bounds[5], region.maxZ);
-        }
-        if (bounds[0] == Integer.MAX_VALUE) throw new IOException("减选后没有可导入的正选区域");
-        return bounds;
-    }
 
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
+        if (imported) return true;
         World world = player.worldObj;
-        for (int budget = 4096; y <= maxY && budget > 0; budget--) {
+        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
+        for (int work = 0; y <= maxY; work++) {
+            if (work > 0 && System.nanoTime() >= deadline) break;
             if (contains(x, y, z)) {
                 if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
                 Block block = world.getBlock(x, y, z);
@@ -228,8 +149,8 @@ final class HologramArea {
                     if (tile instanceof IGregTechTileEntity) {
                         IGregTechTileEntity gt = (IGregTechTileEntity) tile;
                         cell.facing = HologramBlockIdentity.front(gt);
-                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
-                            && gt.getMetaTileEntity() instanceof IConstructable) {
+                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase && HologramStructureDiscovery
+                            .captureSupported((MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity())) {
                             cell.controller = true;
                             Structure structure = new Structure(
                                 x,
@@ -258,6 +179,22 @@ final class HologramArea {
         if (y <= maxY) return false;
         if (discoveryIndex < discovery.size()) {
             Structure structure = discovery.get(discoveryIndex);
+            if (declarationMembers != null) {
+                importPhase = "declaration_memberships";
+                for (int work = 0; declarationMembers.hasNext(); work++) {
+                    if (work > 0 && System.nanoTime() >= deadline) break;
+                    Map.Entry<String, HologramCapture.Cell> entry = declarationMembers.next();
+                    HologramCapture.Cell cell = entry.getValue();
+                    if (contains(cell.x, cell.y, cell.z)) addMember(entry.getKey(), structure.id);
+                    declarationMemberDone++;
+                }
+                if (!declarationMembers.hasNext()) {
+                    declarationMembers = null;
+                    discoveryIndex++;
+                }
+                return false;
+            }
+            importPhase = "declarations";
             if (world.getTileEntity(structure.x, structure.y, structure.z) != structure.machine.getBaseMetaTileEntity())
                 throw new IOException("控制器在导入期间变化，请重新选择区域");
             // Tool configuration belongs to the previously selected machine, never every controller in a region.
@@ -279,39 +216,105 @@ final class HologramArea {
             structure.capture = HologramCapture
                 .collect(structure.machine, structureTrigger, structure.machine.getExtendedFacing(), structure.capture);
             if (!structure.capture.pending) {
-                if (!structure.capture.incomplete)
-                    for (Map.Entry<String, HologramCapture.Cell> entry : structure.capture.positions.entrySet()) {
-                        HologramCapture.Cell cell = entry.getValue();
-                        if (cell.x >= minX && cell.x <= maxX
-                            && cell.y >= minY
-                            && cell.y <= maxY
-                            && cell.z >= minZ
-                            && cell.z <= maxZ
-                            && contains(cell.x, cell.y, cell.z)) addMember(entry.getKey(), structure.id);
-                    }
-                discoveryIndex++;
+                if (!structure.capture.incomplete) {
+                    declarationMembers = structure.capture.positions.entrySet()
+                        .iterator();
+                    declarationMemberDone = 0;
+                    declarationMemberTotal = structure.capture.positions.size();
+                } else discoveryIndex++;
             }
             return false;
         }
-        // Publish only a canonical detached draft, keeping the source world's cells and identities untouched.
-        blueprint = HologramAePolicy.sanitize(blueprint).preset;
+        if (preparation == null) preparation = new HologramAreaPreparation();
+        if ("blocks".equals(importPhase) || "declarations".equals(importPhase)
+            || "declaration_memberships".equals(importPhase)) importPhase = "networks";
+        if ("networks".equals(importPhase)) {
+            if (preparation.captureNetworks(blueprint, Integer.MAX_VALUE, deadline)) {
+                importPhase = "canonicalize";
+                preparation.start(blueprint);
+            }
+            return false;
+        }
+        if ("canonicalize".equals(importPhase)) {
+            if (!preparation.start(blueprint) || !preparation.ready()) return false;
+            blueprint = preparation.result();
+            imported = true;
+            // Workflow continues with detached memberships, projection and plan; publication is atomic.
+            importPhase = "memberships";
+            return true;
+        }
+        return false;
+    }
+
+    void cancelImportWork() {
+        if (importing) imported = false;
         importing = false;
-        imported = true;
-        return true;
+        if (discoveryIndex < discovery.size()) {
+            HologramCapture capture = discovery.get(discoveryIndex).capture;
+            if (capture != null) capture.cancelPending();
+        }
+        if (preparation != null) preparation.cancel();
+        staging = null;
+        if (!imported) declarationSessions.clear();
+        population = null;
+        planTask = null;
     }
 
     /** Current import phase; no source-world reads are needed for the progress display. */
     String importStage() {
-        return y <= maxY ? "blocks" : "declarations";
+        return importPhase;
     }
 
-    /** Progress belongs to the current phase and reads only the detached scan cursor. */
+    long importDone() {
+        if ("blocks".equals(importPhase)) {
+            long width = (long) maxX - minX + 1, depth = (long) maxZ - minZ + 1;
+            return (((long) y - minY) * depth + z - minZ) * width + x - minX;
+        }
+        if ("declarations".equals(importPhase)) return discoveryIndex;
+        if ("declaration_memberships".equals(importPhase)) return declarationMemberDone;
+        if ("networks".equals(importPhase)) return preparation == null ? 0 : preparation.networksDone();
+        if ("canonicalize".equals(importPhase)) return preparation == null ? 0 : preparation.progress().done;
+        if ("memberships".equals(importPhase)) return (long) structureIndex + membershipIndex;
+        if ("projection".equals(importPhase)) return population == null ? 0 : population.completed();
+        if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.completed();
+        return 0;
+    }
+
+    long importTotal() {
+        if ("blocks".equals(importPhase))
+            return ((long) maxX - minX + 1) * ((long) maxZ - minZ + 1) * ((long) maxY - minY + 1);
+        if ("declarations".equals(importPhase)) return discovery.size();
+        if ("declaration_memberships".equals(importPhase)) return declarationMemberTotal;
+        if ("canonicalize".equals(importPhase)) return preparation == null ? 1 : preparation.progress().total;
+        if ("projection".equals(importPhase)) return population == null ? 0 : population.total();
+        if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.total();
+        if ("memberships".equals(importPhase)) return blueprint.cells.size() + (long) discovery.size();
+        return blueprint == null ? 0 : blueprint.cells.size();
+    }
+
+    String importUnit() {
+        if ("declarations".equals(importPhase)) return "structures";
+        if ("memberships".equals(importPhase) || "projection".equals(importPhase)
+            || "plan".equals(importPhase)
+            || "canonicalize".equals(importPhase)) return "entries";
+        return "cells";
+    }
+
+    HologramAreaPreparation.Progress progressSnapshot() {
+        if ("canonicalize".equals(importPhase) && preparation != null) return preparation.progress();
+        return new HologramAreaPreparation.Progress(importDetail(), importDone(), importTotal());
+    }
+
+    String importDetail() {
+        if ("canonicalize".equals(importPhase) && preparation != null) return preparation.progress().phase;
+        if ("plan".equals(importPhase) && planTask != null) return planTask.phase();
+        return "";
+    }
+
+    /** Progress belongs to the current phase, with no estimated weights between unrelated operations. */
     int importProgress() {
-        if (y > maxY) return discovery.isEmpty() ? 100 : (int) (100D * discoveryIndex / discovery.size());
-        long width = (long) maxX - minX + 1, depth = (long) maxZ - minZ + 1;
-        long total = width * depth * ((long) maxY - minY + 1);
-        long visited = (((long) y - minY) * depth + z - minZ) * width + x - minX;
-        return total <= 0 ? 0 : Math.max(0, Math.min(100, (int) (100D * visited / total)));
+        HologramAreaPreparation.Progress current = progressSnapshot();
+        return current.total <= 0 ? 0 : (int) Math.max(0, Math.min(100, 100D * current.done / current.total));
     }
 
     /** Inventory identity is read without client-only pick hooks or harvesting callbacks. */
@@ -391,9 +394,4 @@ final class HologramArea {
         return list;
     }
 
-    int[] points() {
-        if (first == null) return second == null ? new int[0] : second.clone();
-        if (second == null) return first.clone();
-        return new int[] { first[0], first[1], first[2], second[0], second[1], second[2] };
-    }
 }

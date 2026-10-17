@@ -45,9 +45,20 @@ public final class HologramSelection {
         version++;
         clickedStructureId = "";
         if (!additive) indices.clear();
-        for (HologramState.Cell cell : state.cells) {
-            if (inside(cell.dx, cell.dy, cell.dz, a.dx, a.dy, a.dz, b.dx, b.dy, b.dz)) indices.add(cell.index);
+        java.util.List<Integer> matched = new java.util.ArrayList<>();
+        for (Map.Entry<HologramRegionCache.Key, java.util.List<HologramState.Cell>> entry : state.regions.regions
+            .entrySet()) {
+            HologramRegionCache.Key key = entry.getKey();
+            if ((key.x << 4) > Math.max(a.x, b.x) || (key.x << 4) + 15 < Math.min(a.x, b.x)
+                || (key.y << 4) > Math.max(a.y, b.y)
+                || (key.y << 4) + 15 < Math.min(a.y, b.y)
+                || (key.z << 4) > Math.max(a.z, b.z)
+                || (key.z << 4) + 15 < Math.min(a.z, b.z)) continue;
+            for (HologramState.Cell cell : entry.getValue())
+                if (inside(cell.dx, cell.dy, cell.dz, a.dx, a.dy, a.dz, b.dx, b.dy, b.dz)) matched.add(cell.index);
         }
+        java.util.Collections.sort(matched);
+        indices.addAll(matched);
         corner = from;
     }
 
@@ -63,7 +74,7 @@ public final class HologramSelection {
     void structure(HologramState state, String id, boolean additive) {
         version++;
         if (!additive) clear();
-        for (HologramState.Cell cell : state.cells) if (cell.belongsToStructure(id)) indices.add(cell.index);
+        if (!id.isEmpty()) indices.addAll(state.structureMembers.getOrDefault(id, java.util.Collections.emptyList()));
         clickedStructureId = knownStructure(state, id) ? id : "";
     }
 
@@ -89,10 +100,10 @@ public final class HologramSelection {
         clickedStructureId = "";
         Set<Integer> matched = new LinkedHashSet<>();
         matched.add(index);
-        for (HologramState.Cell cell : state.cells) {
-            boolean inScope = scope.isEmpty() ? cell.structureIds.isEmpty() : cell.belongsToStructure(scope);
+        for (int member : state.structureMembers.getOrDefault(scope, java.util.Collections.emptyList())) {
+            HologramState.Cell cell = state.cells.get(member);
             boolean matches = sameType ? sameType(clicked, cell) : clicked.family.equals(cell.family);
-            if (inScope && matches) matched.add(cell.index);
+            if (matches) matched.add(cell.index);
         }
         if (additive && indices.containsAll(matched)) indices.removeAll(matched);
         else indices.addAll(matched);
@@ -118,8 +129,7 @@ public final class HologramSelection {
         if (indices.isEmpty()) return false;
         Set<String> complete = new LinkedHashSet<>();
         Map<String, Integer> total = new LinkedHashMap<>(), chosen = new LinkedHashMap<>();
-        for (HologramState.Cell cell : state.cells)
-            for (String id : cell.structureIds) total.put(id, total.getOrDefault(id, 0) + 1);
+        state.structureMembers.forEach((id, members) -> total.put(id, members.size()));
         for (int index : indices) {
             if (index < 0 || index >= state.cells.size()) return false;
             for (String id : state.cells.get(index).structureIds) chosen.put(id, chosen.getOrDefault(id, 0) + 1);
@@ -163,8 +173,8 @@ public final class HologramSelection {
             }
             if (!declared) return false;
         }
-        for (HologramState.Cell cell : state.cells) if (cell.belongsToStructure(id)) return true;
-        return false;
+        return !state.structureMembers.getOrDefault(id, java.util.Collections.emptyList())
+            .isEmpty();
     }
 
     void retain(int size) {

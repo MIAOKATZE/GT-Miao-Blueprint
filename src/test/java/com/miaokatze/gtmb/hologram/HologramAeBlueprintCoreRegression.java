@@ -58,6 +58,8 @@ public final class HologramAeBlueprintCoreRegression {
         importedCellCard(drive);
         discardedField(drive);
         interfaceStorageAliases();
+        nativeTileWriterCompatibility();
+        idleCpuWriterCompatibility();
         previewCacheSchema();
         quantumDisplayTransport(actor);
         quantumMigrationCursorSchema();
@@ -81,6 +83,188 @@ public final class HologramAeBlueprintCoreRegression {
         patternRotation();
         physicalSlotDto();
         System.out.println(PREFIX + "PASS " + checks + " assertions; actual native registration/proxy/transport APIs");
+    }
+
+    private static void nativeTileWriterCompatibility() throws Exception {
+        for (String definition : Arrays
+            .asList("molecularAssembler", "inscriber", "iOPort", "energyAcceptor", "condenser", "vibrationChamber")) {
+            Object blocks = AEApi.instance()
+                .definitions()
+                .blocks();
+            appeng.api.definitions.IBlockDefinition nativeBlock = (appeng.api.definitions.IBlockDefinition) blocks
+                .getClass()
+                .getMethod(definition)
+                .invoke(blocks);
+            Block block = nativeBlock.maybeBlock()
+                .get();
+            TileEntity tile = block.createTileEntity(
+                null,
+                nativeBlock.maybeStack(1)
+                    .get()
+                    .getItemDamage());
+            if (definition.equals("molecularAssembler")) seedNativeInventory(tile, 0, new ItemStack(Items.diamond, 3));
+            if (definition.equals("inscriber"))
+                seedNativeInventory(tile, 2, gregtech.api.util.GTUtility.getIntegratedCircuit(1));
+            if (definition.equals("iOPort")) seedNativeInventory(
+                tile,
+                0,
+                AEApi.instance()
+                    .definitions()
+                    .items()
+                    .cell64k()
+                    .maybeStack(1)
+                    .get());
+            NBTTagCompound raw = new NBTTagCompound();
+            tile.writeToNBT(raw);
+            if (definition.equals("molecularAssembler")) ((AEBaseInvTile) tile).writeToNBT_AEBaseInvTile(raw);
+            raw.setBoolean("GTSWN_NetworkSafetyEnabled", true);
+            NBTTagCompound original = (NBTTagCompound) raw.copy();
+            HologramAeBlueprint.Analysis checked = HologramAeBlueprint.analyze(block, 0, raw);
+            check(
+                !checked.blocking && checked.payload()
+                    .getBoolean("GTSWN_NetworkSafetyEnabled"),
+                "native " + definition + " writer fields and exact all-TileEntity GTSWN boolean survive review");
+            check(
+                !HologramAeBlueprint.analyze(block, 0, checked.payload()).blocking && raw.equals(original),
+                "native writer projection is repeatable and leaves its exact source unchanged " + definition);
+            if (definition.equals("molecularAssembler")) {
+                check(
+                    checked.materials.stream()
+                        .filter(s -> s.getItem() == Items.diamond)
+                        .mapToInt(s -> s.stackSize)
+                        .sum() == 3,
+                    "inherited itemN assembler stock is charged once, not discarded or duplicated");
+                HologramAeBlueprint.Analysis cleared = HologramAeBlueprint
+                    .updateSlot(block, 0, checked.payload(), "inv/#0", null);
+                check(
+                    cleared.materials.stream()
+                        .noneMatch(s -> s.getItem() == Items.diamond),
+                    "clearing the canonical slot also clears its native restoring alias");
+                HologramPresets.Preset authored = new HologramPresets.Preset();
+                HologramPresets.Cell cell = new HologramPresets.Cell();
+                cell.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
+                cell.tileNbt = HologramBlueprintNbt.encodeCaptured(checked.payload());
+                authored.cells.add(cell);
+                HologramBlueprintProcessing
+                    .removeNbtPath(authored, java.util.Collections.singletonList(0), "tile:/inv/#0");
+                check(
+                    HologramAeBlueprint.analyze(block, 0, HologramBlueprintNbt.decode(cell.tileNbt)).materials.stream()
+                        .noneMatch(s -> s.getItem() == Items.diamond),
+                    "processing path deletion also removes the exact native inventory alias");
+                NBTTagCompound conflict = checked.payload();
+                conflict.getCompoundTag("inv")
+                    .setTag("item0", new ItemStack(Items.emerald).writeToNBT(new NBTTagCompound()));
+                check(
+                    HologramAeBlueprint.analyze(block, 0, conflict).blocking,
+                    "disagreeing native physical aliases remain blocked");
+            }
+            if (definition.equals("inscriber")) {
+                NBTTagCompound marker = checked.payload()
+                    .getCompoundTag("inscriberInv")
+                    .getCompoundTag("#2");
+                check(
+                    marker.hasKey("Count", 1) && marker.getByte("Count") == 0 && checked.materials.isEmpty(),
+                    "native integrated-circuit zero marker remains an exact zero-cost configuration, never promoted to one item");
+                NBTTagCompound forged = checked.payload();
+                forged.getCompoundTag("inscriberInv")
+                    .getCompoundTag("#2")
+                    .setTag("tag", new NBTTagCompound());
+                forged.getCompoundTag("inscriberInv")
+                    .getCompoundTag("#2")
+                    .getCompoundTag("tag")
+                    .setTag("Inventory", new NBTTagList());
+                check(
+                    HologramAeBlueprint.analyze(block, 0, forged).blocking,
+                    "zero-quantity exemption cannot hide arbitrary nested item data");
+            }
+            if (definition.equals("iOPort")) check(
+                checked.materials.size() == 1,
+                "IOPort inherited and native cell encodings pay one physical cell");
+            if (definition.equals("condenser")) {
+                NBTTagCompound nonempty = (NBTTagCompound) original.copy();
+                nonempty.setDouble("storedPower", 1D);
+                check(
+                    HologramAeBlueprint.analyze(block, 0, nonempty).blocking,
+                    "a real nonempty buffer without an exact payment codec still requires explicit removal");
+                nonempty.setTag("storedPower", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
+                check(
+                    HologramAeBlueprint.analyze(block, 0, nonempty).blocking,
+                    "a legal buffer field cannot hide an unreviewed physical asset");
+            }
+            NBTTagCompound malformed = (NBTTagCompound) original.copy();
+            malformed.setInteger("GTSWN_NetworkSafetyEnabled", 1);
+            check(
+                HologramAeBlueprint.analyze(block, 0, malformed).blocking,
+                "GTSWN configuration requires its native byte type, not a prefixed-field exemption");
+        }
+    }
+
+    private static void seedNativeInventory(TileEntity tile, int slot, ItemStack item) {
+        NBTTagCompound slots = new NBTTagCompound();
+        slots.setTag("#" + slot, item.writeToNBT(new NBTTagCompound()));
+        // The native inventory reader writes its detached backing slots without firing world/network callbacks.
+        ((appeng.tile.inventory.AppEngInternalInventory) ((AEBaseInvTile) tile).getInternalInventory())
+            .readFromNBT(slots);
+    }
+
+    private static void idleCpuWriterCompatibility() throws Exception {
+        Block block = AEApi.instance()
+            .definitions()
+            .blocks()
+            .craftingStorage1k()
+            .maybeBlock()
+            .get();
+        appeng.me.cluster.implementations.CraftingCPUCluster nativeCpu = new appeng.me.cluster.implementations.CraftingCPUCluster(
+            new appeng.api.util.WorldCoord(0, 0, 0),
+            new appeng.api.util.WorldCoord(0, 0, 0));
+        NBTTagCompound raw = new NBTTagCompound();
+        block.createTileEntity(null, 0)
+            .writeToNBT(raw);
+        nativeCpu.writeToNBT(raw);
+        raw.setBoolean("core", true);
+        raw.setInteger("craftingAllowMode", 2);
+        raw.setBoolean("suspended", true);
+        raw.setBoolean("GTSWN_NetworkSafetyEnabled", true);
+        HologramAeBlueprint.Analysis checked = HologramAeBlueprint.analyze(block, 0, raw);
+        check(
+            !checked.blocking && checked.payload()
+                .getBoolean("core")
+                && checked.payload()
+                    .getBoolean("suspended")
+                && checked.payload()
+                    .getInteger("craftingAllowMode") == 2,
+            "actual idle CPU writer is accepted with paused state and user crafting policy intact");
+        appeng.me.cluster.implementations.CraftingCPUCluster restored = new appeng.me.cluster.implementations.CraftingCPUCluster(
+            new appeng.api.util.WorldCoord(0, 0, 0),
+            new appeng.api.util.WorldCoord(0, 0, 0));
+        restored.readFromNBT(HologramBlueprintNbt.nativePayload(checked.payload()));
+        NBTTagCompound readback = new NBTTagCompound();
+        restored.writeToNBT(readback);
+        check(
+            restored.isSuspended() && readback.getInteger("craftingAllowMode") == 2,
+            "native CPU reader restores retained idle configuration without any live grid");
+        NBTTagCompound physical = (NBTTagCompound) raw.copy();
+        NBTTagList inventory = new NBTTagList();
+        NBTTagCompound diamonds = new NBTTagCompound();
+        appeng.util.item.AEItemStack.create(new ItemStack(Items.diamond, 7))
+            .writeToNBT(diamonds);
+        inventory.appendTag(diamonds);
+        physical.setTag("inventory", inventory);
+        check(
+            HologramAeBlueprint.analyze(block, 0, physical).blocking,
+            "real CPU buffered items are never exempted as idle runtime");
+        NBTTagCompound callback = (NBTTagCompound) raw.copy();
+        callback.getCompoundTag("craftCompleteListeners")
+            .setByteArray("1", new byte[] { 1, 2, 3 });
+        check(
+            HologramAeBlueprint.analyze(block, 0, callback).blocking,
+            "nonempty serialized callbacks remain blocked without deserialization");
+        NBTTagCompound output = (NBTTagCompound) raw.copy();
+        output.getCompoundTag("finalOutput")
+            .setTag("originalOutput", diamonds);
+        check(
+            HologramAeBlueprint.analyze(block, 0, output).blocking,
+            "nonempty crafting output descriptions cannot acquire idle authorization");
     }
 
     private static void unknownCell(Block drive) throws Exception {
@@ -732,6 +916,7 @@ public final class HologramAeBlueprintCoreRegression {
         NBTTagCompound raw = new NBTTagCompound();
         node.createTileEntity(null, 0)
             .writeToNBT(raw);
+        raw.setBoolean("GTSWN_NetworkSafetyEnabled", true);
         raw.removeTag("lastAppliedMigration");
         check(!HologramAeBlueprint.analyze(node, 0, raw).blocking, "legacy GTSWN cursor-absent node remains supported");
         for (long cursor : new long[] { 0L, 73L, Long.MAX_VALUE }) {
@@ -764,11 +949,29 @@ public final class HologramAeBlueprintCoreRegression {
         NBTTagList recovered = new NBTTagList();
         recovered.appendTag(new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
         recovery.setTag("recoveredPartDrops", recovered);
+        HologramAeBlueprint.Analysis refund = HologramAeBlueprint.analyze(node, 0, recovery);
+        check(
+            !refund.blocking && refund.materials.stream()
+                .anyMatch(s -> s.getItem() == Items.diamond && s.stackSize == 7)
+                && refund.payload()
+                    .getTagList("recoveredPartDrops", 10)
+                    .equals(recovered),
+            "native pending refunds retain their exact contents and require seven real payable items");
+        NBTTagCompound generation = (NBTTagCompound) raw.copy();
+        generation.setString("anchorGeneration", "cdf90139-63c0-4e89-905e-20833e0683a2");
+        HologramAeBlueprint.Analysis normalized = HologramAeBlueprint.analyze(node, 0, generation);
+        check(
+            !normalized.blocking && !normalized.payload()
+                .hasKey("anchorGeneration"),
+            "native generation UUID is omitted before selecting the target network generation");
+        generation.setString("anchorGeneration", "invalid-generation");
+        quantumFieldBlocked(node, generation, "anchorGeneration", "malformed generation cannot borrow the UUID schema");
+        generation.setTag("anchorGeneration", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
         quantumFieldBlocked(
             node,
-            recovery,
-            "recoveredPartDrops",
-            "pending native refunds remain real assets requiring review");
+            generation,
+            "anchorGeneration",
+            "physical assets cannot masquerade as a generation UUID");
         NBTTagCompound future = (NBTTagCompound) raw.copy();
         future.setLong("futureMigrationState", 0L);
         quantumFieldBlocked(node, future, "futureMigrationState", "new unknown persistence fields remain blocked");
@@ -1167,10 +1370,15 @@ public final class HologramAeBlueprintCoreRegression {
             "actual upgrade card DTO is whole native ItemStack/NBT equal to physical source");
         check(
             analysis.materials.size() == 2 && analysis.materials.stream()
-                .anyMatch(stack -> ItemStack.areItemStacksEqual(stack, pattern))
+                .anyMatch(
+                    stack -> AEApi.instance()
+                        .definitions()
+                        .materials()
+                        .blankPattern()
+                        .isSameAs(stack) && stack.stackSize == 1)
                 && analysis.materials.stream()
                     .anyMatch(stack -> ItemStack.areItemStacksEqual(stack, card)),
-            "native physical pattern/card material projection remains exact and paid once");
+            "encoded recipe stays intact while one blank pattern and the exact physical card are paid once");
         check(
             analysis.payload()
                 .equals(canonicalBefore) && raw.equals(sourceBefore)
@@ -1291,6 +1499,7 @@ public final class HologramAeBlueprintCoreRegression {
             Block.getBlockFromItem(main.getItem()) == net.minecraft.init.Blocks.air,
             "genuine CBC primary interface material is not a block item");
         NBTTagCompound raw = HologramNativeCompatibilityFixture.seed(block, 10, 64, 20);
+        raw.setBoolean("GTSWN_NetworkSafetyEnabled", true);
         NBTTagCompound def = new NBTTagCompound(), extra = new NBTTagCompound();
         main.writeToNBT(def);
         ((IPartItem) main.getItem()).createPartFromItemStack(main.copy())
@@ -1298,7 +1507,10 @@ public final class HologramAeBlueprintCoreRegression {
         raw.setTag("def:2", def);
         raw.setTag("extra:2", extra);
         HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, 0, raw);
-        check(!analysis.blocking, "genuine CBC target source uses reviewed native part schema");
+        check(
+            !analysis.blocking && analysis.payload()
+                .getBoolean("GTSWN_NetworkSafetyEnabled"),
+            "genuine CBC target source retains the precise all-TileEntity GTSWN configuration");
         NBTTagCompound canonical = analysis.payload(), before = (NBTTagCompound) canonical.copy();
         String encoded = HologramBlueprintNbt.encodeCanonical(block, canonical);
         HologramBlueprintResources.Plan costs = HologramAeBlueprint.resourcePlan(block, 0, canonical, null);

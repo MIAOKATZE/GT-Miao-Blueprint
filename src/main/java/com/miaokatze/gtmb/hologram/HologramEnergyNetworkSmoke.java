@@ -62,7 +62,6 @@ public final class HologramEnergyNetworkSmoke {
     private int checks;
     private volatile String result = "PENDING";
     private static volatile HologramEnergyNetworkSmoke installed;
-    private static boolean fixtureChunkCallbackRegistered;
     private final NBTTagCompound receipt = new NBTTagCompound();
     private ForgeChunkManager.Ticket chunkTicket;
     private int retainedTicks;
@@ -85,17 +84,7 @@ public final class HologramEnergyNetworkSmoke {
 
     /** Shared bootstrap for opt-in isolated energy/network fixtures; does not create an energy probe listener. */
     public static synchronized void ensureFixtureChunkCallback() {
-        if (fixtureChunkCallbackRegistered) return;
-        if (GTMiaoBlueprint.instance == null)
-            throw new IllegalStateException("Native fixture tickets require the loaded GTMB mod instance");
-        ForgeChunkManager.setForcedChunkLoadingCallback(GTMiaoBlueprint.instance, (tickets, loadedWorld) -> {
-            for (ForgeChunkManager.Ticket old : tickets) {
-                NBTTagCompound marker = old.getModData();
-                if (marker.getBoolean("gtmbEnergyProbe") || marker.getBoolean("gtmbNetworkProbe")
-                    || marker.getBoolean("gtmbPreviewSourceProbe")) ForgeChunkManager.releaseTicket(old);
-            }
-        });
-        fixtureChunkCallbackRegistered = true;
+        com.miaokatze.gtmb.util.ProbeChunkTickets.ensureRegistered();
     }
 
     public static boolean enabled() {

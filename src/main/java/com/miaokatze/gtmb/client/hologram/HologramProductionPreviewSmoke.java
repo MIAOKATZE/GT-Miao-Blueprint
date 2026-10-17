@@ -182,11 +182,11 @@ public final class HologramProductionPreviewSmoke {
                 && HologramClient.state != null
                 && editedSession.equals(HologramClient.state.session)) {
                 // These are local view controls on the genuine network-opened screen, not server state.
-                field(HologramScreen.class, "libraryDrawer").setBoolean(mc.currentScreen, false);
-                field(HologramScreen.class, "view").setInt(mc.currentScreen, 0);
+                HologramUiDiagnostics.writeDiagnosticField(mc.currentScreen, "libraryDrawer", false);
+                HologramUiDiagnostics.writeDiagnosticField(mc.currentScreen, "view", 0);
                 if (adjacentProfile) {
-                    field(HologramScreen.class, "yaw").setDouble(mc.currentScreen, Math.PI / 4);
-                    field(HologramScreen.class, "pitch").setDouble(mc.currentScreen, Math.PI / 6);
+                    HologramUiDiagnostics.writeDiagnosticField(mc.currentScreen, "yaw", Math.PI / 4);
+                    HologramUiDiagnostics.writeDiagnosticField(mc.currentScreen, "pitch", Math.PI / 6);
                 }
                 renderStage = 1;
                 frames = 0;
@@ -382,7 +382,7 @@ public final class HologramProductionPreviewSmoke {
             boolean current = renderStage == 2;
             int renderedView = field(HologramRenderer.class, "visibleView").getInt(null);
             int renderedMode = field(HologramRenderer.class, "visibleMode").getInt(null);
-            if (field(HologramScreen.class, "state").get(screen) != state
+            if (HologramUiDiagnostics.readDiagnosticField(screen, "state") != state
                 || field(HologramRenderer.class, "previewState").get(null) != state
                 || !state.session.equals(ui.getString("session"))
                 || state.data.getLong("planRevision") != ui.getLong("planRevision")
@@ -396,7 +396,7 @@ public final class HologramProductionPreviewSmoke {
                 state.cells.size() == expectedCells() && state.data.getBoolean("supported")
                     && !state.data.getBoolean("capturePending"),
                 "complete original and adjacent network snapshot");
-            write("received-service-state.nbt", state.data);
+            write("received-service-state.nbt", state.fullData());
             String name = current ? "production-native-current.png" : "production-native-target.png";
             screenshot(name);
             // Consume this displayed frame's faces, camera and native models before the
@@ -428,7 +428,7 @@ public final class HologramProductionPreviewSmoke {
             System.out.println(
                 PREFIX + "native models PASS current=" + current + " cells=" + expectedCells() + " screenshot=" + name);
             if (!current) {
-                field(HologramScreen.class, "view").setInt(mc.currentScreen, 1);
+                HologramUiDiagnostics.writeDiagnosticField(mc.currentScreen, "view", 1);
                 renderStage = 2;
                 frames = 0;
             } else {
@@ -679,7 +679,9 @@ public final class HologramProductionPreviewSmoke {
     }
 
     private Object session() throws ReflectiveOperationException {
-        Map<?, ?> sessions = (Map<?, ?>) field(HologramService.class, "SESSIONS").get(null);
+        Map<?, ?> sessions = (Map<?, ?>) field(
+            Class.forName("com.miaokatze.gtmb.hologram.HologramWorkspace"),
+            "SESSIONS").get(null);
         return sessions.get(actor.getUniqueID());
     }
 
@@ -695,7 +697,7 @@ public final class HologramProductionPreviewSmoke {
 
     private static Object read(Object target, String name) throws ReflectiveOperationException {
         require(target != null, "missing probe state for " + name);
-        return field(target.getClass(), name).get(target);
+        return HologramUiDiagnostics.readDiagnosticField(target, name);
     }
 
     private static Field field(Class<?> owner, String name) throws NoSuchFieldException {
@@ -720,7 +722,7 @@ public final class HologramProductionPreviewSmoke {
         if (Boolean.getBoolean("gtmb.hologram.networkInteractionSmoke"))
             write("source-chunk-keeper.nbt", HologramDecorSourceSmoke.sourceChunkEvidence());
         problem.printStackTrace();
-        if (HologramClient.state != null) write("failure-service-state.nbt", HologramClient.state.data);
+        if (HologramClient.state != null) write("failure-service-state.nbt", HologramClient.state.fullData());
         java.io.StringWriter trace = new java.io.StringWriter();
         problem.printStackTrace(new java.io.PrintWriter(trace));
         Files.write(

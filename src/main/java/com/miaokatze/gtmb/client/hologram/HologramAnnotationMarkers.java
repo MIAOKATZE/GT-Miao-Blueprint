@@ -92,20 +92,79 @@ final class HologramAnnotationMarkers {
                 .isEmpty()) result.add(new Marker("area:" + i, "提示区 " + (i + 1), area.getString("prompt"), bounds));
         }
         result.addAll(0, HologramAeWarningMarkers.collect(state));
+        addResourceBlockerMarker(state, result);
         return result;
+    }
+
+    private static void addResourceBlockerMarker(HologramState state, List<Marker> markers) {
+        NBTTagCompound report = state.data.hasKey("resourceBlockers", 9) ? state.data
+            : state.data.getCompoundTag("processing");
+        NBTTagList blockers = report.getTagList("resourceBlockers", 10);
+        if (blockers.tagCount() == 0) return;
+        boolean budgetExceeded = report.getBoolean("resourceReviewTruncated");
+        List<String> lines = new ArrayList<>();
+        if (budgetExceeded)
+            lines.add("报告超过 8192 项预算（共 " + report.getLong("resourceReviewTotal") + " 项），尚未完整列出。请在蓝图处理第五步明确移除相关全局根条目。");
+        for (int i = 0; i < Math.min(4, blockers.tagCount()); i++) {
+            NBTTagCompound row = blockers.getCompoundTagAt(i);
+            lines.add(
+                "原图格 " + row.getInteger("x")
+                    + ","
+                    + row.getInteger("y")
+                    + ","
+                    + row.getInteger("z")
+                    + " · "
+                    + row.getString("path")
+                    + "："
+                    + row.getString("message"));
+        }
+        if (blockers.tagCount() > 4) lines.add("另有 " + (blockers.tagCount() - 4) + " 项；完整坐标与路径见蓝图处理第五步。");
+        lines.add("资源尚不能安全核算；在蓝图流程内选择精确路径处理后再保存。");
+        // Raw preset coordinates are not projected onto transformed preview cells.
+        markers.add(
+            0,
+            new Marker(
+                "resource:report",
+                "资源阻塞 · " + blockers.tagCount() + " 项" + (budgetExceeded ? "（未完整）" : ""),
+                String.join("\n", lines),
+                null,
+                true));
+    }
+
+    /** Keep the complete icon/hit target inside the preview even after repeated collision shifts. */
+    static boolean place(Marker marker, List<Marker> shown, int bottom) {
+        if (marker.y - 7 < HologramScreenLayout.VIEWPORT_Y) return false;
+        while (marker.y + 7 <= bottom) {
+            boolean collision = false;
+            for (Marker previous : shown) {
+                if (Math.abs(marker.x - previous.x) < 14 && Math.abs(marker.y - previous.y) < 14) {
+                    marker.y = previous.y + 15;
+                    collision = true;
+                    break;
+                }
+            }
+            if (!collision) return true;
+        }
+        return false;
     }
 
     static final class Marker {
 
         final String key, title, prompt;
+        final boolean blocker;
         final int[] bounds;
         int x, y;
 
         Marker(String key, String title, String prompt, int[] bounds) {
+            this(key, title, prompt, bounds, false);
+        }
+
+        Marker(String key, String title, String prompt, int[] bounds, boolean blocker) {
             this.key = key;
             this.title = title;
             this.prompt = prompt;
             this.bounds = bounds;
+            this.blocker = blocker;
         }
 
         boolean contains(int mx, int my) {

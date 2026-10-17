@@ -8,7 +8,6 @@ import java.util.HashSet;
 import java.util.Set;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
@@ -18,6 +17,8 @@ import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.util.Vec3;
 
 import org.lwjgl.input.Keyboard;
+
+import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
 import codechicken.nei.LayoutManager;
 import cpw.mods.fml.common.gameevent.TickEvent;
@@ -57,6 +58,15 @@ final class HologramAeInteractionClientSmoke {
     private long nativePreviewTabRender = -1;
     private long returnParentRender = -1;
     private int selectionDiagnosticStage = -1;
+    private String areaSourceSwitchNonce = "";
+    private HologramProcessingClientSmoke initialProcessing, clearedProcessing, finalProcessing;
+    private HologramPlacementReviewClientSmoke placementReviewInput;
+    private NBTTagCompound placementOpeningState;
+    private HologramAreaSelectionClientSmoke areaSelectionInput;
+    private HologramScreen saveControlScreen;
+    private String saveControlSession = "";
+    private long saveControlRevision = -1, saveControlSequence = -1, saveControlFrame = -1;
+    private final NBTTagList wheelObservations = new NBTTagList();
 
     HologramAeInteractionClientSmoke(File receipts) {
         this.receipts = receipts;
@@ -85,7 +95,7 @@ final class HologramAeInteractionClientSmoke {
                 + (mc.currentScreen == null ? "world"
                     : mc.currentScreen.getClass()
                         .getName())
-                + (stage == 39 && mc.currentScreen instanceof HologramAeContainerScreen
+                + (stage == 39 && HologramAeContainerScreen.from(mc.currentScreen) != null
                     ? " navigation=" + childNavigationDiagnostic()
                     : ""));
         // A transient publication is retried before the stage performs any non-idempotent mouse/key input.
@@ -98,10 +108,10 @@ final class HologramAeInteractionClientSmoke {
             case 0:
                 require(mc.currentScreen instanceof HologramScreen, "busy test must continue the real previous draft");
                 parent = (HologramScreen) mc.currentScreen;
-                if (libraryDrawerVisible(parent) || rootClick(130)) next(59);
+                if (libraryDrawerVisible(parent) || rootClick(149)) next(59);
                 break;
             case 59:
-                oldSavePoint = parent.smokeControlPoint(132);
+                oldSavePoint = parent.smokeControlPoint(140);
                 oldPlacePoint = parent.smokeControlPoint(141);
                 mc.displayGuiScreen(null);
                 signal("ae-start.txt");
@@ -111,9 +121,8 @@ final class HologramAeInteractionClientSmoke {
                 fixture = receipt();
                 if (!fixture.getBoolean("aeReady") || Math.abs(mc.thePlayer.posX - 650.5) > 1
                     || !fixtureInventoryArrived(mc, fixture)) return false;
-                mc.thePlayer.setSneaking(true);
-                key(Keyboard.KEY_LSHIFT, true);
-                rightClickSource(mc);
+                if (areaSelectionInput == null) beginAreaSelection(mc, "ae-busy");
+                if (!areaSelectionInput.tick(mc)) return false;
                 next(2);
                 break;
             case 2:
@@ -143,12 +152,14 @@ final class HologramAeInteractionClientSmoke {
                 int[] wantedCorners = busyPass ? new int[] { 618, 56, 157, 684, 120, 223 }
                     : new int[] { 648, 88, 192, lastSourceX, 88, 192 };
                 if (!java.util.Arrays.equals(bothPoints, wantedCorners)) return false;
-                if (busyPass) oldBusyDraft = (NBTTagList) HologramClient.state.data.getTagList("cells", 10)
+                if (busyPass) oldBusyDraft = (NBTTagList) HologramClient.state.fullData()
+                    .getTagList("cells", 10)
                     .copy();
                 key(Keyboard.KEY_LSHIFT, true);
                 // The finishing gesture targets a different block and must preserve both selected corners.
                 corner(mc, 1, 648, 88, 191);
                 key(Keyboard.KEY_LSHIFT, false);
+                areaSourceSwitchNonce = "";
                 next(5);
                 break;
             case 5:
@@ -156,6 +167,32 @@ final class HologramAeInteractionClientSmoke {
                 key(Keyboard.KEY_RETURN, false);
                 parent = (HologramScreen) mc.currentScreen;
                 NBTTagCompound imported = parent.smokeSnapshot();
+                if (imported.getBoolean("discardConfirmationRequired")) {
+                    NBTTagCompound proposal = imported.getCompoundTag("discardTargetAction");
+                    String nonce = proposal.getString("sourceSwitchNonce");
+                    require(
+                        "importArea".equals(proposal.getString("op")) && proposal.getString("session")
+                            .equals(imported.getString("session"))
+                            && proposal.getLong("planRevision") == imported.getLong("planRevision")
+                            && !nonce.isEmpty(),
+                        "actual AE area import retains the server source proposal");
+                    require(
+                        parent.smokeLibraryUiState()
+                            .getBoolean("discardReview"),
+                        "actual AE source proposal opens its discard modal");
+                    if (!areaSourceSwitchNonce.isEmpty()) {
+                        require(
+                            areaSourceSwitchNonce.equals(nonce),
+                            "AE source proposal changed after the actual confirmation");
+                        return false;
+                    }
+                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(
+                        new File(receipts, "ae-source-switch-review-" + busyPass + ".nbt"))) {
+                        CompressedStreamTools.writeCompressed(imported, out);
+                    }
+                    if (rootClick(224)) areaSourceSwitchNonce = nonce;
+                    return false;
+                }
                 if (busyPass) {
                     if (!imported.getBoolean("areaImporting")) return false;
                     if (mc.thePlayer.getHeldItem()
@@ -176,11 +213,11 @@ final class HologramAeInteractionClientSmoke {
                     if (HologramLibraryClient.dedicated()) beforeLocalFiles = localFiles();
                     busyBlockedTraffic = guard.customPackets();
                     signal("ae-busy-visible.txt");
-                    parent.smokeClickAt(oldSavePoint[0], oldSavePoint[1], 0);
-                    parent.smokeClickAt(oldPlacePoint[0], oldPlacePoint[1], 0);
+                    HologramMuiProbeInput.click(parent, oldSavePoint[0], oldSavePoint[1], 0);
+                    HologramMuiProbeInput.click(parent, oldPlacePoint[0], oldPlacePoint[1], 0);
                     int[] blockedEdit = previewScreenPoint(60, 110);
-                    parent.smokeClickAt(blockedEdit[0], blockedEdit[1], 0);
-                    parent.keyTyped((char) 127, Keyboard.KEY_DELETE);
+                    HologramMuiProbeInput.click(parent, blockedEdit[0], blockedEdit[1], 0);
+                    HologramMuiProbeInput.key(parent, (char) 127, Keyboard.KEY_DELETE);
                     screenshot("ae-real-import-busy-old-actions-hidden");
                     next(60);
                     break;
@@ -239,7 +276,7 @@ final class HologramAeInteractionClientSmoke {
                     parent.smokeSnapshot()
                         .getBoolean("areaImporting"),
                     "natural import window ended before user cancellation");
-                parent.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                HologramMuiProbeInput.key(parent, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                 busyCancelledWorldTick = receipt().getLong("tick");
                 next(61);
                 break;
@@ -249,7 +286,9 @@ final class HologramAeInteractionClientSmoke {
                     "E during actual import failed to return to the world or reopened GUI");
                 if (HologramClient.state == null || HologramClient.state.data.getBoolean("areaImporting")) return false;
                 require(
-                    oldBusyDraft.equals(HologramClient.state.data.getTagList("cells", 10)),
+                    oldBusyDraft.equals(
+                        HologramClient.state.fullData()
+                            .getTagList("cells", 10)),
                     "cancelled natural import changed the previous complete draft");
                 if (receipt().getLong("tick") - busyCancelledWorldTick < 80) return false;
                 require(
@@ -276,9 +315,11 @@ final class HologramAeInteractionClientSmoke {
                 System.out.println(
                     "[GTMB-HOLOGRAM-AE-INTERACTION-CLIENT] PASS natural-busy E-cancel old-draft/disk/source/inventory intact no-reopen80ticks");
                 key(Keyboard.KEY_RETURN, false);
-                key(Keyboard.KEY_LSHIFT, true);
-                mc.thePlayer.setSneaking(true);
-                rightClickSource(mc);
+                beginAreaSelection(mc, "ae-import");
+                next(64);
+                break;
+            case 64:
+                if (!areaSelectionInput.tick(mc)) return false;
                 next(2);
                 break;
             case 58:
@@ -305,14 +346,16 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(10)) next(6);
                 break;
             case 6:
-                if (rootClick(130)) next(7);
+                if (rootClick(149)) next(7);
                 break;
             case 7:
+                if (initialProcessing == null) initialProcessing = processingDriver("ae-initial");
+                if (!initialProcessing.tick(parent)) return false;
                 enterDraftName();
                 next(8);
                 break;
             case 8:
-                if (rootClick(132)) next(9);
+                if (rootClick(140)) next(9);
                 break;
             case 9:
                 if (!parent.smokeAeUiState()
@@ -378,7 +421,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(192)) next(14);
                 break;
             case 14:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 HologramAeContainerScreen blockedChild = child();
                 require(
                     blockedChild.smokeModel().x == issue.getInteger("x")
@@ -406,7 +449,9 @@ final class HologramAeInteractionClientSmoke {
                 break;
             case 17:
                 if (mc.currentScreen != parent || parent.smokePending()) return false;
-                if (rootClick(132)) next(18);
+                if (clearedProcessing == null) clearedProcessing = processingDriver("ae-after-hidden-clear");
+                if (!clearedProcessing.tick(parent)) return false;
+                if (rootClick(140)) next(18);
                 break;
             case 18:
                 if (!parent.smokeAeUiState()
@@ -440,7 +485,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(179)) next(23);
                 break;
             case 23:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(
                     new File(receipts, "ae-preview-stage23-state.nbt"))) {
                     CompressedStreamTools.writeCompressed(parent.smokeSnapshot(), out);
@@ -536,18 +581,19 @@ final class HologramAeInteractionClientSmoke {
                 unfocusSearchByMouse();
                 int[] clonePoint = child().smokeSlotPoint(slotId);
                 require(clonePoint != null, "card marker disappeared before native clone input check");
-                child().smokeMouseButton(clonePoint[0], clonePoint[1], 2, true);
-                child().smokeMouseButton(clonePoint[0], clonePoint[1], 2, false);
-                child().keyTyped('1', Keyboard.KEY_1);
-                child().keyTyped('q', Keyboard.KEY_Q);
-                child().keyTyped(' ', Keyboard.KEY_SPACE);
+                HologramMuiProbeInput.click(child(), clonePoint[0], clonePoint[1], 2);
+                HologramMuiProbeInput.key(child(), '1', Keyboard.KEY_1);
+                HologramMuiProbeInput.key(child(), 'q', Keyboard.KEY_Q);
+                HologramMuiProbeInput.key(child(), ' ', Keyboard.KEY_SPACE);
                 originalScale = mc.gameSettings.guiScale;
                 mc.gameSettings.guiScale = originalScale == 1 ? 2 : 1;
                 net.minecraft.client.gui.ScaledResolution scaled = new net.minecraft.client.gui.ScaledResolution(
                     mc,
                     mc.displayWidth,
                     mc.displayHeight);
-                child().setWorldAndResolution(mc, scaled.getScaledWidth(), scaled.getScaledHeight());
+                child().getScreenWrapper()
+                    .getGuiScreen()
+                    .setWorldAndResolution(mc, scaled.getScaledWidth(), scaled.getScaledHeight());
                 next(36);
                 break;
             case 36:
@@ -557,9 +603,11 @@ final class HologramAeInteractionClientSmoke {
                     mc,
                     mc.displayWidth,
                     mc.displayHeight);
-                child().setWorldAndResolution(mc, restored.getScaledWidth(), restored.getScaledHeight());
+                child().getScreenWrapper()
+                    .getGuiScreen()
+                    .setWorldAndResolution(mc, restored.getScaledWidth(), restored.getScaledHeight());
                 unfocusSearchByMouse();
-                child().keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                HologramMuiProbeInput.key(child(), 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                 returnParentRender = parent.smokeRenderGeneration();
                 next(37);
                 break;
@@ -579,7 +627,7 @@ final class HologramAeInteractionClientSmoke {
                 }
                 break;
             case 39:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 require(child().smokeModel().x == 648, "Drive native preview binding mismatch");
                 if (!drivePreviewRecorded) {
                     System.out.println(
@@ -600,7 +648,7 @@ final class HologramAeInteractionClientSmoke {
                     mark(child(), slotId).getTagCompound()
                         .getLong("ic") == 0L,
                     "full storage contents leaked into the mark");
-                child().keyTyped((char) 0, Keyboard.KEY_ESCAPE);
+                HologramMuiProbeInput.key(child(), (char) 0, Keyboard.KEY_ESCAPE);
                 sourceIndex = 2;
                 next(41);
                 break;
@@ -613,7 +661,7 @@ final class HologramAeInteractionClientSmoke {
                 if (rootClick(179)) next(43);
                 break;
             case 43:
-                if (!(mc.currentScreen instanceof HologramAeContainerScreen)) return false;
+                if (!(HologramAeContainerScreen.from(mc.currentScreen) != null)) return false;
                 require(
                     child().smokeModel().x == fixture.getIntArray("aeSourceX")[sourceIndex],
                     "part host preview coordinate mismatch");
@@ -641,8 +689,7 @@ final class HologramAeInteractionClientSmoke {
                 int[] point = markers.getCompoundTagAt(0)
                     .getIntArray("screenPoint");
                 require(point.length == 2, "AE warning marker has no drawn hit coordinate");
-                parent.mouseClicked(point[0], point[1], 0);
-                parent.mouseMovedOrUp(point[0], point[1], 0);
+                HologramMuiProbeInput.click(parent, point[0], point[1], 0);
                 next(46);
                 break;
             case 46:
@@ -652,11 +699,13 @@ final class HologramAeInteractionClientSmoke {
                         .isEmpty(),
                     "actual warning icon failed to pin");
                 screenshot("ae-native-warning-marker-pinned");
-                if (rootClick(130)) next(47);
+                if (rootClick(149)) next(47);
                 break;
             case 47:
+                if (finalProcessing == null) finalProcessing = processingDriver("ae-after-edits");
+                if (!finalProcessing.tick(parent)) return false;
                 assertPreservedDraftName();
-                if (rootClick(132)) next(48);
+                if (rootClick(140)) next(48);
                 break;
             case 48:
                 if (!parent.smokeAeUiState()
@@ -685,6 +734,9 @@ final class HologramAeInteractionClientSmoke {
                 if (HologramLibraryClient.dedicated()) {
                     HologramLibraryClient library = HologramLibraryClient.INSTANCE;
                     if (library.busy()) return false;
+                    NBTTagCompound committed = parent.smokeSnapshot();
+                    if (!committed.getBoolean("blueprintSaved") || committed.getBoolean("blueprintDirty")
+                        || committed.getBoolean("blueprintSavePending")) return false;
                     confirmedLocalId = library.selected(false);
                     if (confirmedLocalId.isEmpty()) return false;
                     int rowIndex = localRow(library.rows(false), confirmedLocalId);
@@ -692,6 +744,9 @@ final class HologramAeInteractionClientSmoke {
                     require(
                         !beforeLocalFiles.equals(localFiles()) && localFiles().containsKey(confirmedLocalId + ".json"),
                         "confirmed AE save completed the actual private file before placement");
+                    require(
+                        new File(mc.mcDataDir, "MiaoBlueprints/" + confirmedLocalId + ".png").isFile(),
+                        "confirmed AE save completed the actual native preview before placement");
                     observeLocalSave();
                 }
                 signal("ae-check-confirm.txt");
@@ -765,6 +820,7 @@ final class HologramAeInteractionClientSmoke {
                 screenshot("ae-v007-first-right-cyan-world-lock");
                 worldLockNonce = lockedWorld.getLong("placementReviewNonce");
                 mc.objectMouseOver = null;
+                placementOpeningState = null;
                 airRightClick(mc, false);
                 next(63);
                 break;
@@ -773,9 +829,33 @@ final class HologramAeInteractionClientSmoke {
                 parent = (HologramScreen) mc.currentScreen;
                 NBTTagCompound lock = parent.smokeSnapshot();
                 if (!lock.getBoolean("virtualLocked") || parent.smokePending()) return false;
+                if (placementOpeningState == null) {
+                    placementOpeningState = (NBTTagCompound) lock.copy();
+                    require(
+                        lock.getLong("placementReviewNonce") > worldLockNonce && lock.getBoolean("open"),
+                        "AE second RIGHT did not issue a fresh real material review");
+                    require(libraryTab(parent) == placementLibraryTab, "AE opening review switched the last peer tab");
+                    require(
+                        java.util.Arrays.equals(
+                            expectedAnchor,
+                            new int[] { lock.getInteger("x"), lock.getInteger("y"), lock.getInteger("z") }),
+                        "AE opening review changed the actual locked coordinate");
+                    try (java.io.OutputStream output = Files
+                        .newOutputStream(new File(receipts, "ae-placement-right2-open-state.nbt").toPath())) {
+                        CompressedStreamTools.writeCompressed(placementOpeningState, output);
+                    }
+                }
+                if (!placementReviewReady()) return false;
+                lock = parent.smokeSnapshot();
                 require(
-                    lock.getLong("placementReviewNonce") > worldLockNonce && lock.getBoolean("open"),
-                    "AE second RIGHT did not issue a fresh real material review");
+                    placementOpeningState.getString("session")
+                        .equals(lock.getString("session")) && lock.getBoolean("virtualPlacement")
+                        && lock.getBoolean("virtualLocked")
+                        && lock.getBoolean("blueprintAwaitingConfirmation")
+                        && lock.getLong("planRevision") >= placementOpeningState.getLong("planRevision")
+                        && lock.getLong("placementReviewNonce")
+                            >= placementOpeningState.getLong("placementReviewNonce"),
+                    "AE placement identity acknowledgement lost the current locked material review");
                 require(libraryTab(parent) == placementLibraryTab, "AE placement review switched the last peer tab");
                 require(
                     java.util.Arrays.equals(
@@ -783,6 +863,9 @@ final class HologramAeInteractionClientSmoke {
                         new int[] { lock.getInteger("x"), lock.getInteger("y"), lock.getInteger("z") }),
                     "AE real C08 locked a different coordinate");
                 require(lock.getInteger("missing") == 0, "native AE planned components are not fully funded");
+                require(
+                    receipt().getInteger("aePlaceEvents") == 0,
+                    "AE identity review placed before material confirmation");
                 System.out
                     .println("[GTMB-HOLOGRAM-AE-INTERACTION-CLIENT] precheck " + parent.smokePlacementReviewContext());
                 screenshot("ae-real-paid-placement-material-precheck");
@@ -812,22 +895,23 @@ final class HologramAeInteractionClientSmoke {
     }
 
     private void enterDraftName() throws Exception {
-        java.lang.reflect.Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
-        nameField.setAccessible(true);
-        GuiTextField name = (GuiTextField) nameField.get(parent);
-        name.setFocused(true);
-        key(Keyboard.KEY_LCONTROL, true);
-        parent.keyTyped((char) 1, Keyboard.KEY_A);
-        key(Keyboard.KEY_LCONTROL, false);
-        for (char c : "SocketAEV005".toCharArray()) parent.keyTyped(c, 0);
+
+        HologramMuiTextField name = (HologramMuiTextField) ((Object) HologramUiDiagnostics
+            .readDiagnosticField(parent, "presetNameField"));
+        int[] point = previewScreenPoint(name.xPosition + 4, name.yPosition + 7);
+        HologramMuiProbeInput.click(parent, point[0], point[1], 0);
+        require(name.isFocused(), "actual mouse click did not focus the blueprint name");
+        HologramMuiProbeInput.key(parent, (char) 1, Keyboard.KEY_A);
+        for (char c : "SocketAEV005".toCharArray()) HologramMuiProbeInput.key(parent, c, 0);
         require("SocketAEV005".equals(name.getText()), "actual Ctrl+A name editing did not replace the previous name");
-        name.setFocused(false);
+        HologramMuiProbeInput.key(parent, '\r', Keyboard.KEY_RETURN);
+        require(!name.isFocused(), "actual Enter did not commit and release the blueprint name");
     }
 
     private void assertPreservedDraftName() throws Exception {
-        java.lang.reflect.Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
-        nameField.setAccessible(true);
-        String name = ((GuiTextField) nameField.get(parent)).getText();
+
+        String name = ((HologramMuiTextField) ((Object) HologramUiDiagnostics
+            .readDiagnosticField(parent, "presetNameField"))).getText();
         NBTTagCompound observed = parent.smokeLibraryUiState();
         observed.setString("draftName", name);
         observed.setString("expectedDraftName", "SocketAEV005");
@@ -841,11 +925,12 @@ final class HologramAeInteractionClientSmoke {
 
     private boolean selectSource(int index) throws Exception {
         if (parent.smokePending()) return false;
-        java.lang.reflect.Field editorState = HologramScreen.class.getDeclaredField("state");
+
         java.lang.reflect.Field previewState = HologramRenderer.class.getDeclaredField("previewState");
-        editorState.setAccessible(true);
+
         previewState.setAccessible(true);
-        if (editorState.get(parent) != previewState.get(null)) return false;
+        if (((Object) HologramUiDiagnostics.readDiagnosticField(parent, "state")) != previewState.get(null))
+            return false;
         HologramState state = new HologramState(parent.smokeSnapshot());
         int[] bounds = parent.smokeViewportBounds();
         NBTTagList skipped = new NBTTagList();
@@ -866,8 +951,7 @@ final class HologramAeInteractionClientSmoke {
                 route.setTag("skippedCandidates", skipped);
                 route.setInteger("sourceIndex", index);
                 route.setTag("beforeUi", parent.smokeLibraryUiState());
-                parent.mouseClicked(actual[0], actual[1], 0);
-                parent.mouseMovedOrUp(actual[0], actual[1], 0);
+                HologramMuiProbeInput.click(parent, actual[0], actual[1], 0);
                 route.setIntArray("actualSelectedIndices", parent.smokeSelectedIndices());
                 route.setTag("afterUi", parent.smokeLibraryUiState());
                 writeSelectionObservation(route);
@@ -918,9 +1002,9 @@ final class HologramAeInteractionClientSmoke {
             route = "surface";
         else {
             if (screenFlag("annotationInteractive")) {
-                java.lang.reflect.Field markers = HologramScreen.class.getDeclaredField("visibleMarkers");
-                markers.setAccessible(true);
-                for (Object entry : (java.util.List<?>) markers.get(parent))
+
+                for (Object entry : (java.util.List<?>) ((Object) HologramUiDiagnostics
+                    .readDiagnosticField(parent, "visibleMarkers")))
                     if (((HologramAnnotationMarkers.Marker) entry).contains(x, y)) route = "annotation";
             }
             if ("selection".equals(route)) {
@@ -937,15 +1021,14 @@ final class HologramAeInteractionClientSmoke {
                     }
                 }
             }
-            java.lang.reflect.Field handles = HologramScreen.class.getDeclaredField("moveHandles");
-            handles.setAccessible(true);
+
             if ("selection".equals(route) && !sameType
                 && !air
-                && handles.getBoolean(parent)
+                && ((Boolean) HologramUiDiagnostics.readDiagnosticField(parent, "moveHandles"))
                 && screenFlag("canMoveSelection")) {
-                java.lang.reflect.Field handle = HologramScreen.class.getDeclaredField("gizmo");
-                handle.setAccessible(true);
-                int axis = ((HologramGizmo) handle.get(parent)).pick(x, y);
+
+                int axis = ((HologramGizmo) ((Object) HologramUiDiagnostics.readDiagnosticField(parent, "gizmo")))
+                    .pick(x, y);
                 if (axis >= 0) {
                     route = "gizmo";
                     observed.setInteger("axis", axis);
@@ -960,9 +1043,8 @@ final class HologramAeInteractionClientSmoke {
     }
 
     private boolean screenFlag(String name) throws Exception {
-        java.lang.reflect.Method method = HologramScreen.class.getDeclaredMethod(name);
-        method.setAccessible(true);
-        return (Boolean) method.invoke(parent);
+
+        return (Boolean) HologramUiDiagnostics.invokeDiagnostic(parent, name, new Class<?>[] {});
     }
 
     private Object screenPointCall(String name, int... point) throws Exception {
@@ -972,9 +1054,8 @@ final class HologramAeInteractionClientSmoke {
             parameters[i] = int.class;
             arguments[i] = point[i];
         }
-        java.lang.reflect.Method method = HologramScreen.class.getDeclaredMethod(name, parameters);
-        method.setAccessible(true);
-        return method.invoke(parent, arguments);
+
+        return HologramUiDiagnostics.invokeDiagnostic(parent, name, parameters, arguments);
     }
 
     private java.util.Map<String, String> localFiles() throws Exception {
@@ -1004,6 +1085,12 @@ final class HologramAeInteractionClientSmoke {
         witness.setBoolean("realClientFileExists", true);
         witness.setString("sha256", localFiles().get(confirmedLocalId + ".json"));
         witness.setBoolean("downloadComplete", !HologramLibraryClient.INSTANCE.busy());
+        witness.setBoolean(
+            "realClientPreviewExists",
+            new File(Minecraft.getMinecraft().mcDataDir, "MiaoBlueprints/" + confirmedLocalId + ".png").isFile());
+        witness.setTag("currentState", parent.smokeSnapshot());
+        witness.setTag("currentUi", parent.smokeLibraryUiState());
+        witness.setTag("actualSaveWitness", HologramLibraryClient.actualSaveWitness());
         NBTTagList baseline = new NBTTagList();
         for (java.util.Map.Entry<String, String> entry : beforeLocalFiles.entrySet()) {
             NBTTagCompound file = new NBTTagCompound();
@@ -1076,15 +1163,15 @@ final class HologramAeInteractionClientSmoke {
     }
 
     private void verifyActualPreview(boolean current, java.awt.image.BufferedImage raster) throws Exception {
-        java.lang.reflect.Field stateField = HologramScreen.class.getDeclaredField("state");
-        stateField.setAccessible(true);
-        HologramState state = (HologramState) stateField.get(parent);
+
+        HologramState state = (HologramState) ((Object) HologramUiDiagnostics.readDiagnosticField(parent, "state"));
         java.lang.reflect.Field renderedState = HologramRenderer.class.getDeclaredField("previewState");
         renderedState.setAccessible(true);
         require(renderedState.get(null) == state, "AE preview verification must observe the actual rendered state");
-        java.lang.reflect.Field view = HologramScreen.class.getDeclaredField("view");
-        view.setAccessible(true);
-        require(view.getInt(parent) == (current ? 1 : 0), "AE actual view mouse control did not select current/target");
+
+        require(
+            ((Integer) HologramUiDiagnostics.readDiagnosticField(parent, "view")) == (current ? 1 : 0),
+            "AE actual view mouse control did not select current/target");
         int sourceCells = 0, atlasCells = 0, nativeCells = 0;
         int[] bounds = parent.smokeViewportBounds();
         for (HologramState.Cell cell : state.cells) {
@@ -1195,14 +1282,12 @@ final class HologramAeInteractionClientSmoke {
     }
 
     private int[] previewScreenPoint(int logicalX, int logicalY) throws Exception {
-        java.lang.reflect.Field x = HologramScreen.class.getDeclaredField("originX");
-        java.lang.reflect.Field y = HologramScreen.class.getDeclaredField("originY");
-        java.lang.reflect.Field scale = HologramScreen.class.getDeclaredField("scale");
-        x.setAccessible(true);
-        y.setAccessible(true);
-        scale.setAccessible(true);
-        return new int[] { x.getInt(parent) + Math.round(logicalX * scale.getFloat(parent)),
-            y.getInt(parent) + Math.round(logicalY * scale.getFloat(parent)) };
+
+        return new int[] {
+            ((Integer) HologramUiDiagnostics.readDiagnosticField(parent, "originX"))
+                + Math.round(logicalX * ((Float) HologramUiDiagnostics.readDiagnosticField(parent, "scale"))),
+            ((Integer) HologramUiDiagnostics.readDiagnosticField(parent, "originY"))
+                + Math.round(logicalY * ((Float) HologramUiDiagnostics.readDiagnosticField(parent, "scale"))) };
     }
 
     private boolean navigate(String logicalSlot) {
@@ -1266,13 +1351,10 @@ final class HologramAeInteractionClientSmoke {
         if (text.equals(search) && text.equals(LayoutManager.searchField.text())) return true;
         int x = LayoutManager.searchField.x + LayoutManager.searchField.w / 2;
         int y = LayoutManager.searchField.y + LayoutManager.searchField.h / 2;
-        child().smokeMouseButton(x, y, 0, true);
-        child().smokeMouseButton(x, y, 0, false);
+        HologramMuiProbeInput.click(child(), x, y, 0);
         require(LayoutManager.searchField.focused(), "actual NEI search click failed to focus");
-        key(Keyboard.KEY_LCONTROL, true);
-        child().keyTyped((char) 1, Keyboard.KEY_A);
-        key(Keyboard.KEY_LCONTROL, false);
-        for (char c : text.toCharArray()) child().keyTyped(c, 0);
+        HologramMuiProbeInput.key(child(), (char) 1, Keyboard.KEY_A);
+        for (char c : text.toCharArray()) HologramMuiProbeInput.key(child(), c, 0);
         require(
             text.equals(LayoutManager.searchField.text()),
             "actual NEI search typing did not populate the public search field");
@@ -1283,31 +1365,92 @@ final class HologramAeInteractionClientSmoke {
 
     private void unfocusSearchByMouse() {
         // Title-band click follows the production outside-slot route and releases the public NEI search focus.
-        int x = (child().width - 256) / 2 + 10, y = (child().height - 238) / 2 + 10;
-        child().smokeMouseButton(x, y, 0, true);
-        child().smokeMouseButton(x, y, 0, false);
+        int x = child().getMainPanel()
+            .getArea().x + 10,
+            y = child().getMainPanel()
+                .getArea().y + 10;
+        HologramMuiProbeInput.click(child(), x, y, 0);
         require(
             LayoutManager.searchField == null || !LayoutManager.searchField.focused(),
             "actual title-band click failed to release NEI search focus");
     }
 
     private static boolean libraryTab(HologramScreen screen) throws ReflectiveOperationException {
-        java.lang.reflect.Field tab = HologramScreen.class.getDeclaredField("blueprintTab");
-        tab.setAccessible(true);
-        return tab.getBoolean(screen);
+
+        return ((Boolean) HologramUiDiagnostics.readDiagnosticField(screen, "blueprintTab"));
     }
 
     private static boolean libraryDrawerVisible(HologramScreen screen) throws ReflectiveOperationException {
-        java.lang.reflect.Field drawer = HologramScreen.class.getDeclaredField("libraryDrawer");
-        drawer.setAccessible(true);
-        return drawer.getBoolean(screen);
+
+        return ((Boolean) HologramUiDiagnostics.readDiagnosticField(screen, "libraryDrawer"));
     }
 
-    private boolean rootClick(int id) {
+    private boolean rootClick(int id) throws Exception {
         if (parent.smokePending()) return false;
+        if (id == 55 && !placementReviewReady()) return false;
+        if (id == 140 && !saveControlReady()) return false;
+        NBTTagCompound saveSource = id == 140 ? parent.smokeSnapshot() : null;
+        NBTTagCompound saveUi = id == 140 ? parent.smokeLibraryUiState() : null;
         boolean clicked = input.rootControl(parent, id, frame);
-        if (clicked) lastActionFrame = frame;
+        if (clicked) {
+            lastActionFrame = frame;
+            if (id == 140) {
+                require(
+                    HologramLibraryClient.dedicated() ? HologramLibraryClient.INSTANCE.busy() : parent.smokePending(),
+                    "actual enabled AE save click did not dispatch a save request");
+                NBTTagCompound observed = new NBTTagCompound();
+                observed.setTag("sourceState", saveSource);
+                observed.setTag("beforeUi", saveUi);
+                observed.setTag("afterUi", parent.smokeLibraryUiState());
+                try (java.io.OutputStream output = Files
+                    .newOutputStream(new File(receipts, "ae-save-click-stage-" + stage + ".nbt").toPath())) {
+                    CompressedStreamTools.writeCompressed(observed, output);
+                }
+            }
+        }
         return clicked;
+    }
+
+    private boolean saveControlReady() {
+        NBTTagCompound state = parent.smokeSnapshot();
+        if (saveControlScreen != parent || !saveControlSession.equals(state.getString("session"))
+            || saveControlRevision != state.getLong("planRevision")
+            || saveControlSequence != state.getLong("uiSequence")) {
+            saveControlScreen = parent;
+            saveControlSession = state.getString("session");
+            saveControlRevision = state.getLong("planRevision");
+            saveControlSequence = state.getLong("uiSequence");
+            saveControlFrame = parent.smokeRenderGeneration();
+            return false;
+        }
+        if (parent.smokeRenderGeneration() <= saveControlFrame) return false;
+        NBTTagList controls = parent.smokeLibraryUiState()
+            .getTagList("drawnControls", 10);
+        for (int i = 0; i < controls.tagCount(); i++) {
+            NBTTagCompound control = controls.getCompoundTagAt(i);
+            if (control.getInteger("id") == 140) return control.getBoolean("enabled");
+        }
+        return false;
+    }
+
+    private boolean placementReviewReady() throws Exception {
+        if (placementReviewInput == null)
+            placementReviewInput = new HologramPlacementReviewClientSmoke(receipts, "ae", (screen, id) -> {
+                require(
+                    screen == parent && Minecraft.getMinecraft().currentScreen == parent,
+                    "placement identity input belongs to the actual current AE parent");
+                return rootClick(id);
+            }, this::receipt);
+        return placementReviewInput.tick(parent);
+    }
+
+    private HologramProcessingClientSmoke processingDriver(String label) {
+        return new HologramProcessingClientSmoke(receipts, label, (screen, id) -> {
+            require(
+                screen == parent && Minecraft.getMinecraft().currentScreen == parent,
+                "processing input belongs to the actual current AE parent");
+            return rootClick(id);
+        });
     }
 
     private boolean childClick(int id) {
@@ -1318,9 +1461,9 @@ final class HologramAeInteractionClientSmoke {
 
     private HologramAeContainerScreen child() {
         require(
-            Minecraft.getMinecraft().currentScreen instanceof HologramAeContainerScreen,
+            HologramAeContainerScreen.from(Minecraft.getMinecraft().currentScreen) != null,
             "actual AE child screen required");
-        return (HologramAeContainerScreen) Minecraft.getMinecraft().currentScreen;
+        return HologramAeContainerScreen.from(Minecraft.getMinecraft().currentScreen);
     }
 
     private ItemStack sample(String key) {
@@ -1393,6 +1536,17 @@ final class HologramAeInteractionClientSmoke {
         mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
     }
 
+    private void beginAreaSelection(Minecraft mc, String label) throws Exception {
+        mc.thePlayer.setSneaking(true);
+        areaSelectionInput = new HologramAreaSelectionClientSmoke(
+            receipts,
+            label,
+            HologramAeInteractionClientSmoke::key,
+            this::rightClickSource);
+        areaSelectionInput
+            .begin(mc, new MovingObjectPosition(648, 88, 192, 2, Vec3.createVectorHelper(648.5, 88.5, 192)));
+    }
+
     private void rightClickSource(Minecraft mc) {
         usePress.begin(mc, false);
         mc.playerController.onPlayerRightClick(
@@ -1426,18 +1580,62 @@ final class HologramAeInteractionClientSmoke {
         require(mouse.isCanceled(), "actual area mouse corner was not consumed");
     }
 
-    private static void wheel(int amount) throws Exception {
+    private void wheel(int amount) throws Exception {
         net.minecraftforge.client.event.MouseEvent wheel = new net.minecraftforge.client.event.MouseEvent();
         java.lang.reflect.Field delta = wheel.getClass()
             .getField("dwheel"),
             button = wheel.getClass()
-                .getField("button");
+                .getField("button"),
+            buttonState = wheel.getClass()
+                .getField("buttonstate");
         delta.setAccessible(true);
         button.setAccessible(true);
+        buttonState.setAccessible(true);
         delta.setInt(wheel, amount);
         button.setInt(wheel, -1);
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(wheel);
-        require(wheel.isCanceled(), "actual AE moving wheel was not consumed");
+        buttonState.setBoolean(wheel, false);
+        java.lang.reflect.Field keyboardBuffer = Keyboard.class.getDeclaredField("keyDownBuffer");
+        keyboardBuffer.setAccessible(true);
+        ByteBuffer keys = (ByteBuffer) keyboardBuffer.get(null);
+        byte previousAlt = keys.get(Keyboard.KEY_LMENU);
+        NBTTagCompound observed = new NBTTagCompound();
+        observed.setByte("leftAltBefore", previousAlt);
+        observed.setIntArray("anchorBefore", HologramClient.movingAnchor(HologramClient.state));
+        int before = previewDistance();
+        observed.setInteger("distanceBefore", before);
+        observed.setInteger("wheel", amount);
+        try {
+            key(Keyboard.KEY_LMENU, true);
+            observed.setBoolean("altHeld", Keyboard.isKeyDown(Keyboard.KEY_LMENU));
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(wheel);
+            require(wheel.isCanceled(), "actual AE moving wheel was not consumed");
+            int after = previewDistance();
+            long steps = Math.max(1L, Math.abs((long) amount) / 120L);
+            int expected = (int) Math.max(
+                HologramWorldFlow.MIN_DISTANCE,
+                Math.min(HologramWorldFlow.MAX_DISTANCE, before + (amount > 0 ? steps : -steps)));
+            require(after == expected && after != before, "actual AE Alt-wheel did not move the preview distance");
+            observed.setInteger("distanceAfter", after);
+            observed.setIntArray("anchorAfter", HologramClient.movingAnchor(HologramClient.state));
+            observed.setBoolean("eventCancelled", wheel.isCanceled());
+        } finally {
+            keys.put(Keyboard.KEY_LMENU, previousAlt);
+        }
+        observed.setByte("leftAltAfter", keys.get(Keyboard.KEY_LMENU));
+        wheelObservations.appendTag(observed);
+        NBTTagCompound evidence = new NBTTagCompound();
+        evidence.setTag("wheels", wheelObservations.copy());
+        evidence.setTag("state", HologramClient.state.fullData());
+        try (java.io.OutputStream output = Files
+            .newOutputStream(new File(receipts, "ae-world-alt-wheel.nbt").toPath())) {
+            CompressedStreamTools.writeCompressed(evidence, output);
+        }
+    }
+
+    private static int previewDistance() throws Exception {
+        java.lang.reflect.Field field = HologramClient.class.getDeclaredField("previewDistance");
+        field.setAccessible(true);
+        return ((HologramWorldFlow.PreviewDistance) field.get(null)).distance();
     }
 
     private static void key(int code, boolean down) throws Exception {

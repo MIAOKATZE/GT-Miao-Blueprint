@@ -39,6 +39,7 @@ public final class HologramBlueprintProcessingRegression {
         sharingKeepsAnonymousNetworkSlots();
         actualCellsAndRelativeProjection();
         globalAndCellSelections();
+        resourceDecisionsAreLocalAndPayable();
         legacyFloorAndDependencyInvalidation();
         auditedSensorCacheBoundary();
         sensorObservationPaymentBoundary();
@@ -47,6 +48,66 @@ public final class HologramBlueprintProcessingRegression {
         ordinaryMaterialVariantBoundary();
         automaticHintsFollowActualProcessing();
         atomicPolicyLibrary();
+    }
+
+    private static void resourceDecisionsAreLocalAndPayable() throws Exception {
+        HologramPresets.Preset raw = source(104);
+        NBTTagCompound payload = HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt);
+        net.minecraft.nbt.NBTTagList unknown = new net.minecraft.nbt.NBTTagList();
+        unknown.appendTag(new ItemStack(Items.diamond, 3).writeToNBT(new NBTTagCompound()));
+        payload.setTag("unknownInventory", unknown);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        raw.cells.get(1).tileNbt = raw.cells.get(0).tileNbt;
+        HologramBlueprintProcessing.Policy policy = completed("self");
+        NBTTagCompound state = HologramBlueprintProcessing.state(raw, policy, 0, 100, 64, 200);
+        net.minecraft.nbt.NBTTagList blockers = state.getTagList("resourceBlockers", 10);
+        SimpleAssert.eq(2, blockers.tagCount(), "unknown inventories are reported separately for identical cells");
+        SimpleAssert.that(
+            blockers.getCompoundTagAt(0)
+                .getString("path")
+                .equals("tile:/unknownInventory")
+                && !blockers.getCompoundTagAt(0)
+                    .getBoolean("canPreserve"),
+            "report exposes an exact removable path without free preservation");
+        HologramBlueprintProcessing.ResourceDecision removal = new HologramBlueprintProcessing.ResourceDecision();
+        removal.path = "tile:/unknownInventory/0";
+        removal.action = "remove";
+        policy.resourceDecisions.add(removal);
+        HologramPresets.Preset processed = HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200);
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintNbt.decode(processed.cells.get(0).tileNbt)
+                .getTagList("unknownInventory", 10)
+                .tagCount(),
+            "precise list entry removal is materialized");
+        SimpleAssert.eq(
+            1,
+            HologramBlueprintNbt.decode(processed.cells.get(1).tileNbt)
+                .getTagList("unknownInventory", 10)
+                .tagCount(),
+            "same type and NBT at another position are untouched");
+        SimpleAssert.eq(
+            1,
+            HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt)
+                .getTagList("unknownInventory", 10)
+                .tagCount(),
+            "author source is immutable");
+        removal.action = "preserve";
+        expectIo(() -> HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200));
+        policy.resourceDecisions.clear();
+        payload.removeTag("unknownInventory");
+        payload.setTag("Inventory", unknown.copy());
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        removal.path = "tile:/Inventory";
+        policy.resourceDecisions.add(removal);
+        processed = HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200);
+        HologramBlueprintResources.Plan bill = HologramBlueprintResources
+            .plan(HologramBlueprintNbt.decode(processed.cells.get(0).tileNbt));
+        SimpleAssert.eq(3, bill.items.get(0).stackSize, "explicit preservation still pays the exact real inventory");
+        NBTTagCompound duplicate = policy.write();
+        duplicate.getTagList("resourceDecisions", 10)
+            .appendTag(removal.write());
+        expectIo(() -> HologramBlueprintProcessing.Policy.read(duplicate));
     }
 
     private static void sharingKeepsAnonymousNetworkSlots() throws Exception {

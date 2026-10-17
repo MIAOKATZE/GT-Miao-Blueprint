@@ -237,12 +237,12 @@ public final class HologramV011InteractionFixture {
 
     @SuppressWarnings("unchecked")
     private static Map<UUID, Object> sessions() throws Exception {
-        return (Map<UUID, Object>) field(HologramService.class, "SESSIONS");
+        return (Map<UUID, Object>) field(HologramWorkspace.class, "SESSIONS");
     }
 
     @SuppressWarnings("unchecked")
     private static Map<UUID, HologramArea> areas() throws Exception {
-        return (Map<UUID, HologramArea>) field(HologramService.class, "AREAS");
+        return (Map<UUID, HologramArea>) field(HologramWorkspace.class, "AREAS");
     }
 
     private static Object field(Object owner, String name) throws Exception {

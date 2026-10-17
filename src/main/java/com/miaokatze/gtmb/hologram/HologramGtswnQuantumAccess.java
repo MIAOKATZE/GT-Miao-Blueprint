@@ -105,6 +105,11 @@ final class HologramGtswnQuantumAccess {
         return generationApi() != null;
     }
 
+    static boolean anchorGenerationAware() throws IOException {
+        GenerationApi api = generationApi();
+        return api != null && api.generation != null;
+    }
+
     static boolean namedNode(TileEntity tile) throws IOException {
         return namedNodeType(tile.getClass());
     }
@@ -155,24 +160,54 @@ final class HologramGtswnQuantumAccess {
 
         final int[] anchor;
         final long cursor;
+        final String generation;
 
         Migration(int[] anchor, long cursor) {
+            this(anchor, cursor, "");
+        }
+
+        Migration(int[] anchor, long cursor, String generation) {
             this.anchor = anchor;
             this.cursor = cursor;
+            this.generation = generation;
         }
     }
 
     static Migration follow(World world, int[] anchor, long cursor) throws IOException {
+        return follow(world, anchor, cursor, "");
+    }
+
+    static Migration follow(World world, int[] anchor, long cursor, String generation) throws IOException {
         GenerationApi api = generationApi();
         if (api == null) return new Migration(anchor.clone(), cursor);
         try {
             Object journal = invoke(api.journal, null, world);
             Object key = api.anchor.newInstance(anchor[0], anchor[1], anchor[2], anchor[3]);
-            Object resolution = invoke(api.resolve, journal, key, cursor);
+            Object resolution = api.generation == null ? invoke(api.resolve, journal, key, cursor)
+                : invoke(api.resolve, journal, key, cursor, generation);
             Object target = api.resolvedAnchor.get(resolution);
             int[] result = new int[4];
             for (int i = 0; i < result.length; i++) result[i] = (Integer) invoke(api.coordinates[i], target);
-            return new Migration(result, api.resolvedCursor.getLong(resolution));
+            return new Migration(
+                result,
+                api.resolvedCursor.getLong(resolution),
+                api.generation == null ? "" : (String) api.generation.get(resolution));
+        } catch (ReflectiveOperationException failure) {
+            throw new Failure(failure);
+        }
+    }
+
+    static void checkAnchorGeneration(World world, int x, int y, int z, String generation) throws IOException {
+        GenerationApi api = generationApi();
+        if (api == null || api.generation == null) return;
+        if (generation == null || generation.isEmpty()) throw new IOException("量子锚点缺少原生网络世代，请重新绑定终端或采集蓝图");
+        try {
+            Object registry = invoke(api.registry, null, world);
+            long position = (Long) invoke(api.pack, null, x, y, z);
+            Object canonical = invoke(api.resolveAnchor, registry, position, generation);
+            if (canonical == null || api.canonicalPosition.getLong(canonical) != position
+                || !generation.equals(api.canonicalGeneration.get(canonical)))
+                throw new IOException("原量子网络世代已不可用，不能沿用相同坐标上的其他网络");
         } catch (ReflectiveOperationException failure) {
             throw new Failure(failure);
         }
@@ -197,9 +232,10 @@ final class HologramGtswnQuantumAccess {
 
     private static final class GenerationApi {
 
-        final Method registry, pack, current, journal, resolve;
+        final Method registry, pack, current, journal, resolve, resolveAnchor;
         final Constructor<?> anchor;
         final Field resolvedAnchor, resolvedCursor;
+        final Field generation, canonicalPosition, canonicalGeneration;
         final Method[] coordinates = new Method[4];
 
         GenerationApi(ClassLoader loader) throws ReflectiveOperationException {
@@ -214,13 +250,34 @@ final class HologramGtswnQuantumAccess {
             Class<?> resolution = Class.forName(PACKAGE + "QuantumMigrationJournal$Resolution", false, loader);
             journal = requireStatic(journals, "get", journals, World.class);
             anchor = key.getConstructor(int.class, int.class, int.class, int.class);
-            resolve = journals.getMethod("resolve", key, long.class);
+            Method generationResolve = null;
+            try {
+                generationResolve = journals.getMethod("resolve", key, long.class, String.class);
+            } catch (NoSuchMethodException legacy) {
+                // Reviewed pre-generation journals only expose the two-argument API.
+            }
+            resolve = generationResolve == null ? journals.getMethod("resolve", key, long.class) : generationResolve;
             if (Modifier.isStatic(resolve.getModifiers()) || resolve.getReturnType() != resolution)
                 throw new NoSuchMethodException("migration API changed");
             resolvedAnchor = resolution.getField("anchor");
             resolvedCursor = resolution.getField("sequence");
             if (resolvedAnchor.getType() != key || resolvedCursor.getType() != long.class)
                 throw new NoSuchFieldException("migration result changed");
+            if (generationResolve == null) {
+                generation = canonicalPosition = canonicalGeneration = null;
+                resolveAnchor = null;
+            } else {
+                generation = resolution.getField("generation");
+                Class<?> canonical = Class
+                    .forName(PACKAGE + "QuantumControllerRegistry$CanonicalAnchor", false, loader);
+                resolveAnchor = controllers.getMethod("resolveAnchor", long.class, String.class);
+                canonicalPosition = canonical.getField("position");
+                canonicalGeneration = canonical.getField("generation");
+                if (generation.getType() != String.class || resolveAnchor.getReturnType() != canonical
+                    || canonicalPosition.getType() != long.class
+                    || canonicalGeneration.getType() != String.class)
+                    throw new NoSuchFieldException("anchor generation API changed");
+            }
             String[] names = { "getDimension", "getX", "getY", "getZ" };
             for (int i = 0; i < names.length; i++) {
                 coordinates[i] = key.getMethod(names[i]);

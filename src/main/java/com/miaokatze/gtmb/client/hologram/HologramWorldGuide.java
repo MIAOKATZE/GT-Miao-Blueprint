@@ -9,6 +9,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.MovingObjectPosition;
 
 import org.lwjgl.opengl.GL11;
@@ -47,6 +48,32 @@ final class HologramWorldGuide {
 
     static RenderWitness lastRenderWitness() {
         return lastRenderWitness;
+    }
+
+    static String selectionCursorKey(NBTTagCompound selection) {
+        int pending = selection.getInteger("areaPendingCorner");
+        if (pending == 1) return "worldGuideSelectionSecond";
+        if (pending == 2) return "worldGuideSelectionFirst";
+        if (selection.getIntArray("areaPoints").length == 6) return "worldGuideSelectionDone";
+        return selection.getBoolean("areaMore") ? "worldGuideSelectionMore" : "worldGuideSelectionBoth";
+    }
+
+    static String selectionCursorText(NBTTagCompound selection) {
+        String key = selectionCursorKey(selection);
+        String fallback = "worldGuideSelectionSecond".equals(key) ? "Right: point 2"
+            : "worldGuideSelectionFirst".equals(key) ? "Left: point 1"
+                : "worldGuideSelectionDone".equals(key) ? "Selected"
+                    : "worldGuideSelectionMore".equals(key) ? "More boxes · Left: point 1 · Right: point 2"
+                        : "Left: point 1 · Right: point 2";
+        return HologramClient.text(key, fallback);
+    }
+
+    static void drawSelectionCursor(NBTTagCompound selection, ScaledResolution resolution) {
+        Minecraft mc = Minecraft.getMinecraft();
+        String message = selectionCursorText(selection);
+        int x = resolution.getScaledWidth() / 2 + 12, y = resolution.getScaledHeight() / 2 + 10;
+        x = Math.max(4, Math.min(x, resolution.getScaledWidth() - mc.fontRenderer.getStringWidth(message) - 6));
+        mc.fontRenderer.drawStringWithShadow(message, x, y, 0x7FFFFF);
     }
 
     static void draw(List<String> messages, ScaledResolution resolution) {

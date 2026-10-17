@@ -176,7 +176,7 @@ final class HologramQuantumGroups {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(
-                    HologramBlueprintNbt.encodeCanonical(tag)
+                    HologramBlueprintNbt.encodeData(tag)
                         .getBytes(StandardCharsets.UTF_8));
             StringBuilder result = new StringBuilder();
             for (byte value : digest) result.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));

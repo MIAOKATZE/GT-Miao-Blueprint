@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -36,8 +37,9 @@ import gregtech.common.blocks.ItemMachines;
 final class HologramPresets {
 
     // The whole library has a separate budget; one large entry must not consume every other slot.
-    static final int MAX_LIBRARY_BYTES = 64 * 1024 * 1024;
+    static final int MAX_LIBRARY_BYTES = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
     private static final Gson GSON = new GsonBuilder().create();
+    private static final Pattern REGISTRY_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,256}");
     private static List<Preset> cached;
 
     private HologramPresets() {}
@@ -49,6 +51,23 @@ final class HologramPresets {
 
     static synchronized void clearCache() {
         cached = null;
+    }
+
+    /** Explicit library navigation/refresh only; snapshots and ticks keep the existing in-memory catalog. */
+    static synchronized void refreshLocalArtifacts() throws IOException {
+        Path library = libraryPath();
+        List<Preset> refreshed = readLibrary(library);
+        java.util.Iterator<Preset> entries = refreshed.iterator();
+        while (entries.hasNext()) {
+            Preset preset = entries.next();
+            // Legacy collection-only templates remain readable. Native artifacts must still have both members.
+            if (preset.nativeBlueprint == null) continue;
+            Path json = library.getParent()
+                .resolve("local_" + preset.id + ".json");
+            Path preview = HologramBlueprintArtifact.previewPath(json);
+            if (!Files.isRegularFile(json) || !Files.isRegularFile(preview)) entries.remove();
+        }
+        cached = refreshed;
     }
 
     static final class Cell {
@@ -63,6 +82,10 @@ final class HologramPresets {
         int defaultDamage;
         int damage, count = 1, x, y, z, facing = -1;
         boolean controller;
+        transient boolean frozenBlockResolved;
+        transient Block frozenBlock;
+        transient Boolean metadataIdentityBoundary;
+        transient java.util.Set<Integer> frozenSensorSlots;
 
         ItemStack stack() {
             Object found = item == null ? null : Item.itemRegistry.getObject(item);
@@ -75,6 +98,10 @@ final class HologramPresets {
         }
 
         Block block() {
+            if (HologramSnapshotMetadataSource.detached()) {
+                if (!frozenBlockResolved) throw new IllegalStateException("Metadata block identity was not frozen");
+                return frozenBlock;
+            }
             Object found = block == null ? null : Block.blockRegistry.getObject(block);
             return found instanceof Block && (found != Blocks.air || "minecraft:air".equals(block)) ? (Block) found
                 : null;
@@ -198,7 +225,8 @@ final class HologramPresets {
     private static List<Preset> readLibrary(Path file) throws IOException {
         List<Preset> result = new ArrayList<>();
         if (Files.exists(file)) {
-            if (Files.size(file) > MAX_LIBRARY_BYTES) throw new IOException("蓝图库超过64MiB上限");
+            if (Files.size(file) > MAX_LIBRARY_BYTES)
+                throw new IOException("蓝图库超过 " + MAX_LIBRARY_BYTES / (1024 * 1024) + " MiB 上限");
             try {
                 FileData data = decode(
                     new String(HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8));
@@ -222,8 +250,8 @@ final class HologramPresets {
     }
 
     static Preset get(String id) throws IOException {
-        for (Preset preset : all()) if (preset.id.equals(id))
-            return HologramBlueprintProcessing.enforcePolicy(HologramAePolicy.sanitize(copy(preset)).preset);
+        for (Preset preset : all()) if (preset.id.equals(id)) return HologramBlueprintProcessing.enforcePolicy(
+            HologramAePolicy.sanitizeOwned(preset, null, HologramAePolicy.PreparationProgress.NONE).preset);
         return null;
     }
 
@@ -246,14 +274,15 @@ final class HologramPresets {
 
     /** Prepare the final identity and canonical payload before a client captures its matching preview. */
     static synchronized Preset prepareSaved(Preset preset, boolean update) throws IOException {
-        return copy(put(all(), preset, update));
+        return put(all(), preset, update);
     }
 
     /** Commit the reviewed bytes without generating another ID or replacing the prepared provenance. */
     static synchronized void commitSaved(Preset prepared, boolean update) throws IOException {
         HologramBlueprintVersions.validate(prepared);
         Preset result = copy(prepared);
-        HologramAePolicy.Draft canonical = HologramAePolicy.sanitize(result);
+        HologramAePolicy.Draft canonical = HologramAePolicy
+            .sanitizeOwned(result, null, HologramAePolicy.PreparationProgress.NONE);
         if (canonical.blocking)
             throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
         result = HologramBlueprintProcessing.enforcePolicy(canonical.preset);
@@ -341,15 +370,24 @@ final class HologramPresets {
 
     /** Keep the logical collection and both native artifact members together on failed deletion. */
     static synchronized void delete(String id, ArtifactDeleteOperation removeArtifact) throws IOException {
-        List<Preset> list = all();
+        List<Preset> list = readLibrary(libraryPath());
         remove(list, id);
         if (id == null || !id.matches("[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"))
             throw new IOException("蓝图必须具有当前原生保存格式的完整 JSON 和 PNG 文件");
         Path library = libraryPath();
         Path artifact = library.getParent()
             .resolve("local_" + id + ".json");
-        Preset artifactBlueprint = HologramBlueprintSharing.read(artifact);
-        if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+        if (Files.exists(artifact)) {
+            // Missing PNG/JSON after an external deletion must still allow removing the surviving pair member.
+            // A complete pair retains the existing identity check before any destructive operation.
+            if (Files.exists(HologramBlueprintArtifact.previewPath(artifact))) {
+                Preset artifactBlueprint = HologramBlueprintSharing.read(artifact);
+                if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+            } else {
+                Preset artifactBlueprint = decodeArtifactIdentity(artifact);
+                if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+            }
+        }
         byte[] previousBytes = HologramBlueprintSharing.readBytes(library, MAX_LIBRARY_BYTES);
         List<Preset> previousCache = cached;
         write(library, list);
@@ -366,8 +404,18 @@ final class HologramPresets {
         }
     }
 
+    private static Preset decodeArtifactIdentity(Path artifact) throws IOException {
+        // Native artifacts retain the Sharing envelope even when the matching preview was removed.
+        // Decode through the same schema/version/payload gate as a complete pair, without requiring PNG.
+        return HologramBlueprintSharing.decode(
+            new String(
+                HologramBlueprintSharing.readBytes(artifact, HologramBlueprintSharing.MAX_BYTES),
+                StandardCharsets.UTF_8));
+    }
+
     private static void restoreLibraryBytes(Path file, byte[] bytes) throws IOException {
-        if (bytes.length > MAX_LIBRARY_BYTES) throw new IOException("蓝图库超过64MiB上限");
+        if (bytes.length > MAX_LIBRARY_BYTES)
+            throw new IOException("蓝图库超过 " + MAX_LIBRARY_BYTES / (1024 * 1024) + " MiB 上限");
         Path temp = Files.createTempFile(file.getParent(), "hologram-presets-restore-", ".tmp");
         try {
             Files.write(temp, bytes);
@@ -390,7 +438,8 @@ final class HologramPresets {
             new String(HologramBlueprintSharing.encodeBounded(GSON, preset, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8),
             Preset.class);
         // Defensive canonical boundary for non-UI callers; the interactive service has already reviewed this result.
-        HologramAePolicy.Draft canonical = HologramAePolicy.sanitize(result);
+        HologramAePolicy.Draft canonical = HologramAePolicy
+            .sanitizeOwned(result, null, HologramAePolicy.PreparationProgress.NONE);
         if (canonical.blocking)
             throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
         result = canonical.preset;
@@ -747,16 +796,17 @@ final class HologramPresets {
             }
             coordinates(structure.x, structure.y, structure.z);
         }
+        HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(preset);
         for (Cell cell : preset.cells) {
-            validateBlueprintCell(cell);
-            filterSelectedPayload(preset, cell);
+            validateBlueprintCell(cell, true, validation);
+            validation.filter(cell);
             if (!positions.add(cell.x + "," + cell.y + "," + cell.z)) throw new IOException("蓝图位置重复");
             validateMembership(cell, structureIds);
         }
         for (Cell cell : preset.palette) {
-            validateBlueprintCell(cell, false);
+            validateBlueprintCell(cell, false, validation);
             validateMembership(cell, structureIds);
-            filterSelectedPayload(preset, cell);
+            validation.filter(cell);
         }
         for (HintArea area : preset.hintAreas) {
             if (area == null || area.x1 > area.x2 || area.y1 > area.y2 || area.z1 > area.z2)
@@ -797,20 +847,16 @@ final class HologramPresets {
         }
     }
 
-    private static void filterSelectedPayload(Preset preset, Cell cell) throws IOException {
-        HologramCoordinatePolicies.validatePaymentPayload(HologramBlueprintNbt.decode(cell.tileNbt));
-        List<String> keys = preset.retainNbt ? preset.retainedNbtKeys : java.util.Collections.emptyList();
-        cell.tileNbt = HologramAePolicy.handles(cell.block(), cell.tileNbt)
-            ? HologramBlueprintNbt.filterCanonical(cell.block(), cell.tileNbt, keys, preset.retainCovers)
-            : HologramBlueprintNbt.filterCaptured(cell.tileNbt, keys, preset.retainCovers);
-        cell.itemNbt = HologramBlueprintNbt.filterCaptured(cell.itemNbt, keys, preset.retainCovers);
-    }
-
     private static void validateBlueprintCell(Cell cell) throws IOException {
         validateBlueprintCell(cell, true);
     }
 
     private static void validateBlueprintCell(Cell cell, boolean placedCell) throws IOException {
+        validateBlueprintCell(cell, placedCell, null);
+    }
+
+    static void validateBlueprintCell(Cell cell, boolean placedCell, HologramBlueprintValidationCache validation)
+        throws IOException {
         if (cell == null || (cell.item == null && cell.block == null)
             || cell.count != 1
             || cell.damage < 0
@@ -818,10 +864,16 @@ final class HologramPresets {
             || cell.metadata > 65535
             || cell.facing < -1
             || cell.facing > 5) throw new IOException("蓝图方块身份、数量或朝向无效");
-        registryText(cell.item, true);
-        registryText(cell.block, true);
-        registryText(cell.defaultItem, true);
-        validateMaterialIdentity(cell, placedCell);
+        if (validation == null) {
+            registryText(cell.item, true);
+            registryText(cell.block, true);
+            registryText(cell.defaultItem, true);
+        } else {
+            validation.registryText(cell.item, true);
+            validation.registryText(cell.block, true);
+            validation.registryText(cell.defaultItem, true);
+        }
+        validateMaterialIdentity(cell, placedCell, validation);
         coordinates(cell.x, cell.y, cell.z);
         text(cell.prompt, 4096);
         if (cell.allowedTargets != null) {
@@ -829,18 +881,20 @@ final class HologramPresets {
             Set<String> unique = new HashSet<>();
             for (Target target : cell.allowedTargets) {
                 if (target == null || target.damage < 0) throw new IOException("蓝图格候选无效");
-                registryText(target.item, false);
+                if (validation == null) registryText(target.item, false);
+                else validation.registryText(target.item, false);
                 if (!unique.add(target.item + ":" + target.damage)) throw new IOException("蓝图格候选重复");
             }
         }
-        // filterSelectedPayload validates binary NBT budgets and strips unselected entries before storage.
+        // The pass-local filter validates binary NBT and payment markers before stripping unselected entries.
     }
 
-    private static void validateMaterialIdentity(Cell cell, boolean placedCell) throws IOException {
-        ItemStack material = cell.stack();
+    private static void validateMaterialIdentity(Cell cell, boolean placedCell,
+        HologramBlueprintValidationCache validation) throws IOException {
+        ItemStack material = validation == null ? cell.stack() : validation.stack(cell.item, cell.damage);
         if (material == null) return; // Missing registry entries remain inspectable; placement rejects them separately.
         Block actual = Block.getBlockFromItem(material.getItem());
-        Block declared = cell.block();
+        Block declared = validation == null ? cell.block() : validation.block(cell);
         boolean gt = material.getItem() instanceof ItemMachines;
         if (gt && actual != GregTechAPI.sBlockMachines) throw new IOException("GT 材料没有对应的真实机器方块");
         if (material.getItem() instanceof ItemBlock && actual != null && actual != Blocks.air) {
@@ -857,7 +911,11 @@ final class HologramPresets {
         if (declared != null && declared == GregTechAPI.sBlockMachines && !gt)
             throw new IOException("GT 机器必须使用对应的真实 GT 机器物品付款");
         if (!gt) {
-            if (placedCell) validateMaterialVariant(cell.block(), cell.metadata, material);
+            if (placedCell) validateMaterialVariant(
+                validation == null ? cell.block() : validation.block(cell),
+                cell.metadata,
+                material,
+                validation);
             return;
         }
         int expected = material.getItemDamage();
@@ -866,6 +924,12 @@ final class HologramPresets {
         String tileId = GregTechAPI.METATILEENTITIES[expected] instanceof MetaPipeEntity ? "BaseMetaPipeEntity"
             : "BaseMetaTileEntity";
         // An absent add-on prototype can still be inspected; its canonical pipe header remains descriptive only.
+        if (validation != null) {
+            tileId = validation
+                .validateGt(cell.tileNbt, expected, tileId, false, GregTechAPI.METATILEENTITIES[expected] == null);
+            validation.validateGt(cell.itemNbt, expected, tileId, true, false);
+            return;
+        }
         NBTTagCompound tile = HologramBlueprintNbt.decode(cell.tileNbt);
         if (GregTechAPI.METATILEENTITIES[expected] == null && tile != null
             && "BaseMetaPipeEntity".equals(tile.getString("id"))) tileId = "BaseMetaPipeEntity";
@@ -891,8 +955,15 @@ final class HologramPresets {
             ItemStack sample = HologramBlockIdentity.materialStack(identity, 0);
             if (sample != null && !sample.getItem()
                 .getHasSubtypes()) return 0;
-            HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
-            int damage = block.getDamageValue(world, 0, 64, 0);
+            int damage;
+            if (HologramMaterialDescriptor.kind(block) != 0) {
+                // Reuse only the audited method identity. Unknown damageDropped overrides still run every time.
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.MATERIAL_DESCRIPTOR_USES, 1);
+                damage = HologramMaterialDescriptor.damage(block, metadata);
+            } else {
+                HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
+                damage = block.getDamageValue(world, 0, 64, 0);
+            }
             if (damage < 0) throw new IOException("原生方块返回了无效的实际材料变种");
             return damage;
         } catch (RuntimeException | LinkageError failure) {
@@ -902,12 +973,18 @@ final class HologramPresets {
 
     /** Ordinary saved states must consume their native physical variant; composite bills are validated separately. */
     static void validateMaterialVariant(Block block, int metadata, ItemStack paid) throws IOException {
+        validateMaterialVariant(block, metadata, paid, null);
+    }
+
+    static void validateMaterialVariant(Block block, int metadata, ItemStack paid,
+        HologramBlueprintValidationCache validation) throws IOException {
         if (paid == null || paid.getItem() == null) throw new IOException("方块没有可核验的实际付款材料");
         if (paid.getItem() instanceof ItemMachines || HologramNativePlacement.supported(block)) return;
         if (!(paid.getItem() instanceof ItemBlock)) return; // Non-block native carriers have their own audited planner.
         Block material = Block.getBlockFromItem(paid.getItem());
         if (!materialBlockAlias(material, block)) throw new IOException("实际方块与付款物品的原生方块不一致");
-        if (materialDamage(block, metadata) != paid.getItemDamage()) throw new IOException("实际方块材料变种与付款物品 damage 不一致");
+        int damage = validation == null ? materialDamage(block, metadata) : validation.materialDamage(block, metadata);
+        if (damage != paid.getItemDamage()) throw new IOException("实际方块材料变种与付款物品 damage 不一致");
     }
 
     /** Shared pure boundary: world metadata is not the machine material damage/MetaTile ID. */
@@ -929,9 +1006,10 @@ final class HologramPresets {
             throw new IOException("蓝图坐标超出范围");
     }
 
-    private static void registryText(String value, boolean optional) throws IOException {
+    static void registryText(String value, boolean optional) throws IOException {
         if (value == null && optional) return;
-        if (value == null || !value.matches("[a-zA-Z0-9_.:/-]{1,256}")) throw new IOException("蓝图注册名无效");
+        if (value == null || !REGISTRY_NAME.matcher(value)
+            .matches()) throw new IOException("蓝图注册名无效");
     }
 
     private static void text(String value, int limit) throws IOException {

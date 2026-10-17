@@ -13,7 +13,6 @@ import java.util.Set;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiIngameMenu;
 import net.minecraft.client.gui.GuiMainMenu;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.init.Blocks;
 import net.minecraft.nbt.CompressedStreamTools;
@@ -612,7 +611,7 @@ public final class HologramV011AreaClientSmoke {
         request.setLong("targetChangedAfterRenderFrame", targetChangedAfterFrame);
         request.setLong("targetChangedAfterWorldRender", targetChangedAfterWorldRender);
         request.setLong("requestedWorldRenderSerial", worldRenderSerial);
-        request.setTag("nettySnapshot", HologramClient.state.data.copy());
+        request.setTag("nettySnapshot", HologramClient.state.fullData());
         bind(request);
         observation = request;
         afterObservation = following;
@@ -983,30 +982,28 @@ public final class HologramV011AreaClientSmoke {
         input.setLong("renderGeneration", screen.smokeRenderGeneration());
         input.setString("session", HologramClient.state.session);
         input.setLong("planRevision", HologramClient.state.data.getLong("planRevision"));
-        input.setTag("nettySnapshot", HologramClient.state.data.copy());
+        input.setTag("nettySnapshot", HologramClient.state.fullData());
         int[] point = screen.smokeControlPoint(id);
         input.setIntArray("controlPoint", point);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
         uiInputs.appendTag(input);
     }
 
     private void typeName(HologramScreen screen, String value) throws Exception {
-        GuiTextField field = (GuiTextField) read(screen, "presetNameField");
+        HologramMuiTextField field = (HologramMuiTextField) read(screen, "presetNameField");
         float scale = (Float) read(screen, "scale");
         int x = (Integer) read(screen, "originX") + Math.round((field.xPosition + 4) * scale);
         int y = (Integer) read(screen, "originY") + Math.round((field.yPosition + 7) * scale);
-        screen.mouseClicked(x, y, 0);
-        screen.mouseMovedOrUp(x, y, 0);
+        HologramMuiProbeInput.click(screen, x, y, 0);
         require(field.isFocused(), "native mouse click focuses the actual blueprint name field");
         key(Keyboard.KEY_LCONTROL, true);
-        screen.keyTyped('\u0001', Keyboard.KEY_A);
+        HologramMuiProbeInput.key(screen, '\u0001', Keyboard.KEY_A);
         require(
             field.getText()
                 .equals(field.getSelectedText()),
             "native Ctrl+A selects the actual blueprint name");
         key(Keyboard.KEY_LCONTROL, false);
-        for (char character : value.toCharArray()) screen.keyTyped(character, 0);
+        for (char character : value.toCharArray()) HologramMuiProbeInput.key(screen, character, 0);
         require(value.equals(field.getText()), "native keyboard names the actual saved blueprint");
         NBTTagCompound input = new NBTTagCompound();
         input.setString("kind", "native-keyboard-name");
@@ -1031,6 +1028,7 @@ public final class HologramV011AreaClientSmoke {
     }
 
     private static Object read(Object owner, String name) throws Exception {
+        if (owner instanceof HologramScreen) return HologramUiDiagnostics.readDiagnosticField(owner, name);
         Field field = (owner instanceof Class ? (Class<?>) owner : owner.getClass()).getDeclaredField(name);
         field.setAccessible(true);
         return field.get(owner instanceof Class ? null : owner);
@@ -1154,7 +1152,7 @@ public final class HologramV011AreaClientSmoke {
             }
             if (HologramClient.state != null)
                 result.setInteger("liveStateObjectIdentity", System.identityHashCode(HologramClient.state));
-            if (HologramClient.state != null) result.setTag("actualSnapshot", HologramClient.state.data.copy());
+            if (HologramClient.state != null) result.setTag("actualSnapshot", HologramClient.state.fullData());
             for (int value : new int[] { Keyboard.KEY_LSHIFT, Keyboard.KEY_LCONTROL, Keyboard.KEY_LMENU })
                 key(value, false);
             bind(result);

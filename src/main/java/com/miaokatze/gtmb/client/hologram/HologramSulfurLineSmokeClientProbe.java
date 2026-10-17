@@ -2,9 +2,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -20,7 +18,6 @@ import javax.imageio.ImageIO;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.gui.inventory.GuiInventory;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.nbt.CompressedStreamTools;
@@ -727,7 +724,7 @@ public final class HologramSulfurLineSmokeClientProbe {
             });
             groupShot("sulfur-quantum-groups-multiselect-frame");
             groupAction("native-unassigned-gates-save", group -> {
-                group.smokeClickControl(7);
+                HologramMuiProbeInput.control(group, 7);
                 nativeMouseEvents++;
                 require(
                     group.smokeUiState()
@@ -765,12 +762,12 @@ public final class HologramSulfurLineSmokeClientProbe {
                         .getIntArray("selection").length == 4,
                     "final complement retains the four later-stage ME nodes");
                 group.smokeName("前段供料");
-                group.smokeClickControl(10);
+                HologramMuiProbeInput.control(group, 10);
                 nativeMouseEvents += 2;
             });
             groupAction("native-new-back-stage-group", group -> {
                 group.smokeName("后段供料");
-                group.smokeClickControl(5);
+                HologramMuiProbeInput.control(group, 5);
                 nativeMouseEvents += 2;
                 require(
                     group.smokeUiState()
@@ -786,7 +783,7 @@ public final class HologramSulfurLineSmokeClientProbe {
                 group.smokeUiState()
                     .getBoolean("saveEnabled"),
                 "all actual nodes assigned before classification submit");
-            group.smokeClickControl(1);
+            HologramMuiProbeInput.control(group, 1);
             nativeMouseEvents++;
         });
         screen("quantum-classification-real-netty-ack", (mc, screen, ui) -> {
@@ -877,7 +874,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         groupNodeClicks.appendTag(proof);
         key(Keyboard.KEY_LCONTROL, control);
         try {
-            group.mouseClicked(sx, sy, 0);
+            HologramMuiProbeInput.click(group, sx, sy, 0);
         } finally {
             key(Keyboard.KEY_LCONTROL, false);
             proof.setIntArray(
@@ -1208,7 +1205,7 @@ public final class HologramSulfurLineSmokeClientProbe {
         screen("native-close-completed-projector", (mc, screen, ui) -> {
             if (!idle(screen, ui)) return false;
             require(data().getInteger("job") == 3, "actual paid construction completed before native Escape");
-            screen.keyTyped((char) 27, Keyboard.KEY_ESCAPE);
+            HologramMuiProbeInput.key(screen, (char) 27, Keyboard.KEY_ESCAPE);
             require(mc.currentScreen == null, "native Escape closes the completed projector to the world");
             closeSequence = (Long) field(screen, "sequence");
             require(closeSequence > data().getLong("uiSequence"), "native Escape dispatched the real close operation");
@@ -1608,8 +1605,8 @@ public final class HologramSulfurLineSmokeClientProbe {
 
     private NBTTagCompound nativeSaveProof(HologramBlueprintArtifact.Artifact artifact, String local) throws Exception {
         NBTTagCompound proof = HologramLibraryClient.actualSaveWitness();
-        for (String key : new String[] { "nativePreviewWitness", "previewVerifiedReply", "ownerDiskAck",
-            "saveCommittedReply" }) if (!proof.hasKey(key, 10)) return null;
+        for (String key : new String[] { "nativePreviewWitness", "ownerDiskAck", "saveCommittedReply" })
+            if (!proof.hasKey(key, 10)) return null;
         proof.setTag("actualLibrarySaveState", HologramLibraryClient.actualSaveState());
         NBTTagCompound nativePreview = proof.getCompoundTag("nativePreviewWitness");
         if (!artifact.jsonSha256.equals(nativePreview.getString("sourceJsonSha256"))) return null;
@@ -1624,23 +1621,14 @@ public final class HologramSulfurLineSmokeClientProbe {
                 && "RGB8_TOP_LEFT_ROW_MAJOR".equals(nativePreview.getString("rgbPacking"))
                 && previewRgbHash(artifact.png).equals(nativePreview.getString("rgbSha256")),
             "actual saved PNG pixels match the source-fenced native END framebuffer readback");
+        String saveFlow = HologramV011NormalDecorProbe.verifySaveTransaction(
+            proof,
+            artifact,
+            local,
+            HologramClient.state.session,
+            data().getLong("planRevision"));
         NBTTagCompound acknowledgement = proof.getCompoundTag("ownerDiskAck");
-        String receipt = acknowledgement.getString("saveReceipt");
-        require(!receipt.isEmpty(), "actual owner disk ACK has a save receipt");
-        String[] keys = { "previewVerifiedReply", "ownerDiskAck", "saveCommittedReply" };
-        String[] operations = { "previewVerified", "ackBlueprintSaved", "saveCommitted" };
-        for (int index = 0; index < keys.length; index++) {
-            NBTTagCompound packet = proof.getCompoundTag(keys[index]);
-            require(
-                operations[index].equals(packet.getString("op")) && receipt.equals(packet.getString("saveReceipt"))
-                    && local.equals(packet.getString("localId"))
-                    && HologramClient.state.session.equals(packet.getString("session"))
-                    && data().getLong("planRevision") == packet.getLong("planRevision")
-                    && packet.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION
-                    && artifact.jsonSha256.equals(packet.getString("jsonSha256"))
-                    && artifact.pngSha256.equals(packet.getString("previewSha256")),
-                "actual native save packet belongs to this exact committed source pair: " + keys[index]);
-        }
+        proof.setString("saveReceiptFlow", saveFlow);
         proof.setByteArray("savedJson", artifact.json);
         proof.setByteArray("savedPng", artifact.png);
         proof.setString("savedJsonSha256", artifact.jsonSha256);
@@ -1726,29 +1714,17 @@ public final class HologramSulfurLineSmokeClientProbe {
     private void type(String label, String fieldName, String value) {
         screen(label, (mc, screen, ui) -> {
             if (!idle(screen, ui)) return false;
-            GuiTextField target = (GuiTextField) field(screen, fieldName);
+            HologramMuiTextField target = (HologramMuiTextField) field(screen, fieldName);
             require(target != null, "real native text field " + fieldName);
             float scale = (Float) field(screen, "scale");
             int x = (Integer) field(screen, "originX") + Math.round((target.xPosition + 4) * scale);
             int y = (Integer) field(screen, "originY") + Math.round((target.yPosition + 7) * scale);
-            screen.mouseClicked(x, y, 0);
-            screen.mouseMovedOrUp(x, y, 0);
+            HologramMuiProbeInput.click(screen, x, y, 0);
             nativeMouseEvents++;
             require(target.isFocused(), "native mouse focuses text field");
-            screen.keyTyped((char) 1, Keyboard.KEY_A);
-            Method injectText = null;
-            Constructor<?> textEvent = null;
-            try {
-                Class<?> input = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents");
-                Class<?> event = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents$TextEvent");
-                injectText = input.getMethod("injectTextEvent", event);
-                textEvent = event.getConstructor(String.class);
-            } catch (ClassNotFoundException vanillaInput) {
-                // Vanilla consumes the character event directly; LWJGL3 uses its native queued text event.
-            }
+            HologramMuiProbeInput.key(screen, (char) 1, Keyboard.KEY_A);
             for (char character : value.toCharArray()) {
-                if (injectText != null) injectText.invoke(null, textEvent.newInstance(String.valueOf(character)));
-                screen.keyTyped(character, 0);
+                HologramMuiProbeInput.key(screen, character, 0);
             }
             nativeKeyEvents += value.length() + 1;
             require(value.equals(target.getText()), "native keyboard replaced exact field value");
@@ -1758,8 +1734,7 @@ public final class HologramSulfurLineSmokeClientProbe {
 
     private void nativeClick(HologramScreen screen, int id) {
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
         nativeMouseEvents++;
     }
 
@@ -1780,7 +1755,7 @@ public final class HologramSulfurLineSmokeClientProbe {
                 original[i] = fields[i].get(null);
                 fields[i].set(null, values[i]);
             }
-            screen.handleMouseInput();
+            HologramMuiProbeInput.scroll(screen, screenX, screenY, delta);
             nativeMouseEvents++;
             nativeWheelEvents++;
         } finally {
@@ -1987,10 +1962,8 @@ public final class HologramSulfurLineSmokeClientProbe {
     }
 
     private static Object field(Object target, String name) throws Exception {
-        Field value = target.getClass()
-            .getDeclaredField(name);
-        value.setAccessible(true);
-        return value.get(target);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(target, name));
     }
 
     private static Path localPath(Minecraft mc, String id) {

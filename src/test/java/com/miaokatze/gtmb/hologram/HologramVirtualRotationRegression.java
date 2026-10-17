@@ -384,7 +384,7 @@ final class HologramVirtualRotationRegression {
     }
 
     private static Object session(EntityPlayerMP player) throws Exception {
-        Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Constructor<?> constructor = type
             .getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class, boolean.class, int.class);
         constructor.setAccessible(true);
@@ -454,7 +454,7 @@ final class HologramVirtualRotationRegression {
     }
 
     private static Method method(String name, Class<?>... parameters) throws Exception {
-        Method method = HologramService.class.getDeclaredMethod(name, parameters);
+        Method method = HologramEngineInspection.declaredMethod(name, parameters);
         method.setAccessible(true);
         return method;
     }

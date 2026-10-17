@@ -595,7 +595,7 @@ public final class HologramEssentiaMeSmoke {
      */
     @SuppressWarnings("unchecked")
     private static Object session(EntityPlayerMP actor, Block jar, NBTTagCompound payload, int x) throws Exception {
-        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramService$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Constructor<?> constructor = type.getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class);
         constructor.setAccessible(true);
         Object session = constructor.newInstance(actor, x, Y, Z);
@@ -655,7 +655,7 @@ public final class HologramEssentiaMeSmoke {
         Object[] values = new Object[arguments.length + 1];
         values[0] = session;
         System.arraycopy(arguments, 0, values, 1, arguments.length);
-        Method method = HologramService.class.getDeclaredMethod(name, signature);
+        Method method = HologramEngineInspection.declaredMethod(name, signature);
         method.setAccessible(true);
         try {
             return method.invoke(null, values);

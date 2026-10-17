@@ -1,8 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
@@ -20,7 +17,7 @@ public final class HologramNetworkBindingUiSmoke {
         if (!Boolean.getBoolean("gtmb.hologram.clientSmoke"))
             throw new IllegalStateException("Client smoke is disabled");
         HologramState state = (HologramState) field(current, "state");
-        NBTTagCompound fixture = (NBTTagCompound) state.data.copy();
+        NBTTagCompound fixture = (NBTTagCompound) state.fullData();
         fixture.removeTag("aeSaveReview");
         fixture.setBoolean("networkBindingRequested", true);
         fixture.setBoolean("editable", true);
@@ -53,9 +50,9 @@ public final class HologramNetworkBindingUiSmoke {
         probe.setWorldAndResolution(Minecraft.getMinecraft(), current.width, current.height);
         for (int i = 0; i < 2; i++) {
             set(probe, "pendingSequence", -1L);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             click(probe, 60000 + i);
-            probe.drawScreen(0, 0, 0);
+            HologramMuiProbeInput.renderFixture(probe, 0, 0, 0);
             click(probe, 61020 + i);
             NBTTagCompound request = (NBTTagCompound) field(probe, "capturedRenderSmokeAction");
             require(
@@ -70,7 +67,7 @@ public final class HologramNetworkBindingUiSmoke {
                 "client_sends_only_server_owned_group_and_inventory_index_" + i);
         }
         set(probe, "pendingSequence", -1L);
-        probe.keyTyped('\0', Keyboard.KEY_E);
+        HologramMuiProbeInput.key(probe, '\0', Keyboard.KEY_E);
         require(
             !(Boolean) field(probe, "networkDrawer") && "closeNetworkBindings"
                 .equals(((NBTTagCompound) field(probe, "capturedRenderSmokeAction")).getString("op")),
@@ -79,23 +76,18 @@ public final class HologramNetworkBindingUiSmoke {
     }
 
     private static void click(HologramScreen screen, int id) throws Exception {
-        Method method = HologramScreen.class.getDeclaredMethod("smokeClickDrawnControl", int.class);
-        method.setAccessible(true);
-        method.invoke(screen, id);
+
+        HologramMuiProbeInput.control(screen, id);
     }
 
     private static Object field(Object object, String name) throws Exception {
-        Field field = object.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(object);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(object, name));
     }
 
     private static void set(Object object, String name, Object value) throws Exception {
-        Field field = object.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(object, value);
+
+        HologramUiDiagnostics.writeDiagnosticField(object, name, value);
     }
 
     private static void require(boolean condition, String name) {
