@@ -86,6 +86,32 @@ def native_probe_failure(role, receipt):
     return ProductFailure(message)
 
 
+def validate_native_cell_counts(evidence, peer, scenario):
+    try:
+        volume = int(peer.get("actualSourceVolume", "-1"))
+        non_air = int(peer.get("actualSourceNonAirBlocks", "-1"))
+        expected = int(peer.get("expectedBlueprintCells", "-1"))
+    except ValueError as error:
+        raise IntegrityFailure("Invalid independent native source-volume/non-air count receipt") from error
+    if volume != 64000 or not 0 < non_air <= volume or expected != non_air:
+        raise IntegrityFailure(f"Independent source volume/non-air mismatch: volume={volume}, nonAir={non_air}, expectedBlueprint={expected}")
+    kinds = ("self", "share") if scenario == "all" else () if scenario == "raw" else (scenario,)
+    for kind in kinds:
+        for suffix in ("BlueprintCellCount", "SavedBlueprintCellCount", "PrivateBlueprintCellCount"):
+            actual = evidence.get(kind + suffix)
+            if actual != str(expected):
+                raise IntegrityFailure(f"Ordinary {kind} {suffix}: actual={actual}, independent native nonAir={expected}, source volume={volume}")
+    if kinds and evidence.get("actualBlueprintCellCount") != str(expected):
+        raise IntegrityFailure(f"Actual ordinary blueprint count must equal independently counted native nonAir={expected}")
+    if scenario in ("raw", "all"):
+        if evidence.get("rawCellCount") != "64000" or evidence.get("raw.previewDecodedCells") != "64000":
+            raise IntegrityFailure("Raw cut/preview must retain all64000 volume cells including air")
+    return {"source_volume": volume, "source_non_air_blocks": non_air,
+            "expected_blueprint_cell_count": expected,
+            "actual_blueprint_cell_count": int(evidence["actualBlueprintCellCount"]) if kinds else None,
+            "raw_cell_count": 64000 if scenario in ("raw", "all") else None}
+
+
 def within(path, parent, *, exists=False):
     """Resolve junctions/symlinks before every intended file or directory operation."""
     resolved = standard_namespace(Path(path).resolve(strict=exists))
@@ -426,9 +452,9 @@ def run(args):
     result = {
         "name": args.name, "status": "RUNNING", "mode": "composite-prepare" if args.prepare_only else "composite-native-64000",
         "phase_mode": "prepare" if args.prepare_only else args.scenario, "scenario": args.scenario,
-        "requested_source_cells": cells,
+        "requested_source_volume": cells,
         "source_dimensions_xyz": [40, 40, 40],
-        "native_scale_claim": "Pending actual full capture/hydration/render/delta; volume eligibility does not prove byte-budget or resource support",
+        "native_scale_claim": "64000-position source volume; ordinary blueprint rows equal independent native non-air count; raw includes all volume cells; native endpoints remain pending until observed",
         "scope": "Actual dedicated Netty and natural rendered MUI stimulus; no OS input; no user instance/world copied",
         "fixture": str(fixture), "output": str(output), "receipts": str(output), "world": str(world),
         "normal_source": str(jar), "normal_sha256": sha(jar), "addon_source": str(addon), "addon_sha256": sha(addon),
@@ -579,8 +605,7 @@ def run(args):
                     if sha(within(item["path"], fixture, exists=True)) != item["sha256"]:
                         raise IntegrityFailure("Installed artifact changed during native run")
                 if not args.prepare_only:
-                    if evidence.get("actualCapturedCells") != "64000" or peer.get("actualSourceBlocks") != "64000":
-                        raise IntegrityFailure("Actual source/client hydration is not exactly64k")
+                    result["cell_counts"] = validate_native_cell_counts(evidence, peer, args.scenario)
                     for kind in (("self", "share") if args.scenario == "all" else () if args.scenario == "raw" else (args.scenario,)):
                         if evidence.get(kind + "ActualPair") != "true" or peer.get(kind + "SaveCommit") != "true":
                             raise IntegrityFailure("Missing native JSON+PNG and exact owner commit for " + kind)

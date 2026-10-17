@@ -128,6 +128,18 @@ public final class ResourceContainers {
                     failure);
             }
         }
+        if (context.nativeTileId.equals("blockReservoirTileEntity") && context.path.equals(context.rootKey)
+            && (context.name.equals("tank") || context.name.equals("regenTank"))) {
+            NBTTagCompound row = context.container;
+            if (!row.hasKey("FluidName", 8) || !row.getString("FluidName")
+                .equals("water")
+                || !row.hasKey("Amount", 3)
+                || row.getInteger("Amount") > 2000
+                || context.name.equals("regenTank") && row.hasKey("Tag"))
+                throw invalid("malformed native EnderIO reservoir water tank");
+            FluidAmount water = fluidRecord(row);
+            return checked(Collections.singletonList(water));
+        }
         String name = context.name.toLowerCase(java.util.Locale.ROOT);
         if (context.fluidContext || name.contains("fluid") || name.contains("tank")) {
             for (Object key : context.container.func_150296_c())

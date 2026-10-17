@@ -921,6 +921,13 @@ final class HologramBlueprintProcessing {
 
     private static void removePath(NBTTagCompound root, String path, net.minecraft.block.Block block)
         throws IOException {
+        String alias = HologramAeBlueprint.inventoryAliasPath(block, path);
+        removePathValue(root, path, block);
+        if (alias != null) removePathValue(root, alias, block);
+    }
+
+    private static void removePathValue(NBTTagCompound root, String path, net.minecraft.block.Block block)
+        throws IOException {
         String[] segments = path.substring(1)
             .split("/", -1);
         NBTBase parent = root;

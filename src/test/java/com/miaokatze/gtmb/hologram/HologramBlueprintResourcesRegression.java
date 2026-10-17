@@ -43,6 +43,8 @@ public final class HologramBlueprintResourcesRegression {
         try {
             inventoryAndEnergy();
             configurationSamples();
+            gtswnNativeConfiguration();
+            nativeReservoirContainers();
             standalonePhysicalAssets();
             carpenterNamesNeverGrantAssetCredit();
             nativeItemDefaultsRemainPayable();
@@ -60,6 +62,102 @@ public final class HologramBlueprintResourcesRegression {
             failure.printStackTrace(System.err);
             throw new AssertionError("blueprint resources regression", failure);
         }
+    }
+
+    private static void gtswnNativeConfiguration() throws Exception {
+        NBTTagCompound panel = new NBTTagCompound();
+        panel.setString("id", "gtswn.network_info_panel");
+        panel.setBoolean("GTSWN_NetworkSafetyEnabled", true);
+        NBTTagCompound sample = new ItemStack(Items.diamond, 64).writeToNBT(new NBTTagCompound());
+        panel.setTag("chartItem", sample);
+        NBTTagList monitored = new NBTTagList();
+        monitored.appendTag(new ItemStack(Items.emerald, 2).writeToNBT(new NBTTagCompound()));
+        panel.setTag("monitoredItems", monitored);
+        NBTTagCompound original = (NBTTagCompound) panel.copy();
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(panel).items.size(),
+            "native panel query templates are ghost identities, including their original sample quantity");
+        SimpleAssert.that(
+            panel.equals(original),
+            "panel query templates and all-TileEntity boolean remain byte-for-byte intact");
+        NBTTagCompound zero = (NBTTagCompound) panel.copy();
+        zero.getCompoundTag("chartItem")
+            .setByte("Count", (byte) 0);
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(zero).items.size(),
+            "native panel setter and reader also preserve a zero-quantity query marker without promoting it to an item");
+        SimpleAssert.that(
+            zero.getCompoundTag("chartItem")
+                .getByte("Count") == 0,
+            "zero marker is retained at its original quantity");
+        NBTTagCompound unrelated = (NBTTagCompound) panel.copy();
+        unrelated.setString("id", "other:inventory");
+        boolean rejected = false;
+        try {
+            HologramBlueprintResources.plan(unrelated);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert
+            .that(rejected, "the same sample names on an unrelated tile do not grant a free inventory exemption");
+        NBTTagCompound malformed = (NBTTagCompound) panel.copy();
+        malformed.getCompoundTag("chartItem")
+            .setLong("Cnt", 100L);
+        rejected = false;
+        try {
+            HologramBlueprintResources.plan(malformed);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "an extra hidden quantity in a query sample is not silently accepted");
+        malformed = (NBTTagCompound) panel.copy();
+        malformed.setInteger("GTSWN_NetworkSafetyEnabled", 1);
+        rejected = false;
+        try {
+            HologramBlueprintResources.plan(malformed);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "native global configuration requires the exact boolean byte schema");
+    }
+
+    private static void nativeReservoirContainers() throws Exception {
+        NBTTagCompound root = new NBTTagCompound(), water = new NBTTagCompound();
+        root.setString("id", "blockReservoirTileEntity");
+        water.setString("FluidName", "water");
+        water.setInteger("Amount", 0);
+        root.setTag("tank", water);
+        NBTTagCompound original = (NBTTagCompound) root.copy();
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(root).fluids.size(),
+            "native restricted water reservoir serializes a legitimate zero-amount FluidStack");
+        SimpleAssert
+            .that(root.equals(original), "zero-quantity native water identity is preserved without payload rewriting");
+        water.setInteger("Amount", 750);
+        root.setTag("regenTank", water.copy());
+        HologramBlueprintResources.Plan filled = HologramBlueprintResources.plan(root);
+        SimpleAssert.eq(1500L, filled.fluids.get(0).amount, "both main and regeneration water are real payable assets");
+        NBTTagCompound malformed = (NBTTagCompound) root.copy();
+        malformed.getCompoundTag("tank")
+            .setTag("contents", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
+        boolean rejected = false;
+        try {
+            HologramBlueprintResources.plan(malformed);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "unknown asset fields inside an otherwise native tank remain blocked");
+        root.setString("id", "other:tank");
+        rejected = false;
+        try {
+            HologramBlueprintResources.plan(root);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "native tank compatibility does not weaken unknown container rejection");
     }
 
     /** Called by smoke after real FML/AE initialization; the monitor remains an explicit bounded fixture. */

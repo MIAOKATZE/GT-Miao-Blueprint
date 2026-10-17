@@ -41,6 +41,8 @@ public final class V0111CompositeNativeProbe {
     private long started, phaseStarted, heartbeat, generation = -1, longFlowStarted;
     private long wholeFlowStarted, processingStarted;
     private long nativeLabProgressAt;
+    private long awaitedTaskToken, awaitedTaskSequence=-1;
+    private String awaitedTaskKind="", awaitedTaskSession="";
     private String fixtureRequest = "", fixtureKind = "", cutRequest = "", rawId = "";
     private Object lastCut;
     private Consumer<Object> originalCut;
@@ -61,6 +63,9 @@ public final class V0111CompositeNativeProbe {
     private int clientDimensionId, clientProviderId;
     private long clientDimensionCleanupStarted;
     private boolean clientDisconnectInitiated;
+    private Boolean previousPauseOnLostFocus;
+    private boolean clientPreferencesRestored;
+    private boolean displayActiveUnavailable;
     private volatile Object admittedClientConnection;
     private String rawPreviewRequest = "";
     private Object rawRenderStateWitness, rawRenderSession;
@@ -83,7 +88,7 @@ public final class V0111CompositeNativeProbe {
         check(!file(client ? "composite-client.properties" : "composite-server.properties").exists(), "fresh observer receipts");
         started = phaseStarted = System.nanoTime();
         proof.setProperty("scope", "40x40x40 actual world; real Netty area import/processing/Save/placement/raw cut; natural rendered MUI stage choices and Save; independently checked client JSON/PNG/owner commit and server material/world oracle; no OS input");
-        proof.setProperty("requestedCells", "64000"); proof.setProperty("preferencesRestored", "true"); proof.setProperty("configRestored", "true");
+        proof.setProperty("requestedSourceVolume", "64000"); proof.setProperty("preferencesRestored", "true"); proof.setProperty("configRestored", "true");
         proof.setProperty("scenario",scenario);
         FMLCommonHandler.instance().bus().register(this);
         if (client) MinecraftForge.EVENT_BUS.register(new RawWorldListener(this));
@@ -125,7 +130,13 @@ public final class V0111CompositeNativeProbe {
                 if (!seedMode) manifest = call(Class.forName("com.miaokatze.gtmb.testlab.TestLab"),"compositeManifest");
                 check(Arrays.equals(ints(manifest,"size"),new int[]{40,40,40}),"exact canonical manifest");
                 writeNbt("composite-manifest.nbt",manifest);
-                proof.setProperty("fixtureReady","true"); proof.setProperty("actualSourceBlocks","64000");
+                proof.setProperty("fixtureReady","true"); proof.setProperty("actualSourceVolume","64000");
+                if(seedMode){
+                    int volume=integer(report,"sourceVolume"),nonAir=integer(report,"sourceNonAirBlocks"),expected=integer(report,"expectedBlueprintCells");
+                    check(volume==64000&&nonAir>0&&nonAir<=volume&&expected==nonAir,"independent native volume/non-air count is complete before ordinary import");
+                    proof.setProperty("actualSourceNonAirBlocks",String.valueOf(nonAir));proof.setProperty("actualSourceAirBlocks",String.valueOf(volume-nonAir));
+                    proof.setProperty("expectedBlueprintCells",String.valueOf(expected));proof.setProperty("blueprintCountBasis",str(report,"blueprintCountBasis"));
+                }
                 proof.setProperty("actor",String.valueOf(call(actor,"func_110124_au")));
                 proof.setProperty("fixtureSourceSha256",str(report,"sourceSha256")); persist("RUNNING");
                 proof.setProperty("fixtureStaticSourceSha256",str(report,"staticSourceSha256"));
@@ -250,9 +261,10 @@ public final class V0111CompositeNativeProbe {
             check(System.nanoTime()-started<OVERALL_LIMIT,"bounded overall client deadline");
             check(System.nanoTime()-phaseStarted<PHASE_LIMIT,"phase timeout "+phase);
             Properties peer=read("composite-server.properties");
-            if(!clientVerdict.isEmpty()) {if("COMPLETE".equals(peer.getProperty("status"))||"PREPARED".equals(peer.getProperty("status"))){boolean cleaned=disconnectAndReleaseClientDimension();persist(clientVerdict);if(cleaned){done=true;call(mc,"func_71400_g");}}return;}
+            if(!clientVerdict.isEmpty()) {if("COMPLETE".equals(peer.getProperty("status"))||"PREPARED".equals(peer.getProperty("status"))){boolean cleaned=disconnectAndReleaseClientDimension();if(cleaned)restoreClientPreferences("native-exit-cleanup");persist(clientVerdict);if(cleaned){done=true;call(mc,"func_71400_g");}}return;}
             if("FAIL".equals(peer.getProperty("status"))){proof.setProperty("failureKind",peer.getProperty("failureKind","PRODUCT_OR_ASSERTION"));throw new IllegalStateException("server failure: "+peer.getProperty("failure",""));}
             if(mc==null)mc=call(Class.forName("net.minecraft.client.Minecraft"),"func_71410_x");
+            applyClientPreferences();
             Object gui=get(mc,"field_71462_r"), player=get(mc,"field_71439_g"), world=get(mc,"field_71441_e"); ticks++;
             if(phase==0) {
                 if(ticks<30||gui==null)return;
@@ -283,6 +295,8 @@ public final class V0111CompositeNativeProbe {
                 Object begun=get(clientType("HologramClient"),"state");
                 observeAreaInput(player,localSelection(begun==null?null:get(begun,"data")));
                 proof.setProperty(kind()+"Area.beginCalls","1");
+                proof.setProperty(kind()+"Area.beginLocalAvailable",proof.getProperty(kind()+"Area.localAvailable","UNAVAILABLE"));
+                proof.setProperty(kind()+"Area.beginLocalContext",proof.getProperty(kind()+"Area.localContext","UNAVAILABLE"));
                 wholeFlowStarted=longFlowStarted=System.nanoTime();advance(3);return;
             }
             // A standalone clipboard flow has no ordinary blueprint state to hydrate.
@@ -290,6 +304,7 @@ public final class V0111CompositeNativeProbe {
             if(phase==14)observePrivateUpload(peer);
             Object state=get(clientType("HologramClient"),"state"), data=state==null?null:get(state,"data");
             if(state==null){if(phase>=3&&phase<=5){observeAreaInput(player,localSelection(null));pulse();}return;}
+            if(phase==9||phase==12||phase==14||phase==19)checkNativeTaskOutcome(state,data);
             if(phase==3) {
                 Object local=localSelection(data);observeAreaInput(player,local);pulse();if(local==null||!bool(local,"areaSelecting"))return;
                 int[] at=ints(manifest,"source");point(1,at[0],at[1],at[2]);advance(4);return;
@@ -304,9 +319,10 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==6) {
                 if(!bool(data,"areaImported")||bool(data,"areaImporting")||bool(data,"capturePending")||busy())return;
-                check(((List<?>)get(state,"cells")).size()==64000,"exact authoritative full client 64k hydration");
+                int cells=((List<?>)get(state,"cells")).size(),expected=expectedBlueprintCells(peer);
+                check(cells==expected,"ordinary authoritative client hydration cells="+cells+" expected independent native non-air="+expected+" of source volume=64000");
                 timing.setProperty(kind()+".importNanos",String.valueOf(System.nanoTime()-longFlowStarted));
-                proof.setProperty("actualCapturedCells","64000"); advance(7);return;
+                proof.setProperty(kind()+"BlueprintCellCount",String.valueOf(cells));proof.setProperty("actualBlueprintCellCount",String.valueOf(cells));advance(7);return;
             }
             if(phase==12) {
                 if(!"true".equals(peer.getProperty(kind()+"SaveCommit"))) {
@@ -329,7 +345,8 @@ public final class V0111CompositeNativeProbe {
                 Object library=get(clientType("HologramLibraryClient"),"INSTANCE");
                 if(!privateLocalId.equals(call(library,"selected",false))||!privateLocalId.equals(str(call(library,"selectedRow",false),"id")))return;
                 privatePreviousPreset=str(data,"blueprintSavedId");privateTransfer="";incomingPrivateReplies.clear();
-                longFlowStarted=System.nanoTime();click(gui,ui,141,gen);
+                longFlowStarted=System.nanoTime();long previousTask=nativeTaskWatermark();click(gui,ui,141,gen);
+                watchNativeTask("private",false,previousTask);
                 proof.setProperty(kind()+"PrivateLoadLocalId",privateLocalId);proof.setProperty(kind()+"PrivateLoadButton","141 actual private-library MUI dispatch");
                 groupIndex=0;advance(14);return;
             }
@@ -339,7 +356,9 @@ public final class V0111CompositeNativeProbe {
                 check(!privateTransfer.isEmpty()&&privateTransfer.equals(str(imported,"transfer")),"actual native privateImported transfer ACK");
                 check(str(imported,"id").startsWith("private_")&&!privatePreviousPreset.equals(str(imported,"id")),"private file upload created a new owner-bound server draft");
                 if(!str(imported,"id").equals(str(data,"selectedPresetId"))||!privateLocalId.equals(str(data,"libraryLocalId")))return;
-                check(((List<?>)get(state,"cells")).size()==64000,"actual saved private artifact rehydrated all 64000 cells before target lock");
+                int cells=((List<?>)get(state,"cells")).size(),expected=expectedBlueprintCells(peer);
+                check(cells==expected,"ordinary private artifact hydration cells="+cells+" expected independent native non-air="+expected+" of source volume=64000 before target lock");
+                proof.setProperty(kind()+"PrivateBlueprintCellCount",String.valueOf(cells));
                 if(!timing.containsKey(kind()+".privateLoadNanos")){
                     Object admission=privateReply("privateReady",privateTransfer);check(admission!=null,"actual native privateBegin admission ACK");
                     Object evidence=nbt(),chunks=construct("net.minecraft.nbt.NBTTagList");
@@ -386,22 +405,37 @@ public final class V0111CompositeNativeProbe {
                 if(!bool(ui,"flowFullReview")){click(gui,ui,296,gen);return;}
                 check(integer(ui,"flowStage")==stage,"actual ordered processing stage "+stage);
                 if(choice==0){if(stage==0)click(gui,ui,flow==0?232:233,gen);choice=1;}
-                else if(choice==1){int[] controls={235,flow==0?240:246,flow==0?262:260,273,280,flow==0?290:291};click(gui,ui,controls[stage],gen);choice=2;}
-                else {check(bool(ui,"flowChosen"),"explicit actual stage choice");click(gui,ui,231,gen);stage++;choice=0;if(stage==6)advance(9);}
+                else if(choice==1){
+                    int[] controls={235,240,flow==0?262:260,270,280,flow==0?290:291};
+                    if(stage==1){
+                        Object processing=compound(data,"processing");check((Boolean)call(processing,"func_74764_b","minimumLevel"),"actual native processing minimumLevel is available");
+                        int minimum=integer(processing,"minimumLevel");check(minimum>=0&&minimum<=10,"native processing identity boundary in supported range");
+                        int selected=Math.max(minimum,flow==0?0:6);controls[1]=240+selected;
+                        proof.setProperty(kind()+"IdentityMinimumLevel",String.valueOf(minimum));proof.setProperty(kind()+"IdentitySelectedLevel",String.valueOf(selected));
+                        proof.setProperty(kind()+"IdentityBoundary","native processingState.minimumLevel; self minimum, share max(minimum,6)");
+                    }
+                    click(gui,ui,controls[stage],gen);if(stage==3)proof.setProperty(kind()+"CoordinateDefaultSelected","auto");choice=2;
+                }
+                else {check(bool(ui,"flowChosen"),"explicit actual stage choice");long previousTask=stage==5?nativeTaskWatermark():0;click(gui,ui,231,gen);stage++;choice=0;if(stage==6){watchNativeTask("processing",true,previousTask);advance(9);}}
             } else if(phase==9) {
                 if(!bool(data,"blueprintProcessingComplete")||bool(ui,"processingFlow"))return;
+                Object appliedPolicy=compound(compound(data,"processing"),"policy");
+                int appliedLevel=integer(appliedPolicy,"deidentificationLevel");check(String.valueOf(appliedLevel).equals(proof.getProperty(kind()+"IdentitySelectedLevel")),"server applied the actual selected native identity level");
+                check("auto".equals(str(appliedPolicy,"coordinateDefault")),"server applied native recommended coordinate policy");
+                proof.setProperty(kind()+"IdentityAppliedLevel",String.valueOf(appliedLevel));proof.setProperty(kind()+"CoordinateDefaultApplied","auto");
                 timing.setProperty(kind()+".processingNanos",String.valueOf(System.nanoTime()-processingStarted));
                 fixture("encode",kind());advance(10);
             } else if(phase==10) {
                 if(!ack(peer))return;
                 typeName(gui,"V0111 "+kind()+" "+output.getName());generation=gen;advance(11);
             } else if(phase==11) {
-                longFlowStarted=System.nanoTime();click(gui,ui,140,gen);
+                longFlowStarted=System.nanoTime();long previousTask=nativeTaskWatermark();click(gui,ui,140,gen);
+                watchNativeTask("save",false,previousTask);
                 proof.setProperty(kind()+"SaveButton","140 actual MUI dispatch");advance(12);
             } else if(phase==17) {
                 if(!bool(data,"blueprintAwaitingConfirmation"))return;
                 click(gui,ui,50,gen);advance(18);
-            } else if(phase==18) {click(gui,ui,55,gen);advance(19);}
+            } else if(phase==18) {long previousTask=nativeTaskWatermark();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
             pulse();
         } catch(Throwable failure) {fail(failure);}
     }
@@ -422,7 +456,7 @@ public final class V0111CompositeNativeProbe {
             Object reply=cutReply(cutRequest);if(reply==null)return;
             check(bool(reply,"success"),str(reply,"message"));check(rawId.equals(str(reply,"id")),"actual raw clipboard identity");
             check(count(list(compound(reply,"preview"),"cells"))==64000,"actual complete selected raw 64k payload");
-            proof.setProperty("actualCapturedCells","64000");timing.setProperty("raw.cutNanos",String.valueOf(System.nanoTime()-longFlowStarted));
+            proof.setProperty("rawCellCount","64000");timing.setProperty("raw.cutNanos",String.valueOf(System.nanoTime()-longFlowStarted));
             rawPreviewStarted=System.nanoTime();advance(35);return;
         }
         if(phase==35){
@@ -688,6 +722,29 @@ public final class V0111CompositeNativeProbe {
         if(!client||done)return;
         proof.setProperty("nativeClientDisconnectEventThread",Thread.currentThread().getName());
         proof.setProperty("nativeClientDisconnectEventMatchesAdmittedConnection",String.valueOf(event.manager==admittedClientConnection));
+        if(admittedClientConnection!=null&&event.manager!=admittedClientConnection)return;
+        // Runner abort also closes the real socket; restore on the ordinary client queue even without a PASS path.
+        try{call(mc,"func_152344_a",(Runnable)()->{
+            try{restoreClientPreferences("native-disconnection-event");persist(proof.getProperty("status","RUNNING"));}
+            catch(Exception failure){proof.setProperty("clientPreferencesRestoreFailure",failure.toString());failure.printStackTrace();}
+        });}catch(Exception failure){proof.setProperty("clientPreferencesRestoreFailure",failure.toString());failure.printStackTrace();}
+    }
+
+    private void applyClientPreferences()throws Exception {
+        if(previousPauseOnLostFocus!=null)return;
+        Object settings=get(mc,"field_71474_y");previousPauseOnLostFocus=(Boolean)get(settings,"field_82881_y");
+        proof.setProperty("preferencesRestored","false");
+        set(settings,"field_82881_y",false);check(!(Boolean)get(settings,"field_82881_y"),"native pauseOnLostFocus environment setting applied");
+        proof.setProperty("pauseOnLostFocusPrevious",String.valueOf(previousPauseOnLostFocus));proof.setProperty("pauseOnLostFocusApplied","false");
+        proof.setProperty("pauseOnLostFocusScope","uniform native GameSettings environment before measurement; avoid background-window auto-pause cancelling the probe; no change to product Escape behavior and no begin retries");
+    }
+
+    private void restoreClientPreferences(String reason)throws Exception {
+        if(previousPauseOnLostFocus==null||clientPreferencesRestored)return;
+        Object settings=get(mc,"field_71474_y");set(settings,"field_82881_y",previousPauseOnLostFocus);
+        check(previousPauseOnLostFocus.equals(get(settings,"field_82881_y")),"original native pauseOnLostFocus preference restored");
+        clientPreferencesRestored=true;proof.setProperty("pauseOnLostFocusRestored",String.valueOf(previousPauseOnLostFocus));
+        proof.setProperty("clientPreferencesRestoreReason",reason);proof.setProperty("preferencesRestored","true");
     }
     private void point(int point,int x,int y,int z)throws Exception {try{check((Boolean)call(clientType("HologramClient"),"localAreaPoint",point,x,y,z,"replace"),"actual local area point");}catch(NoSuchMethodException old){Object state=get(clientType("HologramClient"),"state"),request=worldRequest(state,"areaPoint");putInt(request,"point",point);putInt(request,"x",x);putInt(request,"y",y);putInt(request,"z",z);call(product("HologramNetwork"),"sendAction",request);}}
     private void fixture(String action,String kind)throws Exception {Properties request=new Properties();request.setProperty("sequence",String.valueOf(++requestSequence));request.setProperty("action",action);request.setProperty("kind",kind);store("fixture-request.properties",request);fixtureRequest=action;fixtureKind=kind;}
@@ -696,6 +753,13 @@ public final class V0111CompositeNativeProbe {
     private void uiSend(Object gui,String op,Object request)throws Exception {check(isScreen(gui),"real live MUI session required");call(get(get(gui,"ui"),"session"),"send",op,request,true);}
     private void networkOp(Object state,String op,Object request)throws Exception {putText(request,"op",op);putText(request,"session",String.valueOf(get(state,"session")));call(request,"func_74772_a","planRevision",number(get(state,"data"),"planRevision"));call(product("HologramNetwork"),"sendAction",request);}
     private Object worldRequest(Object state,String action)throws Exception {Object request=nbt();putText(request,"action",action);putText(request,"session",String.valueOf(get(state,"session")));call(request,"func_74772_a","planRevision",number(get(state,"data"),"planRevision"));return request;}
+
+    private int expectedBlueprintCells(Properties peer){
+        int volume=Integer.parseInt(peer.getProperty("actualSourceVolume","-1")),nonAir=Integer.parseInt(peer.getProperty("actualSourceNonAirBlocks","-1")),expected=Integer.parseInt(peer.getProperty("expectedBlueprintCells","-1"));
+        check(volume==64000&&nonAir>0&&nonAir<=volume&&expected==nonAir,"ordinary blueprint count must come from the complete independent native World baseline, not product cells");
+        proof.setProperty("expectedSourceVolume",String.valueOf(volume));proof.setProperty("expectedBlueprintCells",String.valueOf(expected));
+        return expected;
+    }
 
     private void verifyPair(Properties peer,String kind)throws Exception {
         String id=peer.getProperty(kind+"LocalId","");check(id.matches("local_[a-fA-F0-9-]{36}"),"real owner-committed local file ID");
@@ -708,7 +772,9 @@ public final class V0111CompositeNativeProbe {
         Object artifact=call(product("HologramBlueprintArtifact"),"readPair",json);
         check(hash(jsonBytes).equals(get(artifact,"jsonSha256")),"paired PNG source-JSON binding validated");
         Object preset=call(product("HologramBlueprintSharing"),"decode",new String(jsonBytes,java.nio.charset.StandardCharsets.UTF_8));
-        check(((List<?>)get(preset,"cells")).size()==64000,"actual disk saved exact 64k blueprint cells");
+        int cells=((List<?>)get(preset,"cells")).size(),expected=expectedBlueprintCells(peer);
+        check(cells==expected,"ordinary committed disk JSON cells="+cells+" expected independent native non-air="+expected+" of source volume=64000");
+        proof.setProperty(kind+"SavedBlueprintCellCount",String.valueOf(cells));
         Files.copy(json,file(kind+"-actual-saved.json").toPath());Files.copy(png,file(kind+"-actual-saved.png").toPath());
         proof.setProperty(kind+"ActualPair","true");proof.setProperty(kind+"JsonBytes",String.valueOf(jsonBytes.length));proof.setProperty(kind+"PngBytes",String.valueOf(pngBytes.length));proof.setProperty(kind+"JsonSha256",hash(jsonBytes));proof.setProperty(kind+"PngSha256",hash(pngBytes));
     }
@@ -736,10 +802,98 @@ public final class V0111CompositeNativeProbe {
     }
     private Object cutReply(String request)throws Exception {synchronized(incomingCuts){for(Object reply:incomingCuts)if(request.equals(str(reply,"requestId")))return reply;}return null;}
     private static boolean isScreen(Object gui){return gui!=null&&gui.getClass().getName().equals("com.miaokatze.gtmb.client.hologram.HologramScreen");}
-    private void click(Object gui,Object ui,int id,long gen)throws Exception {Object controls=list(ui,"drawnControls");boolean enabled=false;for(int i=0;i<count(controls);i++){Object c=at(controls,i);if(integer(c,"id")==id){enabled=bool(c,"enabled");break;}}check(enabled,"actual visible enabled MUI control "+id);call(gui,"smokeControlPoint",id);call(clientType("HologramMuiProbeInput"),"control",gui,id);generation=gen;proof.setProperty("lastControl",String.valueOf(id));}
+    private long nativeTaskWatermark()throws Exception {
+        Object task=call(clientType("HologramBackgroundTasks"),"actualTaskWitness");return Math.max(number(task,"token"),number(task,"completedToken"));
+    }
+    private void watchNativeTask(String operation,boolean command,long previousTask)throws Exception {
+        Class<?> tasks=clientType("HologramBackgroundTasks");Object state=get(clientType("HologramClient"),"state");
+        awaitedTaskToken=0;long token=(Long)call(tasks,"token");String prefix=kind()+"."+operation+".";
+        proof.setProperty(prefix+"previousTaskWatermark",String.valueOf(previousTask));
+        if(token<=previousTask){proof.setProperty(prefix+"nativeTaskEvidence","NO_NEW_TOKEN; original deadline retained");return;}
+        awaitedTaskKind=operation;awaitedTaskSession=String.valueOf(get(state,"session"));
+        awaitedTaskSequence=command?(Long)call(tasks,"commandSequence",awaitedTaskSession):-1;
+        if(command&&awaitedTaskSequence<0){proof.setProperty(prefix+"nativeTaskEvidence","NO_COMMAND_SEQUENCE; original deadline retained");return;}
+        awaitedTaskToken=token;proof.setProperty(prefix+"nativeTaskEvidence","NEW_NATIVE_TOKEN");
+        proof.setProperty(kind()+"."+operation+".nativeTaskToken",String.valueOf(awaitedTaskToken));
+        proof.setProperty(kind()+"."+operation+".nativeTaskSession",awaitedTaskSession);proof.setProperty(kind()+"."+operation+".nativeTaskSequence",String.valueOf(awaitedTaskSequence));
+    }
+    private void checkNativeTaskOutcome(Object state,Object data)throws Exception {
+        if(awaitedTaskToken<=0)return;
+        Class<?> tasks=clientType("HologramBackgroundTasks");Object task=call(tasks,"actualTaskWitness");
+        if(bool(task,"busy")||number(task,"completedToken")!=awaitedTaskToken||(Boolean)call(tasks,"succeeded"))return;
+        String detail=String.valueOf(call(tasks,"status"));
+        IllegalStateException failure=new IllegalStateException("Native "+awaitedTaskKind+" task failed token="+awaitedTaskToken+" session="+awaitedTaskSession+" sequence="+awaitedTaskSequence+": "+detail);
+        proof.setProperty("nativeTerminalFailureOperation",awaitedTaskKind);proof.setProperty("nativeTerminalFailureToken",String.valueOf(awaitedTaskToken));
+        proof.setProperty("nativeTerminalFailureStatus",detail.substring(0,Math.min(detail.length(),1024)));
+        try{
+            Object report=nbt();putText(report,"operation",awaitedTaskKind);putText(report,"requestSession",awaitedTaskSession);putText(report,"actualSession",String.valueOf(get(state,"session")));
+            call(report,"func_74772_a","requestToken",awaitedTaskToken);call(report,"func_74772_a","requestSequence",awaitedTaskSequence);putInt(report,"phase",phase);putText(report,"nativeTaskStatus",detail);
+            call(report,"func_74782_a","nativeTaskWitness",call(task,"func_74737_b"));
+            for(String key:new String[]{"status","uiSequence","planRevision","processingPresetOperation","processingPresetOperationSuccess","blueprintProcessingComplete","processing","resourceReview","resourceBlockers","rootReport","blueprintOperation","blueprintOperationSuccess","blueprintSavePending","job","jobPartialPlacement","jobMissingCells","jobProtectedCells","jobUnsupportedCells","jobSkippedCells","progress"})
+                if((Boolean)call(data,"func_74764_b",key))call(report,"func_74782_a",key,call(call(data,"func_74781_a",key),"func_74737_b"));
+            Object gui=get(mc,"field_71462_r");if(isScreen(gui))call(report,"func_74782_a","smokeUI",call(gui,"smokeLibraryUiState"));
+            String name="composite-"+kind()+"-terminal-failure.nbt";writeNbt(name,report);proof.setProperty("nativeTerminalFailureReport",name);
+        }catch(Exception diagnostic){proof.setProperty("nativeTerminalFailureReportError",diagnostic.toString());failure.addSuppressed(diagnostic);}
+        throw failure;
+    }
+    private void click(Object gui,Object ui,int id,long gen)throws Exception {
+        Object controls=list(ui,"drawnControls");boolean enabled=false;for(int i=0;i<count(controls);i++){Object c=at(controls,i);if(integer(c,"id")==id){enabled=bool(c,"enabled");break;}}
+        if(!enabled){
+            IllegalStateException failure=new IllegalStateException("actual visible enabled MUI control "+id);
+            try{exportBlockedControl(ui,id);}catch(Exception diagnostic){proof.setProperty("blockedControlReportFailure",diagnostic.toString());failure.addSuppressed(diagnostic);}
+            throw failure;
+        }
+        call(gui,"smokeControlPoint",id);call(clientType("HologramMuiProbeInput"),"control",gui,id);generation=gen;proof.setProperty("lastControl",String.valueOf(id));
+    }
+    private void exportBlockedControl(Object ui,int id)throws Exception {
+        Object state=get(clientType("HologramClient"),"state"),data=state==null?null:get(state,"data"),report=nbt();
+        putInt(report,"control",id);putInt(report,"phase",phase);putInt(report,"stage",stage);putText(report,"scenario",kind());
+        call(report,"func_74782_a","smokeUI",call(ui,"func_74737_b"));
+        if(data!=null){
+            for(String key:new String[]{"processing","resourceReview","resourceBlockers","rootReport"}){
+                boolean present=(Boolean)call(data,"func_74764_b",key);putInt(report,key+"Present",present?1:0);
+                if(present)call(report,"func_74782_a",key,call(call(data,"func_74781_a",key),"func_74737_b"));
+            }
+            Object processing=compound(data,"processing"),resourceHost=data;
+            if(!(Boolean)call(data,"func_74764_b","resourceReview")&&!(Boolean)call(data,"func_74764_b","resourceBlockers"))resourceHost=processing;
+            String resourceKey=(Boolean)call(resourceHost,"func_74764_b","resourceReview")?"resourceReview":"resourceBlockers";
+            Object rows=list(resourceHost,resourceKey);proof.setProperty("blockedControlResourceRows",String.valueOf(count(rows)));
+            int sampled=0;for(int i=0;i<count(rows)&&sampled<16;i++){
+                Object row=at(rows,i);if(bool(row,"canPreserve"))continue;
+                String prefix="blockedResource."+(sampled++)+".";proof.setProperty(prefix+"index",String.valueOf(i));
+                for(String key:new String[]{"x","y","z"})proof.setProperty(prefix+key,String.valueOf(integer(row,key)));
+                for(String key:new String[]{"scope","path","rootKey","message"}){String value=str(row,key);proof.setProperty(prefix+key,value.substring(0,Math.min(value.length(),512)));}
+                proof.setProperty(prefix+"canPreserve",String.valueOf(bool(row,"canPreserve")));proof.setProperty(prefix+"canMigrate",String.valueOf(bool(row,"canMigrate")));
+            }
+            proof.setProperty("blockedControlResourceSamples",String.valueOf(sampled));
+        }
+        String name="composite-"+kind()+"-blocked-control.nbt";writeNbt(name,report);proof.setProperty("blockedControlReport",name);proof.setProperty("blockedControl",String.valueOf(id));
+    }
     private void typeName(Object gui,String name)throws Exception {Class<?> diag=clientType("HologramUiDiagnostics");Object field=call(diag,"readDiagnosticField",gui,"presetNameField");float scale=(Float)call(diag,"readDiagnosticField",gui,"scale");int x=(Integer)call(diag,"readDiagnosticField",gui,"originX")+Math.round(((Integer)get(field,"xPosition")+4)*scale),y=(Integer)call(diag,"readDiagnosticField",gui,"originY")+Math.round(((Integer)get(field,"yPosition")+7)*scale);call(clientType("HologramMuiProbeInput"),"click",gui,x,y,0);check((Boolean)call(field,"isFocused"),"native name field focus");call(clientType("HologramMuiProbeInput"),"key",gui,(char)1,30);for(char c:name.toCharArray())call(clientType("HologramMuiProbeInput"),"key",gui,c,0);check(name.equals(call(field,"getText")),"exact native keyboard name");}
     private void advance(int next)throws Exception {long now=System.nanoTime();timing.setProperty(kind()+".phase."+phase+".nanos",String.valueOf(now-phaseStarted));phase=next;phaseStarted=now;persist("RUNNING");}
-    private void pulse()throws Exception {if(System.nanoTime()-heartbeat<2_000_000_000L)return;heartbeat=System.nanoTime();persist("RUNNING");}
+    private void pulse()throws Exception {
+        if(System.nanoTime()-heartbeat<2_000_000_000L)return;heartbeat=System.nanoTime();
+        if(client&&mc!=null){
+            Object screen=get(mc,"field_71462_r");proof.setProperty("nativeClientScreen",screen==null?"NONE":screen.getClass().getName());
+            observeDisplayActive();
+            proof.setProperty("nativePauseOnLostFocus",String.valueOf(get(get(mc,"field_71474_y"),"field_82881_y")));
+            try{
+                Class<?> type=clientType("HologramClient");proof.setProperty("nativeLocalAreaPresent",String.valueOf(get(type,"localArea")!=null));
+                proof.setProperty("nativeLocalAreaWorldIdentity",String.valueOf(System.identityHashCode(get(type,"localAreaWorld"))));
+                for(String key:new String[]{"localAreaAwaitingBegin","localAreaFinishing","localAreaCancelling"})proof.setProperty("native."+key,String.valueOf(get(type,key)));
+            }catch(NoSuchFieldException historical){proof.setProperty("nativeLocalAreaFlags","API_UNAVAILABLE");}
+        }
+        persist("RUNNING");
+    }
+    private void observeDisplayActive(){
+        if(displayActiveUnavailable)return;
+        try{proof.setProperty("nativeDisplayActive",String.valueOf(call(Class.forName("org.lwjgl.opengl.Display"),"isActive")));}
+        catch(Exception|LinkageError unavailable){
+            Throwable cause=unavailable;while(cause instanceof java.lang.reflect.InvocationTargetException&&cause.getCause()!=null)cause=cause.getCause();
+            String detail=cause.toString();displayActiveUnavailable=true;
+            proof.setProperty("nativeDisplayActive","API_UNAVAILABLE");proof.setProperty("nativeDisplayActiveCause",detail.substring(0,Math.min(detail.length(),256)));
+        }
+    }
     private void persist(String status)throws Exception {proof.setProperty("status",status);proof.setProperty("phase",String.valueOf(phase));proof.setProperty("flow",kind());proof.setProperty("phaseElapsedNanos",String.valueOf(System.nanoTime()-phaseStarted));proof.setProperty("elapsedNanos",String.valueOf(System.nanoTime()-started));store(client?"composite-client.properties":"composite-server.properties",proof);store(client?"composite-client-timing.properties":"composite-server-timing.properties",timing);}
     private void fail(Throwable failure){
         while(failure instanceof java.lang.reflect.InvocationTargetException&&failure.getCause()!=null)failure=failure.getCause();
@@ -748,6 +902,7 @@ public final class V0111CompositeNativeProbe {
             if(!proof.containsKey("failureKind"))proof.setProperty("failureKind",failure instanceof ReceiptIoException?"TEST_IO":failure instanceof NativeFixtureFailure?"FIXTURE_SETUP":"PRODUCT_OR_ASSERTION");
             if(!proof.containsKey("failure")){proof.setProperty("failure",failure.toString());proof.setProperty("failurePhase",String.valueOf(phase));}
             if(client){try{restoreCutWitness();}catch(Exception cleanup){proof.setProperty("cutWitnessCleanupFailure",cleanup.toString());}try{disconnectAndReleaseClientDimension();}catch(Exception cleanup){proof.setProperty("clientDimensionMappingCleanupFailure",cleanup.toString());}}
+            if(client){try{restoreClientPreferences("probe-failure");}catch(Exception cleanup){proof.setProperty("clientPreferencesRestoreFailure",cleanup.toString());}}
             if(server&&seedMode&&bridge!=null){try{call(bridge,"close");writeNbt("composite-server-oracle.nbt",call(bridge,"report"));}catch(Exception cleanup){proof.setProperty("fixtureCleanupFailure",cleanup.toString());}}
             persist("FAIL");
         }catch(Exception nested){proof.setProperty("secondaryReceiptFailure",nested.toString());nested.printStackTrace();}
@@ -780,7 +935,9 @@ public final class V0111CompositeNativeProbe {
         check(Arrays.asList("composite-client.properties","composite-server.properties","composite-client-timing.properties","composite-server-timing.properties","fixture-request.properties",
             "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
-            "composite-self-private-import.nbt","composite-share-private-import.nbt").contains(base),"fixed native receipt name required");
+            "composite-self-private-import.nbt","composite-share-private-import.nbt",
+            "composite-self-blocked-control.nbt","composite-share-blocked-control.nbt","composite-raw-blocked-control.nbt",
+            "composite-self-terminal-failure.nbt","composite-share-terminal-failure.nbt","composite-raw-terminal-failure.nbt").contains(base),"fixed native receipt name required");
         Path path=file(name).toPath().toAbsolutePath().normalize();
         check(path.getParent().equals(output.toPath())&&!Files.isSymbolicLink(path),"receipt remains directly inside the already admitted case directory");
         return path;

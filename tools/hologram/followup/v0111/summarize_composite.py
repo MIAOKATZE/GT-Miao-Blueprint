@@ -29,11 +29,16 @@ def summarize(case):
         "native_seed_playerdata_sha256": receipt.get("native_seed_playerdata_sha256"),
         "server_library_config_sha256": receipt.get("before_files", {}).get("server-library-config", {}).get("sha256"),
         "dependency_hashes": receipt.get("dependency_hashes"),
-        "native_environment": {key: receipt.get(key) for key in
+        "native_environment": {**{key: receipt.get(key) for key in
                                ("allow_nether", "allow_flight", "view_distance", "testlab_force_lease_ceiling",
                                 "client_Xmx", "server_Xmx")},
+                               "pause_on_lost_focus_applied": client.get("pauseOnLostFocusApplied")},
         "seed_files": receipt.get("seed_files"),
         "fixture_static_source_sha256": server.get("fixtureStaticSourceSha256"),
+        "source_volume": server.get("actualSourceVolume"),
+        "expected_blueprint_cell_count": server.get("expectedBlueprintCells"),
+        "actual_blueprint_cell_count": client.get("actualBlueprintCellCount"),
+        "raw_cell_count": client.get("rawCellCount"),
         "endpoints": {}, "cleanup": {key: receipt.get(key) for key in
                                        ("processClosed", "addonsCleanup", "client_library_restored", "cleanup_errors")},
     }
@@ -55,7 +60,7 @@ def main():
     cases = [summarize(native.within(case, native.OUTPUTS, exists=True)) for case in args.cases]
     shared = {}
     for key in ("addon_sha256", "seed_manifest_sha256", "seed_receipt_sha256", "actual_seed_actor_nbt_sha256", "native_seed_playerdata_sha256", "fixture_static_source_sha256",
-                "server_library_config_sha256"):
+                "server_library_config_sha256", "source_volume", "expected_blueprint_cell_count"):
         values = [row[key] for row in cases]
         shared[key] = bool(values and all(values) and len(set(values)) == 1)
     shared["seed_files"] = bool(cases and all(row["seed_files"] == cases[0]["seed_files"] for row in cases))
@@ -63,6 +68,7 @@ def main():
                                                     row["dependency_hashes"] == cases[0]["dependency_hashes"]
                                                     for row in cases))
     shared["native_environment"] = bool(cases and all(row["native_environment"]["allow_nether"] is True and
+                                                     row["native_environment"]["pause_on_lost_focus_applied"] == "false" and
                                                      row["native_environment"] == cases[0]["native_environment"]
                                                      for row in cases))
     comparable = all(shared.values())

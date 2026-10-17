@@ -608,6 +608,11 @@ public final class HologramBlueprintResources {
         Plan result = new Plan();
         if (selectedPayload == null) return result;
         selectedPayload = HologramGtMeShadow.project(HologramEnergyPayload.withoutBuffers(selectedPayload));
+        if (selectedPayload.hasKey("GTSWN_NetworkSafetyEnabled")
+            && (!selectedPayload.hasKey("GTSWN_NetworkSafetyEnabled", 1)
+                || selectedPayload.getByte("GTSWN_NetworkSafetyEnabled") != 0
+                    && selectedPayload.getByte("GTSWN_NetworkSafetyEnabled") != 1))
+            throw unsupported("GTSWN_NetworkSafetyEnabled", "原生 TileEntity 配置必须为布尔 byte");
         boolean craftingHatch = HologramGtCraftingResources.supports(selectedPayload);
         selectedPayload = HologramGtCraftingResources.paymentPayload(selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
@@ -836,6 +841,7 @@ public final class HologramBlueprintResources {
             nativeTileId = root.getString("id");
             machineId = root.hasKey("mID", 99) ? root.getInteger("mID") : -1;
             configuration.addAll(HologramGtMeShadow.configurationPaths(root));
+            configuration.addAll(HologramGtswnPanelConfiguration.paths(root));
             if (nativeComponents != null) for (ItemStack item : nativeComponents)
                 if (item != null && item.getItem() != null && item.stackSize > 0) nativeCredits.add(item.copy());
             for (java.util.Map.Entry<String, ItemStack> attribute : HologramDecorMaterials

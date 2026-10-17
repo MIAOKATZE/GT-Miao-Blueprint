@@ -24,7 +24,7 @@ public final class CompositeWorldWitness {
     private final List<Object> minimumPhysicalItems = new ArrayList<Object>(), minimumPhysicalFluids = new ArrayList<Object>();
     private int sourcePhysicalPatternCount;
     private Object drive, itemMonitor, fluidMonitor, actionSource, bankBefore;
-    private int baselineCursor, cursor, tiles, sourceAir;
+    private int baselineCursor, sourceNonAirBlocks, cursor, tiles, sourceAir;
     private int[] target;
     private String checking="", funded="", saved="";
     private final List<String> mismatches = new ArrayList<String>();
@@ -76,7 +76,20 @@ public final class CompositeWorldWitness {
     }
 
     public void tick()throws Exception {
-        if(baselineCursor<64000){for(int n=0;n<256&&baselineCursor<64000;n++,baselineCursor++){Object row=read(source,baselineCursor);baseline.add(row);inspectPhysicalMinimum(row);staticSourceDigest.update(String.valueOf(normalize(row,"raw",true)).getBytes(StandardCharsets.UTF_8));}if(baselineCursor==64000){putText(result,"sourceSha256",hash(baseline));StringBuilder value=new StringBuilder();for(byte b:staticSourceDigest.digest())value.append(String.format("%02x",b&255));putText(result,"staticSourceSha256",value.toString());putText(result,"status","READY");}return;}
+        if(baselineCursor<64000){
+            for(int n=0;n<256&&baselineCursor<64000;n++,baselineCursor++){
+                Object row=read(source,baselineCursor);baseline.add(row);
+                if(!text(row,"block").equals("minecraft:air"))sourceNonAirBlocks++;
+                inspectPhysicalMinimum(row);staticSourceDigest.update(String.valueOf(normalize(row,"raw",true)).getBytes(StandardCharsets.UTF_8));
+            }
+            if(baselineCursor==64000){
+                putInt(result,"sourceVolume",baselineCursor);putInt(result,"sourceNonAirBlocks",sourceNonAirBlocks);
+                putInt(result,"sourceAirBlocks",baselineCursor-sourceNonAirBlocks);putInt(result,"expectedBlueprintCells",sourceNonAirBlocks);
+                putText(result,"blueprintCountBasis","one independent native World baseline scan of all 64000 positions; vanilla air excluded from ordinary blueprint cells; raw includes air");
+                putText(result,"sourceSha256",hash(baseline));StringBuilder value=new StringBuilder();for(byte b:staticSourceDigest.digest())value.append(String.format("%02x",b&255));putText(result,"staticSourceSha256",value.toString());putText(result,"status","READY");
+            }
+            return;
+        }
         if(!checking.isEmpty()) {
             if(awaitingFormation){if(!formedTarget())return;awaitingFormation=false;}
             for(int n=0;n<256&&cursor<64000;n++,cursor++) {
@@ -93,12 +106,14 @@ public final class CompositeWorldWitness {
     public boolean ready(){return baselineCursor==64000&&checking.isEmpty();}
     public Object report()throws Exception{return call(result,"func_74737_b");}
     public Object checkEncoded(String kind)throws Exception {
+        check(ready()&&sourceNonAirBlocks>0,"complete independent native volume/non-air baseline before JSON readback validation");
         Object session=session();check((Boolean)get(session,"processingReviewed"),"actual processing reviewed");Object preset=get(session,"virtualPreset");
         Object gson=call(construct("com.google.gson.GsonBuilder"),"create");int limit=(Integer)get(product("HologramBlueprintSharing"),"MAX_BYTES");
         byte[] bytes=(byte[])call(product("HologramBlueprintSharing"),"encodeBounded",gson,preset,limit);
         Object readback=call(product("HologramBlueprintSharing"),"decode",new String(bytes,StandardCharsets.UTF_8));
-        check(((List<?>)get(readback,"cells")).size()==64000,"actual bounded saved JSON readback exact 64k");
-        Object row=nbt();putInt(row,"jsonBytes",bytes.length);putInt(row,"jsonLimit",limit);putText(row,"save","NOT_RUN: encoded JSON is not native JSON/PNG owner commit");tag(result,kind+"Encoding",row);return row;
+        int cells=((List<?>)get(readback,"cells")).size();
+        check(cells==sourceNonAirBlocks,"ordinary bounded JSON readback cells="+cells+" expected independent native non-air="+sourceNonAirBlocks+" of source volume=64000");
+        Object row=nbt();putInt(row,"blueprintCells",cells);putInt(row,"expectedNonAirCells",sourceNonAirBlocks);putInt(row,"sourceVolume",64000);putInt(row,"jsonBytes",bytes.length);putInt(row,"jsonLimit",limit);putText(row,"save","NOT_RUN: encoded JSON is not native JSON/PNG owner commit");tag(result,kind+"Encoding",row);return row;
     }
 
     public void fundPlacement(String kind)throws Exception {
@@ -167,6 +182,8 @@ public final class CompositeWorldWitness {
     private Object normalize(Object input,String kind,boolean expected)throws Exception {
         Object out=call(input,"func_74737_b");if(!has(out,"tile"))return out;Object tile=compound(out,"tile");
         for(String key:new String[]{"x","y","z","mTickTimer","mLastUpdate","mLastUpdateTime","mMachine","mUpdated","mUpdate","mNeedsUpdate","mStartUpCheck","mRuntime","mRunTime","mProgresstime","mMaxProgresstime","lastTime","lastTick","lastUpdate","updateCount","lastMetadata","channelCount","usedChannels"})remove(tile,key);
+        // GT .205 saves this server-onPostTick counter at the native TE root; inventory/configuration are untouched.
+        if(text(out,"tileClass").equals("gregtech.api.metatileentity.BaseMetaTileEntity")||text(tile,"id").equals("BaseMetaTileEntity"))remove(tile,"mTotalRunTime");
         for(String key:new HashSet<String>(keys(tile)))if(Arrays.asList("proxy","node","grid","GridNode").contains(key)){Object node=compound(tile,key);for(String runtime:new String[]{"g","k","p"})remove(node,runtime);}
         if(kind.equals("share"))for(String key:new String[]{"Owner","OwnerUUID","owner","ownerUUID","mOwner","mOwnerName","mOwnerUuid","mOwnerUUID","UUID","uuid","SecurityKey","securityKey","lastOutput"})remove(tile,key);
         if(has(tile,"anchorDim")&&has(tile,"anchorX")){if(expected){putInt(tile,"anchorDim",integer(manifest,"dimension"));putInt(tile,"anchorX",bankOrigin[0]+3);putInt(tile,"anchorY",bankOrigin[1]+3);putInt(tile,"anchorZ",bankOrigin[2]+3+(kind.equals("share")?14:0));}remove(tile,"anchorGeneration");remove(tile,"anchorSchema");}

@@ -63,6 +63,7 @@ public final class HologramAeBlueprint {
     private static final int MAX_SLOTS = 512;
     private static final int MAX_UNRESOLVED = 512;
     public static final String UNRESOLVED = "gtmbAeUnresolved";
+    private static final String GTSWN_NETWORK_SAFETY = "GTSWN_NetworkSafetyEnabled";
     private static final Set<String> LOST_BLOCKERS = new HashSet<>(
         Arrays.asList(
             "static_block_data",
@@ -156,7 +157,7 @@ public final class HologramAeBlueprint {
             "misc.TileSkyCompass",
             "misc.TileLightDetector",
             "grindstone.TileCrank")) schema(name);
-        // CPU runtime may contain physical inventory. Shell recognition is allowed; data is a blocker.
+        // The exact idle writer is portable; nonempty CPU inventory, jobs and callbacks remain blocked.
         for (String name : Arrays.asList(
             "crafting.TileCraftingTile",
             "crafting.TileCraftingStorageTile",
@@ -731,6 +732,7 @@ public final class HologramAeBlueprint {
                 "color",
                 "partContainer",
                 "recoveredPartDrops",
+                GTSWN_NETWORK_SAFETY,
                 HologramDisplaySnapshot.QUANTUM_SIDES,
                 HologramNetworkBindings.GROUP,
                 HologramNetworkBindings.ROLE,
@@ -763,6 +765,7 @@ public final class HologramAeBlueprint {
         if (block.getClass()
             .getName()
             .equals("codechicken.multipart.BlockMultipart")) {
+            HologramAeBlueprintSchemas.gtswnTileConfiguration(work, work.data);
             if (supports(block, work.data))
                 HologramAeBlueprintSchemas.previewFields(work, work.data, new String[0], false);
             multipart(work);
@@ -819,8 +822,13 @@ public final class HologramAeBlueprint {
             .getName()
             .equals(TILE + "misc.TileInterface");
         if (interfaceTile) HologramAeBlueprintSchemas.importInterfaceStorage(work);
+        String[] nativeAlias = HologramAeBlueprintSchemas.nativeInventoryAlias(
+            fresh.getClass()
+                .getName());
+        if (nativeAlias != null) HologramAeBlueprintSchemas.importNativeInventoryAlias(work, nativeAlias);
         for (Inventory inventory : schema.inventories) inventory(work, work.data, inventory, new String[0], fresh);
         if (interfaceTile) HologramAeBlueprintSchemas.mirrorInterfaceStorage(work.data);
+        if (nativeAlias != null) HologramAeBlueprintSchemas.mirrorNativeInventoryAlias(work.data, nativeAlias);
         if (fresh.getClass()
             .getName()
             .equals(TILE + "misc.TileAdvancedInscriber"))
@@ -904,7 +912,43 @@ public final class HologramAeBlueprint {
             && selected.path.length >= 2
             && selected.path[0].equals("storage")
             && selected.path[1].matches("#[0-8]")) HologramAeBlueprintSchemas.mirrorInterfaceStorage(changed);
+        if (block instanceof AEBaseTileBlock && ((AEBaseTileBlock) block).getTileEntityClass() != null) {
+            String[] alias = HologramAeBlueprintSchemas.nativeInventoryAlias(
+                ((AEBaseTileBlock) block).getTileEntityClass()
+                    .getName());
+            if (alias != null) HologramAeBlueprintSchemas.mirrorNativeInventoryAlias(changed, alias);
+        }
         return analyze(block, metadata, changed);
+    }
+
+    /** Both exact native readers address the same physical slot; deletion must not leave a restoring alias. */
+    static String inventoryAliasPath(Block block, String path) {
+        if (!(block instanceof AEBaseTileBlock) || ((AEBaseTileBlock) block).getTileEntityClass() == null) return null;
+        String[] layout = HologramAeBlueprintSchemas.nativeInventoryAlias(
+            ((AEBaseTileBlock) block).getTileEntityClass()
+                .getName());
+        if (layout == null) return null;
+        String[] parts = path.substring(1)
+            .split("/", -1);
+        if (parts.length == 1) {
+            if (!layout[0].equals("inv") && parts[0].equals(layout[0])) return "/inv";
+            if (!layout[0].equals("inv") && parts[0].equals("inv")) return "/" + layout[0];
+            return null;
+        }
+        String slot = null, root = null;
+        if (parts[0].equals(layout[0]) && parts[1].matches("#[0-9]+")) {
+            slot = parts[1].substring(1);
+            root = "/inv/item";
+        } else if (parts[0].equals("inv") && parts[1].matches("item[0-9]+")) {
+            slot = parts[1].substring(4);
+            root = "/" + layout[0] + "/#";
+        }
+        if (slot == null || new java.math.BigInteger(slot).compareTo(new java.math.BigInteger(layout[1])) >= 0)
+            return null;
+        StringBuilder alias = new StringBuilder(root).append(slot);
+        for (int i = 2; i < parts.length; i++) alias.append('/')
+            .append(parts[i]);
+        return alias.toString();
     }
 
     /** Only called with the project's read-only detached World, before any native ready/validate callback. */
@@ -1371,6 +1415,7 @@ public final class HologramAeBlueprint {
                     HologramNetworkBindings.HINT,
                     HologramNetworkBindings.CAPTURE_ANCHOR,
                     "internalCurrentPower"));
+            known.add(GTSWN_NETWORK_SAFETY);
             for (Settings setting : Settings.values()) known.add(setting.name());
             for (Inventory inventory : schema.inventories) known.add(inventory.root);
             String type = host.getClass()
@@ -1382,10 +1427,33 @@ public final class HologramAeBlueprint {
             if (type.equals(TILE + "storage.TileChest")) known.add("terminalSettings");
             if (type.equals(TILE + "misc.TileAdvancedInscriber"))
                 known.addAll(Arrays.asList("topLocked", "bottomLocked", "output"));
+            if (nativeInventoryAlias(type) != null || type.equals(TILE + "networking.TileEnergyAcceptor"))
+                known.add("inv");
+            if (type.equals(TILE + "misc.TileCondenser")) known.add("storedPower");
+            if (type.equals(TILE + "misc.TileVibrationChamber")) known.addAll(Arrays.asList("burnTime", "maxBurnTime"));
             if (type.equals(TILE + "networking.TileWirelessHub")
                 || type.equals(TILE + "networking.TileWirelessConnector")) known.add("Color");
             if (type.equals(TILE + "networking.TileController")) known.add("controllerAnimation");
-            if (type.startsWith(TILE + "crafting.TileCrafting")) known.add("core");
+            if (type.startsWith(TILE + "crafting.TileCrafting")) known.addAll(
+                Arrays.asList(
+                    "core",
+                    "inventory",
+                    "tasks",
+                    "waitingFor",
+                    "waitingForMissing",
+                    "finalOutput",
+                    "craftCompleteListeners",
+                    "onCancelListeners",
+                    "craftStatusListeners",
+                    "waiting",
+                    "isComplete",
+                    "suspended",
+                    "usedStorage",
+                    "isMissingMode",
+                    "craftingAllowMode",
+                    "elapsedTime",
+                    "startItemCount",
+                    "remainingItemCount"));
             for (Object raw : new HashSet<Object>(work.data.func_150296_c())) {
                 String key = (String) raw;
                 work.roots.add(key);
@@ -1469,9 +1537,86 @@ public final class HologramAeBlueprint {
             data.setTag("inv", alias);
         }
 
+        static String[] nativeInventoryAlias(String type) {
+            if (type.equals(TILE + "crafting.TileMolecularAssembler")) return new String[] { "inv", "11" };
+            if (type.equals(TILE + "misc.TileInscriber")) return new String[] { "inscriberInv", "4" };
+            if (type.equals(TILE + "storage.TileIOPort")) return new String[] { "cells", "12" };
+            return null;
+        }
+
+        static void importNativeInventoryAlias(Work work, String[] layout) throws IOException {
+            NBTTagCompound data = work.data;
+            if (!data.hasKey("inv")) return;
+            work.roots.add("inv");
+            if (!data.hasKey("inv", 10)) {
+                work.issue("unknown_inventory_slot", "blocker", "inv", "Malformed native inherited inventory alias");
+                data.removeTag("inv");
+                return;
+            }
+            NBTTagCompound inherited = data.getCompoundTag("inv"), canonical = data.getCompoundTag(layout[0]);
+            if (data.hasKey(layout[0]) && !data.hasKey(layout[0], 10))
+                work.issue("unknown_inventory_slot", "blocker", layout[0], "Malformed native canonical inventory");
+            boolean canonicalPresent = !layout[0].equals("inv") && data.hasKey(layout[0]);
+            for (Object key : canonical.func_150296_c()) canonicalPresent |= ((String) key).startsWith("#");
+            NBTTagCompound merged = (NBTTagCompound) canonical.copy();
+            int size = Integer.parseInt(layout[1]);
+            for (Object raw : inherited.func_150296_c()) {
+                String key = (String) raw;
+                if (layout[0].equals("inv") && key.startsWith("#")) continue;
+                if (!key.matches("item(?:0|[1-9][0-9]*)") || !inherited.hasKey(key, 10)
+                    || new java.math.BigInteger(key.substring(4)).compareTo(java.math.BigInteger.valueOf(size)) >= 0)
+                    work.issue(
+                        "unknown_inventory_slot",
+                        "blocker",
+                        "inv/" + key,
+                        "Unrecognized native inherited inventory entry");
+                merged.removeTag(key);
+            }
+            for (int slot = 0; slot < size; slot++) {
+                String aliasKey = "item" + slot, key = "#" + slot;
+                NBTTagCompound alias = inherited.getCompoundTag(aliasKey), selected = canonical.getCompoundTag(key);
+                if (canonicalPresent) {
+                    boolean same = false;
+                    try {
+                        same = HologramBlueprintNbt.nativePayload(alias)
+                            .equals(HologramBlueprintNbt.nativePayload(selected));
+                    } catch (IOException unresolved) { /* No malformed/missing item can acquire alias credit. */ }
+                    if (inherited.hasKey(aliasKey) && !same) work.issue(
+                        "interface_storage_alias_conflict",
+                        "blocker",
+                        layout[0] + "/" + key,
+                        "Native inventory encodings disagree; clear or replace this exact physical slot");
+                } else if (!alias.hasNoTags()) merged.setTag(key, alias.copy());
+            }
+            data.setTag(layout[0], merged);
+            if (!layout[0].equals("inv")) data.removeTag("inv");
+        }
+
+        static void mirrorNativeInventoryAlias(NBTTagCompound data, String[] layout) {
+            NBTTagCompound canonical = data.getCompoundTag(layout[0]);
+            NBTTagCompound alias = layout[0].equals("inv") ? canonical : new NBTTagCompound();
+            for (int slot = 0; slot < Integer.parseInt(layout[1]); slot++) alias.setTag(
+                "item" + slot,
+                canonical.getCompoundTag("#" + slot)
+                    .copy());
+            data.setTag("inv", alias);
+        }
+
         static void cleanHost(Work work, NBTTagCompound data, Object host, String[] prefix) throws IOException {
             String type = host.getClass()
                 .getName();
+            if (prefix.length == 0 && host instanceof TileEntity) gtswnTileConfiguration(work, data);
+            if (prefix.length == 0 && type.equals(TILE + "networking.TileEnergyAcceptor") && data.hasKey("inv")) {
+                work.roots.add("inv");
+                if (!data.hasKey("inv", 10) || !data.getCompoundTag("inv")
+                    .hasNoTags())
+                    work.issue(
+                        "unknown_inventory_slot",
+                        "blocker",
+                        "inv",
+                        "Native energy acceptor inventory has zero slots");
+                data.setTag("inv", new NBTTagCompound());
+            }
             if (prefix.length == 0) data.removeTag("GTSWN_IncorporationIdentity");
             if (prefix.length == 0 && type.equals("appeng.tile.networking.TileController")
                 && data.hasKey("GTSWN_ControllerIdentity")) {
@@ -1514,11 +1659,16 @@ public final class HologramAeBlueprint {
                     throw new IOException("Invalid native AE power cache");
                 root(work, prefix, "internalCurrentPower");
             }
-            if (type.equals(TILE + "misc.TileCondenser"))
-                zero(work, data, "storedPower", prefix, "energy_reset", "Condenser stored power is omitted");
+            if (type.equals(TILE + "misc.TileCondenser")) zero(work, data, "storedPower", prefix);
             if (type.equals(TILE + "misc.TileVibrationChamber")) {
-                zero(work, data, "burnTime", prefix, "burn_reset", "Remaining fuel burn state is omitted");
-                zero(work, data, "maxBurnTime", prefix, "burn_reset", "Fuel burn cache is reset");
+                zero(work, data, "burnTime", prefix);
+                zero(work, data, "maxBurnTime", prefix);
+                if (data.hasKey("burnSpeed") && (!data.hasKey("burnSpeed", 3) || data.getInteger("burnSpeed") <= 0))
+                    work.issue(
+                        "unreviewed_tile_field",
+                        "blocker",
+                        displayPath(path(prefix, "burnSpeed")),
+                        "Native burn speed must be a positive integer");
                 remove(work, data, "burnSpeed", prefix, "burn_reset", "Fuel burn cache is reset");
             }
             if (type.equals(TILE + "networking.TileWireless"))
@@ -1684,8 +1834,12 @@ public final class HologramAeBlueprint {
                     root(work, prefix, key);
                 }
             }
-            if (type.startsWith(TILE + "crafting.TileCrafting")) {
+            if (type.startsWith(TILE + "crafting.TileCrafting") && !idleCraftingCpu(data)) {
                 NBTTagCompound safe = shell(data);
+                if (data.hasKey(GTSWN_NETWORK_SAFETY)) safe.setTag(
+                    GTSWN_NETWORK_SAFETY,
+                    data.getTag(GTSWN_NETWORK_SAFETY)
+                        .copy());
                 for (Object raw : data.func_150296_c()) {
                     String key = (String) raw;
                     if (key.equals("core")) {
@@ -1708,6 +1862,59 @@ public final class HologramAeBlueprint {
                 // False core prevents the native class from copying a cluster's previous state.
                 data.setBoolean("core", false);
             }
+        }
+
+        /** Exact idle CPU writer state. Nonempty inventory/tasks/outputs are still a resource blocker. */
+        private static boolean idleCraftingCpu(NBTTagCompound data) {
+            if (!nativeBoolean(data, "core")) return false;
+            if (!data.getBoolean("core")) {
+                for (String field : Arrays.asList(
+                    "inventory",
+                    "tasks",
+                    "waitingFor",
+                    "waitingForMissing",
+                    "finalOutput",
+                    "craftCompleteListeners",
+                    "onCancelListeners",
+                    "craftStatusListeners",
+                    "waiting",
+                    "isComplete",
+                    "suspended",
+                    "usedStorage",
+                    "isMissingMode",
+                    "craftingAllowMode",
+                    "elapsedTime",
+                    "startItemCount",
+                    "remainingItemCount")) if (data.hasKey(field)) return false;
+                return true;
+            }
+            for (String field : Arrays.asList("inventory", "tasks", "waitingFor", "waitingForMissing"))
+                if (!data.hasKey(field, 9) || ((NBTTagList) data.getTag(field)).tagCount() != 0) return false;
+            for (String field : Arrays.asList("craftCompleteListeners", "onCancelListeners", "craftStatusListeners"))
+                if (!data.hasKey(field, 10) || !data.getCompoundTag(field)
+                    .hasNoTags()) return false;
+            for (String field : Arrays.asList("waiting", "isComplete", "suspended", "isMissingMode"))
+                if (!nativeBoolean(data, field)) return false;
+            if (data.getBoolean("waiting") || !data.hasKey("craftingAllowMode", 3)
+                || data.getInteger("craftingAllowMode") < 0
+                || data.getInteger("craftingAllowMode") > 2) return false;
+            for (String field : Arrays.asList("usedStorage", "elapsedTime", "startItemCount", "remainingItemCount"))
+                if (!data.hasKey(field, 4) || data.getLong(field) < 0) return false;
+            if (!data.hasKey("finalOutput", 10)) return false;
+            NBTTagCompound output = data.getCompoundTag("finalOutput");
+            if (output.func_150296_c()
+                .size() != 4 || !nativeBoolean(output, "fakeCrafting")
+                || !output.hasKey("originalOutput", 10)
+                || !output.getCompoundTag("originalOutput")
+                    .hasNoTags())
+                return false;
+            for (String field : Arrays.asList("patternOutputs", "outputs"))
+                if (!output.hasKey(field, 9) || ((NBTTagList) output.getTag(field)).tagCount() != 0) return false;
+            return true;
+        }
+
+        private static boolean nativeBoolean(NBTTagCompound data, String key) {
+            return data.hasKey(key, 1) && (data.getByte(key) == 0 || data.getByte(key) == 1);
         }
 
         static void inventory(Work work, NBTTagCompound data, Inventory inventory, String[] prefix, Object host)
@@ -1769,7 +1976,7 @@ public final class HologramAeBlueprint {
                         if (kind.equals("ghost")) stack = ghost(work, raw, itemPath);
                         else {
                             stack = readStack(raw);
-                            if (stack == null) {
+                            if (stack == null && !nativeZeroMarker(raw)) {
                                 boolean unavailable = raw.hasKey(HologramBlueprintNbt.ITEM_REGISTRY, 8)
                                     && HologramBlueprintNbt.stableItem(raw) == null;
                                 work.issue(
@@ -1778,7 +1985,7 @@ public final class HologramAeBlueprint {
                                     displayPath(itemPath),
                                     "Physical item is unavailable or invalid; it is not silently retained for free");
                                 stored.removeTag(key);
-                            } else if (kind.equals("emptyCell") || isCell(stack)) {
+                            } else if (stack != null && (kind.equals("emptyCell") || isCell(stack))) {
                                 kind = "emptyCell";
                                 stack = emptyCell(work, stack, itemPath);
                                 NBTTagCompound clean = new NBTTagCompound();
@@ -1787,7 +1994,7 @@ public final class HologramAeBlueprint {
                                     stack.writeToNBT(clean);
                                     stored.setTag(key, clean);
                                 }
-                            } else {
+                            } else if (stack != null) {
                                 try {
                                     work.materials.add(HologramGtCraftingResources.patternMaterial(nativeStack(stack)));
                                     if (stack.stackSize > limit) work.issue(
@@ -1843,6 +2050,7 @@ public final class HologramAeBlueprint {
         static void cable(Work work, NBTTagCompound data, String[] prefix) throws IOException {
             previewFields(work, data, prefix, true);
             if (prefix.length == 0) {
+                gtswnTileConfiguration(work, data);
                 data.setInteger("x", 0);
                 data.setInteger("y", 64);
                 data.setInteger("z", 0);
@@ -1964,6 +2172,7 @@ public final class HologramAeBlueprint {
             }
             Set<String> known = new HashSet<>(
                 Arrays.asList("id", "x", "y", "z", "customName", "orientation_forward", "orientation_up"));
+            if (prefix.length == 0) known.add(GTSWN_NETWORK_SAFETY);
             for (int side = 0; side < 7; side++) {
                 known.add("def:" + side);
                 known.add("extra:" + side);
@@ -1980,6 +2189,21 @@ public final class HologramAeBlueprint {
                         "CableBus field is outside its audited schema and is omitted");
                     data.removeTag(key);
                 }
+            }
+        }
+
+        /** GTSWN 1.8.78 mixes this exact boolean into every TileEntity, not into parts or item tags. */
+        static void gtswnTileConfiguration(Work work, NBTTagCompound data) {
+            if (!data.hasKey(GTSWN_NETWORK_SAFETY)) return;
+            work.roots.add(GTSWN_NETWORK_SAFETY);
+            if (!data.hasKey(GTSWN_NETWORK_SAFETY, 1)
+                || data.getByte(GTSWN_NETWORK_SAFETY) != 0 && data.getByte(GTSWN_NETWORK_SAFETY) != 1) {
+                work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    GTSWN_NETWORK_SAFETY,
+                    "GTSWN TileEntity configuration must be a native boolean byte; malformed data requires explicit review");
+                data.removeTag(GTSWN_NETWORK_SAFETY);
             }
         }
 
@@ -2184,12 +2408,23 @@ public final class HologramAeBlueprint {
             }
         }
 
-        private static void zero(Work work, NBTTagCompound data, String key, String[] prefix, String code,
-            String message) {
+        private static void zero(Work work, NBTTagCompound data, String key, String[] prefix) {
             root(work, prefix, key);
             if (data.hasKey(key)) {
-                if (!data.hasKey(key, 99) || data.getDouble(key) != 0)
-                    work.issue(code, "warning", displayPath(path(prefix, key)), message);
+                if (!data.hasKey(key, 6) || !Double.isFinite(data.getDouble(key)) || data.getDouble(key) < 0) {
+                    work.issue(
+                        "unreviewed_tile_field",
+                        "blocker",
+                        displayPath(path(prefix, key)),
+                        "Native energy/burn buffer must be a finite nonnegative double");
+                    data.removeTag(key);
+                    return;
+                }
+                if (data.getDouble(key) != 0) work.issue(
+                    "unreviewed_tile_field",
+                    "blocker",
+                    displayPath(path(prefix, key)),
+                    "Nonempty native energy/burn buffer has no exact material codec; empty it or explicitly remove this field");
                 data.setDouble(key, 0);
             }
         }
@@ -2197,14 +2432,37 @@ public final class HologramAeBlueprint {
         private static ItemStack readStack(NBTTagCompound raw) throws IOException {
             if (raw.hasNoTags()) return null;
             Item item = HologramBlueprintNbt.stableItem(raw);
-            if (item == null || !raw.hasKey("Damage", 99) || !raw.hasKey("Count", 99)) return null;
-            int count = raw.getInteger("Count");
+            if (item == null || !raw.hasKey("Damage", 99)
+                || raw.getTag("Damage")
+                    .getId() > 4
+                || !raw.hasKey("Count", 99)
+                || raw.getTag("Count")
+                    .getId() > 4
+                || raw.getLong("Count") > Integer.MAX_VALUE
+                || raw.getLong("Count") < 0
+                || raw.hasKey("tag") && !raw.hasKey("tag", 10)) return null;
+            int count = (int) raw.getLong("Count");
             if (count <= 0) return null;
             ItemStack stack = new ItemStack(item, count, raw.getInteger("Damage"));
             if (raw.hasKey("tag", 10)) stack.setTagCompound(
                 (NBTTagCompound) raw.getCompoundTag("tag")
                     .copy());
             return stack;
+        }
+
+        /** GT integrated-circuit configuration deliberately uses a native registered ItemStack with Count=0. */
+        private static boolean nativeZeroMarker(NBTTagCompound raw) throws IOException {
+            if (HologramBlueprintNbt.hasMissingItems(raw)) return false;
+            NBTTagCompound nativeTag = HologramBlueprintNbt.nativePayload(raw);
+            if (!nativeTag.hasKey("id", 2) || !nativeTag.hasKey("Damage", 2)
+                || !nativeTag.hasKey("Count", 1)
+                || nativeTag.getByte("Count") != 0
+                || nativeTag.hasKey("tag") && (!nativeTag.hasKey("tag", 10) || !nativeTag.getCompoundTag("tag")
+                    .hasNoTags()))
+                return false;
+            for (Object key : nativeTag.func_150296_c()) if (!Arrays.asList("id", "Count", "Damage", "tag")
+                .contains(key)) return false;
+            return ItemStack.loadItemStackFromNBT(nativeTag) != null;
         }
 
         private static ItemStack nativeStack(ItemStack stack) throws IOException {
