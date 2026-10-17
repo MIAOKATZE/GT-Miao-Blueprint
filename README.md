@@ -73,6 +73,10 @@ Stable blueprint edits use dirty-cell updates and preserve unchanged 16³ previe
 
 稳定几何上的蓝图编辑按脏格更新，保留未改动的 16³ 预览分区。共享材料规划与大图首次快照分阶段执行；世界修改与材料结果仍由服务端决定。几何增删和专门审核在需要时使用完整刷新。
 
+Validation reuses identical complete NBT within a bounded task cache; different machine, cover and AE configuration remains separate. `gradlew runBlueprintValidationBenchmark` compares the production validation path with its cache enabled and disabled. This component benchmark excludes live-world capture, networking and rendering.
+
+校验通过有界任务缓存复用相同完整 NBT；不同机器、覆盖板和 AE 配置分别处理。`gradlew runBlueprintValidationBenchmark` 对照生产校验路径启用与禁用缓存的结果。该组件基准不包含实际世界采集、网络和渲染。
+
 Administrators can opt into the default-disabled, save-local agent laboratory through `config/gtmb-testlab.cfg`. See [TESTLAB.md](TESTLAB.md) for `/gtmbtestlab`, fixture isolation, stress tests and report boundaries. Ordinary players do not need to enter its dimension.
 
 管理员可通过 `config/gtmb-testlab.cfg` 开启默认关闭的存档内 agent 测试区；配置、`/gtmbtestlab` 指令、隔离设施、压力测试及报告说明见 [TESTLAB.md](TESTLAB.md)。测试无需玩家进入该维度。

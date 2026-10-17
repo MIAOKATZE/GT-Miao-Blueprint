@@ -1,10 +1,7 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
@@ -257,20 +254,56 @@ final class HologramSnapshotMetadataSource {
         cell.frozenBlockResolved = true;
     }
 
-    private static void copyScalars(Object source, Object target) {
-        try {
-            for (Field field : source.getClass()
-                .getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers()) || Modifier.isTransient(field.getModifiers())
-                    || Collection.class.isAssignableFrom(field.getType())
-                    || Map.class.isAssignableFrom(field.getType())
-                    || !field.getType()
-                        .isPrimitive() && field.getType() != String.class && field.getType() != Integer.class)
-                    continue;
-                field.set(target, field.get(source));
-            }
-        } catch (IllegalAccessException changedDto) {
-            throw new IllegalStateException(changedDto);
-        }
+    /** Typed copies remain legal when the native bootstrap redirects reflective Field access. */
+    private static void copyScalars(HologramPresets.Preset source, HologramPresets.Preset target) {
+        target.id = source.id;
+        target.name = source.name;
+        target.controllerType = source.controllerType;
+        target.authorName = source.authorName;
+        target.authorUuid = source.authorUuid;
+        target.createdAt = source.createdAt;
+        target.schema = source.schema;
+        target.aePolicyVersion = source.aePolicyVersion;
+        target.deidentificationVersion = source.deidentificationVersion;
+        target.deidentificationLevel = source.deidentificationLevel;
+        target.deidentificationChosen = source.deidentificationChosen;
+        target.processingNbt = source.processingNbt;
+        target.quantumGroupingNbt = source.quantumGroupingNbt;
+        target.retainNbt = source.retainNbt;
+        target.retainCovers = source.retainCovers;
+        target.prompt = source.prompt;
+        target.sourceMod = source.sourceMod;
+        target.sourceClass = source.sourceClass;
+        target.controllerId = source.controllerId;
+        target.controllerFacing = source.controllerFacing;
+    }
+
+    private static void copyScalars(HologramPresets.Cell source, HologramPresets.Cell target) {
+        target.item = source.item;
+        target.defaultItem = source.defaultItem;
+        target.block = source.block;
+        target.tileNbt = source.tileNbt;
+        target.itemNbt = source.itemNbt;
+        target.prompt = source.prompt;
+        target.structureId = source.structureId;
+        target.metadata = source.metadata;
+        target.excluded = source.excluded;
+        target.defaultDamage = source.defaultDamage;
+        target.damage = source.damage;
+        target.count = source.count;
+        target.x = source.x;
+        target.y = source.y;
+        target.z = source.z;
+        target.facing = source.facing;
+        target.controller = source.controller;
+    }
+
+    private static void copyScalars(HologramBlueprintProcessing.Policy source,
+        HologramBlueprintProcessing.Policy target) {
+        target.tendency = source.tendency;
+        target.quantum = source.quantum;
+        target.coordinateDefault = source.coordinateDefault;
+        target.autoHints = source.autoHints;
+        target.deidentificationLevel = source.deidentificationLevel;
     }
 }

@@ -463,17 +463,41 @@ public final class HologramNetwork {
         }
         if (tag.getBoolean("capturePending")) return;
         // Public callers retain ownership; the internal prepared-full path explicitly transfers it.
-        SnapshotTicket ticket = reserveState(player, tag.getString("session"), tag.getBoolean("cancelled"));
+        Outbox current = outgoing.get(player.getUniqueID());
+        if (current != null && current.owner != null
+            && current.session.equals(tag.getString("session"))
+            && tag.hasKey("planRevision", 4)
+            && tag.getLong("planRevision") < current.owner.planRevision) return;
+        SnapshotTicket ticket = reserveState(
+            player,
+            tag.getString("session"),
+            tag.getBoolean("cancelled"),
+            null,
+            tag.hasKey("uiSequence", 4) ? tag.getLong("uiSequence") : Long.MIN_VALUE);
         if (ticket != null) completeOwnedState(ticket, (NBTTagCompound) tag.copy(), () -> true, () -> {});
     }
 
     /** Reserve FIFO position before building a full DTO, so later ACKs cannot cross its baseline. */
     static SnapshotTicket reserveState(EntityPlayerMP player, String session, boolean cancelled) {
+        return reserveState(player, session, cancelled, null, Long.MIN_VALUE);
+    }
+
+    /** A staged Area editor can retain its wire session nonce while replacing the server owner object. */
+    static SnapshotTicket reserveOwnedState(HologramSession owner) {
+        if (HologramWorkspace.find(owner.player.getUniqueID()) != owner) return null;
+        return reserveState(owner.player, owner.id, owner.cancelled, owner, owner.uiSequence);
+    }
+
+    private static SnapshotTicket reserveState(EntityPlayerMP player, String session, boolean cancelled,
+        HologramSession owner, long uiSequence) {
         if (channel == null) return null;
         Outbox box = outgoing.get(player.getUniqueID());
-        if (box == null || box.player != player || !box.session.equals(session) || cancelled) {
+        if (box == null || box.player != player
+            || !box.session.equals(session)
+            || cancelled
+            || owner != null && box.owner != owner) {
             if (box != null) retire(box);
-            box = new Outbox(player, session);
+            box = new Outbox(player, session, owner);
             outgoing.put(player.getUniqueID(), box);
         }
         int queued = 0;
@@ -482,7 +506,12 @@ public final class HologramNetwork {
             outgoing.remove(player.getUniqueID());
             for (OutgoingSnapshot queuedSnapshot : box.snapshots) queuedSnapshot.failed = true;
             retire(box);
-            transportFailure(player, session, new IllegalStateException("snapshot preparation queue full"));
+            transportFailure(
+                player,
+                session,
+                uiSequence,
+                "snapshot.queue",
+                new IllegalStateException("snapshot preparation queue full"));
             return null;
         }
         OutgoingSnapshot snapshot = new OutgoingSnapshot(snapshotSequence.incrementAndGet());
@@ -574,15 +603,27 @@ public final class HologramNetwork {
         box.snapshots.clear();
     }
 
-    static void transportFailure(EntityPlayerMP player, String session, Exception failure) {
+    static void transportFailure(EntityPlayerMP player, String session, long uiSequence, String code,
+        Exception failure) {
         HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_DROPPED, 1);
-        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot could not be queued", failure);
+        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+            .warn("Hologram " + code + " failed for " + session + " uiSequence=" + uiSequence, failure);
         if (channel != null && progressConnected(player)) {
             NBTTagCompound state = new NBTTagCompound();
             state.setBoolean("transportError", true);
             state.setString("session", session);
+            if (uiSequence != Long.MIN_VALUE) state.setLong("uiSequence", uiSequence);
+            state.setString("errorCode", code);
+            state.setString("errorMessage", transportErrorMessage(code));
             channel.sendTo(new State(state), player);
         }
+    }
+
+    private static String transportErrorMessage(String code) {
+        if ("snapshot.prepare".equals(code)) return "Snapshot preparation failed; the previous preview was retained.";
+        if ("snapshot.encode".equals(code)) return "Snapshot encoding failed; the previous preview was retained.";
+        if ("snapshot.queue".equals(code)) return "Snapshot queue is full; the previous preview was retained.";
+        return "Snapshot exceeds the transfer limit; the previous preview was retained.";
     }
 
     /** Existing transport tick consumes worker results; workers never execute callbacks. */
@@ -615,10 +656,14 @@ public final class HologramNetwork {
                 || box.pendingBytes + encoding.bytes.length > HologramSnapshotAssembly.MAX_BYTES) {
                 Exception failure = encoding.failure != null ? encoding.failure
                     : new IllegalArgumentException("hologram queued snapshot byte budget");
+                long failedUi = snapshot.owned.hasKey("uiSequence", 4) ? snapshot.owned.getLong("uiSequence")
+                    : Long.MIN_VALUE;
+                String failureCode = failure.getMessage() != null && failure.getMessage()
+                    .contains("budget") ? "snapshot.budget" : "snapshot.encode";
                 snapshot.failed = true;
                 retire(box);
                 boxes.remove();
-                transportFailure(box.player, box.session, failure);
+                transportFailure(box.player, box.session, failedUi, failureCode, failure);
                 continue;
             }
             snapshot.bytes = encoding.bytes;
@@ -656,14 +701,16 @@ public final class HologramNetwork {
         final net.minecraft.world.World world;
         final int dimension;
         final String session;
+        final HologramSession owner;
         final Deque<OutgoingSnapshot> snapshots = new ArrayDeque<>();
         long pendingBytes;
 
-        Outbox(EntityPlayerMP player, String session) {
+        Outbox(EntityPlayerMP player, String session, HologramSession owner) {
             this.player = player;
             world = player.worldObj;
             dimension = player.dimension;
             this.session = session;
+            this.owner = owner;
         }
     }
 
@@ -1078,15 +1125,22 @@ public final class HologramNetwork {
             HologramRuntimeMetrics.highWater(HologramRuntimeMetrics.Counter.ACTION_HIGH_WATER, actionGate.size());
             // Packet decompression is already bounded. Large index selections must not be rejected
             // because their textual representation exceeds an unrelated string budget.
-            ServerTaskScheduler.scheduleServerTask(() -> {
-                try {
-                    dispatch(player, msg.tag);
-                } finally {
-                    gate.leave(player);
-                    HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.ACTION_DEPTH, actionGate.size());
-                }
-            });
+            net.minecraft.world.World world = player.worldObj;
+            ServerTaskScheduler
+                .scheduleServerTask(() -> runQueuedAction(player, world, gate, () -> dispatch(player, msg.tag)));
             return null;
+        }
+    }
+
+    /** Admission belongs to the original live world; queued input cannot act after a connection/world transition. */
+    static void runQueuedAction(EntityPlayerMP player, net.minecraft.world.World world, HologramRequestGate gate,
+        Runnable action) {
+        try {
+            if (world == null || player.worldObj != world || !progressConnected(player)) return;
+            action.run();
+        } finally {
+            gate.leave(player);
+            HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.ACTION_DEPTH, actionGate.size());
         }
     }
 

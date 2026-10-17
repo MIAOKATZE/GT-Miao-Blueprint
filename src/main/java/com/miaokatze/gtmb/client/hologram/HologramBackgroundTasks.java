@@ -98,7 +98,8 @@ public final class HologramBackgroundTasks {
     }
 
     static long commandSequence(String sessionId) {
-        return "server".equals(OWNER.kind()) && session.equals(sessionId) ? Math.max(command, issuedSequence) : -1;
+        // Retain the watermark after failure/completion so a retry cannot reuse a retired command identity.
+        return session.equals(sessionId) ? Math.max(command, issuedSequence) : -1;
     }
 
     static boolean libraryTask() {
@@ -361,13 +362,7 @@ public final class HologramBackgroundTasks {
                         : HologramTaskOwner.Result.FAILURE,
                 data.getString("status"));
         } else if ("area".equals(operation)) {
-            if (!data.getBoolean("areaImporting")) OWNER.finish(
-                OWNER.token(),
-                cancelling ? HologramTaskOwner.Result.CANCELLED
-                    : data.getBoolean("areaImported") && data.getLong("planRevision") > startRevision
-                        ? HologramTaskOwner.Result.SUCCESS
-                        : HologramTaskOwner.Result.FAILURE,
-                data.getString("status"));
+            OWNER.finishAreaSnapshot(data, startRevision, cancelling);
         } else if (job == 4 || job == 5) {
             OWNER.finish(
                 OWNER.token(),
@@ -491,6 +486,29 @@ public final class HologramBackgroundTasks {
             OWNER.token(),
             cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
             "服务端任务已结束");
+    }
+
+    static boolean transportFailed(NBTTagCompound failure) {
+        // A failed construction snapshot does not prove its world worker has stopped.
+        if (!"area".equals(operation) && !"scan".equals(operation) && !"processBlueprint".equals(operation))
+            return false;
+        return OWNER.failSnapshot(failure, transportFailureMessage(failure));
+    }
+
+    static boolean retiredTransportFailure(NBTTagCompound failure) {
+        return failure.hasKey("uiSequence", 4)
+            && OWNER.retiredReceipt("server", failure.getString("session") + ":" + failure.getLong("uiSequence"));
+    }
+
+    static String transportFailureMessage(NBTTagCompound failure) {
+        String reason = switch (failure.getString("errorCode")) {
+            case "snapshot.prepare" -> "蓝图快照准备失败";
+            case "snapshot.encode" -> "蓝图快照编码失败";
+            case "snapshot.queue" -> "蓝图快照发送队列已满";
+            case "snapshot.budget" -> "蓝图快照超过传输预算";
+            default -> "蓝图快照传输失败";
+        };
+        return reason + "；保留原预览，请重试当前操作。";
     }
 
     private static void chat(String message) {

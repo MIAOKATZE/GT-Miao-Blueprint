@@ -52,6 +52,12 @@ final class HologramWorkspaceScheduler {
             return;
         if (area != null && area.importing) {
             HologramAreaWorkflow.tickImport(s, area);
+            // The published selection baseline is independent of the private staging import. Keep
+            // its pending UI snapshot moving while preserving the scheduler's shared tick deadline.
+            long snapshotDeadline = HologramWorkBudget.deadline(2_000_000L);
+            if (HologramWorkspace.find(s.player.getUniqueID()) == s && area.importing
+                && !s.capturePending
+                && System.nanoTime() < snapshotDeadline) HologramSnapshotPreparation.tick(s);
             return;
         }
         if (s.capturePending) {

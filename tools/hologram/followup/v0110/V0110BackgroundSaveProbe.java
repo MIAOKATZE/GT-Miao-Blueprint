@@ -19,6 +19,7 @@ import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
+import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
 /** Disposable real-world Save stimulus. The production background observer owns the verdict. */
@@ -32,14 +33,183 @@ public final class V0110BackgroundSaveProbe {
     private long started, phaseStarted, lastGeneration = -1, heartbeat, saveTaskToken, lastSaveDiagnostic;
     private int saveDiagnostics;
     private boolean saveWaitScreenshotPending, saveWaitScreenshotDone;
+    private long lastImportClientDiagnostic, lastImportServerDiagnostic;
+    private int importClientDiagnostics, importServerDiagnostics;
+    private boolean importWaitScreenshotPending, importWaitScreenshotDone;
     private String verdict = "";
     private int preflight;
     private boolean largeEdit, saveContextPrepared;
-    private int side = 16, baselineTicks, maxParsed, maxDirtyRegions, maxBuiltRegions;
+    private int sourceCells = 4096, sourceWidth = 16, sourceHeight = 16, sourceDepth = 16, platformPlaced;
+    private boolean chunksPrepared, safeLargeSpawnSet;
+    private int baselineTicks, maxParsed, maxDirtyRegions, maxBuiltRegions;
+    private long overallBudgetNanos = 900000000000L, importBudgetNanos = 240000000000L;
+    private final Properties timings = new Properties();
+    private final java.util.Map<String, long[]> serverTickWindows = new java.util.LinkedHashMap<String, long[]>();
+    private final java.util.Map<String, Long> workStageDurations = new java.util.LinkedHashMap<String, Long>();
+    private long serverTickStarted, serverTicks, workStageStarted;
+    private static final long[] TICK_BUCKET_NANOS = { 1000000L, 5000000L, 10000000L, 20000000L, 50000000L,
+        100000000L, 250000000L, 500000000L, 1000000000L, Long.MAX_VALUE };
+    private String serverWorkStage = "fixture", previousWorkStage = "";
+    private int serverClientPhase;
+    private boolean runtimeMetricsAttempted, runtimeMetricsCaptured, runtimeMetricsOriginalEnabled, runtimeMetricsRestored;
+    private int runtimeMetricSamples, runtimeStageSamples;
+    private String runtimeMetricSession = "";
+    private long runtimeMetricToken;
+
+    /** Only detached atomic counters cross this boundary; no world/registry inspection or reset. */
+    private void beginRuntimeMetrics() {
+        if (runtimeMetricsAttempted) return;
+        runtimeMetricsAttempted = true;
+        try {
+            Class<?> metrics = Class.forName("com.miaokatze.gtmb.hologram.HologramRuntimeMetrics");
+            runtimeMetricsOriginalEnabled = (Boolean) call(metrics, "isEnabled");
+            runtimeMetricsCaptured = true;
+            proof.setProperty("runtimeMetricsOriginalEnabled", String.valueOf(runtimeMetricsOriginalEnabled));
+            call(metrics, "setEnabled", true);
+            runtimeMetricsSnapshot("main-thread-start");
+        } catch (Exception failure) { proof.setProperty("runtimeMetricsFailure", failure.toString()); }
+    }
+
+    private void runtimeMetricsSnapshot(String checkpoint) {
+        if (!runtimeMetricsCaptured || runtimeMetricsRestored) return;
+        try {
+            long before = System.nanoTime();
+            Object sample = call(Class.forName("com.miaokatze.gtmb.hologram.HologramRuntimeMetrics"), "snapshot");
+            long after = System.nanoTime();
+            call(sample, "func_74778_a", "checkpoint", checkpoint);
+            call(sample, "func_74778_a", "side", client ? "client" : "server");
+            call(sample, "func_74778_a", "case", output.getName());
+            call(sample, "func_74768_a", "driverPhase", client ? phase : serverClientPhase);
+            call(sample, "func_74778_a", "serverWorkStage", serverWorkStage);
+            call(sample, "func_74778_a", "session", runtimeMetricSession);
+            call(sample, "func_74772_a", "taskToken", runtimeMetricToken);
+            call(sample, "func_74757_a", "taskTokenAvailable", runtimeMetricToken > 0);
+            call(sample, "func_74778_a", "identityScope", client ? "observed client session/task identity; zero token means unavailable or not yet issued" : "server session and last polled client task token; END-boundary observation may lag client");
+            call(sample, "func_74772_a", "observerBeforeNanos", before);
+            call(sample, "func_74772_a", "observerAfterNanos", after);
+            call(sample, "func_74772_a", "observerWallMillis", System.currentTimeMillis());
+            call(sample, "func_74772_a", "driverElapsedNanos", after - started);
+            call(sample, "func_74778_a", "scope", "process-local cumulative atomic counters without reset; codec packet/bytes exclude Forge/TCP framing; concurrent fields are sampled separately; root derives monotonic counter differences, gauges/maxima are absolute observations");
+            String name = String.format(java.util.Locale.ROOT, "metrics-%s-%03d-%s.nbt", client ? "client" : "server", ++runtimeMetricSamples, checkpoint);
+            call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", sample, file(name));
+            proof.setProperty("runtimeMetricsLastSample", name);
+            proof.setProperty("runtimeMetricsSamples", String.valueOf(runtimeMetricSamples));
+        } catch (Exception failure) { proof.setProperty("runtimeMetricsFailure", failure.toString()); }
+    }
+
+    private void finishRuntimeMetrics(String status) {
+        try { runtimeMetricsSnapshot("terminal-" + status.toLowerCase(java.util.Locale.ROOT)); }
+        finally {
+            if (runtimeMetricsCaptured && !runtimeMetricsRestored) try {
+                call(Class.forName("com.miaokatze.gtmb.hologram.HologramRuntimeMetrics"), "setEnabled", runtimeMetricsOriginalEnabled);
+                runtimeMetricsRestored = true;
+                proof.setProperty("runtimeMetricsRestored", "true");
+            } catch (Exception failure) { proof.setProperty("runtimeMetricsRestoreFailure", failure.toString()); }
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void measureServerTickStart(TickEvent.ServerTickEvent event) {
+        if (server && !done && event.phase == TickEvent.Phase.START) serverTickStarted = System.nanoTime();
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public void measureServerTickEnd(TickEvent.ServerTickEvent event) {
+        if (!server || serverTickStarted == 0 || event.phase != TickEvent.Phase.END) return;
+        long elapsed = System.nanoTime() - serverTickStarted; serverTickStarted = 0; serverTicks++;
+        long[] histogram = serverTickWindows.get(serverWorkStage);
+        if (histogram == null) { histogram = new long[TICK_BUCKET_NANOS.length + 3]; serverTickWindows.put(serverWorkStage, histogram); }
+        histogram[0]++; histogram[1] = Math.max(histogram[1], elapsed); histogram[2] += elapsed;
+        for (int i = 0; i < TICK_BUCKET_NANOS.length; i++) if (elapsed <= TICK_BUCKET_NANOS[i]) { histogram[i + 3]++; break; }
+        if (done || serverTicks % 100 == 0) try { writeMeasurements(); }
+        catch (Exception failure) { importDiagnosticError("server-measurement", failure); }
+    }
+
+    private void observeServerWorkStages(Object world, List<?> livePlayers) {
+        try {
+            String current = "fixture";
+            if (actor != null) {
+                Object id = call(actor, "func_110124_au");
+                Class<?> workspace = Class.forName("com.miaokatze.gtmb.hologram.HologramWorkspace");
+                Object area = ((java.util.Map<?, ?>) get(workspace, "AREAS")).get(id);
+                Object session = ((java.util.Map<?, ?>) get(workspace, "SESSIONS")).get(id);
+                current = "client-phase-" + serverClientPhase;
+                if (area != null && (Boolean) get(area, "importing")) {
+                    current = "area." + get(area, "importPhase");
+                    String detail = String.valueOf(call(area, "importDetail"));
+                    if (!detail.isEmpty()) current += "." + detail;
+                    timings.setProperty("server.work.done", String.valueOf(call(area, "importDone")));
+                    timings.setProperty("server.work.total", String.valueOf(call(area, "importTotal")));
+                    timings.setProperty("server.work." + current + ".lastObservedDone", String.valueOf(call(area, "importDone")));
+                    timings.setProperty("server.work." + current + ".lastObservedTotal", String.valueOf(call(area, "importTotal")));
+                }
+                if (session != null) {
+                    runtimeMetricSession = String.valueOf(get(session, "id"));
+                    Object task = ((java.util.Map<?, ?>) get(Class.forName("com.miaokatze.gtmb.hologram.HologramSnapshotPreparation"), "TASKS")).get(session);
+                    if (task != null) {
+                        current = "snapshot.stage-" + get(task, "stage");
+                        Object metadata = get(task, "metadata");
+                        if (metadata != null) current += ".metadata-" + get(metadata, "stage");
+                    }
+                }
+            }
+            long now = System.nanoTime();
+            if (!current.equals(previousWorkStage)) {
+                if (!previousWorkStage.isEmpty()) workStageDurations.put(previousWorkStage,
+                    (workStageDurations.containsKey(previousWorkStage) ? workStageDurations.get(previousWorkStage) : 0L) + now - workStageStarted);
+                previousWorkStage = current; workStageStarted = now; serverWorkStage = current;
+                if (runtimeStageSamples < 96) { runtimeStageSamples++; runtimeMetricsSnapshot("stage-transition"); }
+                else proof.setProperty("runtimeMetricsStageLimitReached", "true");
+                writeMeasurements();
+            }
+        } catch (Exception failure) { importDiagnosticError("server-measurement", failure); }
+    }
+
+    private void writeMeasurements() throws Exception {
+        long now = System.nanoTime();
+        if (client) {
+            timings.setProperty("driver.currentPhase", String.valueOf(phase));
+            timings.setProperty("driver.currentPhaseElapsedNanos", String.valueOf(now - phaseStarted));
+            timings.setProperty("scope", "actual driver transition wall time; not pure CPU time or FPS");
+            store("client-phase-timings.properties", timings);
+        } else if (server) {
+            Properties measured = new Properties();
+            measured.setProperty("scope", "read-only FML ServerTick START(HIGHEST)..END(LOWEST) nanoseconds; includes game and addon listeners; bucket quantiles are upper bounds, not exact quantiles/TPS");
+            measured.setProperty("serverTicksObserved", String.valueOf(serverTicks));
+            measured.setProperty("currentStage", serverWorkStage);
+            measured.setProperty("sourceCellsRequested", String.valueOf(sourceCells));
+            measured.setProperty("sourceCellsWrittenAndReadBack", String.valueOf(placed));
+            measured.setProperty("platformBlocksWritten", String.valueOf(largeEdit ? platformPlaced : fixtureReady ? sourceWidth * (sourceDepth + 8) : 0));
+            measured.setProperty("chestReplacementWrites", fixtureReady ? "1" : "0");
+            for (String key : timings.stringPropertyNames()) if (key.startsWith("server.work."))
+                measured.setProperty(key, timings.getProperty(key));
+            for (java.util.Map.Entry<String, long[]> entry : serverTickWindows.entrySet()) {
+                String key = entry.getKey(); long[] h = entry.getValue();
+                measured.setProperty(key + ".ticks", String.valueOf(h[0]));
+                measured.setProperty(key + ".maxNanos", String.valueOf(h[1]));
+                measured.setProperty(key + ".sumNanos", String.valueOf(h[2]));
+                for (int q : new int[] { 50, 95, 99 }) {
+                    long target = (h[0] * q + 99) / 100, count = 0;
+                    for (int i = 0; i < TICK_BUCKET_NANOS.length; i++) if ((count += h[i + 3]) >= target) {
+                        measured.setProperty(key + ".p" + q + "UpperBoundNanos",
+                            TICK_BUCKET_NANOS[i] == Long.MAX_VALUE ? "overflow>1000000000" : String.valueOf(TICK_BUCKET_NANOS[i])); break;
+                    }
+                }
+            }
+            for (java.util.Map.Entry<String, Long> entry : workStageDurations.entrySet()) measured.setProperty("stageWall." + entry.getKey(), String.valueOf(entry.getValue()));
+            if (!previousWorkStage.isEmpty()) measured.setProperty("stageWall." + previousWorkStage,
+                String.valueOf((workStageDurations.containsKey(previousWorkStage) ? workStageDurations.get(previousWorkStage) : 0L) + now - workStageStarted));
+            store("server-tick-and-stage-metrics.properties", measured);
+        }
+    }
     private long baselineRevision;
     private Object baselineState;
     private java.util.Map<Object, Object> baselineRegions, baselinePreview;
     private java.util.function.Consumer<Object> originalReceiver;
+    private java.util.function.Consumer<Object> transportReceiverOriginal;
+    private final java.util.List<Object> transportErrors = java.util.Collections.synchronizedList(new java.util.ArrayList<Object>());
+    private long areaTaskToken, areaTaskCommand = -1;
+    private String areaTaskSession = "";
     private final java.util.List<Object> observedPackets = java.util.Collections.synchronizedList(new java.util.ArrayList<Object>());
     private final java.util.List<Object> packetEvidence = new java.util.ArrayList<Object>();
     private byte[] originalPreferences;
@@ -55,7 +225,17 @@ public final class V0110BackgroundSaveProbe {
         client = Boolean.getBoolean("gtmb.v0110.backgroundClient");
         server = Boolean.getBoolean("gtmb.v0110.backgroundServer");
         if (!client && !server) return;
-        largeEdit = Boolean.getBoolean("gtmb.v0110.largeEdit"); side = largeEdit ? 32 : 16;
+        largeEdit = Boolean.getBoolean("gtmb.v0110.largeEdit");
+        sourceCells = Integer.getInteger("gtmb.v0110.cells", largeEdit ? 50000 : 4096);
+        if (largeEdit) {
+            check(sourceCells == 50000 || sourceCells == 100000 || sourceCells == 1000000, "explicit supported native scale required");
+            sourceWidth = sourceDepth = sourceCells == 1000000 ? 100 : 50;
+            sourceHeight = sourceCells / (sourceWidth * sourceDepth);
+            overallBudgetNanos = sourceCells == 1000000 ? 3600000000000L : 1800000000000L;
+            importBudgetNanos = sourceCells == 1000000 ? 2400000000000L : 900000000000L;
+        } else check(sourceCells == 4096, "background fixture remains exactly4096 cells");
+        check((long) sourceWidth * sourceHeight * sourceDepth == sourceCells && 80 + sourceHeight <= 256,
+            "exact bounded source dimensions and height required");
         check(client != server, "one explicit fixture side required");
         File fixture = new File(System.getProperty("gtmb.hologram.followupRoot", "")).getCanonicalFile();
         check(fixture.getPath().replace('\\', '/').endsWith("/build/hologram-packaged-v018-mui"), "exact existing owned fixture required");
@@ -71,8 +251,13 @@ public final class V0110BackgroundSaveProbe {
             for (String key : new String[] { "gtmb.hologram.clientSmoke", "gtmb.hologram.sulfurLineClient", "gtmb.v019.backgroundClient", "gtmb.v019.ctmClient", "gtmb.v019.downloadClient", "gtmb.v0110.ctmClient", "gtmb.v0110.downloadClient", "gtmb.hologram.followupWorkbenchClient", "gtmb.hologram.followupProductionFlow", "gtmb.hologram.productionPreviewSmoke" })
                 check(!Boolean.getBoolean(key), "exclusive stimulus driver: " + key);
         }
-        proof.setProperty("scope", largeEdit ? "actual dedicated32768 source capture, production virtual rotateCell Netty command, observed delta and naturally rendered region reuse; no Save or FPS/TPS claim" : "real dedicated world 16-cubed block area; production area command packets and server capture; actual six-stage MUI input and Save with optional production AE review; observer independently verifies real JSON+PNG/owner ACK and disposed background panels; no OS input");
-        proof.setProperty("mode", largeEdit ? "large32768-local-edit-no-save" : "real-background-save4096");
+        proof.setProperty("scope", largeEdit ? "actual dedicated source capture at selected exact scale, production virtual rotateCell Netty command, observed delta and naturally rendered region reuse; no Save or FPS/TPS claim" : "real dedicated world 16-cubed block area; production area command packets and server capture; actual six-stage MUI input and Save with optional production AE review; observer independently verifies real JSON+PNG/owner ACK and disposed background panels; no OS input");
+        proof.setProperty("mode", largeEdit ? "large" + sourceCells + "-local-edit-no-save" : "real-background-save4096");
+        proof.setProperty("requestedSourceCells", String.valueOf(sourceCells));
+        proof.setProperty("sourceDimensionsXYZ", sourceWidth + "," + sourceHeight + "," + sourceDepth);
+        proof.setProperty("sourceBounds", "0,80,0.." + (sourceWidth - 1) + "," + (79 + sourceHeight) + "," + (sourceDepth - 1));
+        proof.setProperty("snapshotRawLimitBytes", "134217728"); proof.setProperty("artifactJsonLimitBytes", "8388608");
+        proof.setProperty("limitScope", "area volume eligibility is not full snapshot or artifact support; no native PASS until actual delivery/render/edit assertions complete");
         proof.setProperty("pid", ManagementFactory.getRuntimeMXBean().getName());
         started = phaseStarted = System.nanoTime();
         FMLCommonHandler.instance().bus().register(this);
@@ -83,8 +268,9 @@ public final class V0110BackgroundSaveProbe {
     public void clientTick(TickEvent.ClientTickEvent event) {
         if (!client || done || event.phase != TickEvent.Phase.END) return;
         try {
-            check(System.nanoTime() - started < 900000000000L, "client overall timeout");
-            check(System.nanoTime() - phaseStarted < (phase <= 1 ? 600000000000L : 240000000000L), "client phase timeout " + phase);
+            beginRuntimeMetrics();
+            check(System.nanoTime() - started < overallBudgetNanos, "client overall timeout");
+            check(System.nanoTime() - phaseStarted < (phase <= 1 ? (largeEdit ? importBudgetNanos : 600000000000L) : largeEdit && (phase == 5 || phase == 70) ? importBudgetNanos : 240000000000L), "client phase timeout " + phase);
             Properties peer = read("background-server.properties");
             check(!"FAIL".equals(peer.getProperty("status")), "paired server failed: " + peer.getProperty("failure", ""));
             if (mc == null) {
@@ -96,6 +282,7 @@ public final class V0110BackgroundSaveProbe {
             Object player = get(mc, "field_71439_g"), world = get(mc, "field_71441_e");
             Object gui = get(mc, "field_71462_r");
             pulse(gui);
+            if (phase == 5) { checkOwnedAreaTransportError(); importClientDiagnostic(gui); }
             if (phase == 10) saveDiagnostic(gui);
             if (phase == 0) {
                 if (ticks < 30 || gui == null) return;
@@ -113,10 +300,10 @@ public final class V0110BackgroundSaveProbe {
                 Object held = call(player, "func_70694_bm");
                 if (held == null || !call(held, "func_77973_b").getClass().getName().endsWith("ItemNekoHologramProjector")) return;
                 Object sourceChunk = call(world, "func_72964_e", 0, 0);
-                Object actorChunk = call(world, "func_72964_e", 0, 1);
+                Object actorChunk = call(world, "func_72964_e", 0, largeEdit ? -1 : 1);
                 if (sourceChunk.getClass().getName().endsWith("EmptyChunk") || actorChunk.getClass().getName().endsWith("EmptyChunk")) return;
                 check((Integer) get(sourceChunk, "field_76635_g") == 0 && (Integer) get(sourceChunk, "field_76647_h") == 0
-                    && (Integer) get(actorChunk, "field_76635_g") == 0 && (Integer) get(actorChunk, "field_76647_h") == 1,
+                    && (Integer) get(actorChunk, "field_76635_g") == 0 && (Integer) get(actorChunk, "field_76647_h") == (largeEdit ? -1 : 1),
                     "actual client source and actor chunk coordinates required");
                 if (!call(call(world, "func_147439_a", 0, 80, 0), "func_149739_a").toString().contains("chest")) return;
                 proof.setProperty("actualSourceAndActorChunksLoaded", "true");
@@ -151,16 +338,29 @@ public final class V0110BackgroundSaveProbe {
             }
             if (phase == 3) {
                 if (!Arrays.equals((int[]) call(data, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0 })) return;
-                areaPoint(state, 2, side - 1, 79 + side, side - 1); advance(4); return;
+                areaPoint(state, 2, sourceWidth - 1, 79 + sourceHeight, sourceDepth - 1); advance(4); return;
             }
             if (phase == 4) {
-                if (!Arrays.equals((int[]) call(data, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0, side - 1, 79 + side, side - 1 })) return;
-                call(clientType("HologramClient"), "worldAction", "finishAreaSelection"); advance(5); return;
+                if (!Arrays.equals((int[]) call(data, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0, sourceWidth - 1, 79 + sourceHeight, sourceDepth - 1 })) return;
+                installTransportFailureWatch();
+                runtimeMetricSession = String.valueOf(get(state, "session")); runtimeMetricToken = 0;
+                runtimeMetricsSnapshot("before-import");
+                call(clientType("HologramClient"), "worldAction", "finishAreaSelection");
+                Class<?> tasks = clientType("HologramBackgroundTasks");
+                areaTaskToken = (Long) call(tasks, "token"); areaTaskCommand = (Long) get(tasks, "command");
+                areaTaskSession = (String) get(tasks, "session");
+                runtimeMetricSession = areaTaskSession; runtimeMetricToken = areaTaskToken;
+                proof.setProperty("areaTaskToken", String.valueOf(areaTaskToken));
+                proof.setProperty("areaTaskCommand", String.valueOf(areaTaskCommand));
+                proof.setProperty("areaTaskSession", areaTaskSession);
+                proof.setProperty("typedBackgroundFailureHook", "pending typed FAILURE/CANCELLED distinction; never infer from succeeded=false");
+                advance(5); return;
             }
             if (phase == 5) {
                 if (!bool(data, "areaImported") || bool(data, "areaImporting") || bool(data, "capturePending") || busy()) return;
-                check(((List<?>) get(state, "cells")).size() == side * side * side, "actual server capture has exact source block count");
-                proof.setProperty("actualCapturedCells", String.valueOf(side * side * side));
+                check(((List<?>) get(state, "cells")).size() == sourceCells, "actual server capture has exact source block count");
+                proof.setProperty("actualCapturedCells", String.valueOf(sourceCells));
+                runtimeMetricsSnapshot("after-import");
                 advance(6);
             }
             // After final AE confirmation, never touch the UI again. The observer owns both reopen cycles.
@@ -175,6 +375,7 @@ public final class V0110BackgroundSaveProbe {
                 proof.setProperty("observerReceipt", file("background-save-native.nbt").getCanonicalPath());
                 proof.setProperty("observerTaskToken", String.valueOf(call(receipt, "func_74763_f", "taskToken")));
                 proof.setProperty("backgroundObservedPass", "true");
+                runtimeMetricsSnapshot("after-first-save");
                 advance(12); return;
             }
             if (gui == null || !gui.getClass().getName().equals("com.miaokatze.gtmb.client.hologram.HologramScreen")) return;
@@ -221,9 +422,11 @@ public final class V0110BackgroundSaveProbe {
                 check((Double) call(preview, "yaw") == 37.25d && (Double) call(preview, "pitch") == -17.5d,
                     "actual Save begins with nondefault local camera");
                 if (!capture(gui, "pre-save-workspace")) return;
+                runtimeMetricToken = 0; runtimeMetricsSnapshot("before-first-save");
                 click(gui, ui, 140, generation);
                 proof.setProperty("saveName", "V0110 real background save " + output.getName());
                 saveTaskToken = (Long) call(clientType("HologramBackgroundTasks"), "token");
+                runtimeMetricToken = saveTaskToken;
                 proof.setProperty("saveTaskTokenAfter140", String.valueOf(saveTaskToken)); advance(10);
             } else if (phase == 10) {
                 if (!bool(ui, "aeReview")) return;
@@ -353,7 +556,7 @@ public final class V0110BackgroundSaveProbe {
         if (phase == 70) {
             if (get(clientType("HologramClient"), "preparingSnapshot") != null || get(renderer, "previewState") != state) { baselineTicks = 0; return; }
             if (++baselineTicks < 10) return;
-            check(((List<?>) get(state, "cells")).size() == 32768, "actual large captured virtual blueprint required");
+            check(((List<?>) get(state, "cells")).size() == sourceCells, "actual selected-scale captured virtual blueprint required");
             baselineState = state; baselineRevision = (Long) call(get(state, "data"), "func_74763_f", "planRevision");
             baselineRegions = new java.util.LinkedHashMap<Object, Object>((java.util.Map<Object, Object>) get(get(state, "regions"), "regions"));
             baselinePreview = new java.util.LinkedHashMap<Object, Object>((java.util.Map<Object, Object>) get(renderer, "previewRegions"));
@@ -373,6 +576,8 @@ public final class V0110BackgroundSaveProbe {
             check(String.valueOf(get(((List<?>) get(state, "cells")).get(0), "wantId")).contains("chest"), "actual first captured edit cell is the source chest");
             Object preview = get(get(gui, "ui"), "preview");
             call(call(preview, "selection"), "click", 0, false); call(preview, "selected", 0);
+            runtimeMetricSession = String.valueOf(get(state, "session")); runtimeMetricToken = 0;
+            runtimeMetricsSnapshot("before-large-edit");
             call(preview, "dispatchEdit", "rotateCell", 0, new int[] { 0 });
             proof.setProperty("localEditStimulus", "production UiPreview.dispatchEdit rotateCell0 -> UiSession.send -> actual dedicated Netty; read-only receiver decorator forwards exact actual packet");
             lastGeneration = generation; advance(71); return;
@@ -386,7 +591,7 @@ public final class V0110BackgroundSaveProbe {
             || bool(get(state, "data"), "localPlanPending") || get(renderer, "previewState") != state) return;
         List<?> beforeCells = (List<?>) get(baselineState, "cells"), afterCells = (List<?>) get(state, "cells");
         if (beforeCells.get(0) == afterCells.get(0)) return;
-        check(beforeCells.get(32767) == afterCells.get(32767), "remote cell model object retained across actual Netty delta");
+        check(beforeCells.get(sourceCells - 1) == afterCells.get(sourceCells - 1), "remote cell model object retained across actual Netty delta");
         int reusedRegions = 0, reusedPreview = 0;
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) get(get(state, "regions"), "regions");
         java.util.Map<Object, Object> previews = (java.util.Map<Object, Object>) get(renderer, "previewRegions");
@@ -398,7 +603,7 @@ public final class V0110BackgroundSaveProbe {
         int wireRows = 0;
         for (Object packet : packetEvidence) {
             check(bool(packet, "partial") && "cellDelta".equals(str(packet, "snapshotKind")), "post-baseline production replies are cellDelta, never full geometry");
-            check(integer(packet, "cellCount") == 32768 && str(packet, "generation").equals(get(state, "session")), "actual delta carries exact generation and full cell count");
+            check(integer(packet, "cellCount") == sourceCells && str(packet, "generation").equals(get(state, "session")), "actual delta carries exact generation and full cell count");
             int rows = (Integer) call(call(packet, "func_150295_c", "cells", 10), "func_74745_c");
             check(rows <= 2, "single local edit serializes at most dirty and prior-selected rows"); wireRows += rows;
             call(packets, "func_74742_a", packet);
@@ -406,6 +611,11 @@ public final class V0110BackgroundSaveProbe {
         check(!packetEvidence.isEmpty() && wireRows > 0 && maxParsed <= 2, "real Netty dirty rows parsed without full-state reparse");
         if (!capture(gui, "large-local-edit-result")) return;
         call(receipt, "func_74782_a", "actualNettyReplies", packets);
+        call(receipt, "func_74768_a", "sourceCells", sourceCells);
+        call(receipt, "func_74768_a", "baselineCellRegions", baselineRegions.size());
+        call(receipt, "func_74768_a", "baselinePreviewRegions", baselinePreview.size());
+        call(receipt, "func_74778_a", "cacheMetricScope", "actual cell/preview partition object identities before/after real Netty delta; counts are retained partitions, not per-access cache lookup hit rates");
+        call(receipt, "func_74757_a", "productCacheLookupCountersAvailable", false);
         call(receipt, "func_74768_a", "remoteCellRegionListsReused", reusedRegions);
         call(receipt, "func_74768_a", "nativePreviewRegionsReused", reusedPreview);
         call(receipt, "func_74768_a", "maxObservedParsedCells", maxParsed);
@@ -413,13 +623,63 @@ public final class V0110BackgroundSaveProbe {
         call(receipt, "func_74768_a", "maxObservedPreviewBuiltRegions", maxBuiltRegions);
         call(receipt, "func_74772_a", "baselineRevision", baselineRevision);
         call(receipt, "func_74772_a", "finalRevision", call(get(state, "data"), "func_74763_f", "planRevision"));
-        call(receipt, "func_74778_a", "scope", "real32768-block server capture and virtual edit; actual dedicated Netty DTO observations; actual natural rendered preview region identity reuse; no FPS/TPS or world-list claim");
+        call(receipt, "func_74778_a", "scope", "real selected-scale block server capture and virtual edit; actual dedicated Netty DTO observations; actual natural rendered preview region identity reuse; no FPS/TPS or world-list claim");
         call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", receipt, file("large-local-edit-native.nbt"));
+        runtimeMetricsSnapshot("after-large-edit");
         restoreReceiver(); restorePreferences(); proof.setProperty("largeEditReceipt", "large-local-edit-native.nbt"); persist("PASS"); done = true; call(mc, "func_71400_g");
     }
 
     private void restoreReceiver() throws Exception {
         if (originalReceiver != null) { member(Class.forName("com.miaokatze.gtmb.hologram.HologramNetwork"), "receiver").set(null, originalReceiver); originalReceiver = null; }
+        if (transportReceiverOriginal != null) { member(Class.forName("com.miaokatze.gtmb.hologram.HologramNetwork"), "receiver").set(null, transportReceiverOriginal); transportReceiverOriginal = null; }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void installTransportFailureWatch() throws Exception {
+        Class<?> network = Class.forName("com.miaokatze.gtmb.hologram.HologramNetwork");
+        transportReceiverOriginal = (java.util.function.Consumer<Object>) get(network, "receiver");
+        check(transportReceiverOriginal != null, "real production receiver required for read-only error observation");
+        final java.util.function.Consumer<Object> forward = transportReceiverOriginal;
+        member(network, "receiver").set(null, new java.util.function.Consumer<Object>() {
+            @Override public void accept(Object actual) {
+                try {
+                    if (bool(actual, "transportError")) synchronized (transportErrors) {
+                        if (transportErrors.size() == 8) transportErrors.remove(0);
+                        transportErrors.add(call(actual, "func_74737_b"));
+                    }
+                } catch (Exception observationFailure) { observationFailure.printStackTrace(); }
+                forward.accept(actual);
+            }
+        });
+    }
+
+    private void checkOwnedAreaTransportError() throws Exception {
+        java.util.List<Object> observed = new java.util.ArrayList<Object>();
+        synchronized (transportErrors) { observed.addAll(transportErrors); transportErrors.clear(); }
+        if (areaTaskToken <= 0 || areaTaskCommand < 0 || areaTaskSession.isEmpty()) return;
+        Class<?> tasks = clientType("HologramBackgroundTasks");
+        Object witness = call(tasks, "actualTaskWitness");
+        long current = (Long) call(witness, "func_74763_f", "token"), completed = (Long) call(witness, "func_74763_f", "completedToken");
+        if (current != areaTaskToken && !(current == 0 && completed == areaTaskToken)) return;
+        Object state = get(clientType("HologramClient"), "state");
+        if (state == null || !areaTaskSession.equals(get(state, "session"))) return;
+        String generation = str(get(state, "data"), "generation");
+        if (!generation.isEmpty() && !areaTaskSession.equals(generation)) return;
+        for (Object error : observed) {
+            if (!bool(error, "transportError") || !areaTaskSession.equals(str(error, "session"))
+                || !(Boolean) call(error, "func_150297_b", "uiSequence", 4)
+                || (Long) call(error, "func_74763_f", "uiSequence") != areaTaskCommand) continue;
+            String code = str(error, "errorCode");
+            if (!(code.equals("snapshot.prepare") || code.equals("snapshot.encode")
+                || code.equals("snapshot.queue") || code.equals("snapshot.budget"))) continue;
+            Object receipt = construct("net.minecraft.nbt.NBTTagCompound");
+            call(receipt, "func_74782_a", "actualTransportError", error);
+            scalar(receipt, "trackedLocalTaskToken", areaTaskToken); scalar(receipt, "trackedCommand", areaTaskCommand);
+            scalar(receipt, "trackedSession", areaTaskSession); scalar(receipt, "currentLocalGeneration", generation);
+            scalar(receipt, "scope", "actual production error packet matched exact session+typed command and local owner token; server sends no separate generation field");
+            call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", receipt, file("area-owned-transport-failure.nbt"));
+            throw new IllegalStateException("Production area transport failed for tracked task: " + code + ": " + str(error, "errorMessage"));
+        }
     }
 
     private void preflight(Object gui, Object ui, long generation) throws Exception {
@@ -467,8 +727,10 @@ public final class V0110BackgroundSaveProbe {
             check((Integer) call(library, "savedStructureAccent", 148) == 0xff62e8ef, "Know retains cyan148 suggestion");
             if (!capture(gui, "saved-workspace-cyan148")) return;
             typeName(gui, "V0110 real background save " + output.getName() + " preferences");
+            runtimeMetricToken = 0; runtimeMetricsSnapshot("before-second-save");
             click(gui, ui, 140, generation);
             secondSaveTaskToken = (Long) call(clientType("HologramBackgroundTasks"), "token");
+            runtimeMetricToken = secondSaveTaskToken;
             check(secondSaveTaskToken > saveTaskToken, "second actual Save receives fresh owner token");
             proof.setProperty("secondSaveTaskTokenAfter140", String.valueOf(secondSaveTaskToken));
             advance(14); return;
@@ -490,6 +752,7 @@ public final class V0110BackgroundSaveProbe {
             proof.setProperty("secondSaveLocalId", localId);
             if (!(Boolean) call(library, "saveGuidanceOpen")) return;
             if (!capture(gui, "save-guidance-second-commit")) return;
+            runtimeMetricsSnapshot("after-second-save");
             clickGuidance(gui, true);
             guidanceGeneration = generation; lastGeneration = generation; advance(15); return;
         }
@@ -512,7 +775,7 @@ public final class V0110BackgroundSaveProbe {
             call(styles, "func_74778_a", "scope", "production semantic component method assertions; actual framebuffer pixel counts are separate evidence, no four-color visual PASS implied");
             call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", styles, file("semantic-component.nbt"));
             proof.setProperty("guidance", "two actual committed Save140 operations; first Know MUI click; second DontShow MUI click; disk persistence reread; cyan148 retained");
-            restorePreferences(); persist("PASS"); done = true; call(mc, "func_71400_g");
+            restoreReceiver(); restorePreferences(); persist("PASS"); done = true; call(mc, "func_71400_g");
         }
     }
 
@@ -553,6 +816,254 @@ public final class V0110BackgroundSaveProbe {
         else Files.deleteIfExists(preferences.toPath());
         member(clientType("HologramUiMemory"), "tabMemory").set(null, null);
         preferencesRestored = true; proof.setProperty("preferencesRestored", "true");
+    }
+
+    /** Read-only phase5 observations. Diagnostic errors never advance/cancel the production workflow. */
+    private void importClientDiagnostic(Object gui) {
+        long now = System.nanoTime();
+        if (lastImportClientDiagnostic != 0 && now - lastImportClientDiagnostic < 5000000000L) return;
+        lastImportClientDiagnostic = now;
+        if (!importWaitScreenshotDone) importWaitScreenshotPending = true;
+        try {
+            Object diagnostic = diagnosticRoot("client", now), state = get(clientType("HologramClient"), "state");
+            Object summary = describe(state, "session", "parsedCells");
+            if (state != null) {
+                Object data = get(state, "data");
+                copyScalarTags(data, summary, "session", "generation", "planRevision", "uiSequence", "areaSelecting",
+                    "areaImported", "areaImporting", "capturePending", "status", "open", "openPurpose",
+                    "targetClosed", "localPlanPending", "localPlanGeneration", "localPlanError");
+                scalar(summary, "cells", ((List<?>) get(state, "cells")).size());
+            }
+            call(diagnostic, "func_74782_a", "state", summary);
+            call(diagnostic, "func_74778_a", "screen", gui == null ? "world" : gui.getClass().getName());
+            Class<?> tasks = clientType("HologramBackgroundTasks");
+            call(diagnostic, "func_74782_a", "backgroundWitness", call(tasks, "actualTaskWitness"));
+            call(diagnostic, "func_74782_a", "backgroundContext", describe(tasks, "session", "operation", "command",
+                "issuedSequence", "startRevision", "boundToken", "completedToken", "cancelling", "restorePending",
+                "succeeded", "completion"));
+            call(diagnostic, "func_74782_a", "backgroundOwner", describe(get(tasks, "OWNER"), "kind", "key", "label",
+                "token", "detached", "announced"));
+            Object tracker = get(tasks, "displayProgress"), current;
+            synchronized (tracker) { current = get(tracker, "current"); }
+            call(diagnostic, "func_74782_a", "backgroundDisplayProgress", progressFields(current));
+            Object progresses = construct("net.minecraft.nbt.NBTTagList");
+            java.util.Map<?, ?> views = (java.util.Map<?, ?>) get(clientType("HologramClientProgress"), "views");
+            int limit = 0;
+            for (java.util.Map.Entry<?, ?> entry : views.entrySet()) {
+                if (++limit > 16) break;
+                Object row = describe(entry.getValue(), "session", "request", "sequence", "command");
+                scalar(row, "scope", String.valueOf(entry.getKey()));
+                tracker = get(entry.getValue(), "tracker");
+                synchronized (tracker) { current = get(tracker, "current"); }
+                call(row, "func_74782_a", "rawProgress", progressFields(current));
+                call(progresses, "func_74742_a", row);
+            }
+            call(diagnostic, "func_74782_a", "rawProgressViews", progresses);
+            call(diagnostic, "func_74782_a", "preparingSnapshot", describe(
+                get(clientType("HologramClient"), "preparingSnapshot"), "stage", "cellPosition", "materialPosition",
+                "memberPosition", "lastStepWork", "rows", "materialRows", "pages", "members"));
+            scalar(diagnostic, "deferredSnapshots", get(clientType("HologramClient"), "deferredSnapshots"));
+            scalar(diagnostic, "deferredCellRows", get(clientType("HologramClient"), "deferredCellRows"));
+            Properties quick = new Properties();
+            quick.setProperty("screen", gui == null ? "world" : gui.getClass().getName());
+            quick.setProperty("statePresent", String.valueOf(state != null));
+            if (state != null) {
+                Object data = get(state, "data");
+                quick.setProperty("session", String.valueOf(get(state, "session")));
+                quick.setProperty("planRevision", String.valueOf(call(data, "func_74763_f", "planRevision")));
+                quick.setProperty("uiSequence", String.valueOf(call(data, "func_74763_f", "uiSequence")));
+                quick.setProperty("cells", String.valueOf(((List<?>) get(state, "cells")).size()));
+                for (String key : new String[] { "areaImporting", "areaImported", "capturePending" })
+                    quick.setProperty(key, String.valueOf(bool(data, key)));
+            }
+            writeImportDiagnostic("client", ++importClientDiagnostics, diagnostic, quick);
+            if (!importWaitScreenshotDone) importWaitScreenshotPending = true;
+        } catch (Exception failure) { importDiagnosticError("client", failure); }
+    }
+
+    private void importServerDiagnostic(Object host, Object world, List<?> livePlayers) {
+        long now = System.nanoTime();
+        if (lastImportServerDiagnostic != 0 && now - lastImportServerDiagnostic < 5000000000L) return;
+        lastImportServerDiagnostic = now;
+        try {
+            Object diagnostic = diagnosticRoot("server", now);
+            scalar(diagnostic, "triggerClientPhase", 5);
+            Class<?> workspace = Class.forName("com.miaokatze.gtmb.hologram.HologramWorkspace");
+            Object id = actor == null ? null : call(actor, "func_110124_au");
+            Object session = id == null ? null : ((java.util.Map<?, ?>) get(workspace, "SESSIONS")).get(id);
+            Object area = id == null ? null : ((java.util.Map<?, ?>) get(workspace, "AREAS")).get(id);
+            Object editor = id == null ? null : ((java.util.Map<?, ?>) get(workspace, "AREA_EDITORS")).get(id);
+            scalar(diagnostic, "livePlayers", livePlayers.size());
+            scalar(diagnostic, "actorPresent", actor != null);
+            scalar(diagnostic, "actorLiveIdentity", actor != null && livePlayers.size() == 1 && livePlayers.get(0) == actor);
+            call(diagnostic, "func_74782_a", "workspaceSession", sessionFields(session, world, livePlayers));
+            call(diagnostic, "func_74782_a", "areaEditor", sessionFields(editor, world, livePlayers));
+            Object areaState = describe(area, "selecting", "imported", "importing", "first", "second", "x", "y", "z",
+                "minX", "minY", "minZ", "maxX", "maxY", "maxZ", "importPhase", "active", "discoveryIndex",
+                "structureIndex", "membershipIndex", "declarationMemberDone", "declarationMemberTotal",
+                "expandedNbt", "structures", "members", "edited", "discovery", "declarationSessions", "regions");
+            if (area != null) {
+                call(areaState, "func_74782_a", "blueprint", describe(get(area, "blueprint"), "schema", "cells", "palette", "structures"));
+                Object preparation = get(area, "preparation");
+                Object preparing = describe(preparation, "networkCursor");
+                if (preparation != null) {
+                    call(preparing, "func_74782_a", "progress", describe(get(preparation, "progress"), "phase", "done", "total"));
+                    futureFields(preparing, "future", get(preparation, "task"));
+                }
+                call(areaState, "func_74782_a", "preparation", preparing);
+                call(areaState, "func_74782_a", "population", describe(get(area, "population"), "sourceIndex", "cursor", "pass", "initialized"));
+                call(areaState, "func_74782_a", "planTask", describe(get(area, "planTask"), "stage", "cursor", "lastWork", "needsExterior"));
+                call(areaState, "func_74782_a", "stagingSession", sessionFields(get(area, "staging"), world, livePlayers));
+            }
+            call(diagnostic, "func_74782_a", "area", areaState);
+            Object box = id == null ? null : ((java.util.Map<?, ?>) get(
+                Class.forName("com.miaokatze.gtmb.hologram.HologramNetwork"), "outgoing")).get(id);
+            Object transport = describe(box, "session", "dimension", "pendingBytes", "snapshots");
+            if (box != null) {
+                Object head = ((java.util.Deque<?>) get(box, "snapshots")).peekFirst();
+                Object headState = describe(head, "sequence", "libraryInitial", "failed", "offset", "index", "queueNotified");
+                if (head != null) {
+                    Object bytes = get(head, "bytes"); scalar(headState, "compressedBytes", bytes == null ? 0 : Array.getLength(bytes));
+                    call(headState, "func_74782_a", "encoding", describe(get(head, "encoding"), "cancelled", "done", "failure"));
+                }
+                call(transport, "func_74782_a", "head", headState);
+            }
+            call(diagnostic, "func_74782_a", "transport", transport);
+            Properties quick = new Properties();
+            quick.setProperty("triggerClientPhase", "5");
+            quick.setProperty("sessionPresent", String.valueOf(session != null));
+            quick.setProperty("areaPresent", String.valueOf(area != null));
+            if (session != null) for (String key : new String[] { "id", "status", "phase", "planRevision", "uiSequence", "capturePending", "cancelled" })
+                quick.setProperty(key, String.valueOf(get(session, key)));
+            if (area != null) for (String key : new String[] { "importPhase", "importing", "imported", "x", "y", "z", "structureIndex", "membershipIndex" })
+                quick.setProperty("area." + key, String.valueOf(get(area, key)));
+            writeImportDiagnostic("server", ++importServerDiagnostics, diagnostic, quick);
+        } catch (Exception failure) { importDiagnosticError("server", failure); }
+    }
+
+    private Object sessionFields(Object session, Object world, List<?> livePlayers) throws Exception {
+        Object row = describe(session, "id", "status", "phase", "progressPhase", "planRevision", "uiSequence", "open",
+            "openPurpose", "cancelled", "capturePending", "captureAttempts", "virtual", "virtualPlacement", "slot",
+            "toolId", "scope", "selected", "job", "cursor", "completed", "blueprintSource", "areaStructureId",
+            "localPlanPending", "localPlanGeneration", "localPlanError", "blueprintClientTaskToken", "libraryInitialSnapshot");
+        if (session == null) return row;
+        Object player = get(session, "player");
+        scalar(row, "ownerIsFixtureActor", player == actor);
+        scalar(row, "ownerLiveIdentity", livePlayers.size() == 1 && livePlayers.get(0) == player);
+        scalar(row, "ownerWorldIdentity", get(player, "field_70170_p") == world);
+        scalar(row, "ownerDead", get(player, "field_70128_L"));
+        scalar(row, "boundStackIsHeld", get(session, "boundTool") == call(player, "func_70694_bm"));
+        call(row, "func_74782_a", "capture", describe(get(session, "capture"), "cells", "positions", "pending",
+            "incomplete", "failure", "failureOrigin", "pieceCursor", "walkingComplete"));
+        Object task = ((java.util.Map<?, ?>) get(Class.forName("com.miaokatze.gtmb.hologram.HologramSnapshotPreparation"), "TASKS")).get(session);
+        Object snapshot = describe(task, "session", "phase", "revision", "ui", "batch", "size", "stage", "index",
+            "encoding", "lastTick", "lastDetail", "cells", "materials", "recovery", "workTotal", "missing", "total");
+        if (task != null) {
+            Object metadata = get(task, "metadata");
+            Object metadataState = describe(metadata, "stage", "cursor", "revision", "draftOnly", "keysCached", "sourceWarning");
+            if (metadata != null) {
+                call(metadataState, "func_74782_a", "source", describe(get(metadata, "source"), "stage", "cursor", "index"));
+                call(metadataState, "func_74782_a", "workerProgress", describe(get(get(metadata, "workerProgress"), "value"), "phase", "done", "total"));
+                futureFields(metadataState, "report", get(metadata, "report"));
+            }
+            call(snapshot, "func_74782_a", "metadata", metadataState);
+        }
+        call(row, "func_74782_a", "snapshotPreparation", snapshot);
+        return row;
+    }
+
+    private Object diagnosticRoot(String sideName, long now) throws Exception {
+        Object row = construct("net.minecraft.nbt.NBTTagCompound");
+        scalar(row, "scope", "read-only phase5 diagnostic; scalar fields and collection counts only; no world reads, commands, ACK or native actions");
+        scalar(row, "side", sideName); scalar(row, "observedAtNanos", now);
+        scalar(row, "driverPhase", phase); scalar(row, "phaseMillis", (now - phaseStarted) / 1000000L);
+        scalar(row, "thread", Thread.currentThread().getName()); return row;
+    }
+
+    private static Object progressFields(Object progress) throws Exception {
+        return describe(progress, "operation", "phase", "detail", "done", "total", "unit", "complete", "startedAt", "observedAt");
+    }
+
+    private static Object describe(Object source, String... fields) throws Exception {
+        Object row = construct("net.minecraft.nbt.NBTTagCompound");
+        scalar(row, "present", source != null);
+        if (source == null) return row;
+        scalar(row, "class", source instanceof Class ? ((Class<?>) source).getName() : source.getClass().getName());
+        for (String name : fields) {
+            try { scalar(row, name, get(source, name)); }
+            catch (NoSuchFieldException missing) { scalar(row, name + "Unavailable", true); }
+        }
+        return row;
+    }
+
+    private static void scalar(Object target, String key, Object value) throws Exception {
+        if (value == null) { call(target, "func_74757_a", key + "Present", false); return; }
+        if (value instanceof Boolean) call(target, "func_74757_a", key, value);
+        else if (value instanceof Long) call(target, "func_74772_a", key, value);
+        else if (value instanceof Number) call(target, "func_74768_a", key, ((Number) value).intValue());
+        else if (value instanceof String || value instanceof Enum || value instanceof Throwable) {
+            String text = String.valueOf(value); call(target, "func_74778_a", key, text.length() > 2048 ? text.substring(0, 2048) : text);
+        } else if (value instanceof java.util.Collection) call(target, "func_74768_a", key + "Count", ((java.util.Collection<?>) value).size());
+        else if (value instanceof java.util.Map) call(target, "func_74768_a", key + "Count", ((java.util.Map<?, ?>) value).size());
+        else if (value instanceof int[] && ((int[]) value).length <= 64) call(target, "func_74783_a", key, ((int[]) value).clone());
+        else if (value.getClass().getName().equals("net.minecraft.nbt.NBTTagList")) call(target, "func_74768_a", key + "Count", call(value, "func_74745_c"));
+        else call(target, "func_74778_a", key + "Class", value.getClass().getName());
+    }
+
+    private static void copyScalarTags(Object source, Object target, String... keys) throws Exception {
+        for (String key : keys) {
+            Object tag = call(source, "func_74781_a", key);
+            if (tag != null) {
+                int type = ((Number) call(tag, "func_74732_a")).intValue();
+                if (type >= 1 && type <= 8 && type != 7) call(target, "func_74782_a", key, call(tag, "func_74737_b"));
+            }
+        }
+    }
+
+    private static void futureFields(Object target, String key, Object future) throws Exception {
+        scalar(target, key + "Present", future != null);
+        if (future instanceof java.util.concurrent.Future) {
+            scalar(target, key + "Done", ((java.util.concurrent.Future<?>) future).isDone());
+            scalar(target, key + "Cancelled", ((java.util.concurrent.Future<?>) future).isCancelled());
+        }
+    }
+
+    private void writeImportDiagnostic(String sideName, int index, Object diagnostic, Properties quick) throws Exception {
+        String prefix = String.format(java.util.Locale.ROOT, "area-%s-wait-%03d", sideName, index);
+        call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", diagnostic, file(prefix + ".nbt"));
+        quick.setProperty("scope", "read-only phase5 diagnostic; no production mutation or network action");
+        quick.setProperty("diagnostic", prefix + ".nbt"); quick.setProperty("observedAtNanos", String.valueOf(System.nanoTime()));
+        store(prefix + ".properties", quick); store("area-" + sideName + "-wait-latest.properties", quick);
+    }
+
+    private void importDiagnosticError(String sideName, Exception failure) {
+        failure.printStackTrace();
+        try {
+            Properties error = new Properties(); error.setProperty("scope", "diagnostic failure only; production workflow/assertions unchanged");
+            error.setProperty("failure", failure.toString()); error.setProperty("driverPhase", String.valueOf(phase));
+            store("area-" + sideName + "-diagnostic-error.properties", error);
+        } catch (Exception outputFailure) { outputFailure.printStackTrace(); }
+    }
+
+    @SubscribeEvent
+    public void importWaitRender(TickEvent.RenderTickEvent event) {
+        if (!client || done || mc == null || !importWaitScreenshotPending || importWaitScreenshotDone || event.phase != TickEvent.Phase.END) return;
+        importWaitScreenshotPending = false;
+        try {
+            File game = (File) get(mc, "field_71412_D");
+            String name = "gtmb-v0110-" + output.getName() + "-area-import-wait.png";
+            File actual = new File(new File(game, "screenshots"), name);
+            check(!actual.exists() && !file("area-import-wait-render-end.png").exists(), "fresh real import-wait screenshot required");
+            call(Class.forName("net.minecraft.util.ScreenShotHelper"), "func_148259_a", game, name,
+                get(mc, "field_71443_c"), get(mc, "field_71440_d"), call(mc, "func_147110_a"));
+            check(javax.imageio.ImageIO.read(actual) != null, "actual import-wait framebuffer decodes");
+            Files.copy(actual.toPath(), file("area-import-wait-render-end.png").toPath());
+            Object screenshot = diagnosticRoot("client-render", System.nanoTime()), gui = get(mc, "field_71462_r");
+            scalar(screenshot, "capture", "actual RenderTick.END framebuffer; no GUI construction, refresh, or native input");
+            scalar(screenshot, "screen", gui == null ? "world" : gui.getClass().getName());
+            call(Class.forName("net.minecraft.nbt.CompressedStreamTools"), "func_74795_b", screenshot, file("area-import-wait-render-end.nbt"));
+            importWaitScreenshotDone = true;
+        } catch (Exception failure) { importWaitScreenshotDone = true; importDiagnosticError("client-render", failure); }
     }
 
     private void saveDiagnostic(Object gui) throws Exception {
@@ -602,7 +1113,8 @@ public final class V0110BackgroundSaveProbe {
     public void serverTick(TickEvent.ServerTickEvent event) {
         if (!server || done || event.phase != TickEvent.Phase.END) return;
         try {
-            check(System.nanoTime() - started < 900000000000L, "server overall timeout");
+            beginRuntimeMetrics();
+            check(System.nanoTime() - started < overallBudgetNanos, "server overall timeout");
             Object host = call(Class.forName("net.minecraft.server.MinecraftServer"), "func_71276_C");
             Object world = call(host, "func_71218_a", 0);
             String name = String.valueOf(call(call(world, "func_72912_H"), "func_76065_j"));
@@ -624,29 +1136,46 @@ public final class V0110BackgroundSaveProbe {
                 configured = true; proof.setProperty("configApplied", "true"); proof.setProperty("activeDownloadKiB", String.valueOf(largeEdit ? originalDown : 1)); persist("RUNNING");
             }
             if (!fixtureReady) {
-                call(Class.forName("com.miaokatze.gtmb.hologram.HologramCutChunks"), "load", world, 0, 0, side - 1, side + 7);
+                if (!largeEdit || !chunksPrepared) {
+                    call(Class.forName("com.miaokatze.gtmb.hologram.HologramCutChunks"), "load", world,
+                        largeEdit ? -16 : 0, largeEdit ? -64 : 0, largeEdit ? sourceWidth + 32 : sourceWidth - 1, largeEdit ? sourceDepth + 72 : sourceDepth + 7);
+                    chunksPrepared = true;
+                }
                 Object blocks = get(Class.forName("net.minecraft.block.Block"), "field_149771_c");
                 Object stone = call(blocks, "func_82594_a", "minecraft:stone");
-                if (placed == 0) for (int x = 0; x < side; x++) for (int z = 0; z < side + 8; z++) put(world, x, 79, z, stone, 0);
+                if (largeEdit) {
+                    int platformWidth = sourceWidth + 32, platformTotal = platformWidth * (sourceDepth + 72);
+                    int endPlatform = Math.min(platformTotal, platformPlaced + 256);
+                    while (platformPlaced < endPlatform) {
+                        int n = platformPlaced++; put(world, n % platformWidth - 16, 79, n / platformWidth - 64, stone, 0);
+                    }
+                    if (platformPlaced < platformTotal) return;
+                    // Source preparation may outlast startup: keep vanilla spawn fuzz completely outside the tower.
+                    if (!safeLargeSpawnSet) {
+                        call(call(world, "func_72912_H"), "func_76081_a", 8, 80, -40);
+                        proof.setProperty("fixturePreparationSpawn", "8,80,-40; real padded platform before source placement");
+                        safeLargeSpawnSet = true;
+                    }
+                } else if (placed == 0) for (int x = 0; x < sourceWidth; x++) for (int z = 0; z < sourceDepth + 8; z++) put(world, x, 79, z, stone, 0);
                 Random random = new Random(19020L + placed);
                 Object[] palette = { stone, call(blocks, "func_82594_a", "minecraft:wool"), call(blocks, "func_82594_a", "minecraft:stained_glass") };
-                int end = Math.min(side * side * side, placed + 256);
+                int end = Math.min(sourceCells, placed + 256);
                 while (placed < end) {
-                    int n = placed++, x = n % side, z = n / side % side, y = 80 + n / (side * side);
+                    int n = placed++, x = n % sourceWidth, z = n / sourceWidth % sourceDepth, y = 80 + n / (sourceWidth * sourceDepth);
                     int kind = random.nextInt(3);
                     put(world, x, y, z, palette[kind], kind == 0 ? 0 : random.nextInt(16));
                 }
-                if (placed < side * side * side) return;
+                if (placed < sourceCells) return;
                 put(world, 0, 80, 0, call(blocks, "func_82594_a", "minecraft:chest"), 2);
-                call(call(world, "func_72912_H"), "func_76081_a", 8, 80, 21);
-                proof.setProperty("fixtureStandardSpawn", "8,80,21; WorldInfo.setSpawnPosition");
+                call(call(world, "func_72912_H"), "func_76081_a", 8, 80, largeEdit ? -6 : 21);
+                proof.setProperty("fixtureStandardSpawn", "8,80," + (largeEdit ? -6 : 21) + "; WorldInfo.setSpawnPosition");
                 fixtureReady = true;
             }
             List<?> players = (List<?>) get(call(host, "func_71203_ab"), "field_72404_b");
             check(players.size() <= 1, "single owned actor required");
             if (!players.isEmpty() && actor == null) {
                 actor = players.get(0);
-                call(get(actor, "field_71135_a"), "func_147364_a", 8.5d, 80d, 21.5d, 180f, -20f);
+                call(get(actor, "field_71135_a"), "func_147364_a", 8.5d, 80d, largeEdit ? -5.5d : 21.5d, 180f, -20f);
                 // The normal player-movement path updates PlayerManager watches and its chunk send queues.
                 call(call(host, "func_71203_ab"), "func_72358_d", actor);
                 proof.setProperty("fixturePostTeleportChunkWatchUpdate", "standard ServerConfigurationManager.func_72358_d");
@@ -654,10 +1183,16 @@ public final class V0110BackgroundSaveProbe {
                 Object item = call(get(Class.forName("net.minecraft.item.Item"), "field_150901_e"), "func_82594_a", "gtmb:neko_hologram_projector");
                 Array.set(get(inventory, "field_70462_a"), 0, construct("net.minecraft.item.ItemStack", item)); set(inventory, "field_70461_c", 0);
                 call(get(actor, "field_71069_bz"), "func_75142_b");
-                proof.setProperty("world", name); proof.setProperty("actualSourceBlocks", String.valueOf(side * side * side));
+                proof.setProperty("world", name); proof.setProperty("actualSourceBlocks", String.valueOf(sourceCells));
                 store("background-fixture-ready.properties", proof);
             }
             Properties peer = read("background-client.properties");
+            serverClientPhase = Integer.parseInt(peer.getProperty("phase", "0"));
+            try {
+                runtimeMetricToken = Long.parseLong(peer.getProperty(serverClientPhase <= 5 ? "areaTaskToken" : serverClientPhase >= 14 ? "secondSaveTaskTokenAfter140" : serverClientPhase >= 10 && serverClientPhase <= 13 ? "saveTaskTokenAfter140" : "unavailableTaskToken", "0"));
+            } catch (Exception diagnosticFailure) { runtimeMetricToken = 0; proof.setProperty("runtimeMetricsFailure", diagnosticFailure.toString()); }
+            observeServerWorkStages(world, players);
+            if ("5".equals(peer.getProperty("phase"))) importServerDiagnostic(host, world, players);
             String status = peer.getProperty("status", "");
             if ("PASS".equals(status) || "FAIL".equals(status)) {
                 if (verdict.isEmpty()) verdict = status;
@@ -723,7 +1258,13 @@ public final class V0110BackgroundSaveProbe {
     private static boolean bool(Object nbt, String key) throws Exception { return (Boolean) call(nbt, "func_74767_n", key); }
     private static int integer(Object nbt, String key) throws Exception { return (Integer) call(nbt, "func_74762_e", key); }
     private static String str(Object nbt, String key) throws Exception { return (String) call(nbt, "func_74779_i", key); }
-    private void advance(int next) throws Exception { phase = next; phaseStarted = System.nanoTime(); persist("RUNNING"); }
+    private void advance(int next) throws Exception {
+        long now = System.nanoTime();
+        runtimeMetricsSnapshot("phase-" + phase + "-end");
+        timings.setProperty("driver.phase." + phase + ".elapsedNanos", String.valueOf(now - phaseStarted));
+        phase = next; phaseStarted = now;
+        writeMeasurements(); persist("RUNNING");
+    }
     private void pulse(Object gui) throws Exception {
         if (System.nanoTime() - heartbeat < 2000000000L) return;
         heartbeat = System.nanoTime(); proof.setProperty("phase", String.valueOf(phase)); proof.setProperty("phaseMillis", String.valueOf((heartbeat - phaseStarted) / 1000000));
@@ -734,6 +1275,7 @@ public final class V0110BackgroundSaveProbe {
         while (failure instanceof java.lang.reflect.InvocationTargetException && failure.getCause() != null) failure = failure.getCause();
         failure.printStackTrace();
         try { if (client) { restoreReceiver(); restorePreferences(); } proof.setProperty("failure", failure.toString()); persist("FAIL"); } catch (Exception nested) { nested.printStackTrace(); }
+        finally { finishRuntimeMetrics("FAIL"); }
         done = true;
         try {
             if (client && mc != null) call(mc, "func_71400_g");
@@ -759,7 +1301,15 @@ public final class V0110BackgroundSaveProbe {
         catch (java.io.FileNotFoundException transientMissingReceipt) { return new Properties(); }
         return p;
     }
-    private void persist(String status) throws Exception { proof.setProperty("status", status); store(client ? "background-client.properties" : "background-server.properties", proof); }
+    private void persist(String status) throws Exception {
+        proof.setProperty("status", status);
+        if (!"RUNNING".equals(status)) {
+            finishRuntimeMetrics(status);
+            try { writeMeasurements(); }
+            catch (Exception diagnosticFailure) { proof.setProperty("measurementFailure", diagnosticFailure.toString()); }
+        }
+        store(client ? "background-client.properties" : "background-server.properties", proof);
+    }
     private void store(String name, Properties p) throws Exception {
         File temporary = file(name + ".tmp"); try (FileOutputStream out = new FileOutputStream(temporary)) { p.store(out, "GTMB real background Save stimulus"); }
         for (int attempt = 0; attempt < 10; attempt++) {

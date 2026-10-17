@@ -107,6 +107,13 @@ final class HologramClientProgress {
         retiredServerSessions.clear();
     }
 
+    static void transportFailed(NBTTagCompound failure) {
+        if (!failure.hasKey("uiSequence", 4)) return;
+        Entry current = views.get("server");
+        if (current != null && current.session.equals(failure.getString("session"))
+            && current.command == failure.getLong("uiSequence")) current.tracker.clear();
+    }
+
     static long sequence(String scope) {
         Entry entry = views.get(scope);
         return entry == null ? -1 : entry.sequence;

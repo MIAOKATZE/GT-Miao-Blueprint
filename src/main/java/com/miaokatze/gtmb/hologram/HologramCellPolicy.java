@@ -242,6 +242,16 @@ final class HologramCellPolicy {
         boolean restoredConfiguration) {
         ItemStack wanted = targetFor(s, c, index);
         if (wanted == null) return false;
+        // These paths can never accept an absent primary block. Reject the mismatch before decoding
+        // full payloads or invoking native variant validators; matching blocks still use every check below.
+        if (s.virtual && s.virtualPreset != null
+            && s.virtualPreset.schema >= 2
+            && !HologramRecovery.hasSeal(wanted)
+            && (HologramNativePlacement.supported(c.block) && old != c.block
+                || wanted.getItem() instanceof ItemMachines && old != Block.getBlockFromItem(wanted.getItem())
+                || old == Blocks.air && wanted.getItem() instanceof ItemBlock
+                    && Block.getBlockFromItem(wanted.getItem()) != Blocks.air))
+            return false;
         if (s.virtual && s.virtualPreset.schema >= 2 && HologramNetworkBindings.node(c.block)) {
             try {
                 if (HologramBlueprintProcessing.quantumCleared(s.virtualPreset)

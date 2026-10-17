@@ -213,6 +213,7 @@ public final class HologramServerLoadRegression {
         try {
             SimpleAssert
                 .that(HologramNetwork.progressConnected(player), "open embedded connection passes progress guard only");
+            queuedActionContext(player, world, unsafe);
             SimpleAssert
                 .that(!HologramNetwork.progressConnected(null), "missing player has no progress delivery target");
             net.minecraft.entity.player.EntityPlayerMP detached = (net.minecraft.entity.player.EntityPlayerMP) unsafe
@@ -310,6 +311,48 @@ public final class HologramServerLoadRegression {
             channel.set(null, previous);
             player.playerNetServerHandler.netManager.channel()
                 .close();
+        }
+    }
+
+    private static void queuedActionContext(net.minecraft.entity.player.EntityPlayerMP player,
+        HologramServiceEditRegression.ReadOnlyWorld world, sun.misc.Unsafe unsafe) throws InstantiationException {
+        HologramRequestGate gate = new HologramRequestGate(1, 1);
+        int[] dispatched = { 0 };
+        Runnable action = () -> dispatched[0]++;
+        SimpleAssert.that(gate.enter(player), "queued action owns its admission slot");
+        HologramNetwork.runQueuedAction(player, world, gate, action);
+        SimpleAssert.eq(1, dispatched[0], "live connection in its original world dispatches normally");
+        SimpleAssert.eq(0, gate.size(), "normal action releases its admission slot");
+        net.minecraft.network.NetHandlerPlayServer handler = player.playerNetServerHandler;
+        try {
+            SimpleAssert.that(gate.enter(player), "world-changing request is queued before transition");
+            player.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            HologramNetwork.runQueuedAction(player, world, gate, action);
+            SimpleAssert.eq(1, dispatched[0], "old-world input cannot dispatch after a world transition");
+            SimpleAssert.eq(0, gate.size(), "world transition still releases admission capacity");
+            player.worldObj = world;
+            SimpleAssert.that(gate.enter(player), "disconnecting request is queued before disconnect");
+            player.playerNetServerHandler = null;
+            HologramNetwork.runQueuedAction(player, world, gate, action);
+            SimpleAssert.eq(1, dispatched[0], "disconnected input cannot create a workspace or invoke an action");
+            SimpleAssert.eq(0, gate.size(), "disconnected input releases its admission capacity");
+            player.playerNetServerHandler = handler;
+            SimpleAssert.that(gate.enter(player), "throwing action is admitted after reconnect");
+            try {
+                HologramNetwork.runQueuedAction(
+                    player,
+                    world,
+                    gate,
+                    () -> { throw new IllegalStateException("fixture dispatch failure"); });
+                throw new AssertionError("dispatch failure must remain visible to the server scheduler");
+            } catch (IllegalStateException expected) {
+                SimpleAssert.eq(0, gate.size(), "throwing action also releases its admission capacity");
+            }
+        } finally {
+            player.worldObj = world;
+            player.playerNetServerHandler = handler;
+            gate.clear();
         }
     }
 

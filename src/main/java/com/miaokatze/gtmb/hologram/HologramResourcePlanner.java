@@ -114,6 +114,7 @@ final class HologramResourcePlanner {
         private HologramVirtualAllocationTask allocation;
         private HologramExteriorTask exterior;
         private HologramResourceTask resources;
+        private HologramPlanClassifier classifier;
         private int stage, cursor, lastWork;
         private boolean needsExterior;
         private java.util.Set<String> outside = Collections.emptySet();
@@ -172,6 +173,7 @@ final class HologramResourcePlanner {
                     stage = 9;
                     return;
                 }
+                classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
                 stage = 10;
             } else if (stage == 10) {
@@ -251,7 +253,7 @@ final class HologramResourcePlanner {
             } else if (stage == 7) {
                 if (cursor < s.capture.cells.size()) classify(cursor++);
                 else {
-                    resources = new HologramResourceTask(s);
+                    resources = new HologramResourceTask(s, classifier);
                     stage = 8;
                 }
             } else if (stage == 8) {
@@ -264,14 +266,16 @@ final class HologramResourcePlanner {
             HologramCapture.Cell c = s.capture.cells.get(i);
             World world = s.player.worldObj;
             boolean loaded = world.blockExists(c.x, c.y, c.z);
-            s.expectedBlocks.add(loaded ? world.getBlock(c.x, c.y, c.z) : Blocks.air);
-            s.expectedMeta.add(loaded ? world.getBlockMetadata(c.x, c.y, c.z) : 0);
+            net.minecraft.block.Block actual = loaded ? world.getBlock(c.x, c.y, c.z) : Blocks.air;
+            int actualMeta = loaded ? world.getBlockMetadata(c.x, c.y, c.z) : 0;
+            s.expectedBlocks.add(actual);
+            s.expectedMeta.add(actualMeta);
             TileEntity tile = loaded ? world.getTileEntity(c.x, c.y, c.z) : null;
             s.expectedTiles.add(tile);
             s.expectedFacings.add(
                 tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
                     .ordinal() : -1);
-            c.status = HologramPlanPolicy.classify(s, c, i);
+            c.status = classifier.classify(s, c, i, loaded, actual, actualMeta, tile);
             s.planStatus.add(c.status);
             if (s.localPlanPending) HologramLocalPlanRefresh.classified(s, i);
         }

@@ -250,6 +250,158 @@ public final class HologramResourcePlannerRegression {
                 "native resource row order and totals are preserved");
         }
         deferredLifecycle(player);
+        classifierReuse(player, world);
+    }
+
+    private static void classifierReuse(EntityPlayerMP player, HologramServiceEditRegression.ReadOnlyWorld world)
+        throws Exception {
+        HologramSession s = session(player, 1);
+        s.virtualPreset.schema = 2;
+        HologramCapture.Cell cell = s.capture.cells.get(0);
+        cell.userPosition = true;
+        HologramPlanClassifier classifier = new HologramPlanClassifier(s);
+        net.minecraft.block.Block[] types = { Blocks.stone, Blocks.wool, Blocks.stained_glass };
+        boolean originalCreative = player.capabilities.isCreativeMode;
+        try {
+            HologramSession controller = session(player, 1);
+            controller.virtual = false;
+            controller.virtualPreset = null;
+            HologramPlanClassifier controllerClassifier = new HologramPlanClassifier(controller);
+            HologramCapture.Cell controllerCell = controller.capture.cells.get(0);
+            SimpleAssert.eq(
+                HologramPlanPolicy.classify(controller, controllerCell, 0),
+                controllerClassifier.classify(
+                    controller,
+                    controllerCell,
+                    0,
+                    true,
+                    world.getBlock(controllerCell.x, controllerCell.y, controllerCell.z),
+                    0,
+                    null),
+                "nonvirtual classifier keeps the original policy without requiring a virtual preset");
+            boolean rejectedControllerTask = false;
+            try {
+                HologramResourcePlanner.beginPlan(controller);
+            } catch (IllegalArgumentException expected) {
+                rejectedControllerTask = true;
+            }
+            SimpleAssert
+                .that(rejectedControllerTask, "area PlanTask continues to reject nonvirtual controller allocation");
+            HologramSession missingPreset = session(player, 1);
+            missingPreset.virtualPreset = null;
+            missingPreset.capture.cells.get(0).anchor = true;
+            HologramResourcePlanner.PlanTask missingPresetTask = HologramResourcePlanner.beginPlan(missingPreset);
+            int missingTicks = 0;
+            while (!missingPresetTask.done() && missingTicks++ < 1000) missingPresetTask.step(32, 1000000000L);
+            SimpleAssert.that(
+                missingPresetTask.done(),
+                "virtual anchor plan tolerates an absent optional preset without a cache NPE");
+            SimpleAssert
+                .eq("protected", missingPreset.planStatus.get(0), "absent-preset anchor retains original protection");
+            for (int i = 0; i < 50000; i++) {
+                net.minecraft.block.Block source = types[i % types.length];
+                cell.block = source;
+                cell.blueprintItem = String.valueOf(
+                    net.minecraft.item.Item.itemRegistry
+                        .getNameForObject(net.minecraft.item.Item.getItemFromBlock(source)));
+                cell.blueprintDamage = 0;
+                ItemStack target = new ItemStack(source);
+                s.pins.put(0, target);
+                s.planTargets.clear();
+                s.planTargets.add(target);
+                player.capabilities.isCreativeMode = i % 8 == 0;
+                world.occupiedX = cell.x;
+                world.occupied = i % 5 == 0 ? null : i % 7 == 0 ? Blocks.dirt : source;
+                net.minecraft.block.Block actual = world.getBlock(cell.x, cell.y, cell.z);
+                String result = classifier.classify(s, cell, 0, true, actual, 0, null);
+                if (i < 48) SimpleAssert.eq(
+                    HologramPlanPolicy.classify(s, cell, 0),
+                    result,
+                    "ordinary proof preserves each current-world and creative/survival result");
+                String expected = actual == source ? "satisfied"
+                    : actual == Blocks.air || player.capabilities.isCreativeMode ? "pending" : "blocked";
+                SimpleAssert
+                    .eq(expected, result, "50000 ordinary classifications retain position-specific world state");
+            }
+            SimpleAssert.eq(
+                50000L,
+                classifier.ordinaryCells,
+                "large repeated identity workload uses the audited ordinary proof");
+            SimpleAssert.eq(0L, classifier.fallbackCells, "ordinary identity workload needs no NBT/native fallback");
+            SimpleAssert.that(
+                classifier.damageMisses() <= 3 && classifier.damageHits() > 50000,
+                "pure variant callbacks scale with distinct identities rather than the 50000 positions");
+
+            cell.block = Blocks.stone;
+            cell.blueprintItem = "minecraft:stone";
+            s.pins.put(0, new ItemStack(Blocks.stone));
+            s.planTargets.set(0, new ItemStack(Blocks.stone));
+            player.capabilities.isCreativeMode = true;
+            for (net.minecraft.block.Block occupied : new net.minecraft.block.Block[] { Blocks.bedrock, Blocks.dirt }) {
+                world.occupied = occupied;
+                SimpleAssert.eq(
+                    HologramPlanPolicy.classify(s, cell, 0),
+                    classifier.classify(s, cell, 0, true, occupied, 0, null),
+                    "creative ordinary replacement preserves the original removable predicate");
+            }
+            world.occupant = new net.minecraft.tileentity.TileEntity();
+            SimpleAssert.eq(
+                HologramPlanPolicy.classify(s, cell, 0),
+                classifier.classify(s, cell, 0, true, world.occupied, 0, world.occupant),
+                "unrecoverable current tiles retain the exact protected policy");
+            world.occupant = null;
+
+            world.occupied = null;
+            cell.block = Blocks.stone;
+            cell.blueprintItem = "minecraft:stone";
+            cell.blueprintDamage = 0;
+            s.pins.put(0, new ItemStack(Blocks.stone));
+            s.planTargets.set(0, new ItemStack(Blocks.stone));
+            HologramBlueprintResources.Plan first = null;
+            for (int amount : new int[] { 2, 9 }) {
+                NBTTagCompound payload = new NBTTagCompound();
+                NBTTagList inventory = new NBTTagList();
+                inventory.appendTag(new ItemStack(Items.diamond, amount).writeToNBT(new NBTTagCompound()));
+                payload.setTag("Inventory", inventory);
+                cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                SimpleAssert.that(
+                    !classifier.emptyOrdinary(s, cell, 0),
+                    "same block/meta with NBT never uses the empty identity proof");
+                HologramBlueprintResources.Plan resources = classifier.resources(s, cell, 0);
+                SimpleAssert.eq(
+                    amount,
+                    resources.items.get(0).stackSize,
+                    "distinct complete inventory NBT retains its own exact bill");
+                if (first == null) first = resources;
+                else SimpleAssert.that(first != resources, "different complete NBT cannot share a material result");
+            }
+            for (String key : new String[] { "gt.covers", "aeUnknownConfiguration" }) {
+                NBTTagCompound one = new NBTTagCompound(), two = new NBTTagCompound();
+                one.setString(key, "first exact configuration");
+                two.setString(key, "second exact configuration");
+                for (NBTTagCompound payload : new NBTTagCompound[] { one, two }) {
+                    cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                    SimpleAssert.that(
+                        !classifier.emptyOrdinary(s, cell, 0),
+                        "cover and AE/unknown payload identities never alias by block/meta");
+                    long before = classifier.fallbackCells;
+                    classifier.classify(s, cell, 0, true, Blocks.air, 0, null);
+                    SimpleAssert.eq(
+                        before + 1,
+                        classifier.fallbackCells,
+                        "each complete cover/unknown configuration uses native policy validation");
+                }
+            }
+            cell.tileNbt = "";
+            cell.itemNbt = HologramBlueprintNbt.encodeCaptured(new NBTTagCompound());
+            SimpleAssert.that(
+                !classifier.emptyOrdinary(s, cell, 0),
+                "even an encoded empty item payload takes the explicit payload path");
+        } finally {
+            world.occupied = null;
+            world.occupant = null;
+            player.capabilities.isCreativeMode = originalCreative;
+        }
     }
 
     private static void deferredLifecycle(EntityPlayerMP player) throws Exception {

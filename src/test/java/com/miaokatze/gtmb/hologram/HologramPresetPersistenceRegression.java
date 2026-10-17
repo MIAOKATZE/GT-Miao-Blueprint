@@ -18,6 +18,7 @@ final class HologramPresetPersistenceRegression {
     private HologramPresetPersistenceRegression() {}
 
     static void run() {
+        HologramBlueprintValidationCacheRegression.run();
         Path directory = null;
         Object previousCache = null;
         Field cache = null;

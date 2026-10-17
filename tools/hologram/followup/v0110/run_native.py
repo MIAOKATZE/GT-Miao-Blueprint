@@ -18,7 +18,39 @@ import zipfile
 import psutil
 
 
-ROOT = Path(__file__).resolve().parents[4]
+def standard_namespace(path):
+    """Normalize an already resolved Win32 drive/UNC name, never a device namespace.
+
+    ntpath.realpath may retain GetFinalPathNameByHandle's extended prefix when
+    its second, unprefixed lookup races an atomic file replacement. Normalize
+    both operands before containment; do not resolve again or ignore failures.
+    """
+    value = os.fspath(path)
+    if os.name != "nt":
+        return Path(value)
+    value = value.replace("/", "\\")
+    folded = value.casefold()
+    if folded.startswith("\\\\?\\unc\\"):
+        value = "\\\\" + value[8:]
+    elif folded.startswith("\\\\?\\"):
+        if not re.match(r"^[A-Za-z]:\\", value[4:]):
+            raise ValueError("Unsupported extended device namespace")
+        value = value[4:]
+    elif folded.startswith(("\\\\.\\", "\\??\\")):
+        raise ValueError("Device namespaces are not permitted")
+    normalized = Path(value)
+    if not normalized.is_absolute():
+        raise ValueError("Canonical containment paths must be absolute")
+    # Removing an extended prefix must not change trailing-dot/space, ADS, or
+    # reserved DOS-device semantics. None are legitimate fixture filenames.
+    for part in normalized.parts[1:]:
+        if part.endswith((".", " ")) or ":" in part or re.match(
+                r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", part, re.I):
+            raise ValueError("Ambiguous Win32 filename in canonical path")
+    return normalized
+
+
+ROOT = standard_namespace(Path(__file__).resolve()).parents[4]
 BUILD = ROOT / "build"
 FIXTURE = BUILD / "hologram-packaged-v018-mui"
 OUTPUTS = BUILD / "verification/render-v0110"
@@ -37,8 +69,9 @@ class IntegrityFailure(RuntimeError):
 
 def within(path, parent, *, exists=False):
     """Resolve junctions/symlinks before every intended file or directory operation."""
-    resolved = Path(path).resolve(strict=exists)
-    resolved.relative_to(Path(parent).resolve(strict=True))
+    resolved = standard_namespace(Path(path).resolve(strict=exists))
+    boundary = standard_namespace(Path(parent).resolve(strict=True))
+    resolved.relative_to(boundary)
     return resolved
 
 
@@ -59,7 +92,7 @@ def assert_idle():
         if (process.info["name"] or "").casefold() not in ("java.exe", "javaw.exe", "java"):
             continue
         try:
-            cwd = Path(process.cwd()).resolve().as_posix().casefold().rstrip("/")
+            cwd = standard_namespace(Path(process.cwd()).resolve()).as_posix().casefold().rstrip("/")
             command = " ".join(process.cmdline()).replace("\\", "/").casefold()
         except psutil.NoSuchProcess:
             continue
@@ -108,11 +141,12 @@ def validate_heap(tokens, expected):
         raise ValueError(f"Exactly one {expected} required, observed {actual}")
 
 
-def common_flags(output, large):
+def common_flags(output, large, cells):
     return [
         f"-Dgtmb.hologram.followupRoot={FIXTURE.as_posix()}",
         f"-Dgtmb.v0110.output={output.as_posix()}",
         f"-Dgtmb.v0110.largeEdit={str(large).lower()}",
+        f"-Dgtmb.v0110.cells={cells}",
         "-Dgtmb.hologram.cutNativeClient=false",
         "-Dgtmb.hologram.cutNativeServer=false",
         "-Dgtmb.v016.productionGui=false",
@@ -128,7 +162,7 @@ def common_flags(output, large):
     ]
 
 
-def client_arguments(output, large):
+def client_arguments(output, large, cells):
     prepared = argfile_tokens(within(FIXTURE / "java-args.txt", FIXTURE, exists=True).read_text(encoding="utf-8"))
     validate_heap(prepared, "-Xmx4096M")
     tokens = [value for value in prepared if not value.startswith("-Dgtmb.")
@@ -146,7 +180,7 @@ def client_arguments(output, large):
     within(Path(native[0].split("=", 1)[1]), FIXTURE / "client", exists=True)
     if tokens.count("-cp") != 1:
         raise ValueError("Prepared client arguments require an explicit -cp boundary")
-    additions = ["-Xms768M", "-Xmx4096M", *common_flags(output, large),
+    additions = ["-Xms768M", "-Xmx4096M", *common_flags(output, large, cells),
                  "-Dgtmb.v0110.backgroundClient=true", f"-Dgtmb.v0110.address=127.0.0.1:{PORT}",
                  f"-Dgtmb.hologram.backgroundProbe={str(not large).lower()}",
                  f"-Dgtmb.hologram.previewCaptureWitness={str(not large).lower()}",
@@ -157,12 +191,12 @@ def client_arguments(output, large):
     return tokens
 
 
-def server_arguments(output, large):
+def server_arguments(output, large, cells):
     prepared = argfile_tokens(within(FIXTURE / "server/java9args.txt", FIXTURE, exists=True).read_text(encoding="utf-8"))
     tokens = [value for value in prepared if not value.startswith("-Dgtmb.")
               and not re.match(r"-Xm[sx]", value)]
     tokens += ["-Xms1G", "-Xmx6G", "-Dhttp.proxyHost=127.0.0.1", "-Dhttp.proxyPort=7890",
-               "-Dhttps.proxyHost=127.0.0.1", "-Dhttps.proxyPort=7890", *common_flags(output, large),
+               "-Dhttps.proxyHost=127.0.0.1", "-Dhttps.proxyPort=7890", *common_flags(output, large, cells),
                "-Dgtmb.v0110.backgroundServer=true", "-Dgtmb.hologram.backgroundProbe=false", "-jar",
                within(FIXTURE / "server/lwjgl3ify-forgePatches.jar", FIXTURE, exists=True).as_posix(), "nogui"]
     validate_heap(tokens, "-Xmx6G")
@@ -231,11 +265,14 @@ def verify_jar(path, member):
 def run(args):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", args.name):
         raise ValueError("--name requires 1-20 ASCII letters/digits/underscore/hyphen")
+    args.large_edit = args.large_edit or args.cells is not None
+    cells = args.cells if args.cells is not None else 50000 if args.large_edit else 4096
+    timeout_seconds = 3900 if cells == 1000000 else 2100 if args.large_edit else TIMEOUT_SECONDS
     within(BUILD, ROOT, exists=True)
     fixture = within(FIXTURE, BUILD, exists=True)
     if fixture != FIXTURE.absolute():
         raise ValueError("Only the existing owned fixture is permitted")
-    if OUTPUTS.resolve() != OUTPUTS.absolute():
+    if standard_namespace(OUTPUTS.resolve()) != OUTPUTS.absolute():
         raise ValueError("Case output root must not redirect through a junction/symlink")
     for role in ("client", "server"):
         within(fixture / role / "mods", fixture, exists=True)
@@ -253,15 +290,15 @@ def run(args):
     # Runtime executable is read-only and may live outside the workspace, as recorded by this fixture.
     environment_path = within(fixture / "environment.json", fixture, exists=True)
     environment = json.loads(environment_path.read_text(encoding="utf-8"))
-    java = Path(environment["java"]).resolve(strict=True)
+    java = standard_namespace(Path(environment["java"]).resolve(strict=True))
     if not java.is_file() or java.name.casefold() not in ("java.exe", "java"):
         raise ValueError("Fixture environment must identify an existing Java executable")
     assert_idle()
     assert_port_available()
     if within(fixture / "receipts/cut-os-input-bridge.lock", fixture).exists():
         raise RuntimeError("Existing CUT input bridge lock requires root inspection before this no-OS-input case")
-    client_tokens = client_arguments(output, args.large_edit)
-    server_tokens = server_arguments(output, args.large_edit)
+    client_tokens = client_arguments(output, args.large_edit, cells)
+    server_tokens = server_arguments(output, args.large_edit, cells)
     targets = {
         "server-properties": within(fixture / "server/server.properties", fixture, exists=True),
         "server-library-config": within(fixture / "server/config/gtmb/server-blueprint-library.cfg", fixture),
@@ -294,14 +331,17 @@ def run(args):
     write_argfile(server_args, server_tokens)
     commands = {"client": [str(java), "@" + str(client_args)], "server": [str(java), "@" + str(server_args)]}
     result = {
-        "name": args.name, "status": "RUNNING", "mode": "large-edit32768" if args.large_edit else "background-save4096",
+        "name": args.name, "status": "RUNNING", "mode": f"large-edit{cells}" if args.large_edit else "background-save4096",
+        "requested_source_cells": cells,
+        "source_dimensions_xyz": [100, 100, 100] if cells == 1000000 else [50, cells // 2500, 50] if args.large_edit else [16, 16, 16],
+        "native_scale_claim": "Pending actual full capture/hydration/render/delta; volume eligibility does not prove byte-budget or resource support",
         "scope": "Actual dedicated Netty and natural rendered MUI stimulus; no OS input; no user instance/world copied",
         "fixture": str(fixture), "output": str(output), "receipts": str(output), "world": str(world),
         "normal_source": str(jar), "normal_sha256": sha(jar), "addon_source": str(addon), "addon_sha256": sha(addon),
         "java": str(java), "java_sha256": sha(java), "environment_sha256": sha(environment_path),
         "client_Xmx": "4096M", "server_Xmx": "6G", "client_peak_rss_bytes": 0,
         "commands": commands, "argfiles_sha256": {"client": sha(client_args), "server": sha(server_args)},
-        "port": PORT, "started_unix": time.time(), "timeout_seconds": TIMEOUT_SECONDS,
+        "port": PORT, "started_unix": time.time(), "timeout_seconds": timeout_seconds,
         "before_files": backups, "processes": {}, "moved_originals": [], "installed": [],
         "preserved_v016_addons": preserved_addons,
         "cleanup_errors": [], "addonsCleanup": False, "processClosed": False,
@@ -362,7 +402,7 @@ def run(args):
                     raise IntegrityFailure("Installed artifact digest differs")
         assert_idle()
         assert_port_available()
-        deadline = time.monotonic() + TIMEOUT_SECONDS
+        deadline = time.monotonic() + timeout_seconds
         server = launch("server")
         startup_deadline = min(deadline, time.monotonic() + 600)
         while not re.search(r"Done \([0-9.,]+s\)!", (output / "server.log").read_text(encoding="utf-8", errors="replace")):
@@ -379,6 +419,7 @@ def run(args):
         client = launch("client")
         monitor = psutil.Process(client.pid)
         created = monitor.create_time()
+        last_limit_check = 0.0
         while time.monotonic() < deadline:
             if client.poll() is None:
                 try:
@@ -390,6 +431,19 @@ def run(args):
             evidence = properties(output / "background-client.properties")
             peer = properties(output / "background-server.properties")
             result["native_evidence"], result["server_evidence"] = evidence, peer
+            if args.large_edit and time.monotonic() - last_limit_check >= 5:
+                last_limit_check = time.monotonic()
+                for role in ("server", "client"):
+                    log_path = output / (role + ".log")
+                    if not log_path.is_file():
+                        continue
+                    with log_path.open("rb") as log_stream:
+                        log_stream.seek(0, os.SEEK_END)
+                        log_stream.seek(max(0, log_stream.tell() - 65536))
+                        tail = log_stream.read().decode("utf-8", errors="replace")
+                    limit = re.search(r"[^\r\n]*(?:IOException[^\r\n]*snapshot byte budget|OutOfMemoryError)[^\r\n]*", tail)
+                    if limit:
+                        raise ProductFailure(f"Actual native limit/resource failure ({role}): {limit[0][:2048]}")
             for role, receipt in (("client", evidence), ("server", peer)):
                 if receipt.get("status") == "FAIL":
                     raise ProductFailure(role + ": " + receipt.get("failure", "Native probe reported FAIL"))
@@ -408,6 +462,13 @@ def run(args):
                 if args.large_edit:
                     if not (output / "large-local-edit-native.nbt").is_file() or peer.get("actualSourceChestUnchanged") != "true":
                         raise RuntimeError("Large native case lacks its actual delta receipt/source-world check")
+                    if any(receipt.get(key) != str(cells) for receipt, key in (
+                            (evidence, "actualCapturedCells"), (evidence, "requestedSourceCells"),
+                            (peer, "actualSourceBlocks"), (peer, "requestedSourceCells"))):
+                        raise IntegrityFailure("Selected scale differs from real source/capture receipts; never substitute a smaller fixture")
+                    if not all((output / name).is_file() for name in (
+                            "client-phase-timings.properties", "server-tick-and-stage-metrics.properties")):
+                        raise RuntimeError("Large case lacks read-only timing/whole-server-tick measurement receipts")
                 elif not (output / "background-save-native.nbt").is_file() or evidence.get("backgroundObservedPass") != "true":
                     raise RuntimeError("Background case lacks its task-bound production observer result")
                 result["status"] = "PASS"
@@ -535,6 +596,22 @@ def run(args):
             result["status"] = "INCONCLUSIVE"
             result["failure"] = "Forced stop cannot satisfy natural-terminal success"
         result["world_exists_after"] = world.exists()
+        product_limits, memory_failures = [], []
+        for role in ("server", "client"):
+            log = output / (role + ".log")
+            if log.is_file():
+                for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if re.search(r"snapshot byte budget|snapshot NBT length|exceeds byte limit|超过\s*8\s*MiB|超过\s*64\s*MiB", line, re.I):
+                        if len(product_limits) < 32:
+                            product_limits.append({"role": role, "line": line[:2048]})
+                    if "OutOfMemoryError" in line and len(memory_failures) < 16:
+                        memory_failures.append({"role": role, "line": line[:2048]})
+        result["observed_product_limit_log_lines"] = product_limits
+        result["observed_jvm_memory_failure_log_lines"] = memory_failures
+        if result["status"] != "PASS" and (product_limits or memory_failures):
+            result["status"] = "FAIL"
+            result["native_scale_outcome"] = "real product byte limit observed" if product_limits else "real JVM memory failure under fixed selected heaps"
+        result["native_scale_success_claimed"] = result["status"] == "PASS"
         result["closed_unix"] = time.time()
         save(output / "addons-cleanup.json", {key: result[key] for key in ("installed", "moved_originals", "addonsCleanup", "cleanup_errors")})
         publish()
@@ -554,6 +631,8 @@ def main():
     parser.add_argument("--jar", type=Path, required=True)
     parser.add_argument("--addon", type=Path, required=True)
     parser.add_argument("--large-edit", action="store_true")
+    parser.add_argument("--cells", type=int, choices=(50000, 100000, 1000000),
+                        help="Exact real source volume; implies --large-edit. Default background stays4096; --large-edit alone selects50000")
     return run(parser.parse_args())
 
 

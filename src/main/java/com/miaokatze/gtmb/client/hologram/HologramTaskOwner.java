@@ -57,6 +57,10 @@ final class HologramTaskOwner {
         return busy() && this.kind.equals(kind) && this.key.equals(key);
     }
 
+    boolean retiredReceipt(String kind, String key) {
+        return retired.contains(kind + ":" + key);
+    }
+
     boolean advance(String kind, String previousKey, String nextKey) {
         if (!matches(kind, previousKey) || previousKey.equals(nextKey) || retired.contains(kind + ":" + nextKey))
             return false;
@@ -70,6 +74,39 @@ final class HologramTaskOwner {
 
     boolean finishReceipt(String kind, String key, Result result, String detail) {
         return matches(kind, key) && finish(token, result, detail);
+    }
+
+    boolean failSnapshot(net.minecraft.nbt.NBTTagCompound failure, String detail) {
+        // Session alone is insufficient: a delayed error must not finish a newer command in that workspace.
+        if (!failure.getBoolean("transportError") || !failure.hasKey("uiSequence", 4)
+            || failure.getString("session")
+                .isEmpty())
+            return false;
+        if (failure.hasKey("clientTaskToken", 4) && failure.getLong("clientTaskToken") != token) return false;
+        return finishReceipt(
+            "server",
+            failure.getString("session") + ":" + failure.getLong("uiSequence"),
+            Result.FAILURE,
+            detail);
+    }
+
+    boolean finishAreaSnapshot(net.minecraft.nbt.NBTTagCompound snapshot, long startRevision, boolean cancelling) {
+        if (!snapshot.hasKey("uiSequence", 4)
+            || !matches("server", snapshot.getString("session") + ":" + snapshot.getLong("uiSequence"))) return false;
+        net.minecraft.nbt.NBTTagCompound proposal = snapshot.getCompoundTag("discardTargetAction");
+        boolean sourceReview = snapshot.getBoolean("discardConfirmationRequired")
+            && "importArea".equals(proposal.getString("op"))
+            && snapshot.getString("session")
+                .equals(proposal.getString("session"))
+            && !proposal.getString("sourceSwitchNonce")
+                .isEmpty()
+            && snapshot.getLong("planRevision") == proposal.getLong("planRevision");
+        if (!snapshot.getBoolean("targetClosed") && (snapshot.getBoolean("areaImporting") || sourceReview))
+            return false;
+        Result result = cancelling ? Result.CANCELLED
+            : !snapshot.getBoolean("targetClosed") && snapshot.getBoolean("areaImported")
+                && snapshot.getLong("planRevision") > startRevision ? Result.SUCCESS : Result.FAILURE;
+        return finish(token, result, snapshot.getString("status"));
     }
 
     boolean rejectAdvance(String kind, String rejectedKey, String previousKey) {

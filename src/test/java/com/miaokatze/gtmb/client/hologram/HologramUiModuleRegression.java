@@ -15,6 +15,7 @@ public final class HologramUiModuleRegression {
 
     public static void run() {
         localPlanConsumersWaitWithoutLockingEditing();
+        outgoingSelectionScope();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -90,6 +91,59 @@ public final class HologramUiModuleRegression {
                 HologramUiTabMemory.openingTab(opening, true),
                 "the explicit " + purpose + " opening overrides remembered structure navigation");
         }
+    }
+
+    private static void outgoingSelectionScope() {
+        for (String op : new String[] { "close", "settings", "savePreset", "saveBlueprint", "saveBlueprintAs",
+            "saveBlueprintReplace", "updatePreset", "processBlueprint", "confirmAeSave", "aePreviewEdit",
+            "configureBlueprintQuantumGroups", "selectStructure", "confirmBlueprintPlacement", "pause", "cancel" }) {
+            NBTTagCompound request = new NBTTagCompound();
+            request.setLong("clientTaskToken", 71L);
+            HologramUiSession.buildOutgoingRequest(
+                op,
+                request,
+                9,
+                () -> {
+                    throw new AssertionError(
+                        "non-selection operation materialized a potentially million-cell selection");
+                },
+                "module-a",
+                "session-a");
+            SimpleAssert.that(!request.hasKey("selectedIndices"), op + " sends no unrelated selection array");
+            SimpleAssert.eq(71L, request.getLong("clientTaskToken"), op + " retains its background task owner");
+            SimpleAssert.eq("session-a", request.getString("session"), op + " retains the workspace owner");
+            SimpleAssert.eq("module-a", request.getString("structureId"), op + " retains structure context");
+            SimpleAssert.eq(9, request.getInteger("selected"), op + " retains the single selected cell context");
+        }
+        int[] indices = new int[50000];
+        for (int i = 0; i < indices.length; i++) indices[i] = i;
+        for (String op : new String[] { "configure", "build", "start", "scan", "editCopy", "editCut", "editPaste",
+            "editMove", "restoreCell", "rotateCell", "clearPin", "customPin", "sourcePin", "pin", "hatchFacing",
+            "hatchPreset", "clearHatchPreset", "editCellFlags", "editHintArea", "configureBlueprintCellNbt",
+            "editBlueprintCellNbt" }) {
+            NBTTagCompound request = HologramUiSession
+                .buildOutgoingRequest(op, new NBTTagCompound(), 7, () -> indices, "module-a", "session-a");
+            SimpleAssert.that(
+                Arrays.equals(indices, request.getIntArray("selectedIndices")),
+                op + " retains every selected cell, including configure scope=2 and processing NBT fallback");
+        }
+        NBTTagCompound explicit = new NBTTagCompound();
+        explicit.setIntArray("indices", new int[] { 2, 5 });
+        explicit.setIntArray("selectedIndices", new int[] { 8 });
+        explicit.setInteger("selected", 8);
+        explicit.setString("structureId", "explicit-module");
+        HologramUiSession.buildOutgoingRequest(
+            "editCut",
+            explicit,
+            0,
+            () -> { throw new AssertionError("explicit selection was unnecessarily rebuilt"); },
+            "module-a",
+            "session-a");
+        SimpleAssert
+            .that(Arrays.equals(new int[] { 2, 5 }, explicit.getIntArray("indices")), "explicit batch survives");
+        SimpleAssert
+            .that(Arrays.equals(new int[] { 8 }, explicit.getIntArray("selectedIndices")), "explicit scope survives");
+        SimpleAssert.eq("explicit-module", explicit.getString("structureId"), "explicit structure context survives");
     }
 
     private static void localPlanConsumersWaitWithoutLockingEditing() {

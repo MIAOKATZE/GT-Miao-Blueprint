@@ -20,6 +20,7 @@ final class HologramSnapshotMetadataRegression {
 
     static void run() {
         try {
+            typedScalarCopyOracle();
             frozenWorkerContext();
             coordinateMembershipComplexity();
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
@@ -115,6 +116,38 @@ final class HologramSnapshotMetadataRegression {
             }
         } catch (Exception failed) {
             throw new AssertionError("snapshot metadata", failed);
+        }
+    }
+
+    /** Every declared scalar participates, so adding a DTO field without updating its typed copy fails here. */
+    private static void typedScalarCopyOracle() throws ReflectiveOperationException {
+        for (Class<?> type : new Class<?>[] { HologramPresets.Preset.class, HologramPresets.Cell.class,
+            HologramBlueprintProcessing.Policy.class }) {
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            Object source = constructor.newInstance(), target = constructor.newInstance();
+            java.util.List<Field> scalars = new java.util.ArrayList<>();
+            for (Field field : type.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                    || java.lang.reflect.Modifier.isTransient(field.getModifiers())) continue;
+                Class<?> value = field.getType();
+                field.setAccessible(true);
+                if (value == String.class) field.set(source, "scalar:" + field.getName());
+                else if (value == int.class || value == Integer.class) field.set(source, 17);
+                else if (value == long.class) field.set(source, 29L);
+                else if (value == boolean.class) field.set(source, true);
+                else continue;
+                scalars.add(field);
+            }
+            java.lang.reflect.Method copy = HologramSnapshotMetadataSource.class
+                .getDeclaredMethod("copyScalars", type, type);
+            copy.setAccessible(true);
+            copy.invoke(null, source, target);
+            SimpleAssert.that(scalars.size() >= 5, "typed DTO oracle covers all scalar values");
+            for (Field field : scalars) SimpleAssert.eq(
+                field.get(source),
+                field.get(target),
+                "typed native-safe scalar copy preserves " + type.getSimpleName() + "." + field.getName());
         }
     }
 

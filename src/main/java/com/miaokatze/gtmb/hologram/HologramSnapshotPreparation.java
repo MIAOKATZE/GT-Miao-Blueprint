@@ -36,7 +36,7 @@ final class HologramSnapshotPreparation {
         if (previous != null && previous.valid()) return;
         if (previous != null) cancel(previous);
         if (TASKS.size() >= MAX_TASKS) return;
-        HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveState(s.player, s.id, s.cancelled);
+        HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveOwnedState(s);
         if (ticket == null) return;
         Task task = new Task(s, ticket);
         TASKS.put(s, task);
@@ -63,7 +63,9 @@ final class HologramSnapshotPreparation {
             cancel(task);
             HologramNetwork.transportFailure(
                 s.player,
-                s.id,
+                task.session,
+                task.ui,
+                "snapshot.prepare",
                 new IllegalStateException("Hologram snapshot preparation failed", failure));
         }
         return true;

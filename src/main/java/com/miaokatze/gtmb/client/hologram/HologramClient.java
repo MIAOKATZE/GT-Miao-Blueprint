@@ -643,11 +643,18 @@ public final class HologramClient {
         if (Minecraft.getMinecraft().theWorld == null) return;
         if (nbt.getBoolean("transportError")) {
             Minecraft mc = Minecraft.getMinecraft();
-            if (mc.thePlayer != null) mc.thePlayer.addChatMessage(
-                new net.minecraft.util.ChatComponentText(
-                    text(
-                        "transportError",
-                        "Hologram snapshot exceeds the transfer budget; the previous preview was retained.")));
+            boolean taskFailed = HologramBackgroundTasks.transportFailed(nbt);
+            if (taskFailed) {
+                HologramClientProgress.transportFailed(nbt);
+                if (mc.currentScreen instanceof HologramScreen screen)
+                    screen.ui.session.transportFailed(nbt, HologramBackgroundTasks.transportFailureMessage(nbt));
+            }
+            if (!taskFailed && !HologramBackgroundTasks.busy()
+                && !HologramBackgroundTasks.retiredTransportFailure(nbt)
+                && mc.thePlayer != null
+                && (state == null || state.session.equals(nbt.getString("session"))))
+                mc.thePlayer.addChatMessage(
+                    new net.minecraft.util.ChatComponentText(HologramBackgroundTasks.transportFailureMessage(nbt)));
             return;
         }
         installDecoded(snapshotInbox.poll());

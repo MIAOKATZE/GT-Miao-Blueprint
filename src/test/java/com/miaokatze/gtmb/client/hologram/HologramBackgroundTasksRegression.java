@@ -15,6 +15,8 @@ public final class HologramBackgroundTasksRegression {
     public static void run() {
         presentationValues();
         freshScreenBoundary();
+        transportFailures();
+        areaSnapshotReview();
         List<String> events = new ArrayList<>();
         HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
 
@@ -240,5 +242,161 @@ public final class HologramBackgroundTasksRegression {
                 type == String.class || type == long.class || type == NBTTagCompound.class,
                 "detached presentation contains pure values without retaining disposed UI objects: " + field.getName());
         }
+    }
+
+    private static void transportFailures() {
+        List<HologramTaskOwner.Result> results = new ArrayList<>();
+        HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {
+                results.add(result);
+                SimpleAssert.that(detail.contains("准备失败"), "the owner retains the actual preparation failure reason");
+            }
+        });
+        long token = owner.begin("server", "area-session:60", "area import");
+        owner.detach();
+        NBTTagCompound failure = new NBTTagCompound();
+        failure.setBoolean("transportError", true);
+        failure.setString("session", "area-session");
+        failure.setString("errorCode", "snapshot.prepare");
+        String detail = "蓝图快照准备失败；保留原预览";
+        SimpleAssert
+            .that(!owner.failSnapshot(failure, detail), "a session-only transport error cannot release an owner");
+        failure.setLong("uiSequence", 59);
+        SimpleAssert
+            .that(!owner.failSnapshot(failure, detail), "an older snapshot error cannot end the current import");
+        failure.setLong("uiSequence", 60);
+        failure.setLong("clientTaskToken", token + 1);
+        SimpleAssert.that(!owner.failSnapshot(failure, detail), "a supplied wrong owner token is rejected");
+        failure.removeTag("clientTaskToken");
+        SimpleAssert
+            .that(owner.failSnapshot(failure, detail), "the actual failed snapshot ends its exact import owner");
+        SimpleAssert
+            .that(!owner.busy() && owner.detached(), "failed import unlocks while keeping its detached presentation");
+        SimpleAssert
+            .eq(HologramTaskOwner.Result.FAILURE, results.get(0), "snapshot failure never reports world success");
+        SimpleAssert
+            .that(!owner.failSnapshot(failure, detail), "duplicate transport failure emits no second terminal event");
+        SimpleAssert.that(
+            owner.retiredReceipt("server", "area-session:60"),
+            "the client can suppress fallback chat for an already announced failed receipt");
+        SimpleAssert.eq(1, results.size(), "failed snapshot announces one failure and no success sound result");
+        SimpleAssert.eq(
+            0L,
+            owner.begin("server", "area-session:60", "stale progress"),
+            "late progress cannot revive the failed snapshot owner");
+        long retry = owner.begin("server", "area-session:61", "retry import");
+        SimpleAssert.that(
+            retry > token && !owner.failSnapshot(failure, detail),
+            "a delayed failed receipt cannot terminate the retry in the same session");
+        failure.setString("session", "other-world-session");
+        failure.setLong("uiSequence", 61);
+        SimpleAssert.that(!owner.failSnapshot(failure, detail), "cross-session failure cannot end the retry");
+        failure.setString("session", "area-session");
+        SimpleAssert.that(owner.failSnapshot(failure, detail), "the retry can fail only through its own exact receipt");
+
+        HologramClientProgress.clear();
+        NBTTagCompound progress = new NBTTagCompound();
+        progress.setString("scope", "server");
+        progress.setString("session", "area-session");
+        progress.setLong("uiSequence", 62);
+        progress.setLong("sequence", 1);
+        progress.setString("phase", "area.blocks");
+        progress.setLong("done", 300);
+        progress.setLong("total", 1000);
+        HologramClientProgress.receive(progress);
+        HologramClientProgress.transportFailed(failure);
+        SimpleAssert.that(
+            HologramClientProgress.view("server", "area-session") != null,
+            "an old failed snapshot does not erase newer import progress");
+        failure.setLong("uiSequence", 62);
+        HologramClientProgress.transportFailed(failure);
+        SimpleAssert.eq(
+            null,
+            HologramClientProgress.view("server", "area-session"),
+            "matching transport failure clears the otherwise endless in-progress observation");
+        HologramClientProgress.clear();
+    }
+
+    /** Server publication regressions feed an actually assembled/decoded area snapshot through this same owner gate. */
+    public static void assertAreaSnapshotCompletes(NBTTagCompound finalWire, long startRevision) {
+        List<HologramTaskOwner.Result> results = new ArrayList<>();
+        HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {
+                results.add(result);
+            }
+        });
+        SimpleAssert.that(
+            !finalWire.getString("session")
+                .isEmpty() && finalWire.hasKey("uiSequence", 4),
+            "actual decoded publication retains the area request identity");
+        owner.begin("server", finalWire.getString("session") + ":" + finalWire.getLong("uiSequence"), "area import");
+        owner.detach();
+        SimpleAssert.that(
+            owner.finishAreaSnapshot(finalWire, startRevision, false),
+            "the actual area wire result reaches the production task completion gate");
+        SimpleAssert.that(
+            !owner.busy() && owner.detached(),
+            "actual completed area publication unlocks its owner without reopening a deliberately closed UI");
+        SimpleAssert.eq(
+            HologramTaskOwner.Result.SUCCESS,
+            results.get(0),
+            "success requires actual areaImported and a revision newer than the pre-import workspace");
+        SimpleAssert.that(
+            !owner.finishAreaSnapshot(finalWire, startRevision, false),
+            "retransmitted actual area publication cannot finish the same owner twice");
+        SimpleAssert.eq(1, results.size(), "actual area completion emits exactly one terminal result");
+    }
+
+    private static void areaSnapshotReview() {
+        List<HologramTaskOwner.Result> results = new ArrayList<>();
+        HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {
+                results.add(result);
+            }
+        });
+        owner.begin("server", "review-session:35", "area import");
+        NBTTagCompound snapshot = new NBTTagCompound();
+        snapshot.setString("session", "review-session");
+        snapshot.setLong("uiSequence", 35);
+        snapshot.setLong("planRevision", 1);
+        snapshot.setBoolean("areaImporting", true);
+        SimpleAssert.that(
+            !owner.finishAreaSnapshot(snapshot, 1, false) && owner.busy(),
+            "a partial imported snapshot cannot finish its active worker");
+        snapshot.setBoolean("areaImporting", false);
+        snapshot.setBoolean("discardConfirmationRequired", true);
+        NBTTagCompound proposal = new NBTTagCompound();
+        proposal.setString("session", "review-session");
+        proposal.setString("op", "importArea");
+        proposal.setLong("planRevision", 1);
+        proposal.setString("sourceSwitchNonce", "server-issued-review");
+        snapshot.setTag("discardTargetAction", proposal);
+        SimpleAssert.that(
+            !owner.finishAreaSnapshot(snapshot, 1, false) && owner.busy(),
+            "an actual source-switch review retains its owner instead of claiming import success");
+        snapshot.setBoolean("discardConfirmationRequired", false);
+        snapshot.setBoolean("areaImported", true);
+        SimpleAssert.that(
+            owner.finishAreaSnapshot(snapshot, 1, false),
+            "a terminal import result is consumed after the review gate closes");
+        SimpleAssert.eq(
+            HologramTaskOwner.Result.FAILURE,
+            results.get(0),
+            "areaImported without a newer authoritative revision cannot report success");
     }
 }

@@ -225,6 +225,7 @@ public final class HologramSnapshotPublishRegression {
 
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
+            areaStagingHandoff(player, work);
             for (int i = 0; i < 8; i++) SimpleAssert.that(
                 HologramNetwork.reserveState(player, "fixture", false) != null,
                 "bounded pending slots accept requests up to player limit");
@@ -466,6 +467,122 @@ public final class HologramSnapshotPublishRegression {
         } while (s.localPlanError.isEmpty() && s.localPlanPending || HologramSnapshotPreparation.pending(s)
             || !work.isEmpty());
         tick();
+    }
+
+    /** Actual Area scan, canonicalization, Population, PlanTask and publishImport replace the Java owner. */
+    @SuppressWarnings("unchecked")
+    private static void areaStagingHandoff(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        UUID id = player.getUniqueID();
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession before = sessions.get(id);
+        HologramArea oldArea = HologramWorkspace.AREAS.get(id);
+        HologramSession oldEditor = HologramWorkspace.AREA_EDITORS.get(id);
+        java.util.Map<String, HologramSession> oldStructures = HologramWorkspace.AREA_STRUCTURES.get(id);
+        HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
+        net.minecraft.block.Block occupied = world.occupied;
+        int occupiedX = world.occupiedX;
+        boolean creative = player.capabilities.isCreativeMode;
+        HologramSession previous = new HologramSession(player, 0, 64, 0, false, 2);
+        previous.planRevision = 1;
+        previous.uiSequence = 7;
+        // This vanilla world fixture has no initialized AE/container integrations.
+        // Staging inherits these settings and still builds the real resource quote and full snapshot.
+        previous.materialSettings.me = false;
+        previous.materialSettings.containers = false;
+        HologramArea area = new HologramArea();
+        try {
+            world.occupied = net.minecraft.init.Blocks.stone;
+            world.occupiedX = 0;
+            player.capabilities.isCreativeMode = true;
+            area.point(1, 0, 64, 0);
+            area.point(2, 0, 127, 63);
+            area.begin(world);
+            HologramWorkspace.AREAS.put(id, area);
+            HologramWorkspace.activate(id, previous);
+            HologramSnapshots.send(previous);
+            HologramNetwork.SnapshotTicket oldTicket = preparationTicket(previous);
+            long deadline = System.nanoTime() + 20_000_000_000L;
+            while (area.importing) {
+                HologramAreaWorkflow.tickImport(previous, area);
+                if (System.nanoTime() >= deadline) throw new AssertionError("Actual Area staging did not finish");
+                java.util.concurrent.locks.LockSupport.parkNanos(100_000L);
+            }
+            HologramSession staged = HologramWorkspace.find(id);
+            SimpleAssert.that(
+                staged != previous && staged.id.equals(previous.id),
+                "actual Area publish replaces the server object while retaining the wire session nonce");
+            SimpleAssert.eq(4096, staged.capture.cells.size(), "actual world import publishes every scanned block");
+            SimpleAssert.that(
+                HologramSnapshotPreparation.pending(previous) && HologramSnapshotPreparation.pending(staged),
+                "old stage-zero task overlaps the new full reservation");
+            HologramNetwork.SnapshotTicket newTicket = preparationTicket(staged);
+            NBTTagCompound ack = new NBTTagCompound();
+            ack.setString("session", staged.id);
+            ack.setLong("uiSequence", staged.uiSequence);
+            ack.setLong("planRevision", staged.planRevision);
+            ack.setString("marker", "new-owner-ack");
+            ack.setIntArray("ackIndices", new int[] { 17 });
+            HologramNetwork.sendState(player, ack);
+            HologramSnapshotPreparation.cancel(previous);
+            SimpleAssert.that(
+                !oldTicket.current() && newTicket.current(),
+                "retiring the old same-id placeholder cannot cancel the new owner baseline or its ACK");
+            WIRE.clear();
+            drainPublication(staged, work);
+            for (int i = 0; i < 4; i++) {
+                while (!work.isEmpty()) work.remove()
+                    .run();
+                tick();
+            }
+            NBTTagCompound complete = latestFull();
+            SimpleAssert.eq(
+                4096,
+                complete.getTagList("cells", 10)
+                    .tagCount(),
+                "real metadata and encoding publish the complete imported Area through transport");
+            SimpleAssert.that(
+                complete.getBoolean("areaImported") && !complete.getBoolean("areaImporting"),
+                "only the published Area terminates importing in the final full envelope");
+            int fullAt = -1, ackAt = -1;
+            for (int i = 0; i < WIRE.size(); i++) if (WIRE.get(i) instanceof HologramNetwork.Fragment) {
+                NBTTagCompound value = decode(WIRE.get(i));
+                if (value.hasKey("cells", 9)) fullAt = i;
+                if ("new-owner-ack".equals(value.getString("marker"))) ackAt = i;
+            }
+            SimpleAssert.that(
+                fullAt >= 0 && ackAt > fullAt,
+                "new owner ACK survives old cancellation and follows its full baseline");
+            com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression
+                .assertAreaSnapshotCompletes(complete, previous.planRevision);
+        } finally {
+            HologramNetwork.clearServerQueues();
+            world.occupied = occupied;
+            world.occupiedX = occupiedX;
+            player.capabilities.isCreativeMode = creative;
+            if (before == null) sessions.remove(id);
+            else sessions.put(id, before);
+            if (oldArea == null) HologramWorkspace.AREAS.remove(id);
+            else HologramWorkspace.AREAS.put(id, oldArea);
+            if (oldEditor == null) HologramWorkspace.AREA_EDITORS.remove(id);
+            else HologramWorkspace.AREA_EDITORS.put(id, oldEditor);
+            if (oldStructures == null) HologramWorkspace.AREA_STRUCTURES.remove(id);
+            else HologramWorkspace.AREA_STRUCTURES.put(id, oldStructures);
+            WIRE.clear();
+        }
+    }
+
+    private static HologramNetwork.SnapshotTicket preparationTicket(HologramSession session)
+        throws ReflectiveOperationException {
+        Field tasks = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
+        tasks.setAccessible(true);
+        Object task = ((java.util.Map<?, ?>) tasks.get(null)).get(session);
+        Field ticket = task.getClass()
+            .getDeclaredField("ticket");
+        ticket.setAccessible(true);
+        return (HologramNetwork.SnapshotTicket) ticket.get(task);
     }
 
     private static NBTTagCompound latestFull() throws java.io.IOException {

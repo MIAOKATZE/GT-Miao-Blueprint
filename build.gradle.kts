@@ -41,6 +41,18 @@ tasks.register<JavaExec>("runHologramTest") {
 
 tasks.named("check") { dependsOn("runHologramTest") }
 
+tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
+    group = "verification"
+    description = "Measures production validation reuse at 50k, 100k and 1m streamed cells; not a live-world benchmark."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramBlueprintValidationCacheRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    maxHeapSize = "4g"
+    val scratchDir = layout.buildDirectory.dir("hologram-validation-benchmark")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
 // The common service and native adapters need more heap for Checkstyle's complete syntax trees.
 tasks.withType<org.gradle.api.plugins.quality.Checkstyle>().configureEach {
     maxHeapSize = "2g"

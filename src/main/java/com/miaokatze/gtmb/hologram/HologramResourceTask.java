@@ -16,6 +16,7 @@ import net.minecraft.world.World;
 final class HologramResourceTask {
 
     private final HologramSession s;
+    private final HologramPlanClassifier classifier;
     private final Map<String, ItemStack> stacks = new LinkedHashMap<>();
     private final Map<String, Integer> counts = new LinkedHashMap<>();
     private final Map<String, Long> decorReserved = new HashMap<>();
@@ -33,8 +34,9 @@ final class HologramResourceTask {
     private int stage, cursor, activeIndex, assetStage;
     private long checked;
 
-    HologramResourceTask(HologramSession s) {
+    HologramResourceTask(HologramSession s, HologramPlanClassifier classifier) {
         this.s = s;
+        this.classifier = classifier;
     }
 
     boolean done() {
@@ -289,7 +291,7 @@ final class HologramResourceTask {
             if (!HologramSessionPolicy.inScope(s, cell, activeIndex) || !"pending".equals(cell.status)) return;
             active = cell;
             costs = new HashMap<>();
-            assets = HologramCellPolicy.resourcePlan(s, cell).items.iterator();
+            assets = classifier.resources(s, cell, activeIndex).items.iterator();
             assetStage = 0;
         } else if (assets.hasNext()) {
             ItemStack item = assets.next();
@@ -315,7 +317,7 @@ final class HologramResourceTask {
         HologramCapture.Cell c = s.capture.cells.get(i);
         if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) return;
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
-        if (s.mode != 2 && s.virtualPreset.schema >= 2) {
+        if (s.mode != 2 && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
             try {
                 merge = aggregate.merge(HologramCellPolicy.resourcePlan(s, c));
                 HologramEnergyPayload.Prepared cache = HologramCellPolicy.cachePlan(s, c, i);

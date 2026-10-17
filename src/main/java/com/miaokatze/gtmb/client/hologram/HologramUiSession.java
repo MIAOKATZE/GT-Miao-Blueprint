@@ -170,14 +170,14 @@ final class HologramUiSession {
         ui.nbt.prepareCommand(op, n);
         ui.library.prepareCommand(n);
         ui.config.prepareCommand(op, n, sequence + 1);
-        if (!n.hasKey("selected")) n.setInteger("selected", ui.preview.selected());
-        if (!n.hasKey("selectedIndices")) n.setIntArray(
-            "selectedIndices",
-            ui.preview.selection()
-                .indices());
-        if (!n.hasKey("structureId")) n.setString("structureId", state.data.getString("activeStructure"));
-        n.setString("session", state.session);
-        n.setString("op", op);
+        buildOutgoingRequest(
+            op,
+            n,
+            ui.preview.selected(),
+            () -> ui.preview.selection()
+                .indices(),
+            state.data.getString("activeStructure"),
+            state.session);
         if (HologramBackgroundTasks.libraryTask() && (op.startsWith("saveBlueprint") || "savePreset".equals(op)
             || "updatePreset".equals(op)
             || "exportDraft".equals(op)
@@ -202,6 +202,26 @@ final class HologramUiSession {
         }
     }
 
+    /** Selection arrays are materialized only for server operations that consume them. */
+    static NBTTagCompound buildOutgoingRequest(String op, NBTTagCompound request, int selected,
+        java.util.function.Supplier<int[]> selection, String structure, String session) {
+        if (!request.hasKey("selected")) request.setInteger("selected", selected);
+        if (!request.hasKey("selectedIndices") && selectionConsumer(op))
+            request.setIntArray("selectedIndices", selection.get());
+        if (!request.hasKey("structureId")) request.setString("structureId", structure);
+        request.setString("session", session);
+        request.setString("op", op);
+        return request;
+    }
+
+    private static boolean selectionConsumer(String op) {
+        // Dispatcher planning/configuration scope, BlueprintEditor geometry, and AuthoringWorkflow NBT/flags.
+        return switch (op) {
+            case "configure", "build", "start", "scan", "editCopy", "editCut", "editPaste", "editMove", "restoreCell", "rotateCell", "clearPin", "customPin", "sourcePin", "pin", "hatchFacing", "hatchPreset", "clearHatchPreset", "editCellFlags", "editHintArea", "configureBlueprintCellNbt", "editBlueprintCellNbt" -> true;
+            default -> false;
+        };
+    }
+
     HologramProgress progress() {
         if (HologramBackgroundTasks.busy()) return HologramBackgroundTasks.progress();
         HologramProgress server = HologramClientProgress.view("server", state.session);
@@ -214,10 +234,18 @@ final class HologramUiSession {
     }
 
     void transportRejected(NBTTagCompound event) {
+        rejectTransport(event, HologramProgressView.phase("busy"));
+    }
+
+    void transportFailed(NBTTagCompound event, String message) {
+        rejectTransport(event, message);
+    }
+
+    private void rejectTransport(NBTTagCompound event, String message) {
+        if (!event.hasKey("uiSequence", 4)) return;
         long rejected = event.getLong("uiSequence");
         if (!pendingTicket.rejectExact(event.getString("session"), rejected)) return;
         commandProgress.clear();
-        String message = HologramProgressView.phase("busy");
         ui.preview.rejectCommand(rejected, message);
         ui.config.rejectCommand(rejected);
         ui.processing.rejectCommand(rejected);
