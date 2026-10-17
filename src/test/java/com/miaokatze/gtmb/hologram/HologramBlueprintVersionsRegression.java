@@ -48,11 +48,11 @@ public final class HologramBlueprintVersionsRegression {
     }
 
     private static void releaseAndPackAreIndependent() throws Exception {
-        SimpleAssert.eq("0.1.3", Tags.RELEASE_VERSION, "blueprint release is the explicit semantic release property");
+        SimpleAssert.eq("0.1.14", Tags.RELEASE_VERSION, "blueprint release is the explicit semantic release property");
         HologramPresets.Preset client = blueprint();
         client.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-RC-2");
         HologramBlueprintVersions.validate(client);
-        SimpleAssert.eq("0.1.3", client.nativeBlueprint.gtmbVersion, "GTMB release does not become the pack version");
+        SimpleAssert.eq("0.1.14", client.nativeBlueprint.gtmbVersion, "GTMB release does not become the pack version");
         SimpleAssert.eq("2.9.0-RC-2", client.nativeBlueprint.gtnhVersion, "exact RC-2 environment is preserved");
         HologramPresets.Preset server = blueprint();
         server.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-RC-1");
@@ -250,12 +250,49 @@ public final class HologramBlueprintVersionsRegression {
             String cachedBlueprint = GSON.toJson(
                 HologramPresets.all()
                     .get(0));
-            expectIo(() -> HologramPresets.delete(prepared.id));
+            // Explicit deletion must also clean the stale logical row after the player removes both files.
+            HologramPresets.delete(prepared.id);
+            SimpleAssert.eq(
+                0,
+                HologramPresets.all()
+                    .size(),
+                "explicit delete removes an externally deleted pair's stale row");
+            HologramPresets.clearCache();
+            SimpleAssert.eq(
+                0,
+                HologramPresets.all()
+                    .size(),
+                "missing-pair cleanup survives catalog reload");
+            HologramPresets.commitSaved(prepared, false);
             SimpleAssert.that(
                 Arrays.equals(libraryBytes, Files.readAllBytes(library)),
-                "missing old artifact cannot delete logical source");
+                "recreating the reviewed fixture restores the exact collection before pair-failure checks");
             HologramBlueprintSharing.write(json, prepared, BlueprintArtifactTestData.previewPng());
             byte[] jsonBytes = Files.readAllBytes(json), pngBytes = Files.readAllBytes(png);
+
+            byte[] corruptJson = "{corrupt-native-artifact".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            Files.write(json, corruptJson);
+            expectIo(() -> HologramPresets.delete(prepared.id));
+            SimpleAssert.that(
+                Arrays.equals(libraryBytes, Files.readAllBytes(library))
+                    && Arrays.equals(corruptJson, Files.readAllBytes(json))
+                    && Arrays.equals(pngBytes, Files.readAllBytes(png)),
+                "a present but corrupt complete pair cannot authorize deleting its logical source or user files");
+            Files.write(json, jsonBytes);
+
+            HologramPresets.Preset unrelated = HologramPresets.copy(prepared);
+            unrelated.id = java.util.UUID.randomUUID()
+                .toString();
+            HologramBlueprintSharing.write(json, unrelated, BlueprintArtifactTestData.previewPng());
+            byte[] unrelatedJson = Files.readAllBytes(json), unrelatedPng = Files.readAllBytes(png);
+            expectIo(() -> HologramPresets.delete(prepared.id));
+            SimpleAssert.that(
+                Arrays.equals(libraryBytes, Files.readAllBytes(library))
+                    && Arrays.equals(unrelatedJson, Files.readAllBytes(json))
+                    && Arrays.equals(unrelatedPng, Files.readAllBytes(png)),
+                "a complete pair with another blueprint ID preserves the catalog and both surviving user files");
+            Files.write(json, jsonBytes);
+            Files.write(png, pngBytes);
             int[] moves = { 0 };
             expectIo(
                 () -> HologramPresets

@@ -61,9 +61,12 @@ final class HologramCoordinatePolicies {
         throws IOException {
         List<Relation> relations = new ArrayList<>();
         if (preset == null) return relations;
+        Set<String> enabledStructures = new HashSet<>();
+        for (HologramPresets.Structure structure : preset.structures)
+            if (structure.enabled) enabledStructures.add(structure.id);
         Set<String> selected = new HashSet<>();
         for (HologramPresets.Cell cell : preset.cells)
-            if (!cell.excluded && activeCell(preset, cell)) selected.add(position(cell.x, cell.y, cell.z));
+            if (!cell.excluded && activeCell(enabledStructures, cell)) selected.add(position(cell.x, cell.y, cell.z));
         for (HologramPresets.Cell cell : preset.cells) {
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (tag == null) continue;
@@ -104,7 +107,9 @@ final class HologramCoordinatePolicies {
                 NBTTagList inventory = tag.getTagList("Items", 10);
                 for (int i = 0; i < inventory.tagCount(); i++) {
                     NBTTagCompound stack = inventory.getCompoundTagAt(i);
-                    if (!sensorCard(stack) || !stack.hasKey("Slot", 1) || !stack.hasKey("tag", 10)) continue;
+                    boolean sensor = HologramSnapshotMetadataSource.detached() ? cell.frozenSensorSlots.contains(i)
+                        : sensorCard(stack);
+                    if (!sensor || !stack.hasKey("Slot", 1) || !stack.hasKey("tag", 10)) continue;
                     int slot = stack.getByte("Slot") & 255;
                     if (slot > ("IC2NCAdvancedInfoPanel".equals(tileId) ? 2 : 0)) continue;
                     NBTTagCompound card = stack.getCompoundTag("tag");
@@ -507,6 +512,18 @@ final class HologramCoordinatePolicies {
         return sensorCard(HologramBlueprintNbt.stableItem(stack));
     }
 
+    static void freezeSensorSlots(HologramPresets.Cell cell, NBTTagCompound payload) {
+        cell.frozenSensorSlots = new HashSet<>();
+        if (payload == null || !panel(payload.getString("id")) || !payload.hasKey("Items", 9)) return;
+        NBTTagList inventory = payload.getTagList("Items", 10);
+        int maximum = "IC2NCAdvancedInfoPanel".equals(payload.getString("id")) ? 2 : 0;
+        for (int i = 0; i < inventory.tagCount(); i++) {
+            NBTTagCompound stack = inventory.getCompoundTagAt(i);
+            if (stack.hasKey("Slot", 1) && (stack.getByte("Slot") & 255) <= maximum && sensorCard(stack))
+                cell.frozenSensorSlots.add(i);
+        }
+    }
+
     /** Native panel reads may update CardState. All serialized identity, configuration and assets remain exact. */
     static NBTTagCompound sensorStateProjection(NBTTagCompound serializedStack) {
         return nativeSensorProjection(serializedStack, true);
@@ -624,11 +641,10 @@ final class HologramCoordinatePolicies {
         return position(cell.x, cell.y, cell.z) + ":tile:" + adapter + ":" + slot;
     }
 
-    private static boolean activeCell(HologramPresets.Preset preset, HologramPresets.Cell cell) {
+    private static boolean activeCell(Set<String> enabledStructures, HologramPresets.Cell cell) {
         List<String> memberships = cell.memberships();
         if (memberships.isEmpty()) return true;
-        for (HologramPresets.Structure structure : preset.structures)
-            if (structure.enabled && memberships.contains(structure.id)) return true;
+        for (String id : memberships) if (enabledStructures.contains(id)) return true;
         return false;
     }
 

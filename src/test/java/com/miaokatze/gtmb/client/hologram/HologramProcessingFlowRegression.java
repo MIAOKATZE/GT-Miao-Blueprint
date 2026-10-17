@@ -13,7 +13,9 @@ public final class HologramProcessingFlowRegression {
     }
 
     public static void run() {
+        explicitChoiceGuidance();
         nativeSaveStages();
+        resourceDecisionsStayScoped();
         HologramProcessingFlow optional = new HologramProcessingFlow(new NBTTagCompound());
         optional.requirements((1 << 4) | (1 << 5));
         check(optional.optional() && optional.chosen(), "An empty preset stage permits Next without choosing a preset");
@@ -190,6 +192,46 @@ public final class HologramProcessingFlowRegression {
             "Changing recommended identity or network choices returns to the earliest affected review step");
     }
 
+    private static void explicitChoiceGuidance() {
+        NBTTagCompound defaults = new NBTTagCompound();
+        HologramProcessingFlow flow = new HologramProcessingFlow(defaults);
+        check(
+            "self".equals(
+                flow.values()
+                    .getString("tendency"))
+                && !flow.explicitChoice(),
+            "a recommended self-use value is not an explicit approval");
+        check(
+            flow.guidanceAccent(232) == 0x68dded && flow.guidanceAccent(233) == 0x68dded
+                && flow.guidanceAccent(231) == 0,
+            "both tendency choices guide an unconfirmed stage; Next does not claim readiness");
+        flow.tendency(false);
+        check(
+            flow.guidanceAccent(232) == 0 && flow.guidanceAccent(233) == 0
+                && flow.guidanceAccent(231) == 0x80efaa
+                && !flow.complete(),
+            "explicitly choosing the default transfers guidance to Next without completing server processing");
+        flow.next();
+        flow.clearChoice();
+        check(
+            flow.guidanceAccent(231) == 0 && flow.guidanceAccent(232) == 0x68dded,
+            "a rejected or invalidated local stage requests a fresh decision");
+        flow.choose();
+        check(
+            flow.guidanceAccent(231) == 0x80efaa && flow.guidanceAccent(233) == 0,
+            "an explicit stage-specific choice also enables the next step");
+        check(
+            !defaults.hasKey("tendency") && flow.policy()
+                .getTagList("confirmedStages", 8)
+                .tagCount() == 1,
+            "guidance never mutates the source draft or invents remaining confirmations");
+        HologramProcessingFlow optional = new HologramProcessingFlow(defaults);
+        optional.requirements(0);
+        check(
+            optional.guidanceAccent(231) == 0x80efaa && !optional.explicitChoice(),
+            "an empty optional stage may continue while its recommendation remains unconfirmed");
+    }
+
     private static void nativeSaveStages() {
         long second = java.util.concurrent.TimeUnit.SECONDS.toNanos(1), begin = second;
         HologramLibraryClient.SaveProgress progress = new HologramLibraryClient.SaveProgress();
@@ -222,6 +264,73 @@ public final class HologramProcessingFlowRegression {
         check(
             !progress.waitingExpired(begin + 1000 * second) && !progress.idleExpired(begin + 1000 * second),
             "A retired save cannot expire a later unrelated operation");
+    }
+
+    private static void resourceDecisionsStayScoped() {
+        HologramProcessingFlow flow = new HologramProcessingFlow(new NBTTagCompound());
+        flow.stage = 4;
+        NBTTagCompound first = new NBTTagCompound();
+        first.setInteger("x", 12);
+        first.setString("scope", "tile");
+        first.setString("path", "tile:/inventory/nested");
+        first.setString("rootKey", "inventory");
+        NBTTagCompound second = (NBTTagCompound) first.copy();
+        second.setInteger("x", 13);
+        second.setBoolean("canPreserve", true);
+        net.minecraft.nbt.NBTTagList resources = new net.minecraft.nbt.NBTTagList();
+        resources.appendTag(first);
+        resources.appendTag(second);
+        check(!flow.resourceChoicesReady(resources), "Unknown inventory still requires an explicit resolution");
+        flow.resourceDecision(first, "preserve");
+        check(
+            flow.resourceDecision(first)
+                .isEmpty(),
+            "An unknown resource cannot bypass pricing through preserve");
+        flow.resourceDecision(first, "migrate");
+        check(
+            flow.resourceDecision(first)
+                .isEmpty(),
+            "Unknown schemas cannot request arbitrary migration");
+        flow.resourceDecision(first, "remove");
+        check(
+            !flow.resourceChoicesReady(resources) && flow.resourceDecision(second)
+                .isEmpty(),
+            "A newly decodable unknown inventory still requires its own complete-preservation decision");
+        flow.resourceDecision(second, "preserve");
+        check(flow.resourceChoicesReady(resources), "Supported retained resources remain subject to server pricing");
+        second.setBoolean("canPreserve", false);
+        check(!flow.resourceChoicesReady(resources), "A changed report revokes a stale preserve capability");
+        second.setBoolean("canMigrate", true);
+        flow.resourceDecision(second, "migrate");
+        check(
+            flow.resourceChoicesReady(resources) && flow.values()
+                .getTagList("resourceDecisions", 10)
+                .tagCount() == 2,
+            "Migration replaces the exact cell decision without accumulating contradictory actions");
+        HologramProcessingFlow restored = HologramProcessingFlow.restoreBackgroundUiState(flow.backgroundUiState());
+        check(
+            restored.resourceChoicesReady(resources),
+            "Background suspension preserves deliberate resource decisions");
+        restored.preset(flow.policy());
+        check(!restored.resourceChoicesReady(resources), "Reusable presets never transfer cell resource authorization");
+        check(flow.resourceChoicesReady(resources), "Applying a preset never mutates the original policy");
+        HologramProcessingFlow reopened = new HologramProcessingFlow(new NBTTagCompound());
+        NBTTagCompound retained = (NBTTagCompound) first.copy();
+        retained.setBoolean("preserved", true);
+        retained.setBoolean("canPreserve", true);
+        retained.setBoolean("canCancelPreserve", true);
+        net.minecraft.nbt.NBTTagList saved = new net.minecraft.nbt.NBTTagList();
+        saved.appendTag(retained);
+        check(reopened.resourceChoicesReady(saved), "A saved preservation remains selected when the editor reopens");
+        reopened.resourceDecision(retained, "cancel");
+        check(
+            !reopened.resourceChoicesReady(saved) && "cancel".equals(reopened.resourceDecision(retained)),
+            "Canceling an unknown wrapper revokes the old preservation and requires a new resolution");
+        reopened.resourceDecision(retained, "remove");
+        check(reopened.resourceChoicesReady(saved), "An already preserved root can still be explicitly removed");
+        retained.setBoolean("canCancel", true);
+        reopened.resourceDecision(retained, "cancel");
+        check(reopened.resourceChoicesReady(saved), "Known native formats can return to ordinary processing");
     }
 
     private static void check(boolean passed, String message) {

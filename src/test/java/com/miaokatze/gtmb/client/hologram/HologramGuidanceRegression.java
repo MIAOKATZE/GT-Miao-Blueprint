@@ -14,9 +14,109 @@ public final class HologramGuidanceRegression {
 
     public static void run() {
         savedLibraryAndAuthorWorkspace();
+        parsedAuthorWorkspace();
         exactBindingAcknowledgement();
         bindingFailuresAndUserSelection();
         completedAndPreservedNetworks();
+        optionalHatchPresetsKeepCurrentPlanReviewable();
+        committedSaveGuidanceLifecycle();
+    }
+
+    private static void parsedAuthorWorkspace() {
+        NBTTagCompound source = state();
+        source.setBoolean("blueprintProcessingRequired", true);
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(new NBTTagCompound());
+        source.setTag("cells", cells);
+        HologramState parsed = new HologramState(source);
+        check(
+            !parsed.data.hasKey("cells") && parsed.cells.size() == 1,
+            "the real parser keeps cells in its typed collection instead of metadata");
+        check(HologramGuidance.authorWorkspace(source), "raw unsaved source cells still identify an author workspace");
+        check(
+            HologramGuidance.authorWorkspace(parsed),
+            "parsed unsaved cells identify authoring even without dirty or opening-purpose flags");
+        check(
+            !HologramGuidance.authorWorkspace(parsed.data),
+            "the raw NBT overload does not invent cells missing from its supplied tree");
+        check(
+            HologramGuidance.next(parsed, -1, true, false)
+                .contains("处理流程"),
+            "the real parsed guidance directs an unsaved draft into its required processing flow");
+        source.setBoolean("blueprintSaved", true);
+        check(
+            !HologramGuidance.authorWorkspace(new HologramState(source)),
+            "typed cells alone do not turn a clean saved blueprint into authoring");
+        source.setString("openPurpose", "blueprintEdit");
+        check(
+            HologramGuidance.authorWorkspace(new HologramState(source)),
+            "explicit editing still enters authoring for a saved parsed blueprint");
+        source.setBoolean("virtualPlacement", true);
+        check(
+            !HologramGuidance.authorWorkspace(new HologramState(source)),
+            "a parsed placement snapshot keeps the existing placement exclusion");
+    }
+
+    private static void committedSaveGuidanceLifecycle() {
+        HologramSaveGuidance guidance = new HologramSaveGuidance();
+        check(
+            !guidance.pending("save-a") && !guidance.takeNotice("save-a", false),
+            "opening, preparing and failed saves have no committed save guidance");
+        guidance.committed("save-a");
+        check(
+            guidance.pending("save-a") && !guidance.pending("save-b"),
+            "a committed save recommends structure setup only for its owning workspace");
+        check(
+            guidance.accent("save-a", 148) == HologramUiAccent.SUGGESTION
+                && guidance.accent("save-a", 60) == HologramUiAccent.SUGGESTION
+                && guidance.accent("save-a", 163) == HologramUiAccent.SUGGESTION,
+            "saved structure entry points use the cyan suggestion semantic");
+        check(
+            guidance.takeNotice("save-a", false) && !guidance.takeNotice("save-a", false),
+            "one committed save presents its explanation once across screen reopen");
+        check(guidance.pending("save-a"), "knowing about the distinction does not dismiss the suggested next edit");
+        guidance.visitedStructure("save-b");
+        check(guidance.pending("save-a"), "entering another workspace cannot dismiss this save's suggestion");
+        guidance.visitedStructure("save-a");
+        check(
+            !guidance.pending("save-a") && guidance.accent("save-a", 148) == 0,
+            "actually entering structure adjustment clears the saved suggestion");
+        guidance.committed("save-a");
+        check(
+            !guidance.takeNotice("save-a", true) && guidance.pending("save-a"),
+            "do not show again suppresses only the explanatory dialog, preserving entry highlights");
+        check(!guidance.takeNotice("save-a", false), "a suppressed notice does not reappear in the same save");
+        guidance.committed("");
+        check(!guidance.pending(""), "an ownerless save cannot create a global hint");
+    }
+
+    private static void optionalHatchPresetsKeepCurrentPlanReviewable() {
+        NBTTagCompound state = state();
+        state.setBoolean("target", true);
+        state.setBoolean("presetAvailable", true);
+        state.setBoolean("presetActive", false);
+        state.setInteger("missing", 0);
+        check(
+            HologramGuidance.structureAccent(state, 94) == 0x80efaa
+                && HologramGuidance.structureAccent(state, 50) == 0x80efaa,
+            "a fresh controller offers both the optional preset shortcut and direct construction review");
+        check(HologramPlacementConfirmation.canBuild(state, 5), "a reviewed default plan needs no preset selection");
+        state.setInteger("missing", 1);
+        check(
+            !HologramPlacementConfirmation.canBuild(state, 5),
+            "optional presets cannot bypass material requirements");
+        state.setInteger("missing", 0);
+        check(
+            !HologramPlacementConfirmation.canBuild(state, 4),
+            "optional presets cannot bypass a stale review revision");
+        state.setBoolean("presetActive", true);
+        check(
+            HologramGuidance.structureAccent(state, 50) == 0x80efaa,
+            "applying a preset retains direct construction guidance");
+        state.setBoolean("virtual", true);
+        check(
+            HologramGuidance.structureAccent(state, 94) == 0 && HologramGuidance.structureAccent(state, 50) == 0,
+            "controller shortcuts do not override the virtual blueprint placement lifecycle");
     }
 
     private static void savedLibraryAndAuthorWorkspace() {

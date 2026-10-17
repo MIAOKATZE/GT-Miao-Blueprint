@@ -419,8 +419,8 @@ public final class HologramAeNativePreviewRegression {
         NBTTagCompound canonicalBefore = (NBTTagCompound) decode.invoke(null, canonical);
         canonicalBefore = (NBTTagCompound) canonicalBefore.copy();
 
-        Class<?> serviceClass = Class.forName("com.miaokatze.gtmb.hologram.HologramService");
-        Class<?> sessionClass = Class.forName("com.miaokatze.gtmb.hologram.HologramService$Session");
+        Class<?> cellPolicyClass = Class.forName("com.miaokatze.gtmb.hologram.HologramCellPolicy");
+        Class<?> sessionClass = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Class<?> presetClass = Class.forName("com.miaokatze.gtmb.hologram.HologramPresets$Preset");
         Class<?> cellClass = Class.forName("com.miaokatze.gtmb.hologram.HologramCapture$Cell");
         Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
@@ -448,7 +448,7 @@ public final class HologramAeNativePreviewRegression {
         set(sessionClass, session, "virtualPreset", preset);
         set(sessionClass, session, "placementNbtCustomized", true);
         set(sessionClass, session, "placementRetainCovers", Boolean.FALSE);
-        Method serviceSelection = serviceClass.getDeclaredMethod("targetPreviewTile", sessionClass, cellClass);
+        Method serviceSelection = cellPolicyClass.getDeclaredMethod("targetPreviewTile", sessionClass, cellClass);
         serviceSelection.setAccessible(true);
 
         for (List<String> selected : Arrays.asList(keptKeys, Collections.<String>emptyList())) {

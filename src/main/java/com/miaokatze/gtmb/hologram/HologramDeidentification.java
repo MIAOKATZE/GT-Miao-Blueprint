@@ -60,15 +60,23 @@ final class HologramDeidentification {
     }
 
     static HologramPresets.Preset apply(HologramPresets.Preset source, int requested) throws IOException {
-        int level = Math.max(checked(requested), level(source));
-        HologramPresets.Preset result = HologramPresets.copy(source);
+        return applyOwned(HologramPresets.copy(source), requested, null, HologramAePolicy.PreparationProgress.NONE);
+    }
+
+    /** Exclusive detached DTO ownership, with frozen source-world network identities when run on a worker. */
+    static HologramPresets.Preset applyOwned(HologramPresets.Preset result, int requested, Map<String, String> networks,
+        HologramAePolicy.PreparationProgress progress) throws IOException {
+        int level = Math.max(checked(requested), level(result));
         result.deidentificationLevel = level;
         result.deidentificationVersion = VERSION;
-        if (level > 0) result.aeIssues.addAll(HologramNetworkBindings.sanitize(result));
+        if (level > 0) result.aeIssues.addAll(HologramNetworkBindings.sanitize(result, networks, progress));
+        int completed = 0;
         for (HologramPresets.Cell cell : result.cells) {
+            progress.update("deidentify", completed++, result.cells.size());
             cell.tileNbt = project(cell, cell.tileNbt, level);
             cell.itemNbt = project(cell, cell.itemNbt, level);
         }
+        progress.update("deidentify", completed, result.cells.size());
         return result;
     }
 

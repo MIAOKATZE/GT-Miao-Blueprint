@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
@@ -39,6 +40,9 @@ public final class HologramBlueprintProcessingRegression {
         sharingKeepsAnonymousNetworkSlots();
         actualCellsAndRelativeProjection();
         globalAndCellSelections();
+        resourceDecisionsAreLocalAndPayable();
+        fullPreservationSurvivesProjectionAndTransport();
+        scopeReviewsReuseExactOutcomes();
         legacyFloorAndDependencyInvalidation();
         auditedSensorCacheBoundary();
         sensorObservationPaymentBoundary();
@@ -47,6 +51,224 @@ public final class HologramBlueprintProcessingRegression {
         ordinaryMaterialVariantBoundary();
         automaticHintsFollowActualProcessing();
         atomicPolicyLibrary();
+    }
+
+    private static void resourceDecisionsAreLocalAndPayable() throws Exception {
+        HologramPresets.Preset raw = source(104);
+        NBTTagCompound payload = HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt);
+        net.minecraft.nbt.NBTTagList unknown = new net.minecraft.nbt.NBTTagList();
+        unknown.appendTag(new ItemStack(Items.diamond, 3).writeToNBT(new NBTTagCompound()));
+        payload.setTag("unknownInventory", unknown);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        raw.cells.get(1).tileNbt = raw.cells.get(0).tileNbt;
+        HologramBlueprintProcessing.Policy policy = completed("self");
+        NBTTagCompound state = HologramBlueprintProcessing.state(raw, policy, 0, 100, 64, 200);
+        net.minecraft.nbt.NBTTagList blockers = state.getTagList("resourceBlockers", 10);
+        SimpleAssert.eq(2, blockers.tagCount(), "unknown inventories are reported separately for identical cells");
+        SimpleAssert.that(
+            blockers.getCompoundTagAt(0)
+                .getString("path")
+                .equals("tile:/unknownInventory")
+                && blockers.getCompoundTagAt(0)
+                    .getBoolean("canFullPreserve"),
+            "decodable native items offer a completely preserved, payable root");
+        HologramBlueprintProcessing.ResourceDecision removal = new HologramBlueprintProcessing.ResourceDecision();
+        removal.path = "tile:/unknownInventory/0";
+        removal.action = "remove";
+        policy.resourceDecisions.add(removal);
+        expectIo(() -> HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200));
+        HologramBlueprintProcessing.ResourceDecision other = new HologramBlueprintProcessing.ResourceDecision();
+        other.x = 4;
+        other.path = "tile:/unknownInventory";
+        other.action = "preserve";
+        policy.resourceDecisions.add(other);
+        HologramPresets.Preset processed = HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200);
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintNbt.decode(processed.cells.get(0).tileNbt)
+                .getTagList("unknownInventory", 10)
+                .tagCount(),
+            "precise list entry removal is materialized");
+        SimpleAssert.eq(
+            1,
+            HologramBlueprintNbt.decode(processed.cells.get(1).tileNbt)
+                .getTagList("unknownInventory", 10)
+                .tagCount(),
+            "same type and NBT at another position are untouched");
+        SimpleAssert.eq(
+            1,
+            HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt)
+                .getTagList("unknownInventory", 10)
+                .tagCount(),
+            "author source is immutable");
+        removal.action = "preserve";
+        expectIo(() -> HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200));
+        policy.resourceDecisions.clear();
+        raw.cells.get(1).excluded = true;
+        payload.removeTag("unknownInventory");
+        payload.setTag("Inventory", unknown.copy());
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        removal.path = "tile:/Inventory";
+        policy.resourceDecisions.add(removal);
+        processed = HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200);
+        HologramBlueprintResources.Plan bill = HologramBlueprintResources
+            .plan(HologramBlueprintNbt.decode(processed.cells.get(0).tileNbt));
+        SimpleAssert.eq(3, bill.items.get(0).stackSize, "explicit preservation still pays the exact real inventory");
+        NBTTagCompound known = HologramBlueprintProcessing.state(processed, policy, 0, 100, 64, 200)
+            .getTagList("resourceReview", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.that(
+            known.getBoolean("preserved") && known.getBoolean("canCancel"),
+            "a preserved native inventory can return to ordinary resource handling");
+        removal.action = "cancel";
+        HologramPresets.Preset ordinary = HologramBlueprintProcessing.process(processed, policy, 0, 100, 64, 200);
+        SimpleAssert.that(
+            !HologramBlueprintNbt.decode(ordinary.cells.get(0).tileNbt)
+                .hasKey(HologramFullPreservation.TAG),
+            "canceling removes the saved preservation capability");
+        removal.action = "preserve";
+        NBTTagCompound duplicate = policy.write();
+        duplicate.getTagList("resourceDecisions", 10)
+            .appendTag(removal.write());
+        expectIo(() -> HologramBlueprintProcessing.Policy.read(duplicate));
+    }
+
+    private static void fullPreservationSurvivesProjectionAndTransport() throws Exception {
+        HologramPresets.Preset raw = source(104);
+        NBTTagCompound payload = HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt);
+        NBTTagCompound tagged = new NBTTagCompound();
+        tagged.setString("ownerUUID", "exact item identity");
+        tagged.setTag("Inventory", new ItemStack(Items.emerald, 7).writeToNBT(new NBTTagCompound()));
+        ItemStack physical = new ItemStack(Items.diamond, 3);
+        physical.setTagCompound(tagged);
+        NBTTagCompound row = physical.writeToNBT(new NBTTagCompound());
+        // The legacy actor rewriter treats an owner wrapper specially. Preservation must keep its exact item tag.
+        NBTTagCompound wrapper = new NBTTagCompound();
+        wrapper.setTag("owner", row);
+        payload.setTag("unknownInventory", wrapper);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        HologramBlueprintProcessing.Policy policy = completed("share");
+        HologramBlueprintProcessing.ResourceDecision keep = new HologramBlueprintProcessing.ResourceDecision();
+        keep.path = "tile:/unknownInventory";
+        keep.action = "preserve";
+        policy.resourceDecisions.add(keep);
+        HologramPresets.Preset processed = HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200);
+        // Preset.copy is the same Gson DTO round trip used by persistence and sharing.
+        HologramPresets.Preset loaded = HologramPresets.copy(processed);
+        NBTTagCompound saved = HologramBlueprintNbt.decode(loaded.cells.get(0).tileNbt);
+        NBTTagCompound selected = HologramBlueprintNbt.forPlacement(
+            loaded.cells.get(0).tileNbt,
+            java.util.UUID.randomUUID(),
+            "installer",
+            12,
+            75,
+            29,
+            true,
+            true);
+        SimpleAssert.that(
+            saved.getTag("unknownInventory")
+                .equals(selected.getTag("unknownInventory")),
+            "complete resource root survives sharing, loading and the legacy owner rewriter");
+        HologramBlueprintResources.Plan bill = HologramBlueprintResources.plan(selected);
+        SimpleAssert.eq(1, bill.items.size(), "an exact paid item owns its nested inventory without double charging");
+        SimpleAssert.that(
+            ItemStack.areItemStacksEqual(physical, bill.items.get(0)),
+            "the payment identity contains every real item tag");
+        SimpleAssert.that(
+            !HologramBlueprintNbt.nativePayload(selected)
+                .hasKey(HologramFullPreservation.TAG),
+            "native tile readers never receive author-decision metadata");
+        NBTTagCompound reopened = HologramBlueprintProcessing.state(loaded, policy, 0, 100, 64, 200);
+        NBTTagCompound retained = reopened.getTagList("resourceReview", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.that(
+            retained.getBoolean("preserved") && retained.getBoolean("canCancelPreserve")
+                && !retained.getBoolean("canCancel"),
+            "reopening exposes cancellation while an unknown container still needs an explicit resolution");
+        SimpleAssert.eq(
+            0,
+            reopened.getTagList("resourceBlockers", 10)
+                .tagCount(),
+            "a successfully paid preservation is editable without being labeled an unresolved blocker");
+        keep.action = "cancel";
+        expectIo(() -> HologramBlueprintProcessing.process(loaded, policy, 0, 100, 64, 200));
+        keep.action = "remove";
+        HologramPresets.Preset removed = HologramBlueprintProcessing.process(loaded, policy, 0, 100, 64, 200);
+        NBTTagCompound removedTag = HologramBlueprintNbt.decode(removed.cells.get(0).tileNbt);
+        SimpleAssert.that(
+            !removedTag.hasKey("unknownInventory") && !removedTag.hasKey(HologramFullPreservation.TAG),
+            "removing an already preserved root removes its receipt instead of silently reinstating the old choice");
+        keep.action = "preserve";
+        NBTTagCompound opaque = new NBTTagCompound();
+        opaque.setByteArray("privateAsset", new byte[] { 1, 7, 19 });
+        payload.setTag("unknownInventory", opaque);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        NBTTagCompound report = HologramBlueprintProcessing.state(raw, policy, 0, 100, 64, 200)
+            .getTagList("resourceReview", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.that(
+            !report.getBoolean("canFullPreserve") && report.getString("message")
+                .contains("unknownInventory/privateAsset"),
+            "private assets expose their removal path and never offer false preservation");
+        expectIo(() -> HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200));
+        policy.resourceDecisions.clear();
+        expectIo(() -> HologramBlueprintProcessing.process(raw, policy, 0, 100, 64, 200));
+    }
+
+    private static void scopeReviewsReuseExactOutcomes() throws Exception {
+        int[] scans = { 0 };
+        com.miaokatze.gtmb.api.GTMBExtensions.Registration registration = com.miaokatze.gtmb.api.ResourceContainers
+            .register("gtmb:test_processing_scope_reuse", context -> {
+                if (!context.path.equals("testData")) return null;
+                scans[0]++;
+                if (context.container()
+                    .getInteger("variant") < 0) throw new IOException("invalid fixture variant");
+                return java.util.Collections.emptyList();
+            });
+        try {
+            HologramPresets.Cell cell = source(104).cells.get(0);
+            Class<?> reviewsType = Class.forName(HologramBlueprintProcessing.class.getName() + "$ScopeReviews");
+            java.lang.reflect.Constructor<?> constructor = reviewsType.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            Object reviews = constructor.newInstance();
+            Method select = reviewsType.getDeclaredMethod(
+                "select",
+                HologramPresets.Cell.class,
+                String.class,
+                String.class,
+                NBTTagCompound.class);
+            select.setAccessible(true);
+            NBTTagCompound tag = new NBTTagCompound();
+            tag.setTag("testData", new NBTTagCompound());
+            String encoded = HologramBlueprintNbt.encodeCanonical(tag);
+            Object selected = select.invoke(reviews, cell, "tile", encoded, tag);
+            select.invoke(reviews, cell, "tile", encoded, tag);
+            Field preserved = selected.getClass()
+                .getDeclaredField("preserved");
+            preserved.setAccessible(true);
+            SimpleAssert.that(preserved.get(selected) == null, "ordinary scopes record no preservation payload");
+            Method finish = reviewsType.getDeclaredMethod(
+                "finish",
+                HologramPresets.Cell.class,
+                String.class,
+                selected.getClass(),
+                String.class);
+            finish.setAccessible(true);
+            finish.invoke(reviews, cell, "tile", selected, encoded);
+            SimpleAssert.eq(1, scans[0], "identical selections and their final save reuse one actual planner result");
+            tag.getCompoundTag("testData")
+                .setInteger("variant", 1);
+            finish.invoke(reviews, cell, "tile", selected, HologramBlueprintNbt.encodeCanonical(tag));
+            SimpleAssert.eq(2, scans[0], "a complete NBT change requires a fresh planner result");
+            tag.getCompoundTag("testData")
+                .setInteger("variant", -1);
+            selected = select.invoke(reviews, cell, "tile", HologramBlueprintNbt.encodeCanonical(tag), tag);
+            tag.removeTag("testData");
+            finish.invoke(reviews, cell, "tile", selected, HologramBlueprintNbt.encodeCanonical(tag));
+            SimpleAssert.eq(3, scans[0], "a selected failure may be resolved by a later explicit projection");
+        } finally {
+            registration.close();
+        }
     }
 
     private static void sharingKeepsAnonymousNetworkSlots() throws Exception {
@@ -759,9 +981,22 @@ public final class HologramBlueprintProcessingRegression {
 
     private static void automaticHintsFollowActualProcessing() throws Exception {
         Block previous = gregtech.api.GregTechAPI.sBlockMachines;
+        ItemStack coverMaterial = new ItemStack(Items.stick, 1, 31014);
+        Field registrationsField = gregtech.api.covers.CoverRegistry.class.getDeclaredField("covers");
+        registrationsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<Object, Object> registrations = (Map<Object, Object>) registrationsField.get(null);
+        Object coverKey = new gregtech.api.objects.GTItemStack(coverMaterial);
+        Object previousCover = registrations.remove(coverKey);
         try {
             // Exercise the registered GT root/cover policy without constructing or ticking a machine.
             gregtech.api.GregTechAPI.sBlockMachines = Blocks.stone;
+            gregtech.api.interfaces.ITexture texture = (gregtech.api.interfaces.ITexture) java.lang.reflect.Proxy
+                .newProxyInstance(
+                    gregtech.api.interfaces.ITexture.class.getClassLoader(),
+                    new Class<?>[] { gregtech.api.interfaces.ITexture.class },
+                    (proxy, method, args) -> method.getReturnType() == boolean.class ? true : null);
+            gregtech.api.covers.CoverRegistry.registerCover(coverMaterial, texture, ProcessingHintCover::new);
             HologramPresets.Preset raw = new HologramPresets.Preset();
             raw.schema = 2;
             raw.prompt = "作者的全局说明";
@@ -785,13 +1020,36 @@ public final class HologramBlueprintProcessingRegression {
             NBTTagCompound coverData = new NBTTagCompound();
             coverData.setString("ownerUUID", "PRIVATE_COVER_UUID");
             coverData.setInteger("frequency", 39);
+            ProcessingHintCover nativeCover = new ProcessingHintCover(
+                new gregtech.api.covers.CoverContext(
+                    coverMaterial,
+                    net.minecraftforge.common.util.ForgeDirection.NORTH,
+                    null));
+            nativeCover.data = (NBTTagCompound) coverData.copy();
             NBTTagCompound cover = new NBTTagCompound();
-            cover.setTag("d", coverData);
+            gregtech.api.covers.CoverRegistry.writeCoverToNbt(nativeCover, cover);
+            cover.setByte("s", (byte) net.minecraftforge.common.util.ForgeDirection.NORTH.ordinal());
+            SimpleAssert.that(
+                gregtech.api.covers.CoverRegistry
+                    .buildCoverFromNbt(cover, net.minecraftforge.common.util.ForgeDirection.NORTH, null)
+                    .writeToNBT(new NBTTagCompound())
+                    .getCompoundTag("d")
+                    .equals(coverData),
+                "automatic hint fixture uses an actual registered cover persistence round trip");
             net.minecraft.nbt.NBTTagList covers = new net.minecraft.nbt.NBTTagList();
             covers.appendTag(cover);
-            covers.appendTag(new ItemStack(Items.paper, 3).writeToNBT(new NBTTagCompound()));
+            // A paid inventory record belongs to Inventory, never to the native cover-record list.
+            net.minecraft.nbt.NBTTagList inventory = new net.minecraft.nbt.NBTTagList();
+            inventory.appendTag(new ItemStack(Items.paper, 3).writeToNBT(new NBTTagCompound()));
+            nativeTag.setTag("Inventory", inventory);
             nativeTag.setTag("gt.covers", covers);
             cell.tileNbt = HologramBlueprintNbt.encodeCaptured(nativeTag);
+            SimpleAssert.that(
+                ItemStack.areItemStacksEqual(
+                    coverMaterial,
+                    HologramBlueprintCovers.materials(cell.tileNbt)
+                        .get(0)),
+                "the hint fixture's installed cover has a real, exact payable material");
             HologramBlueprintProcessing.Policy full = completed("self");
             full.deidentificationLevel = 10;
             full.autoHints = "full";
@@ -873,6 +1131,8 @@ public final class HologramBlueprintProcessingRegression {
                 "quantum clear still instructs the recipient after its group descriptor is removed");
         } finally {
             gregtech.api.GregTechAPI.sBlockMachines = previous;
+            if (previousCover == null) registrations.remove(coverKey);
+            else registrations.put(coverKey, previousCover);
         }
         HologramPresets.Preset carpenter = new HologramPresets.Preset();
         carpenter.schema = 2;
@@ -911,6 +1171,26 @@ public final class HologramBlueprintProcessingRegression {
         SimpleAssert.that(
             HologramBlueprintProcessing.process(inside, self, 0, 100, 64, 200).cells.get(0).prompt.contains("锚定原绝对坐标"),
             "explicit internal absolute choices carry the same fixed-coordinate obligation");
+    }
+
+    /** A native registered test cover whose configuration is persisted by the real GT cover envelope. */
+    private static final class ProcessingHintCover extends gregtech.common.covers.Cover {
+
+        NBTTagCompound data = new NBTTagCompound();
+
+        ProcessingHintCover(gregtech.api.covers.CoverContext context) {
+            super(context, null);
+        }
+
+        @Override
+        protected void readDataFromNbt(net.minecraft.nbt.NBTBase saved) {
+            data = (NBTTagCompound) saved.copy();
+        }
+
+        @Override
+        protected net.minecraft.nbt.NBTBase saveDataToNbt() {
+            return data.copy();
+        }
     }
 
     private static int occurrences(String text, String needle) {

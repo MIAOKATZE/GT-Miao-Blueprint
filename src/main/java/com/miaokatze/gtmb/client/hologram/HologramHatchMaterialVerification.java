@@ -255,7 +255,7 @@ public final class HologramHatchMaterialVerification {
 
     private static HologramState worldView(HologramState state, boolean current) {
         if (!current) return state;
-        NBTTagCompound data = (NBTTagCompound) state.data.copy();
+        NBTTagCompound data = (NBTTagCompound) state.fullData();
         NBTTagCompound row = data.getTagList("cells", 10)
             .getCompoundTagAt(0);
         row.setTag(

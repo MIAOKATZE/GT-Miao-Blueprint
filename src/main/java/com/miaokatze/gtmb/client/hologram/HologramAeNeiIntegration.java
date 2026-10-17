@@ -25,7 +25,7 @@ final class HologramAeNeiIntegration extends INEIGuiAdapter {
 
     @Override
     public VisiblityData modifyVisiblity(GuiContainer gui, VisiblityData visibility) {
-        if (gui instanceof HologramAeContainerScreen) {
+        if (HologramAeContainerScreen.from(gui) != null) {
             visibility.showUtilityButtons = false;
             visibility.showStateButtons = false;
             visibility.showSubsetDropdown = false;
@@ -36,13 +36,13 @@ final class HologramAeNeiIntegration extends INEIGuiAdapter {
 
     @Override
     public Iterable<Integer> getItemSpawnSlots(GuiContainer gui, ItemStack stack) {
-        return gui instanceof HologramAeContainerScreen ? Collections.emptyList() : null;
+        return HologramAeContainerScreen.from(gui) != null ? Collections.emptyList() : null;
     }
 
     @Override
     public boolean handleDragNDrop(GuiContainer gui, int x, int y, ItemStack dragged, int button) {
-        return gui instanceof HologramAeContainerScreen
-            && ((HologramAeContainerScreen) gui).acceptDrop(x, y, dragged == null ? null : dragged.copy(), button);
+        return HologramAeContainerScreen.from(gui) != null && HologramAeContainerScreen.from(gui)
+            .acceptDrop(x, y, dragged == null ? null : dragged.copy(), button);
     }
 
     static ItemStack sampleAt(int x, int y) {

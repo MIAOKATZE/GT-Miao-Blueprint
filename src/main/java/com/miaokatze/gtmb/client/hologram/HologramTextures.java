@@ -95,6 +95,12 @@ final class HologramTextures {
         }
     }
 
+    static void advance(HologramState previous, HologramState next) {
+        if (snapshot != previous) return;
+        for (int index : next.changedIndices) RESOLVED.remove(previous.cells.get(index));
+        snapshot = next;
+    }
+
     static void installReloadListener() {
         if (!reloadInstalled) {
             reloadInstalled = true;

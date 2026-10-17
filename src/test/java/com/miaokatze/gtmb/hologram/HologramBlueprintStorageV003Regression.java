@@ -28,6 +28,10 @@ final class HologramBlueprintStorageV003Regression {
         Field cache = null;
         Object previousCache = null;
         try {
+            SimpleAssert.eq(
+                128 * 1024 * 1024,
+                HologramPresets.MAX_LIBRARY_BYTES,
+                "logical library has a separate bounded 128MiB capacity");
             cache = HologramPresets.class.getDeclaredField("cached");
             cache.setAccessible(true);
             previousCache = cache.get(null);
@@ -35,10 +39,16 @@ final class HologramBlueprintStorageV003Regression {
             Path share = directory.resolve("share.json"), library = directory.resolve("library.json");
             HologramPresets.Preset large = preset("large_a");
             large.prompt = "整体提示";
-            for (int i = 0; i < 50000; i++) {
+            for (int i = 0; i < 64000; i++) {
                 HologramPresets.Cell cell = new HologramPresets.Cell();
                 cell.block = "missing:stone";
                 cell.x = i;
+                if (i < 500) {
+                    NBTTagCompound tile = new NBTTagCompound();
+                    tile.setInteger("fixtureIndex", i);
+                    tile.setString("retainedPayload", "capacity fixture keeps all selected tile data");
+                    cell.tileNbt = HologramBlueprintNbt.encodeCaptured(tile);
+                }
                 large.cells.add(cell);
             }
             large.cells.get(0).prompt = "方块提示";
@@ -58,14 +68,19 @@ final class HologramBlueprintStorageV003Regression {
                 new GsonBuilder().setPrettyPrinting()
                     .create()
                     .toJson(large)
-                    .getBytes(StandardCharsets.UTF_8).length > HologramBlueprintSharing.MAX_BYTES,
+                    .getBytes(StandardCharsets.UTF_8).length > 8 * 1024 * 1024,
                 "large structure reproduces pretty JSON exceeding the old share budget");
             HologramBlueprintSharing.write(share, large, BlueprintArtifactTestData.previewPng());
             SimpleAssert.that(
                 Files.size(share) < HologramBlueprintSharing.MAX_BYTES,
-                "compact share fits the same bounded byte budget");
+                "64k cells and 500 tile payloads fit the expanded bounded share budget");
+            SimpleAssert.that(Files.size(share) > 8 * 1024 * 1024, "compact 64k fixture exceeds the old 8MiB limit");
             HologramPresets.Preset restored = HologramBlueprintSharing.read(share);
-            SimpleAssert.eq(50000, restored.cells.size(), "all large structure cells survive");
+            SimpleAssert.eq(64000, restored.cells.size(), "all large structure cells survive");
+            for (int i = 0; i < 500; i++) SimpleAssert.eq(
+                large.cells.get(i).tileNbt,
+                restored.cells.get(i).tileNbt,
+                "tile payload survives full-capacity share round trip " + i);
             SimpleAssert.eq("整体提示", restored.prompt, "overall prompt survives");
             SimpleAssert.eq("方块提示", restored.cells.get(0).prompt, "cell prompt survives");
             SimpleAssert.eq("区域提示", restored.hintAreas.get(0).prompt, "area prompt survives");
@@ -84,7 +99,7 @@ final class HologramBlueprintStorageV003Regression {
             List<HologramPresets.Preset> entries = new ArrayList<>(Arrays.asList(large, second));
             write.invoke(null, library, entries);
             SimpleAssert.that(
-                Files.size(library) > HologramBlueprintSharing.MAX_BYTES,
+                Files.size(library) > 8 * 1024 * 1024,
                 "two bounded blueprints may exceed the old whole-library limit");
             SimpleAssert.eq(2, ((List<?>) read.invoke(null, library)).size(), "larger library reloads completely");
             byte[] original = Files.readAllBytes(library);
@@ -105,6 +120,14 @@ final class HologramBlueprintStorageV003Regression {
             Files.delete(blocked);
             Files.delete(share);
             Files.delete(HologramBlueprintArtifact.previewPath(share));
+            Files.delete(library);
+
+            try (java.nio.channels.FileChannel oversized = java.nio.channels.FileChannel
+                .open(library, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE)) {
+                oversized.position(HologramPresets.MAX_LIBRARY_BYTES);
+                oversized.write(java.nio.ByteBuffer.wrap(new byte[] { 1 }));
+            }
+            expectIo(() -> read.invoke(null, library));
             Files.delete(library);
 
             expectIo(() -> HologramBlueprintSharing.encodeBounded(new Gson(), "猫猫猫", 8));

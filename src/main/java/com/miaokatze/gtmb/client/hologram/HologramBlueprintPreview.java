@@ -82,7 +82,7 @@ public final class HologramBlueprintPreview {
 
     /** No GL, live world access, registry lookups, native factories, or mutable GUI state on this worker path. */
     static NBTTagCompound snapshot(byte[] exactJson) throws IOException {
-        if (exactJson == null || exactJson.length == 0 || exactJson.length > 8 * 1024 * 1024)
+        if (exactJson == null || exactJson.length == 0 || exactJson.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
             throw new IOException("Blueprint preview JSON byte budget");
         boolean witness = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         byte[] sourceJson = witness ? exactJson.clone() : exactJson;

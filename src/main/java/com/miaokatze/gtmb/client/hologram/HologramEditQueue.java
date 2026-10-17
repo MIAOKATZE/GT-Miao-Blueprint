@@ -70,15 +70,10 @@ final class HologramEditQueue {
             if (!session.equals(snapshot.session)) return null;
             int[] result = new int[positions.length / 3];
             for (int i = 0; i < result.length; i++) {
-                result[i] = -1;
-                for (HologramState.Cell cell : snapshot.cells) {
-                    if (cell.x == positions[i * 3] && cell.y == positions[i * 3 + 1]
-                        && cell.z == positions[i * 3 + 2]) {
-                        result[i] = cell.index;
-                        break;
-                    }
-                }
-                if (result[i] < 0) return null;
+                HologramState.Cell cell = snapshot.regions
+                    .at(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+                if (cell == null) return null;
+                result[i] = cell.index;
             }
             return result;
         }
@@ -86,9 +81,8 @@ final class HologramEditQueue {
         int selectionIn(HologramState snapshot) {
             if (!session.equals(snapshot.session)) return -2;
             if (!hasCell) return -1;
-            for (HologramState.Cell cell : snapshot.cells)
-                if (cell.x == x && cell.y == y && cell.z == z) return cell.index;
-            return -2;
+            HologramState.Cell cell = snapshot.regions.at(x, y, z);
+            return cell == null ? -2 : cell.index;
         }
     }
 }

@@ -42,7 +42,9 @@ final class HologramResourceWorld extends World {
             Object previousSave = SAVE_CACHE.get(null);
             Object previousMap = MAP_CACHE.get(null);
             try {
-                return new HologramResourceWorld(block, metadata);
+                HologramResourceWorld created = new HologramResourceWorld(block, metadata);
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.MATERIAL_WORLD_CREATED, 1);
+                return created;
             } finally {
                 try {
                     SAVE_CACHE.set(null, previousSave);
@@ -167,6 +169,13 @@ final class HologramResourceWorld extends World {
     @Override
     public int getBlockMetadata(int x, int y, int z) {
         return blockExists(x, y, z) ? metadata : 0;
+    }
+
+    @Override
+    public int getBlockLightOpacity(int x, int y, int z) {
+        // Reporting parts query neighboring opacity while their native reader attaches them. World's default
+        // implementation dereferences a real Chunk, which this read-only, single-cell world never provides.
+        return getBlock(x, y, z).getLightOpacity(this, x, y, z);
     }
 
     @Override

@@ -14,6 +14,9 @@ public final class HologramAnnotationMarkersRegression {
 
     public static void run() {
         quantumGroupsRoundTrip();
+        blockerSeveritySurvivesAggregation();
+        resourceBlockersHaveIndependentMarker();
+        markerPlacementStaysInsidePreview();
         NBTTagCompound data = new NBTTagCompound();
         data.setString("blueprintPrompt", "Foundation first");
         NBTTagList cells = new NBTTagList();
@@ -51,6 +54,43 @@ public final class HologramAnnotationMarkersRegression {
         SimpleAssert.that(
             structure.contains(100, 80) && !structure.contains(120, 80),
             "only the miniature marker opens its annotation tooltip");
+    }
+
+    private static void markerPlacementStaysInsidePreview() {
+        for (boolean author : new boolean[] { false, true }) {
+            int bottom = HologramScreenLayout.VIEWPORT_Y + HologramScreenLayout.previewHeight(true, author);
+            List<HologramAnnotationMarkers.Marker> shown = new java.util.ArrayList<>();
+            boolean overflow = false;
+            for (int index = 0; index < 20; index++) {
+                HologramAnnotationMarkers.Marker marker = new HologramAnnotationMarkers.Marker(
+                    "cell:" + index,
+                    "native issue",
+                    "details remain in the full report",
+                    null);
+                marker.x = 100;
+                marker.y = 80;
+                if (HologramAnnotationMarkers.place(marker, shown, bottom)) {
+                    SimpleAssert.that(marker.y + 7 <= bottom, "collision layout never enters the footer");
+                    for (HologramAnnotationMarkers.Marker previous : shown) SimpleAssert
+                        .that(Math.abs(marker.y - previous.y) >= 14, "visible icons stay independently clickable");
+                    shown.add(marker);
+                } else overflow = true;
+            }
+            SimpleAssert.that(!shown.isEmpty() && overflow, "dense issues exhaust preview space without escaping it");
+        }
+        List<HologramAnnotationMarkers.Marker> unsorted = new java.util.ArrayList<>();
+        for (int y : new int[] { 130, 100, 115 }) {
+            HologramAnnotationMarkers.Marker previous = new HologramAnnotationMarkers.Marker("cell:" + y, "", "", null);
+            previous.x = 100;
+            previous.y = y;
+            unsorted.add(previous);
+        }
+        HologramAnnotationMarkers.Marker shifted = new HologramAnnotationMarkers.Marker("new", "", "", null);
+        shifted.x = 100;
+        shifted.y = 105;
+        SimpleAssert.that(HologramAnnotationMarkers.place(shifted, unsorted, 219), "available lower slot is found");
+        SimpleAssert
+            .eq(145, shifted.y, "a shift rechecks earlier icons instead of colliding with an already visited row");
     }
 
     private static void quantumGroupsRoundTrip() {
@@ -132,5 +172,66 @@ public final class HologramAnnotationMarkersRegression {
         SimpleAssert.that(
             !new HologramState.Cell(0, invalid).quantumNetworkHint(),
             "mismatched descriptor cannot silently attribute a cell to another network");
+    }
+
+    private static void blockerSeveritySurvivesAggregation() {
+        NBTTagCompound data = new NBTTagCompound(), cell = new NBTTagCompound();
+        cell.setInteger("x", 7);
+        cell.setInteger("dx", 2);
+        cell.setString("structureId", "machine");
+        NBTTagList cells = new NBTTagList(), issues = new NBTTagList();
+        cells.appendTag(cell);
+        data.setTag("cells", cells);
+        NBTTagCompound warning = new NBTTagCompound();
+        warning.setString("severity", "warning");
+        warning.setString("code", "ae.node_reset");
+        warning.setLong("count", 1);
+        warning.setInteger("x", 7);
+        warning.setInteger("y", 0);
+        warning.setInteger("z", 0);
+        warning.setString("structureId", "machine");
+        issues.appendTag(warning);
+        data.setTag("aeIssues", issues);
+        for (HologramAnnotationMarkers.Marker marker : HologramAeWarningMarkers.collect(new HologramState(data)))
+            SimpleAssert.that(!marker.blocker, "Ordinary warnings keep the warning marker appearance");
+        NBTTagCompound blocker = (NBTTagCompound) warning.copy();
+        blocker.setString("severity", "blocker");
+        blocker.setString("code", "ae.unreviewed_tile_field");
+        issues.appendTag(blocker);
+        List<HologramAnnotationMarkers.Marker> markers = HologramAeWarningMarkers.collect(new HologramState(data));
+        SimpleAssert.eq(2, markers.size(), "Comprehensive and structure marker still aggregate each issue once");
+        for (HologramAnnotationMarkers.Marker marker : markers)
+            SimpleAssert.that(marker.blocker, "A mixed warning/blocker group retains the red cross severity");
+    }
+
+    private static void resourceBlockersHaveIndependentMarker() {
+        NBTTagCompound data = new NBTTagCompound(), processing = new NBTTagCompound(), blocker = new NBTTagCompound();
+        blocker.setInteger("x", 12);
+        blocker.setInteger("y", 4);
+        blocker.setInteger("z", -3);
+        blocker.setString("path", "tile:/unknownInventory");
+        blocker.setString("message", "Unsupported inventory schema");
+        NBTTagList blockers = new NBTTagList();
+        blockers.appendTag(blocker);
+        processing.setTag("resourceBlockers", blockers);
+        data.setTag("processing", processing);
+        List<HologramAnnotationMarkers.Marker> markers = HologramAnnotationMarkers.collect(new HologramState(data));
+        SimpleAssert
+            .eq(1, markers.size(), "A non-AE resource blocker remains visible without old AE issues or preview cells");
+        HologramAnnotationMarkers.Marker marker = markers.get(0);
+        SimpleAssert.eq("resource:report", marker.key, "Resource reports have a stable independent pin identity");
+        SimpleAssert.that(
+            marker.blocker && marker.bounds == null,
+            "Raw resource coordinates use a global red cross rather than a guessed transformed cell");
+        SimpleAssert.that(
+            marker.prompt.contains("12,4,-3") && marker.prompt.contains("tile:/unknownInventory"),
+            "The compact report preserves the exact raw cell and NBT path");
+        processing.setBoolean("resourceReviewTruncated", true);
+        processing.setLong("resourceReviewTotal", 8193);
+        marker = HologramAnnotationMarkers.collect(new HologramState(data))
+            .get(0);
+        SimpleAssert.that(
+            marker.title.contains("未完整") && marker.prompt.contains("8193") && marker.prompt.contains("全局根条目"),
+            "An over-budget report never presents its listed rows as the complete set");
     }
 }

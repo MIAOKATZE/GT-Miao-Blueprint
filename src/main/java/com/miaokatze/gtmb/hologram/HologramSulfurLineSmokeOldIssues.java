@@ -461,7 +461,7 @@ public final class HologramSulfurLineSmokeOldIssues {
     /** Only initializes a raw fixture draft; author review flags and placement authorization are never assigned. */
     private static Object fixtureSession(EntityPlayerMP actor, int x, int y, int z, HologramPresets.Preset raw)
         throws Exception {
-        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramService$Session");
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
         Constructor<?> constructor = type
             .getDeclaredConstructor(EntityPlayerMP.class, int.class, int.class, int.class, boolean.class, int.class);
         constructor.setAccessible(true);
@@ -601,7 +601,7 @@ public final class HologramSulfurLineSmokeOldIssues {
             types[i + 1] = arguments[i] instanceof Integer ? int.class : arguments[i].getClass();
             values[i + 1] = arguments[i];
         }
-        Method method = HologramService.class.getDeclaredMethod(name, types);
+        Method method = HologramEngineInspection.declaredMethod(name, types);
         method.setAccessible(true);
         try {
             return method.invoke(null, values);
