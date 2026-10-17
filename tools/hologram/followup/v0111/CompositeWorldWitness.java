@@ -105,17 +105,6 @@ public final class CompositeWorldWitness {
 
     public boolean ready(){return baselineCursor==64000&&checking.isEmpty();}
     public Object report()throws Exception{return call(result,"func_74737_b");}
-    public Object checkEncoded(String kind)throws Exception {
-        check(ready()&&sourceNonAirBlocks>0,"complete independent native volume/non-air baseline before JSON readback validation");
-        Object session=session();check((Boolean)get(session,"processingReviewed"),"actual processing reviewed");Object preset=get(session,"virtualPreset");
-        Object gson=call(construct("com.google.gson.GsonBuilder"),"create");int limit=(Integer)get(product("HologramBlueprintSharing"),"MAX_BYTES");
-        byte[] bytes=(byte[])call(product("HologramBlueprintSharing"),"encodeBounded",gson,preset,limit);
-        Object readback=call(product("HologramBlueprintSharing"),"decode",new String(bytes,StandardCharsets.UTF_8));
-        int cells=((List<?>)get(readback,"cells")).size();
-        check(cells==sourceNonAirBlocks,"ordinary bounded JSON readback cells="+cells+" expected independent native non-air="+sourceNonAirBlocks+" of source volume=64000");
-        Object row=nbt();putInt(row,"blueprintCells",cells);putInt(row,"expectedNonAirCells",sourceNonAirBlocks);putInt(row,"sourceVolume",64000);putInt(row,"jsonBytes",bytes.length);putInt(row,"jsonLimit",limit);putText(row,"save","NOT_RUN: encoded JSON is not native JSON/PNG owner commit");tag(result,kind+"Encoding",row);return row;
-    }
-
     public void fundPlacement(String kind)throws Exception {
         check(funded.isEmpty(),"one finite supply outstanding");Object s=session();check((Boolean)get(s,"virtualPlacement")&&(Boolean)get(s,"virtualLocked"),"actual locked product placement");
         int[] at=ints(manifest,kind);check((Integer)get(s,"x")==at[0]&&(Integer)get(s,"y")==at[1]&&(Integer)get(s,"z")==at[2],"exact canonical target");

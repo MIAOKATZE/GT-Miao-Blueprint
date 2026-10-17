@@ -39,6 +39,8 @@ public final class V0111CompositeNativeProbe {
     private Object mc, actor, bridge, manifest;
     private int phase, ticks, stage, choice, flow, requestSequence, acknowledged, groupIndex;
     private long started, phaseStarted, heartbeat, generation = -1, longFlowStarted;
+    private Object generationScreen;
+    private Object guidanceAwaitingGui;
     private long wholeFlowStarted, processingStarted;
     private long nativeLabProgressAt;
     private long awaitedTaskToken, awaitedTaskSequence=-1;
@@ -154,8 +156,7 @@ public final class V0111CompositeNativeProbe {
             if (sequence > acknowledged && manifest != null) {
                 check(sequence == acknowledged + 1,"fixture control sequence must be contiguous");
                 String action = command.getProperty("action",""), kind = command.getProperty("kind","");
-                if (action.equals("encode")) call(bridge,"checkEncoded",kind);
-                else if (action.equals("move")) move(host,kind);
+                if (action.equals("move")) move(host,kind);
                 else if (action.equals("fund")) call(bridge,"fundPlacement",kind);
                 else if (action.equals("check")) call(bridge,"checkPlacement",kind);
                 else if (action.equals("rawCheck")) call(bridge,"checkRaw");
@@ -266,6 +267,7 @@ public final class V0111CompositeNativeProbe {
             if(mc==null)mc=call(Class.forName("net.minecraft.client.Minecraft"),"func_71410_x");
             applyClientPreferences();
             Object gui=get(mc,"field_71462_r"), player=get(mc,"field_71439_g"), world=get(mc,"field_71441_e"); ticks++;
+            pulse();
             if(phase==0) {
                 if(ticks<30||gui==null)return;
                 admitClientDimension();
@@ -326,7 +328,7 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==12) {
                 if(!"true".equals(peer.getProperty(kind()+"SaveCommit"))) {
-                    if(isScreen(gui)) {Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");if(bool(ui,"aeReview")&&gen>generation)click(gui,ui,181,gen);}
+                    if(isScreen(gui)) {Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");if(bool(ui,"aeReview")&&naturalUiReady(gui,gen))confirmNativeSaveReview(gui,ui,state,data,gen);}
                     return;
                 }
                 verifyPair(peer,kind());timing.setProperty(kind()+".saveNanos",String.valueOf(System.nanoTime()-longFlowStarted));
@@ -336,9 +338,11 @@ public final class V0111CompositeNativeProbe {
                 if(!ack(peer))return;
                 if(!isScreen(gui)){call(clientType("HologramClient"),"openSettings");return;}
                 Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");
-                if(gen<=generation||busy()||bool(ui,"busy"))return;
-                if(!bool(ui,"blueprintTab")||!bool(ui,"library")){click(gui,ui,149,gen);return;}
-                if(bool(ui,"public")){click(gui,ui,201,gen);return;}
+                if(!naturalUiReady(gui,gen)||busy()||bool(ui,"busy"))return;
+                if(acknowledgeSaveGuidance(gui,gen))return;
+                if(!bool(ui,"blueprintTab")||!bool(ui,"library")){if(drawnControlReady(ui,149))click(gui,ui,149,gen);return;}
+                if(bool(ui,"public")){if(drawnControlReady(ui,201))click(gui,ui,201,gen);return;}
+                if(!drawnControlReady(ui,141))return;
                 privateLocalId=peer.getProperty(kind()+"LocalId","");
                 check(!privateLocalId.isEmpty(),"actual saved client private-file identity");
                 // Native successful Save selects its committed local row; wait for its real catalog refresh.
@@ -351,6 +355,18 @@ public final class V0111CompositeNativeProbe {
                 groupIndex=0;advance(14);return;
             }
             if(phase==14) {
+                if(isScreen(gui)){
+                    Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");
+                    if(naturalUiReady(gui,gen)){
+                        if(acknowledgeSaveGuidance(gui,gen))return;
+                        if(bool(ui,"discardReview")){
+                            if(!drawnControlReady(ui,224))return;
+                            Object library=get(get(gui,"ui"),"library");check((Integer)get(library,"deferredLibraryAction")==141,"native private-load discard retains the actual deferred141 action");
+                            long previousTask=nativeTaskWatermark();click(gui,ui,224,gen);watchNativeTask("private",false,previousTask);
+                            proof.setProperty(kind()+"PrivateDiscardConfirmation","actual visible enabled224 resumes native deferred141");return;
+                        }
+                    }
+                }
                 if(!bool(data,"virtualPlacement")||bool(data,"virtualLocked")||busy())return;
                 Object imported=privateReply("privateImported",privateTransfer);if(imported==null)return;
                 check(!privateTransfer.isEmpty()&&privateTransfer.equals(str(imported,"transfer")),"actual native privateImported transfer ACK");
@@ -396,7 +412,7 @@ public final class V0111CompositeNativeProbe {
             }
             if(!isScreen(gui)) {if(phase>=7&&phase<=11)call(clientType("HologramClient"),"openSettings");return;}
             Object ui=call(gui,"smokeLibraryUiState");long gen=number(ui,"renderGeneration");
-            if(gen<=generation||gen==0||busy())return;
+            if(!naturalUiReady(gui,gen)||busy())return;
             if(phase==7) {
                 if(!bool(ui,"blueprintTab")||!bool(ui,"library")){click(gui,ui,149,gen);return;}
                 processingStarted=System.nanoTime();click(gui,ui,220,gen);stage=choice=0;advance(8);
@@ -424,18 +440,17 @@ public final class V0111CompositeNativeProbe {
                 check("auto".equals(str(appliedPolicy,"coordinateDefault")),"server applied native recommended coordinate policy");
                 proof.setProperty(kind()+"IdentityAppliedLevel",String.valueOf(appliedLevel));proof.setProperty(kind()+"CoordinateDefaultApplied","auto");
                 timing.setProperty(kind()+".processingNanos",String.valueOf(System.nanoTime()-processingStarted));
-                fixture("encode",kind());advance(10);
+                advance(10);
             } else if(phase==10) {
-                if(!ack(peer))return;
                 typeName(gui,"V0111 "+kind()+" "+output.getName());generation=gen;advance(11);
             } else if(phase==11) {
                 longFlowStarted=System.nanoTime();long previousTask=nativeTaskWatermark();click(gui,ui,140,gen);
                 watchNativeTask("save",false,previousTask);
                 proof.setProperty(kind()+"SaveButton","140 actual MUI dispatch");advance(12);
             } else if(phase==17) {
-                if(!bool(data,"blueprintAwaitingConfirmation"))return;
+                if(!bool(data,"blueprintAwaitingConfirmation")||!drawnControlReady(ui,50))return;
                 click(gui,ui,50,gen);advance(18);
-            } else if(phase==18) {long previousTask=nativeTaskWatermark();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
+            } else if(phase==18) {if(!drawnControlReady(ui,55))return;long previousTask=nativeTaskWatermark();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
             pulse();
         } catch(Throwable failure) {fail(failure);}
     }
@@ -765,6 +780,7 @@ public final class V0111CompositeNativeProbe {
         String id=peer.getProperty(kind+"LocalId","");check(id.matches("local_[a-fA-F0-9-]{36}"),"real owner-committed local file ID");
         File game=(File)get(mc,"field_71412_D");Path directory=new File(game,"MiaoBlueprints").getCanonicalFile().toPath();Path json=directory.resolve(id+".json"),png=directory.resolve(id+".png");
         check(Files.isRegularFile(json)&&Files.isRegularFile(png),"actual JSON+PNG on client disk");
+        int jsonLimit=(Integer)get(product("HologramBlueprintSharing"),"MAX_BYTES");check(Files.size(json)<=jsonLimit,"actual committed JSON is within this product version's native byte limit");
         byte[] jsonBytes=Files.readAllBytes(json),pngBytes=Files.readAllBytes(png);
         check(hash(jsonBytes).equals(peer.getProperty(kind+"JsonSha256")),"independent JSON SHA matches exact production owner commit");
         check(hash(pngBytes).equals(peer.getProperty(kind+"PngSha256")),"independent PNG SHA matches exact production owner commit");
@@ -776,7 +792,7 @@ public final class V0111CompositeNativeProbe {
         check(cells==expected,"ordinary committed disk JSON cells="+cells+" expected independent native non-air="+expected+" of source volume=64000");
         proof.setProperty(kind+"SavedBlueprintCellCount",String.valueOf(cells));
         Files.copy(json,file(kind+"-actual-saved.json").toPath());Files.copy(png,file(kind+"-actual-saved.png").toPath());
-        proof.setProperty(kind+"ActualPair","true");proof.setProperty(kind+"JsonBytes",String.valueOf(jsonBytes.length));proof.setProperty(kind+"PngBytes",String.valueOf(pngBytes.length));proof.setProperty(kind+"JsonSha256",hash(jsonBytes));proof.setProperty(kind+"PngSha256",hash(pngBytes));
+        proof.setProperty(kind+"ActualPair","true");proof.setProperty(kind+"JsonLimit",String.valueOf(jsonLimit));proof.setProperty(kind+"JsonBytes",String.valueOf(jsonBytes.length));proof.setProperty(kind+"PngBytes",String.valueOf(pngBytes.length));proof.setProperty(kind+"JsonSha256",hash(jsonBytes));proof.setProperty(kind+"PngSha256",hash(pngBytes));
     }
 
     @SuppressWarnings("unchecked")
@@ -802,6 +818,53 @@ public final class V0111CompositeNativeProbe {
     }
     private Object cutReply(String request)throws Exception {synchronized(incomingCuts){for(Object reply:incomingCuts)if(request.equals(str(reply,"requestId")))return reply;}return null;}
     private static boolean isScreen(Object gui){return gui!=null&&gui.getClass().getName().equals("com.miaokatze.gtmb.client.hologram.HologramScreen");}
+    private boolean naturalUiReady(Object gui,long gen){
+        if(generationScreen!=gui){generationScreen=gui;generation=-1;}
+        return gen>0&&gen>generation;
+    }
+    private Boolean nativeSaveGuidanceOpen(Object gui)throws Exception {
+        try{return (Boolean)call(get(get(gui,"ui"),"library"),"saveGuidanceOpen");}
+        catch(NoSuchMethodException historical){return null;}
+    }
+    private boolean acknowledgeSaveGuidance(Object gui,long gen)throws Exception {
+        Boolean open=nativeSaveGuidanceOpen(gui);
+        if(!Boolean.TRUE.equals(open)){
+            if(Boolean.FALSE.equals(open)&&guidanceAwaitingGui==gui){proof.setProperty(kind()+"SaveGuidanceAcknowledged","native modal closed on a later natural frame");guidanceAwaitingGui=null;}
+            return false;
+        }
+        if(guidanceAwaitingGui!=gui){
+            call(clientType("HologramMuiProbeInput"),"key",gui,'\r',28);guidanceAwaitingGui=gui;generationScreen=gui;generation=gen;
+            proof.setProperty(kind()+"SaveGuidanceInput","native MUI Return28; original guidance consumeKey acknowledges without suppression");
+        }
+        return true;
+    }
+    private Object drawnControl(Object ui,int id)throws Exception {
+        Object controls=list(ui,"drawnControls");for(int i=0;i<count(controls);i++){Object control=at(controls,i);if(integer(control,"id")==id)return control;}return null;
+    }
+    private boolean drawnControlReady(Object ui,int id)throws Exception {Object control=drawnControl(ui,id);return control!=null&&bool(control,"enabled");}
+    private Object nativeAeReview(Object gui)throws Exception {return call(clientType("HologramUiDiagnostics"),"readDiagnosticField",gui,"aeReview");}
+    private long nativePendingSequence(Object gui)throws Exception {return (Long)call(clientType("HologramUiDiagnostics"),"readDiagnosticField",gui,"pendingSequence");}
+    private Object nativeAeReviewObservation(Object gui)throws Exception {
+        Object observed=nbt(),model=nativeAeReview(gui);putText(observed,"source","read-only actual native AE review model fields; no diagnostic smoke getter or replacement model");
+        call(observed,"func_74772_a","pendingSequence",nativePendingSequence(gui));if(model==null)return observed;
+        for(String key:new String[]{"session","transactionId"})putText(observed,key,String.valueOf(get(model,key)));
+        call(observed,"func_74772_a","revision",get(model,"revision"));
+        for(String key:new String[]{"valid","review","canConfirm"})call(observed,"func_74757_a",key,get(model,key));
+        for(String key:new String[]{"blockerCount","warningCount"})putInt(observed,key,(Integer)get(model,key));return observed;
+    }
+    private void confirmNativeSaveReview(Object gui,Object ui,Object state,Object data,long gen)throws Exception {
+        if(drawnControl(ui,181)==null)return;
+        Object model=nativeAeReview(gui);if(model==null||nativePendingSequence(gui)>=0||!(Boolean)get(model,"review"))return;
+        Object review=compound(data,"aeSaveReview");String transaction=str(review,"transactionId");
+        if(transaction.isEmpty()||!transaction.equals(get(model,"transactionId"))||!String.valueOf(get(state,"session")).equals(get(model,"session"))||number(data,"planRevision")!=(Long)get(model,"revision"))return;
+        boolean valid=(Boolean)get(model,"valid"),canConfirm=(Boolean)get(model,"canConfirm");int blockers=(Integer)get(model,"blockerCount");
+        if(!valid||blockers>0||!canConfirm){
+            IllegalStateException failure=new IllegalStateException("Native AE Save review cannot confirm: valid="+valid+" blockers="+blockers+" canConfirm="+canConfirm);
+            try{exportBlockedControl(ui,181);}catch(Exception diagnostic){proof.setProperty("blockedControlReportFailure",diagnostic.toString());failure.addSuppressed(diagnostic);}throw failure;
+        }
+        if(!(Boolean)call(model,"matches",String.valueOf(get(state,"session")),number(data,"planRevision")))return;
+        if(drawnControlReady(ui,181))click(gui,ui,181,gen);
+    }
     private long nativeTaskWatermark()throws Exception {
         Object task=call(clientType("HologramBackgroundTasks"),"actualTaskWitness");return Math.max(number(task,"token"),number(task,"completedToken"));
     }
@@ -843,14 +906,15 @@ public final class V0111CompositeNativeProbe {
             try{exportBlockedControl(ui,id);}catch(Exception diagnostic){proof.setProperty("blockedControlReportFailure",diagnostic.toString());failure.addSuppressed(diagnostic);}
             throw failure;
         }
-        call(gui,"smokeControlPoint",id);call(clientType("HologramMuiProbeInput"),"control",gui,id);generation=gen;proof.setProperty("lastControl",String.valueOf(id));
+        call(gui,"smokeControlPoint",id);call(clientType("HologramMuiProbeInput"),"control",gui,id);generationScreen=gui;generation=gen;proof.setProperty("lastControl",String.valueOf(id));
     }
     private void exportBlockedControl(Object ui,int id)throws Exception {
         Object state=get(clientType("HologramClient"),"state"),data=state==null?null:get(state,"data"),report=nbt();
         putInt(report,"control",id);putInt(report,"phase",phase);putInt(report,"stage",stage);putText(report,"scenario",kind());
         call(report,"func_74782_a","smokeUI",call(ui,"func_74737_b"));
+        if(phase==12&&isScreen(get(mc,"field_71462_r")))call(report,"func_74782_a","nativeAeReviewState",nativeAeReviewObservation(get(mc,"field_71462_r")));
         if(data!=null){
-            for(String key:new String[]{"processing","resourceReview","resourceBlockers","rootReport"}){
+            for(String key:new String[]{"processing","resourceReview","resourceBlockers","rootReport","aeSaveReview"}){
                 boolean present=(Boolean)call(data,"func_74764_b",key);putInt(report,key+"Present",present?1:0);
                 if(present)call(report,"func_74782_a",key,call(call(data,"func_74781_a",key),"func_74737_b"));
             }
@@ -875,6 +939,12 @@ public final class V0111CompositeNativeProbe {
         if(System.nanoTime()-heartbeat<2_000_000_000L)return;heartbeat=System.nanoTime();
         if(client&&mc!=null){
             Object screen=get(mc,"field_71462_r");proof.setProperty("nativeClientScreen",screen==null?"NONE":screen.getClass().getName());
+            proof.setProperty("nativeBackgroundBusy",String.valueOf(busy()));
+            Object actualState=get(clientType("HologramClient"),"state");proof.setProperty("nativeBlueprintDirty",actualState==null?"NO_STATE":String.valueOf(bool(get(actualState,"data"),"blueprintDirty")));
+            if(isScreen(screen)){
+                proof.setProperty("nativeDiscardReview",String.valueOf(get(get(get(screen,"ui"),"library"),"discardReview")));
+                Boolean guidance=nativeSaveGuidanceOpen(screen);proof.setProperty("nativeSaveGuidanceOpen",guidance==null?"ABSENT_NATIVE_API":String.valueOf(guidance));
+            }else{proof.setProperty("nativeDiscardReview","NO_WORKSPACE");proof.setProperty("nativeSaveGuidanceOpen","NO_WORKSPACE");}
             observeDisplayActive();
             proof.setProperty("nativePauseOnLostFocus",String.valueOf(get(get(mc,"field_71474_y"),"field_82881_y")));
             try{

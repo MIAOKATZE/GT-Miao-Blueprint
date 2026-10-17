@@ -327,7 +327,8 @@ final class HologramCutClient {
         try {
             if (selection.regionSnapshot()
                 .tagCount() == 0) {
-                status.show(HologramClient.text("worldGuideSelectionBoth", "Left: point 1 · Right: point 2"));
+                refreshDirectory();
+                mc().displayGuiScreen(new HologramCutStorageScreen());
                 return;
             }
             bounds = selection.bounds();
