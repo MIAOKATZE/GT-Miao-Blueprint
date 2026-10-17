@@ -119,6 +119,11 @@ public final class V0110LoadedLatencyProbe {
                 try { Class.forName(CLIENT+"HologramClient").getDeclaredMethod("localAreaPoint",int.class,int.class,int.class,int.class,String.class);localApi=true; }
                 catch(NoSuchMethodException oldVersion) {localApi=false;}
                 proof.setProperty("pointStimulus",localApi?"production localAreaPoint + localAreaSelection; local completion is not server ACK":"legacy product Action + installed server authority; local API absent");
+                // Give both versions the same benchmark-only socket idle limit so a slow baseline can finish.
+                // This does not alter product tasks, codecs, work budgets, or completion predicates.
+                Object pipeline=call(call(call(call(mc,"func_147114_u"),"func_147298_b"),"channel"),"pipeline");
+                call(pipeline,"replace","timeout","timeout",construct("io.netty.handler.timeout.ReadTimeoutHandler",300));
+                proof.setProperty("benchmarkSocketReadTimeoutSeconds","300");
                 installReceiver(); metric("start"); phase=2;
                 if (runPhase.equals("import")) { round=7; step=0; }
             }

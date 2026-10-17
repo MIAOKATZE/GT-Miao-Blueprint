@@ -723,7 +723,7 @@ def run(args):
 
 
 def latency_flags(args, role):
-    return [f"-Dgtmb.latency.{role}=true", f"-Dgtmb.latency.cells={args.cells}",
+    return ["-Dfml.readTimeout=300", f"-Dgtmb.latency.{role}=true", f"-Dgtmb.latency.cells={args.cells}",
             f"-Dgtmb.latency.phase={args.phase}", "-Dgtmb.v0110.ctmClient=false",
             "-Dgtmb.v0110.downloadClient=false"]
 

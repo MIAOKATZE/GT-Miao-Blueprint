@@ -312,6 +312,9 @@ public final class HologramResourcePlannerRegression {
             for (HologramSession draft : new HologramSession[] { sync, staged }) {
                 draft.virtualPreset.schema = 2;
                 draft.virtualPlacement = false;
+                // This detached fixture has no FML/AE registries; exercise real main-inventory planning.
+                draft.materialSettings.containers = false;
+                draft.materialSettings.me = false;
                 draft.expectedBlocks.add(Blocks.dirt);
                 draft.planStatus.add("pending");
                 draft.replacementAuthorized = draft.placementReviewIssued = draft.forcePlacementReady = true;

@@ -321,6 +321,7 @@ final class HologramBlueprintServiceRegression {
         List<ItemStack> previousTargets = new java.util.ArrayList<>(targets);
         HologramPresets.Preset preset = (HologramPresets.Preset) get(session, "virtualPreset");
         boolean originalRetain = preset.retainNbt;
+        boolean originalPlacement = (Boolean) get(session, "virtualPlacement");
         Object originalCapture = get(session, "capture");
         net.minecraft.nbt.NBTTagList before = new net.minecraft.nbt.NBTTagList();
         for (ItemStack stack : actor.inventory.mainInventory)
@@ -338,6 +339,8 @@ final class HologramBlueprintServiceRegression {
         identity.setAccessible(true);
         installed.setAccessible(true);
         try {
+            // Payment quotes consume the reviewed placement target, independent of author-edit pins.
+            set(session, "virtualPlacement", true);
             gregtech.api.GregTechAPI.METATILEENTITIES[id] = (gregtech.api.interfaces.metatileentity.IMetaTileEntity) unsafe
                 .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchInput.class);
             ItemStack target = registeredGtMaterial(id);
@@ -403,6 +406,7 @@ final class HologramBlueprintServiceRegression {
             gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
             cell.tileNbt = originalNbt;
             preset.retainNbt = originalRetain;
+            set(session, "virtualPlacement", originalPlacement);
             targets.clear();
             targets.addAll(previousTargets);
         }

@@ -1268,8 +1268,9 @@ public final class HologramBlueprintResourcesRegression {
             HologramPresets.Preset preset = new HologramPresets.Preset();
             preset.schema = 2;
             for (Object[] entry : new Object[][] { { "player", player }, { "virtual", true },
-                { "virtualPreset", preset }, { "capture", capture }, { "indexedCapture", capture },
-                { "cellIndices", indices }, { "planTargets", java.util.Collections.singletonList(sealed) },
+                { "virtualPlacement", true }, { "virtualPreset", preset }, { "capture", capture },
+                { "indexedCapture", capture }, { "cellIndices", indices },
+                { "planTargets", java.util.Collections.singletonList(sealed) },
                 { "networkBindings", new HologramNetworkBindings.State() } }) {
                 java.lang.reflect.Field field = type.getDeclaredField((String) entry[0]);
                 field.setAccessible(true);

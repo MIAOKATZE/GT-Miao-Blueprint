@@ -43,3 +43,5 @@ python tools/hologram/followup/v0110/summarize_loaded_latency.py build/verificat
 ```
 
 One round is a first actual sample, not a latency distribution. Local response / old server-authoritative response must not be labeled a server-ACK or20x heavy-task speedup. Heavy import and authoritative prompt endpoints need like-for-like measurements. This ordinary-block baseline makes no claim about same-block/different-NBT isolation; that remains a separate fixture.
+
+The runner sets the server's FML socket read timeout to300 seconds. Before issuing any measured command, the addon replaces only the client's real Netty idle-timeout handler with the same300-second handler on both versions. This benchmark-only timeout gives the slow baseline time to finish; product work, codecs, authority, capture and endpoint assertions are unchanged. The earlier default-timeout v0.1.9 disconnect remains a separate failure, and a completed benchmark does not establish that the old version works at its default timeout. Losing the connected test world is terminal FAIL rather than an idle RUNNING receipt.
