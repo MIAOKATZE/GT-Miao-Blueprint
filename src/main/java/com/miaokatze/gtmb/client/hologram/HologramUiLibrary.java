@@ -50,10 +50,13 @@ final class HologramUiLibrary {
         HologramUiTabMemory preferences = HologramUiMemory.tabMemory();
         if (preferences == null
             || !SAVE_GUIDANCE.takeNotice(ui.session.state().session, preferences.saveGuidanceSuppressed())) return;
-        saveGuidanceDialog = new HologramSaveGuidanceDialog(
-            ui.host.parent()
-                .panel(),
-            preferences);
+        // MUI2 retains the handler for a panel name after closing; reuse it for later Save commits.
+        if (saveGuidanceDialog == null) {
+            saveGuidanceDialog = new HologramSaveGuidanceDialog(
+                ui.host.parent()
+                    .panel(),
+                preferences);
+        }
         saveGuidanceDialog.open();
     }
 

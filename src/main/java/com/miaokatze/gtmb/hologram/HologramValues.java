@@ -43,8 +43,21 @@ final class HologramValues {
             && BlockCasings5.getCoilHeatFromDamage(meta) != HeatingCoilLevel.None;
     }
 
-    static String stackKey(ItemStack stack) {
-        return stack.getItem() + ":" + stack.getItemDamage() + ":" + stack.getTagCompound();
+    static HologramBlueprintResources.ExactKey stackKey(ItemStack stack) {
+        return new HologramBlueprintResources.ExactKey(java.util.Objects.requireNonNull(stack), null);
+    }
+
+    static HologramBlueprintResources.ExactKey lookupKey(ItemStack stack) {
+        return HologramBlueprintResources.ExactKey.borrowed(java.util.Objects.requireNonNull(stack));
+    }
+
+    /** Lookups borrow the current payload; only a newly admitted material keeps an immutable snapshot. */
+    static <T> void mergeStack(Map<HologramBlueprintResources.ExactKey, T> values, ItemStack stack, T amount,
+        java.util.function.BinaryOperator<T> merge) {
+        HologramBlueprintResources.ExactKey probe = lookupKey(stack);
+        T previous = values.get(probe);
+        if (previous == null) values.put(stackKey(stack), amount);
+        else values.replace(probe, merge.apply(previous, amount));
     }
 
     static boolean same(ItemStack a, ItemStack b) {

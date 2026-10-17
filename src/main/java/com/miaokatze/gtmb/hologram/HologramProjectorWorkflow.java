@@ -12,7 +12,7 @@ final class HologramProjectorWorkflow {
     static void open(EntityPlayerMP player, int x, int y, int z, int side) {
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous != null && previous.player == player && HologramSessionPolicy.blockedByAreaImport(previous)) {
-            HologramSnapshots.send(previous);
+            HologramSnapshots.sendUi(previous);
             return;
         }
         if (previous != null && previous.player == player
@@ -26,7 +26,7 @@ final class HologramProjectorWorkflow {
             previous.settingsOnly = false;
             dismissPresetBrowse(previous);
             previous.openPurpose = "controllerStructure";
-            HologramSnapshots.send(previous);
+            HologramSnapshots.sendUi(previous);
             return;
         }
         if (previous != null && previous.player == player
@@ -48,7 +48,7 @@ final class HologramProjectorWorkflow {
             next.setInteger("side", side);
             next.setString("presetId", "controller:" + x + "," + y + "," + z);
             HologramAuthoringWorkflow.requestSourceSwitch(previous, next, target, context, null);
-            HologramSnapshots.send(previous);
+            HologramSnapshots.sendUi(previous);
             return;
         }
         if (previous != null && (previous.job == 1 || previous.job == 2)) {
@@ -77,7 +77,7 @@ final class HologramProjectorWorkflow {
             previous.settingsOnly = false;
             dismissPresetBrowse(previous);
             previous.openPurpose = "";
-            HologramSnapshots.send(previous);
+            HologramSnapshots.sendUi(previous);
             return;
         }
         HologramSession session = uiSession(player);
@@ -86,7 +86,7 @@ final class HologramProjectorWorkflow {
         session.blueprintPreview = true;
         session.status = "右击真实控制器导入结构，或在蓝图库选择蓝图后点击放置";
         HologramWorkspace.activate(player.getUniqueID(), session);
-        HologramSnapshots.send(session);
+        HologramSnapshots.sendUi(session);
     }
 
     /** Ordinary world use imports a constructable controller or opens the existing workspace. */
@@ -120,7 +120,7 @@ final class HologramProjectorWorkflow {
             || s.job == 5
             || s.job == 4) return false;
         if (HologramSessionPolicy.blockedByAreaImport(s)) {
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendUi(s);
             return true;
         }
         HologramResourcePlanner.refreshPlan(s);
@@ -170,7 +170,7 @@ final class HologramProjectorWorkflow {
         s.settingsOnly = false;
         dismissPresetBrowse(s);
         s.open = true;
-        HologramSnapshots.send(s);
+        HologramSnapshots.sendUi(s);
     }
 
     static void cancel(EntityPlayerMP player) {

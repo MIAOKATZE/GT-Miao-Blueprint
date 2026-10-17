@@ -29,6 +29,7 @@ final class HologramSnapshots {
     }
 
     static void aeSnapshot(HologramSession s, NBTTagCompound state, boolean currentIssues) {
+        boolean authoring = HologramSessionPolicy.authoring(s);
         try {
             if (currentIssues && s.virtualPreset != null)
                 state.setTag("aeIssues", HologramAuthoringQueries.aeCurrentIssues(s));
@@ -42,7 +43,7 @@ final class HologramSnapshots {
                 }
             }
             HologramAeProtocol.Preview preview = s.ae.preview;
-            if (preview != null && s.capture != null) {
+            if (!authoring && preview != null && s.capture != null) {
                 HologramCapture.Cell cell = s.capture.positions.get(preview.x + "," + preview.y + "," + preview.z);
                 if (cell == null || !preview.current(
                     s.id,
@@ -179,27 +180,7 @@ final class HologramSnapshots {
             state.setString("networkBindingError", HologramAePolicy.fallback(invalid.getMessage()));
         }
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
-        state.setBoolean("areaSelecting", area != null && area.selecting);
-        state.setBoolean("areaImporting", area != null && area.importing);
-        state.setInteger("areaImportProgress", area != null && area.importing ? area.importProgress() : 0);
-        state.setString("areaImportStage", area != null && area.importing ? area.importStage() : "");
-        HologramAreaPreparation.Progress areaProgress = area != null && area.importing ? area.progressSnapshot() : null;
-        state.setLong("areaImportDone", areaProgress == null ? 0 : areaProgress.done);
-        state.setLong("areaImportTotal", areaProgress == null ? 0 : areaProgress.total);
-        state.setString("areaImportDetail", areaProgress == null ? "" : areaProgress.phase);
-        state.setString("areaImportUnit", areaProgress == null ? "cells" : area.importUnit());
-        state.setBoolean("areaImported", area != null && area.imported);
-        state.setIntArray("areaPoints", area == null ? new int[0] : area.points());
-        state.setTag("areaRegions", area == null ? new NBTTagList() : area.regionSnapshot());
-        state.setBoolean(
-            "areaUndoAvailable",
-            area != null && (!area.regionUndo.isEmpty() || area.first != null || area.second != null));
-        state.setString("areaToolId", area == null ? "" : s.toolId);
-        state.setString("areaPointMode", area == null ? "replace" : area.pointMode);
-        state.setInteger(
-            "areaPendingCorner",
-            area == null ? 0
-                : area.first != null && area.second == null ? 1 : area.first == null && area.second != null ? 2 : 0);
+        writeAreaSelection(s, state);
         state.setBoolean(
             "blueprintDirty",
             s.blueprintDirty || s.capture != null && !s.virtualPlacement && s.blueprintSource.isEmpty());
@@ -427,28 +408,9 @@ final class HologramSnapshots {
     }
 
     static void writeBlueprintScalars(HologramSession s, NBTTagCompound state) {
+        boolean authoring = HologramSessionPolicy.authoring(s);
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
-        state.setBoolean("areaSelecting", area != null && area.selecting);
-        state.setBoolean("areaImporting", area != null && area.importing);
-        state.setInteger("areaImportProgress", area != null && area.importing ? area.importProgress() : 0);
-        state.setString("areaImportStage", area != null && area.importing ? area.importStage() : "");
-        HologramAreaPreparation.Progress areaProgress = area != null && area.importing ? area.progressSnapshot() : null;
-        state.setLong("areaImportDone", areaProgress == null ? 0 : areaProgress.done);
-        state.setLong("areaImportTotal", areaProgress == null ? 0 : areaProgress.total);
-        state.setString("areaImportDetail", areaProgress == null ? "" : areaProgress.phase);
-        state.setString("areaImportUnit", areaProgress == null ? "cells" : area.importUnit());
-        state.setBoolean("areaImported", area != null && area.imported);
-        state.setIntArray("areaPoints", area == null ? new int[0] : area.points());
-        state.setTag("areaRegions", area == null ? new NBTTagList() : area.regionSnapshot());
-        state.setBoolean(
-            "areaUndoAvailable",
-            area != null && (!area.regionUndo.isEmpty() || area.first != null || area.second != null));
-        state.setString("areaToolId", area == null ? "" : s.toolId);
-        state.setString("areaPointMode", area == null ? "replace" : area.pointMode);
-        state.setInteger(
-            "areaPendingCorner",
-            area == null ? 0
-                : area.first != null && area.second == null ? 1 : area.first == null && area.second != null ? 2 : 0);
+        writeAreaSelection(s, state);
         state.setBoolean(
             "blueprintDirty",
             s.blueprintDirty || s.capture != null && !s.virtualPlacement && s.blueprintSource.isEmpty());
@@ -493,7 +455,7 @@ final class HologramSnapshots {
         state.setTag("placementNbtKeys", HologramSessionPolicy.nbtKeys(HologramSessionPolicy.placementKeys(s)));
         state.setBoolean(
             "materialOrderingAvailable",
-            s.virtual && s.virtualPreset != null && HologramMaterialOrdering.available(s.player));
+            !authoring && s.virtual && s.virtualPreset != null && HologramMaterialOrdering.available(s.player));
         state.setString("blueprintEnergyNotice", s.blueprintEnergyNotice);
         state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
         state.setBoolean("blueprintPreview", s.blueprintPreview);
@@ -626,6 +588,154 @@ final class HologramSnapshots {
             .send(s.player, state);
     }
 
+    /** Selection facts bypass full DTO preparation and its geometry/material work and FIFO reservation. */
+    static void sendAreaSelection(HologramSession s) {
+        NBTTagCompound receipt = areaSelection(s);
+        NBTTagCompound envelope = new NBTTagCompound();
+        envelope.setBoolean("progressOnly", true);
+        envelope.setTag("progress", receipt);
+        HologramWorkspace.snapshotSink()
+            .send(s.player, envelope);
+        // This receipt delivered only the explicit opening intent; other full-snapshot one-shots remain pending.
+        s.open = false;
+    }
+
+    /** Opening an unchanged workspace is independent of material reports and native preview construction. */
+    static void sendUi(HologramSession s) {
+        if (s.cancelled) {
+            send(s);
+            return;
+        }
+        NBTTagCompound state = areaSelection(s);
+        state.setBoolean("workspaceUiOnly", true);
+        state.setBoolean("workspaceHasCapture", s.capture != null);
+        state.setBoolean("workspaceCapturePending", s.capturePending);
+        state.setBoolean("snapshotPending", s.capture != null || s.capturePending);
+        state.setString("openPurpose", s.openPurpose);
+        if ("controllerStructure".equals(s.openPurpose)) s.workspaceTab = "structure";
+        else if ("blueprintEdit".equals(s.openPurpose) || "blueprintBrowse".equals(s.openPurpose)
+            || "blueprintPlacement".equals(s.openPurpose)
+            || "placementReview".equals(s.openPurpose)) s.workspaceTab = "blueprint";
+        state.setString("workspaceTab", s.workspaceTab);
+        state.setBoolean("settingsOnly", s.settingsOnly);
+        state.setBoolean("blueprintPreview", s.blueprintPreview);
+        state.setBoolean("presetBrowseForPlacement", s.presetBrowseForPlacement);
+        state.setBoolean("target", s.target != null || s.virtual && s.capture != null);
+        state.setBoolean("supported", s.capture != null && !s.capture.incomplete);
+        state.setString("title", s.machine == null ? "全息构造器" : s.machine.getLocalName());
+        state.setString(
+            "virtualPresetId",
+            s.virtualPreset == null || s.virtualPreset.id == null ? "" : s.virtualPreset.id);
+        state.setString("virtualPresetName", s.virtualPreset == null ? "" : s.virtualPreset.name);
+        state.setBoolean("blueprintDirty", HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s));
+        state.setBoolean("blueprintSaved", "saved".equals(s.blueprintSource));
+        state.setString("blueprintSource", s.blueprintSource);
+        state.setBoolean("blueprintProcessingComplete", s.processingReviewed);
+        state.setBoolean("blueprintProcessingRequired", !s.processingReviewed);
+        state.setBoolean("localPlanPending", s.localPlanPending);
+        state.setBoolean("planIncomplete", s.localPlanPending);
+        state.setString("localPlanError", s.localPlanError);
+        state.setString("quickToken", s.libraryQuickToken);
+        state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
+        state.setBoolean("serverLibraryEnabled", HologramLibraryFacade.enabled());
+        state.setBoolean("libraryAdmin", HologramLibraryFacade.isAdmin(s.player));
+        state.setBoolean("adminOP4", state.getBoolean("libraryAdmin"));
+        state.setString("libraryLocalId", s.libraryLocalId);
+        state.setString("selectedPresetId", HologramSessionPolicy.selectedPreset(s));
+        state.setInteger("selected", s.selected);
+        state.setInteger("main", s.main);
+        state.setInteger("mode", s.mode);
+        state.setInteger("scope", s.scope);
+        state.setInteger("layer", s.layer);
+        state.setInteger("side", s.side);
+        state.setInteger("facing", s.facing);
+        state.setInteger("hatchTier", s.hatchTier);
+        state.setInteger("hatchTierMax", gregtech.api.enums.GTValues.VN.length - 1);
+        state.setBoolean("hatchDowngrade", s.hatchDowngrade);
+        state.setBoolean("noHatches", s.noHatches);
+        state.setTag("channels", s.channels.copy());
+        state.setBoolean("materialMain", s.materialSettings.main);
+        state.setBoolean("materialContainers", s.materialSettings.containers);
+        state.setBoolean("materialMe", s.materialSettings.me);
+        state.setInteger("materialPriority", s.materialSettings.priority);
+        state.setInteger("recoveryDestination", s.materialSettings.recoveryDestination);
+        state.setLong("configurationAcceptedSequence", s.configurationAcceptedSequence);
+        state.setBoolean("creativeMaterials", s.player.capabilities.isCreativeMode);
+        if (s.open && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s)) s.libraryUiActive = true;
+        NBTTagCompound envelope = new NBTTagCompound();
+        envelope.setBoolean("progressOnly", true);
+        envelope.setTag("progress", state);
+        HologramWorkspace.snapshotSink()
+            .send(s.player, envelope);
+        // A UI shell cannot consume the opening intent reserved for the eventual complete capture.
+        if (!s.capturePending) {
+            s.open = false;
+            s.openPurpose = "";
+        }
+    }
+
+    static NBTTagCompound areaSelection(HologramSession s) {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("areaSelectionOnly", true);
+        state.setString("session", s.id);
+        state.setString("generation", s.id);
+        state.setString("toolId", s.toolId);
+        state.setLong("planRevision", s.planRevision);
+        state.setLong("uiSequence", s.uiSequence);
+        state.setLong("areaSelectionSequence", ++s.areaSelectionSequence);
+        state.setLong("batchSeq", s.batchSeq);
+        state.setString("phase", s.phase);
+        state.setString("status", s.status);
+        state.setInteger("job", s.job);
+        state.setInteger("x", s.x);
+        state.setInteger("y", s.y);
+        state.setInteger("z", s.z);
+        state.setInteger("dimension", s.dimension);
+        state.setBoolean("open", s.open);
+        state.setString("openPurpose", "");
+        state.setBoolean("hints", false);
+        state.setBoolean("settingsOnly", false);
+        state.setBoolean("libraryInitialSnapshot", false);
+        state.setBoolean("virtual", s.virtual);
+        state.setBoolean("virtualPlacement", s.virtualPlacement);
+        state.setBoolean("virtualLocked", s.virtualLocked);
+        state.setBoolean("blueprintAwaitingConfirmation", s.blueprintAwaitingConfirmation);
+        state.setBoolean("forcePlacementReady", s.forcePlacementReady);
+        state.setBoolean("blueprintSavePending", !s.blueprintSaveReceipt.isEmpty());
+        state.setLong("placementReviewNonce", s.placementReviewNonce);
+        state.setBoolean("discardConfirmationRequired", s.discardConfirmationRequired);
+        state.setString("discardTargetOp", s.discardTargetOp);
+        state.setString("discardTargetId", s.discardTargetId);
+        state.setTag("discardTargetAction", s.pendingSourceAction.copy());
+        writeAreaSelection(s, state);
+        return state;
+    }
+
+    private static void writeAreaSelection(HologramSession s, NBTTagCompound state) {
+        HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+        state.setBoolean("areaSelecting", area != null && area.selecting);
+        state.setBoolean("areaImporting", area != null && area.importing);
+        state.setInteger("areaImportProgress", area != null && area.importing ? area.importProgress() : 0);
+        state.setString("areaImportStage", area != null && area.importing ? area.importStage() : "");
+        HologramAreaPreparation.Progress progress = area != null && area.importing ? area.progressSnapshot() : null;
+        state.setLong("areaImportDone", progress == null ? 0 : progress.done);
+        state.setLong("areaImportTotal", progress == null ? 0 : progress.total);
+        state.setString("areaImportDetail", progress == null ? "" : progress.phase);
+        state.setString("areaImportUnit", progress == null ? "cells" : area.importUnit());
+        state.setBoolean("areaImported", area != null && area.imported);
+        state.setIntArray("areaPoints", area == null ? new int[0] : area.points());
+        state.setTag("areaRegions", area == null ? new NBTTagList() : area.regionSnapshot());
+        state.setBoolean(
+            "areaUndoAvailable",
+            area != null && (!area.regionUndo.isEmpty() || area.first != null || area.second != null));
+        state.setString("areaToolId", area == null ? "" : s.toolId);
+        state.setString("areaPointMode", area == null ? "replace" : area.pointMode);
+        state.setInteger(
+            "areaPendingCorner",
+            area == null ? 0
+                : area.first != null && area.second == null ? 1 : area.first == null && area.second != null ? 2 : 0);
+    }
+
     static void send(HologramSession s) {
         // Partial batches are server-only. Keep the original open intent until a complete snapshot exists.
         if (s.capturePending) {
@@ -694,6 +804,7 @@ final class HologramSnapshots {
         s.open = false;
         state.setString("session", s.id);
         state.setString("generation", s.id);
+        state.setString("toolId", s.toolId);
         state.setBoolean("capturePending", s.capturePending);
         state.setInteger("captureAttempts", s.captureAttempts);
         state.setLong("captureRetryDue", s.captureRetryDue);
@@ -710,6 +821,7 @@ final class HologramSnapshots {
         }
 
         state.setLong("uiSequence", s.uiSequence);
+        state.setLong("areaSelectionSequence", s.areaSelectionSequence);
         state.setString("phase", s.phase);
         state.setIntArray("pending", new int[0]);
         state.setIntArray(
@@ -839,8 +951,122 @@ final class HologramSnapshots {
     }
 
     static NBTTagCompound cellRow(HologramSession s, int index, boolean draftOnly) {
+        return cellRowData(s, index, draftOnly, new CellRows(s)).row;
+    }
+
+    static final class CellRow {
+
+        final NBTTagCompound row;
+        final ItemStack target;
+        final boolean loaded, inScope;
+        final Block current;
+        final int metadata;
+        final TileEntity tile;
+
+        CellRow(NBTTagCompound row, ItemStack target, boolean loaded, boolean inScope, Block current, int metadata,
+            TileEntity tile) {
+            this.row = row;
+            this.target = target;
+            this.loaded = loaded;
+            this.inScope = inScope;
+            this.current = current;
+            this.metadata = metadata;
+            this.tile = tile;
+        }
+    }
+
+    /** One snapshot task's material validation and selected NBT policy. Parsed payloads stay local to each row. */
+    static final class CellRows {
+
+        private final HologramSession s;
+        private final HologramBlueprintValidationCache validation;
+        private final List<String> keys;
+        private final boolean covers, virtual, retainNbt, authoring;
+        private final int schema;
+
+        CellRows(HologramSession s) {
+            this.s = s;
+            authoring = HologramSessionPolicy.authoring(s);
+            validation = s.virtualPreset == null ? null : new HologramBlueprintValidationCache(s.virtualPreset);
+            List<String> configured = HologramSessionPolicy.placementKeys(s);
+            keys = configured == null ? null : new java.util.ArrayList<>(configured);
+            covers = HologramSessionPolicy.placementRetainCovers(s);
+            virtual = s.virtual;
+            retainNbt = s.virtualPreset == null || s.virtualPreset.retainNbt;
+            schema = s.virtualPreset == null ? 0 : s.virtualPreset.schema;
+        }
+
+        NBTTagCompound preview(HologramCapture.Cell cell, NBTTagCompound source) throws java.io.IOException {
+            if (!virtual || source == null) return null;
+            if (authoring) return source;
+            if (schema < 2) return source;
+            NBTTagCompound payload = HologramGtMeShadow.project(
+                HologramBlueprintNbt.canonicalActorPayload(
+                    cell.block,
+                    HologramBlueprintNbt.filterSelection(source, retainNbt ? keys : Collections.emptyList(), covers),
+                    null,
+                    "",
+                    false));
+            HologramBlueprintNbt.normalizeTransportItems(payload);
+            return HologramCoordinatePolicies.placementProjection(payload, s.dimension, cell.x, cell.y, cell.z);
+        }
+
+        TargetPreview target(HologramCapture.Cell cell, ItemStack target) throws java.io.IOException {
+            if (target == null) return new TargetPreview(cell.block, cell.meta);
+            if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2) return new TargetPreview(
+                HologramCellPolicy.targetPreviewBlock(s, cell, target),
+                HologramCellPolicy.targetPreviewMeta(s, cell, target));
+            boolean nativeBlock = HologramNativePlacement.supported(cell.block);
+            if (!nativeBlock && !cell.blueprintItem.isEmpty()) {
+                ItemStack original = validation.stack(cell.blueprintItem, cell.blueprintDamage);
+                if (original != null && original.getItem() instanceof net.minecraft.item.ItemBlock
+                    && !(original.getItem() instanceof ItemMachines))
+                    validation.validateMaterialVariant(cell.block, cell.meta, original);
+            }
+            if (nativeBlock) return new TargetPreview(cell.block, cell.meta);
+            Block material = Block.getBlockFromItem(target.getItem());
+            int nativeMeta = target.getItem()
+                .getMetadata(target.getItemDamage());
+            if (target.getItem() instanceof ItemMachines)
+                return new TargetPreview(material, cell.block == material ? cell.meta : nativeMeta);
+            if (target.getItem() instanceof net.minecraft.item.ItemBlock) {
+                try {
+                    validation.validateMaterialVariant(cell.block, cell.meta, target);
+                    return new TargetPreview(cell.block, cell.meta);
+                } catch (java.io.IOException differentVariant) {}
+            }
+            return new TargetPreview(material, nativeMeta);
+        }
+    }
+
+    private static final class TargetPreview {
+
+        final Block block;
+        final int metadata;
+
+        TargetPreview(Block block, int metadata) {
+            this.block = block;
+            this.metadata = metadata;
+        }
+    }
+
+    static CellRow cellRowData(HologramSession s, int index, boolean draftOnly, CellRows context) {
+        long measured = HologramRuntimeMetrics.start();
+        try {
+            return cellRowCurrent(s, index, draftOnly || context.authoring, context);
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.CELL_ROW, measured);
+        }
+    }
+
+    private static CellRow cellRowCurrent(HologramSession s, int index, boolean draftOnly, CellRows context) {
         HologramCapture.Cell c = s.capture.cells.get(index);
+        boolean authoring = context.authoring;
         World world = s.player.worldObj;
+        ItemStack pinned = HologramCellPolicy.targetFor(s, c, index);
+        String position = HologramValues.position(c);
+        boolean inScope = HologramSessionPolicy.inScope(s, c, index);
+        boolean explicitTarget = HologramCellPolicy.explicitTarget(s, c, index);
         NBTTagCompound row = new NBTTagCompound();
         row.setInteger("x", c.x);
         row.setInteger("y", c.y);
@@ -851,7 +1077,7 @@ final class HologramSnapshots {
         row.setBoolean("sourceMissing", !c.sourceWarning.isEmpty());
         row.setString("sourceClass", c.sourceClass);
         row.setString("sourceWarning", c.sourceWarning);
-        row.setBoolean("missingBlock", c.unknown && HologramCellPolicy.targetFor(s, c, index) == null);
+        row.setBoolean("missingBlock", c.unknown && pinned == null);
         String sourceRegistry = c.blueprintBlock.isEmpty() ? c.blueprintItem : c.blueprintBlock;
         String sourceMod = sourceRegistry.contains(":") ? sourceRegistry.substring(0, sourceRegistry.indexOf(':')) : "";
         row.setString("sourceMod", sourceMod);
@@ -860,8 +1086,10 @@ final class HologramSnapshots {
             s.virtualPreset == null ? "" : s.virtualPreset.modVersions.getOrDefault(sourceMod, ""));
         row.setBoolean("excluded", c.excluded);
         row.setString("prompt", c.prompt);
+        NBTTagCompound sourcePayload = null;
+        java.io.IOException payloadFailure = null;
         try {
-            NBTTagCompound network = HologramBlueprintNbt.decode(c.tileNbt);
+            NBTTagCompound network = sourcePayload = HologramBlueprintNbt.decode(c.tileNbt);
             if (network != null && network.hasKey(HologramNetworkBindings.GROUP)) {
                 String group = HologramNetworkBindings.group(network);
                 row.setString("networkGroup", group);
@@ -872,6 +1100,7 @@ final class HologramSnapshots {
                 row.setTag("specialHint", hint);
             }
         } catch (java.io.IOException invalidGroup) {
+            payloadFailure = invalidGroup;
             row.setString("networkGroupError", HologramAePolicy.fallback(invalidGroup.getMessage()));
         }
         row.setString("structureId", c.structureId);
@@ -880,25 +1109,27 @@ final class HologramSnapshots {
         row.setBoolean("hasPin", s.pins.containsKey(index));
         row.setBoolean("templateController", "templateController".equals(c.role));
         row.setBoolean("hasTargetOverride", s.pins.containsKey(index) || s.autoTargets.containsKey(index));
-        row.setBoolean("hasFacingPin", s.facingPins.containsKey(HologramValues.position(c)));
-        int plannedFacing = s.facingPins
-            .getOrDefault(HologramValues.position(c), draftOnly ? -1 : s.planFacings.getOrDefault(index, -1));
+        row.setBoolean("hasFacingPin", s.facingPins.containsKey(position));
+        int plannedFacing = s.facingPins.getOrDefault(
+            position,
+            authoring ? c.actualFacing : draftOnly ? -1 : s.planFacings.getOrDefault(index, -1));
         row.setInteger("hatchFacing", plannedFacing);
         row.setInteger("targetFacing", c.anchor ? c.actualFacing : plannedFacing);
-        TileEntity actualTile = world.getTileEntity(c.x, c.y, c.z);
-        try {
-            c.actualDisplay = HologramDisplaySnapshot.capture(actualTile);
-        } catch (RuntimeException | LinkageError ignored) {
-            c.actualDisplay = new NBTTagCompound();
+        TileEntity actualTile = authoring ? null : world.getTileEntity(c.x, c.y, c.z);
+        if (!authoring) {
+            try {
+                c.actualDisplay = HologramDisplaySnapshot.capture(actualTile);
+            } catch (RuntimeException | LinkageError ignored) {
+                c.actualDisplay = new NBTTagCompound();
+            }
         }
         row.setTag("actualDisplay", c.actualDisplay.copy());
         row.setInteger(
             "actualFacing",
-            actualTile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) actualTile).getFrontFacing()
-                .ordinal() : -1);
-        row.setIntArray(
-            "hatchFacings",
-            HologramCellPolicy.legalFacings(s, c, HologramCellPolicy.targetFor(s, c, index)));
+            authoring ? c.actualFacing
+                : actualTile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) actualTile).getFrontFacing()
+                    .ordinal() : -1);
+        row.setIntArray("hatchFacings", HologramCellPolicy.legalFacings(s, c, pinned));
         row.setBoolean("userPosition", c.userPosition);
         row.setBoolean("iconOnly", c.iconOnly);
         row.setString("role", c.role);
@@ -915,16 +1146,13 @@ final class HologramSnapshots {
             row.setIntArray("hintTint", tint);
         }
         row.setInteger("hintIndex", c.hintIndex);
-        row.setBoolean("inScope", HologramSessionPolicy.inScope(s, c, index));
-        row.setBoolean(
-            "explicitTarget",
-            HologramCellPolicy.explicitTarget(s, c, index) || HologramCellPolicy.explicitGrade(s, c));
+        row.setBoolean("inScope", inScope);
+        row.setBoolean("explicitTarget", explicitTarget || HologramCellPolicy.explicitGrade(s, c));
         row.setBoolean(
             "autoTarget",
-            !draftOnly && (!s.noHatches && s.channels.hasKey("gt_hatch", 3)
-                && "hatch".equals(c.role)
-                && !HologramCellPolicy.explicitTarget(s, c, index) || s.autoTargets.containsKey(index)));
-        boolean loaded = world.blockExists(c.x, c.y, c.z);
+            !draftOnly && (!s.noHatches && s.channels.hasKey("gt_hatch", 3) && "hatch".equals(c.role) && !explicitTarget
+                || s.autoTargets.containsKey(index)));
+        boolean loaded = !authoring && world.blockExists(c.x, c.y, c.z);
         Block current = loaded ? world.getBlock(c.x, c.y, c.z) : Blocks.air;
         int meta = loaded ? world.getBlockMetadata(c.x, c.y, c.z) : 0;
         row.setString("id", String.valueOf(Block.blockRegistry.getNameForObject(current)));
@@ -933,36 +1161,40 @@ final class HologramSnapshots {
             "wantId",
             c.block == null ? c.blueprintBlock : String.valueOf(Block.blockRegistry.getNameForObject(c.block)));
         row.setInteger("wantMeta", c.meta);
-        ItemStack pinned = HologramCellPolicy.targetFor(s, c, index);
         row.setString(
             "exactIdentity",
             pinned == null ? HologramBlockIdentity.key(c.block, c.meta) : HologramBlockIdentity.key(pinned));
         // Resolve the exact same wanted block used by this DTO before selecting its detached native display.
-        int displayFacing = c.anchor ? c.actualFacing
-            : s.facingPins.getOrDefault(HologramValues.position(c), plannedFacing);
-        String previewTile = "", previewError = "";
+        int displayFacing = c.anchor ? c.actualFacing : s.facingPins.getOrDefault(position, plannedFacing);
+        NBTTagCompound previewTile = null;
+        String previewError = "";
+        Block wantedBlock = c.block;
         try {
             if (pinned != null) {
-                Block pinnedBlock = HologramCellPolicy.targetPreviewBlock(s, c, pinned);
-                if (pinnedBlock != Blocks.air) {
-                    row.setString("wantId", String.valueOf(Block.blockRegistry.getNameForObject(pinnedBlock)));
-                    row.setInteger("wantMeta", HologramCellPolicy.targetPreviewMeta(s, c, pinned));
+                TargetPreview preview = context.target(c, pinned);
+                if (preview.block != Blocks.air) {
+                    wantedBlock = preview.block;
+                    row.setString("wantId", String.valueOf(Block.blockRegistry.getNameForObject(preview.block)));
+                    row.setInteger("wantMeta", preview.metadata);
                 }
             }
-            previewTile = HologramCellPolicy.targetPreviewTile(s, c);
+            // A malformed network hint is independent of otherwise decodable display NBT.
+            if (sourcePayload == null && payloadFailure != null && context.virtual && context.schema >= 2)
+                throw payloadFailure;
+            previewTile = context.preview(c, sourcePayload);
         } catch (java.io.IOException invalid) {
             previewError = "蓝图目标预览NBT无效：" + HologramAePolicy.fallback(invalid.getMessage());
             row.setBoolean("previewInvalid", true);
             row.setString("previewError", previewError);
         }
-        Block wantedBlock = Block.getBlockFromName(row.getString("wantId"));
-        c.targetDisplay = HologramDisplaySnapshot.target(
+        if (wantedBlock == null) wantedBlock = Block.getBlockFromName(row.getString("wantId"));
+        c.targetDisplay = HologramDisplaySnapshot.targetPayload(
             wantedBlock,
             pinned,
             displayFacing,
             c.element,
             previewTile,
-            !s.virtual || HologramSessionPolicy.placementRetainCovers(s));
+            authoring || !s.virtual || HologramSessionPolicy.placementRetainCovers(s));
         if (!s.virtual && pinned != null
             && actualTile instanceof IGregTechTileEntity
             && ((IGregTechTileEntity) actualTile).getMetaTileID() == pinned.getItemDamage()) {
@@ -979,20 +1211,25 @@ final class HologramSnapshots {
             row.setString("wantId", "minecraft:air");
             row.setInteger("wantMeta", 0);
         }
-        row.setString("status", draftOnly ? "planning" : c.status);
+        row.setString("status", authoring ? "preview" : draftOnly ? "planning" : c.status);
         row.setString(
             "reason",
-            draftOnly ? s.localPlanError
-                : previewError.isEmpty() ? HologramPlanPolicy.reason(s, c, index) : previewError);
+            authoring ? previewError.isEmpty() ? "作者预览；进入放置时核对现场方块与材料。" : previewError
+                : draftOnly ? s.localPlanError
+                    : previewError.isEmpty() ? HologramPlanPolicy.reason(s, c, index, loaded, actualTile)
+                        : previewError);
         row.setString(
             "operation",
-            draftOnly ? "PLANNING"
-                : !HologramSessionPolicy.inScope(s, c, index) ? "OUTSIDE"
-                    : "satisfied".equals(c.status) ? "KEEP"
-                        : "protected".equals(c.status) || "unsupported".equals(c.status) || "blocked".equals(c.status)
-                            ? "PROTECT"
-                            : s.mode == 2 ? "REMOVE"
-                                : loaded && HologramCellPolicy.trivial(world, c.x, c.y, c.z) ? "PLACE" : "REPLACE");
+            authoring ? "EDIT"
+                : draftOnly ? "PLANNING"
+                    : !inScope ? "OUTSIDE"
+                        : "satisfied".equals(c.status) ? "KEEP"
+                            : "protected".equals(c.status) || "unsupported".equals(c.status)
+                                || "blocked".equals(c.status)
+                                    ? "PROTECT"
+                                    : s.mode == 2 ? "REMOVE"
+                                        : loaded && HologramCellPolicy.trivial(world, c.x, c.y, c.z) ? "PLACE"
+                                            : "REPLACE");
         NBTTagList choices = new NBTTagList();
         List<ItemStack> options = index == s.selected ? HologramCellPolicy.candidates(s, c) : Collections.emptyList();
         int chosenChoice = -1;
@@ -1023,7 +1260,7 @@ final class HologramSnapshots {
         row.setTag("candidateRoles", candidateRoles);
         row.setIntArray("candidateTiers", candidateTiers);
         if (!draftOnly) row.setIntArray("candidateAvailable", candidateAvailable);
-        return row;
+        return new CellRow(row, pinned, loaded, inScope, current, meta, actualTile);
     }
 
     static NBTTagCompound recoverySummary(ItemStack drop, boolean estimated) {

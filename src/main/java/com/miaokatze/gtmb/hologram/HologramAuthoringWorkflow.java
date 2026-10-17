@@ -157,6 +157,7 @@ final class HologramAuthoringWorkflow {
             cell.tileNbt = payload == null ? "" : payload;
             cell.itemNbt = "";
             cell.resourceFingerprint = "";
+            cell.resourcePlanKey = null;
             if (rebindShell) rebindAeShell(s, cell, index, remainingShell);
             s.virtualPreset.aeIssues = nextIssues;
             s.virtualEdited.add(HologramValues.position(cell));
@@ -196,6 +197,7 @@ final class HologramAuthoringWorkflow {
         cell.candidates = null;
         cell.candidateComplete = false;
         cell.resourceFingerprint = "";
+        cell.resourcePlanKey = null;
         cell.resourcePlan = null;
         cell.targetDisplay = new NBTTagCompound();
         if (sample == null) {
@@ -243,10 +245,14 @@ final class HologramAuthoringWorkflow {
         HologramBlueprintProcessing.enforcePolicy(draft.preset);
         HologramPresets.validate(draft.preset);
         boolean containsAe = false;
-        for (HologramPresets.Cell cell : draft.preset.cells)
-            containsAe |= HologramAePolicy.handles(cell.block(), cell.tileNbt)
-                || HologramBlueprintNbt.decode(cell.tileNbt) != null && HologramBlueprintNbt.decode(cell.tileNbt)
-                    .hasKey(HologramNetworkBindings.GROUP);
+        for (HologramPresets.Cell cell : draft.preset.cells) {
+            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            if (HologramAeBlueprint.supports(cell.block(), payload)
+                || payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) {
+                containsAe = true;
+                break;
+            }
+        }
         if (!containsAe && !draft.blocking) {
             HologramBlueprintMetadata.captureVersions(draft.preset);
             HologramLibraryWorkflow.saveReviewedDraft(s, draft.preset, operation, update, false);
@@ -300,6 +306,7 @@ final class HologramAuthoringWorkflow {
             cell.itemNbt = saved.itemNbt == null ? "" : saved.itemNbt;
             cell.excluded = saved.excluded;
             cell.resourceFingerprint = "";
+            cell.resourcePlanKey = null;
             s.virtualEdited.add(HologramValues.position(cell));
         }
         s.virtualPreset = sanitized.preset;
@@ -312,6 +319,8 @@ final class HologramAuthoringWorkflow {
     }
 
     static boolean blueprintAction(HologramSession s, NBTTagCompound action, String op) {
+        String dependency = blueprintEditDependency(op);
+        boolean indexedAnnotations = false;
         try {
             if ("deidentifyBlueprint".equals(op) || "configurePlacementDeidentification".equals(op)) {
                 int level = HologramDeidentification.checked(action.getInteger("level"));
@@ -380,6 +389,7 @@ final class HologramAuthoringWorkflow {
                     if (cell != null) {
                         cell.tileNbt = saved.tileNbt == null ? "" : saved.tileNbt;
                         cell.resourceFingerprint = "";
+                        cell.resourcePlanKey = null;
                     }
                 }
                 s.virtualPreset = edited;
@@ -524,13 +534,20 @@ final class HologramAuthoringWorkflow {
                 } else if ("editCellFlags".equals(op) || "editHintArea".equals(op)) {
                     if (s.capture == null) throw new java.io.IOException("请先载入区域或结构");
                     int[] indices = HologramSessionPolicy.editIndices(s, action);
+                    java.util.Set<Integer> dirty = new java.util.LinkedHashSet<>();
+                    boolean excludedChanged = false;
+                    String prompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
                     for (int index : indices) if (index >= 0 && index < s.capture.cells.size()) {
                         HologramCapture.Cell cell = s.capture.cells.get(index);
-                        if (action.hasKey("excluded")) cell.excluded = action.getBoolean("excluded");
-                        if ("editCellFlags".equals(op) && action.hasKey("prompt"))
-                            cell.prompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
+                        if (action.hasKey("excluded")) {
+                            excludedChanged |= cell.excluded != action.getBoolean("excluded");
+                            cell.excluded = action.getBoolean("excluded");
+                        }
+                        if ("editCellFlags".equals(op) && action.hasKey("prompt")) cell.prompt = prompt;
+                        if ("editCellFlags".equals(op) || action.hasKey("excluded")) dirty.add(index);
                     }
-                    if ("editCellFlags".equals(op) && s.virtualPreset != null) {
+                    indexedAnnotations = HologramLocalPlanRefresh.annotations(s, dirty);
+                    if (!indexedAnnotations && !dirty.isEmpty() && s.virtualPreset != null) {
                         for (HologramPresets.Cell saved : s.virtualPreset.cells) {
                             HologramCapture.Cell cell = s.capture.positions
                                 .get((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z));
@@ -541,7 +558,7 @@ final class HologramAuthoringWorkflow {
                     }
                     if ("editHintArea".equals(op)) {
                         HologramPresets.HintArea hint = new HologramPresets.HintArea();
-                        hint.prompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
+                        hint.prompt = prompt;
                         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
                         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
                         for (int index : indices) if (index >= 0 && index < s.capture.cells.size()) {
@@ -565,7 +582,8 @@ final class HologramAuthoringWorkflow {
                             HologramBlueprintData.updateHintArea(hints, hint);
                         }
                     }
-                    HologramResourcePlanner.refreshPlan(s);
+                    dependency = excludedChanged ? "geometry" : "prompt";
+                    if (excludedChanged) HologramBlueprintEditor.refreshEdited(s, dirty);
                     s.status = "排除与提示已更新；保存蓝图后保留";
                 } else if ("importArea".equals(op)) {
                     HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
@@ -629,8 +647,7 @@ final class HologramAuthoringWorkflow {
                 } else if ("editMove".equals(op)) {
                     HologramBlueprintEditor.moveBlueprintCells(s, action);
                 } else return false;
-            String dependency = blueprintEditDependency(op);
-            if (dependency != null) blueprintEdited(s, dependency);
+            if (dependency != null) blueprintEdited(s, dependency, indexedAnnotations);
         } catch (java.io.IOException | RuntimeException failure) {
             s.status = "蓝图操作失败：" + failure.getMessage();
         }
@@ -817,13 +834,35 @@ final class HologramAuthoringWorkflow {
     }
 
     static void blueprintEdited(HologramSession s, String dependency) {
+        blueprintEdited(s, dependency, false);
+    }
+
+    private static void blueprintEdited(HologramSession s, String dependency, boolean indexedAnnotations) {
         s.blueprintDirty = true;
         clearSourceSwitch(s);
         s.blueprintSaveReceipt = "";
         s.processingReviewed = false;
         s.decorLedger = new HologramDecorMaterials.Ledger();
         try {
-            if (s.virtualPreset != null) HologramBlueprintProcessing.invalidate(s.virtualPreset, dependency);
+            boolean annotations = indexedAnnotations
+                || "prompt".equals(dependency) && HologramLocalPlanRefresh.annotations(s, Collections.emptySet());
+            HologramBlueprintProcessing.Policy policy = annotations ? s.processingPolicy : null;
+            if (s.virtualPreset != null) HologramBlueprintProcessing.invalidate(s.virtualPreset, dependency, policy);
+            if (annotations) {
+                // Only author annotations changed. Keep raw NBT, identity policy and AE issue ownership intact.
+                HologramPresets.Preset source = s.processingSource;
+                source.prompt = s.virtualPreset == null ? s.blueprintPrompt : s.virtualPreset.prompt;
+                List<HologramPresets.HintArea> hints = s.virtualPreset == null ? s.blueprintHintAreas
+                    : s.virtualPreset.hintAreas;
+                if (source.hintAreas != hints) {
+                    source.hintAreas.clear();
+                    source.hintAreas.addAll(hints);
+                }
+                if (source != s.virtualPreset) HologramBlueprintProcessing.invalidate(source, dependency, policy);
+                s.processingPolicy = policy == null ? HologramBlueprintProcessing.policy(source) : policy;
+                s.ae.invalidateReviews();
+                return;
+            }
             HologramPresets.Preset current = HologramBlueprintProjection
                 .blueprint(s, s.virtualPreset == null ? "未命名蓝图" : s.virtualPreset.name);
             if (s.processingSource != null && ("prompt".equals(dependency) || "geometry".equals(dependency))) {
@@ -983,7 +1022,7 @@ final class HologramAuthoringWorkflow {
                 s.status = "方块 NBT 配置已修改；请重新审核 NBT 与提示步骤后保存";
             } else {
                 s.blueprintSaveReceipt = "";
-                HologramPresets.Preset raw = HologramPresets.copy(HologramAuthoringQueries.processingSource(s));
+                HologramPresets.Preset raw = HologramAuthoringQueries.processingSource(s);
                 HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.Policy
                     .read(action.getCompoundTag("policy"));
                 HologramPresets.Preset processed = HologramBlueprintProcessing
@@ -1107,11 +1146,12 @@ final class HologramAuthoringWorkflow {
             if (cell == null) continue;
             if (saved.item != null && (!saved.item.equals(cell.blueprintItem) || saved.damage != cell.blueprintDamage)
                 && HologramNativePlacement.supported(cell.block)
-                && !saved.excluded) rebindAeShell(s, cell, s.capture.cells.indexOf(cell), saved.stack());
+                && !saved.excluded) rebindAeShell(s, cell, HologramSessionPolicy.cellIndex(s, cell), saved.stack());
             cell.tileNbt = saved.tileNbt == null ? "" : saved.tileNbt;
             cell.itemNbt = saved.itemNbt == null ? "" : saved.itemNbt;
             cell.excluded = saved.excluded;
             cell.resourceFingerprint = "";
+            cell.resourcePlanKey = null;
         }
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.imported && (s.areaOverviewOwner == area || s.virtualPreset == area.blueprint)) {

@@ -10,6 +10,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
+
 import gregtech.common.blocks.BlockFrameBox;
 
 /** Inventory/material queries and accounting snapshots shared by planning and transactions. */
@@ -98,7 +100,7 @@ final class HologramMaterialAccess {
     }
 
     static int decorativeAvailability(HologramSession s, int current, ItemStack stack, int limit) {
-        String key = HologramValues.stackKey(stack);
+        ExactKey key = HologramValues.lookupKey(stack);
         long protectedAssets = s.pendingAssetBudget.getOrDefault(key, 0L)
             - s.cellAssetBudgets.getOrDefault(current, Collections.emptyMap())
                 .getOrDefault(key, 0L);
@@ -107,9 +109,9 @@ final class HologramMaterialAccess {
     }
 
     static void commitAssetBudget(HologramSession s, int index) {
-        Map<String, Long> costs = s.cellAssetBudgets.remove(index);
+        Map<ExactKey, Long> costs = s.cellAssetBudgets.remove(index);
         if (costs == null) return;
-        for (Map.Entry<String, Long> cost : costs.entrySet()) {
+        for (Map.Entry<ExactKey, Long> cost : costs.entrySet()) {
             long remaining = s.pendingAssetBudget.getOrDefault(cost.getKey(), 0L) - cost.getValue();
             if (remaining <= 0) s.pendingAssetBudget.remove(cost.getKey());
             else s.pendingAssetBudget.put(cost.getKey(), remaining);
@@ -122,7 +124,11 @@ final class HologramMaterialAccess {
     }
 
     static HologramMaterials.Context materialSource(HologramSession s) {
-        if (s.materialContext == null) s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);
+        if (s.materialContext == null) {
+            s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);
+            // A real material access may deliver pending recovery; UI-only actions never construct this context.
+            s.materialContext.flushRecovery();
+        }
         return s.materialContext;
     }
 }

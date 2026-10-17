@@ -16,6 +16,8 @@ final class HologramActionDispatcher {
     static void handle(EntityPlayerMP player, NBTTagCompound action) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
+        // Each action gets fresh material connections only if it actually queries or changes materials.
+        s.materialContext = null;
         if (action.getInteger("clientSnapshotProtocol") == 1) s.cellDeltaProtocol = true;
         if ("requestFullSnapshot".equals(action.getString("op"))) {
             long tick = player.worldObj.getTotalWorldTime();
@@ -30,7 +32,9 @@ final class HologramActionDispatcher {
             if (HologramLibraryWorkflow.acknowledgeBlueprintSave(s, action)) HologramSnapshots.send(s);
             return;
         }
-        if (action.hasKey("uiSequence")) s.uiSequence = action.getLong("uiSequence");
+        // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
+        if (action.hasKey("uiSequence") && !"close".equals(action.getString("op")))
+            s.uiSequence = action.getLong("uiSequence");
         long now = player.worldObj.getTotalWorldTime();
         if (s.actionTick != now) {
             s.actionTick = now;
@@ -90,7 +94,7 @@ final class HologramActionDispatcher {
             s.settingsOnly = false;
             s.forcePlacementReady = false;
             HologramDraftPersistence.persist(s);
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendUi(s);
             return;
         }
         if (!("confirmAeSave".equals(op) || "cancelAeSave".equals(op)
@@ -109,8 +113,6 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
-        s.materialContext = new HologramMaterials.Context(player, s.materialSettings);
-        s.materialContext.flushRecovery();
         boolean construction = "build".equals(op) || "start".equals(op)
             || "native".equals(op)
             || "confirmBlueprintPlacement".equals(op);
@@ -562,7 +564,7 @@ final class HologramActionDispatcher {
         if (action.hasKey("materialMe")) s.materialSettings.me = action.getBoolean("materialMe");
         if (action.hasKey("materialPriority"))
             s.materialSettings.priority = HologramValues.clamp(action.getInteger("materialPriority"), 0, 2);
-        s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);
+        s.materialContext = null;
         s.mode = HologramValues.clamp(action.getInteger("mode"), 0, 2);
         s.scope = HologramValues.clamp(action.getInteger("scope"), 0, 3);
         s.layer = HologramValues.clamp(action.getInteger("layer"), -128, 128);
@@ -595,7 +597,6 @@ final class HologramActionDispatcher {
             s.job = 0;
             HologramResourcePlanner.refreshPlan(s);
         }
-        HologramDraftPersistence.persist(s);
         if (hatchTargets != null) {
             s.presetSupported = true;
             s.presetReason = "自定义仓室搭配已应用；施工时仍核对权限、材料与现场";
@@ -664,7 +665,7 @@ final class HologramActionDispatcher {
                         + draft.getString("controllerType"),
                     draft);
         }
-        s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);
+        s.materialContext = null;
         if (s.capture != null) HologramResourcePlanner.refreshPlan(s);
         s.status = "设置已保存到当前投影仪";
     }

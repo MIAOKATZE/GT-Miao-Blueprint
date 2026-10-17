@@ -347,6 +347,7 @@ final class HologramWorldPlacementWorkflow {
         boolean expireCapability = s.virtualLocked || s.placementReviewIssued || s.forcePlacementReady;
         s.virtualPlacement = false;
         s.virtualLocked = false;
+        if (HologramSessionPolicy.authoring(s)) HologramResourcePlanner.clearAuthoringQuotes(s);
         s.blueprintAwaitingConfirmation = false;
         s.placementReviewIssued = false;
         s.forcePlacementReady = false;
@@ -362,8 +363,15 @@ final class HologramWorldPlacementWorkflow {
 
     /** Rebase the in-memory draft without publishing a temporary lock or discarding edits. */
     static boolean beginVirtualPlacement(HologramSession s, int x, int y, int z, int side) {
-        if (!moveVirtual(s, x, y, z, side)) return false;
+        boolean previousPlacement = s.virtualPlacement;
         s.virtualPlacement = true;
+        boolean moved = false;
+        try {
+            moved = moveVirtual(s, x, y, z, side);
+            if (!moved) return false;
+        } finally {
+            if (!moved) s.virtualPlacement = previousPlacement;
+        }
         s.virtualLocked = false;
         s.blueprintAwaitingConfirmation = false;
         s.forcePlacementReady = false;

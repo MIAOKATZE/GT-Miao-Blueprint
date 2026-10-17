@@ -1,6 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
-/** Presentation only: explicit root exit suppresses queued openings until the server acknowledges close. */
+/** Presentation only: root exit suppresses queued openings; deliberate OPEN/import clears the prior view intent. */
 final class HologramRootCloseFence {
 
     private String session = "";
@@ -19,7 +19,7 @@ final class HologramRootCloseFence {
             clear();
             return false;
         }
-        // The ACK itself must not route the GUI. Later deliberate opens can reuse the same sequence.
+        // A non-opening data reply may retire the fence. Explicit reopening also works at the same data sequence.
         if (sequence >= this.sequence && !open && !importing) clear();
         return true;
     }

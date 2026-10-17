@@ -42,7 +42,9 @@ final class HologramResourceWorld extends World {
             Object previousSave = SAVE_CACHE.get(null);
             Object previousMap = MAP_CACHE.get(null);
             try {
-                return new HologramResourceWorld(block, metadata);
+                HologramResourceWorld created = new HologramResourceWorld(block, metadata);
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.MATERIAL_WORLD_CREATED, 1);
+                return created;
             } finally {
                 try {
                     SAVE_CACHE.set(null, previousSave);

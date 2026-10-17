@@ -12,24 +12,26 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
+
 /** Resource report from a private virtual plan, including resumable distinct-material checks. */
 final class HologramResourceTask {
 
     private final HologramSession s;
     private final HologramPlanClassifier classifier;
-    private final Map<String, ItemStack> stacks = new LinkedHashMap<>();
-    private final Map<String, Integer> counts = new LinkedHashMap<>();
-    private final Map<String, Long> decorReserved = new HashMap<>();
+    private final Map<ExactKey, ItemStack> stacks = new LinkedHashMap<>();
+    private final Map<ExactKey, Integer> counts = new LinkedHashMap<>();
+    private final Map<ExactKey, Long> decorReserved = new HashMap<>();
     private final Map<ShellKey, Long> contentsByShell = new HashMap<>(), shellsByShell = new HashMap<>();
     private final Set<String> intrinsic = new HashSet<>();
     private HologramDecorMaterials.Ledger decorReport;
     private HologramBlueprintResources.Accumulator aggregate, total;
     private HologramBlueprintResources.Accumulator.Merge merge;
     private HologramBlueprintResources.MissingTask missing;
-    private Iterator<Map.Entry<String, ItemStack>> shells;
+    private Iterator<Map.Entry<ExactKey, ItemStack>> shells;
     private Iterator<ItemStack> assets;
-    private Iterator<Map.Entry<String, Long>> assetCosts;
-    private Map<String, Long> costs;
+    private Iterator<Map.Entry<ExactKey, Long>> assetCosts;
+    private Map<ExactKey, Long> costs;
     private HologramCapture.Cell active;
     private int stage, cursor, activeIndex, assetStage;
     private long checked;
@@ -94,6 +96,7 @@ final class HologramResourceTask {
     }
 
     void advance() {
+        long measured = HologramRuntimeMetrics.start();
         try {
             advanceChecked();
         } catch (IOException invalid) {
@@ -112,6 +115,8 @@ final class HologramResourceTask {
                 stage = 12;
                 cursor = 0;
             }
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.PLAN_RESOURCES, measured);
         }
     }
 
@@ -170,7 +175,7 @@ final class HologramResourceTask {
             }
         } else if (stage == 5) {
             if (shells.hasNext()) {
-                Map.Entry<String, ItemStack> entry = shells.next();
+                Map.Entry<ExactKey, ItemStack> entry = shells.next();
                 int available = HologramMaterialAccess
                     .shellCount(s, entry.getValue(), Math.max(4096, s.capture.cells.size()));
                 s.planMissing += Math.max(0, counts.get(entry.getKey()) - available);
@@ -195,7 +200,7 @@ final class HologramResourceTask {
             }
         } else if (stage == 7) {
             if (shells.hasNext()) {
-                Map.Entry<String, ItemStack> entry = shells.next();
+                Map.Entry<ExactKey, ItemStack> entry = shells.next();
                 ItemStack stack = entry.getValue()
                     .copy();
                 stack.stackSize = counts.get(entry.getKey());
@@ -230,7 +235,7 @@ final class HologramResourceTask {
             }
         } else if (stage == 10) {
             if (shells.hasNext()) {
-                Map.Entry<String, ItemStack> entry = shells.next();
+                Map.Entry<ExactKey, ItemStack> entry = shells.next();
                 shellsByShell.merge(new ShellKey(entry.getValue()), (long) counts.get(entry.getKey()), Long::sum);
                 checked++;
             } else {
@@ -274,7 +279,7 @@ final class HologramResourceTask {
     private void reserveAssets() throws IOException {
         if (assetCosts != null) {
             if (assetCosts.hasNext()) {
-                Map.Entry<String, Long> cost = assetCosts.next();
+                Map.Entry<ExactKey, Long> cost = assetCosts.next();
                 s.pendingAssetBudget.merge(cost.getKey(), cost.getValue(), Long::sum);
             } else {
                 assetCosts = null;
@@ -295,7 +300,7 @@ final class HologramResourceTask {
             assetStage = 0;
         } else if (assets.hasNext()) {
             ItemStack item = assets.next();
-            costs.merge(HologramValues.stackKey(item), assetStage == 0 ? (long) item.stackSize : 1L, Long::sum);
+            HologramValues.mergeStack(costs, item, assetStage == 0 ? (long) item.stackSize : 1L, Long::sum);
         } else if (assetStage == 0) {
             assets = HologramCellPolicy.coverCosts(s, active)
                 .iterator();
@@ -305,7 +310,7 @@ final class HologramResourceTask {
                 && HologramCellPolicy.decoration(s, active) == null
                 && !HologramMaterialAccess.freeShell(s, active, HologramCellPolicy.targetFor(s, active, activeIndex))) {
                 ItemStack shell = HologramEssentia.shellMaterial(HologramCellPolicy.targetFor(s, active, activeIndex));
-                if (shell != null) costs.merge(HologramValues.stackKey(shell), 1L, Long::sum);
+                if (shell != null) HologramValues.mergeStack(costs, shell, 1L, Long::sum);
             }
             s.cellAssetBudgets.put(activeIndex, costs);
             assetCosts = costs.entrySet()
@@ -348,10 +353,10 @@ final class HologramResourceTask {
                             0L,
                             (long) HologramMaterialAccess.materialSource(s)
                                 .count(stack, Integer.MAX_VALUE)
-                                - decorReserved.getOrDefault(HologramValues.stackKey(stack), 0L)
-                                - s.pendingAssetBudget.getOrDefault(HologramValues.stackKey(stack), 0L)));
+                                - decorReserved.getOrDefault(HologramValues.lookupKey(stack), 0L)
+                                - s.pendingAssetBudget.getOrDefault(HologramValues.lookupKey(stack), 0L)));
                     for (ItemStack payment : quote.items) {
-                        decorReserved.merge(HologramValues.stackKey(payment), (long) payment.stackSize, Long::sum);
+                        HologramValues.mergeStack(decorReserved, payment, (long) payment.stackSize, Long::sum);
                         s.decorPlanItems.add(payment.copy());
                     }
                     decorReport.commit(quote);
@@ -375,9 +380,13 @@ final class HologramResourceTask {
     }
 
     private void addShell(ItemStack stack) {
-        String key = HologramValues.stackKey(stack);
-        stacks.put(key, stack);
-        counts.merge(key, 1, Integer::sum);
+        ExactKey key = HologramValues.lookupKey(stack);
+        Integer previous = counts.get(key);
+        if (previous == null) {
+            key = HologramValues.stackKey(stack);
+            stacks.put(key, stack);
+            counts.put(key, 1);
+        } else counts.replace(key, previous + 1);
     }
 
     /** Fuzzy shells ignore unsealed NBT, but sealed resources require exact payload equality. */

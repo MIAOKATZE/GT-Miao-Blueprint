@@ -15,6 +15,7 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.IIcon;
 import net.minecraft.world.World;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -25,6 +26,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureWalker;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
@@ -45,10 +47,10 @@ public final class HologramCapture {
     final List<Piece> pieces = new ArrayList<>();
     final List<Cell> cells = new ArrayList<>();
     final Map<String, Cell> positions = new HashMap<>();
-    final IdentityHashMap<IStructureElement<?>, Map<String, HologramCasingFallback.Target>> casingCache = new IdentityHashMap<>();
+    final IdentityHashMap<IStructureElement<?>, Map<Pair<Integer, ExactKey>, HologramCasingFallback.Target>> casingCache = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, HologramReplacementFamily.Family> familyCache = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, String> roleCache = new IdentityHashMap<>();
-    final IdentityHashMap<IStructureElement<?>, Set<String>> declarationTrace = new IdentityHashMap<>();
+    final IdentityHashMap<IStructureElement<?>, Set<Pair<Integer, ExactKey>>> declarationTrace = new IdentityHashMap<>();
     /** One declaration identity graph per capture, retained across server tick continuations. */
     IStructureDefinition<?> definition;
     private long interpretationGeneration = HologramDeclarationAdapters.generation();
@@ -278,10 +280,12 @@ public final class HologramCapture {
                     capture.positions.put(position, cell);
                     capture.current = cell;
                     try {
-                        String signalKey = piece.trigger.stackSize + ":" + piece.trigger.getTagCompound();
-                        boolean observeDeclaration = capture.declarationTrace
-                            .computeIfAbsent(element, ignored -> new HashSet<>())
-                            .add(signalKey);
+                        Set<Pair<Integer, ExactKey>> signals = capture.declarationTrace
+                            .computeIfAbsent(element, ignored -> new HashSet<>());
+                        boolean observeDeclaration = !signals
+                            .contains(Pair.of(piece.trigger.stackSize, HologramValues.lookupKey(piece.trigger)));
+                        if (observeDeclaration)
+                            signals.add(Pair.of(piece.trigger.stackSize, HologramValues.stackKey(piece.trigger)));
                         if (observeDeclaration) HologramDeclarationWrappers.observeChannels(element, piece.trigger);
                         if (element == StructureUtility.isAir()) {
                             cell.block = Blocks.air;
@@ -453,10 +457,17 @@ public final class HologramCapture {
     }
 
     private HologramCasingFallback.Target casing(IStructureElement<?> element, ItemStack trigger) {
-        Map<String, HologramCasingFallback.Target> signals = casingCache
+        Map<Pair<Integer, ExactKey>, HologramCasingFallback.Target> signals = casingCache
             .computeIfAbsent(element, ignored -> new HashMap<>());
-        String signal = trigger == null ? "" : trigger.stackSize + ":" + trigger.getTagCompound();
-        if (!signals.containsKey(signal)) signals.put(signal, HologramCasingFallback.resolve(element, trigger));
+        Pair<Integer, ExactKey> signal = trigger == null ? null
+            : Pair.of(trigger.stackSize, HologramValues.lookupKey(trigger));
+        if (!signals.containsKey(signal)) {
+            Pair<Integer, ExactKey> owned = trigger == null ? null
+                : Pair.of(trigger.stackSize, HologramValues.stackKey(trigger));
+            HologramCasingFallback.Target target = HologramCasingFallback.resolve(element, trigger);
+            signals.put(owned, target);
+            return target;
+        }
         return signals.get(signal);
     }
 
@@ -489,6 +500,7 @@ public final class HologramCapture {
         String sourceClass = "", sourceWarning = "";
         String resourceFingerprint = "", resourceTile = "", resourceItem = "", resourceError = "";
         HologramBlueprintResources.Plan resourcePlan;
+        HologramCellPolicy.ResourcePlanKey resourcePlanKey;
         String coverCostsNbt = "";
         List<ItemStack> coverMaterials = java.util.Collections.emptyList();
         boolean invalidCoverCosts;

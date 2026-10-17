@@ -55,6 +55,10 @@ final class HologramBlueprintEditor {
 
     static void refreshEdited(HologramSession s, java.util.Set<Integer> dirty) {
         if (HologramLocalPlanRefresh.refresh(s, dirty)) return;
+        if (HologramSessionPolicy.authoring(s)) {
+            HologramResourcePlanner.refreshPlan(s);
+            return;
+        }
         if (s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && s.cellDeltaProtocol) {
             HologramDeferredPlanRefresh.request(s, dirty);
         } else HologramResourcePlanner.refreshPlan(s);

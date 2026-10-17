@@ -60,6 +60,7 @@ final class HologramBlueprintData {
         cell.resourceFingerprint = old.resourceFingerprint;
         cell.resourceError = old.resourceError;
         cell.resourcePlan = old.resourcePlan;
+        cell.resourcePlanKey = old.resourcePlanKey;
         cell.coverCostsNbt = old.coverCostsNbt;
         cell.coverMaterials = old.coverMaterials;
         cell.invalidCoverCosts = old.invalidCoverCosts;

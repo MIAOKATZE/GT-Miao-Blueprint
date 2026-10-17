@@ -145,7 +145,14 @@ public final class HologramNativePlacement {
     /** Main sample is charged by the normal transaction; every remaining native component is extra. */
     public static List<ItemStack> additionalMaterials(Block block, int metadata, NBTTagCompound payload, ItemStack main)
         throws IOException {
-        List<ItemStack> costs = materials(block, metadata, payload);
+        return additionalMaterials(block, materials(block, metadata, payload), main);
+    }
+
+    /** Reuse a bill already obtained for the exact payload in this operation, retaining the caller's native credits. */
+    static List<ItemStack> additionalMaterials(Block block, List<ItemStack> materials, ItemStack main)
+        throws IOException {
+        List<ItemStack> costs = new ArrayList<>();
+        for (ItemStack material : materials) costs.add(material.copy());
         if (HologramGtswnPlacementMaterials.freeShell(block, main)) return costs;
         if (costs.isEmpty()) return costs;
         for (int i = 0; i < costs.size(); i++) {

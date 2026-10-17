@@ -32,6 +32,96 @@ public final class HologramLargeStateRegression {
         incremental(state);
         preparation(state);
         regionInvalidation();
+        areaSelectionReceipts(state);
+    }
+
+    private static void areaSelectionReceipts(HologramState full) {
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setBoolean("areaSelectionOnly", true);
+        receipt.setString("session", full.session);
+        receipt.setString("generation", full.session);
+        receipt.setLong("planRevision", full.data.getLong("planRevision"));
+        receipt.setLong("areaSelectionSequence", 1);
+        receipt.setBoolean("areaSelecting", true);
+        receipt.setBoolean("open", false);
+        receipt.setIntArray("areaPoints", new int[] { 3, 64, 4 });
+        HologramState selected = HologramState.apply(full, receipt);
+        SimpleAssert.that(
+            selected.cells == full.cells && selected.regions == full.regions
+                && selected.materials == full.materials
+                && selected.structureMembers == full.structureMembers,
+            "point receipts retain all cell, NBT, material and spatial objects");
+        SimpleAssert.eq(0, selected.parsedCells, "point receipts parse zero cells regardless of structure size");
+        SimpleAssert
+            .that(!selected.data.getBoolean("areaSelectionShell"), "a real baseline remains editable after points");
+        NBTTagCompound uiReceipt = (NBTTagCompound) receipt.copy();
+        uiReceipt.setLong("areaSelectionSequence", 2);
+        uiReceipt.setBoolean("workspaceUiOnly", true);
+        uiReceipt.setBoolean("workspaceHasCapture", true);
+        uiReceipt.setBoolean("open", true);
+        HologramState reopened = HologramState.apply(selected, uiReceipt);
+        SimpleAssert.that(
+            reopened.cells == full.cells && !reopened.data.getBoolean("snapshotPending"),
+            "reopening a known blueprint needs no new geometry or material preparation");
+        HologramState openingShell = HologramState.apply(null, uiReceipt);
+        SimpleAssert.that(
+            openingShell.data.getBoolean("open") && openingShell.data.getBoolean("snapshotPending"),
+            "unknown blueprint opens its UI immediately with an honest pending baseline");
+        uiReceipt.setBoolean("workspaceHasCapture", false);
+        HologramState emptyWorkspace = HologramState.apply(null, uiReceipt);
+        SimpleAssert.that(
+            !emptyWorkspace.data.getBoolean("snapshotPending") && !emptyWorkspace.data.getBoolean("areaSelectionShell"),
+            "an empty tool opens without scheduling unnecessary full structure metadata");
+        SimpleAssert.that(
+            HologramState.apply(selected, uiReceipt).data.getBoolean("snapshotPending"),
+            "a geometry change cannot silently reuse a nonempty baseline as an empty workspace");
+        uiReceipt.setBoolean("workspaceCapturePending", true);
+        HologramState capturing = HologramState.apply(null, uiReceipt);
+        SimpleAssert.that(
+            capturing.data.getBoolean("snapshotPending") && capturing.data.getBoolean("areaSelectionShell"),
+            "an unfinished capture with no cells yet cannot masquerade as a ready empty tool");
+        HologramState pendingCapture = HologramState.apply(selected, uiReceipt);
+        SimpleAssert.that(
+            HologramState.apply(pendingCapture, full.fullData()).data.getBoolean("snapshotPending"),
+            "an older full baseline cannot consume a newer capture opening intent or mark that capture ready");
+        uiReceipt.setBoolean("workspaceCapturePending", false);
+        HologramState shell = HologramState.apply(null, receipt);
+        SimpleAssert.that(
+            shell.cells.isEmpty() && shell.data.getBoolean("areaSelectionShell"),
+            "first point receipt establishes only an explicitly noneditable selection shell");
+        rejects(
+            shell,
+            delta(shell, shell.data.getLong("planRevision")),
+            "selection shell cannot stand in for full baseline");
+        NBTTagCompound staleFull = full.fullData();
+        staleFull.setBoolean("areaSelecting", false);
+        staleFull.setBoolean("open", true);
+        HologramState late = HologramState.apply(selected, staleFull);
+        SimpleAssert.that(
+            late.cells.size() == full.cells.size() && late.data.getBoolean("areaSelecting")
+                && !late.data.getBoolean("open")
+                && late.data.getIntArray("areaPoints")[0] == 3,
+            "delayed full geometry cannot undo a newer corner or reopen the UI");
+        HologramState.Preparation preparation = new HologramState.Preparation(staleFull);
+        while (!preparation.step(4096, Long.MAX_VALUE)) {}
+        SimpleAssert.that(
+            preparation.result()
+                .retainAreaSelection(selected).data.getBoolean("areaSelecting"),
+            "cooperative full preparation retains a newer corner receipt as well");
+        receipt.setLong("areaSelectionSequence", 2);
+        receipt.setLong("planRevision", full.data.getLong("planRevision") + 1);
+        receipt.setBoolean("areaSelecting", false);
+        receipt.setBoolean("areaImporting", true);
+        HologramState importing = HologramState.apply(selected, receipt);
+        SimpleAssert
+            .that(importing.data.getBoolean("areaSelectionShell"), "new import revision cannot authorize old geometry");
+        NBTTagCompound completed = full.fullData();
+        completed.setLong("planRevision", receipt.getLong("planRevision"));
+        completed.setLong("areaSelectionSequence", 2);
+        HologramState restored = HologramState.apply(importing, completed);
+        SimpleAssert.that(
+            !restored.data.getBoolean("areaSelectionShell") && !restored.data.getBoolean("areaImporting"),
+            "matching final full replaces the shell and owns geometry again");
     }
 
     private static void incremental(HologramState state) {
@@ -92,6 +182,31 @@ public final class HologramLargeStateRegression {
             renamed.cells == next.cells && renamed.regions == next.regions,
             "metadata-only acknowledgement reuses cell pages and every region");
         SimpleAssert.eq("renamed", renamed.data.getString("draftName"), "lightweight metadata still advances");
+        NBTTagCompound annotation = delta(renamed, renamed.data.getLong("planRevision"));
+        NBTTagCompound annotationRow = new NBTTagCompound();
+        annotationRow.setInteger("index", 15);
+        annotationRow.setBoolean("annotationOnly", true);
+        annotationRow.setString("prompt", "new author prompt");
+        annotationRow.setBoolean("excluded", false);
+        NBTTagList annotationRows = new NBTTagList();
+        annotationRows.appendTag(annotationRow);
+        annotation.setTag("cells", annotationRows);
+        HologramState annotated = HologramState.apply(renamed, annotation);
+        SimpleAssert.eq(
+            "new author prompt",
+            annotated.cells.get(15).prompt,
+            "annotation patch changes only its named cell text");
+        SimpleAssert.eq(7, annotated.cells.get(15).wantMeta, "annotation preserves the installed target identity");
+        SimpleAssert.eq(
+            renamed.cells.get(15).x,
+            annotated.cells.get(15).x,
+            "annotation preserves the installed cell coordinates");
+        SimpleAssert.that(
+            annotated.cells.get(5000) == renamed.cells.get(5000) && annotated.materials == renamed.materials,
+            "annotation reuses unrelated geometry and unchanged quotes");
+        SimpleAssert.that(
+            !"new author prompt".equals(renamed.cells.get(15).prompt),
+            "annotation patch cannot mutate its published base");
         rejects(renamed, patch, "repeated stale delta cannot apply on a different revision");
         NBTTagCompound mismatch = delta(renamed, 12);
         mismatch.setString("generation", "other");

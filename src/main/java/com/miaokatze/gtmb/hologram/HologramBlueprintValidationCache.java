@@ -111,10 +111,9 @@ final class HologramBlueprintValidationCache {
             return filtered.get(key);
         }
         filterMisses++;
-        if (tile) HologramCoordinatePolicies.validatePaymentPayload(HologramBlueprintNbt.decode(encoded));
-        String result = tile && HologramAePolicy.handles(block, encoded)
-            ? HologramBlueprintNbt.filterCanonical(block, encoded, keys, retainCovers)
-            : HologramBlueprintNbt.filterCaptured(encoded, keys, retainCovers);
+        net.minecraft.nbt.NBTTagCompound source = HologramBlueprintNbt.decode(encoded);
+        if (tile) HologramCoordinatePolicies.validatePaymentPayload(source);
+        String result = HologramBlueprintNbt.filterDecoded(tile ? block : null, source, keys, retainCovers);
         if (admit(encoded.length() + (result == null ? 0 : result.length()))) filtered.put(key, result);
         return result;
     }
@@ -159,6 +158,11 @@ final class HologramBlueprintValidationCache {
 
     static boolean vanillaMaterial(Block block) {
         return block != null && vanillaMaterialClass(block.getClass());
+    }
+
+    boolean ordinaryMaterial(Block block, int metadata) {
+        return block != null && !block.hasTileEntity(metadata)
+            && (vanillaMaterial(block) || HologramMaterialDescriptor.kind(block) != 0);
     }
 
     /** Audited vanilla pick/drop implementations read only metadata; subclasses keep the uncached callback. */

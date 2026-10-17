@@ -21,10 +21,9 @@ import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.BlockFrameBox;
 
 /** Server-owned region selection and resumable read-only world import. */
-final class HologramArea {
+final class HologramArea extends HologramAreaSelection {
 
     boolean selecting, imported, importing;
-    int[] first, second;
     int x, y, z, minX, minY, minZ, maxX, maxY, maxZ;
     HologramPresets.Preset blueprint;
     final Map<String, Structure> structures = new LinkedHashMap<>();
@@ -44,85 +43,12 @@ final class HologramArea {
     HologramResourcePlanner.PlanTask planTask;
     long expandedNbt;
     String active = "";
-    String pointMode = "replace";
-    final List<Region> regions = new ArrayList<>();
-    final List<List<Region>> regionUndo = new ArrayList<>();
-
-    static final class Region {
-
-        final int minX, minY, minZ, maxX, maxY, maxZ;
-        final String mode;
-
-        Region(int[] a, int[] b, String mode) {
-            minX = Math.min(a[0], b[0]);
-            minY = Math.min(a[1], b[1]);
-            minZ = Math.min(a[2], b[2]);
-            maxX = Math.max(a[0], b[0]);
-            maxY = Math.max(a[1], b[1]);
-            maxZ = Math.max(a[2], b[2]);
-            this.mode = mode;
-        }
-
-        boolean contains(int x, int y, int z) {
-            return x >= minX && x <= maxX && y >= minY && y <= maxY && z >= minZ && z <= maxZ;
-        }
-    }
-
-    void point(int index, int xx, int yy, int zz, String mode) throws IOException {
-        if (!("replace".equals(mode) || "add".equals(mode) || "subtract".equals(mode)))
-            throw new IOException("区域组合模式无效");
-        if (index != 1 && index != 2) throw new IOException("区域角点无效");
-        boolean pending = (first == null) != (second == null);
-        boolean completes = pending && (index == 1 ? second != null : first != null);
-        if (completes && (regions.size() >= 128 || regionUndo.size() >= 128)) throw new IOException("区域组合过多，请撤销或完成");
-        // Either mouse button may start the next pair. Re-marking that same corner keeps its original mode.
-        if (!pending) {
-            first = null;
-            second = null;
-            pointMode = mode;
-        }
-        if (index == 1) first = new int[] { xx, yy, zz };
-        else second = new int[] { xx, yy, zz };
-        if (completes) {
-            regionUndo.add(new ArrayList<>(regions));
-            if ("replace".equals(pointMode)) regions.clear();
-            regions.add(new Region(first, second, pointMode));
-        }
-    }
-
-    void undoRegion() {
-        if (regionUndo.isEmpty()) {
-            first = null;
-            second = null;
-            return;
-        }
-        regions.clear();
-        regions.addAll(regionUndo.remove(regionUndo.size() - 1));
-        first = null;
-        second = null;
-    }
 
     boolean contains(int xx, int yy, int zz) {
         if (regions.isEmpty()) return xx >= minX && xx <= maxX && yy >= minY && yy <= maxY && zz >= minZ && zz <= maxZ;
         boolean selected = false;
         for (Region region : regions) if (region.contains(xx, yy, zz)) selected = !"subtract".equals(region.mode);
         return selected;
-    }
-
-    NBTTagList regionSnapshot() {
-        NBTTagList rows = new NBTTagList();
-        for (Region region : regions) {
-            NBTTagCompound row = new NBTTagCompound();
-            row.setInteger("minX", region.minX);
-            row.setInteger("minY", region.minY);
-            row.setInteger("minZ", region.minZ);
-            row.setInteger("maxX", region.maxX);
-            row.setInteger("maxY", region.maxY);
-            row.setInteger("maxZ", region.maxZ);
-            row.setString("mode", region.mode);
-            rows.appendTag(row);
-        }
-        return rows;
     }
 
     static final class Structure {
@@ -140,11 +66,6 @@ final class HologramArea {
             this.machine = machine;
             id = x + "," + y + "," + z;
         }
-    }
-
-    void point(int index, int xx, int yy, int zz) {
-        if (index == 1) first = new int[] { xx, yy, zz };
-        if (index == 2) second = new int[] { xx, yy, zz };
     }
 
     void begin(World world) throws IOException {
@@ -191,33 +112,14 @@ final class HologramArea {
     }
 
     /** Subtraction can only reduce the mask, so its exterior bounds never enlarge the source scan. */
-    int[] bounds() throws IOException {
-        if (regions.isEmpty()) {
-            if (first == null || second == null) throw new IOException("请先选择两个区域角点");
-            regions.add(new Region(first, second, "replace"));
-        }
-        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
-            Integer.MIN_VALUE };
-        for (Region region : regions) {
-            if ("subtract".equals(region.mode)) continue;
-            bounds[0] = Math.min(bounds[0], region.minX);
-            bounds[1] = Math.min(bounds[1], region.minY);
-            bounds[2] = Math.min(bounds[2], region.minZ);
-            bounds[3] = Math.max(bounds[3], region.maxX);
-            bounds[4] = Math.max(bounds[4], region.maxY);
-            bounds[5] = Math.max(bounds[5], region.maxZ);
-        }
-        if (bounds[0] == Integer.MAX_VALUE) throw new IOException("减选后没有可导入的正选区域");
-        return bounds;
-    }
 
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
         if (imported) return true;
         World world = player.worldObj;
-        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS);
-        for (int budget = 4096; y <= maxY && budget > 0; budget--) {
-            if (budget < 4096 && System.nanoTime() >= deadline) break;
+        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
+        for (int work = 0; y <= maxY; work++) {
+            if (work > 0 && System.nanoTime() >= deadline) break;
             if (contains(x, y, z)) {
                 if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
                 Block block = world.getBlock(x, y, z);
@@ -279,7 +181,7 @@ final class HologramArea {
             Structure structure = discovery.get(discoveryIndex);
             if (declarationMembers != null) {
                 importPhase = "declaration_memberships";
-                for (int work = 0; declarationMembers.hasNext() && work < 4096; work++) {
+                for (int work = 0; declarationMembers.hasNext(); work++) {
                     if (work > 0 && System.nanoTime() >= deadline) break;
                     Map.Entry<String, HologramCapture.Cell> entry = declarationMembers.next();
                     HologramCapture.Cell cell = entry.getValue();
@@ -327,7 +229,10 @@ final class HologramArea {
         if ("blocks".equals(importPhase) || "declarations".equals(importPhase)
             || "declaration_memberships".equals(importPhase)) importPhase = "networks";
         if ("networks".equals(importPhase)) {
-            if (preparation.captureNetworks(blueprint, 4096, deadline)) importPhase = "canonicalize";
+            if (preparation.captureNetworks(blueprint, Integer.MAX_VALUE, deadline)) {
+                importPhase = "canonicalize";
+                preparation.start(blueprint);
+            }
             return false;
         }
         if ("canonicalize".equals(importPhase)) {
@@ -489,9 +394,4 @@ final class HologramArea {
         return list;
     }
 
-    int[] points() {
-        if (first == null) return second == null ? new int[0] : second.clone();
-        if (second == null) return first.clone();
-        return new int[] { first[0], first[1], first[2], second[0], second[1], second[2] };
-    }
 }

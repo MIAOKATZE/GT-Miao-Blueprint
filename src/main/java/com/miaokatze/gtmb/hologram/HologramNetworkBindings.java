@@ -552,7 +552,11 @@ final class HologramNetworkBindings {
 
         void add(String encoded, boolean excluded) throws IOException {
             if (excluded) return;
-            NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+            add(HologramBlueprintNbt.decode(encoded));
+        }
+
+        /** Owner-thread decoded input is read only; every cell still performs its native binding checks. */
+        void add(NBTTagCompound tag) throws IOException {
             if (tag == null || !tag.hasKey(GROUP)) return;
             String id = group(tag);
             NBTTagCompound row = groups.get(id);

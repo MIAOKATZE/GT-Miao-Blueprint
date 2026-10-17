@@ -30,6 +30,7 @@ public final class HologramServerLoadRegression {
             publication();
             productionJobDeltas();
             fairRounds();
+            adaptiveTickSlack();
             taskScheduling();
             callbackPendingCapacity();
         } catch (ReflectiveOperationException failure) {
@@ -189,6 +190,88 @@ public final class HologramServerLoadRegression {
                 .eq(1, visited.size(), "one slow atomic callback does not grant every peer another full budget");
         } finally {
             cursor.setInt(null, previous);
+        }
+    }
+
+    private static void adaptiveTickSlack() throws ReflectiveOperationException {
+        final long ms = 1_000_000L;
+        SimpleAssert.eq(
+            40 * ms,
+            HologramWorkBudget.tickNanos(100 * ms, 100 * ms),
+            "idle tick exposes spare time through 40 ms");
+        SimpleAssert
+            .eq(15 * ms, HologramWorkBudget.tickNanos(100 * ms, 125 * ms), "world work reduces spare tick time");
+        SimpleAssert.eq(
+            ms,
+            HologramWorkBudget.tickNanos(100 * ms, 160 * ms),
+            "busy tick retains only a minimum progress slice");
+        Field cursor = HologramWorkspaceScheduler.class.getDeclaredField("nextSession");
+        cursor.setAccessible(true);
+        int previous = cursor.getInt(null);
+        try {
+            cursor.setInt(null, 0);
+            AtomicLong clock = new AtomicLong();
+            List<String> order = new ArrayList<>();
+            List<Long> quotas = new ArrayList<>();
+            HologramWorkspaceScheduler.runRound(Arrays.asList("idle", "a", "b"), session -> {
+                order.add(session);
+                if (!"idle".equals(session)) clock.addAndGet(HologramWorkBudget.remainingNanos(0));
+            }, session -> {
+                order.add(session + "+");
+                long quota = HologramWorkBudget.remainingNanos(0);
+                quotas.add(quota);
+                clock.addAndGet(quota);
+            }, session -> !"idle".equals(session), clock::get, 40 * ms);
+            SimpleAssert.eq(
+                Arrays.asList("idle", "a", "b", "a+", "b+"),
+                order,
+                "each peer gets its first slice before extra work");
+            SimpleAssert.eq(
+                Arrays.asList(15 * ms, 15 * ms),
+                quotas,
+                "active peers fairly share spare time without reserving idle quotas");
+            SimpleAssert
+                .eq(40 * ms, clock.get(), "idle server spends the available tick instead of stopping after five ms");
+
+            cursor.setInt(null, 0);
+            clock.set(0);
+            order.clear();
+            for (int tick = 0; tick < 3; tick++)
+                HologramWorkspaceScheduler.runRound(Arrays.asList("a", "b", "c"), session -> {
+                    order.add(session);
+                    SimpleAssert.eq(
+                        ms,
+                        HologramWorkBudget.remainingNanos(0),
+                        "busy peer is clipped to the shared one-ms quota");
+                    clock.addAndGet(2 * ms); // One native callback may atomically exceed its soft deadline.
+                },
+                    session -> { throw new AssertionError("busy tick granted an extra continuation"); },
+                    session -> true,
+                    clock::get,
+                    ms);
+            SimpleAssert.eq(
+                Arrays.asList("a", "b", "c"),
+                order,
+                "busy atomic work rotates peers across ticks without multiplying their budgets");
+
+            cursor.setInt(null, 0);
+            clock.set(0);
+            order.clear();
+            HologramWorkspaceScheduler.runRound(
+                Arrays.asList("waiting", "job"),
+                order::add,
+                session -> { throw new AssertionError("worker waiting or a once-per-tick job was run twice"); },
+                session -> false,
+                clock::get,
+                40 * ms);
+            SimpleAssert.eq(
+                Arrays.asList("waiting", "job"),
+                order,
+                "unavailable workers and jobs are polled once and release spare time");
+            SimpleAssert.eq(0L, HologramWorkBudget.remainingNanos(0), "assigned quota cannot escape its work round");
+        } finally {
+            cursor.setInt(null, previous);
+            HologramWorkBudget.end();
         }
     }
 

@@ -84,28 +84,38 @@ final class HologramUiRouter {
     }
 
     void drawImportBusy(int mx, int my) {
-        ui.canvas.text("正在导入框选区域", 142, 13, 360, 0xf5e4b9);
+        boolean importing = ui.session.areaImporting();
+        ui.canvas.text(importing ? "正在导入框选区域" : "正在准备蓝图快照", 142, 13, 360, 0xf5e4b9);
         drawRect(30, 62, 650, 282, 0xff172f36);
-        ui.canvas.text("正在导入区域 · 请稍候", 50, 78, 580, 0xffe59b);
+        ui.canvas.text(importing ? "正在导入区域 · 请稍候" : "正在读取蓝图 · 请稍候", 50, 78, 580, 0xffe59b);
         String stage = ui.session.state().data.getString("areaImportStage");
         if (stage.isEmpty()) stage = "blocks";
-        ui.canvas.text(HologramProgressView.phase("area." + stage), 50, 105, 580, 0x8bdddf);
-        ui.canvas.text("导入完成前，暂不能编辑、保存或放置蓝图。", 50, 123, 580, 0xe5c28d);
-        ui.canvas.text("取消后保留导入前的蓝图。", 50, 141, 580, 0xa9d6cf);
+        ui.canvas.text("准备完成前，暂不能编辑、保存或放置蓝图。", 50, 123, 580, 0xe5c28d);
+        ui.canvas.text(importing ? "取消后保留导入前的蓝图。" : "可以先返回世界，快照准备会继续。", 50, 141, 580, 0xa9d6cf);
         HologramProgress progress = ui.session.progress();
-        if (progress == null || !progress.phase.startsWith("area.")) progress = importProgress.update(
+        if (progress == null || progress.complete) progress = importProgress.update(
             ui.session.state().session,
-            "area." + stage,
+            importing ? "area." + stage : "snapshot.prepare",
             ui.session.state().data.getString("areaImportDetail"),
             ui.session.state().data.getLong("areaImportDone"),
             ui.session.state().data.getLong("areaImportTotal"),
             ui.session.state().data.getString("areaImportUnit"),
             false,
             System.nanoTime());
+        ui.canvas.text(HologramProgressView.phase(progress.phase), 50, 105, 580, 0x8bdddf);
         HologramProgressView.draw(ui.host.font(), progress, 50, 165, 580, 9);
         ui.canvas.text(HologramProgressView.detail(progress), 50, 192, 580, 0x8bdddf);
         ui.canvas.text(ui.session.state().data.getString("status"), 50, 204, 580, 0xe5c28d);
-        ui.canvas.button(193, 218, 239, 244, 20, "取消导入并返回世界 · Esc / E", true, mx, my);
+        ui.canvas.button(
+            193,
+            218,
+            239,
+            244,
+            20,
+            importing && !HologramBackgroundTasks.busy() ? "取消导入并返回世界 · Esc / E" : "返回世界，后台继续 · Esc / E",
+            true,
+            mx,
+            my);
     }
 
     void updateScreen() {
@@ -151,7 +161,7 @@ final class HologramUiRouter {
                     return;
                 }
             }
-            if (ui.session.areaImporting()) {
+            if (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending")) {
                 ui.router.drawImportBusy(mx, my);
                 if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction())
                     drawTaskStatus(mx, my);
@@ -750,6 +760,10 @@ final class HologramUiRouter {
     }
 
     void activate(int id) {
+        if (id == 193 && (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending"))) {
+            closeRoot();
+            return;
+        }
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (id == 990) closeRoot();
             else if (id == 991) HologramBackgroundTasks.cancel();

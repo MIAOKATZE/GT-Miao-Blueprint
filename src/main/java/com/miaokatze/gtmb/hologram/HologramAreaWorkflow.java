@@ -21,7 +21,7 @@ final class HologramAreaWorkflow {
         HologramSession s = HologramProjectorWorkflow.uiSession(player);
         if (s.job == 1 || s.job == 2) {
             s.status = "请先取消当前施工任务再选择区域";
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendAreaSelection(s);
             return;
         }
         HologramArea area = HologramWorkspace.AREAS
@@ -39,7 +39,7 @@ final class HologramAreaWorkflow {
             if (!area.selecting && area.first != null && area.second != null) startAreaImport(s, area);
         }
         player.addChatMessage(new ChatComponentText("[猫猫蓝图全息投影仪] " + s.status));
-        HologramSnapshots.send(s);
+        HologramSnapshots.sendAreaSelection(s);
     }
 
     /** Begin and finish are separate, idempotent gestures; a repeated click never starts an import. */
@@ -47,11 +47,14 @@ final class HologramAreaWorkflow {
         HologramSession s = HologramProjectorWorkflow.uiSession(player);
         if (s.job == 1 || s.job == 2) {
             s.status = "请先完成或取消当前施工，再框选区域";
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendAreaSelection(s);
             return;
         }
         HologramArea existing = HologramWorkspace.AREAS.get(player.getUniqueID());
-        if (existing != null && (existing.selecting || existing.importing)) return;
+        if (existing != null && (existing.selecting || existing.importing)) {
+            HologramSnapshots.sendAreaSelection(s);
+            return;
+        }
         HologramArea area = new HologramArea();
         HologramWorkspace.AREAS.put(player.getUniqueID(), area);
         area.selecting = true;
@@ -61,36 +64,73 @@ final class HologramAreaWorkflow {
         player.inventory.markDirty();
         HologramProjectorWorkflow.libraryCloseUi(s);
         s.status = "左键第一角，右键第二角；浮空框选，Alt + 滚轮调整距离；再次 Shift + 右键完成，Esc 取消";
-        HologramSnapshots.send(s);
+        HologramSnapshots.sendAreaSelection(s);
     }
 
     static void finishAreaSelection(EntityPlayerMP player, NBTTagCompound request) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
-        if (s == null || s.player != player
-            || !s.id.equals(request.getString("session"))
+        if (s != null && s.player != player) return;
+        // A repeated final packet must not retire the import that this same command already started.
+        if (s != null && area != null
+            && area.importing
+            && s.id.equals(request.getString("session"))
+            && request.hasKey("uiSequence", 4)
+            && request.getLong("uiSequence") == s.uiSequence
+            && HologramSessionPolicy.valid(s)) {
+            HologramSnapshots.sendAreaSelection(s);
+            return;
+        }
+        if (s == null || !s.id.equals(request.getString("session"))
             || !request.hasKey("planRevision", 4)
             || s.planRevision != request.getLong("planRevision")
             || !HologramSessionPolicy.valid(s)
             || s.job == 1
             || s.job == 2
             || area == null
-            || !area.selecting) return;
-        if (request.hasKey("uiSequence", 4)) {
-            long sequence = request.getLong("uiSequence");
-            if (sequence <= s.uiSequence) return;
-            s.uiSequence = sequence;
+            || !area.selecting
+            || request.hasKey("uiSequence", 4) && request.getLong("uiSequence") <= s.uiSequence) {
+            NBTTagCompound rejected = new NBTTagCompound();
+            rejected.setString("scope", "server");
+            rejected.setString("session", request.getString("session"));
+            if (request.hasKey("uiSequence", 4)) rejected.setLong("uiSequence", request.getLong("uiSequence"));
+            rejected.setString("action", "finishAreaSelection");
+            rejected.setString("phase", "request.rejected");
+            rejected.setString("outcome", "rejected");
+            rejected.setString("status", "框选确认未执行；当前会话或工具已变化，可重新确认");
+            NBTTagCompound envelope = new NBTTagCompound();
+            envelope.setBoolean("progressOnly", true);
+            envelope.setTag("progress", rejected);
+            HologramWorkspace.snapshotSink()
+                .send(player, envelope);
+            return;
+        }
+        if (request.hasKey("uiSequence", 4)) s.uiSequence = request.getLong("uiSequence");
+        if (request.hasKey("areaSelection", 10)) {
+            try {
+                area.readSnapshot(request.getCompoundTag("areaSelection"));
+            } catch (java.io.IOException invalid) {
+                s.status = invalid.getMessage();
+                HologramSnapshots.sendAreaSelection(s);
+                return;
+            }
         }
         if (area.regions.isEmpty() && (area.first == null || area.second == null)) {
             s.status = "请先设置两个角点，再次 Shift + 右键完成";
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendAreaSelection(s);
             return;
         }
         area.selecting = false;
         HologramWorkspace.clearAreaMarker(s, HologramSessionPolicy.currentTool(s));
         player.inventory.markDirty();
-        startAreaImport(s, area);
-        HologramSnapshots.send(s);
+        if (!startAreaImport(s, area) && !s.discardConfirmationRequired) {
+            area.selecting = true;
+            HologramSessionPolicy.currentTool(s)
+                .getTagCompound()
+                .setBoolean("gtitHologramAreaSelecting", true);
+            player.inventory.markDirty();
+        }
+        HologramSnapshots.sendAreaSelection(s);
     }
 
     static void cancelAreaSelection(EntityPlayerMP player, String session) {
@@ -106,7 +146,7 @@ final class HologramAreaWorkflow {
         HologramWorkspace.clearAreaSelection(s);
         HologramProjectorWorkflow.libraryCloseUi(s);
         s.status = "区域框选已取消，当前蓝图保留";
-        HologramSnapshots.send(s);
+        HologramSnapshots.sendAreaSelection(s);
     }
 
     static void worldAreaPoint(EntityPlayerMP player, NBTTagCompound request) {
@@ -140,7 +180,7 @@ final class HologramAreaWorkflow {
             || s.job == 2) return;
         area.undoRegion();
         s.status = "已撤销上一步区域组合";
-        HologramSnapshots.send(s);
+        HologramSnapshots.sendAreaSelection(s);
     }
 
     static void areaPoint(EntityPlayerMP player, int point, int x, int y, int z, boolean atPlayer) {
@@ -163,12 +203,12 @@ final class HologramAreaWorkflow {
             area.point(point, x, y, z, mode);
         } catch (java.io.IOException invalid) {
             s.status = invalid.getMessage();
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendAreaSelection(s);
             return;
         }
         s.status = "区域点 " + point + " = " + x + ", " + y + ", " + z;
         player.addChatMessage(new ChatComponentText("[猫猫蓝图全息投影仪] " + s.status));
-        HologramSnapshots.send(s);
+        HologramSnapshots.sendAreaSelection(s);
     }
 
     static boolean startAreaImport(HologramSession s, HologramArea area) {
@@ -442,6 +482,7 @@ final class HologramAreaWorkflow {
             source.side);
         staged.id = source.id;
         staged.uiSequence = source.uiSequence;
+        staged.areaSelectionSequence = source.areaSelectionSequence;
         staged.planRevision = source.planRevision;
         staged.blueprintClientTaskToken = source.blueprintClientTaskToken;
         staged.libraryQuickClientTaskToken = source.libraryQuickClientTaskToken;
@@ -542,8 +583,8 @@ final class HologramAreaWorkflow {
                 area.tick(s.player, HologramSessionPolicy.trigger(s));
             } else if ("memberships".equals(area.importPhase)) {
                 if (area.staging == null) area.staging = importStaging(s, area);
-                long deadline = HologramWorkBudget.deadline(2_000_000L);
-                for (int work = 0; work < 4096; work++) {
+                long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L));
+                for (int work = 0; work < Integer.MAX_VALUE; work++) {
                     if (work > 0 && System.nanoTime() >= deadline) break;
                     if (area.structureIndex < area.discovery.size())
                         importStructure(area, area.discovery.get(area.structureIndex++));
@@ -556,14 +597,15 @@ final class HologramAreaWorkflow {
                     }
                 }
             } else if ("projection".equals(area.importPhase)) {
-                if (area.population.step(4096, HologramWorkBudget.deadline(2_000_000L))) {
+                if (area.population.step()) {
                     area.planTask = HologramResourcePlanner.beginPlan(area.staging);
                     area.importPhase = "plan";
                 }
-            } else if ("plan".equals(area.importPhase) && area.planTask.step(4096, 2_000_000L)) {
-                publishImport(s, area);
-                return;
-            }
+            } else if ("plan".equals(area.importPhase)
+                && area.planTask.step(Integer.MAX_VALUE, HologramWorkBudget.remainingNanos(2_000_000L))) {
+                    publishImport(s, area);
+                    return;
+                }
             if (!previousPhase.equals(area.importStage()) || s.player.worldObj.getTotalWorldTime() % 10 == 0)
                 HologramSnapshots.sendProgress(s);
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
@@ -578,6 +620,7 @@ final class HologramAreaWorkflow {
         if (area.staging == null || !importOwned(previous, area)) throw new java.io.IOException("区域导入会话已过期");
         HologramSession staged = area.staging;
         staged.uiSequence = previous.uiSequence;
+        staged.areaSelectionSequence = previous.areaSelectionSequence;
         staged.blueprintClientTaskToken = previous.blueprintClientTaskToken;
         staged.libraryQuickClientTaskToken = previous.libraryQuickClientTaskToken;
         staged.placementReviewNonce = previous.placementReviewNonce;

@@ -232,8 +232,8 @@ final class HologramPresets {
     }
 
     static Preset get(String id) throws IOException {
-        for (Preset preset : all()) if (preset.id.equals(id))
-            return HologramBlueprintProcessing.enforcePolicy(HologramAePolicy.sanitize(copy(preset)).preset);
+        for (Preset preset : all()) if (preset.id.equals(id)) return HologramBlueprintProcessing.enforcePolicy(
+            HologramAePolicy.sanitizeOwned(preset, null, HologramAePolicy.PreparationProgress.NONE).preset);
         return null;
     }
 
@@ -256,14 +256,15 @@ final class HologramPresets {
 
     /** Prepare the final identity and canonical payload before a client captures its matching preview. */
     static synchronized Preset prepareSaved(Preset preset, boolean update) throws IOException {
-        return copy(put(all(), preset, update));
+        return put(all(), preset, update);
     }
 
     /** Commit the reviewed bytes without generating another ID or replacing the prepared provenance. */
     static synchronized void commitSaved(Preset prepared, boolean update) throws IOException {
         HologramBlueprintVersions.validate(prepared);
         Preset result = copy(prepared);
-        HologramAePolicy.Draft canonical = HologramAePolicy.sanitize(result);
+        HologramAePolicy.Draft canonical = HologramAePolicy
+            .sanitizeOwned(result, null, HologramAePolicy.PreparationProgress.NONE);
         if (canonical.blocking)
             throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
         result = HologramBlueprintProcessing.enforcePolicy(canonical.preset);
@@ -400,7 +401,8 @@ final class HologramPresets {
             new String(HologramBlueprintSharing.encodeBounded(GSON, preset, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8),
             Preset.class);
         // Defensive canonical boundary for non-UI callers; the interactive service has already reviewed this result.
-        HologramAePolicy.Draft canonical = HologramAePolicy.sanitize(result);
+        HologramAePolicy.Draft canonical = HologramAePolicy
+            .sanitizeOwned(result, null, HologramAePolicy.PreparationProgress.NONE);
         if (canonical.blocking)
             throw new IOException("AE unresolved issues cannot be persisted without an explicit repair");
         result = canonical.preset;
@@ -916,8 +918,15 @@ final class HologramPresets {
             ItemStack sample = HologramBlockIdentity.materialStack(identity, 0);
             if (sample != null && !sample.getItem()
                 .getHasSubtypes()) return 0;
-            HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
-            int damage = block.getDamageValue(world, 0, 64, 0);
+            int damage;
+            if (HologramMaterialDescriptor.kind(block) != 0) {
+                // Reuse only the audited method identity. Unknown damageDropped overrides still run every time.
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.MATERIAL_DESCRIPTOR_USES, 1);
+                damage = HologramMaterialDescriptor.damage(block, metadata);
+            } else {
+                HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
+                damage = block.getDamageValue(world, 0, 64, 0);
+            }
             if (damage < 0) throw new IOException("原生方块返回了无效的实际材料变种");
             return damage;
         } catch (RuntimeException | LinkageError failure) {

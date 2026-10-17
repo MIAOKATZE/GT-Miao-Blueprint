@@ -25,12 +25,10 @@ final class HologramBlueprintProjection {
     static HologramPresets.Preset blueprint(HologramSession s, String name) throws java.io.IOException {
         if (s.capture == null || s.capture.incomplete || s.capturePending) throw new java.io.IOException("需要完整结构或区域");
         HologramPresets.Preset result = s.virtualPreset == null ? new HologramPresets.Preset()
-            : HologramPresets.copy(s.virtualPreset);
+            : HologramSnapshotMetadataSource.copyMetadata(s.virtualPreset);
         result.schema = 2;
         result.name = name == null || name.trim()
             .isEmpty() ? "未命名蓝图" : name.trim();
-        result.cells.clear();
-        result.palette.clear();
         if (s.virtualPreset == null) {
             result.id = s.blueprintSavedId.isEmpty() ? null : s.blueprintSavedId;
             result.prompt = s.blueprintPrompt;
@@ -229,6 +227,10 @@ final class HologramBlueprintProjection {
 
         long total() {
             return s.virtualPreset.structures.size() + 2L * s.virtualPreset.cells.size();
+        }
+
+        boolean step() {
+            return step(Integer.MAX_VALUE, HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L)));
         }
 
         boolean step(int maxWork, long deadline) {

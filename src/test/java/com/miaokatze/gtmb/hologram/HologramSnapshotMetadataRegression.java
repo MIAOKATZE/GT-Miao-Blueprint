@@ -22,6 +22,7 @@ final class HologramSnapshotMetadataRegression {
         try {
             typedScalarCopyOracle();
             frozenWorkerContext();
+            repeatedPayloadSlices();
             coordinateMembershipComplexity();
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
@@ -45,6 +46,7 @@ final class HologramSnapshotMetadataRegression {
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
             HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
             session.virtual = true;
+            session.virtualPlacement = true;
             session.virtualPreset = new HologramPresets.Preset();
             session.virtualPreset.schema = 2;
             session.virtualPreset.name = "metadata fixture";
@@ -320,6 +322,59 @@ final class HologramSnapshotMetadataRegression {
             "worker context rejects implicit native identity resolution");
         SimpleAssert
             .that(known.block() == Blocks.dirt, "owner thread retains the original live registry lookup semantics");
+    }
+
+    /** Real NBT/native classification work uses the production time-only loop, without a fake fast clock. */
+    private static void repeatedPayloadSlices() throws Exception {
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setInteger("configuration", 73);
+        payload.setString("preserved", "complete repeated payload");
+        String encoded = HologramBlueprintNbt.encodeCaptured(payload);
+        HologramSnapshotDataContext context = new HologramSnapshotDataContext();
+        HologramPresets.Cell[] cells = new HologramPresets.Cell[50_000];
+        for (int i = 0; i < cells.length; i++) {
+            HologramPresets.Cell cell = new HologramPresets.Cell();
+            cell.block = "minecraft:stone";
+            cell.tileNbt = encoded;
+            cells[i] = cell;
+        }
+        for (int i = 0; i < 1024; i++) context.freezeBlock(cells[i]);
+        java.util.concurrent.atomic.AtomicInteger cursor = new java.util.concurrent.atomic.AtomicInteger();
+        int slices = 0;
+        long started = System.nanoTime();
+        while (cursor.get() < cells.length) {
+            HologramSnapshotPreparation.runSlice(() -> {
+                try {
+                    context.freezeBlock(cells[cursor.getAndIncrement()]);
+                } catch (java.io.IOException invalid) {
+                    throw new AssertionError(invalid);
+                }
+            },
+                () -> cursor.get() == cells.length,
+                System.nanoTime() + HologramWorkBudget.SLICE_NANOS,
+                System::nanoTime);
+            if (++slices >= 160)
+                throw new AssertionError("Repeated 50k metadata rows exhausted " + slices + " real slices");
+        }
+        SimpleAssert.eq(cells.length, cursor.get(), "all 50k repeated payloads are frozen through real time slices");
+        SimpleAssert.that(
+            cells[0].frozenSensorSlots == cells[cells.length - 1].frozenSensorSlots,
+            "identical full native payloads reuse their immutable snapshot classification");
+        HologramPresets.Cell different = new HologramPresets.Cell();
+        different.block = "minecraft:stone";
+        payload.setString(HologramNetworkBindings.GROUP, "different-group");
+        different.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        context.freezeBlock(different);
+        SimpleAssert.that(
+            !cells[0].metadataIdentityBoundary && different.metadataIdentityBoundary,
+            "the same block with different full NBT retains its distinct native identity boundary");
+        SimpleAssert.eq(
+            73,
+            context.freeze(encoded)
+                .getInteger("configuration"),
+            "classification reuse preserves the complete original payload");
+        System.out.println(
+            "Snapshot 50k repeated payload owner slices=" + slices + " cpuNanos=" + (System.nanoTime() - started));
     }
 
     private static void coordinateMembershipComplexity() throws Exception {

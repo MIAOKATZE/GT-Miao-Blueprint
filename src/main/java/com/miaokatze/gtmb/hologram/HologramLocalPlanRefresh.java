@@ -16,21 +16,22 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
+
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 
 /** Stable-index edit cache. Geometry/allocator changes explicitly use the complete planner. */
 final class HologramLocalPlanRefresh {
 
     final Set<Integer> pending = new LinkedHashSet<>();
-    Map<String, List<Integer>> partitions = new HashMap<>();
     Map<String, List<Integer>> memberships = new HashMap<>();
     Map<String, HologramPresets.Cell> defaults = new HashMap<>();
     private final Set<Integer> awaiting = new LinkedHashSet<>();
     private boolean metadataPending;
-    private String[] shellKeys = new String[0];
-    private Map<String, String> canonicalKeys = new HashMap<>();
-    private Map<String, ItemStack> identities = new LinkedHashMap<>();
-    private Map<String, Integer> counts = new LinkedHashMap<>();
+    private ExactKey[] shellKeys = new ExactKey[0];
+    private Map<ExactKey, ExactKey> canonicalKeys = new HashMap<>();
+    private Map<ExactKey, ItemStack> identities = new LinkedHashMap<>();
+    private Map<ExactKey, Integer> counts = new LinkedHashMap<>();
     private byte[] summaries = new byte[0];
     private String[] statuses = new String[0];
     private boolean[] complexCells = new boolean[0];
@@ -40,6 +41,8 @@ final class HologramLocalPlanRefresh {
     private Set<String> palette = new HashSet<>();
     private HologramCapture capture;
     private HologramPresets.Preset source;
+    private HologramPresets.Preset defaultsPreset;
+    boolean snapshotReuseIndices;
     private long revision;
     private int size, scope, layer, selected, total, work, protectedCells;
     private String active;
@@ -55,10 +58,6 @@ final class HologramLocalPlanRefresh {
 
     boolean current(HologramSession s) {
         return ready && capture == s.capture && s.capture != null && size == s.capture.cells.size();
-    }
-
-    static String region(int x, int y, int z) {
-        return (x >> 4) + "," + (y >> 4) + "," + (z >> 4);
     }
 
     static Set<Integer> selected(HologramSession s, NBTTagCompound action) {
@@ -85,24 +84,31 @@ final class HologramLocalPlanRefresh {
 
     static void snapshotBegin(HologramSession s) {
         HologramLocalPlanRefresh cache = s.localEdits;
+        cache.snapshotReuseIndices = cache.current(s) && cache.revision == s.planRevision
+            && cache.source == s.processingSource
+            && cache.defaultsPreset == s.virtualPreset;
         cache.ready = false;
         cache.pending.clear();
         cache.awaiting.clear();
         cache.metadataPending = false;
-        cache.partitions = new HashMap<>();
-        cache.memberships = new HashMap<>();
-        cache.defaults = new HashMap<>();
+        if (!cache.snapshotReuseIndices) {
+            cache.memberships = new HashMap<>();
+            cache.defaults = new HashMap<>();
+        }
         cache.identities = new LinkedHashMap<>();
         cache.counts = new LinkedHashMap<>();
         cache.canonicalKeys = new HashMap<>();
         cache.summaries = new byte[s.capture == null ? 0 : s.capture.cells.size()];
-        cache.shellKeys = new String[cache.summaries.length];
+        cache.shellKeys = new ExactKey[cache.summaries.length];
         cache.statuses = new String[cache.summaries.length];
         cache.complexCells = new boolean[cache.summaries.length];
         cache.complexCount = 0;
-        cache.sourceIndices = new HashMap<>();
-        cache.palette = new HashSet<>();
+        if (!cache.snapshotReuseIndices) {
+            cache.sourceIndices = new HashMap<>();
+            cache.palette = new HashSet<>();
+        }
         cache.source = s.processingSource;
+        cache.defaultsPreset = s.virtualPreset;
         cache.indexCapture = s.indexedCapture != s.capture;
         if (cache.indexCapture) s.cellIndices = new java.util.IdentityHashMap<>();
         cache.simple = s.virtual && s.virtualPreset != null
@@ -169,29 +175,39 @@ final class HologramLocalPlanRefresh {
     }
 
     static void snapshotCell(HologramSession s, int index, NBTTagCompound row) {
+        snapshotSeedCapture(s, index);
+        HologramCapture.Cell cell = s.capture.cells.get(index);
+        snapshotCell(
+            s,
+            index,
+            row,
+            HologramCellPolicy.targetFor(s, cell, index),
+            HologramSessionPolicy.inScope(s, cell, index));
+    }
+
+    static void snapshotCell(HologramSession s, int index, NBTTagCompound row, ItemStack target, boolean inScope) {
         HologramLocalPlanRefresh cache = s.localEdits;
         HologramCapture.Cell cell = s.capture.cells.get(index);
-        if (cache.indexCapture) s.cellIndices.put(cell, index);
-        cache.partitions.computeIfAbsent(region(cell.x, cell.y, cell.z), ignored -> new Indices())
-            .add(index);
-        for (String member : cell.memberships()) cache.memberships.computeIfAbsent(member, ignored -> new Indices())
-            .add(index);
-        cache.summaries[index] = (byte) summary(s, index);
+        if (!cache.snapshotReuseIndices) {
+            for (String member : cell.memberships()) cache.memberships.computeIfAbsent(member, ignored -> new Indices())
+                .add(index);
+        }
+        cache.summaries[index] = (byte) summary(cell.status, inScope);
         cache.statuses[index] = cell.status;
-        cache.complexCells[index] = complex(s, index);
+        cache.complexCells[index] = inScope
+            && (!cell.tileNbt.isEmpty() || !cell.itemNbt.isEmpty() || target != null && target.hasTagCompound());
         if (cache.complexCells[index]) cache.complexCount++;
-        cache.replaceShell(index, shell(s, index));
+        cache.replaceShell(index, shell(s, index, target, inScope));
     }
 
     /** A failed planner may publish editable draft geometry without claiming a complete material plan. */
     static void snapshotDraftCell(HologramSession s, int index, NBTTagCompound row) {
         HologramLocalPlanRefresh cache = s.localEdits;
         HologramCapture.Cell cell = s.capture.cells.get(index);
-        if (cache.indexCapture) s.cellIndices.put(cell, index);
-        cache.partitions.computeIfAbsent(region(cell.x, cell.y, cell.z), ignored -> new Indices())
-            .add(index);
-        for (String member : cell.memberships()) cache.memberships.computeIfAbsent(member, ignored -> new Indices())
-            .add(index);
+        if (!cache.snapshotReuseIndices) {
+            for (String member : cell.memberships()) cache.memberships.computeIfAbsent(member, ignored -> new Indices())
+                .add(index);
+        }
         cache.summaries[index] = (byte) (HologramSessionPolicy.inScope(s, cell, index) ? 1 : 0);
         cache.statuses[index] = cell.status;
         cache.complexCells[index] = true;
@@ -225,16 +241,24 @@ final class HologramLocalPlanRefresh {
 
     private static int summary(HologramSession s, int index) {
         HologramCapture.Cell cell = s.capture.cells.get(index);
-        if (!HologramSessionPolicy.inScope(s, cell, index)) return 0;
-        return 1 | ("pending".equals(cell.status) ? 2 : 0)
-            | ("protected".equals(cell.status) || "unsupported".equals(cell.status) || "blocked".equals(cell.status) ? 4
-                : 0);
+        return summary(cell.status, HologramSessionPolicy.inScope(s, cell, index));
+    }
+
+    private static int summary(String status, boolean inScope) {
+        if (!inScope) return 0;
+        return 1 | ("pending".equals(status) ? 2 : 0)
+            | ("protected".equals(status) || "unsupported".equals(status) || "blocked".equals(status) ? 4 : 0);
     }
 
     private static ItemStack shell(HologramSession s, int index) {
         HologramCapture.Cell cell = s.capture.cells.get(index);
         ItemStack target = HologramCellPolicy.targetFor(s, cell, index);
-        if (!HologramSessionPolicy.inScope(s, cell, index) || !"pending".equals(cell.status)
+        return shell(s, index, target, HologramSessionPolicy.inScope(s, cell, index));
+    }
+
+    private static ItemStack shell(HologramSession s, int index, ItemStack target, boolean inScope) {
+        HologramCapture.Cell cell = s.capture.cells.get(index);
+        if (!inScope || !"pending".equals(cell.status)
             || s.player.capabilities.isCreativeMode
             || HologramCellPolicy.orientationOnly(s, cell, index)
             || HologramMaterialAccess.freeShell(s, cell, target)) return null;
@@ -249,7 +273,7 @@ final class HologramLocalPlanRefresh {
     }
 
     private void replaceShell(int index, ItemStack replacement) {
-        String previous = shellKeys[index];
+        ExactKey previous = shellKeys[index];
         shellKeys[index] = null;
         if (previous != null) {
             int remaining = counts.get(previous) - 1;
@@ -260,12 +284,11 @@ final class HologramLocalPlanRefresh {
             } else counts.put(previous, remaining);
         }
         if (replacement != null) {
-            String key = HologramValues.stackKey(replacement);
-            String canonical = canonicalKeys.get(key);
+            ExactKey canonical = canonicalKeys.get(HologramValues.lookupKey(replacement));
             if (canonical == null) {
-                canonical = key;
-                canonicalKeys.put(key, key);
-                identities.put(key, replacement.copy());
+                canonical = HologramValues.stackKey(replacement);
+                canonicalKeys.put(canonical, canonical);
+                identities.put(canonical, replacement.copy());
             }
             shellKeys[index] = canonical;
             counts.merge(canonical, 1, Integer::sum);
@@ -275,6 +298,7 @@ final class HologramLocalPlanRefresh {
     /** Returns false before mutating a plan when its shared resource/allocation dependencies require a full pass. */
     static boolean refresh(HologramSession s, Set<Integer> edited) {
         HologramLocalPlanRefresh cache = s.localEdits;
+        if (HologramSessionPolicy.authoring(s)) return refreshAuthoring(s, edited);
         if (!cache.ready || !cache.simple
             || cache.capture != s.capture
             || cache.size != s.capture.cells.size()
@@ -340,7 +364,8 @@ final class HologramLocalPlanRefresh {
                 index,
                 tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
                     .ordinal() : -1);
-            cell.status = HologramPlanPolicy.classify(s, cell, index);
+            cell.status = HologramPlanPolicy
+                .classify(s, cell, index, loaded, s.expectedBlocks.get(index), s.expectedMeta.get(index), tile);
             s.planStatus.set(index, cell.status);
             int now = summary(s, index);
             cache.summaries[index] = (byte) now;
@@ -349,23 +374,24 @@ final class HologramLocalPlanRefresh {
             if ((now & 2) != 0) cache.work++;
             if ((now & 4) != 0) cache.protectedCells++;
             cache.replaceShell(index, shell(s, index));
-            Map<String, Long> previous = s.cellAssetBudgets.remove(index);
+            Map<ExactKey, Long> previous = s.cellAssetBudgets.remove(index);
             if (previous != null) previous.forEach(
                 (key, value) -> s.pendingAssetBudget
                     .compute(key, (ignored, count) -> count == null || count <= value ? null : count - value));
             ItemStack cost = cache.identities.get(cache.shellKeys[index]);
             if (cost != null) {
-                Map<String, Long> budget = new HashMap<>();
-                budget.put(HologramValues.stackKey(cost), 1L);
+                Map<ExactKey, Long> budget = new HashMap<>();
+                ExactKey key = cache.shellKeys[index];
+                budget.put(key, 1L);
                 s.cellAssetBudgets.put(index, budget);
-                s.pendingAssetBudget.merge(HologramValues.stackKey(cost), 1L, Long::sum);
+                s.pendingAssetBudget.merge(key, 1L, Long::sum);
             }
         }
         s.planMissing = 0;
         s.blueprintResourceMissing = "";
         HologramBlueprintResources.Plan total = new HologramBlueprintResources.Plan();
         try {
-            for (Map.Entry<String, Integer> entry : cache.counts.entrySet()) {
+            for (Map.Entry<ExactKey, Integer> entry : cache.counts.entrySet()) {
                 ItemStack stack = cache.identities.get(entry.getKey())
                     .copy();
                 int available = HologramMaterialAccess.shellCount(s, stack, Math.max(4096, cache.size));
@@ -387,6 +413,99 @@ final class HologramLocalPlanRefresh {
         if (cache.selected >= 0) cache.pending.add(cache.selected);
         if (s.selected >= 0) cache.pending.add(s.selected);
         cache.context(s);
+        return true;
+    }
+
+    /** Author targets are owned DTO edits; no live differential or material transaction exists yet. */
+    private static boolean refreshAuthoring(HologramSession s, Set<Integer> edited) {
+        HologramLocalPlanRefresh cache = s.localEdits;
+        if (!cache.current(s) || s.localPlanPending
+            || s.planTargets.size() != cache.size
+            || s.mode != 0
+            || s.job == 1
+            || s.job == 2
+            || s.job == 4
+            || !cache.active.equals(s.blueprintActiveStructure)
+            || cache.scope != s.scope
+            || cache.layer != s.layer
+            || s.scope == 3) return false;
+        Set<Integer> dirty = new LinkedHashSet<>(edited);
+        if (s.scope == 2) {
+            dirty.addAll(cache.selection);
+            dirty.addAll(s.selectedIndices);
+            if (cache.selected >= 0) dirty.add(cache.selected);
+            if (s.selected >= 0) dirty.add(s.selected);
+        }
+        for (int index : dirty) {
+            if (index < 0 || index >= cache.size) return false;
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            int[] legal = HologramCellPolicy.legalFacings(s, cell, HologramCellPolicy.draftTarget(s, cell, index));
+            int wanted = s.facingPins
+                .getOrDefault(HologramValues.position(cell), s.planFacings.getOrDefault(index, cell.actualFacing));
+            boolean retained = legal.length == 0;
+            for (int side : legal) if (side == wanted) retained = true;
+            // A new unpinned machine orientation still needs the complete geometry choice.
+            if (!retained) return false;
+        }
+        s.ae.invalidate();
+        s.job = 0;
+        s.cursor = s.completed = 0;
+        s.recovered.clear();
+        s.defer = false;
+        s.stopTick = false;
+        HologramSession.resetJobCounts(s, false);
+        HologramSession.clearPending(s);
+        HologramResourcePlanner.clearAuthoringQuotes(s);
+        s.planRevision++;
+        for (int index : dirty) {
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            if ((cache.summaries[index] & 1) != 0) cache.total--;
+            ItemStack target = HologramCellPolicy.draftTarget(s, cell, index);
+            s.planTargets.set(index, target);
+            int previous = s.planFacings.getOrDefault(index, cell.actualFacing);
+            int wanted = s.facingPins.getOrDefault(HologramValues.position(cell), previous);
+            s.planFacings.remove(index);
+            for (int side : HologramCellPolicy.legalFacings(s, cell, target))
+                if (side == wanted) s.planFacings.put(index, wanted);
+            cell.status = "preview";
+            cache.statuses[index] = cell.status;
+            cache.summaries[index] = (byte) (HologramSessionPolicy.inScope(s, cell, index) ? 1 : 0);
+            if (cache.summaries[index] != 0) cache.total++;
+        }
+        cache.work = cache.protectedCells = 0;
+        cache.pending.addAll(dirty);
+        cache.metadataPending = true;
+        cache.context(s);
+        return true;
+    }
+
+    /** Update only owned annotation fields; source NBT and identity decisions remain untouched. */
+    static boolean annotations(HologramSession s, Set<Integer> dirty) {
+        HologramLocalPlanRefresh cache = s.localEdits;
+        if (!cache.current(s) || cache.defaultsPreset != s.virtualPreset
+            || cache.source != s.processingSource
+            || cache.source == null) return false;
+        for (int index : dirty) {
+            if (index < 0 || index >= cache.size) return false;
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            String key = (cell.x - s.x) + "," + (cell.y - s.y) + "," + (cell.z - s.z);
+            if (!cache.sourceIndices.containsKey(key) || s.virtualPreset != null && !cache.defaults.containsKey(key))
+                return false;
+        }
+        for (int index : dirty) {
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            String key = (cell.x - s.x) + "," + (cell.y - s.y) + "," + (cell.z - s.z);
+            HologramPresets.Cell original = cache.defaults.get(key);
+            if (original != null) {
+                original.prompt = cell.prompt;
+                original.excluded = cell.excluded;
+            }
+            HologramPresets.Cell sourceCell = cache.source.cells.get(cache.sourceIndices.get(key));
+            sourceCell.prompt = cell.prompt;
+            sourceCell.excluded = cell.excluded;
+        }
+        cache.pending.addAll(dirty);
+        cache.metadataPending = true;
         return true;
     }
 
@@ -429,8 +548,14 @@ final class HologramLocalPlanRefresh {
         cache.simple = false;
         cache.pending.addAll(dirty);
         cache.awaiting.addAll(dirty);
-        if (cache.selected >= 0) cache.pending.add(cache.selected);
-        if (s.selected >= 0) cache.pending.add(s.selected);
+        if (cache.selected >= 0) {
+            cache.pending.add(cache.selected);
+            cache.awaiting.add(cache.selected);
+        }
+        if (s.selected >= 0) {
+            cache.pending.add(s.selected);
+            cache.awaiting.add(s.selected);
+        }
         cache.metadataPending = true;
         cache.context(s);
     }
@@ -445,7 +570,10 @@ final class HologramLocalPlanRefresh {
         cache.protectedCells += ((now & 4) != 0 ? 1 : 0) - ((old & 4) != 0 ? 1 : 0);
         cache.summaries[index] = (byte) now;
         String status = s.capture.cells.get(index).status;
-        if (!java.util.Objects.equals(cache.statuses[index], status)) cache.pending.add(index);
+        if (!java.util.Objects.equals(cache.statuses[index], status)) {
+            cache.pending.add(index);
+            cache.awaiting.add(index);
+        }
         cache.statuses[index] = status;
         boolean complex = complex(s, index);
         if (complex != cache.complexCells[index]) cache.complexCount += complex ? 1 : -1;
@@ -463,7 +591,6 @@ final class HologramLocalPlanRefresh {
             return;
         }
         cache.pending.addAll(cache.awaiting);
-        cache.awaiting.clear();
         cache.metadataPending = true;
         cache.simple = s.virtual && s.virtualPreset != null
             && s.virtualPreset.schema >= 2
@@ -503,7 +630,7 @@ final class HologramLocalPlanRefresh {
         NBTTagCompound state = new NBTTagCompound();
         state.setBoolean("partial", true);
         state.setBoolean("planIncomplete", s.localPlanPending);
-        state.setBoolean("quotesIncomplete", s.localPlanPending);
+        state.setBoolean("quotesIncomplete", HologramSessionPolicy.authoring(s) || s.localPlanPending);
         state.setString("snapshotKind", "cellDelta");
         state.setString("session", s.id);
         state.setString("generation", s.id);
@@ -540,9 +667,37 @@ final class HologramLocalPlanRefresh {
         if (s.processingPolicy != null) state
             .setTag("processingConfirmedStages", HologramSessionPolicy.nbtKeys(s.processingPolicy.confirmedStages));
         state.setTag("processingPatch", processingState);
+        state.setBoolean("blueprintSavePending", !s.blueprintSaveReceipt.isEmpty());
+        state.setBoolean("discardConfirmationRequired", s.discardConfirmationRequired);
+        state.setString("discardTargetOp", s.discardTargetOp);
+        state.setString("discardTargetId", s.discardTargetId);
+        state.setTag("discardTargetAction", s.pendingSourceAction.copy());
+        state.setBoolean(
+            "processingResumeAllowed",
+            s.processingWorkflowStarted && s.processingPolicy != null && !s.processingPolicy.confirmedStages.isEmpty());
+        if (s.ae.review == null) state.setTag("aeSaveReview", new NBTTagCompound());
+        state.setString(
+            "blueprintPrompt",
+            s.virtualPreset == null ? s.blueprintPrompt : s.virtualPreset.prompt == null ? "" : s.virtualPreset.prompt);
+        NBTTagList hints = new NBTTagList();
+        for (HologramPresets.HintArea hint : s.virtualPreset == null ? s.blueprintHintAreas
+            : s.virtualPreset.hintAreas) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setIntArray("bounds", new int[] { hint.x1, hint.y1, hint.z1, hint.x2, hint.y2, hint.z2 });
+            row.setString("prompt", hint.prompt == null ? "" : hint.prompt);
+            hints.appendTag(row);
+        }
+        state.setTag("hintAreas", hints);
+        boolean annotationsOnly = cache.revision == s.planRevision && cache.awaiting.isEmpty() && !s.localPlanPending;
         NBTTagList cells = new NBTTagList();
         for (int index : cache.pending) {
-            NBTTagCompound row = HologramSnapshots.cellRow(s, index);
+            NBTTagCompound row;
+            if (annotationsOnly) {
+                row = new NBTTagCompound();
+                row.setBoolean("annotationOnly", true);
+                row.setString("prompt", s.capture.cells.get(index).prompt);
+                row.setBoolean("excluded", s.capture.cells.get(index).excluded);
+            } else row = HologramSnapshots.cellRow(s, index);
             row.setInteger("index", index);
             if (s.localPlanPending) {
                 row.setString("status", "planning");
@@ -551,10 +706,10 @@ final class HologramLocalPlanRefresh {
             cells.appendTag(row);
         }
         state.setTag("cells", cells);
-        if (!s.localPlanPending) {
+        if (!s.localPlanPending && !annotationsOnly && !HologramSessionPolicy.authoring(s)) {
             NBTTagList materials = new NBTTagList();
             if (cache.simple) {
-                for (Map.Entry<String, Integer> entry : cache.counts.entrySet())
+                for (Map.Entry<ExactKey, Integer> entry : cache.counts.entrySet())
                     materials.appendTag(materialRow(s, cache.identities.get(entry.getKey()), entry.getValue()));
             } else if (s.blueprintTotalResources != null) {
                 for (ItemStack item : s.blueprintTotalResources.items)
@@ -566,6 +721,8 @@ final class HologramLocalPlanRefresh {
             state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
         }
         cache.revision = s.planRevision;
+        // A pending-plan delta cannot retire the final quote obligation at this same revision.
+        if (!s.localPlanPending) cache.awaiting.clear();
         cache.pending.clear();
         cache.metadataPending = false;
         return state;

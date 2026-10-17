@@ -119,6 +119,7 @@ final class HologramUiSession {
         if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
+            && !this.state.data.getBoolean("areaSelectionShell")
             && job != 1
             && job != 2
             && pendingTicket.sequence() < 0

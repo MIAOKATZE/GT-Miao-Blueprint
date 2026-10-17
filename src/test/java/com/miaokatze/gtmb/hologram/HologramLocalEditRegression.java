@@ -28,10 +28,6 @@ final class HologramLocalEditRegression {
             SimpleAssert.that(
                 Math.abs(large - small) < 256,
                 "one-cell payload grows with numeric totals, not blueprint geometry");
-            SimpleAssert.eq(
-                "-1,-1,1",
-                HologramLocalPlanRefresh.region(-1, -16, 16),
-                "negative coordinates use floor-aligned 16-cell regions");
         } catch (Exception invalid) {
             throw new AssertionError("Local edit regression", invalid);
         }
@@ -56,6 +52,7 @@ final class HologramLocalEditRegression {
             }
         HologramSession s = new HologramSession(player, 0, 64, 0, false, 2);
         s.virtual = true;
+        s.virtualPlacement = true;
         s.cellDeltaProtocol = true;
         s.allocationsFrozen = true;
         s.selected = 0;
@@ -139,6 +136,7 @@ final class HologramLocalEditRegression {
             "only edited and formerly selected candidate rows are serialized");
         int bytes = HologramSnapshotCodec.compress(delta).length;
         SimpleAssert.that(bytes < 8192, "single edit wire payload is bounded independently of full geometry");
+        annotations(s, world);
         before.apply(s);
         SimpleAssert.that(
             !s.pins.containsKey(1) && s.capture.cells.get(count - 1) == untouched,
@@ -148,6 +146,68 @@ final class HologramLocalEditRegression {
         SimpleAssert
             .that(HologramLocalPlanRefresh.delta(s) == null, "legacy client never receives a partial geometry packet");
         return bytes;
+    }
+
+    private static void annotations(HologramSession s, CountingWorld world) throws Exception {
+        HologramPresets.Preset source = s.processingSource;
+        HologramPresets.Cell raw = source.cells.get(1);
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setString("owner", "raw-author-source");
+        raw.tileNbt = HologramBlueprintNbt.encodeCanonical(payload);
+        raw.itemNbt = raw.tileNbt;
+        String tile = raw.tileNbt, item = raw.itemNbt;
+        s.processingPolicy = HologramBlueprintProcessing.defaults("self", 0);
+        s.processingPolicy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        s.processingReviewed = true;
+        s.blueprintSaveReceipt = "old-save";
+        long revision = s.planRevision;
+        world.reads = 0;
+        NBTTagCompound action = new NBTTagCompound();
+        action.setIntArray("indices", new int[] { 1 });
+        action.setString("prompt", "edited cell prompt");
+        HologramAuthoringWorkflow.blueprintAction(s, action, "editCellFlags");
+        SimpleAssert.eq(revision, s.planRevision, "prompt edit retains the material/world plan revision");
+        SimpleAssert.that(
+            s.processingSource == source && source.cells.get(1) == raw,
+            "prompt edit retains the indexed raw author source");
+        SimpleAssert.eq(tile, raw.tileNbt, "prompt edit retains raw tile NBT");
+        SimpleAssert.eq(item, raw.itemNbt, "prompt edit retains raw item NBT");
+        SimpleAssert.eq("edited cell prompt", raw.prompt, "prompt edit updates its indexed source row");
+        SimpleAssert.eq(
+            "edited cell prompt",
+            s.virtualPreset.cells.get(1).prompt,
+            "prompt edit updates its indexed reloadable default");
+        SimpleAssert.eq(5, s.processingPolicy.confirmedStages.size(), "prompt edit invalidates only the hints stage");
+        NBTTagCompound delta = HologramLocalPlanRefresh.delta(s);
+        SimpleAssert.that(
+            delta != null && !delta.hasKey("materials") && !delta.hasKey("blueprintResources"),
+            "annotation delta reuses unchanged quotes");
+        SimpleAssert.eq(
+            1,
+            delta.getTagList("cells", 10)
+                .tagCount(),
+            "annotation sends only its edited row");
+        SimpleAssert.that(
+            delta.getTagList("cells", 10)
+                .getCompoundTagAt(0)
+                .getBoolean("annotationOnly"),
+            "annotation row carries no repeated geometry or candidates");
+        SimpleAssert.that(
+            !delta.getBoolean("blueprintSavePending") && s.ae.review == null,
+            "annotation edit retires old save and AE review authority");
+        action.setString("prompt", "edited region prompt");
+        HologramAuthoringWorkflow.blueprintAction(s, action, "editHintArea");
+        NBTTagCompound hintDelta = HologramLocalPlanRefresh.delta(s);
+        SimpleAssert.eq(
+            0,
+            hintDelta.getTagList("cells", 10)
+                .tagCount(),
+            "region prompt changes metadata only");
+        SimpleAssert.eq(
+            "edited region prompt",
+            source.hintAreas.get(0).prompt,
+            "region prompt updates the raw author source metadata");
+        SimpleAssert.eq(0, world.reads, "prompt and region edits never match the world or rebuild candidate quotes");
     }
 
     private static int amount(HologramSession s, Block block) {

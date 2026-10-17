@@ -26,7 +26,7 @@ final class HologramSnapshotMetadataTask {
     private final NBTTagCompound state;
     private final long revision;
     private final HologramCapture capture;
-    private final boolean draftOnly;
+    private final boolean authoring, draftOnly;
     private final HologramSnapshotDataContext dataContext = new HologramSnapshotDataContext();
     private HologramSnapshotMetadataSource source;
     private HologramSnapshotAeTask ae;
@@ -54,26 +54,27 @@ final class HologramSnapshotMetadataTask {
         this.state = state;
         revision = s.planRevision;
         capture = s.capture;
-        draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
+        authoring = HologramSessionPolicy.authoring(s);
+        draftOnly = authoring || s.localPlanPending && !s.localPlanError.isEmpty();
     }
 
     String phase() {
         if (stage == 1 && source != null) return source.phase();
         if (stage == 3) return workerProgress.value.phase;
-        if (stage == 13 && ae != null) return ae.phase();
+        if (stage == 12 && ae != null) return ae.phase();
         return new String[] { "metadata.initialize", "metadata.source", "metadata.capture", "metadata.processing",
-            "metadata.networks", "metadata.network_groups", "metadata.labels", "metadata.nbt_keys",
-            "metadata.resources", "metadata.mods", "metadata.dependencies", "metadata.hints", "metadata.selection",
-            "metadata.ae", "metadata.complete" }[stage];
+            "metadata.network_groups", "metadata.labels", "metadata.nbt_keys", "metadata.resources", "metadata.mods",
+            "metadata.dependencies", "metadata.hints", "metadata.selection", "metadata.ae",
+            "metadata.complete" }[stage];
     }
 
     long done() {
         if (stage == 1 && source != null) return source.done();
         if (stage == 3) return workerProgress.value.done;
-        if (stage == 5 && networks != null) return networks.done();
-        if (stage == 8 && resources != null) return resources.done();
-        if (stage == 13 && ae != null) return ae.done();
-        return stage == 14 ? 1 : cursor;
+        if (stage == 4 && networks != null) return networks.done();
+        if (stage == 7 && resources != null) return resources.done();
+        if (stage == 12 && ae != null) return ae.done();
+        return stage == 13 ? 1 : cursor;
     }
 
     HologramAreaPreparation.Progress progress() {
@@ -82,21 +83,19 @@ final class HologramSnapshotMetadataTask {
 
     long total() {
         if (stage == 1 && source != null) return source.total();
-        if (stage == 2) return capture == null ? 0 : capture.cells.size();
+        if (stage == 2) return capture == null ? networkSize() : capture.cells.size();
         if (stage == 3) return workerProgress.value.total;
-        if (stage == 4) return networkSize();
-        if (stage == 5 && networks != null) return networks.total();
-        if (stage == 6) return labelSize();
-        if (stage == 7) return availableKeys.size();
-        if (stage == 8 && resources != null) return resources.total();
-        if (stage == 9) return cpw.mods.fml.common.Loader.instance()
+        if (stage == 4 && networks != null) return networks.total();
+        if (stage == 5) return labelSize();
+        if (stage == 6) return availableKeys.size();
+        if (stage == 7 && resources != null) return resources.total();
+        if (stage == 8) return cpw.mods.fml.common.Loader.instance()
             .getModList()
             .size();
-        if (stage == 10)
-            return s.virtualPreset == null ? s.machine == null ? 0 : 1 : s.virtualPreset.modVersions.size();
-        if (stage == 11) return (s.virtualPreset == null ? s.blueprintHintAreas : s.virtualPreset.hintAreas).size();
-        if (stage == 12) return s.selectedIndices.size();
-        if (stage == 13 && ae != null) return ae.total();
+        if (stage == 9) return s.virtualPreset == null ? s.machine == null ? 0 : 1 : s.virtualPreset.modVersions.size();
+        if (stage == 10) return (s.virtualPreset == null ? s.blueprintHintAreas : s.virtualPreset.hintAreas).size();
+        if (stage == 11) return s.selectedIndices.size();
+        if (stage == 12 && ae != null) return ae.total();
         return 1;
     }
 
@@ -105,7 +104,7 @@ final class HologramSnapshotMetadataTask {
             cancel();
             throw new IllegalStateException("Snapshot metadata source changed");
         }
-        for (int work = 0; work < maxWork && stage < 14; work++) {
+        for (int work = 0; work < maxWork && stage < 13; work++) {
             if (work > 0 && System.nanoTime() >= deadline) return false;
             try {
                 if (stage == 0) initialize();
@@ -120,51 +119,54 @@ final class HologramSnapshotMetadataTask {
                 } else if (stage == 2) capturePosition();
                 else if (stage == 3) {
                     if (!deriveReport()) return false;
-                } else if (stage == 4) appendNetwork();
-                else if (stage == 5) {
-                    if (networks.step(1, deadline)) {
-                        state.setTag("networkBindings", networks.result);
+                } else if (stage == 4) {
+                    if (networks == null || networks.step(1, deadline)) {
+                        if (networks != null) state.setTag("networkBindings", networks.result);
                         next();
                     }
-                } else if (stage == 6) appendLabel();
-                else if (stage == 7) appendNbtKey();
-                else if (stage == 8) {
+                } else if (stage == 5) appendLabel();
+                else if (stage == 6) appendNbtKey();
+                else if (stage == 7) {
                     if (draftOnly) {
                         state.setTag("blueprintResources", new NBTTagList());
-                        state.setBoolean("planIncomplete", true);
+                        state.setBoolean("planIncomplete", s.localPlanPending);
                         state.setBoolean("quotesIncomplete", true);
                         next();
                     } else if (resources.step(1, deadline)) {
                         state.setTag("blueprintResources", resources.result());
                         next();
                     }
-                } else if (stage == 9) {
+                } else if (stage == 8) {
                     List<cpw.mods.fml.common.ModContainer> mods = cpw.mods.fml.common.Loader.instance()
                         .getModList();
                     if (cursor < mods.size()) {
                         cpw.mods.fml.common.ModContainer mod = mods.get(cursor++);
                         installed.put(mod.getModId(), mod.getVersion());
                     } else next();
-                } else if (stage == 10) appendDependency();
-                else if (stage == 11) appendHint();
-                else if (stage == 12) appendSelection();
+                } else if (stage == 9) appendDependency();
+                else if (stage == 10) appendHint();
+                else if (stage == 11) appendSelection();
                 else if (ae.step(1, deadline)) {
-                    stage = 14;
+                    stage = 13;
                     cursor = 1;
                 }
             } catch (IOException invalid) {
-                if (stage == 4 || stage == 5) {
+                if (stage == 4) {
                     state.setString("networkBindingError", HologramAePolicy.fallback(invalid.getMessage()));
-                    stage = 6;
+                    stage = 5;
                     cursor = 0;
                 } else throw new IllegalStateException("Snapshot metadata rejected", invalid);
             }
         }
-        return stage == 14;
+        return stage == 13;
     }
 
     void cancel() {
         if (report != null) HologramAreaPreparation.cancel(report);
+    }
+
+    boolean waitingForWorker() {
+        return stage == 3 && (report == null || !report.isDone());
     }
 
     private void next() {
@@ -179,7 +181,15 @@ final class HologramSnapshotMetadataTask {
             dataContext.freeze(s.virtualPreset.processingNbt);
         } catch (IOException ignored) { /* The detached processing report retains the same validation error. */ }
         ae = new HologramSnapshotAeTask(s, state);
-        networks = new HologramNetworkBindings.SnapshotTask(s.player, s.networkBindings);
+        if (authoring) {
+            NBTTagCompound bindings = new NBTTagCompound();
+            bindings.setBoolean("nativeAuthority", false);
+            bindings.setBoolean("terminalSecurityChecked", false);
+            bindings.setBoolean("terminalBinding", false);
+            bindings.setTag("groups", new NBTTagList());
+            bindings.setTag("inventory", new NBTTagList());
+            state.setTag("networkBindings", bindings);
+        } else networks = new HologramNetworkBindings.SnapshotTask(s.player, s.networkBindings);
         if (!draftOnly) resources = new HologramResourcePlanner.ResourceRowsTask(s);
         keysCached = s.nbtKeysCapture == capture;
         if (keysCached) keyIterator = s.availableNbtKeys.iterator();
@@ -192,13 +202,22 @@ final class HologramSnapshotMetadataTask {
             availableKeys.add(keyIterator.next());
             return;
         }
-        if (capture != null && cursor < capture.cells.size()) {
+        if (capture == null && cursor < networkSize()) {
+            HologramPresets.Cell cell = s.virtualPreset.cells.get(cursor++);
+            collectNetwork(cell.tileNbt, cell.excluded);
+        } else if (capture != null && cursor < capture.cells.size()) {
             HologramCapture.Cell cell = capture.cells.get(cursor);
-            try {
-                dataContext.freeze(cell.tileNbt);
-                dataContext.freeze(cell.itemNbt);
+            if (s.virtualPreset != null) collectNetwork(cell.tileNbt, cell.excluded);
+            if (!keysCached && s.virtual) try {
+                NBTTagCompound tile = dataContext.freeze(cell.tileNbt);
+                NBTTagCompound item = dataContext.freeze(cell.itemNbt);
+                rootKeys(tile, availableKeys);
+                rootKeys(item, availableKeys);
             } catch (IOException ignored) { /* Invalid cell payload remains unsupported in the detached report. */ }
-            positions.add(new Position(cursor++, cell.x - s.x, cell.y - s.y, cell.z - s.z, cell.tileNbt, cell.itemNbt));
+            HologramPresets.Cell frozen = source == null ? null
+                : source.cellWithPayloadAt(cell.x - s.x, cell.y - s.y, cell.z - s.z);
+            if (frozen != null) positions.add(new Position(cursor, frozen));
+            cursor++;
             if (!decorative && s.virtualPreset != null) decorative = HologramCellPolicy.decorationTarget(s, cell);
             if (!keysCached && !s.virtual) try {
                 TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
@@ -215,7 +234,7 @@ final class HologramSnapshotMetadataTask {
             HologramPresets.Preset frozen = source == null ? null : source.result;
             HologramBlueprintProcessing.Policy frozenPolicy = source == null ? null : source.policy;
             int selected = s.selected, dimension = s.dimension, x = s.x, y = s.y, z = s.z;
-            boolean reviewed = s.processingReviewed, virtual = s.virtual, cached = keysCached;
+            boolean reviewed = s.processingReviewed;
             String receipt = s.virtualPreset == null ? null : s.virtualPreset.processingNbt;
             List<Position> frozenPositions = positions;
             HologramSnapshotDataContext frozenContext = dataContext;
@@ -234,7 +253,6 @@ final class HologramSnapshotMetadataTask {
                         z,
                         reviewed,
                         receipt,
-                        virtual && !cached,
                         progress);
                 } finally {
                     HologramSnapshotMetadataSource.exitDetached();
@@ -242,23 +260,22 @@ final class HologramSnapshotMetadataTask {
             });
             if (!HologramAreaPreparation.execute(candidate)) return false;
             report = candidate;
-            return false;
         }
         if (!report.isDone()) return false;
         try {
             Report result = report.get();
             for (Object raw : result.fields.func_150296_c())
                 state.setTag((String) raw, result.fields.getTag((String) raw));
-            if (!keysCached && s.virtual) availableKeys = result.keys;
             if (!keysCached) {
                 s.availableNbtKeys.clear();
                 s.nbtKeysCapture = null;
             }
-            if (source != null && (s.processingSource == null || draftOnly)) {
+            if (source != null && source.publishesSource()
+                && (s.processingSource == null || s.localPlanPending && !s.localPlanError.isEmpty())) {
                 s.processingSource = result.source;
                 if (s.processingPolicy == null) s.processingPolicy = result.policy;
             }
-            state.setBoolean("networkBindingRequested", s.networkBindingRequested);
+            state.setBoolean("networkBindingRequested", !authoring && s.networkBindingRequested);
             state.setBoolean("decorativeMaterialsNotice", decorative);
             next();
             return true;
@@ -276,17 +293,13 @@ final class HologramSnapshotMetadataTask {
             : s.virtualPreset == null ? 0 : s.virtualPreset.cells.size();
     }
 
-    private void appendNetwork() throws IOException {
-        if (cursor >= networkSize()) {
-            next();
-            return;
-        }
-        if (s.virtualPreset != null && capture != null) {
-            HologramCapture.Cell cell = capture.cells.get(cursor++);
-            networks.add(cell.tileNbt, cell.excluded);
-        } else {
-            HologramPresets.Cell cell = s.virtualPreset.cells.get(cursor++);
-            networks.add(cell.tileNbt, cell.excluded);
+    private void collectNetwork(String payload, boolean excluded) {
+        if (authoring || networks == null || excluded) return;
+        try {
+            networks.add(dataContext.freeze(payload));
+        } catch (IOException invalid) {
+            state.setString("networkBindingError", HologramAePolicy.fallback(invalid.getMessage()));
+            networks = null;
         }
     }
 
@@ -321,7 +334,8 @@ final class HologramSnapshotMetadataTask {
             row.setString("sourceClass", saved.sourceClass == null ? "" : saved.sourceClass);
             row.setString("sourceMod", saved.sourceMod == null ? "" : saved.sourceMod);
             row.setBoolean("declared", warning.isEmpty());
-            TileEntity tile = s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
+            TileEntity tile = authoring ? null
+                : s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
             row.setBoolean(
                 "formed",
                 tile instanceof IGregTechTileEntity
@@ -440,7 +454,7 @@ final class HologramSnapshotMetadataTask {
 
     private static Report derive(HologramPresets.Preset raw, HologramBlueprintProcessing.Policy policy,
         List<Position> frozenPositions, int selected, int dimension, int x, int y, int z, boolean reviewed,
-        String receipt, boolean collectKeys, WorkerProgress progress) throws IOException {
+        String receipt, WorkerProgress progress) throws IOException {
         Report result = new Report(raw, policy);
         if (raw != null) try {
             if (result.policy == null) result.policy = HologramBlueprintProcessing.policy(raw);
@@ -470,21 +484,9 @@ final class HologramSnapshotMetadataTask {
                 processing.getTagList("nbtPaths", 8)
                     .copy());
             progress.value = new HologramAreaPreparation.Progress("metadata.processing", 1, 1);
-            cellNbt(result.fields, raw, result.policy, frozenPositions, selected, progress);
+            cellNbt(result.fields, result.policy, frozenPositions, selected, progress);
         } catch (IOException invalid) {
             result.fields.setString("processingError", invalid.getMessage());
-        }
-        if (collectKeys) for (int i = 0; i < frozenPositions.size(); i++) {
-            interrupted();
-            Position position = frozenPositions.get(i);
-            try {
-                rootKeys(HologramBlueprintNbt.decode(position.tile), result.keys);
-                rootKeys(HologramBlueprintNbt.decode(position.item), result.keys);
-            } catch (IOException | RuntimeException ignored) { /* Invalid payload stays unsupported. */ }
-            if ((i & 63) == 0 || i + 1 == frozenPositions.size()) progress.value = new HologramAreaPreparation.Progress(
-                "metadata.nbt_keys",
-                i + 1,
-                frozenPositions.size());
         }
         try {
             result.fields.setTag("processingPresets", HologramProcessingPresets.labels());
@@ -494,9 +496,8 @@ final class HologramSnapshotMetadataTask {
         return result;
     }
 
-    private static void cellNbt(NBTTagCompound output, HologramPresets.Preset raw,
-        HologramBlueprintProcessing.Policy policy, List<Position> frozenPositions, int selected,
-        WorkerProgress progress) throws IOException {
+    private static void cellNbt(NBTTagCompound output, HologramBlueprintProcessing.Policy policy,
+        List<Position> frozenPositions, int selected, WorkerProgress progress) throws IOException {
         NBTTagList rows = new NBTTagList();
         int entryCount = 0;
         NBTTagList overrides = policy.write()
@@ -506,28 +507,23 @@ final class HologramSnapshotMetadataTask {
             NBTTagCompound row = overrides.getCompoundTagAt(i);
             overridePositions.put(key(row.getInteger("x"), row.getInteger("y"), row.getInteger("z")), row);
         }
-        Map<String, HologramPresets.Cell> cells = new HashMap<>();
-        for (HologramPresets.Cell cell : raw.cells) cells.put(key(cell.x, cell.y, cell.z), cell);
+        int visited = 0;
         for (Position position : frozenPositions) {
             interrupted();
             progress.value = new HologramAreaPreparation.Progress(
                 "metadata.cell_nbt",
-                position.index,
+                visited++,
                 frozenPositions.size());
             if ((rows.tagCount() >= 8192 || entryCount >= 65536) && position.index != selected) {
                 output.setBoolean("cellNbtTruncated", true);
                 continue;
             }
-            HologramPresets.Cell cell = cells.get(key(position.x, position.y, position.z));
-            if (cell == null) continue;
-            Set<String> keys = new TreeSet<>();
-            rootKeys(HologramBlueprintNbt.decode(cell.tileNbt), keys);
-            rootKeys(HologramBlueprintNbt.decode(cell.itemNbt), keys);
-            if (keys.isEmpty()) continue;
+            HologramPresets.Cell cell = position.cell;
+            NBTTagList cellEntries = HologramBlueprintProcessing.nbtEntries(cell);
+            if (cellEntries.tagCount() == 0) continue;
             NBTTagCompound override = overridePositions.get(key(cell.x, cell.y, cell.z));
             List<String> chosen = override == null || override.getBoolean("all") ? null
                 : HologramAuthoringQueries.selectedNbtKeys(override.getTagList("keys", 8));
-            NBTTagList cellEntries = HologramBlueprintProcessing.nbtEntries(cell);
             entryCount += cellEntries.tagCount();
             for (int i = 0; i < cellEntries.tagCount(); i++) {
                 NBTTagCompound entry = cellEntries.getCompoundTagAt(i);
@@ -579,23 +575,18 @@ final class HologramSnapshotMetadataTask {
 
     private static final class Position {
 
-        final int index, x, y, z;
-        final String tile, item;
+        final int index;
+        final HologramPresets.Cell cell;
 
-        Position(int index, int x, int y, int z, String tile, String item) {
+        Position(int index, HologramPresets.Cell cell) {
             this.index = index;
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            this.tile = tile;
-            this.item = item;
+            this.cell = cell;
         }
     }
 
     private static final class Report {
 
         final NBTTagCompound fields = new NBTTagCompound();
-        final Set<String> keys = new TreeSet<>();
         final HologramPresets.Preset source;
         HologramBlueprintProcessing.Policy policy;
 

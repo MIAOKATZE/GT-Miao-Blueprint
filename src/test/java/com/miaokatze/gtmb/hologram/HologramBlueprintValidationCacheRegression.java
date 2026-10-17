@@ -34,10 +34,72 @@ public final class HologramBlueprintValidationCacheRegression {
     static void run() {
         try {
             reuseAndIsolation();
+            centralMaterialDamage();
             boundedFallback();
             authoritativePositions();
         } catch (IOException failure) {
             throw new AssertionError("pass-local blueprint validation cache", failure);
+        }
+    }
+
+    private static void centralMaterialDamage() throws IOException {
+        int[] drops = { 0 };
+        Block metadataPick = new Block(Material.rock) {
+
+            @Override
+            public int damageDropped(int metadata) {
+                return metadata + ++drops[0];
+            }
+        };
+        HologramResourceWorld originalWorld = HologramResourceWorld.create(metadataPick, 7);
+        int original = metadataPick.getDamageValue(originalWorld, 0, 64, 0);
+        drops[0] = 0;
+        SimpleAssert.eq(
+            original,
+            HologramPresets.materialDamage(metadataPick, 7),
+            "central metadata descriptor matches the original detached-world native pick");
+        SimpleAssert.eq(
+            9,
+            HologramPresets.materialDamage(metadataPick, 7),
+            "central no-context path never caches unknown dynamic drop results");
+
+        int[] callbacks = { 0 };
+        Block worldPick = new Block(Material.rock) {
+
+            @Override
+            public int getDamageValue(World world, int x, int y, int z) {
+                SimpleAssert.that(
+                    world instanceof HologramResourceWorld,
+                    "unknown override retains the original detached resource world");
+                return world.getBlockMetadata(x, y, z) + ++callbacks[0];
+            }
+        };
+        SimpleAssert.eq(
+            0,
+            HologramMaterialDescriptor.kind(worldPick),
+            "a world-aware override cannot acquire its superclass metadata proof");
+        SimpleAssert.eq(
+            5,
+            HologramPresets.materialDamage(worldPick, 4),
+            "central fallback executes unknown native pick with current metadata");
+        SimpleAssert.eq(
+            6,
+            HologramPresets.materialDamage(worldPick, 4),
+            "central fallback executes unknown native pick on every call");
+        SimpleAssert.eq(
+            0,
+            HologramPresets.materialDamage(net.minecraft.init.Blocks.stone, 12),
+            "central no-subtype item early return remains zero despite state metadata");
+        SimpleAssert.eq(
+            0,
+            HologramPresets.materialDamage(net.minecraft.init.Blocks.lit_furnace, 5),
+            "central state-only furnace alias preserves its construction item's early return");
+        for (int metadata : new int[] { 0, 1, 2 }) {
+            Block dirt = net.minecraft.init.Blocks.dirt;
+            SimpleAssert.eq(
+                dirt.getDamageValue(HologramResourceWorld.create(dirt, metadata), 0, 64, 0),
+                HologramPresets.materialDamage(dirt, metadata),
+                "vanilla dirt's pick exception retains original podzol/native behavior");
         }
     }
 
@@ -66,6 +128,20 @@ public final class HologramBlueprintValidationCacheRegression {
         };
         SimpleAssert.eq(1, cache.materialDamage(thirdParty, 0), "third-party callback executes first read");
         SimpleAssert.eq(2, cache.materialDamage(thirdParty, 0), "third-party callback is never memoized");
+
+        final int[] nativeDrops = { 0 };
+        Block inheritedPick = new Block(Material.rock) {
+
+            @Override
+            public int damageDropped(int metadata) {
+                nativeDrops[0]++;
+                return metadata + nativeDrops[0];
+            }
+        };
+        SimpleAssert.that(cache.ordinaryMaterial(inheritedPick, 0), "inherited native pick has a metadata descriptor");
+        SimpleAssert.eq(1, cache.materialDamage(inheritedPick, 0), "inherited pick calls its actual drop override");
+        SimpleAssert.eq(2, cache.materialDamage(inheritedPick, 0), "unknown drop results never survive across cells");
+        SimpleAssert.that(!cache.ordinaryMaterial(thirdParty, 0), "unknown world-aware pick override stays native");
 
         HologramPresets.Cell different = cell(3, payload(8));
         cache.filter(different);

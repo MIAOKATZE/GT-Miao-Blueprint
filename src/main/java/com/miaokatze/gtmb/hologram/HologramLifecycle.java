@@ -1,14 +1,24 @@
 package com.miaokatze.gtmb.hologram;
 
+import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
 /** Drives construction exclusively on the server thread. */
 public final class HologramLifecycle {
 
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onServerTickStart(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) HologramWorkBudget.startServerTick();
+    }
+
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) HologramCutService.startupRecovery();
-        if (event.phase == TickEvent.Phase.END) HologramService.tick();
+        if (event.phase == TickEvent.Phase.END) try {
+            HologramService.tick();
+        } finally {
+            HologramWorkBudget.endServerTick();
+        }
     }
 }

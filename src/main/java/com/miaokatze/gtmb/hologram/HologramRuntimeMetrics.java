@@ -31,7 +31,11 @@ public final class HologramRuntimeMetrics {
         SNAPSHOT_COMPRESS("snapshotCompress"),
         SERVER_ACTIONS("serverActions"),
         WORKSPACE_TICK("workspaceTick"),
-        TRANSPORT_TICK("transportTick");
+        TRANSPORT_TICK("transportTick"),
+        PLAN_STEP("planStep"),
+        PLAN_CLASSIFY("planClassify"),
+        PLAN_RESOURCES("planResources"),
+        CELL_ROW("cellRow");
 
         final String key;
 
@@ -58,6 +62,8 @@ public final class HologramRuntimeMetrics {
         FULL_CELLS_BUILDS("fullCellsSnapshotBuilds"),
         FULL_CELLS_VISITED("fullCellsSnapshotCells"),
         FULL_CELLS_COMPRESSED_BYTES("fullCellsSnapshotCompressedBytes"),
+        MATERIAL_WORLD_CREATED("materialWorldCreated"),
+        MATERIAL_DESCRIPTOR_USES("materialDescriptorUses"),
         RUNNING_JOB_FULL_BUILDS("runningJobFullBuilds"),
         JOB_DELTA_PACKETS("jobDeltaPackets"),
         JOB_DELTA_CELLS("jobDeltaCells"),

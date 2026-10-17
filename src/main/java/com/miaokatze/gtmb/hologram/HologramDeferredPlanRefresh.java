@@ -10,7 +10,6 @@ import net.minecraft.world.World;
 /** Latest-edit-wins continuation for complex virtual edits; it never owns a background UI lock. */
 final class HologramDeferredPlanRefresh {
 
-    private static final int WORK_PER_TICK = 4096;
     private static final long NANOS_PER_TICK = 2_000_000L;
     private static final String WAIT = "材料与差分正在更新，可继续编辑；完成后可保存或施工";
 
@@ -74,7 +73,11 @@ final class HologramDeferredPlanRefresh {
     static void tick(HologramSession s) {
         boolean pending = s.localPlanPending;
         String error = s.localPlanError;
-        tick(s, WORK_PER_TICK, NANOS_PER_TICK, HologramLocalPlanRefresh::completed);
+        tick(
+            s,
+            Integer.MAX_VALUE,
+            HologramWorkBudget.remainingNanos(NANOS_PER_TICK),
+            HologramLocalPlanRefresh::completed);
         if (pending && !s.cancelled && HologramWorkspace.find(s.player.getUniqueID()) == s) {
             if (!s.localPlanError.isEmpty() && !s.localPlanError.equals(error)) HologramLocalPlanRefresh.failed(s);
             HologramSnapshots.sendProgress(s);

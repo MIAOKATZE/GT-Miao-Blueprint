@@ -234,7 +234,14 @@ final class HologramState {
             int index = row.getInteger("index");
             if (!row.hasKey("index") || index < 0 || index >= base.cells.size() || !indices.add(index))
                 throw new IllegalArgumentException("Invalid partial cell index");
-            Cell cell = new Cell(index, row), old = base.cells.get(index);
+            Cell old = base.cells.get(index);
+            if (row.getBoolean("annotationOnly")) {
+                NBTTagCompound annotations = row;
+                row = old.tag();
+                row.setString("prompt", annotations.getString("prompt"));
+                row.setBoolean("excluded", annotations.getBoolean("excluded"));
+            }
+            Cell cell = new Cell(index, row);
             // Topology-changing operations require a full snapshot with a new spatial index.
             if (cell.x != old.x || cell.y != old.y
                 || cell.z != old.z
@@ -261,10 +268,12 @@ final class HologramState {
 
     /** A delta never copies or reparses the complete cells NBT tree. */
     static HologramState apply(HologramState base, NBTTagCompound source) {
-        if (!source.getBoolean("partial")) return new HologramState(source);
+        if (source.getBoolean("areaSelectionOnly")) return applyAreaSelection(base, source);
+        if (!source.getBoolean("partial")) return new HologramState(source).retainAreaSelection(base);
         if (!source.hasKey("baseRevision", 4) || !source.hasKey("planRevision", 4)
             || !source.hasKey("cellCount", 3)
             || base == null
+            || base.data.getBoolean("areaSelectionShell")
             || !base.session.equals(source.getString("session"))
             || !base.data.getString("generation")
                 .equals(source.getString("generation"))
@@ -273,6 +282,44 @@ final class HologramState {
             || source.getInteger("cellCount") != base.cells.size())
             throw new IllegalArgumentException("Partial snapshot base mismatch");
         return new HologramState(base, source);
+    }
+
+    /** A selection receipt carries no geometry baseline, material plan, or construction acknowledgement. */
+    private static HologramState applyAreaSelection(HologramState base, NBTTagCompound receipt) {
+        boolean same = base != null && base.session.equals(receipt.getString("session"));
+        if (same && receipt.getLong("areaSelectionSequence") <= base.data.getLong("areaSelectionSequence")) return base;
+        NBTTagCompound changes = metadata(receipt);
+        changes.setTag("areaSelectionReceipt", metadata(receipt));
+        boolean shell = !same || base.data.getBoolean("areaSelectionShell")
+            || base.data.getLong("planRevision") != receipt.getLong("planRevision");
+        if (receipt.getBoolean("workspaceUiOnly")) {
+            changes.setBoolean("capturePending", receipt.getBoolean("workspaceCapturePending"));
+            if (receipt.getBoolean("workspaceCapturePending")) shell = true;
+            else if (!receipt.getBoolean("workspaceHasCapture")) shell = same && !base.cells.isEmpty();
+        }
+        changes.setBoolean("areaSelectionShell", shell);
+        changes.setBoolean("snapshotPending", receipt.getBoolean("workspaceUiOnly") && shell);
+        return same ? base.withMetadata(changes) : new HologramState(changes);
+    }
+
+    /** A delayed full baseline can install its geometry without rolling back a newer point receipt. */
+    HologramState retainAreaSelection(HologramState previous) {
+        if (previous == null || !session.equals(previous.session)
+            || data.getLong("planRevision") != previous.data.getLong("planRevision")
+            || data.getLong("areaSelectionSequence") >= previous.data.getLong("areaSelectionSequence")
+            || !previous.data.hasKey("areaSelectionReceipt", 10)) return this;
+        NBTTagCompound latest = metadata(previous.data.getCompoundTag("areaSelectionReceipt"));
+        // A receipt clears replayed hints on its own view; the eventual full still owns its undelivered one-shots.
+        latest.removeTag("hints");
+        latest.removeTag("libraryInitialSnapshot");
+        if (latest.getBoolean("workspaceUiOnly"))
+            latest.setBoolean("capturePending", latest.getBoolean("workspaceCapturePending"));
+        latest.setTag("areaSelectionReceipt", previous.data.getCompoundTag("areaSelectionReceipt"));
+        boolean shell = latest.getBoolean("workspaceUiOnly") && (latest.getBoolean("workspaceCapturePending")
+            || !latest.getBoolean("workspaceHasCapture") && !cells.isEmpty());
+        latest.setBoolean("areaSelectionShell", shell);
+        latest.setBoolean("snapshotPending", shell);
+        return withMetadata(latest);
     }
 
     boolean follows(HologramState base) {
@@ -310,6 +357,7 @@ final class HologramState {
         for (Object name : source.func_150296_c()) {
             String key = (String) name;
             if (!key.equals("cells") && !key.equals("partial")
+                && !key.equals("areaSelectionOnly")
                 && !key.equals("baseRevision")
                 && !key.equals("processingPatch")
                 && !key.equals("processingConfirmedStages"))

@@ -180,22 +180,38 @@ public final class HologramBlueprintResources {
     }
 
     /** Exact native identity; NBT compounds compare structurally, independent of serialized key order. */
-    private static final class ExactKey {
+    static final class ExactKey {
 
         final Object type;
         final int meta;
         final NBTTagCompound tag;
+        private final int hash;
 
         ExactKey(ItemStack item, FluidStack fluid) {
+            this(item, fluid, true);
+        }
+
+        private ExactKey(ItemStack item, FluidStack fluid, boolean snapshot) {
             type = item != null ? item.getItem() : fluid == null ? null : fluid.getFluid();
             meta = item == null ? 0 : item.getItemDamage();
             NBTTagCompound nbt = item == null ? fluid == null ? null : fluid.tag : item.getTagCompound();
-            tag = nbt == null ? null : (NBTTagCompound) nbt.copy();
+            tag = nbt == null || !snapshot ? nbt : (NBTTagCompound) nbt.copy();
+            hash = (System.identityHashCode(type) * 31 + meta) * 31 + java.util.Objects.hashCode(tag);
+        }
+
+        /** A read-only lookup probe. Never store this short-lived view in a collection. */
+        static ExactKey borrowed(ItemStack item) {
+            return new ExactKey(item, null, false);
+        }
+
+        boolean matches(ItemStack item) {
+            return type == (item == null ? null : item.getItem()) && meta == (item == null ? 0 : item.getItemDamage())
+                && java.util.Objects.equals(tag, item == null ? null : item.getTagCompound());
         }
 
         @Override
         public int hashCode() {
-            return (System.identityHashCode(type) * 31 + meta) * 31 + java.util.Objects.hashCode(tag);
+            return hash;
         }
 
         @Override

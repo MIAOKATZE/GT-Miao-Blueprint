@@ -90,8 +90,8 @@ final class HologramSession {
     HologramPresets.Preset processingSource;
     HologramDecorMaterials.Ledger decorLedger = new HologramDecorMaterials.Ledger();
     final List<ItemStack> decorPlanItems = new ArrayList<>();
-    final Map<String, Long> pendingAssetBudget = new HashMap<>();
-    final Map<Integer, Map<String, Long>> cellAssetBudgets = new HashMap<>();
+    final Map<HologramBlueprintResources.ExactKey, Long> pendingAssetBudget = new HashMap<>();
+    final Map<Integer, Map<HologramBlueprintResources.ExactKey, Long>> cellAssetBudgets = new HashMap<>();
     HologramBlueprintProcessing.Policy processingPolicy;
     String workspaceTab = "structure";
     String openPurpose = "";
@@ -129,6 +129,7 @@ final class HologramSession {
     final HologramLocalPlanRefresh localEdits = new HologramLocalPlanRefresh();
     boolean cellDeltaProtocol;
     long snapshotResyncTick = Long.MIN_VALUE;
+    long areaSelectionSequence;
     boolean replacementReady, replacementAuthorized;
     HologramCapture indexedCapture;
     IdentityHashMap<HologramCapture.Cell, Integer> cellIndices = new IdentityHashMap<>();

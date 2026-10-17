@@ -12,8 +12,8 @@ import net.minecraft.world.World;
 import gregtech.common.blocks.ItemMachines;
 
 /**
- * A task-owned proof for empty ordinary vanilla cells. Position/world/permission observations are
- * always made for the current cell; only audited metadata-to-material results survive across cells.
+ * A task-owned proof for empty ordinary cells. World/permission observations remain per position;
+ * method descriptors may be shared, while unknown damageDropped overrides are called every time.
  */
 final class HologramPlanClassifier {
 
@@ -60,8 +60,11 @@ final class HologramPlanClassifier {
             && target.getItem() instanceof ItemBlock
             && !(target.getItem() instanceof ItemMachines)
             && target.getItemDamage() >= 0
-            && HologramBlueprintValidationCache.vanillaMaterial(cell.block)
-            && HologramBlueprintValidationCache.vanillaMaterial(Block.getBlockFromItem(target.getItem()))
+            && validation.ordinaryMaterial(cell.block, cell.meta)
+            && validation.ordinaryMaterial(
+                Block.getBlockFromItem(target.getItem()),
+                target.getItem()
+                    .getMetadata(target.getItemDamage()))
             && target.getItem() == Item.getItemFromBlock(Block.getBlockFromItem(target.getItem()))
             && !HologramNativePlacement.supported(cell.block)
             && (cell.block == Block.getBlockFromItem(target.getItem())
@@ -85,7 +88,7 @@ final class HologramPlanClassifier {
         ItemStack target = target(s, cell, index);
         if (actualTile != null || !emptyOrdinary(s, cell, index, target)) {
             fallbackCells++;
-            return HologramPlanPolicy.classify(s, cell, index);
+            return HologramPlanPolicy.classify(s, cell, index, loaded, actual, actualMeta, actualTile);
         }
         ordinaryCells++;
         if (cell.structureTargets != null) {
@@ -143,7 +146,7 @@ final class HologramPlanClassifier {
 
     private boolean validationDamageMatches(Block actual, int metadata, ItemStack paid) {
         try {
-            // The exact vanilla classes on this path read only metadata. Third-party subclasses never enter.
+            // Audited pick implementations read metadata; unknown drop overrides still execute on each call.
             return validation.materialDamage(actual, metadata) == paid.getItemDamage();
         } catch (IOException invalid) {
             return false;

@@ -9,7 +9,7 @@ import net.minecraft.util.AxisAlignedBB;
 
 import org.lwjgl.opengl.GL11;
 
-/** Read-only bounded world overlay; the inclusive coordinates always come from the server mirror. */
+/** Read-only bounded overlay of local selection geometry or the last authoritative server mirror. */
 final class HologramAreaOverlay {
 
     static final class RenderWitness {
@@ -44,9 +44,13 @@ final class HologramAreaOverlay {
     }
 
     static void render(HologramState state, float partialTicks, int[] cursor) {
+        renderSelection(state, state.data, partialTicks, cursor);
+    }
+
+    static void renderSelection(HologramState state, NBTTagCompound selection, float partialTicks, int[] cursor) {
         Minecraft mc = Minecraft.getMinecraft();
         Entity camera = mc.renderViewEntity;
-        int[] points = state.data.getIntArray("areaPoints");
+        int[] points = selection.getIntArray("areaPoints");
         lastRenderWitness = null;
         if (camera == null) return;
         double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
@@ -60,7 +64,7 @@ final class HologramAreaOverlay {
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glDepthMask(false);
             GL11.glLineWidth(2);
-            NBTTagList regions = state.data.getTagList("areaRegions", 10);
+            NBTTagList regions = selection.getTagList("areaRegions", 10);
             for (int i = 0; i < regions.tagCount(); i++) {
                 NBTTagCompound region = regions.getCompoundTagAt(i);
                 if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, .8f);

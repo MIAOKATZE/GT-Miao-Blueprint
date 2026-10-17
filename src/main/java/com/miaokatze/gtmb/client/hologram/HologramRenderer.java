@@ -127,7 +127,7 @@ final class HologramRenderer {
             if (sameMemberships) structureBoundsState = next;
         }
         if (worldState == previous) {
-            if (worldIndex != previous.cells.size()) {
+            if (worldIndex != previous.cells.size() && next.changedIndices.length != 0) {
                 clearWorldGroups();
             } else {
                 for (HologramRegionCache.Key key : dirty) {

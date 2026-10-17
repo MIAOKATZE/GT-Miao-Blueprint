@@ -18,6 +18,10 @@ final class HologramSessionPolicy {
 
     private HologramSessionPolicy() {}
 
+    static boolean authoring(HologramSession s) {
+        return s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && !s.virtualPlacement;
+    }
+
     static boolean blockedByAreaImport(HologramSession s) {
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area == null || !area.importing) return false;

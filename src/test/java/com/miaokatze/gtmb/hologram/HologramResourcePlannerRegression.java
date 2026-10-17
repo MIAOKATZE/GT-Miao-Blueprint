@@ -139,6 +139,52 @@ public final class HologramResourcePlannerRegression {
         }
         SimpleAssert.eq(size, stress.plan.items.size(), "distinct payloads stay distinct");
         SimpleAssert.eq((long) size + 2, operations, "distinct-resource merge has one indexed operation per item");
+
+        ItemStack main = new ItemStack(Items.diamond, 3);
+        NBTTagCompound exact = new NBTTagCompound();
+        exact.setString("identity", "native bill");
+        main.setTagCompound(exact);
+        List<ItemStack> components = java.util.Collections.singletonList(main);
+        ItemStack paid = main.copy();
+        paid.stackSize = 1;
+        List<ItemStack> extra = HologramNativePlacement.additionalMaterials(Blocks.stone, components, paid);
+        SimpleAssert.eq(2, extra.get(0).stackSize, "reused exact native bill pays the primary shell once");
+        SimpleAssert.eq(3, main.stackSize, "subtracting a primary never mutates the original native credits");
+        paid.getTagCompound()
+            .setString("identity", "different full NBT");
+        boolean rejected = false;
+        try {
+            HologramNativePlacement.additionalMaterials(Blocks.stone, components, paid);
+        } catch (java.io.IOException expectedFailure) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "same item/damage with different complete NBT is never the paid primary");
+
+        ItemStack bytesA = new ItemStack(Items.diamond), bytesB = new ItemStack(Items.diamond);
+        NBTTagCompound tagA = new NBTTagCompound(), tagB = new NBTTagCompound();
+        tagA.setByteArray("bytes", new byte[] { 0, 31 });
+        tagB.setByteArray("bytes", new byte[] { 1, 0 });
+        bytesA.setTagCompound(tagA);
+        bytesB.setTagCompound(tagB);
+        HologramBlueprintResources.ExactKey keyA = HologramValues.stackKey(bytesA);
+        HologramBlueprintResources.ExactKey keyB = HologramValues.stackKey(bytesB);
+        SimpleAssert.eq(keyA.hashCode(), keyB.hashCode(), "byte-array fixture deliberately collides by hash");
+        SimpleAssert.that(!keyA.equals(keyB), "equal-length byte arrays require complete structural equality");
+        java.util.Map<HologramBlueprintResources.ExactKey, Long> counts = new java.util.HashMap<>();
+        HologramValues.mergeStack(counts, bytesA, 1L, Long::sum);
+        HologramValues.mergeStack(counts, bytesB, 1L, Long::sum);
+        ItemStack equal = bytesA.copy();
+        equal.stackSize = 57;
+        HologramValues.mergeStack(counts, equal, 1L, Long::sum);
+        SimpleAssert.eq(2, counts.size(), "different byte payload bills stay distinct despite a hash collision");
+        SimpleAssert.eq(
+            Long.valueOf(2),
+            counts.get(HologramValues.lookupKey(equal)),
+            "equal full payload copies merge independently of stack size");
+        bytesA.getTagCompound()
+            .setByteArray("bytes", new byte[] { 9, 9 });
+        SimpleAssert.that(keyA.matches(equal), "admitted key owns its payload after the source stack changes");
+        SimpleAssert.eq(Long.valueOf(2), counts.get(keyA), "source mutation cannot corrupt material map membership");
     }
 
     private static void stagedParity() throws Exception {
@@ -251,6 +297,89 @@ public final class HologramResourcePlannerRegression {
         }
         deferredLifecycle(player);
         classifierReuse(player, world);
+        authoringPlan(player, unsafe);
+    }
+
+    private static void authoringPlan(EntityPlayerMP player, sun.misc.Unsafe unsafe) throws Exception {
+        net.minecraft.world.World previousWorld = player.worldObj;
+        double previousY = player.posY;
+        HologramLocalEditRegression.CountingWorld world = (HologramLocalEditRegression.CountingWorld) unsafe
+            .allocateInstance(HologramLocalEditRegression.CountingWorld.class);
+        player.worldObj = world;
+        player.posY = 64;
+        try {
+            HologramSession sync = session(player, 128), staged = session(player, 128);
+            for (HologramSession draft : new HologramSession[] { sync, staged }) {
+                draft.virtualPreset.schema = 2;
+                draft.virtualPlacement = false;
+                draft.expectedBlocks.add(Blocks.dirt);
+                draft.planStatus.add("pending");
+                draft.replacementAuthorized = draft.placementReviewIssued = draft.forcePlacementReady = true;
+                draft.blueprintResources = new HologramBlueprintResources.Plan();
+                draft.blueprintResources.addItems(java.util.Collections.singletonList(new ItemStack(Blocks.dirt)));
+            }
+            HologramResourcePlanner.refreshPlan(sync);
+            HologramResourcePlanner.PlanTask task = HologramResourcePlanner.beginPlan(staged);
+            java.util.Set<String> phases = new java.util.HashSet<>();
+            for (int slices = 0; !task.done() && slices < 1000; slices++) {
+                task.step(17, 1000000000L);
+                phases.add(task.phase());
+            }
+            SimpleAssert.that(task.done(), "authoring projection completes with bounded target/facing work");
+            SimpleAssert.eq(0, world.reads, "author draft planning performs no live world matching");
+            SimpleAssert.that(
+                !phases.contains("plan.classify") && !phases.contains("resources.cells"),
+                "author planning skips differential and resource phases");
+            assertItems(sync.planTargets, staged.planTargets);
+            SimpleAssert.eq(sync.planFacings, staged.planFacings, "author target/facing parity");
+            for (HologramSession draft : new HologramSession[] { sync, staged }) {
+                SimpleAssert.that(
+                    draft.expectedBlocks.isEmpty() && draft.planStatus.isEmpty(),
+                    "author projection cannot retain a stale world plan");
+                SimpleAssert.that(
+                    draft.blueprintResources.items.isEmpty() && draft.pendingAssetBudget.isEmpty()
+                        && draft.materialContext == null,
+                    "author projection clears material quotes and connections");
+                SimpleAssert.that(
+                    !draft.replacementAuthorized && !draft.placementReviewIssued
+                        && !draft.forcePlacementReady
+                        && !draft.localPlanPending,
+                    "author mode holds no construction authorization or fabricated pending task");
+            }
+            sync.cellDeltaProtocol = true;
+            sync.processingSource = HologramPresets.copy(sync.virtualPreset);
+            sync.processingPolicy = HologramBlueprintProcessing.defaults("self", 0);
+            HologramLocalPlanRefresh.snapshotBegin(sync);
+            for (int i = 0; i < sync.capture.cells.size(); i++) {
+                HologramLocalPlanRefresh.snapshotSeedDefaults(sync, i);
+                HologramLocalPlanRefresh.snapshotSeedSource(sync, i);
+                HologramLocalPlanRefresh.snapshotDraftCell(sync, i, new NBTTagCompound());
+            }
+            NBTTagCompound baseline = new NBTTagCompound();
+            baseline.setInteger("total", sync.capture.cells.size());
+            HologramLocalPlanRefresh.snapshotComplete(sync, baseline);
+            sync.pins.put(1, new ItemStack(Blocks.dirt));
+            SimpleAssert.that(
+                HologramLocalPlanRefresh.refresh(sync, java.util.Collections.singleton(1)),
+                "a stable author edit updates only its owned targets without a deferred whole plan");
+            NBTTagCompound delta = HologramLocalPlanRefresh.delta(sync);
+            SimpleAssert.that(
+                delta != null && delta.getBoolean("quotesIncomplete")
+                    && !delta.getBoolean("planIncomplete")
+                    && !delta.hasKey("materials")
+                    && !delta.hasKey("blueprintResources"),
+                "author delta does not claim a live material quote");
+            SimpleAssert.eq(0, world.reads, "sparse author edit and its cell delta perform no live world reads");
+            SimpleAssert.that(
+                HologramWorldPlacementWorkflow.beginVirtualPlacement(sync, sync.x, sync.y, sync.z, sync.side),
+                "the real placement entry accepts the authored draft");
+            SimpleAssert.that(
+                world.reads > 0 && sync.expectedBlocks.size() == 128 && sync.planStatus.size() == 128,
+                "placement entry performs fresh live matching before issuing a construction plan");
+        } finally {
+            player.worldObj = previousWorld;
+            player.posY = previousY;
+        }
     }
 
     private static void classifierReuse(EntityPlayerMP player, HologramServiceEditRegression.ReadOnlyWorld world)
@@ -331,6 +460,95 @@ public final class HologramResourcePlannerRegression {
             SimpleAssert.that(
                 classifier.damageMisses() <= 3 && classifier.damageHits() > 50000,
                 "pure variant callbacks scale with distinct identities rather than the 50000 positions");
+
+            String decorId = "gtmb:planner_metadata_decor";
+            net.minecraft.block.Block decor = net.minecraft.block.Block.getBlockFromName(decorId);
+            if (decor == null) {
+                decor = new net.minecraft.block.Block(net.minecraft.block.material.Material.rock) {
+
+                    @Override
+                    public int damageDropped(int metadata) {
+                        return metadata;
+                    }
+                };
+                // Forge returns the default air block for an absent ID; query raw occupancy instead.
+                // Keep away from the 4087..4094 IDs reserved by later regression fixtures.
+                int free = 3997;
+                while (free > 0
+                    && (((cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry<?>) net.minecraft.block.Block.blockRegistry)
+                        .getRaw(free) != null || net.minecraft.item.Item.itemRegistry.getObjectById(free) != null))
+                    free--;
+                SimpleAssert.that(free > 0, "ordinary mod fixture has a free native registry identity");
+                net.minecraft.block.Block.blockRegistry.addObject(free, decorId, decor);
+                net.minecraft.item.ItemBlock decorItem = new net.minecraft.item.ItemBlock(decor);
+                decorItem.setHasSubtypes(true);
+                net.minecraft.item.Item.itemRegistry.addObject(free, decorId, decorItem);
+            }
+            cell.block = decor;
+            cell.blueprintItem = net.minecraft.item.Item.itemRegistry
+                .getNameForObject(net.minecraft.item.Item.getItemFromBlock(decor));
+            cell.blueprintDamage = 0;
+            ItemStack decorTarget = new ItemStack(decor);
+            s.pins.put(0, decorTarget);
+            s.planTargets.set(0, decorTarget);
+            world.occupied = decor;
+            long ordinaryBefore = classifier.ordinaryCells;
+            SimpleAssert.eq(
+                HologramPlanPolicy.classify(s, cell, 0),
+                classifier.classify(s, cell, 0, true, decor, 0, null),
+                "ordinary mod decoration preserves native physical identity classification");
+            SimpleAssert.eq(
+                ordinaryBefore + 1,
+                classifier.ordinaryCells,
+                "ordinary mod decoration reuses the audited native method descriptor");
+            SimpleAssert.that(
+                classifier.resources(s, cell, 0).items.isEmpty(),
+                "ordinary no-NBT mod decoration has no hidden inventory bill");
+            HologramSnapshots.CellRows rowContext = new HologramSnapshots.CellRows(s);
+            HologramSnapshots.CellRow ordinaryRow = HologramSnapshots.cellRowData(s, 0, false, rowContext);
+            SimpleAssert.eq(
+                net.minecraft.block.Block.blockRegistry.getNameForObject(decor),
+                ordinaryRow.row.getString("wantId"),
+                "row preview preserves the physical ordinary mod block");
+            SimpleAssert.eq(
+                decor,
+                net.minecraft.block.Block.getBlockFromName(ordinaryRow.row.getString("wantId")),
+                "row preview's registered identity resolves to the exact physical ordinary mod block");
+            SimpleAssert.eq(decor, ordinaryRow.current, "same-call row observation supplies its current block");
+            SimpleAssert.that(
+                HologramValues.same(decorTarget, ordinaryRow.target),
+                "same-call row observation supplies its exact resolved target");
+            for (int color : new int[] { 3, 8 }) {
+                NBTTagCompound visual = new NBTTagCompound();
+                visual.setByte("mColor", (byte) color);
+                visual.setInteger("texturePage", color);
+                NBTTagList inventory = new NBTTagList();
+                inventory.appendTag(new ItemStack(Items.diamond, color).writeToNBT(new NBTTagCompound()));
+                visual.setTag("Inventory", inventory);
+                cell.tileNbt = HologramBlueprintNbt.encodeCaptured(visual);
+                NBTTagCompound expectedPayload = HologramBlueprintNbt
+                    .decode(HologramCellPolicy.targetPreviewTile(s, cell));
+                SimpleAssert.eq(
+                    expectedPayload,
+                    rowContext.preview(cell, HologramBlueprintNbt.decode(cell.tileNbt)),
+                    "in-memory snapshot selection equals the former transport round trip for exact NBT");
+                HologramSnapshots.CellRow payloadRow = HologramSnapshots.cellRowData(s, 0, false, rowContext);
+                SimpleAssert.eq(
+                    color - 1,
+                    payloadRow.row.getCompoundTag("targetDisplay")
+                        .getInteger("color"),
+                    "different full NBT of the same block retains its own target display");
+                NBTTagCompound source = HologramBlueprintNbt.decode(cell.tileNbt);
+                NBTTagCompound detached = rowContext.preview(cell, source);
+                detached.setInteger("texturePage", 999);
+                SimpleAssert.eq(
+                    color,
+                    rowContext.preview(cell, source)
+                        .getInteger("texturePage"),
+                    "a row's display projection cannot mutate its source payload");
+            }
+            cell.tileNbt = "";
+            cell.itemNbt = "";
 
             cell.block = Blocks.stone;
             cell.blueprintItem = "minecraft:stone";
@@ -588,6 +806,7 @@ public final class HologramResourcePlannerRegression {
     private static HologramSession session(EntityPlayerMP player, int size) {
         HologramSession s = new HologramSession(player, 0, 64, 0, false, 2);
         s.virtual = true;
+        s.virtualPlacement = true;
         s.scope = 0;
         s.virtualPreset = new HologramPresets.Preset();
         s.virtualPreset.palette.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));

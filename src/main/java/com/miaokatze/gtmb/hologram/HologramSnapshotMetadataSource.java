@@ -31,9 +31,11 @@ final class HologramSnapshotMetadataSource {
     private final HologramPresets.Preset original;
     private final boolean project;
     private final boolean draftOnly;
+    private final boolean publishSource;
     final HologramPresets.Preset result = new HologramPresets.Preset();
     HologramBlueprintProcessing.Policy policy;
     private final java.util.Set<String> palette = new HashSet<>();
+    private final Map<String, HologramPresets.Cell> payloadCells = new java.util.HashMap<>();
     private int stage, cursor;
     private Iterator<? extends Map.Entry<String, String>> map;
     private Iterator<HologramArea.Structure> areaStructures;
@@ -43,6 +45,7 @@ final class HologramSnapshotMetadataSource {
         this.dataContext = dataContext;
         project = s.processingSource == null;
         draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
+        publishSource = project || draftOnly;
         original = project ? s.virtualPreset : s.processingSource;
     }
 
@@ -55,6 +58,7 @@ final class HologramSnapshotMetadataSource {
     }
 
     long total() {
+        if (!publishSource && (stage >= 2 && stage <= 5 || stage == 7)) return 0;
         if (stage == 1) return original == null || project && s.machine != null ? 0 : original.structures.size();
         if (stage == 2) return original == null ? 0 : original.aeIssues.size();
         if (stage == 3) return original == null ? s.blueprintHintAreas.size() : original.hintAreas.size();
@@ -83,7 +87,10 @@ final class HologramSnapshotMetadataSource {
                     result.structures.add(HologramBlueprintData.copyStructure(original.structures.get(cursor++)));
                 else next();
             } else if (stage == 2) {
-                if (original != null && cursor < original.aeIssues.size()) result.aeIssues
+                if (!publishSource) {
+                    stage = 6;
+                    cursor = 0;
+                } else if (original != null && cursor < original.aeIssues.size()) result.aeIssues
                     .add(GSON.fromJson(GSON.toJson(original.aeIssues.get(cursor++)), HologramAePolicy.Issue.class));
                 else next();
             } else if (stage == 3) {
@@ -112,7 +119,7 @@ final class HologramSnapshotMetadataSource {
                 if (cursor < size) {
                     HologramPresets.Cell cell = project
                         ? HologramBlueprintProjection.projectedCell(s, cursor++, result, palette)
-                        : copyCell(original.cells.get(cursor++));
+                        : copyCell(original.cells.get(cursor++), publishSource);
                     if (draftOnly) {
                         HologramCapture.Cell authoring = project ? s.capture.cells.get(cursor - 1)
                             : s.capture.positions.get((s.x + cell.x) + "," + (s.y + cell.y) + "," + (s.z + cell.z));
@@ -125,10 +132,12 @@ final class HologramSnapshotMetadataSource {
                             s.facingPins.getOrDefault(HologramValues.position(authoring), authoring.actualFacing));
                     }
                     freezeBlock(cell, dataContext);
+                    if (hasPayload(cell.tileNbt) || hasPayload(cell.itemNbt))
+                        payloadCells.put(cell.x + "," + cell.y + "," + cell.z, cell);
                     result.cells.add(cell);
                 } else next();
             } else if (stage == 7) {
-                if (!project && cursor < original.palette.size())
+                if (!project && publishSource && cursor < original.palette.size())
                     result.palette.add(copyCell(original.palette.get(cursor++)));
                 else next();
             } else if (stage == 8) {
@@ -176,7 +185,7 @@ final class HologramSnapshotMetadataSource {
             dataContext.freeze(original.processingNbt);
             dataContext.freeze(original.quantumGroupingNbt);
             copyScalars(original, result);
-            if (original.nativeBlueprint != null) result.nativeBlueprint = GSON
+            if (publishSource && original.nativeBlueprint != null) result.nativeBlueprint = GSON
                 .fromJson(GSON.toJson(original.nativeBlueprint), HologramBlueprintVersions.Metadata.class);
         }
         java.util.List<String> keys = original == null ? s.retainedNbtKeys : original.retainedNbtKeys;
@@ -222,14 +231,39 @@ final class HologramSnapshotMetadataSource {
     }
 
     static HologramPresets.Cell copyCell(HologramPresets.Cell source) {
+        return copyCell(source, true);
+    }
+
+    private static HologramPresets.Cell copyCell(HologramPresets.Cell source, boolean targets) {
         HologramPresets.Cell result = new HologramPresets.Cell();
         copyScalars(source, result);
         if (source.structureIds != null) result.structureIds = new ArrayList<>(source.structureIds);
-        if (source.allowedTargets != null) {
+        if (targets && source.allowedTargets != null) {
             result.allowedTargets = new ArrayList<>();
             for (HologramPresets.Target target : source.allowedTargets)
                 result.allowedTargets.add(GSON.fromJson(GSON.toJson(target), HologramPresets.Target.class));
         }
+        return result;
+    }
+
+    boolean publishesSource() {
+        return publishSource;
+    }
+
+    /** Copy the header and small descriptors without copying a cell tree that the caller will replace. */
+    static HologramPresets.Preset copyMetadata(HologramPresets.Preset source) {
+        HologramPresets.Preset result = new HologramPresets.Preset();
+        copyScalars(source, result);
+        if (source.nativeBlueprint != null) result.nativeBlueprint = GSON
+            .fromJson(GSON.toJson(source.nativeBlueprint), HologramBlueprintVersions.Metadata.class);
+        for (HologramPresets.Structure structure : source.structures)
+            result.structures.add(HologramBlueprintData.copyStructure(structure));
+        for (HologramAePolicy.Issue issue : source.aeIssues)
+            result.aeIssues.add(GSON.fromJson(GSON.toJson(issue), HologramAePolicy.Issue.class));
+        for (HologramPresets.HintArea hint : source.hintAreas)
+            result.hintAreas.add(GSON.fromJson(GSON.toJson(hint), HologramPresets.HintArea.class));
+        result.retainedNbtKeys = source.retainedNbtKeys == null ? null : new ArrayList<>(source.retainedNbtKeys);
+        result.modVersions.putAll(source.modVersions);
         return result;
     }
 
@@ -238,20 +272,15 @@ final class HologramSnapshotMetadataSource {
     }
 
     static void freezeBlock(HologramPresets.Cell cell, HologramSnapshotDataContext dataContext) throws IOException {
-        net.minecraft.block.Block block = cell.block();
-        net.minecraft.nbt.NBTTagCompound payload = dataContext.freeze(cell.tileNbt);
-        dataContext.freeze(cell.itemNbt);
-        HologramCoordinatePolicies.freezeSensorSlots(cell, payload);
-        cell.metadataIdentityBoundary = HologramAeBlueprint.supports(block, payload)
-            || HologramNetworkBindings.node(block)
-            || payload != null && (payload.hasKey(HologramNetworkBindings.GROUP)
-                || payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
-            || HologramNetworkSchemas.removeExternalReferences(
-                block,
-                cell.damage,
-                payload == null ? null : (net.minecraft.nbt.NBTTagCompound) payload.copy());
-        cell.frozenBlock = block;
-        cell.frozenBlockResolved = true;
+        dataContext.freezeBlock(cell);
+    }
+
+    HologramPresets.Cell cellWithPayloadAt(int x, int y, int z) {
+        return payloadCells.isEmpty() ? null : payloadCells.get(x + "," + y + "," + z);
+    }
+
+    static boolean hasPayload(String encoded) {
+        return encoded != null && !encoded.isEmpty();
     }
 
     /** Typed copies remain legal when the native bootstrap redirects reflective Field access. */

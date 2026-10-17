@@ -123,7 +123,8 @@ final class HologramCellPolicy {
     }
 
     static ItemStack targetFor(HologramSession s, HologramCapture.Cell c, int index) {
-        if (s.localPlanPending) return HologramEssentia.shellMaterial(draftTarget(s, c, index));
+        if (s.localPlanPending || HologramSessionPolicy.authoring(s))
+            return HologramEssentia.shellMaterial(draftTarget(s, c, index));
         if (index >= 0 && index < s.planTargets.size()) {
             ItemStack target = s.planTargets.get(index);
             return target == null ? null : HologramEssentia.shellMaterial(target);
@@ -144,7 +145,7 @@ final class HologramCellPolicy {
         if (c.userPosition) return null;
         ItemStack automatic = s.autoTargets.get(index);
         if (!s.noHatches && automatic != null) return automatic.copy();
-        TileEntity actual = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
+        TileEntity actual = HologramSessionPolicy.authoring(s) ? null : s.player.worldObj.getTileEntity(c.x, c.y, c.z);
         // Capture replaces hint blocks with any recognized casing fallback. A remaining
         // hatch hint therefore needs its declared hatch even when automatic filling is off.
         // Preserve only an installed hatch accepted by that declaration; never synthesize one.
@@ -362,88 +363,106 @@ final class HologramCellPolicy {
         return result;
     }
 
+    /** The existing per-cell resource cache's complete detached input, without concatenating encoded payloads. */
+    static final class ResourcePlanKey {
+
+        final String tile, item, sourceItem, actorName;
+        final int sourceDamage, metadata, dimension, x, y, z;
+        final Block block;
+        final HologramNativePlacement.Adapter adapter;
+        final long generation;
+        final boolean retainNbt, retainCovers;
+        final List<String> keys;
+        final java.util.UUID actor;
+        final HologramBlueprintResources.ExactKey target;
+
+        ResourcePlanKey(HologramSession s, HologramCapture.Cell cell, ItemStack target,
+            HologramNativePlacement.Adapter adapter) {
+            tile = cell.tileNbt;
+            item = cell.itemNbt;
+            sourceItem = cell.blueprintItem;
+            sourceDamage = cell.blueprintDamage;
+            block = cell.block;
+            metadata = cell.meta;
+            dimension = s.dimension;
+            x = cell.x;
+            y = cell.y;
+            z = cell.z;
+            this.adapter = adapter;
+            generation = com.miaokatze.gtmb.api.ResourceContainers.generation();
+            retainNbt = s.virtualPreset.retainNbt;
+            retainCovers = HologramSessionPolicy.placementRetainCovers(s);
+            List<String> selected = HologramSessionPolicy.placementKeys(s);
+            keys = selected == null ? null : Collections.unmodifiableList(new ArrayList<>(selected));
+            actor = s.player.getUniqueID();
+            actorName = s.player.getCommandSenderName();
+            this.target = new HologramBlueprintResources.ExactKey(target, null);
+        }
+
+        boolean matches(HologramSession s, HologramCapture.Cell cell, ItemStack target,
+            HologramNativePlacement.Adapter adapter) {
+            return block == cell.block && metadata == cell.meta
+                && this.adapter == adapter
+                && generation == com.miaokatze.gtmb.api.ResourceContainers.generation()
+                && dimension == s.dimension
+                && x == cell.x
+                && y == cell.y
+                && z == cell.z
+                && sourceDamage == cell.blueprintDamage
+                && java.util.Objects.equals(sourceItem, cell.blueprintItem)
+                && java.util.Objects.equals(tile, cell.tileNbt)
+                && java.util.Objects.equals(item, cell.itemNbt)
+                && retainNbt == s.virtualPreset.retainNbt
+                && retainCovers == HologramSessionPolicy.placementRetainCovers(s)
+                && java.util.Objects.equals(keys, HologramSessionPolicy.placementKeys(s))
+                && java.util.Objects.equals(actor, s.player.getUniqueID())
+                && java.util.Objects.equals(actorName, s.player.getCommandSenderName())
+                && this.target.matches(target);
+        }
+    }
+
     static HologramBlueprintResources.Plan resourcePlan(HologramSession s, HologramCapture.Cell cell)
         throws java.io.IOException {
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2)
             return new HologramBlueprintResources.Plan();
-        if (HologramRecovery.hasSeal(targetFor(s, cell, HologramSessionPolicy.cellIndex(s, cell)))) {
-            sealedPlacementTarget(s, cell, HologramSessionPolicy.cellIndex(s, cell));
+        int index = HologramSessionPolicy.cellIndex(s, cell);
+        ItemStack finalTarget = targetFor(s, cell, index);
+        if (HologramRecovery.hasSeal(finalTarget)) {
+            sealedPlacementTarget(s, cell, index);
             cell.resourceError = "";
             return new HologramBlueprintResources.Plan().addNativeItems(
                 HologramGtswnPlacementMaterials.extraMaterials(cell.block, HologramBlueprintNbt.decode(cell.tileNbt)));
         }
-        String fingerprint = com.miaokatze.gtmb.api.ResourceContainers.generation() + ":"
-            + cell.tileNbt
-            + ":"
-            + cell.itemNbt
-            + ":"
-            + s.virtualPreset.retainNbt
-            + ":"
-            + HologramSessionPolicy.placementRetainCovers(s)
-            + ":"
-            + HologramSessionPolicy.placementKeys(s)
-            + ":"
-            + cell.block
-            + ":"
-            + cell.meta
-            + ":"
-            + targetFor(s, cell, HologramSessionPolicy.cellIndex(s, cell));
-        if (!fingerprint.equals(cell.resourceFingerprint)) {
-            cell.resourceFingerprint = fingerprint;
+        HologramNativePlacement.Adapter adapter = HologramNativePlacement.adapter(cell.block);
+        if (cell.resourcePlanKey == null || !cell.resourcePlanKey.matches(s, cell, finalTarget, adapter)) {
+            cell.resourcePlanKey = new ResourcePlanKey(s, cell, finalTarget, adapter);
+            cell.resourceFingerprint = "prepared"; // Short diagnostics only; never participates in cache identity.
             cell.resourceError = "";
             cell.resourcePlan = null;
             try {
-                NBTTagCompound tile = HologramBlueprintNbt.forPlacement(
-                    cell.block,
-                    cell.meta,
-                    cell.tileNbt,
-                    s.player.getUniqueID(),
-                    s.player.getCommandSenderName(),
-                    cell.x,
-                    cell.y,
-                    cell.z,
-                    s.virtualPreset.retainNbt,
-                    HologramSessionPolicy.placementRetainCovers(s),
-                    HologramSessionPolicy.placementKeys(s));
-                NBTTagCompound item = HologramBlueprintNbt.itemForPlacement(
-                    cell.itemNbt,
-                    s.player.getUniqueID(),
-                    s.player.getCommandSenderName(),
-                    s.virtualPreset.retainNbt,
-                    HologramSessionPolicy.placementRetainCovers(s),
-                    HologramSessionPolicy.placementKeys(s));
-                HologramEnergyPayload.Prepared cache = cachePlan(s, cell, HologramSessionPolicy.cellIndex(s, cell));
-                tile = cache.tileEmpty;
-                item = cache.itemEmpty;
-                ItemStack finalTarget = targetFor(s, cell, HologramSessionPolicy.cellIndex(s, cell));
+                // cachePlan performs the same placement selection and validation before preparing buffers.
+                // The former two projections were immediately overwritten, including two AE analyses per cell.
+                HologramEnergyPayload.Prepared cache = cachePlan(s, cell, index);
+                NBTTagCompound tile = cache.tileEmpty;
+                NBTTagCompound item = cache.itemEmpty;
                 Block finalBlock = targetPreviewBlock(s, cell, finalTarget);
                 int finalMeta = targetPreviewMeta(s, cell, finalTarget);
                 HologramEssentia.validatePlacement(finalBlock, finalMeta, tile);
                 if (HologramAeBlueprint.supports(cell.block, tile)) {
-                    cell.resourcePlan = HologramAeBlueprint.resourcePlan(
-                        cell.block,
-                        cell.meta,
-                        tile,
-                        targetFor(s, cell, HologramSessionPolicy.cellIndex(s, cell)));
+                    cell.resourcePlan = HologramAeBlueprint.resourcePlan(cell.block, cell.meta, tile, finalTarget);
                 } else {
-                    List<ItemStack> nativeComponents = HologramNativePlacement.supported(cell.block)
+                    List<ItemStack> nativeComponents = adapter != null
                         ? HologramNativePlacement.materials(cell.block, cell.meta, tile)
                         : Collections.emptyList();
                     cell.resourcePlan = HologramBlueprintResources.plan(tile, nativeComponents)
                         .merge(HologramBlueprintResources.plan(item));
-                    if (HologramNativePlacement.supported(cell.block) && decoration(s, cell) == null) {
+                    if (adapter != null && decoration(s, cell) == null) {
                         if (!s.virtualPreset.retainNbt)
                             throw new java.io.IOException("Native composite tile requires retained NBT");
-                        if (HologramNativePlacement.adapter(cell.block)
-                            .includesInventoryDrops(cell.block))
-                            cell.resourcePlan.removeItemsIncludedByNativeDrops(
-                                HologramNativePlacement.materials(cell.block, cell.meta, tile));
+                        if (adapter.includesInventoryDrops(cell.block))
+                            cell.resourcePlan.removeItemsIncludedByNativeDrops(nativeComponents);
                         cell.resourcePlan.addNativeItems(
-                            HologramNativePlacement.additionalMaterials(
-                                cell.block,
-                                cell.meta,
-                                tile,
-                                targetFor(s, cell, HologramSessionPolicy.cellIndex(s, cell))));
+                            HologramNativePlacement.additionalMaterials(cell.block, nativeComponents, finalTarget));
                     }
                 }
                 cell.resourcePlan.addNativeItems(HologramGtswnPlacementMaterials.extraMaterials(finalBlock, tile));
@@ -650,6 +669,7 @@ final class HologramCellPolicy {
         throws java.io.IOException {
         if (!s.virtual || s.virtualPreset == null
             || s.virtualPreset.schema < 2
+            || !HologramDecorMaterials.supports(cell.block)
             || HologramRecovery.hasSeal(targetFor(s, cell, HologramSessionPolicy.cellIndex(s, cell)))) return null;
         NBTTagCompound payload = HologramBlueprintNbt.decode(targetPreviewTile(s, cell));
         if (!HologramDecorMaterials.supports(cell.block, payload)) return null;

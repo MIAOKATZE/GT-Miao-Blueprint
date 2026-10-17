@@ -226,6 +226,7 @@ public final class HologramSnapshotPublishRegression {
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
             areaStagingHandoff(player, work);
+            lightweightAreaSelection(player, work);
             for (int i = 0; i < 8; i++) SimpleAssert.that(
                 HologramNetwork.reserveState(player, "fixture", false) != null,
                 "bounded pending slots accept requests up to player limit");
@@ -316,6 +317,7 @@ public final class HologramSnapshotPublishRegression {
             .getDeclaredMethod("session", EntityPlayerMP.class, int.class);
         factory.setAccessible(true);
         HologramSession s = (HologramSession) factory.invoke(null, player, 3);
+        s.virtualPlacement = true;
         s.virtualPreset.schema = 2;
         s.virtualPreset.id = "snapshot_error_reopen";
         s.virtualPreset.name = "Snapshot error reopen";
@@ -444,6 +446,19 @@ public final class HologramSnapshotPublishRegression {
                     .getCompoundTagAt(0)
                     .getString("wantId"),
                 "successful retry full contains the latest edit");
+            java.util.Map<String, HologramPresets.Cell> preparedDefaults = s.localEdits.defaults;
+            s.open = true;
+            HologramSnapshots.send(s);
+            drainPublication(s, work);
+            SimpleAssert.that(
+                s.localEdits.snapshotReuseIndices && s.localEdits.defaults == preparedDefaults,
+                "a real unchanged full reopen reuses its prepared editor indices");
+            s.localEdits.invalidate();
+            HologramSnapshots.send(s);
+            drainPublication(s, work);
+            SimpleAssert.that(
+                !s.localEdits.snapshotReuseIndices && s.localEdits.defaults != preparedDefaults,
+                "explicit invalidation rebuilds editor indices before publishing the next full baseline");
         } finally {
             HologramSnapshotPreparation.cancel(s);
             HologramDeferredPlanRefresh.cancel(s);
@@ -488,6 +503,7 @@ public final class HologramSnapshotPublishRegression {
         HologramSession previous = new HologramSession(player, 0, 64, 0, false, 2);
         previous.planRevision = 1;
         previous.uiSequence = 7;
+        previous.areaSelectionSequence = 11;
         // This vanilla world fixture has no initialized AE/container integrations.
         // Staging inherits these settings and still builds the real resource quote and full snapshot.
         previous.materialSettings.me = false;
@@ -515,6 +531,10 @@ public final class HologramSnapshotPublishRegression {
                 staged != previous && staged.id.equals(previous.id),
                 "actual Area publish replaces the server object while retaining the wire session nonce");
             SimpleAssert.eq(4096, staged.capture.cells.size(), "actual world import publishes every scanned block");
+            SimpleAssert.eq(
+                previous.areaSelectionSequence,
+                staged.areaSelectionSequence,
+                "same-session Area owner handoff retains selection receipt ordering");
             SimpleAssert.that(
                 HologramSnapshotPreparation.pending(previous) && HologramSnapshotPreparation.pending(staged),
                 "old stage-zero task overlaps the new full reservation");
@@ -538,6 +558,10 @@ public final class HologramSnapshotPublishRegression {
                 tick();
             }
             NBTTagCompound complete = latestFull();
+            SimpleAssert.eq(
+                previous.areaSelectionSequence,
+                complete.getLong("areaSelectionSequence"),
+                "final full carries the latest point sequence so it can end importing");
             SimpleAssert.eq(
                 4096,
                 complete.getTagList("cells", 10)
@@ -571,6 +595,179 @@ public final class HologramSnapshotPublishRegression {
             if (oldStructures == null) HologramWorkspace.AREA_STRUCTURES.remove(id);
             else HologramWorkspace.AREA_STRUCTURES.put(id, oldStructures);
             WIRE.clear();
+        }
+    }
+
+    /** Real world gestures publish bounded receipts even before a full baseline exists. */
+    @SuppressWarnings("unchecked")
+    private static void lightweightAreaSelection(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        HologramArea previousArea = HologramWorkspace.AREAS.remove(player.getUniqueID());
+        double previousY = player.posY;
+        HologramSession s = new HologramSession(player, 0, 64, 0, false, 2);
+        HologramWorkspace.activate(player.getUniqueID(), s);
+        player.posY = 64;
+        s.hints = true;
+        s.libraryInitialSnapshot = true;
+        s.openPurpose = "blueprintBrowse";
+        try {
+            HologramNetwork.clearServerQueues();
+            WIRE.clear();
+            HologramProjectorWorkflow.openSettings(player);
+            SimpleAssert.eq(1, WIRE.size(), "empty blueprint mode opens on the wire without preparation ticks");
+            SimpleAssert.that(
+                selectionReceipt().getBoolean("workspaceUiOnly")
+                    && !selectionReceipt().getBoolean("workspaceHasCapture")
+                    && selectionReceipt().getBoolean("open"),
+                "empty mode receipt owns UI opening without a full baseline");
+            SimpleAssert
+                .that(!HologramSnapshotPreparation.pending(s), "empty UI opening schedules no full metadata task");
+            s.capturePending = true;
+            s.open = true;
+            s.openPurpose = "controllerStructure";
+            HologramSnapshots.sendUi(s);
+            SimpleAssert.that(
+                s.open && "controllerStructure".equals(s.openPurpose),
+                "a real immediate UI receipt preserves opening intent until capture completion");
+            SimpleAssert.that(
+                selectionReceipt().getBoolean("workspaceCapturePending")
+                    && selectionReceipt().getBoolean("snapshotPending"),
+                "the immediate capture shell advertises real pending work even before its first cell");
+            s.capturePending = false;
+            WIRE.clear();
+            s.openPurpose = "blueprintBrowse";
+            HologramAreaWorkflow.beginAreaSelection(player);
+            SimpleAssert.eq(1, WIRE.size(), "begin emits a wire receipt without a server preparation tick");
+            SimpleAssert.that(!HologramSnapshotPreparation.pending(s), "empty selection creates no full DTO task");
+            SimpleAssert.that(selectionReceipt().getBoolean("areaSelecting"), "server authorizes selection directly");
+            HologramAreaWorkflow.beginAreaSelection(player);
+            SimpleAssert.eq(2, WIRE.size(), "idempotent begin still replies when its earlier receipt was lost");
+            // A million-cell capture that fails on any read proves the gesture path never scans its content.
+            s.capture = new HologramCapture(null, new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone));
+            Field cells = HologramCapture.class.getDeclaredField("cells");
+            cells.setAccessible(true);
+            cells.set(s.capture, new java.util.AbstractList<HologramCapture.Cell>() {
+
+                @Override
+                public int size() {
+                    return 1_000_000;
+                }
+
+                @Override
+                public HologramCapture.Cell get(int index) {
+                    throw new AssertionError("Selection read blueprint cells");
+                }
+            });
+            s.blueprintSource = "saved";
+            s.open = true;
+            HologramSnapshots.sendUi(s);
+            s.openPurpose = "blueprintBrowse";
+            SimpleAssert.that(
+                selectionReceipt().getBoolean("workspaceHasCapture") && !HologramSnapshotPreparation.pending(s),
+                "opening a million-cell draft emits only UI facts");
+            HologramSnapshotPreparation.start(s);
+            NBTTagCompound invalidPoint = new NBTTagCompound();
+            invalidPoint.setString("session", s.id);
+            invalidPoint.setLong("planRevision", s.planRevision + 1);
+            invalidPoint.setInteger("point", 1);
+            invalidPoint.setInteger("y", 64);
+            int beforeInvalid = WIRE.size();
+            HologramAreaWorkflow.worldAreaPoint(player, invalidPoint);
+            invalidPoint.setLong("planRevision", s.planRevision);
+            int previousSlot = player.inventory.currentItem;
+            player.inventory.currentItem = 1;
+            HologramAreaWorkflow.worldAreaPoint(player, invalidPoint);
+            player.inventory.currentItem = previousSlot;
+            SimpleAssert
+                .eq(beforeInvalid, WIRE.size(), "stale revision or a different held tool cannot authorize corners");
+            HologramAreaWorkflow.areaPoint(player, 1, 0, 64, 0, false);
+            SimpleAssert
+                .that(HologramSnapshotPreparation.pending(s), "point receipt retains a real business full reservation");
+            SimpleAssert.that(
+                java.util.Arrays.equals(new int[] { 0, 64, 0 }, selectionReceipt().getIntArray("areaPoints")),
+                "first point is server-owned on the actual wire");
+            HologramAreaWorkflow.areaPoint(player, 2, 1, 64, 0, false);
+            NBTTagCompound points = selectionReceipt();
+            SimpleAssert
+                .eq(6, points.getIntArray("areaPoints").length, "both points arrive before any full preparation");
+            for (String key : new String[] { "cells", "materials", "processing", "aePreview", "ackIndices", "partial" })
+                SimpleAssert.that(!points.hasKey(key), "selection receipt excludes full/edit authority field " + key);
+            NBTTagCompound finish = new NBTTagCompound();
+            finish.setString("session", s.id);
+            finish.setLong("planRevision", s.planRevision);
+            finish.setLong("uiSequence", s.uiSequence + 1);
+            HologramAreaWorkflow.finishAreaSelection(player, finish);
+            SimpleAssert.that(
+                selectionReceipt().getBoolean("areaImporting"),
+                "finish acknowledges the actual server import transition");
+            SimpleAssert.eq(0, work.size(), "gestures schedule no full worker encoding");
+            SimpleAssert.that(
+                s.hints && s.libraryInitialSnapshot && "blueprintBrowse".equals(s.openPurpose),
+                "selection preserves undelivered full-snapshot one-shots");
+            HologramAreaWorkflow.cancelAreaSelection(player, s.id);
+            SimpleAssert.that(
+                !selectionReceipt().getBoolean("areaImporting"),
+                "cancel publishes cleared authoritative selection");
+            HologramAreaWorkflow.beginAreaSelection(player);
+            HologramAreaSelection local = new HologramAreaSelection();
+            int registrationPackets = WIRE.size();
+            local.point(2, 1001, 64, 0, "replace");
+            local.point(1, 1000, 64, 0, "replace");
+            local.point(1, 1002, 64, 0, "add");
+            local.undoRegion();
+            local.point(1, 1000, 64, 0, "replace");
+            local.point(2, 1001, 64, 0, "replace");
+            SimpleAssert.eq(
+                registrationPackets,
+                WIRE.size(),
+                "shared local point, combination and undo math emits no server packets");
+            finish.setLong("planRevision", s.planRevision);
+            finish.setLong("uiSequence", s.uiSequence + 1);
+            finish.setTag("areaSelection", local.snapshot());
+            HologramAreaWorkflow.finishAreaSelection(player, finish);
+            SimpleAssert.that(
+                selectionReceipt().getBoolean("areaImporting"),
+                "one final bounded geometry submission starts import without per-corner reach admission");
+            SimpleAssert.eq(
+                1000,
+                selectionReceipt().getIntArray("areaPoints")[0],
+                "server imports the final local geometry exactly");
+            SimpleAssert
+                .eq(registrationPackets + 1, WIRE.size(), "local interaction needs only one final authority receipt");
+            HologramAreaWorkflow.cancelAreaSelection(player, s.id);
+        } finally {
+            HologramSnapshotPreparation.cancel(s);
+            HologramWorkspace.AREAS.remove(player.getUniqueID());
+            if (previousArea != null) HologramWorkspace.AREAS.put(player.getUniqueID(), previousArea);
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
+            player.posY = previousY;
+            HologramNetwork.clearServerQueues();
+            WIRE.clear();
+        }
+    }
+
+    private static NBTTagCompound selectionReceipt() {
+        IMessage packet = WIRE.get(WIRE.size() - 1);
+        SimpleAssert
+            .that(packet instanceof HologramNetwork.State, "selection uses the existing immediate state envelope");
+        ByteBuf bytes = Unpooled.buffer();
+        try {
+            packet.toBytes(bytes);
+            HologramNetwork.State decoded = new HologramNetwork.State();
+            decoded.fromBytes(bytes);
+            SimpleAssert.that(decoded.tag.getBoolean("progressOnly"), "selection bypasses fragmented full FIFO");
+            NBTTagCompound receipt = decoded.tag.getCompoundTag("progress");
+            SimpleAssert.that(
+                receipt.getBoolean("areaSelectionOnly"),
+                "wire distinguishes selection from progress and edit ACKs");
+            return receipt;
+        } finally {
+            bytes.release();
         }
     }
 

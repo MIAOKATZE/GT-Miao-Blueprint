@@ -10,6 +10,8 @@ import java.util.TreeMap;
 
 import net.minecraft.item.ItemStack;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
+
 import gregtech.common.blocks.ItemMachines;
 
 /** Shared reservations and tier choices from allocateVirtualTargets, resumed at individual candidates. */
@@ -17,7 +19,8 @@ final class HologramVirtualAllocationTask {
 
     private final HologramSession s;
     private final Map<String, Map<Integer, List<ItemStack>>> groups = new HashMap<>();
-    private final Map<String, Integer> indices = new HashMap<>(), reserved = new HashMap<>(), counts = new HashMap<>();
+    private final Map<String, Integer> indices = new HashMap<>();
+    private final Map<ExactKey, Integer> reserved = new HashMap<>(), counts = new HashMap<>();
     private Iterator<Map.Entry<String, Map<Integer, List<ItemStack>>>> roles;
     private Iterator<List<ItemStack>> tiers;
     private Iterator<ItemStack> samples;
@@ -102,7 +105,7 @@ final class HologramVirtualAllocationTask {
             ItemStack manual = s.pins.get(i);
             if (manual != null && s.virtualEdited.contains(key)
                 && !HologramCellPolicy.plainTargetInstalled(s, c, manual))
-                reserved.merge(HologramValues.stackKey(manual), 1, Integer::sum);
+                HologramValues.mergeStack(reserved, manual, 1, Integer::sum);
         } else if (stage == 3) {
             if (cursor == s.virtualPreset.cells.size()) {
                 stage = 6;
@@ -147,12 +150,14 @@ final class HologramVirtualAllocationTask {
             ItemStack option = candidates.get(candidate++);
             if (HologramCellPolicy.hatchTier(option) > tier
                 || HologramCellPolicy.legalFacings(s, cell, option).length == 0) return;
-            String key = HologramValues.stackKey(option);
-            int available = counts.computeIfAbsent(
-                key,
-                ignored -> s.player.capabilities.isCreativeMode ? HologramCapture.LIMIT
+            ExactKey key = HologramValues.lookupKey(option);
+            Integer available = counts.get(key);
+            if (available == null) {
+                available = s.player.capabilities.isCreativeMode ? HologramCapture.LIMIT
                     : HologramMaterialAccess.materialSource(s)
-                        .count(option, Math.max(4096, s.capture.cells.size())));
+                        .count(option, Math.max(4096, s.capture.cells.size()));
+                counts.put(HologramValues.stackKey(option), available);
+            }
             if (available > reserved.getOrDefault(key, 0)) {
                 chosen = option;
                 commit();
@@ -164,7 +169,7 @@ final class HologramVirtualAllocationTask {
         s.pins.put(index, chosen.copy());
         s.coordinatePins.put(position, chosen.copy());
         if (!HologramCellPolicy.plainTargetInstalled(s, cell, chosen))
-            reserved.merge(HologramValues.stackKey(chosen), 1, Integer::sum);
+            HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
         Integer facing = s.facingPins.get(position);
         if (facing != null) {
             boolean legal = false;

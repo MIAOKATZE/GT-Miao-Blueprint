@@ -14,6 +14,8 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
+
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
@@ -58,18 +60,22 @@ final class HologramResourcePlanner {
         for (int i = 0; i < s.capture.cells.size(); i++) {
             s.capture.cells.get(i).stableIndex = i;
             s.planTargets.add(HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i));
+            if (HologramSessionPolicy.authoring(s)) s.capture.cells.get(i).status = "preview";
         }
+        if (HologramSessionPolicy.authoring(s)) return;
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell c = s.capture.cells.get(i);
             boolean loaded = w.blockExists(c.x, c.y, c.z);
-            s.expectedBlocks.add(loaded ? w.getBlock(c.x, c.y, c.z) : Blocks.air);
-            s.expectedMeta.add(loaded ? w.getBlockMetadata(c.x, c.y, c.z) : 0);
+            net.minecraft.block.Block actual = loaded ? w.getBlock(c.x, c.y, c.z) : Blocks.air;
+            int actualMeta = loaded ? w.getBlockMetadata(c.x, c.y, c.z) : 0;
+            s.expectedBlocks.add(actual);
+            s.expectedMeta.add(actualMeta);
             TileEntity tile = loaded ? w.getTileEntity(c.x, c.y, c.z) : null;
             s.expectedTiles.add(tile);
             s.expectedFacings.add(
                 tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
                     .ordinal() : -1);
-            c.status = HologramPlanPolicy.classify(s, c, i);
+            c.status = HologramPlanPolicy.classify(s, c, i, loaded, actual, actualMeta, tile);
             s.planStatus.add(c.status);
         }
         refreshResources(s);
@@ -78,7 +84,7 @@ final class HologramResourcePlanner {
     private static void resetPlan(HologramSession s) {
         s.ae.invalidate();
         s.replacementAuthorized = false;
-        s.replacementReady = HologramPlanPolicy.replacementStructureBuilt(s);
+        s.replacementReady = !HologramSessionPolicy.authoring(s) && HologramPlanPolicy.replacementStructureBuilt(s);
         s.job = 0;
         s.cursor = 0;
         s.completed = 0;
@@ -98,6 +104,34 @@ final class HologramResourcePlanner {
         s.planMissing = 0;
         s.planRecoveryFits = true;
         s.blueprintTotalResources = null;
+        if (HologramSessionPolicy.authoring(s)) clearAuthoringQuotes(s);
+    }
+
+    static void clearAuthoringQuotes(HologramSession s) {
+        s.expectedBlocks.clear();
+        s.expectedMeta.clear();
+        s.expectedTiles.clear();
+        s.expectedFacings.clear();
+        s.planStatus.clear();
+        s.replacementAuthorized = false;
+        s.replacementReady = false;
+        s.planMissing = 0;
+        s.planRecoveryFits = true;
+        s.blueprintTotalResources = null;
+        s.placementReviewIssued = false;
+        s.forcePlacementReady = false;
+        s.blueprintAwaitingConfirmation = false;
+        s.materialContext = null;
+        s.blueprintResources = new HologramBlueprintResources.Plan();
+        s.blueprintEnergy = new HologramEnergy.Demand();
+        s.blueprintEnergyCells.clear();
+        s.blueprintEnergyWarnings.clear();
+        s.blueprintIntrinsicSources.clear();
+        s.blueprintResourceMissing = "";
+        s.blueprintEnergyNotice = "";
+        s.decorPlanItems.clear();
+        s.pendingAssetBudget.clear();
+        s.cellAssetBudgets.clear();
     }
 
     /** Area imports plan into an unactivated staging session. Native/world calls stay on this thread. */
@@ -126,10 +160,18 @@ final class HologramResourcePlanner {
         boolean step(int maxWork, long maxNanos) {
             if (Thread.currentThread() != owner)
                 throw new IllegalStateException("Planning must stay on its main thread");
-            HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
-            while (!done() && budget.take()) advance();
-            lastWork = budget.used();
-            return done();
+            long measured = HologramRuntimeMetrics.start();
+            long now = System.nanoTime();
+            long available = maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE
+                : Math.max(0L, HologramWorkBudget.deadline(Math.max(0L, maxNanos)) - now);
+            HologramPlanBudget budget = new HologramPlanBudget(maxWork, available);
+            try {
+                while (!done() && budget.take()) advance();
+                lastWork = budget.used();
+                return done();
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.PLAN_STEP, measured);
+            }
         }
 
         boolean done() {
@@ -173,7 +215,7 @@ final class HologramResourcePlanner {
                     stage = 9;
                     return;
                 }
-                classifier = new HologramPlanClassifier(s);
+                if (!HologramSessionPolicy.authoring(s)) classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
                 stage = 10;
             } else if (stage == 10) {
@@ -221,7 +263,7 @@ final class HologramResourcePlanner {
                     if (needsExterior) {
                         exterior = new HologramExteriorTask(
                             geometry,
-                            (x, y, z) -> s.player.worldObj.blockExists(x, y, z)
+                            (x, y, z) -> HologramSessionPolicy.authoring(s) || s.player.worldObj.blockExists(x, y, z)
                                 && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
                         stage = 4;
                     } else {
@@ -246,9 +288,10 @@ final class HologramResourcePlanner {
                 if (cursor < s.capture.cells.size()) {
                     int i = cursor++;
                     s.planTargets.add(HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i));
+                    if (HologramSessionPolicy.authoring(s)) s.capture.cells.get(i).status = "preview";
                 } else {
                     cursor = 0;
-                    stage = 7;
+                    stage = HologramSessionPolicy.authoring(s) ? 9 : 7;
                 }
             } else if (stage == 7) {
                 if (cursor < s.capture.cells.size()) classify(cursor++);
@@ -263,6 +306,15 @@ final class HologramResourcePlanner {
         }
 
         private void classify(int i) {
+            long measured = HologramRuntimeMetrics.start();
+            try {
+                classifyCurrent(i);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.PLAN_CLASSIFY, measured);
+            }
+        }
+
+        private void classifyCurrent(int i) {
             HologramCapture.Cell c = s.capture.cells.get(i);
             World world = s.player.worldObj;
             boolean loaded = world.blockExists(c.x, c.y, c.z);
@@ -295,7 +347,14 @@ final class HologramResourcePlanner {
                 for (int side : legal) if (side == pin) s.planFacings.put(i, pin);
                 return;
             }
-            TileEntity actual = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
+            if (HologramSessionPolicy.authoring(s)) {
+                for (int side : legal) if (side == c.actualFacing) {
+                    s.planFacings.put(i, side);
+                    return;
+                }
+            }
+            TileEntity actual = HologramSessionPolicy.authoring(s) ? null
+                : s.player.worldObj.getTileEntity(c.x, c.y, c.z);
             if (actual instanceof IGregTechTileEntity && target != null
                 && !HologramRecovery.hasSeal(target)
                 && ((IGregTechTileEntity) actual).getMetaTileID() == target.getItemDamage()) {
@@ -328,6 +387,7 @@ final class HologramResourcePlanner {
 
         ResourceRowsTask(HologramSession s) {
             this.s = s;
+            if (HologramSessionPolicy.authoring(s)) stage = 5;
         }
 
         NBTTagList result() {
@@ -482,13 +542,17 @@ final class HologramResourcePlanner {
     }
 
     static void refreshResources(HologramSession s) {
+        if (HologramSessionPolicy.authoring(s)) {
+            clearAuthoringQuotes(s);
+            return;
+        }
         s.planMissing = 0;
         s.planRecoveryFits = true;
         s.blueprintTotalResources = null;
         if (s.capture == null) return;
         World w = s.player.worldObj;
-        Map<String, ItemStack> stacks = new LinkedHashMap<>();
-        Map<String, Integer> counts = new LinkedHashMap<>();
+        Map<ExactKey, ItemStack> stacks = new LinkedHashMap<>();
+        Map<ExactKey, Integer> counts = new LinkedHashMap<>();
         s.blueprintResources = new HologramBlueprintResources.Plan();
         s.blueprintEnergy = new HologramEnergy.Demand();
         s.blueprintEnergyCells.clear();
@@ -497,25 +561,25 @@ final class HologramResourcePlanner {
         s.blueprintResourceMissing = "";
         s.decorPlanItems.clear();
         HologramDecorMaterials.Ledger decorReport = s.decorLedger.copy();
-        Map<String, Long> decorReserved = new HashMap<>();
+        Map<ExactKey, Long> decorReserved = new HashMap<>();
         s.pendingAssetBudget.clear();
         s.cellAssetBudgets.clear();
         if (!s.player.capabilities.isCreativeMode) for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell cell = s.capture.cells.get(i);
             if (!HologramSessionPolicy.inScope(s, cell, i) || !"pending".equals(cell.status)) continue;
             try {
-                Map<String, Long> costs = new HashMap<>();
+                Map<ExactKey, Long> costs = new HashMap<>();
                 for (ItemStack item : HologramCellPolicy.resourcePlan(s, cell).items)
-                    costs.merge(HologramValues.stackKey(item), (long) item.stackSize, Long::sum);
+                    HologramValues.mergeStack(costs, item, (long) item.stackSize, Long::sum);
                 for (ItemStack cover : HologramCellPolicy.coverCosts(s, cell))
-                    costs.merge(HologramValues.stackKey(cover), 1L, Long::sum);
+                    HologramValues.mergeStack(costs, cover, 1L, Long::sum);
                 if (!HologramCellPolicy.orientationOnly(s, cell, i) && HologramCellPolicy.decoration(s, cell) == null
                     && !HologramMaterialAccess.freeShell(s, cell, HologramCellPolicy.targetFor(s, cell, i))) {
                     ItemStack shell = HologramEssentia.shellMaterial(HologramCellPolicy.targetFor(s, cell, i));
-                    if (shell != null) costs.merge(HologramValues.stackKey(shell), 1L, Long::sum);
+                    if (shell != null) HologramValues.mergeStack(costs, shell, 1L, Long::sum);
                 }
                 s.cellAssetBudgets.put(i, costs);
-                for (Map.Entry<String, Long> cost : costs.entrySet())
+                for (Map.Entry<ExactKey, Long> cost : costs.entrySet())
                     s.pendingAssetBudget.merge(cost.getKey(), cost.getValue(), Long::sum);
             } catch (java.io.IOException ignored) { /* The complete report below retains this blocker. */ }
         }
@@ -544,7 +608,7 @@ final class HologramResourcePlanner {
             if (s.mode != 2 && HologramCellPolicy.orientationOnly(s, c, i)) continue;
             if (s.mode != 2 && !s.player.capabilities.isCreativeMode)
                 for (ItemStack cover : HologramCellPolicy.coverCosts(s, c)) {
-                    String key = HologramValues.stackKey(cover);
+                    ExactKey key = HologramValues.stackKey(cover);
                     stacks.put(key, cover);
                     counts.merge(key, 1, Integer::sum);
                 }
@@ -553,7 +617,7 @@ final class HologramResourcePlanner {
                     HologramDecorMaterials.Descriptor descriptor = HologramCellPolicy.decoration(s, c);
                     if (descriptor == null && !HologramMaterialAccess.freeShell(s, c, target)) {
                         ItemStack shell = HologramEssentia.shellMaterial(target);
-                        String key = HologramValues.stackKey(shell);
+                        ExactKey key = HologramValues.stackKey(shell);
                         stacks.put(key, shell);
                         counts.merge(key, 1, Integer::sum);
                     } else if (descriptor != null) {
@@ -563,10 +627,10 @@ final class HologramResourcePlanner {
                                 0L,
                                 (long) HologramMaterialAccess.materialSource(s)
                                     .count(stack, Integer.MAX_VALUE)
-                                    - decorReserved.getOrDefault(HologramValues.stackKey(stack), 0L)
-                                    - s.pendingAssetBudget.getOrDefault(HologramValues.stackKey(stack), 0L)));
+                                    - decorReserved.getOrDefault(HologramValues.lookupKey(stack), 0L)
+                                    - s.pendingAssetBudget.getOrDefault(HologramValues.lookupKey(stack), 0L)));
                         for (ItemStack payment : quote.items) {
-                            String key = HologramValues.stackKey(payment);
+                            ExactKey key = HologramValues.stackKey(payment);
                             decorReserved.merge(key, (long) payment.stackSize, Long::sum);
                             s.decorPlanItems.add(payment.copy());
                         }
@@ -599,7 +663,7 @@ final class HologramResourcePlanner {
                 s.blueprintResourceMissing = missing;
             }
         }
-        for (Map.Entry<String, ItemStack> entry : stacks.entrySet()) {
+        for (Map.Entry<ExactKey, ItemStack> entry : stacks.entrySet()) {
             ItemStack stack = entry.getValue();
             int available = HologramMaterialAccess.shellCount(s, stack, Math.max(4096, s.capture.cells.size()));
             s.planMissing += Math.max(0, counts.get(entry.getKey()) - available);
@@ -611,7 +675,7 @@ final class HologramResourcePlanner {
                 HologramBlueprintResources.Plan total = new HologramBlueprintResources.Plan()
                     .merge(s.blueprintResources);
                 List<ItemStack> base = new ArrayList<>();
-                for (Map.Entry<String, ItemStack> entry : stacks.entrySet()) {
+                for (Map.Entry<ExactKey, ItemStack> entry : stacks.entrySet()) {
                     ItemStack stack = entry.getValue()
                         .copy();
                     stack.stackSize = counts.get(entry.getKey());
@@ -623,7 +687,7 @@ final class HologramResourcePlanner {
                     ? s.blueprintResources.missing(HologramMaterialAccess.materialSource(s))
                     : total.missing(HologramMaterialAccess.materialSource(s));
                 if (HologramMaterialAccess.fuzzyBlueprintShells(s))
-                    for (Map.Entry<String, ItemStack> entry : stacks.entrySet()) {
+                    for (Map.Entry<ExactKey, ItemStack> entry : stacks.entrySet()) {
                         ItemStack shell = entry.getValue();
                         boolean sealed = HologramRecovery.hasSeal(shell);
                         long exactContents = 0;
@@ -632,7 +696,7 @@ final class HologramResourcePlanner {
                                 : !HologramRecovery.hasSeal(resource)))
                             exactContents += resource.stackSize;
                         long shellNeed = 0;
-                        for (Map.Entry<String, ItemStack> other : stacks.entrySet())
+                        for (Map.Entry<ExactKey, ItemStack> other : stacks.entrySet())
                             if (shell.isItemEqual(other.getValue())
                                 && (sealed ? ItemStack.areItemStackTagsEqual(shell, other.getValue())
                                     : !HologramRecovery.hasSeal(other.getValue())))
@@ -679,8 +743,8 @@ final class HologramResourcePlanner {
             for (List<ItemStack> group : s.virtualGroups.values())
                 group.sort((a, b) -> Integer.compare(HologramCellPolicy.hatchTier(b), HologramCellPolicy.hatchTier(a)));
         }
-        Map<String, Integer> counts = new HashMap<>();
-        Map<String, Integer> reserved = new HashMap<>();
+        Map<ExactKey, Integer> counts = new HashMap<>();
+        Map<ExactKey, Integer> reserved = new HashMap<>();
         Map<String, Integer> indices = new HashMap<>();
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell cell = s.capture.cells.get(i);
@@ -689,7 +753,7 @@ final class HologramResourcePlanner {
             ItemStack manual = s.pins.get(i);
             if (manual != null && s.virtualEdited.contains(key)
                 && !HologramCellPolicy.plainTargetInstalled(s, cell, manual))
-                reserved.merge(HologramValues.stackKey(manual), 1, Integer::sum);
+                HologramValues.mergeStack(reserved, manual, 1, Integer::sum);
         }
         for (HologramPresets.Cell saved : s.virtualPreset.cells) {
             String position = (s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z);
@@ -716,12 +780,14 @@ final class HologramResourcePlanner {
                 else for (ItemStack candidate : group) {
                     if (HologramCellPolicy.hatchTier(candidate) > tier
                         || HologramCellPolicy.legalFacings(s, cell, candidate).length == 0) continue;
-                    String key = HologramValues.stackKey(candidate);
-                    int available = counts.computeIfAbsent(
-                        key,
-                        ignored -> s.player.capabilities.isCreativeMode ? HologramCapture.LIMIT
+                    ExactKey key = HologramValues.lookupKey(candidate);
+                    Integer available = counts.get(key);
+                    if (available == null) {
+                        available = s.player.capabilities.isCreativeMode ? HologramCapture.LIMIT
                             : HologramMaterialAccess.materialSource(s)
-                                .count(candidate, Math.max(4096, s.capture.cells.size())));
+                                .count(candidate, Math.max(4096, s.capture.cells.size()));
+                        counts.put(HologramValues.stackKey(candidate), available);
+                    }
                     if (available > reserved.getOrDefault(key, 0)) {
                         chosen = candidate;
                         break;
@@ -731,7 +797,7 @@ final class HologramResourcePlanner {
             s.pins.put(index, chosen.copy());
             s.coordinatePins.put(position, chosen.copy());
             if (!HologramCellPolicy.plainTargetInstalled(s, cell, chosen))
-                reserved.merge(HologramValues.stackKey(chosen), 1, Integer::sum);
+                HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
             Integer facing = s.facingPins.get(position);
             if (facing != null) {
                 boolean legal = false;
@@ -745,12 +811,20 @@ final class HologramResourcePlanner {
     static void refreshFacings(HologramSession s) {
         s.planFacings.clear();
         List<int[]> cells = new ArrayList<>();
-        for (HologramCapture.Cell c : s.capture.cells)
+        boolean needsExterior = false;
+        for (int i = 0; i < s.capture.cells.size(); i++) {
+            HologramCapture.Cell c = s.capture.cells.get(i);
             cells.add(new int[] { c.x, c.y, c.z, c.block == Blocks.air && !c.anchor ? 0 : 1 });
-        java.util.Set<String> exterior = HologramHatchGeometry.exterior(
-            cells,
-            (x, y, z) -> s.player.worldObj.blockExists(x, y, z)
-                && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
+            ItemStack target = HologramCellPolicy.draftTarget(s, c, i);
+            if (target != null && target.getItem() instanceof ItemMachines
+                && !(ItemMachines.getMetaTileEntity(target) instanceof gregtech.api.metatileentity.MetaPipeEntity))
+                needsExterior = true;
+        }
+        java.util.Set<String> exterior = !needsExterior ? Collections.emptySet()
+            : HologramHatchGeometry.exterior(
+                cells,
+                (x, y, z) -> HologramSessionPolicy.authoring(s) || s.player.worldObj.blockExists(x, y, z)
+                    && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell c = s.capture.cells.get(i);
             ItemStack target = HologramCellPolicy.draftTarget(s, c, i);
@@ -766,7 +840,15 @@ final class HologramResourcePlanner {
                 for (int side : legal) if (side == pin) s.planFacings.put(i, pin);
                 continue;
             }
-            TileEntity actual = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
+            boolean retainedFacing = false;
+            if (HologramSessionPolicy.authoring(s)) for (int side : legal) if (side == c.actualFacing) {
+                s.planFacings.put(i, side);
+                retainedFacing = true;
+                break;
+            }
+            if (retainedFacing) continue;
+            TileEntity actual = HologramSessionPolicy.authoring(s) ? null
+                : s.player.worldObj.getTileEntity(c.x, c.y, c.z);
             if (actual instanceof IGregTechTileEntity && target != null
                 && !HologramRecovery.hasSeal(target)
                 && ((IGregTechTileEntity) actual).getMetaTileID() == target.getItemDamage()) {
@@ -801,7 +883,7 @@ final class HologramResourcePlanner {
         }
         Map<String, gregtech.api.interfaces.IHatchElement<?>> types = new LinkedHashMap<>();
         Map<String, Integer> quotas = new LinkedHashMap<>();
-        Map<String, Integer> reserved = new HashMap<>();
+        Map<ExactKey, Integer> reserved = new HashMap<>();
         int minimumCasings = HologramIndustrialConstraints.minimumCasings(s.context);
         int remainingCasings = 0;
         for (int i = 0; i < s.capture.cells.size(); i++) if (HologramIndustrialConstraints
@@ -832,7 +914,7 @@ final class HologramResourcePlanner {
                 stack = new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) actual).getMetaTileID());
             if (stack == null || HologramCellPolicy.hatchElement(s, c, stack, true) == null) continue;
             if (s.pins.containsKey(i) && !(actual instanceof IGregTechTileEntity))
-                reserved.merge(HologramValues.stackKey(stack), 1, Integer::sum);
+                HologramValues.mergeStack(reserved, stack, 1, Integer::sum);
             gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(stack);
             for (Map.Entry<String, gregtech.api.interfaces.IHatchElement<?>> type : types.entrySet())
                 if (HologramHatchPolicy.matchesHatch(type.getValue(), prototype))
@@ -871,7 +953,7 @@ final class HologramResourcePlanner {
             HologramCapture.Cell chosenCell = s.capture.cells.get(chosenIndex);
             if (HologramIndustrialConstraints.casing(chosenCell, new ItemStack(chosenCell.block, 1, chosenCell.meta)))
                 remainingCasings--;
-            reserved.merge(HologramValues.stackKey(chosen), 1, Integer::sum);
+            HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
         }
         s.presetSupported = unfilled == 0 && remainingCasings >= minimumCasings;
         s.presetReason = s.presetSupported ? "已按声明配额生成仓室预设；各仓室按声明允许的等级范围自动调整，已有仓室与手选目标保留"
@@ -906,7 +988,7 @@ final class HologramResourcePlanner {
         return count;
     }
 
-    static ItemStack presetCandidate(HologramSession s, List<ItemStack> options, Map<String, Integer> reserved) {
+    static ItemStack presetCandidate(HologramSession s, List<ItemStack> options, Map<ExactKey, Integer> reserved) {
         int[] tiers = new int[options.size()], available = new int[options.size()];
         for (int i = 0; i < options.size(); i++) {
             ItemStack option = options.get(i);
@@ -914,7 +996,7 @@ final class HologramResourcePlanner {
             available[i] = s.player.capabilities.isCreativeMode ? 1
                 : HologramMaterialAccess.materialSource(s)
                     .count(option, Math.max(4096, s.capture.cells.size()))
-                    - reserved.getOrDefault(HologramValues.stackKey(option), 0);
+                    - reserved.getOrDefault(HologramValues.lookupKey(option), 0);
         }
         int chosen = HologramHatchPreset.choose(tiers, available, s.hatchTier, s.hatchDowngrade);
         return chosen < 0 ? null : options.get(chosen);
