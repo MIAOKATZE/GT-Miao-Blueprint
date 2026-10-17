@@ -61,7 +61,7 @@ final class HologramRenderer {
     private static double cachedExtent = 1;
     private static int worldLayer = Integer.MAX_VALUE;
     private static final long WORLD_BUILD_NANOS = 3_000_000L;
-    private static final int WORLD_INDEX_BATCH = 2048, WORLD_MESH_BATCH = 256;
+    private static final int WORLD_MESH_BATCH = 256;
     private static final Map<Coordinate, WorldGroup> worldGroups = new LinkedHashMap<>();
     private static final Set<Coordinate> worldGhosts = new HashSet<>();
     private static final Set<Coordinate> worldOccluders = new HashSet<>();
@@ -1035,8 +1035,7 @@ final class HologramRenderer {
     }
 
     private static void indexWorld(HologramState state, long deadline) {
-        int count = 0;
-        while (worldIndex < state.cells.size() && count++ < WORLD_INDEX_BATCH && System.nanoTime() < deadline)
+        while (worldIndex < state.cells.size() && System.nanoTime() < deadline)
             indexWorldCell(state, state.cells.get(worldIndex++));
     }
 

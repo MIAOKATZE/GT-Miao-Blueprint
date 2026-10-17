@@ -68,7 +68,7 @@ public final class HologramClient {
     private static HologramSnapshotInbox.Result<NBTTagCompound> preparingResult;
     private static final java.util.Deque<HologramSnapshotInbox.Result<NBTTagCompound>> deferredSnapshots = new java.util.ArrayDeque<>();
     private static int deferredCellRows;
-    private static final int SNAPSHOT_PREPARE_WORK = 4096, DEFERRED_SNAPSHOT_LIMIT = 8, DEFERRED_CELL_LIMIT = 16384;
+    private static final int DEFERRED_SNAPSHOT_LIMIT = 8, DEFERRED_CELL_LIMIT = 16384;
     private static final long SNAPSHOT_PREPARE_NANOS = 2_000_000L;
 
     /** Explicit root exit only: an already queued opening snapshot must not reopen the editor. */
@@ -988,7 +988,7 @@ public final class HologramClient {
             installDeferredSnapshot();
             return;
         }
-        if (!preparingSnapshot.step(SNAPSHOT_PREPARE_WORK, SNAPSHOT_PREPARE_NANOS)) {
+        if (!preparingSnapshot.step(Integer.MAX_VALUE, SNAPSHOT_PREPARE_NANOS)) {
             snapshotPreparationProgress();
             return;
         }
