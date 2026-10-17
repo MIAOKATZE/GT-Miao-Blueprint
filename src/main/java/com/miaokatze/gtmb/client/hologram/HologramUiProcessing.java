@@ -585,9 +585,14 @@ final class HologramUiProcessing {
             this.processingFlow.choose();
         } else if (id >= 73000 && id < 100000) {
             int row = (id - 73000) / 3;
-            if (row < resourceReview().tagCount()) this.processingFlow.resourceDecision(
-                resourceReview().getCompoundTagAt(row),
-                new String[] { "remove", "preserve", "migrate" }[(id - 73000) % 3]);
+            if (row < resourceReview().tagCount()) {
+                NBTTagCompound resource = resourceReview().getCompoundTagAt(row);
+                int action = (id - 73000) % 3;
+                this.processingFlow.resourceDecision(
+                    resource,
+                    action == 2 && resource.getBoolean("canCancelPreserve") ? "cancel"
+                        : new String[] { "remove", "preserve", "migrate" }[action]);
+            }
         } else if (id >= 240 && id <= 250) {
             values.setInteger("deidentificationLevel", id - 240);
             this.processingFlow.choose();
@@ -624,7 +629,11 @@ final class HologramUiProcessing {
                 + resource.getInteger("z");
             String decision = processingFlow.resourceDecision(resource);
             ui.canvas.text("原图格 " + location + " · " + resource.getString("path"), 42, y + 4, 279, 0xf2dca5);
-            String[] actions = { "remove", "preserve", "migrate" }, names = { "移除该路径", "保留并核价", "迁移格式" };
+            String[] actions = { "remove", "preserve", "migrate" }, names = { "移除该路径", "完全保留", "迁移格式" };
+            if (resource.getBoolean("canCancelPreserve")) {
+                actions[2] = "cancel";
+                names[2] = "取消保留";
+            }
             for (int action = 0; action < 3; action++) ui.canvas.button(
                 73000 + i * 3 + action,
                 324 + action * 103,
@@ -632,7 +641,9 @@ final class HologramUiProcessing {
                 100,
                 20,
                 (actions[action].equals(decision) ? "✓ " : "") + names[action],
-                action == 0 || resource.getBoolean(action == 1 ? "canPreserve" : "canMigrate"),
+                action == 0 || resource.getBoolean(
+                    action == 1 ? "canPreserve"
+                        : resource.getBoolean("canCancelPreserve") ? "canCancelPreserve" : "canMigrate"),
                 mx,
                 my);
             if (mx >= 42 && mx < 630 && my >= y && my < y + 20) ui.canvas.tooltip(
@@ -645,8 +656,8 @@ final class HologramUiProcessing {
                             + resource.getString("path")
                             + "："
                             + resource.getString("message")
-                            + (resource.getBoolean("canPreserve") ? "。保留由服务器重新核算物品、流体与能量。"
-                                : "。此值尚不能安全核算；可精确移除此路径，或取消后编辑为受支持值再处理。"),
+                            + (resource.getBoolean("canFullPreserve") ? "。此路径可完整解析：完全保留原值，建造消耗对应的精确物品和流体；物品内部数据随整件付费。"
+                                : "。此路径含无法解析或无法完整计费的信息，不能保存；请选择移除该路径后继续。"),
                         430));
         }
         if (resources.tagCount() == 0) ui.canvas.text("当前没有待核对的资源路径；可切回普通 NBT 根条目。", 42, 154, 588, 0x94afb4);

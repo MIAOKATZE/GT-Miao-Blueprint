@@ -64,6 +64,7 @@ public final class HologramClient {
         HologramSnapshotCodec::decode);
     private static long lastDecodeNotice;
     private static final HologramRootCloseFence rootCloseFence = new HologramRootCloseFence();
+    private static final HologramPendingPositionLock pendingPositionLock = new HologramPendingPositionLock();
     private static HologramState.Preparation preparingSnapshot;
     private static HologramSnapshotInbox.Result<NBTTagCompound> preparingResult;
     private static final java.util.Deque<HologramSnapshotInbox.Result<NBTTagCompound>> deferredSnapshots = new java.util.ArrayDeque<>();
@@ -115,13 +116,19 @@ public final class HologramClient {
                     localAreaRevision = -1;
                 }
                 HologramClientProgress.receive(nbt);
+                if ("rejected".equals(nbt.getString("outcome")) && pendingPositionLock.rejected(nbt))
+                    positionLockNotice(
+                        nbt.getString("status")
+                            .isEmpty() ? nbt.getString("message") : nbt.getString("status"));
                 if (state != null && state.session.equals(nbt.getString("session"))
                     && HologramClientProgress.matches(nbt)
                     && !"rejected".equals(nbt.getString("outcome"))) receivedAt = System.nanoTime();
                 if ("rejected".equals(nbt.getString("outcome")) || HologramClientProgress.matches(nbt))
                     HologramBackgroundTasks.progress(nbt);
-                if (nbt.getBoolean("jobDelta") && HologramClientProgress.matches(nbt))
+                if (nbt.getBoolean("jobDelta") && HologramClientProgress.matches(nbt)) {
                     HologramRenderer.jobVisualChanged(state, HologramJobVisuals.accept(state, nbt));
+                    state = HologramJobVisuals.metadata(state);
+                }
                 if ("rejected".equals(nbt.getString("outcome"))) {
                     HologramLibraryClient.INSTANCE.transportRejectedSave(nbt);
                     if ("cut".equals(nbt.getString("scope"))) {
@@ -176,6 +183,8 @@ public final class HologramClient {
     private static HologramWorldFlow.Stage worldStage() {
         if (localAreaCancelling) return HologramWorldFlow.Stage.WORKSPACE;
         if (localArea != null) return HologramWorldFlow.Stage.AREA;
+        if (state != null && pendingPositionLock.cancelling(state.data)) return HologramWorldFlow.Stage.WORKSPACE;
+        if (positionLockPending(state)) return HologramWorldFlow.Stage.LOCKED;
         return state == null ? HologramWorldFlow.Stage.WORKSPACE
             : HologramWorldFlow.stage(
                 state.data.getBoolean("areaSelecting") || state.data.getBoolean("areaImporting"),
@@ -239,6 +248,14 @@ public final class HologramClient {
                 : alt ? HologramWorldFlow.Gesture.ALT_RIGHT : HologramWorldFlow.Gesture.RIGHT);
         if (intent == HologramWorldFlow.Intent.NONE) return;
         if (!usePressFence.consume()) return;
+        if (state != null && pendingPositionLock.cancelling(state.data)) {
+            positionLockNotice(text("worldGuideLockCancelling", "Cancelling placement…"));
+            return;
+        }
+        if (positionLockPending(state)) {
+            positionLockNotice(text("worldGuideLockPending", "Position locked; checking with the server… Esc cancels"));
+            return;
+        }
         if (intent == HologramWorldFlow.Intent.BEGIN_AREA) {
             beginLocalAreaSelection();
             input.setString("action", "beginAreaSelection");
@@ -257,18 +274,21 @@ public final class HologramClient {
                 if (HologramLibraryClient.INSTANCE.quickPlaceLast(input)) return;
             } else if (intent == HologramWorldFlow.Intent.CONFIRM_POSITION) {
                 int[] anchor = movingAnchor(state);
-                input.setString("action", "confirmVirtualPosition");
-                input.setString("session", state.session);
-                input.setLong("planRevision", state.data.getLong("planRevision"));
-                input.setInteger("x", anchor[0]);
-                input.setInteger("y", anchor[1]);
-                input.setInteger("z", anchor[2]);
-                input.setInteger("side", state.data.getInteger("side"));
+                if (!pendingPositionLock
+                    .begin(state.data, anchor, HologramBackgroundTasks.commandSequence(state.session), input)) return;
             } else {
                 if (intent == HologramWorldFlow.Intent.OPEN) openCachedWorkspace();
                 input.setString("action", air ? "useAir" : "useBlock");
             }
-        HologramNetwork.sendAction(input);
+        try {
+            HologramNetwork.sendAction(input);
+        } catch (RuntimeException failure) {
+            if (pendingPositionLock.rejected(input)) {
+                positionLockNotice(
+                    text("worldGuideLockFailed", "Position could not be locked; adjust the preview and try again"));
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Position lock request failed", failure);
+            } else throw failure;
+        }
     }
 
     private final HologramWorldFlow.KeyEdge rotationKey = new HologramWorldFlow.KeyEdge();
@@ -380,6 +400,8 @@ public final class HologramClient {
                 + " / "
                 + HologramLibraryClient.bytes(HologramLibraryClient.INSTANCE.totalBytes()));
         HologramWorldFlow.Stage stage = worldStage();
+        if (state != null && pendingPositionLock.cancelling(state.data) && projectorWorld())
+            lines.add(text("worldGuideLockCancelling", "Cancelling placement…"));
         if (stage == HologramWorldFlow.Stage.WORKSPACE) {
             HologramWorldGuide.draw(lines, event.resolution);
             return;
@@ -405,7 +427,10 @@ public final class HologramClient {
                 : stage == HologramWorldFlow.Stage.MOVING ? "worldGuideMoving"
                     : stage == HologramWorldFlow.Stage.LOCKED ? "worldGuideLocked"
                         : stage == HologramWorldFlow.Stage.JOB ? "worldGuideJob" : "worldGuideIdle";
-        lines.add(text(key, "Right-click: projector workspace"));
+        lines.add(
+            positionLockPending(state)
+                ? text("worldGuideLockPending", "Position locked; checking with the server… Esc cancels")
+                : text(key, "Right-click: projector workspace"));
         if (stage == HologramWorldFlow.Stage.AREA && !state.data.getBoolean("areaImporting")) {
             net.minecraft.nbt.NBTTagList regions = areaSelection.getTagList("areaRegions", 10);
             int subtracted = 0;
@@ -438,15 +463,17 @@ public final class HologramClient {
             String status = HologramUiText.reason(state.data.getString("status"));
             if (!status.isEmpty()) lines.add(status);
         } else if (stage == HologramWorldFlow.Stage.LOCKED) {
+            int[] anchor = positionLockPending(state) ? pendingPositionLock.anchor()
+                : new int[] { state.data.getInteger("x"), state.data.getInteger("y"), state.data.getInteger("z") };
             lines.add(
                 String.format(
                     java.util.Locale.ROOT,
                     text("worldGuideLockedTarget", "Locked target %d, %d, %d"),
-                    state.data.getInteger("x"),
-                    state.data.getInteger("y"),
-                    state.data.getInteger("z")));
+                    anchor[0],
+                    anchor[1],
+                    anchor[2]));
             String status = HologramUiText.reason(state.data.getString("status"));
-            if (!status.isEmpty()) lines.add(status);
+            if (!positionLockPending(state) && !status.isEmpty()) lines.add(status);
         }
         HologramWorldGuide.draw(lines, event.resolution);
     }
@@ -506,6 +533,7 @@ public final class HologramClient {
         boolean enabled = projectorWorld() && state != null
             && mc.theWorld == snapshotWorld
             && worldStage() == HologramWorldFlow.Stage.LOCKED
+            && !positionLockPending(state)
             && state.data.getInteger("job") == 0
             && !state.data.getBoolean("capturePending")
             && !state.cells.isEmpty();
@@ -618,6 +646,7 @@ public final class HologramClient {
             request.setString("session", state.session);
             request.setLong("planRevision", state.data.getLong("planRevision"));
         }
+        if ("cancelVirtualPlacement".equals(action)) pendingPositionLock.cancel(request);
         if ("finishAreaSelection".equals(action) && state != null) {
             rootCloseFence.clear();
             long sequence = Math
@@ -795,8 +824,22 @@ public final class HologramClient {
 
     /** Only a render translation; no moving-preview world mutation packets are emitted. */
     static int[] movingAnchor(HologramState snapshot) {
+        if (positionLockPending(snapshot)) return pendingPositionLock.anchor();
         if (snapshot != null && snapshot.data.getBoolean("cutPreview")) return HologramCutClient.INSTANCE.anchor();
         return worldTarget(true).anchor;
+    }
+
+    static boolean positionLockPending(HologramState snapshot) {
+        return snapshot != null && pendingPositionLock.pending(snapshot.data);
+    }
+
+    static boolean positionLocked(HologramState snapshot) {
+        return snapshot != null && (snapshot.data.getBoolean("virtualLocked") || positionLockPending(snapshot));
+    }
+
+    private static void positionLockNotice(String message) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null) mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(message));
     }
 
     static int[] cutAnchor(boolean adjacent) {
@@ -851,6 +894,7 @@ public final class HologramClient {
         syncSnapshotWorld();
         if (Minecraft.getMinecraft().theWorld == null) return;
         if (nbt.getBoolean("transportError")) {
+            pendingPositionLock.rejected(nbt);
             Minecraft mc = Minecraft.getMinecraft();
             boolean taskFailed = HologramBackgroundTasks.transportFailed(nbt);
             if (taskFailed) {
@@ -906,6 +950,7 @@ public final class HologramClient {
             localAreaAwaitingBegin = localAreaFinishing = localAreaCancelling = false;
         }
         HologramClientProgress.clear();
+        pendingPositionLock.clear();
         snapshotInbox.clear();
         clearSnapshotPreparation();
         fullSnapshotRequested = false;
@@ -1090,8 +1135,6 @@ public final class HologramClient {
             return;
         }
         if (!nbt.getBoolean("partial") && !nbt.getBoolean("areaSelectionOnly")) fullSnapshotRequested = false;
-        nbt = next.data;
-        HologramClientProgress.snapshot(nbt);
         if (!same) {
             fullSnapshotRequested = false;
             rootCloseFence.clear();
@@ -1099,9 +1142,13 @@ public final class HologramClient {
             acceptedBatch = -1;
         }
         long now = System.nanoTime();
-        acceptedBatch = batch;
         receivedAt = now;
         HologramJobVisuals.bind(next);
+        next = HologramJobVisuals.metadata(next);
+        nbt = next.data;
+        acceptedBatch = nbt.getLong("batchSeq");
+        pendingPositionLock.snapshot(nbt);
+        HologramClientProgress.snapshot(nbt);
         HologramRenderer.snapshotChanged(state, next);
         if (state != null && state.data.getBoolean("areaImporting")
             && !nbt.getBoolean("areaImporting")
@@ -1233,6 +1280,7 @@ public final class HologramClient {
         fullSnapshotRequested = false;
         clearSnapshotPreparation();
         placementIdentitySync.clear();
+        pendingPositionLock.clear();
         rootCloseFence.clear();
         if (invalidatePending) {
             assembly.clear();
@@ -1273,6 +1321,7 @@ public final class HologramClient {
             clearProjection();
             return;
         }
+        if (pendingPositionLock.cancelling(state.data)) return;
         if (localSelection == null && !localAreaCancelling && state.data.getBoolean("areaSelecting"))
             HologramAreaOverlay.render(state, event.partialTicks);
         if (!worldPreview || state.data.getInteger("job") == 4) return;

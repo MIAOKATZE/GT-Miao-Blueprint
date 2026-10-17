@@ -68,13 +68,17 @@ Shapeless recipe: **1 StructureLib Hologram Projector → 1 Neko Blueprint Holog
 | --- | --- |
 | **1 · 导入 / Import** | 手持投影仪右键打开工作台；对准真实控制器可导入结构，或使用「框选区域」导入世界区域。 / Right-click with the projector to open the workspace; target a real controller to import its structure, or select a world region. |
 | **2 · 编辑与保存 / Edit & save** | 用「结构调整」编辑结构，用「蓝图设置」完成私用／分享处理，再命名保存；从蓝图库选择蓝图并查看三维预览。 / Adjust the structure, complete private-use or sharing processing in Blueprint Settings, then name and save it; select entries in the library for a 3D preview. |
-| **3 · 定位与施工 / Position & build** | 点「放置所选蓝图」进入世界预览，右键将绿色预览锁为青色，再右键核对材料并确认；Esc 取消。 / Click Place to enter the world preview, right-click to lock green to cyan, then right-click to review materials and confirm; Esc cancels. |
+| **3 · 定位与施工 / Position & build** | 点「放置所选蓝图」进入世界预览，右键立即固定位置并将绿色边框切为青色；位置核对完成后，再右键核对材料并确认，Esc 取消。 / Click Place to enter the world preview. Right-click immediately freezes the position and turns the outline cyan; after the position check, right-click again to review materials and confirm. Esc cancels. |
 | **4 · 调整位置 / Adjust position** | 框选取命中方块，放置预览贴合命中表面；无命中时悬空，Alt 强制悬空，**Alt+滚轮调距 0–64 格**（0 为脚下）。**普通滚轮保持原版快捷栏切换**。 / Selection uses the hit block and placement attaches to its face; without a hit it floats. Alt forces floating; **Alt+wheel adjusts 0–64 blocks** (0 = your feet). **The plain wheel keeps vanilla hotbar switching.** |
 | **5 · 切换剪切 / Switch to Cut** | 蓝图模式下 Shift+右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；空闲时 Ctrl+Shift+右键可重开。选择「剪切」即开始框选。 / In Blueprint mode, Shift+right-click opens the mode selector; keep Shift held and right-click to cycle, then release Shift to enter. Ctrl+Shift+right-click reopens it while idle. Choosing Cut starts selection. |
 
 结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后显示操作帮助，任何动作都会收起帮助并继续响应输入。
 
 In Structure Adjustment, **G toggles the movement axes**; the button shows its on/off state. Help appears after 2 idle seconds and dismisses on any action while letting that input take effect.
+
+资源复核中，可解析的库存数据可选择「完全保留」，施工时匹配完整物品数据并扣除对应材料。确实无法解析的信息会指出具体路径，需要移除后才能保存。倾向自用时可尽量保留原配置；与坐标或去标识选项冲突时，界面会要求先解决冲突。
+
+In resource review, choose **Keep unchanged** for inventory data whose complete material cost can be decoded. Construction matches the full item data and consumes those materials. Unreadable data identifies the path to remove before saving. Private-use processing can retain the original configuration; resolve any conflicting coordinate or identity-processing choices first.
 
 <details>
 <summary><strong>剪切、选区与旋转 / Cut, selection and rotation controls</strong></summary>

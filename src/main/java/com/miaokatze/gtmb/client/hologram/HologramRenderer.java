@@ -63,6 +63,7 @@ final class HologramRenderer {
     private static final long WORLD_BUILD_NANOS = 3_000_000L;
     private static final int WORLD_MESH_BATCH = 256;
     private static final Map<Coordinate, WorldGroup> worldGroups = new LinkedHashMap<>();
+    private static int placementColorList, placementColor;
     private static final Set<Coordinate> worldGhosts = new HashSet<>();
     private static final Set<Coordinate> worldOccluders = new HashSet<>();
     private static int worldIndex;
@@ -158,7 +159,7 @@ final class HologramRenderer {
     }
 
     private static boolean renderMetadataChanged(HologramState previous, HologramState next) {
-        String[] keys = { "mode", "virtual", "virtualPlacement", "virtualLocked", "x", "y", "z", "dimension" };
+        String[] keys = { "mode", "virtual", "virtualPlacement", "x", "y", "z", "dimension" };
         for (String key : keys) {
             Object before = previous.data.getTag(key), after = next.data.getTag(key);
             if (!java.util.Objects.equals(before, after)) return true;
@@ -885,6 +886,7 @@ final class HologramRenderer {
         double offsetX = anchor == null ? 0 : anchor[0] - state.data.getInteger("x");
         double offsetY = anchor == null ? 0 : anchor[1] - state.data.getInteger("y");
         double offsetZ = anchor == null ? 0 : anchor[2] - state.data.getInteger("z");
+        syncPlacementColor(state);
         Frustrum frustum = new Frustrum();
         frustum.setPosition(px, py, pz);
         double range = Math.max(16, mc.gameSettings.renderDistanceChunks * 16);
@@ -982,10 +984,29 @@ final class HologramRenderer {
         lastWorldGeometry = lastWorldGTGeometry = lastWorldFallback = lastWorldMatched = lastWorldGhosts = 0;
         lastWorldPlacementOutlineColor = 0;
         for (WorldGroup group : worldGroups.values()) for (int list : group.lists) GL11.glDeleteLists(list, 1);
+        if (placementColorList != 0) GL11.glDeleteLists(placementColorList, 1);
+        placementColorList = placementColor = 0;
         worldGroups.clear();
         worldGhosts.clear();
         worldOccluders.clear();
         worldIndex = 0;
+    }
+
+    /** Cached geometry calls this tiny list, so a local lock changes color without rebuilding the blueprint. */
+    private static void syncPlacementColor(HologramState state) {
+        if (!state.data.getBoolean("virtualPlacement") || state.data.getInteger("mode") == 2) return;
+        int color = placementOutlineColor(state);
+        lastWorldPlacementOutlineColor = color;
+        if (placementColorList == 0) placementColorList = GL11.glGenLists(1);
+        if (placementColorList == 0 || placementColor == color) return;
+        placementColor = color;
+        GL11.glNewList(placementColorList, GL11.GL_COMPILE);
+        GL11.glColor4f(((color >> 16) & 255) / 255f, ((color >> 8) & 255) / 255f, (color & 255) / 255f, .65f);
+        GL11.glEndList();
+    }
+
+    static int placementOutlineColor(HologramState state) {
+        return HologramClient.positionLocked(state) ? 0x66d9ef : 0x70e69a;
     }
 
     /** Rebuild only affected cached groups; visual receipts never replace snapshot cells. */
@@ -1136,16 +1157,21 @@ final class HologramRenderer {
             GL11.glPopMatrix();
         }
         GL11.glDisable(GL11.GL_TEXTURE_2D);
+        boolean dynamicPlacementColor = worldState != null && worldState.data.getBoolean("virtualPlacement")
+            && !removal
+            && placementColorList != 0;
+        if (dynamicPlacementColor) GL11.glCallList(placementColorList);
         t.startDrawing(GL11.GL_LINES);
+        if (dynamicPlacementColor) t.disableColor();
         for (HologramState.Cell c : cells) {
             int color = c.anchor ? 0xffffbd : HologramJobVisuals.color(worldState, c);
             if (worldState != null && worldState.data.getBoolean("virtualPlacement") && !removal) {
-                color = worldState.data.getBoolean("virtualLocked") ? 0x66d9ef : 0x70e69a;
+                color = placementOutlineColor(worldState);
                 lastWorldPlacementOutlineColor = color;
             }
             if (removal && HologramJobVisuals.status(worldState, c)
                 .equals("pending")) color = 0xf08b83;
-            t.setColorRGBA_F(
+            if (!dynamicPlacementColor) t.setColorRGBA_F(
                 ((color >> 16) & 255) / 255f,
                 ((color >> 8) & 255) / 255f,
                 (color & 255) / 255f,

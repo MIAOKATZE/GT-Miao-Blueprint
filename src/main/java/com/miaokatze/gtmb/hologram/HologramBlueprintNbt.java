@@ -359,6 +359,7 @@ final class HologramBlueprintNbt {
         return essentialKey(normalized) || HologramNetworkBindings.descriptorKey(key)
             || HologramCoordinatePolicies.RELATIONS.equals(key)
             || HologramRecovery.TAG.equals(key)
+            || HologramFullPreservation.TAG.equals(key)
             || ITEM_REGISTRY.equals(key)
             || MISSING_ITEM.equals(key)
             || COVER_REGISTRY.equals(key)
@@ -485,6 +486,7 @@ final class HologramBlueprintNbt {
             compound.removeTag(COVER_DAMAGE);
             compound.removeTag(MISSING_COVER);
             compound.removeTag(HologramCoordinatePolicies.RELATIONS);
+            compound.removeTag(HologramFullPreservation.TAG);
             for (Object raw : compound.func_150296_c()) removeMarkers(compound.getTag((String) raw));
         } else if (tag instanceof NBTTagList) {
             for (NBTBase entry : listEntries((NBTTagList) tag)) removeMarkers(entry);
@@ -583,6 +585,8 @@ final class HologramBlueprintNbt {
             if (itemCompound(compound)) return;
             for (Object raw : new ArrayList<>(compound.func_150296_c())) {
                 String key = (String) raw;
+                if (HologramFullPreservation.TAG.equals(key) || HologramFullPreservation.preserves(compound, key))
+                    continue;
                 String normalized = key.toLowerCase(Locale.ROOT);
                 NBTBase original = compound.getTag(key);
                 if (stripCovers && coverKey(normalized)) {

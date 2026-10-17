@@ -59,7 +59,7 @@ final class HologramSnapshotPreparation {
         if (!task.valid()) {
             cancel(task);
             if (!task.ticket.failed() && HologramWorkspace.find(s.player.getUniqueID()) == s
-                && HologramSessionPolicy.valid(s)
+                && HologramSessionPolicy.tickValid(s)
                 && !s.cancelled) HologramSnapshots.send(s);
             return true;
         }
@@ -207,7 +207,7 @@ final class HologramSnapshotPreparation {
                 && layer == s.layer
                 && selected == s.selected
                 && !s.cancelled
-                && HologramSessionPolicy.valid(s);
+                && HologramSessionPolicy.tickValid(s);
         }
 
         void step(long deadline, LongSupplier clock) {

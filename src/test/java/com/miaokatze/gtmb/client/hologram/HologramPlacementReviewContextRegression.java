@@ -15,6 +15,7 @@ public final class HologramPlacementReviewContextRegression {
     }
 
     public static void run() {
+        HologramPendingPositionLockRegression.run();
         terminalWorkspaceReopening();
         HologramPlacementReviewContext context = new HologramPlacementReviewContext();
         context.accept("blueprint", 1, false, true, true);

@@ -32,6 +32,9 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression::run);
         cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
         cases.put(
+            "admitted_jobs_survive_hotbar_selection_and_publish_real_stop_receipts",
+            HologramJobLifecycleRegression::run);
+        cases.put(
             "area_resource_planning_is_resumable_and_matches_sync_results",
             HologramResourcePlannerRegression::run);
         cases.put(

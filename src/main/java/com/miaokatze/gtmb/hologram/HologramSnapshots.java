@@ -475,6 +475,12 @@ final class HologramSnapshots {
     }
 
     static void sendJob(HologramSession s) {
+        // Final publication must not require the held tool used to admit a new command. In particular,
+        // a genuinely invalid running context cannot ever pass full DTO preparation's validity gate.
+        if (s.job >= 3 && !HologramSessionPolicy.valid(s)) {
+            sendStoppedJob(s);
+            return;
+        }
         if (s.job == 1 && !s.open && !s.cancelled) {
             if (s.jobPublication.indices.size() < 8192
                 && !s.jobPublication.due(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence)) {
@@ -492,6 +498,16 @@ final class HologramSnapshots {
             return;
         }
         send(s);
+    }
+
+    static void sendStoppedJob(HologramSession s) {
+        HologramSnapshotPreparation.cancel(s);
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("progressOnly", true);
+        state.setTag("progress", jobDelta(s));
+        HologramWorkspace.snapshotSink()
+            .send(s.player, state);
+        s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
     }
 
     /**

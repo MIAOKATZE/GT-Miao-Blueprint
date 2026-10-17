@@ -256,6 +256,7 @@ final class HologramProcessingFlow {
 
     void resourceDecision(NBTTagCompound resource, String action) {
         if (!"remove".equals(action) && !("preserve".equals(action) && resource.getBoolean("canPreserve"))
+            && !("cancel".equals(action) && resource.getBoolean("canCancelPreserve"))
             && !("migrate".equals(action) && resource.getBoolean("canMigrate"))) return;
         NBTTagList previous = policy.getTagList("resourceDecisions", 10), decisions = new NBTTagList();
         for (int i = 0; i < previous.tagCount(); i++)
@@ -279,7 +280,7 @@ final class HologramProcessingFlow {
         for (int i = 0; i < decisions.tagCount(); i++)
             if (sameResource(decisions.getCompoundTagAt(i), resource)) return decisions.getCompoundTagAt(i)
                 .getString("action");
-        return "";
+        return resource.getBoolean("preserved") ? "preserve" : "";
     }
 
     boolean resourceChoicesReady(NBTTagList resources) {
@@ -296,8 +297,9 @@ final class HologramProcessingFlow {
             NBTTagCompound resource = resources.getCompoundTagAt(i);
             if (ignoredRoots.contains(resource.getString("rootKey"))) continue;
             String action = decisions.get(resourceKey(resource));
-            if ((action == null || action.isEmpty()) && resource.getBoolean("canPreserve")) continue;
+            if (action == null && resource.getBoolean("preserved")) continue;
             if ("remove".equals(action) || "preserve".equals(action) && resource.getBoolean("canPreserve")
+                || "cancel".equals(action) && resource.getBoolean("canCancel")
                 || "migrate".equals(action) && resource.getBoolean("canMigrate")) continue;
             return false;
         }

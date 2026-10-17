@@ -607,6 +607,8 @@ public final class HologramBlueprintResources {
     public static Plan plan(NBTTagCompound selectedPayload, List<ItemStack> nativeComponents) throws IOException {
         Plan result = new Plan();
         if (selectedPayload == null) return result;
+        NBTTagCompound original = selectedPayload;
+        HologramFullPreservation.roots(original);
         selectedPayload = HologramGtMeShadow.project(HologramEnergyPayload.withoutBuffers(selectedPayload));
         if (selectedPayload.hasKey("GTSWN_NetworkSafetyEnabled")
             && (!selectedPayload.hasKey("GTSWN_NetworkSafetyEnabled", 1)
@@ -615,6 +617,7 @@ public final class HologramBlueprintResources {
             throw unsupported("GTSWN_NetworkSafetyEnabled", "原生 TileEntity 配置必须为布尔 byte");
         boolean craftingHatch = HologramGtCraftingResources.supports(selectedPayload);
         selectedPayload = HologramGtCraftingResources.paymentPayload(selectedPayload);
+        HologramFullPreservation.assertUnchanged(original, selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         HologramEssentia.validateNonJarContents(selectedPayload);
         Inspection inspection = new Inspection(selectedPayload, nativeComponents);
@@ -626,6 +629,7 @@ public final class HologramBlueprintResources {
         }
         for (Object raw : selectedPayload.func_150296_c()) {
             String key = (String) raw;
+            if (HologramFullPreservation.TAG.equals(key)) continue;
             if (HologramEssentia.isJar(selectedPayload) && (key.equals("Aspect") || key.equals("Amount"))) continue;
             if (craftingHatch && key.equals("gtmbCraftingResourceCosts")) {
                 inspect(
@@ -650,6 +654,10 @@ public final class HologramBlueprintResources {
         if (depth > 64) throw unsupported(rootKey, "资源NBT嵌套过深");
         String lower = name.toLowerCase(Locale.ROOT);
         if (inspection.configuration.contains(path)) return;
+        if (inspection.fullyPreserved.contains(rootKey)) {
+            inspectFullyPreserved(value, rootKey, path, plan, inspection, depth);
+            return;
+        }
         boolean physicalItem = inspection.physical.contains(path);
         if (physicalItem && !(value instanceof NBTTagCompound)) throw unsupported(rootKey, "实物物品记录必须为NBT复合项");
         inventoryContext |= inventoryContainer(lower) || physicalItem;
@@ -805,6 +813,86 @@ public final class HologramBlueprintResources {
         if (storage && nonempty(value)) throw unsupported(rootKey, "未知资源存储格式");
     }
 
+    /**
+     * An explicit author choice permits unknown container names, never unknown asset encodings. Every leaf must
+     * be a complete native item/fluid record; opaque scalars and arrays cannot silently become free resources.
+     */
+    private static void inspectFullyPreserved(NBTBase value, String root, String path, Plan plan, Inspection inspection,
+        int depth) throws IOException {
+        if (depth > 64) throw unsupported(root, "资源NBT嵌套过深 " + path);
+        if (inspection.configuration.contains(path)) return;
+        if (value instanceof NBTTagCompound) {
+            NBTTagCompound row = (NBTTagCompound) value;
+            HologramNativeResources.inspect(row, path.substring(path.lastIndexOf('/') + 1), root);
+            if (itemRecord(row)) {
+                for (Object raw : row.func_150296_c()) {
+                    String key = (String) raw;
+                    if (!key.equals("id") && !key.equals("Count")
+                        && !key.equals("Damage")
+                        && !key.equals("tag")
+                        && !key.equals("Slot")
+                        && !key.equals(HologramBlueprintNbt.ITEM_REGISTRY)
+                        && !key.equals(HologramBlueprintNbt.MISSING_ITEM))
+                        throw unsupported(root, "物品记录含无法解析的私有字段 " + path + "/" + key);
+                }
+                if (!integer(row, "id") || !integer(row, "Count")
+                    || row.hasKey("Damage") && !integer(row, "Damage")
+                    || row.hasKey("Slot") && !integer(row, "Slot")
+                    || row.hasKey("tag") && !row.hasKey("tag", 10)
+                    || row.getLong("id") < 0
+                    || row.getLong("id") > Short.MAX_VALUE
+                    || row.hasKey("Damage") && (row.getLong("Damage") < 0 || row.getLong("Damage") > Short.MAX_VALUE)
+                    || row.getLong("Count") < 1
+                    || row.getLong("Count") > Integer.MAX_VALUE) throw unsupported(root, "物品记录类型或数量无效 " + path);
+                NBTTagCompound nativeRow = HologramBlueprintNbt.nativePayload(row);
+                ItemStack item = ItemStack.loadItemStackFromNBT(nativeRow);
+                if (item == null || item.getItem() == null) throw unsupported(root, "库存物品未注册 " + path);
+                item.stackSize = (int) row.getLong("Count");
+                plan.addItem(item);
+                plan.addEntry(new Entry(root, item, null, BigInteger.valueOf(item.stackSize)));
+                return; // The entire exact tagged item pays its nested contents once.
+            }
+            if (row.hasKey("FluidName") || row.hasKey("Amount")) {
+                for (Object raw : row.func_150296_c()) {
+                    String key = (String) raw;
+                    if (!key.equals("FluidName") && !key.equals("Amount") && !key.equals("Tag"))
+                        throw unsupported(root, "流体记录含无法解析的私有字段 " + path + "/" + key);
+                }
+                if (!row.hasKey("FluidName", 8) || !integer(row, "Amount")
+                    || row.getLong("Amount") < 0
+                    || row.getLong("Amount") > Integer.MAX_VALUE
+                    || row.hasKey("Tag") && !row.hasKey("Tag", 10)) throw unsupported(root, "流体记录类型或数量无效 " + path);
+                FluidStack fluid = FluidStack.loadFluidStackFromNBT(row);
+                if (fluid == null || fluid.getFluid() == null) throw unsupported(root, "流体未注册 " + path);
+                if (!HologramMaterials.supportsFluidNbt(fluid)) throw unsupported(root, "当前AE流体接口不能保留此流体NBT " + path);
+                long amount = row.getLong("Amount");
+                if (amount > 0) {
+                    plan.addFluid(fluid, amount, root);
+                    plan.addEntry(new Entry(root, null, fluid, BigInteger.valueOf(amount)));
+                }
+                return;
+            }
+            for (Object raw : row.func_150296_c()) {
+                String key = (String) raw;
+                inspectFullyPreserved(row.getTag(key), root, path + "/" + key, plan, inspection, depth + 1);
+            }
+            return;
+        }
+        if (value instanceof NBTTagList) {
+            NBTTagList list = (NBTTagList) value;
+            if (list.tagCount() > 0 && list.func_150303_d() != 10) throw unsupported(root, "无法解析的资源列表 " + path);
+            for (int i = 0; i < list.tagCount(); i++)
+                inspectFullyPreserved(list.getCompoundTagAt(i), root, path + "/" + i, plan, inspection, depth + 1);
+            return;
+        }
+        throw unsupported(root, "无法解析私有资产 " + path + "；请移除此信息");
+    }
+
+    private static boolean integer(NBTTagCompound row, String key) {
+        return row.hasKey(key, 99) && row.getTag(key)
+            .getId() <= 4;
+    }
+
     /** Count is part of the native item record; an omitted Damage has the native default of zero. */
     private static boolean itemRecord(NBTTagCompound compound) {
         return compound.hasKey("Count") || compound.hasKey("id") && compound.hasKey("Damage");
@@ -835,9 +923,11 @@ public final class HologramBlueprintResources {
         final String nativeTileId;
         final int machineId;
         final Set<String> configuration = new HashSet<>(), physical = new HashSet<>();
+        final Set<String> fullyPreserved;
         final List<ItemStack> nativeCredits = new ArrayList<>();
 
         Inspection(NBTTagCompound root, List<ItemStack> nativeComponents) throws IOException {
+            fullyPreserved = HologramFullPreservation.roots(root);
             nativeTileId = root.getString("id");
             machineId = root.hasKey("mID", 99) ? root.getInteger("mID") : -1;
             configuration.addAll(HologramGtMeShadow.configurationPaths(root));

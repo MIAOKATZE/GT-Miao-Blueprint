@@ -29,12 +29,15 @@ final class HologramPlacementJobs {
 
     static void tickJob(HologramSession s) {
         if (s.job != 1) return;
-        if (!HologramSessionPolicy.valid(s) || (!s.virtual && (s.machine == null || s.machine.getExtendedFacing()
+        if (!HologramSessionPolicy.jobValid(s) || (!s.virtual && (s.machine == null || s.machine.getExtendedFacing()
             .ordinal() != s.facing))) {
-            HologramSession.clearPending(s);
+            // Keep attempted/total counters and unpublished outcomes for the stopped-job receipt.
+            // job=4 itself prevents any remaining work from executing.
+            s.defer = s.stopTick = false;
+            s.phase = "STOPPED";
             s.job = 4;
             s.status = "工具、目标或控制器朝向已变化，请重新采集";
-            HologramSnapshots.send(s);
+            HologramSnapshots.sendStoppedJob(s);
             return;
         }
         s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);

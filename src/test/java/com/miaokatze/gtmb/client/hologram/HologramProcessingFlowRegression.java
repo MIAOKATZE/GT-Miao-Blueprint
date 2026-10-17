@@ -293,9 +293,9 @@ public final class HologramProcessingFlowRegression {
             "Unknown schemas cannot request arbitrary migration");
         flow.resourceDecision(first, "remove");
         check(
-            flow.resourceChoicesReady(resources) && flow.resourceDecision(second)
+            !flow.resourceChoicesReady(resources) && flow.resourceDecision(second)
                 .isEmpty(),
-            "Supported inventory defaults to retained pricing without copying the other cell's remove decision");
+            "A newly decodable unknown inventory still requires its own complete-preservation decision");
         flow.resourceDecision(second, "preserve");
         check(flow.resourceChoicesReady(resources), "Supported retained resources remain subject to server pricing");
         second.setBoolean("canPreserve", false);
@@ -314,6 +314,23 @@ public final class HologramProcessingFlowRegression {
         restored.preset(flow.policy());
         check(!restored.resourceChoicesReady(resources), "Reusable presets never transfer cell resource authorization");
         check(flow.resourceChoicesReady(resources), "Applying a preset never mutates the original policy");
+        HologramProcessingFlow reopened = new HologramProcessingFlow(new NBTTagCompound());
+        NBTTagCompound retained = (NBTTagCompound) first.copy();
+        retained.setBoolean("preserved", true);
+        retained.setBoolean("canPreserve", true);
+        retained.setBoolean("canCancelPreserve", true);
+        net.minecraft.nbt.NBTTagList saved = new net.minecraft.nbt.NBTTagList();
+        saved.appendTag(retained);
+        check(reopened.resourceChoicesReady(saved), "A saved preservation remains selected when the editor reopens");
+        reopened.resourceDecision(retained, "cancel");
+        check(
+            !reopened.resourceChoicesReady(saved) && "cancel".equals(reopened.resourceDecision(retained)),
+            "Canceling an unknown wrapper revokes the old preservation and requires a new resolution");
+        reopened.resourceDecision(retained, "remove");
+        check(reopened.resourceChoicesReady(saved), "An already preserved root can still be explicitly removed");
+        retained.setBoolean("canCancel", true);
+        reopened.resourceDecision(retained, "cancel");
+        check(reopened.resourceChoicesReady(saved), "Known native formats can return to ordinary processing");
     }
 
     private static void check(boolean passed, String message) {

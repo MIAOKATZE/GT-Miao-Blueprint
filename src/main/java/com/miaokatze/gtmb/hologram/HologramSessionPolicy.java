@@ -59,15 +59,22 @@ final class HologramSessionPolicy {
     }
 
     static boolean valid(HologramSession s) {
-        ItemStack held = s.player.getHeldItem();
+        return currentTool(s) != null && validWorldContext(s);
+    }
+
+    /** Admission remains held-tool-only. An admitted job may run while another hotbar slot is selected. */
+    static boolean jobValid(HologramSession s) {
+        return jobTool(s) != null && validWorldContext(s);
+    }
+
+    /** Only active construction uses the broader runtime rule; editors and other tasks retain admission checks. */
+    static boolean tickValid(HologramSession s) {
+        return s.job == 1 ? jobValid(s) : valid(s);
+    }
+
+    private static boolean validWorldContext(HologramSession s) {
         return !s.player.isDead && s.player.dimension == s.dimension
-            && held != null
-            && held.hasTagCompound()
-            && s.toolId.equals(
-                held.getTagCompound()
-                    .getString(HologramSessionKeys.TOOL_ID))
-            && held.getItem() == s.tool
-            && s.player.inventory.currentItem == s.slot
+            && s.player.worldObj == s.libraryWorld
             && (!s.virtual || !s.virtualPlacement
                 || !s.virtualLocked
                 || (HologramWorldFlow.worldPosition(s.x, s.y, s.z, s.player.worldObj.getHeight())
@@ -146,7 +153,7 @@ final class HologramSessionPolicy {
     }
 
     static ItemStack trigger(HologramSession s) {
-        ItemStack current = currentTool(s);
+        ItemStack current = s.job == 1 ? jobTool(s) : currentTool(s);
         ItemStack result = current == null ? new ItemStack(s.tool, 1) : current.copy();
         // Large editor drafts are tool storage, not native structure signals copied into every captured cell.
         if (result.hasTagCompound()) result.getTagCompound()
@@ -170,6 +177,16 @@ final class HologramSessionPolicy {
             && s.toolId.equals(
                 held.getTagCompound()
                     .getString(HologramSessionKeys.TOOL_ID)) ? held : null;
+    }
+
+    private static ItemStack jobTool(HologramSession s) {
+        ItemStack tool = s.slot < 0 || s.slot >= s.player.inventory.mainInventory.length ? null
+            : s.player.inventory.mainInventory[s.slot];
+        return tool != null && tool.getItem() == s.tool
+            && tool.hasTagCompound()
+            && s.toolId.equals(
+                tool.getTagCompound()
+                    .getString(HologramSessionKeys.TOOL_ID)) ? tool : null;
     }
 
     static String controllerType(HologramSession s) {

@@ -48,6 +48,7 @@ public final class HologramBlueprintResourcesRegression {
             standalonePhysicalAssets();
             carpenterNamesNeverGrantAssetCredit();
             nativeItemDefaultsRemainPayable();
+            fullyPreservedNativeContainers();
             fluidCostsAndSelectedKeys();
             numberedFluidContainers();
             registeredFluidContainerCodec();
@@ -62,6 +63,54 @@ public final class HologramBlueprintResourcesRegression {
             failure.printStackTrace(System.err);
             throw new AssertionError("blueprint resources regression", failure);
         }
+    }
+
+    private static void fullyPreservedNativeContainers() throws Exception {
+        NBTTagCompound payload = new NBTTagCompound();
+        ItemStack material = new ItemStack(Items.paper, 4);
+        NBTTagCompound identity = new NBTTagCompound();
+        identity.setString("ownerUUID", "paid exact variant");
+        identity.setTag("nestedItem", new ItemStack(Items.diamond, 31).writeToNBT(new NBTTagCompound()));
+        material.setTagCompound(identity);
+        NBTTagCompound wrapper = new NBTTagCompound();
+        NBTTagList items = new NBTTagList();
+        items.appendTag(material.writeToNBT(new NBTTagCompound()));
+        wrapper.setTag("unfamiliarSlots", items);
+        Fluid fluid = fixtureFluid("gtmb_fully_preserved_fluid");
+        wrapper.setTag("unfamiliarLiquid", new FluidStack(fluid, 1250).writeToNBT(new NBTTagCompound()));
+        payload.setTag("unknownInventory", wrapper);
+        reject(payload, "unknownInventory");
+        HologramFullPreservation.mark(payload, "unknownInventory");
+        NBTTagCompound before = (NBTTagCompound) payload.copy();
+        HologramBlueprintResources.Plan costs = HologramBlueprintResources.plan(payload);
+        SimpleAssert.that(before.equals(payload), "full preservation only inspects the caller's payload");
+        SimpleAssert.eq(1, costs.items.size(), "nested contents are owned by the paid complete item");
+        SimpleAssert.that(
+            ItemStack.areItemStacksEqual(material, costs.items.get(0)),
+            "unknown wrapper payment retains every item tag and its real quantity");
+        SimpleAssert.eq(1250L, costs.fluids.get(0).amount, "unknown wrapper native fluid is fully priced");
+        NBTTagCompound variant = (NBTTagCompound) payload.copy();
+        variant.getCompoundTag("unknownInventory")
+            .getTagList("unfamiliarSlots", 10)
+            .getCompoundTagAt(0)
+            .getCompoundTag("tag")
+            .setString("ownerUUID", "different exact variant");
+        SimpleAssert.that(
+            !ItemStack.areItemStackTagsEqual(costs.items.get(0), HologramBlueprintResources.plan(variant).items.get(0)),
+            "the same host and preservation mode cannot reuse another complete NBT identity");
+        NBTTagCompound privateData = (NBTTagCompound) payload.copy();
+        privateData.getCompoundTag("unknownInventory")
+            .setByteArray("privateAsset", new byte[] { 1, 2 });
+        reject(privateData, "unknownInventory/privateAsset");
+        NBTTagCompound malformed = (NBTTagCompound) payload.copy();
+        malformed.getCompoundTag("unknownInventory")
+            .getTagList("unfamiliarSlots", 10)
+            .getCompoundTagAt(0)
+            .setLong("Cnt", 100_000_000L);
+        reject(malformed, "Cnt");
+        NBTTagCompound missing = (NBTTagCompound) payload.copy();
+        missing.removeTag("unknownInventory");
+        reject(missing, "unknownInventory");
     }
 
     private static void gtswnNativeConfiguration() throws Exception {

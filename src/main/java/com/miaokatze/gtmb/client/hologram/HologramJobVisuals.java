@@ -24,6 +24,7 @@ final class HologramJobVisuals {
 
     private static HologramState basis;
     private static long batch = -1, publication = -1;
+    private static NBTTagCompound terminal;
     private static final Map<Integer, Outcome> outcomes = new HashMap<>();
     private static final java.util.Deque<NBTTagCompound> pending = new java.util.ArrayDeque<>();
     private static String pendingContext = "";
@@ -38,6 +39,7 @@ final class HologramJobVisuals {
         if (complete == null) {
             basis = null;
             outcomes.clear();
+            terminal = null;
             batch = publication = -1;
             clearPending();
             return;
@@ -50,6 +52,7 @@ final class HologramJobVisuals {
             .getLong("sequence");
         if (!same || covers(fullBatch, fullPublication, batch, publication)) {
             outcomes.clear();
+            terminal = null;
             batch = fullBatch;
             publication = fullPublication;
         }
@@ -98,9 +101,55 @@ final class HologramJobVisuals {
         }
         batch = delta.getLong("batchSeq");
         publication = nextPublication;
+        if (delta.hasKey("job", 3) && delta.getInteger("job") >= 3
+            && (!delta.hasKey("uiSequence", 4) || delta.getLong("uiSequence") >= state.data.getLong("uiSequence")))
+            terminal = terminalMetadata(state, delta);
         return changed.stream()
             .mapToInt(Integer::intValue)
             .toArray();
+    }
+
+    /** A terminal receipt updates only lifecycle observations, sharing every immutable geometry/quote object. */
+    static HologramState metadata(HologramState state) {
+        if (state == null || state != basis
+            || terminal == null
+            || covers(
+                state.data.getLong("batchSeq"),
+                state.data.getCompoundTag("progress")
+                    .getLong("sequence"),
+                terminal.getLong("batchSeq"),
+                terminal.getCompoundTag("progress")
+                    .getLong("sequence")))
+            return state;
+        HologramState updated = HologramState.apply(state, terminal);
+        basis = updated;
+        return updated;
+    }
+
+    private static NBTTagCompound terminalMetadata(HologramState state, NBTTagCompound delta) {
+        NBTTagCompound patch = new NBTTagCompound();
+        patch.setBoolean("partial", true);
+        patch.setString("session", state.session);
+        patch.setString("generation", state.data.getString("generation"));
+        patch.setLong("baseRevision", state.data.getLong("planRevision"));
+        patch.setLong("planRevision", state.data.getLong("planRevision"));
+        patch.setInteger("cellCount", state.cells.size());
+        for (String key : new String[] { "job", "cursor", "completed", "status", "jobMissingCells", "jobProtectedCells",
+            "jobUnsupportedCells", "jobSkippedCells", "batchSeq", "uiSequence" })
+            if (delta.hasKey(key)) patch.setTag(
+                key,
+                delta.getTag(key)
+                    .copy());
+        if (delta.hasKey("completed", 3)) patch.setInteger("layerCompleted", delta.getInteger("completed"));
+        NBTTagCompound progress = new NBTTagCompound();
+        for (String key : new String[] { "scope", "session", "phase", "outcome", "complete", "done", "total", "unit",
+            "sequence", "uiSequence", "planRevision" }) if (delta.hasKey(key))
+                progress.setTag(
+                    key,
+                    delta.getTag(key)
+                        .copy());
+        patch.setTag("progress", progress);
+        return patch;
     }
 
     private static String context(NBTTagCompound data) {

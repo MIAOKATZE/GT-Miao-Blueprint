@@ -83,7 +83,7 @@ final class HologramWorkspaceScheduler {
     private static boolean canContinue(HologramSession s) {
         if (HologramWorkspace.find(s.player.getUniqueID()) != s || s.capturePending
             || s.cancelled
-            || !HologramSessionPolicy.valid(s)
+            || !HologramSessionPolicy.tickValid(s)
             || s.libraryWorld != s.player.worldObj) return false;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
@@ -100,7 +100,7 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
-        if (!HologramSessionPolicy.valid(s) || s.libraryWorld != s.player.worldObj) {
+        if (!HologramSessionPolicy.tickValid(s) || s.libraryWorld != s.player.worldObj) {
             HologramDeferredPlanRefresh.suspend(s);
             HologramProjectorWorkflow.libraryCloseUi(s);
             if (!HologramWorkspace.areaSessionOwned(s)) HologramWorkspace.clearAreaSelection(s);

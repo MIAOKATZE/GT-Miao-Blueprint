@@ -1082,6 +1082,15 @@ final class HologramCellPolicy {
         if (!placeableSample(s, cell, sample)) return false;
         if ("templateController".equals(cell.role))
             return sample.getItem() instanceof ItemMachines && sample.getItemDamage() == cell.blueprintDamage;
+        // A captured world blueprint already declares the actual GT item at this cell. StructureLib's
+        // advertised editing candidates can omit an add-on hatch accepted by its live structure element.
+        // Replaying that exact source item uses ItemMachines; it must not require a hatch-adder candidate.
+        if (s.virtual && s.virtualPreset != null
+            && s.virtualPreset.schema >= 2
+            && sample.getItem() instanceof ItemMachines
+            && cell.block == Block.getBlockFromItem(sample.getItem())
+            && cell.blueprintDamage == sample.getItemDamage()
+            && cell.blueprintItem.equals(Item.itemRegistry.getNameForObject(sample.getItem()))) return true;
         if (cell.structureTargets != null || (!s.areaStructureId.isEmpty() && !cell.memberships()
             .isEmpty())) return candidates(s, cell).stream()
                 .anyMatch(option -> HologramValues.sameMaterial(option, sample));

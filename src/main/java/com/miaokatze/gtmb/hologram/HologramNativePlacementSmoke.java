@@ -3,6 +3,7 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -551,6 +552,127 @@ public final class HologramNativePlacementSmoke {
         } finally {
             player.rotationYaw = oldYaw;
             player.rotationPitch = oldPitch;
+        }
+        backgroundGtJobs(world, player);
+    }
+
+    /** Small real GT contract: retained hatch/controller state, both payment modes, and actual job continuation. */
+    private static void backgroundGtJobs(WorldServer world, EntityPlayerMP player) throws Exception {
+        int originalSlot = player.inventory.currentItem;
+        boolean originalCreative = player.capabilities.isCreativeMode;
+        Block block = gregtech.api.GregTechAPI.sBlockMachines;
+        try {
+            player.inventory.currentItem = 0;
+            List<Integer> identities = new ArrayList<>(java.util.Arrays.asList(51, 1000));
+            if (cpw.mods.fml.common.Loader.isModLoaded("gtsr")) {
+                int addonHatch = -1;
+                for (int id = 1; id < gregtech.api.GregTechAPI.METATILEENTITIES.length; id++) {
+                    gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+                    if (prototype instanceof gregtech.api.metatileentity.implementations.MTEHatch
+                        && prototype.getClass()
+                            .getName()
+                            .equals("com.miaokatze.gtsr.common.machine.base.MTESteamInputHatchGeneric")) {
+                        addonHatch = id;
+                        break;
+                    }
+                }
+                require(addonHatch > 0, "background_gt_loaded_addon_generic_hatch_registered");
+                identities.add(addonHatch);
+            } else System.out.println(PREFIX + "BACKGROUND GT GTSR coverage=NOT_LOADED");
+            for (int chunk = 600 >> 4; chunk <= 664 >> 4; chunk++) {
+                Chunk loaded = world.theChunkProviderServer.loadChunk(chunk, 160 >> 4);
+                require(
+                    loaded != null && !(loaded instanceof EmptyChunk) && loaded.isChunkLoaded,
+                    "background_gt_actual_loaded_chunk_" + chunk);
+            }
+            int scenario = 0, sourceIndex = 0;
+            for (int id : identities) {
+                ItemStack primary = new ItemStack(block, 1, id);
+                int sourceX = 600 + sourceIndex++ * 4;
+                require(world.isAirBlock(sourceX, 88, 160), "background_gt_fresh_source_" + id);
+                require(
+                    ((gregtech.common.blocks.ItemMachines) primary.getItem())
+                        .placeBlockAt(primary.copy(), player, world, sourceX, 88, 160, 1, .5F, .5F, .5F, 0),
+                    "background_gt_real_item_source_" + id);
+                TileEntity source = world.getTileEntity(sourceX, 88, 160);
+                NBTTagCompound retained = snapshot(source);
+                for (boolean creative : new boolean[] { false, true }) {
+                    player.inventory.currentItem = 0;
+                    player.capabilities.isCreativeMode = creative;
+                    int destinationX = 640 + scenario++ * 4;
+                    require(world.isAirBlock(destinationX, 88, 160), "background_gt_fresh_destination_" + scenario);
+                    HologramCapture.Cell target = cell(
+                        block,
+                        world.getBlockMetadata(sourceX, 88, 160),
+                        retained,
+                        primary,
+                        destinationX,
+                        88,
+                        160);
+                    // The captured native item is authoritative even when a structure wrapper advertised
+                    // only a different editable candidate. No add-on name or hatch-adder is involved.
+                    target.structureTargets = java.util.Collections.singletonList(new ItemStack(block, 1, 1000));
+                    HologramSession s = (HologramSession) session(player, target, primary);
+                    s.virtualPreset.deidentificationLevel = 1;
+                    s.virtualPreset.deidentificationChosen = true;
+                    if (id == 1000) {
+                        target.role = "templateController";
+                        s.virtualPreset.controllerId = id;
+                        s.facing = ((gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?>) ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) source)
+                            .getMetaTileEntity()).getExtendedFacing()
+                                .ordinal();
+                    }
+                    s.planFacings.put(0, retained.getShort("mFacing") & 0xffff);
+                    s.expectedBlocks.add(world.getBlock(destinationX, 88, 160));
+                    s.expectedMeta.add(world.getBlockMetadata(destinationX, 88, 160));
+                    s.expectedTiles.add(null);
+                    s.expectedFacings.add(-1);
+                    s.work.add(0);
+                    s.job = 1;
+                    fill(player, java.util.Collections.singletonList(primary), false);
+                    player.inventory.currentItem = 8;
+                    require(
+                        !HologramSessionPolicy.valid(s) && HologramSessionPolicy.jobValid(s),
+                        "background_gt_keeps_admission_strict_" + scenario);
+                    HologramPlacementJobs.tickJob(s);
+                    require(
+                        s.job == 3 && s.completed == 1 && "placed".equals(target.status),
+                        "background_gt_actual_job_places_" + id + "_creative_" + creative + "_status_" + s.status);
+                    TileEntity actual = world.getTileEntity(destinationX, 88, 160);
+                    require(
+                        actual instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity,
+                        "background_gt_real_tile_" + scenario);
+                    gregtech.api.interfaces.tileentity.IGregTechTileEntity gt = (gregtech.api.interfaces.tileentity.IGregTechTileEntity) actual;
+                    require(
+                        gt.getMetaTileID() == id && gt.getMetaTileEntity() != null
+                            && gt.getFrontFacing()
+                                .ordinal() == retained.getShort("mFacing")
+                            && world.getBlockMetadata(destinationX, 88, 160) == target.meta,
+                        "background_gt_paid_identity_native_state_and_facing_" + scenario);
+                    require(
+                        materialsCount(player) == (creative ? 1 : 0),
+                        "background_gt_exact_shell_payment_" + scenario);
+                    System.out.println(
+                        PREFIX + "BACKGROUND GT CONTRACT id="
+                            + id
+                            + " class="
+                            + gt.getMetaTileEntity()
+                                .getClass()
+                                .getName()
+                            + " creative="
+                            + creative
+                            + " selectedSlot="
+                            + player.inventory.currentItem
+                            + " result=PASS"
+                            + " originalCandidateOmitted=true job="
+                            + s.job
+                            + " placed="
+                            + s.completed);
+                }
+            }
+        } finally {
+            player.inventory.currentItem = originalSlot;
+            player.capabilities.isCreativeMode = originalCreative;
         }
     }
 

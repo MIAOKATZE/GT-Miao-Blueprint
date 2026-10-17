@@ -43,7 +43,8 @@ public final class HologramWorldServiceRegression {
             player.capabilities = new PlayerCapabilities();
             player.capabilities.allowEdit = true;
             player.posY = 64;
-            player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
+            player.inventory.mainInventory[0] = new ItemStack(
+                new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
             Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
@@ -342,11 +343,12 @@ public final class HologramWorldServiceRegression {
         Object originalSession = sessions.put(player.getUniqueID(), session);
         String[] fields = { "virtualPlacement", "virtualLocked", "blueprintAwaitingConfirmation",
             "placementReviewIssued", "forcePlacementReady", "openPurpose", "placementReviewNonce", "blueprintPreview",
-            "presetBrowseForPlacement", "job", "open" };
+            "presetBrowseForPlacement", "job", "open", "uiSequence" };
         Object[] original = new Object[fields.length];
         for (int i = 0; i < fields.length; i++) original[i] = get(session, fields[i]);
         Object draft = get(session, "virtualPreset"), capture = get(session, "capture");
         Object originalScope = get(session, "scope"), originalRevision = get(session, "planRevision");
+        ItemStack originalHeld = player.getHeldItem();
         HologramAeProtocol.State ae = (HologramAeProtocol.State) get(session, "ae");
         HologramAeProtocol.Review originalReview = ae.review;
         NBTTagCompound request = new NBTTagCompound();
@@ -417,7 +419,21 @@ public final class HologramWorldServiceRegression {
                     get(session, "placementReviewNonce"),
                     "replayed Escape cannot expire a second capability");
             }
+            set(session, "virtualPlacement", true);
+            set(session, "virtualLocked", true);
+            set(session, "uiSequence", 42L);
+            request.setLong("planRevision", (Long) get(session, "planRevision") - 1);
+            request.setLong("positionLockSequence", 41);
+            HologramService.cancelWorldPlacement(player, request);
+            SimpleAssert.eq(true, get(session, "virtualLocked"), "another lock identity cannot relax revision fencing");
+            request.setLong("positionLockSequence", 42);
+            player.inventory.mainInventory[player.inventory.currentItem] = new ItemStack(Blocks.stone);
+            HologramService.cancelWorldPlacement(player, request);
+            SimpleAssert.eq(false, get(session, "virtualLocked"), "Escape cancels its own in-flight moved lock");
+            SimpleAssert.eq(false, get(session, "virtualPlacement"), "correlated Escape exits the placement preview");
+            SimpleAssert.eq(0, get(session, "job"), "cancel race cannot start construction");
         } finally {
+            player.inventory.mainInventory[player.inventory.currentItem] = originalHeld;
             for (int i = 0; i < fields.length; i++) set(session, fields[i], original[i]);
             ae.review = originalReview;
             if (originalSession == null) sessions.remove(player.getUniqueID());
@@ -592,11 +608,19 @@ public final class HologramWorldServiceRegression {
             request.setInteger("y", 64);
             request.setInteger("z", 0);
             request.setInteger("side", 1);
+            long sequence = (Long) get(session, "uiSequence") + 1;
+            request.setLong("uiSequence", sequence);
             HologramService.confirmWorldPosition(player, request);
+            SimpleAssert.eq(sequence, get(session, "uiSequence"), "world lock ACK carries its real command identity");
             SimpleAssert.eq(true, get(session, "virtualLocked"), "first right click locks the world preview");
             SimpleAssert
                 .eq(false, get(session, "placementReviewIssued"), "first lock cannot issue material UI authority");
             SimpleAssert.eq(false, get(session, "open"), "first lock never queues an open UI");
+            long firstNonce = (Long) get(session, "placementReviewNonce");
+            HologramService.confirmWorldPosition(player, request);
+            SimpleAssert
+                .eq(firstNonce, get(session, "placementReviewNonce"), "duplicate lock delivery cannot issue review");
+            SimpleAssert.eq(0, get(session, "job"), "duplicate lock delivery cannot begin construction");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             action.invoke(null, session, request, "confirmBlueprintPlacement");
             SimpleAssert.eq(0, get(session, "job"), "forged confirm after lock cannot bypass the second world click");
@@ -616,6 +640,9 @@ public final class HologramWorldServiceRegression {
             SimpleAssert.that((Long) get(session, "placementReviewNonce") > nonce, "unlock expires the review nonce");
             SimpleAssert.that(get(session, "virtualPreset") == preset, "unlock keeps the exact edited blueprint draft");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
+            HologramService.confirmWorldPosition(player, request);
+            SimpleAssert.eq(false, get(session, "virtualLocked"), "a retired sequence cannot relock after unlock");
+            request.setLong("uiSequence", sequence + 1);
             HologramService.confirmWorldPosition(player, request);
             SimpleAssert.eq(true, get(session, "virtualLocked"), "preview can lock again after Shift right");
             nonce = (Long) get(session, "placementReviewNonce");

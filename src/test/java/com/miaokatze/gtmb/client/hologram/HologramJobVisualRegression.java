@@ -11,6 +11,7 @@ public final class HologramJobVisualRegression {
     private HologramJobVisualRegression() {}
 
     public static void run() {
+        terminalMetadata();
         HologramJobVisuals.bind(null);
         HologramState basis = state("job", 2, 3, 0);
         NBTTagCompound unchanged = (NBTTagCompound) basis.fullData();
@@ -108,6 +109,56 @@ public final class HologramJobVisualRegression {
         SimpleAssert.that(
             HologramJobVisuals.completed(basis, basis.cells.get(0)),
             "a different complete context remains usable after an unrelated early queue overflow");
+        HologramJobVisuals.bind(null);
+    }
+
+    private static void terminalMetadata() {
+        HologramJobVisuals.bind(null);
+        HologramState running = state("terminal", 2, 3, 0);
+        NBTTagCompound stopped = delta("terminal", 2, 3, 1, 0, true, "placed");
+        stopped.setInteger("job", 4);
+        stopped.setInteger("completed", 1);
+        stopped.setInteger("cursor", 1);
+        stopped.setInteger("jobSkippedCells", 0);
+        stopped.setString("status", "fixture stopped");
+        stopped.setString("phase", "job");
+        stopped.setString("outcome", "stopped");
+        stopped.setBoolean("complete", true);
+        HologramJobVisuals.accept(running, stopped);
+        HologramState terminal = HologramJobVisuals.metadata(running);
+        SimpleAssert.eq(4, terminal.data.getInteger("job"), "terminal receipt replaces stale running metadata");
+        SimpleAssert.eq(1, terminal.data.getInteger("completed"), "terminal preserves successful-cell count");
+        SimpleAssert.eq("fixture stopped", terminal.data.getString("status"), "reopening sees the server stop reason");
+        SimpleAssert.that(
+            terminal.cells == running.cells && terminal.materials == running.materials,
+            "terminal metadata shares geometry and quotes without reparsing cells");
+        SimpleAssert.eq(0, terminal.parsedCells, "terminal receipt parses no geometry rows");
+        SimpleAssert.eq(1, running.data.getInteger("job"), "published basis remains immutable");
+        SimpleAssert
+            .that(HologramJobVisuals.metadata(terminal) == terminal, "unchanged metadata keeps object identity");
+        HologramJobVisuals.accept(terminal, stopped);
+        SimpleAssert.that(HologramJobVisuals.metadata(terminal) == terminal, "duplicate terminal cannot revive work");
+        NBTTagCompound stale = delta("terminal", 1, 3, 99, 0, true, "placed");
+        stale.setInteger("job", 1);
+        HologramJobVisuals.accept(terminal, stale);
+        SimpleAssert.eq(
+            4,
+            HologramJobVisuals.metadata(terminal).data.getInteger("job"),
+            "stale plans cannot restore busy metadata");
+        HologramState lateFull = state("terminal", 2, 3, 0);
+        HologramJobVisuals.bind(lateFull);
+        SimpleAssert.eq(
+            4,
+            HologramJobVisuals.metadata(lateFull).data.getInteger("job"),
+            "an older full snapshot cannot revive a stopped job after its direct receipt");
+        HologramJobVisuals.bind(null);
+        HologramJobVisuals.accept(null, stopped);
+        HologramState delayedBasis = state("terminal", 2, 3, 0);
+        HologramJobVisuals.bind(delayedBasis);
+        SimpleAssert.eq(
+            4,
+            HologramJobVisuals.metadata(delayedBasis).data.getInteger("job"),
+            "an early terminal receipt becomes metadata when its complete basis arrives");
         HologramJobVisuals.bind(null);
     }
 

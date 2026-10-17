@@ -177,18 +177,31 @@ final class HologramWorldPlacementWorkflow {
 
     static void confirmWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
-        if (s == null || s.player != player || !s.id.equals(request.getString("session"))) return;
-        if (HologramSessionPolicy.blockedByAreaImport(s)) {
+        if (s == null || s.player != player || !s.id.equals(request.getString("session"))) {
+            rejectPositionLock(player, request, "位置锁定未执行；当前会话已变化，请重新打开蓝图");
+            return;
+        }
+        // A retried delivery acknowledges the same visual intent; it cannot become the second world click.
+        if (s.virtualLocked && request.hasKey("uiSequence", 4)
+            && request.getLong("uiSequence") == s.uiSequence
+            && HologramSessionPolicy.valid(s)) {
             HologramSnapshots.send(s);
             return;
         }
-        if (s.cancelled || !s.virtual
+        if (HologramSessionPolicy.blockedByAreaImport(s) || s.cancelled
+            || !s.virtual
+            || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem())
             || !s.virtualPlacement
             || s.virtualLocked
             || s.job == 1
             || s.job == 2
             || s.job == 4
-            || !HologramSessionPolicy.valid(s)) return;
+            || !HologramSessionPolicy.valid(s)
+            || request.hasKey("uiSequence", 4) && request.getLong("uiSequence") <= s.uiSequence) {
+            rejectPositionLock(player, request, "位置锁定未执行；当前会话或放置状态已变化，请重新确定位置");
+            return;
+        }
+        if (request.hasKey("uiSequence", 4)) s.uiSequence = request.getLong("uiSequence");
         String failure = null;
         int x = request.getInteger("x"), y = request.getInteger("y"), z = request.getInteger("z");
         if (!request.hasKey("planRevision", 4) || s.planRevision != request.getLong("planRevision"))
@@ -206,16 +219,49 @@ final class HologramWorldPlacementWorkflow {
             failure = "蓝图采集尚未完整，预览与蓝图保留；请等待后重试";
         if (failure != null) {
             s.status = failure;
+            rejectPositionLock(player, request, failure);
             HologramProjectorWorkflow.libraryCloseUi(s);
             HologramSnapshots.send(s);
             return;
         }
-        lockVirtual(
-            player,
-            request.getInteger("x"),
-            request.getInteger("y"),
-            request.getInteger("z"),
-            request.getInteger("side"));
+        try {
+            lockVirtual(
+                player,
+                request.getInteger("x"),
+                request.getInteger("y"),
+                request.getInteger("z"),
+                request.getInteger("side"));
+            if (!s.virtualLocked) rejectPositionLock(player, request, s.status);
+        } catch (RuntimeException failureDuringLock) {
+            s.virtualLocked = false;
+            s.blueprintAwaitingConfirmation = false;
+            s.placementReviewIssued = false;
+            s.forcePlacementReady = false;
+            s.placementReviewNonce++;
+            s.status = "位置核对失败，预览与蓝图保留；请重新确定位置";
+            rejectPositionLock(player, request, s.status);
+            HologramNetwork.transportFailure(player, s.id, s.uiSequence, "positionLock", failureDuringLock);
+        }
+    }
+
+    private static void rejectPositionLock(EntityPlayerMP player, NBTTagCompound request, String message) {
+        NBTTagCompound rejected = new NBTTagCompound();
+        rejected.setString("scope", "server");
+        rejected.setString("session", request.getString("session"));
+        if (request.hasKey("uiSequence", 4)) rejected.setLong("uiSequence", request.getLong("uiSequence"));
+        if (request.hasKey("planRevision", 4)) rejected.setLong("planRevision", request.getLong("planRevision"));
+        rejected.setString(
+            "action",
+            request.getString("action")
+                .isEmpty() ? "confirmVirtualPosition" : request.getString("action"));
+        rejected.setString("phase", "request.rejected");
+        rejected.setString("outcome", "rejected");
+        rejected.setString("status", message);
+        NBTTagCompound envelope = new NBTTagCompound();
+        envelope.setBoolean("progressOnly", true);
+        envelope.setTag("progress", rejected);
+        HologramWorkspace.snapshotSink()
+            .send(player, envelope);
     }
 
     /** Unlock invalidates every prior material confirmation capability while retaining the editable draft. */
@@ -333,17 +379,31 @@ final class HologramWorldPlacementWorkflow {
     /** Escape exits to the world, revokes placement authority and retains the draft without changing paid blocks. */
     static void cancelWorldPlacement(EntityPlayerMP player, NBTTagCompound request) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
+        boolean cancellingLock = s != null && request.hasKey("positionLockSequence", 4)
+            && request.getLong("positionLockSequence") > 0
+            && request.getLong("positionLockSequence") == s.uiSequence
+            && request.hasKey("planRevision", 4)
+            && request.getLong("planRevision") <= s.planRevision;
         if (s == null || s.player != player
             || !s.id.equals(request.getString("session"))
             || !request.hasKey("planRevision", 4)
-            || s.planRevision != request.getLong("planRevision")
-            || !HologramSessionPolicy.valid(s)
+            || s.planRevision != request.getLong("planRevision") && !cancellingLock
+            || !HologramSessionPolicy.valid(s) && !(cancellingLock && !player.isDead && player.dimension == s.dimension)
             || s.cancelled
             || !s.virtual
             || !s.virtualPlacement
             || s.job == 1
             || s.job == 2
-            || s.job == 4) return;
+            || s.job == 4) {
+            if (request.hasKey("positionLockSequence", 4)) {
+                NBTTagCompound proof = new NBTTagCompound();
+                proof.setString("session", request.getString("session"));
+                proof.setString("action", "cancelVirtualPlacement");
+                proof.setLong("uiSequence", request.getLong("positionLockSequence"));
+                rejectPositionLock(player, proof, "取消放置未执行；当前会话或施工状态已变化");
+            }
+            return;
+        }
         boolean expireCapability = s.virtualLocked || s.placementReviewIssued || s.forcePlacementReady;
         s.virtualPlacement = false;
         s.virtualLocked = false;

@@ -181,6 +181,7 @@ final class HologramSession {
     final List<Integer> expectedFacings = new ArrayList<>();
     final List<String> planStatus = new ArrayList<>();
     final List<ItemStack> planTargets = new ArrayList<>();
+    final HologramPlacementDiagnostics.Limits placementDiagnostics = new HologramPlacementDiagnostics.Limits();
     long actionTick = -1;
     long positionNudgeTick = Long.MIN_VALUE;
     long positionNudgeRefillTick = Long.MIN_VALUE;
@@ -249,6 +250,7 @@ final class HologramSession {
 
     static void resetJobCounts(HologramSession s, boolean partial) {
         s.jobPublication.clear();
+        s.placementDiagnostics.clear();
         s.jobPartialPlacement = partial;
         s.jobMissingCells = s.jobProtectedCells = s.jobUnsupportedCells = s.jobSkippedCells = 0;
     }

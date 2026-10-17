@@ -54,6 +54,7 @@ final class HologramWorldTransactions {
             return operateChecked(s, c, index);
         } catch (RuntimeException | LinkageError failure) {
             if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) failure.printStackTrace(System.err);
+            HologramPlacementDiagnostics.failure(s, c, index, "admission", failure);
             c.status = "unsupported";
             s.status = "设备状态或回收数据无法读取，该格未施工";
             return false;
@@ -208,6 +209,7 @@ final class HologramWorldTransactions {
         boolean changedWorld = false;
         NBTTagCompound quantumPlacementPayload = null;
         TileEntity newQuantumJoin = null;
+        String placementStage = "reserve";
         try {
             decorDescriptor = HologramCellPolicy.decoration(s, c);
             if (s.mode != 2 && decorDescriptor == null
@@ -288,6 +290,7 @@ final class HologramWorldTransactions {
                 reserved.setTagCompound(
                     cachedPayload == null ? null : cachePaid ? cachedPayload.itemPaid : cachedPayload.itemEmpty);
             if (!empty) {
+                placementStage = "remove";
                 BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(c.x, c.y, c.z, w, old, oldMeta, s.player);
                 if (MinecraftForge.EVENT_BUS.post(event)) {
                     rollbackMaterials(s, transaction, inventory);
@@ -341,6 +344,7 @@ final class HologramWorldTransactions {
                 }
             }
             if (s.mode != 2) {
+                placementStage = "native-place";
                 if (!HologramValues.same(energyTarget, HologramCellPolicy.targetFor(s, c, index)))
                     throw new IllegalStateException("Placement target changed after resource reservation");
                 changedWorld = true;
@@ -479,6 +483,8 @@ final class HologramWorldTransactions {
                             w.getBlock(c.x, c.y, c.z),
                             w.getBlockMetadata(c.x, c.y, c.z),
                             false))) {
+                    HologramPlacementDiagnostics
+                        .rejected(s, c, index, result.name(), nativeCancelled, reservation == null || reservation.used);
                     HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
                     rollbackMaterials(s, transaction, inventory);
                     c.status = nativeCancelled ? "protected"
@@ -487,6 +493,7 @@ final class HologramWorldTransactions {
                     return false;
                 }
                 Block placed = w.getBlock(c.x, c.y, c.z);
+                placementStage = "native-callbacks";
                 if (placed instanceof ICustomBlockSetting || directCreative) {
                     ItemStack placedStack = new ItemStack(placed, 1, w.getBlockMetadata(c.x, c.y, c.z));
                     placed.onBlockPlacedBy(w, c.x, c.y, c.z, s.player, placedStack);
@@ -516,6 +523,7 @@ final class HologramWorldTransactions {
                         || emptyAeNativeShell
                         || requiredNetworkBinding);
                 if (sealedPlacement != null) {
+                    placementStage = "sealed-state";
                     if (placedTile == null || !HologramRecovery.supported(placedTile))
                         throw new java.io.IOException("封存设备没有可验证的完整状态恢复路径");
                     NBTTagCompound paidState = (NBTTagCompound) sealedPlacement.getTagCompound()
@@ -552,6 +560,7 @@ final class HologramWorldTransactions {
                     && placedTile instanceof IGregTechTileEntity
                     && !restoreBlueprintTileData
                     && (!HologramRecovery.hasSeal(pin) || s.facingPins.containsKey(HologramValues.position(c)))) {
+                    placementStage = "default-facing";
                     IGregTechTileEntity gt = (IGregTechTileEntity) placedTile;
                     if (c.anchor || !gt.getMetaTileEntity()
                         .isFacingValid(ForgeDirection.getOrientation(direction)))
@@ -568,6 +577,7 @@ final class HologramWorldTransactions {
                     && (s.virtualPreset.retainNbt || HologramSessionPolicy.placementRetainCovers(s)
                         || emptyAeNativeShell
                         || requiredNetworkBinding)) {
+                    placementStage = "blueprint-state";
                     if (placedTile == null && !nativePlacement)
                         throw new IllegalStateException("blueprint tile missing");
                     NBTTagCompound data = selectedCacheTile;
@@ -602,6 +612,7 @@ final class HologramWorldTransactions {
                         else placedTile.readFromNBT(data);
                         blueprintTileDataApplied = true;
                         if (direction != null && direction >= 0 && placedTile instanceof IGregTechTileEntity) {
+                            placementStage = "restored-facing";
                             IGregTechTileEntity gt = (IGregTechTileEntity) placedTile;
                             // Basic machines restore a distinct main-facing from NBT. Validate their output-facing
                             // against that restored state, rather than the temporary item-placement defaults.
@@ -617,6 +628,7 @@ final class HologramWorldTransactions {
                     }
                 }
                 if (s.virtual && s.virtualPreset.schema >= 2 && placedTile != null && !blueprintTileDataApplied) {
+                    placementStage = "ownership";
                     NBTTagCompound owned = HologramBlueprintOwnership.prepare(placedTile, null, s.player);
                     if (owned != null) {
                         HologramCellPolicy.validateGtPayloadIdentity(pin, owned);
@@ -642,6 +654,7 @@ final class HologramWorldTransactions {
                     && pin.getItem() instanceof ItemMachines
                     && pin.getItemDamage() == s.virtualPreset.controllerId)
                     applyVirtualControllerAlignment(s, placedTile);
+                placementStage = "installed-state";
                 // Native multipart blocks report air until their complete tile is installed.
                 // Verify semantic occupancy only after the audited factory and world-join path finish.
                 if (nativePlacement && (!blueprintTileDataApplied || placedTile == null
@@ -665,11 +678,13 @@ final class HologramWorldTransactions {
             }
             if (quantumPlacementPayload != null
                 && "join".equals(quantumPlacementPayload.getString(HologramNetworkBindings.ROLE))) {
+                placementStage = "network-join";
                 newQuantumJoin = w.getTileEntity(c.x, c.y, c.z);
                 if (newQuantumJoin == null) throw new java.io.IOException("Quantum incorporation target is missing");
                 HologramNetworkBindings.bindJoin(newQuantumJoin, quantumPlacementPayload, s.player, s.networkBindings);
             }
             if (s.virtual && s.mode != 2) {
+                placementStage = "final-identity";
                 HologramCellPolicy
                     .validateGtPlacedIdentity(energyTarget, w.getBlock(c.x, c.y, c.z), w.getTileEntity(c.x, c.y, c.z));
                 if (s.virtualPreset != null && s.virtualPreset.schema >= 2) {
@@ -693,6 +708,7 @@ final class HologramWorldTransactions {
             }
         } catch (java.io.IOException | RuntimeException | LinkageError e) {
             if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) e.printStackTrace(System.err);
+            HologramPlacementDiagnostics.failure(s, c, index, placementStage, e);
             if (newQuantumJoin != null) {
                 try {
                     HologramNetworkBindings.rollbackJoin(newQuantumJoin, s.player);
