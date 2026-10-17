@@ -250,9 +250,18 @@ public final class CompositeWorldWitness {
         Object requests=call(state,"func_150295_c","requests",10);int tombstones=0;
         for(int i=0;i<size(requests);i++)if(text(entry(requests,i),"id").equals(id))tombstones++;
         check(tombstones==1,"actual durable CUT completed-request tombstone");
-        for(String key:new String[]{"dimension","x","y","z","sizeX","sizeY","sizeZ","selectionVersion","selectedCells","blocks"})requireType(call(selected,"func_74781_a",key),3,"entry/"+key);
+        for(String key:new String[]{"dimension","x","y","z","sizeX","sizeY","sizeZ","blocks"})requireType(call(selected,"func_74781_a",key),3,"entry/"+key);
         check(integer(selected,"dimension")==integer(manifest,"dimension")&&integer(selected,"x")==source[0]&&integer(selected,"y")==source[1]&&integer(selected,"z")==source[2],"actual raw source origin/dimension");
-        check(integer(selected,"sizeX")==40&&integer(selected,"sizeY")==40&&integer(selected,"sizeZ")==40&&integer(selected,"selectionVersion")==1&&integer(selected,"selectedCells")==64000,"full original 40-cube selection");
+        check(integer(selected,"sizeX")==40&&integer(selected,"sizeY")==40&&integer(selected,"sizeZ")==40,"full original 40-cube bounds");
+        boolean selectionVersionPresent=has(selected,"selectionVersion"),selectedCellsPresent=has(selected,"selectedCells");
+        check(selectionVersionPresent==selectedCellsPresent,"selection metadata is either complete or legacy implicit dense");
+        if(selectionVersionPresent){
+            for(String key:new String[]{"selectionVersion","selectedCells"})requireType(call(selected,"func_74781_a",key),3,"entry/"+key);
+            check(integer(selected,"selectionVersion")==1&&integer(selected,"selectedCells")==64000,"explicit full original 40-cube selection");
+        }
+        // v0.1.9/v0.1.10 HologramCutEntry.capture writes dense bounds/cells without these newer fields.
+        // In either encoding, the loop below independently requires every one of the 64000 unique positions.
+        putText(evidence,"selectionEncoding",selectionVersionPresent?"explicit-dense-v1":"legacy-implicit-dense");
         Object cells=call(selected,"func_150295_c","cells",10);check(size(cells)==64000,"all 64000 durable rows retained");
         for(int i=0;i<64000;i++)rawCells.add(null);int blocks=0;
         for(int i=0;i<size(cells);i++){
