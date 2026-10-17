@@ -26,6 +26,7 @@ import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import cpw.mods.fml.common.network.FMLNetworkEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.common.MinecraftForge;
 
@@ -59,6 +60,8 @@ public final class V0111CompositeNativeProbe {
     private boolean productClientMappingLifecycle;
     private int clientDimensionId, clientProviderId;
     private long clientDimensionCleanupStarted;
+    private boolean clientDisconnectInitiated;
+    private volatile Object admittedClientConnection;
     private String rawPreviewRequest = "";
     private Object rawRenderStateWitness, rawRenderSession;
     private long rawPreviewStarted, rawRenderStarted, rawFramesBefore;
@@ -275,23 +278,28 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==2) {
                 if(!ack(peer))return;
-                call(clientType("HologramClient"),"beginAreaSelection"); wholeFlowStarted=longFlowStarted=System.nanoTime();advance(3);return;
+                if(!observeAreaInput(player,null)){pulse();return;}
+                call(clientType("HologramClient"),"beginAreaSelection");
+                Object begun=get(clientType("HologramClient"),"state");
+                observeAreaInput(player,localSelection(begun==null?null:get(begun,"data")));
+                proof.setProperty(kind()+"Area.beginCalls","1");
+                wholeFlowStarted=longFlowStarted=System.nanoTime();advance(3);return;
             }
             // A standalone clipboard flow has no ordinary blueprint state to hydrate.
             if(phase>=30) {raw(peer);if(clientVerdict.isEmpty())pulse();return;}
             if(phase==14)observePrivateUpload(peer);
             Object state=get(clientType("HologramClient"),"state"), data=state==null?null:get(state,"data");
-            if(state==null)return;
+            if(state==null){if(phase>=3&&phase<=5){observeAreaInput(player,localSelection(null));pulse();}return;}
             if(phase==3) {
-                Object local=localSelection(data);if(!bool(local,"areaSelecting"))return;
+                Object local=localSelection(data);observeAreaInput(player,local);pulse();if(local==null||!bool(local,"areaSelecting"))return;
                 int[] at=ints(manifest,"source");point(1,at[0],at[1],at[2]);advance(4);return;
             }
             if(phase==4) {
-                Object local=localSelection(data);if(ints(local,"areaPoints").length<3)return;
+                Object local=localSelection(data);observeAreaInput(player,local);pulse();if(local==null||ints(local,"areaPoints").length<3)return;
                 int[] at=ints(manifest,"source");point(2,at[0]+39,at[1]+39,at[2]+39);advance(5);return;
             }
             if(phase==5) {
-                if(ints(localSelection(data),"areaPoints").length!=6)return;
+                Object local=localSelection(data);observeAreaInput(player,local);pulse();if(local==null||ints(local,"areaPoints").length!=6)return;
                 call(clientType("HologramClient"),"worldAction","finishAreaSelection");advance(6);return;
             }
             if(phase==6) {
@@ -552,6 +560,25 @@ public final class V0111CompositeNativeProbe {
         return null;
     }
 
+    private boolean observeAreaInput(Object player,Object local)throws Exception {
+        Object held=call(player,"func_70694_bm");int slot=(Integer)get(get(player,"field_71071_by"),"field_70461_c");
+        boolean projector=(Boolean)call(Class.forName("com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector"),"isProjector",held),background=busy();
+        String prefix=kind()+"Area.";
+        proof.setProperty(prefix+"heldSlot",String.valueOf(slot));proof.setProperty(prefix+"heldProjector",String.valueOf(projector));
+        proof.setProperty(prefix+"backgroundBusy",String.valueOf(background));proof.setProperty(prefix+"dimension",String.valueOf(get(player,"field_71093_bK")));
+        proof.setProperty(prefix+"worldIdentity",String.valueOf(System.identityHashCode(get(mc,"field_71441_e"))));
+        proof.setProperty(prefix+"heldItem",held==null?"NONE":call(held,"func_77973_b").getClass().getName());
+        proof.setProperty(prefix+"heldDamage",held==null?"NONE":String.valueOf(call(held,"func_77960_j")));
+        proof.setProperty(prefix+"heldToolId",held!=null&&(Boolean)call(held,"func_77942_o")?str(call(held,"func_77978_p"),"gtitHologramToolId"):"");
+        proof.setProperty(prefix+"localAvailable",String.valueOf(local!=null));
+        proof.setProperty(prefix+"localSelecting",local==null?"UNAVAILABLE":String.valueOf(bool(local,"areaSelecting")));
+        Object cut=get(clientType("HologramCutClient"),"INSTANCE");
+        proof.setProperty(prefix+"cutMode",String.valueOf(call(cut,"cutMode")));proof.setProperty(prefix+"cutActivity",String.valueOf(call(cut,"active")));
+        try{proof.setProperty(prefix+"localContext",String.valueOf(call(clientType("HologramClient"),"localAreaContext")));}
+        catch(NoSuchMethodException historical){proof.setProperty(prefix+"localContext","API_UNAVAILABLE");}
+        return slot==0&&projector&&!background;
+    }
+
     private Object localSelection(Object data)throws Exception {try{return call(clientType("HologramClient"),"localAreaSelection");}catch(NoSuchMethodException old){return data;}}
 
     /** Historical TestLab.init registers a provider but leaves its dimension mapping to serverStarting. */
@@ -603,6 +630,7 @@ public final class V0111CompositeNativeProbe {
     }
 
     private void verifyClientDimensionAfterConnection()throws Exception {
+        admittedClientConnection=call(call(mc,"func_147114_u"),"func_147298_b");
         Class<?> dimensions=Class.forName("net.minecraftforge.common.DimensionManager");
         check((Boolean)call(dimensions,"isDimensionRegistered",clientDimensionId),"actual connected client dimension mapping exists");
         check((Integer)call(dimensions,"getProviderType",clientDimensionId)==clientProviderId,"actual connected client dimension uses exact native provider");
@@ -613,10 +641,25 @@ public final class V0111CompositeNativeProbe {
 
     private boolean disconnectAndReleaseClientDimension()throws Exception {
         if(!client)return true;
-        // Release the client world through its native lifecycle before removing our own mapping.
-        if(mc!=null&&get(mc,"field_71441_e")!=null){call(get(mc,"field_71441_e"),"func_72882_A");call(mc,"func_71403_a",(Object)null);}
+        if(!clientDisconnectInitiated){
+            clientDisconnectInitiated=true;clientDimensionCleanupStarted=System.nanoTime();
+            if(mc!=null&&get(mc,"field_71441_e")!=null){
+                // Invoke the real menu branch: quitting packet, world unload, then MainMenu in one native action.
+                // Loading null with no replacement screen leaves Freecam's ordinary mouse-look path with no player.
+                Object menu=construct("net.minecraft.client.gui.GuiIngameMenu");call(mc,"func_147108_a",menu);
+                check(get(mc,"field_71462_r")==menu,"actual native pause menu opened for disconnect");
+                Object disconnect=null;
+                for(Object button:(List<?>)get(menu,"field_146292_n"))if((Integer)get(button,"field_146127_k")==1){disconnect=button;break;}
+                check(disconnect!=null,"actual native disconnect button exists");call(menu,"func_146284_a",disconnect);
+                proof.setProperty("clientDisconnectAction","native GuiIngameMenu button1: quitting packet, world unload, main menu");
+            }else{
+                if(mc!=null&&get(mc,"field_71462_r")==null)call(mc,"func_147108_a",construct("net.minecraft.client.gui.GuiMainMenu"));
+                proof.setProperty("clientDisconnectAction","world already unloaded by native connection; preserve native screen or open main menu if absent");
+            }
+            proof.setProperty("clientDisconnectWait","return to ordinary client ticks before observing native mapping cleanup; no synchronous wait or lifecycle callback injection");
+            return false;
+        }
         if(productClientMappingLifecycle) {
-            if(clientDimensionCleanupStarted==0)clientDimensionCleanupStarted=System.nanoTime();
             Object status=call(Class.forName("com.miaokatze.gtmb.testlab.TestLab"),"status");
             if(bool(status,"clientDimensionMapped")) {
                 check(System.nanoTime()-clientDimensionCleanupStarted<30_000_000_000L,"product native client disconnection mapping cleanup deadline");
@@ -638,6 +681,13 @@ public final class V0111CompositeNativeProbe {
         } else proof.setProperty("clientDimensionMappingCleanup","pre-existing historical mapping not modified by addon");
         proof.setProperty("clientDimensionMappingCleanupComplete","true");
         return true;
+    }
+
+    @SubscribeEvent
+    public void nativeClientDisconnected(FMLNetworkEvent.ClientDisconnectionFromServerEvent event){
+        if(!client||done)return;
+        proof.setProperty("nativeClientDisconnectEventThread",Thread.currentThread().getName());
+        proof.setProperty("nativeClientDisconnectEventMatchesAdmittedConnection",String.valueOf(event.manager==admittedClientConnection));
     }
     private void point(int point,int x,int y,int z)throws Exception {try{check((Boolean)call(clientType("HologramClient"),"localAreaPoint",point,x,y,z,"replace"),"actual local area point");}catch(NoSuchMethodException old){Object state=get(clientType("HologramClient"),"state"),request=worldRequest(state,"areaPoint");putInt(request,"point",point);putInt(request,"x",x);putInt(request,"y",y);putInt(request,"z",z);call(product("HologramNetwork"),"sendAction",request);}}
     private void fixture(String action,String kind)throws Exception {Properties request=new Properties();request.setProperty("sequence",String.valueOf(++requestSequence));request.setProperty("action",action);request.setProperty("kind",kind);store("fixture-request.properties",request);fixtureRequest=action;fixtureKind=kind;}
