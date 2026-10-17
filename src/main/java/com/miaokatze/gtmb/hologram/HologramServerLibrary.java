@@ -166,8 +166,8 @@ final class HologramServerLibrary {
     NBTTagCompound statusTag(boolean admin) {
         HologramLibraryConfig.View view = config();
         if (view == null) view = new HologramLibraryConfig.View(
-            HologramLibraryConfig.DEFAULT_KIB_PER_SECOND,
-            HologramLibraryConfig.DEFAULT_KIB_PER_SECOND,
+            HologramLibraryConfig.DEFAULT_UPLOAD_KIB_PER_SECOND,
+            HologramLibraryConfig.DEFAULT_DOWNLOAD_KIB_PER_SECOND,
             10,
             0);
         NBTTagCompound tag = view.tag(admin && available());

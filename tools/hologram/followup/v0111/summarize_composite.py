@@ -8,6 +8,7 @@ import run_composite as native
 
 ENDPOINTS = tuple(f"{kind}.{stage}" for kind in ("self", "share")
                   for stage in ("importNanos", "processingNanos", "saveNanos", "privateLoadNanos", "placementNanos",
+                                "privatePlacementWorkflowNanos", "constructionConfirmToCompleteNanos",
                                 "longFlowProductCompleteNanos", "longFlowVerifiedNanos")) + (
     "raw.cutNanos", "raw.previewHydrationNanos", "raw.previewRenderNanos", "raw.previewNanos",
     "raw.pasteNanos", "raw.longFlowProductCompleteNanos", "raw.longFlowVerifiedNanos")
@@ -20,6 +21,8 @@ def summarize(case):
     timing = native.properties(case / "composite-client-timing.properties")
     result = {
         "case": case.name, "status": receipt["status"], "failure": receipt.get("failure"),
+        "timing_scope": {"placementNanos": "historical alias: private-file upload through construction completion; not construction-only",
+                         "constructionConfirmToCompleteNanos": "actual confirmation click55 through native job3 completion; excludes private upload and review"},
         "failure_kind": receipt.get("failure_kind"),
         "scenario": receipt.get("scenario", "all"),
         "failure_phase": client.get("failurePhase"), "product_sha256": receipt["normal_sha256"],

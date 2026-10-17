@@ -12,6 +12,7 @@ import org.lwjgl.input.Keyboard;
 
 import com.miaokatze.gtmb.client.hologram.HologramUiLibrary.LibraryNavigation;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
+import com.miaokatze.gtmb.hologram.HologramLibraryConfig;
 
 /** Internal library workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiLibrary {
@@ -675,7 +676,15 @@ final class HologramUiLibrary {
         drawRect(0, 0, HologramUiCanvas.DESIGN_W, HologramUiCanvas.DESIGN_H, 0xd0102026);
         drawRect(60, 77, 452, 290, 0xff172f36);
         ui.canvas.text("服务器蓝图库 · 管理员设置（OP 4）", 76, 90, 360, 0xf5e4b9);
-        ui.canvas.text("单位 KiB/s；默认较慢传输 16，配额默认 10 项", 76, 112, 360, 0x8ba7ad);
+        ui.canvas.text(
+            "单位 KiB/s；新默认上传 " + HologramLibraryConfig.DEFAULT_UPLOAD_KIB_PER_SECOND
+                + " / 下载 "
+                + HologramLibraryConfig.DEFAULT_DOWNLOAD_KIB_PER_SECOND
+                + "；配额 10 项",
+            76,
+            112,
+            360,
+            0x8ba7ad);
         ui.canvas.text("客户端上传带宽", 76, 145, 190, 0xb9d5d4);
         this.libraryUploadField.drawTextBox();
         ui.canvas.text("客户端下载带宽", 76, 180, 190, 0xb9d5d4);

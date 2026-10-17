@@ -62,6 +62,10 @@ Manual sharing: copy the **same-basename JSON + PNG pair** into the recipient's 
 
 手动分享：将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`；公库上传、下载使用蓝图库「客户端／服务器」切换。
 
+New servers default to a shared upload limit of **1024 KiB/s (1 MiB/s)** and download limit of **128 KiB/s**. Operators can adjust both in the server library's admin settings; existing configuration values are preserved.
+
+新安装默认全服聚合上传限速 **1024 KiB/s（1 MiB/s）**、下载限速 **128 KiB/s**。管理员可在服务器蓝图库的设置中调整；已有配置值保留。
+
 Detailed controls, private/shared processing and resource rules: [GTMB Guide / 完整操作、私用分享与资源规则](https://miaokatze.com/wiki?mod=gtmb). Find and share blueprints at the [Blueprint Library / 蓝图站](https://miaokatze.com/blueprints).
 
 Community integrations / 社区扩展：[Public API & module contracts / 公共 API 与模块契约](API.md).

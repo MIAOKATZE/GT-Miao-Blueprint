@@ -8,6 +8,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.math.BigInteger;
 import java.security.MessageDigest;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -24,6 +26,7 @@ import java.util.Map;
 public final class CompositeWorldWitness {
     public static final String LIGHTING_PROFILE="vanilla-block-light-v1";
     private final Object world, actor, manifest, result;
+    private final Object seedShareTerminal;
     private final int[] source, bankOrigin;
     private final List<Object> baseline = new ArrayList<Object>(), stock = new ArrayList<Object>(), fluids = new ArrayList<Object>();
     private final List<Object> minimumPhysicalItems = new ArrayList<Object>(), minimumPhysicalFluids = new ArrayList<Object>();
@@ -51,9 +54,19 @@ public final class CompositeWorldWitness {
     private final Map<String,Long> quantumStarted=new LinkedHashMap<String,Long>(),quantumLastTick=new LinkedHashMap<String,Long>();
     private boolean quantumEnumerated;
     private static final String QUANTUM_TILE="com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode";
+    private final Map<String,Object> pendingRawSamples=new LinkedHashMap<String,Object>();
+    private final java.util.Set<String> rawBeforeIds=new HashSet<String>();
+    private final List<Object> rawCells=new ArrayList<Object>();
+    private Object rawCutEntry,rawSourceGraph,rawTargetGraph,rawGridProof,rawPostDifferences;
+    private Object rawSemanticObservations;
+    private boolean rawPrepareStarted,rawPrepared,rawPreviewVerified;
+    private long rawSourceGraphTick;
+    private int rawAeSampleInterval,rawCoverInteractionInterval;
+    private boolean rawAeChartEnabled;
 
     public CompositeWorldWitness(Object world,Object actor,Object manifest,Object seedReceipt)throws Exception {
         this.world=world;this.actor=actor;this.manifest=manifest;this.source=ints(manifest,"source");this.bankOrigin=ints(manifest,"bank");result=nbt();
+        seedShareTerminal=call(compound(seedReceipt,"shareTerminal"),"func_74737_b");
         check(Arrays.equals(ints(manifest,"size"),new int[]{40,40,40}),"immutable exact fixture dimensions");
         check((Integer)get(actor,"field_71093_bK")==integer(manifest,"dimension"),"actual connected actor dimension");
         check(!(Boolean)get(get(actor,"field_71075_bZ"),"field_75098_d"),"survival actor required");
@@ -133,21 +146,224 @@ public final class CompositeWorldWitness {
             return;
         }
         if(!checking.isEmpty()) {
-            if(awaitingFormation){if(!formedTarget()||!quantumReady(checking,target))return;captureAeSample(checking,target,checking+"-after-natural-formation-before-world-oracle");awaitingFormation=false;putText(result,"status","CHECK_WORLD_"+checking);}
+            if(awaitingFormation){if(!formedTarget()||!quantumReady(checking,target))return;
+                if(checking.equals("raw")){Object sample=aeSnapshot(target,"raw-after-natural-formation-before-world-oracle");if(!rawGraphPathReady(sample,"raw"))return;publishAeSample("raw",sample);}else captureAeSample(checking,target,checking+"-after-natural-formation-before-world-oracle");
+                if(checking.equals("raw")){
+                    check(rawCutEntry!=null&&rawPreviewVerified,"server durable cut evidence and exact client transport verified before raw world oracle");
+                    try{
+                        rawGridProof=call(Class.forName("gtmb.v0111.probe.CompositeAeRawRelocation"),"prepare",rawSourceGraph,rawTargetGraph,rawCutEntry,source,target,bool(compound(result,"rawCutSourceAllGraphPathReadiness"),"ready"),bool(compound(result,"rawAllGraphPathReadiness"),"ready"));
+                        pendingRawSamples.put("ae-relocation-proof",call(rawGridProof,"receipt"));
+                    }catch(Exception failure){rawGridProof=null;Throwable cause=failure;while(cause instanceof java.lang.reflect.InvocationTargetException&&cause.getCause()!=null)cause=cause.getCause();Object rejected=nbt();putText(rejected,"status","REJECTED");putText(rejected,"reason",cause.toString());pendingRawSamples.put("ae-relocation-proof",rejected);putText(result,"rawAEProofFailure",cause.toString());}
+                    rawPostDifferences=listTag();rawSemanticObservations=listTag();
+                }
+                awaitingFormation=false;putText(result,"status","CHECK_WORLD_"+checking);}
             for(int n=0;n<256&&cursor<64000;n++,cursor++) {
-                Object expected=normalize(baseline.get(cursor),checking,true),actual=normalize(read(target,cursor),checking,false);
+                Object expected,actual;
+                if(checking.equals("raw")){
+                    expected=rawExpected(cursor);actual=read(target,cursor);putInt(actual,"x",cursor%40);putInt(actual,"y",cursor/1600);putInt(actual,"z",cursor/40%40);
+                    collectDifferences(expected,actual,"",cursor,rawPostDifferences);
+                    if(rawGridProof!=null)call(rawGridProof,"rewriteExpectedGridIds",expected,cursor);
+                    relocateRootTile(expected,target,cursor);
+                    rawNativeSemantics(expected,actual,cursor);
+                }else{expected=normalize(baseline.get(cursor),checking,true);actual=normalize(read(target,cursor),checking,false);}
                 if(has(expected,"tile"))tiles++;
-                if(!expected.equals(actual)&&mismatches.size()<16)mismatches.add(cursor+": expected="+abbreviate(expected)+" actual="+abbreviate(actual));
+                if(!typedEqual(expected,actual)&&mismatches.size()<16)mismatches.add(cursor+": expected="+abbreviate(expected)+" actual="+abbreviate(actual));
                 if(checking.equals("raw")){Object sourceCell=read(source,cursor);if(text(sourceCell,"block").equals("minecraft:air")&&!has(sourceCell,"tile"))sourceAir++;}
             }
             putInt(result,"oracleComparedCells",cursor);putInt(result,"oracleTotalCells",64000);
-            if(cursor==64000){String kind=checking;checking="";putInt(result,kind+"ComparedCells",cursor);putInt(result,kind+"ComparedTiles",tiles);putInt(result,kind+"SourceAirCells",sourceAir);putText(result,kind+"Mismatches",mismatches.toString());putLong(result,kind+"PostcheckNanos",System.nanoTime()-operationStarted);check(mismatches.isEmpty(),"independent "+kind+" native data mismatch: "+mismatches);if(kind.equals("raw"))check(sourceAir==64000,"raw source independently empty at every selected cell");putBool(result,kind+"Passed",true);putText(result,"status","READY");}
+            if(cursor==64000){String kind=checking;checking="";putInt(result,kind+"ComparedCells",cursor);putInt(result,kind+"ComparedTiles",tiles);putInt(result,kind+"SourceAirCells",sourceAir);putText(result,kind+"Mismatches",mismatches.toString());putLong(result,kind+"PostcheckNanos",System.nanoTime()-operationStarted);if(kind.equals("raw")){Object evidence=nbt();tag(evidence,"differences",rawPostDifferences);tag(evidence,"semanticObservations",rawSemanticObservations);putInt(evidence,"completedCells",cursor);putBool(evidence,"scanComplete",true);putText(evidence,"boundary","Full cut payload to sampled post-native World, before root relocation, grid proof, or semantic evaluation; sample spans natural ticks and is later than commit.");pendingRawSamples.put("postnative-differences",evidence);}
+                if(kind.equals("raw"))check(rawGridProof!=null,"strict AE raw relocation proof unavailable: "+text(result,"rawAEProofFailure"));check(mismatches.isEmpty(),"independent "+kind+" native data mismatch: "+mismatches);if(kind.equals("raw"))check(sourceAir==64000,"raw source independently empty at every selected cell");putBool(result,kind+"Passed",true);putText(result,"status","READY");}
         }
         observeSave();
     }
 
     public boolean ready(){return baselineCursor==64000&&checking.isEmpty();}
     public boolean lightingInstalled(){return lightingInstalled;}
+
+    /** Test-only pre-CUT gate. The source graph is separate from the earlier 250-tick baseline. */
+    public boolean prepareRawCut()throws Exception {
+        check(ready()&&rawCutEntry==null,"raw preparation precedes actual CUT and world verification");
+        if(rawPrepared)return true;
+        if(!rawPrepareStarted){
+            Object state=durableState(null);check(!has(state,"pending"),"no interrupted cut before fixture operation");
+            Object entries=call(state,"func_150295_c","entries",10);
+            for(int i=0;i<size(entries);i++)check(rawBeforeIds.add(text(entry(entries,i),"id")),"no duplicate pre-existing durable entry ids");
+            rawPrepareStarted=true;
+        }
+        if(!quantumReady("rawCutSource",source))return false;
+        long started=System.nanoTime();Object sample=aeSnapshot(source,"source-ready-immediately-before-actual-client-cut-request");if(!rawGraphPathReady(sample,"rawCutSource"))return false;
+        rawSourceGraphTick=(Long)call(world,"func_82737_E");publishAeSample("rawCutSource",sample);
+        Class<?> config=Class.forName("com.miaokatze.gtswn.config.Config");rawAeSampleInterval=(Integer)get(config,"aeSampleInterval");rawCoverInteractionInterval=(Integer)get(config,"interactionRateTicks");rawAeChartEnabled=(Boolean)get(config,"aeChartEnabled");
+        putInt(result,"rawPrecutAeSampleInterval",rawAeSampleInterval);putInt(result,"rawPrecutCoverInteractionInterval",rawCoverInteractionInterval);putBool(result,"rawPrecutAeChartEnabled",rawAeChartEnabled);
+        putLong(result,"rawSourceGraphWorldTick",rawSourceGraphTick);putLong(result,"rawSourceGraphReadNanos",System.nanoTime()-started);
+        putBool(result,"rawPrepared",true);rawPrepared=true;return true;
+    }
+
+    private Object durableState(Object evidence)throws Exception {
+        Object owner=call(product("HologramLibraryFacade"),"actorId",actor);
+        Path root=(Path)call(product("HologramCutService"),"saveRoot");
+        Path path=root.resolve("gtmb-cut").resolve(owner.toString()+".nbt");
+        if(!Files.exists(path)){check(evidence==null,"actual successful CUT must have a durable owner file");Object empty=nbt();tag(empty,"entries",listTag());return empty;}
+        long length=Files.size(path);check(length>0&&length<=((Integer)get(product("HologramSnapshotAssembly"),"MAX_BYTES")),"durable cut byte budget");
+        byte[] bytes=Files.readAllBytes(path);Object state=call(product("HologramSnapshotCodec"),"decode",bytes);
+        check(integer(state,"version")==((Integer)get(product("HologramCutProtocol"),"VERSION")),"native durable format version");
+        if(evidence!=null){putText(evidence,"actorUUID",owner.toString());putText(evidence,"durableFile",path.toString());putText(evidence,"durableFileSha256",digest(bytes));putLong(evidence,"durableFileBytes",bytes.length);putLong(evidence,"captureWorldTick",(Long)call(world,"func_82737_E"));}
+        return state;
+    }
+
+    /** Exactly one post-ACK disk read; no service execute/list/recover, capture, apply, or native writer. */
+    public void captureRawCut(Object actualCutAck)throws Exception {
+        check(rawPrepared&&rawCutEntry==null,"one durable capture after independently prepared source");
+        Object evidence=nbt(),state=durableState(evidence);check(!has(state,"pending"),"CUT committed; no recoverable pending edit");
+        Object entries=call(state,"func_150295_c","entries",10),selected=null;int added=0;
+        java.util.Set<String> ids=new HashSet<String>();
+        for(int i=0;i<size(entries);i++){Object candidate=entry(entries,i);String id=text(candidate,"id");check(ids.add(id),"unique durable ids");if(!rawBeforeIds.contains(id)){selected=candidate;added++;}}
+        check(added==1&&ids.containsAll(rawBeforeIds),"exactly one new owner-bound entry and no lost prior entries");
+        String id=text(selected,"id");check(java.util.UUID.fromString(id).toString().equals(id),"canonical actual entry UUID");
+        Object requests=call(state,"func_150295_c","requests",10);int tombstones=0;
+        for(int i=0;i<size(requests);i++)if(text(entry(requests,i),"id").equals(id))tombstones++;
+        check(tombstones==1,"actual durable CUT completed-request tombstone");
+        for(String key:new String[]{"dimension","x","y","z","sizeX","sizeY","sizeZ","selectionVersion","selectedCells","blocks"})requireType(call(selected,"func_74781_a",key),3,"entry/"+key);
+        check(integer(selected,"dimension")==integer(manifest,"dimension")&&integer(selected,"x")==source[0]&&integer(selected,"y")==source[1]&&integer(selected,"z")==source[2],"actual raw source origin/dimension");
+        check(integer(selected,"sizeX")==40&&integer(selected,"sizeY")==40&&integer(selected,"sizeZ")==40&&integer(selected,"selectionVersion")==1&&integer(selected,"selectedCells")==64000,"full original 40-cube selection");
+        Object cells=call(selected,"func_150295_c","cells",10);check(size(cells)==64000,"all 64000 durable rows retained");
+        for(int i=0;i<64000;i++)rawCells.add(null);int blocks=0;
+        for(int i=0;i<size(cells);i++){
+            Object cell=entry(cells,i);for(String key:new String[]{"x","y","z","meta"})requireType(call(cell,"func_74781_a",key),3,"cell/"+key);requireType(call(cell,"func_74781_a","block"),8,"cell/block");
+            int x=integer(cell,"x"),y=integer(cell,"y"),z=integer(cell,"z");check(x>=0&&x<40&&y>=0&&y<40&&z>=0&&z<40,"cell within manifest");int index=x+40*z+1600*y;check(rawCells.get(index)==null,"no duplicated durable selected cell");rawCells.set(index,cell);
+            if(!text(cell,"block").equals("minecraft:air"))blocks++;
+            if(has(cell,"tile")){Object tile=compound(cell,"tile");requireType(call(cell,"func_74781_a","tile"),10,"cell/tile");for(String key:new String[]{"x","y","z"})requireType(call(tile,"func_74781_a",key),3,"tile/"+key);check(integer(tile,"x")==source[0]+x&&integer(tile,"y")==source[1]+y&&integer(tile,"z")==source[2]+z,"durable native TE root coordinates");}
+        }
+        check(blocks==integer(selected,"blocks")&&!rawCells.contains(null),"durable complete selected coverage and independent nonair count");
+        rawCutEntry=call(selected,"func_74737_b"); // Never modify this original; cells above belong only to the detached disk decode.
+        tag(evidence,"entry",rawCutEntry);putText(evidence,"entryId",id);putText(evidence,"entryTypedSha256",digest(canonicalBytes(rawCutEntry)));
+        putLong(evidence,"precutSourceGraphWorldTick",rawSourceGraphTick);putLong(evidence,"precutGraphToDurableObservationTicks",(Long)call(world,"func_82737_E")-rawSourceGraphTick);
+        putText(evidence,"boundary","Owner is authenticated server GameProfile + exact owner filename, not an entry field or client declaration. Source graph precedes actual CUT; observation gap is not an EU conservation proof.");pendingRawSamples.put("durable-entry",evidence);
+        check(bool(actualCutAck,"success")&&text(actualCutAck,"id").equals(id)&&text(actualCutAck,"requestId").equals(id),"actual CUT ACK matches server-selected durable entry id and request tombstone");
+        check(typedEqual(compound(actualCutAck,"preview"),rawCutEntry),"actual CUT ACK full typed raw payload equals authoritative server disk entry");
+        Object delta=nbt(),changes=listTag();int invariantMismatches=0;
+        for(int i=0;i<64000;i++){
+            Object before=baseline.get(i),after=rawExpected(i);remove(after,"x");remove(after,"y");remove(after,"z");
+            int start=size(changes);collectDifferences(before,after,"",i,changes);
+            for(int d=start;d<size(changes);d++){Object change=entry(changes,d);boolean temporal=baselineTemporal(change);putText(change,"assessment",temporal?"separate-time-native-state; not an asset-loss or conservation proof":"independent baseline asset/configuration invariant");if(!temporal)invariantMismatches++;}
+        }
+        tag(delta,"differences",changes);putInt(delta,"invariantMismatches",invariantMismatches);putText(delta,"boundary","Full typed baseline-to-durable-cut differences; baseline spans 250 natural ticks and is not a cut-time snapshot. No changed value is erased.");pendingRawSamples.put("baseline-to-cut-differences",delta);
+        putText(result,"rawDurableEntryId",id);putText(result,"rawDurableActorUUID",text(evidence,"actorUUID"));putText(result,"rawDurableFileSha256",text(evidence,"durableFileSha256"));putBool(result,"rawDurableCaptured",true);putInt(result,"rawBaselineInvariantMismatches",invariantMismatches);
+        check(invariantMismatches==0,"independent baseline assets/configuration changed before actual CUT; see full differences artifact");
+    }
+
+    public void verifyRawPreview(Object reply)throws Exception {
+        check(rawCutEntry!=null&&!rawPreviewVerified,"one real preview cross-check before paste");
+        check(bool(reply,"success")&&text(reply,"id").equals(text(rawCutEntry,"id")),"client preview reply belongs to actual server durable id");
+        String request=text(reply,"requestId");check(java.util.UUID.fromString(request).toString().equals(request)&&!request.equals(text(rawCutEntry,"id")),"independent preview request UUID");
+        Object expected=call(rawCutEntry,"func_74737_b");for(String key:new String[]{"rotation","turnX","turnZ","mirror"})putInt(expected,key,0);
+        check(typedEqual(expected,compound(reply,"preview")),"identity preview is the entire server durable payload plus exactly four Int-zero pose tags");
+        rawPreviewVerified=true;putBool(result,"rawPreviewMatchesServerDurable",true);putText(result,"rawVerifiedPreviewRequestId",request);
+    }
+    public Object pendingRawSample(String kind){return pendingRawSamples.get(kind);}
+    /** Failure keeps every already-collected original difference without claiming the scan completed. */
+    public void retainRawFailureEvidence()throws Exception {
+        if(rawPostDifferences==null||pendingRawSamples.containsKey("postnative-differences")||has(result,"rawEvidence-postnative-differences"))return;
+        Object evidence=nbt();tag(evidence,"differences",rawPostDifferences);tag(evidence,"semanticObservations",rawSemanticObservations);putInt(evidence,"completedCells",cursor);putBool(evidence,"scanComplete",false);putText(evidence,"boundary","Original typed differences collected before the failure; incomplete scan is not a PASS or complete-volume attestation.");pendingRawSamples.put("postnative-differences",evidence);
+    }
+    public void commitRawSample(String kind,String artifact,String sha256,long bytes)throws Exception {
+        check(pendingRawSamples.containsKey(kind)&&artifact.equals("composite-raw-"+kind+".nbt")&&sha256.matches("[0-9a-f]{64}")&&bytes>0,"one actual fixed raw artifact receipt");
+        Object reference=nbt();putText(reference,"artifact",artifact);putText(reference,"sha256",sha256);putLong(reference,"bytes",bytes);tag(result,"rawEvidence-"+kind,reference);pendingRawSamples.remove(kind);
+    }
+    private Object rawExpected(int index)throws Exception {Object row=call(rawCells.get(index),"func_74737_b");if(has(row,"tile"))putText(row,"tileClass",text(baseline.get(index),"tileClass"));return row;}
+    private static String digest(byte[] bytes)throws Exception {StringBuilder value=new StringBuilder();for(byte b:MessageDigest.getInstance("SHA-256").digest(bytes))value.append(String.format("%02x",b&255));return value.toString();}
+    private static boolean typedEqual(Object a,Object b)throws Exception{return a==null?b==null:b!=null&&Arrays.equals(canonicalBytes(a),canonicalBytes(b));}
+    private static void requireType(Object value,int type,String path)throws Exception{check(value!=null&&((Byte)call(value,"func_74732_a")).intValue()==type,"exact native NBT type at "+path);}
+    private void collectDifferences(Object before,Object after,String path,int index,Object out)throws Exception {
+        if(typedEqual(before,after))return;int a=before==null?-1:((Byte)call(before,"func_74732_a")).intValue(),b=after==null?-1:((Byte)call(after,"func_74732_a")).intValue();
+        if(a==10&&b==10){java.util.Set<String> all=new java.util.TreeSet<String>(keys(before));all.addAll(keys(after));for(String key:all)collectDifferences(call(before,"func_74781_a",key),call(after,"func_74781_a",key),path+"/"+key.replace("~","~0").replace("/","~1"),index,out);return;}
+        if(a==9&&b==9&&(Integer)call(before,"func_150303_d")==((Integer)call(after,"func_150303_d")).intValue()){List<?> aa=nbtListElements(before),bb=nbtListElements(after);for(int i=0;i<Math.max(aa.size(),bb.size());i++)collectDifferences(i<aa.size()?aa.get(i):null,i<bb.size()?bb.get(i):null,path+"["+i+"]",index,out);return;}
+        Object row=nbt();putInt(row,"index",index);putText(row,"sourceObservedNativeClass",text(baseline.get(index),"tileClass"));putText(row,"path",path);putInt(row,"beforeTagId",a);putInt(row,"afterTagId",b);if(before!=null)tag(row,"before",call(before,"func_74737_b"));if(after!=null)tag(row,"after",call(after,"func_74737_b"));append(out,row);
+    }
+    private boolean baselineTemporal(Object difference)throws Exception {
+        String cls=text(difference,"sourceObservedNativeClass"),path=text(difference,"path");int a=integer(difference,"beforeTagId"),b=integer(difference,"afterTagId");if(a!=b)return false;
+        if(cls.equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel")&&a==4&&path.equals("/tile/lastAESampleTick")){
+            long from=(Long)call(call(difference,"func_74781_a","before"),"func_150291_c"),to=(Long)call(call(difference,"func_74781_a","after"),"func_150291_c");
+            return rawAeChartEnabled&&rawAeSampleInterval>0&&from>=-1&&to>from&&to>=baselineFirstWorldTick&&to<=(Long)call(world,"func_82737_E")&&(from<0||to-from>=rawAeSampleInterval);
+        }
+        if(cls.equals("gregtech.api.metatileentity.BaseMetaTileEntity"))return (a==1&&path.equals("/tile/mActive"))||(a==4&&(path.equals("/tile/mTotalRunTime")||path.equals("/tile/proxy/g")||path.matches("/tile/gt\\.covers\\[[0-9]+\\]/d/(storedEU|ticksSinceLastRefill)")));
+        return cls.equals(QUANTUM_TILE)&&((a==1&&path.equals("/tile/linked"))||(a==4&&path.equals("/tile/proxy/g")));
+    }
+    private static void relocateRootTile(Object row,int[] at,int index)throws Exception {if(has(row,"tile")){Object tile=compound(row,"tile");putInt(tile,"x",at[0]+index%40);putInt(tile,"y",at[1]+index/1600);putInt(tile,"z",at[2]+index/40%40);}}
+    private void rawNativeSemantics(Object expected,Object actual,int index)throws Exception {
+        if(!has(expected,"tile")||!has(actual,"tile")||!text(expected,"tileClass").equals(text(actual,"tileClass")))return;
+        String cls=text(expected,"tileClass");Object before=compound(expected,"tile"),after=compound(actual,"tile");
+        if(cls.equals("crazypants.enderio.machine.capbank.TileCapBank"))capBankDisplaySemantics(before,index);
+        if(cls.equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel")){singlePanelScreenSemantics(before,index,integer(expected,"meta"));panelSampleSemantics(before,after,index);}
+        // This exact GT root is an elapsed server counter, not configuration or inventory.
+        if(cls.equals("gregtech.api.metatileentity.BaseMetaTileEntity")){boundedCounter(before,after,"mTotalRunTime",index);wirelessCoverTimerSemantics(before,after,index);}
+    }
+    private Object existingTileAt(int x,int y,int z)throws Exception {
+        Object chunk=existingChunk(x,z);if(chunk==null)return null;
+        return ((Map<?,?>)get(chunk,"field_150816_i")).get(construct("net.minecraft.world.ChunkPosition",x&15,y,z&15));
+    }
+    private Object semanticObservation(int index,String predicate)throws Exception {Object row=nbt();putInt(row,"index",index);putText(row,"predicate",predicate);putLong(row,"sampleWorldTick",(Long)call(world,"func_82737_E"));append(rawSemanticObservations,row);return row;}
+    private void capBankDisplaySemantics(Object tile,int index)throws Exception {
+        if(!has(tile,"hasDisplayTypes"))return;requireType(call(tile,"func_74781_a","hasDisplayTypes"),1,"CapBank/hasDisplayTypes");
+        check(((Byte)call(call(tile,"func_74781_a","hasDisplayTypes"),"func_150290_f")).intValue()==1,"native CapBank display marker is exactly byte1");
+        int[][] directions={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};int remaining=0,removed=0;
+        Object observation=null;
+        for(int face=0;face<6;face++){
+            String key="faceDisplay"+face;if(!has(tile,key))continue;Object value=call(tile,"func_74781_a",key);requireType(value,2,"CapBank/"+key);int type=((Short)call(value,"func_150289_e")).intValue();check(type==1||type==2,"native CapBank non-NONE display enum value");
+            int x=target[0]+index%40+directions[face][0],y=target[1]+index/1600+directions[face][1],z=target[2]+index/40%40+directions[face][2];
+            Object block=call(world,"func_147439_a",x,y,z);boolean opaque=(Boolean)call(block,"func_149662_c"),cap=block==get(Class.forName("crazypants.enderio.EnderIO"),"blockCapBank");
+            if(opaque||cap){
+                if(observation==null){observation=semanticObservation(index,"EnderIO TileCapBank.validateDisplayTypes: each configured face whose real native neighbor isOpaqueCube() or identical EnderIO.blockCapBank is set to NONE; empty map emits no display tags");tag(observation,"faces",listTag());}
+                Object faceRow=nbt();putInt(faceRow,"faceOrdinal",face);putInt(faceRow,"x",x);putInt(faceRow,"y",y);putInt(faceRow,"z",z);putText(faceRow,"neighborNativeClass",block.getClass().getName());putText(faceRow,"neighborBlock",String.valueOf(call(get(Class.forName("net.minecraft.block.Block"),"field_149771_c"),"func_148750_c",block)));putBool(faceRow,"nativeIsOpaqueCube",opaque);putBool(faceRow,"identicalNativeCapBank",cap);tag(faceRow,"originalDisplay",call(value,"func_74737_b"));append(call(observation,"func_150295_c","faces",10),faceRow);remove(tile,key);removed++;
+            }else remaining++;
+        }
+        if(removed>0&&remaining==0)remove(tile,"hasDisplayTypes");
+    }
+    private void singlePanelScreenSemantics(Object tile,int index,int facing)throws Exception {
+        if(!has(tile,"screen")||facing<2||facing>5)return;
+        Object original=compound(tile,"screen");int[] old={source[0]+index%40,source[1]+index/1600,source[2]+index/40%40};
+        for(String prefix:new String[]{"core","min","max"})for(int axis=0;axis<3;axis++){String key=prefix+"XYZ".charAt(axis);Object value=call(original,"func_74781_a",key);if(value==null||((Byte)call(value,"func_74732_a")).intValue()!=3||integer(original,key)!=old[axis])return;}
+        if(integer(original,"facing")!=facing)return;
+        int x=target[0]+index%40,y=target[1]+index/1600,z=target[2]+index/40%40;
+        Object host=existingTileAt(x,y,z);if(host==null||!host.getClass().getName().equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel"))return;
+        int[][] neighbors=(facing==2||facing==3)?new int[][]{{-1,0,0},{1,0,0},{0,-1,0},{0,1,0}}:new int[][]{{0,0,-1},{0,0,1},{0,-1,0},{0,1,0}};
+        Object observation=semanticObservation(index,"GTSWN ScreenStructure.rebuild singleton only: source native screen is one-cell bbox; no compatible same-facing panel/extender in target screen plane; exact 9 Int absolute cache coordinates become actual host position");Object roster=listTag();tag(observation,"planeNeighbors",roster);
+        for(int[] delta:neighbors){int nx=x+delta[0],ny=y+delta[1],nz=z+delta[2];if(existingChunk(nx,nz)==null){putBool(observation,"topologyProven",false);return;}Object neighbor=existingTileAt(nx,ny,nz);String cls=neighbor==null?"<none>":neighbor.getClass().getName();int meta=(Integer)call(world,"func_72805_g",nx,ny,nz);Object row=nbt();putText(row,"nativeClass",cls);putInt(row,"meta",meta);putInt(row,"x",nx);putInt(row,"y",ny);putInt(row,"z",nz);append(roster,row);
+            if(meta==facing&&(cls.equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel")||cls.equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanelExtender"))){putBool(observation,"topologyProven",false);return;}
+        }
+        putBool(observation,"topologyProven",true);int[] at={x,y,z};for(String prefix:new String[]{"core","min","max"})for(int axis=0;axis<3;axis++)putInt(original,prefix+"XYZ".charAt(axis),at[axis]);
+    }
+    private void boundedCounter(Object before,Object after,String key,int index)throws Exception {
+        if(!has(before,key)||!has(after,key))return;Object a=call(before,"func_74781_a",key),b=call(after,"func_74781_a",key);if(((Byte)call(a,"func_74732_a")).intValue()!=4||((Byte)call(b,"func_74732_a")).intValue()!=4)return;
+        long from=(Long)call(a,"func_150291_c"),to=(Long)call(b,"func_150291_c"),elapsed=(Long)call(world,"func_82737_E")-rawSourceGraphTick;
+        if(to!=from&&from>=0&&to>=from&&to-from<=elapsed){Object row=semanticObservation(index,"GT BaseMetaTileEntity root /tile/mTotalRunTime is native multiblock server elapsed ticks; monotone delta bounded by independently sampled pre-CUT to current World tick interval");putLong(row,"before",from);putLong(row,"after",to);putLong(row,"maximumElapsedTicks",elapsed);tag(before,key,call(b,"func_74737_b"));}
+    }
+    private void panelSampleSemantics(Object before,Object after,int index)throws Exception {
+        String key="lastAESampleTick";if(!has(before,key)||!has(after,key))return;Object a=call(before,"func_74781_a",key),b=call(after,"func_74781_a",key);if(((Byte)call(a,"func_74732_a")).intValue()!=4||((Byte)call(b,"func_74732_a")).intValue()!=4)return;
+        long from=(Long)call(a,"func_150291_c"),to=(Long)call(b,"func_150291_c"),now=(Long)call(world,"func_82737_E");if(from==to)return;
+        Class<?> config=Class.forName("com.miaokatze.gtswn.config.Config");int interval=(Integer)get(config,"aeSampleInterval");
+        Object host=existingTileAt(target[0]+index%40,target[1]+index/1600,target[2]+index/40%40);if(host==null||!host.getClass().getName().equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkInfoPanel"))return;
+        Object controller=get(host,"controller");if(controller==null||!controller.getClass().getName().equals("com.miaokatze.gtswn.common.panel.AEMonitorController"))return;
+        if(rawAeChartEnabled&&(Boolean)get(config,"aeChartEnabled")&&interval==rawAeSampleInterval&&interval>0&&from>=-1&&to>=rawSourceGraphTick&&to<=now&&to>from&&(from<0||to-from>=interval)&&((Long)get(controller,"lastAESampleTick")).longValue()==to){
+            Object row=semanticObservation(index,"Exact GTSWN AEMonitorController.tickSampling: aeChartEnabled, interval positive, changed Long /tile/lastAESampleTick equals existing native controller timestamp, monotone sampling interval, new total-World-time lies between independently observed pre-CUT and sample ticks; no other panel fields changed by this predicate");putLong(row,"before",from);putLong(row,"after",to);putInt(row,"aeSampleInterval",interval);tag(before,key,call(b,"func_74737_b"));
+        }
+    }
+    private void wirelessCoverTimerSemantics(Object before,Object after,int index)throws Exception {
+        if(!has(before,"gt.covers")||!has(after,"gt.covers"))return;Object aa=call(before,"func_150295_c","gt.covers",10),bb=call(after,"func_150295_c","gt.covers",10);if(size(aa)!=size(bb))return;
+        Object host=existingTileAt(target[0]+index%40,target[1]+index/1600,target[2]+index/40%40);if(host==null||!host.getClass().getName().equals("gregtech.api.metatileentity.BaseMetaTileEntity"))return;
+        long elapsed=(Long)call(world,"func_82737_E")-rawSourceGraphTick;int interval=(Integer)get(Class.forName("com.miaokatze.gtswn.config.Config"),"interactionRateTicks");if(interval!=rawCoverInteractionInterval||interval<=0||elapsed<0)return;
+        for(int c=0;c<size(aa);c++){
+            Object a=entry(aa,c),b=entry(bb,c);if(!has(a,"d")||!has(b,"d"))continue;Object ad=compound(a,"d"),bd=compound(b,"d");String key="ticksSinceLastRefill";if(!has(ad,key)||!has(bd,key))continue;
+            Object av=call(ad,"func_74781_a",key),bv=call(bd,"func_74781_a",key);if(((Byte)call(av,"func_74732_a")).intValue()!=4||((Byte)call(bv,"func_74732_a")).intValue()!=4)continue;long from=(Long)call(av,"func_150291_c"),to=(Long)call(bv,"func_150291_c");if(from==to||from<0||from>=interval||to<0||to>=interval)continue;
+            Object ac=call(a,"func_74737_b"),bc=call(b,"func_74737_b");remove(compound(ac,"d"),key);remove(compound(bc,"d"),key);if(!typedEqual(ac,bc))continue; // Every cover identity/configuration and stored/fractional EU field remains exact.
+            if(!bool(ad,"configured")||integer(ad,"voltage")<=0||(Long)call(ad,"func_74763_f","capacity")<=0||!has(ad,"amperageDecimal"))continue;
+            Object amperageTag=call(ad,"func_74781_a","amperageDecimal");if(((Byte)call(amperageTag,"func_74732_a")).intValue()!=6)continue;double amperage=(Double)call(amperageTag,"func_150286_g");if(Double.isNaN(amperage)||Double.isInfinite(amperage)||amperage<=0)continue;
+            int side=integer(a,"s");if(side<0||side>=6)continue;Object cover=call(host,"getCoverAtSide",enumValue("net.minecraftforge.common.util.ForgeDirection",new String[]{"DOWN","UP","NORTH","SOUTH","WEST","EAST"}[side]));
+            if(cover==null||!cover.getClass().getName().equals("com.miaokatze.gtswn.common.covers.GTswn_Cover_EnergyWireless")||((Integer)call(cover,"getCoverID")).intValue()!=integer(a,"id")||((Integer)call(cover,"getTickRate")).intValue()!=1||((Long)get(cover,"ticksSinceLastRefill")).longValue()!=to)continue;
+            if(call(get(cover,"coveredTile"),"get")!=host)continue;long minimumTicks=(to-from+interval)%interval;if(minimumTicks>elapsed)continue;
+            Object row=semanticObservation(index,"Exact live GTswn_Cover_EnergyWireless class/side/id bound to this GT host; doCoverThings ticks once per server tick, increments Long /tile/gt.covers[c]/d/ticksSinceLastRefill and wraps to zero at actual Config.interactionRateTicks. Modulo advance fits pre-CUT-to-sample tick interval; every other cover tag including all energy/configuration is typed-identical.");putInt(row,"coverListIndex",c);putInt(row,"coverId",integer(a,"id"));putInt(row,"side",side);putInt(row,"interactionRateTicks",interval);putLong(row,"before",from);putLong(row,"after",to);putLong(row,"minimumElapsedTicks",minimumTicks);putLong(row,"maximumElapsedTicks",elapsed);tag(ad,key,call(bv,"func_74737_b"));
+        }
+    }
 
     /** Read only existing chunk TE maps; never call a lazy native getTileEntity/getNode getter. */
     private Object existingChunk(int x,int z)throws Exception {
@@ -310,11 +526,27 @@ public final class CompositeWorldWitness {
         try{return CompositeAeNetworkObserver.snapshot(world,origin,label);}catch(Exception failure){Object out=nbt();putText(out,"sampleLabel",label);putText(out,"status","OBSERVER_UNAVAILABLE");putText(out,"failure",failure.toString());return out;}
     }
     private void captureAeSample(String kind,int[] origin,String label)throws Exception {
-        check(!pendingAeSamples.containsKey(kind)&&!has(result,aeReportKey(kind)),"one detached AE sample per fixed boundary");
-        Object sample=aeSnapshot(origin,label);pendingAeSamples.put(kind,sample);
-        Object reference=nbt();putText(reference,"sampleLabel",label);putText(reference,"status","PENDING_ARTIFACT");tag(result,aeReportKey(kind),reference);
+        publishAeSample(kind,aeSnapshot(origin,label));
     }
-    private static String aeReportKey(String kind){check(Arrays.asList("source","self","share","raw").contains(kind),"fixed AE sample kind");return kind.equals("source")?"sourceAEAtBaselineComplete":kind+"AEAfterNativeFormation";}
+    private void publishAeSample(String kind,Object sample)throws Exception {
+        check(!pendingAeSamples.containsKey(kind)&&!has(result,aeReportKey(kind)),"one detached AE sample per fixed boundary");
+        pendingAeSamples.put(kind,sample);
+        if(kind.equals("rawCutSource"))rawSourceGraph=sample;if(kind.equals("raw"))rawTargetGraph=sample;
+        Object reference=nbt();putText(reference,"sampleLabel",text(sample,"sampleLabel"));putText(reference,"status","PENDING_ARTIFACT");tag(result,aeReportKey(kind),reference);
+    }
+    /** All detached sample groups, including isolated/outer groups, must match current registered native grids. */
+    private boolean rawGraphPathReady(Object sample,String kind)throws Exception {
+        Object report=nbt(),rows=listTag();tag(report,"groups",rows);putLong(report,"sampleWorldTick",(Long)call(world,"func_82737_E"));
+        Object groups=call(sample,"func_150295_c","grids",10);java.util.Set<Long> expected=new HashSet<Long>();
+        for(int i=0;i<size(groups);i++){Object group=entry(groups,i);requireType(call(group,"func_74781_a","g"),4,"graph/grids/g");check(expected.add((Long)call(group,"func_74763_f","g")),"unique source/target selected graph ids");}
+        boolean ready=!expected.isEmpty();java.util.Set<Long> found=new HashSet<Long>();
+        for(Object grid:(Iterable<?>)call(get(Class.forName("appeng.hooks.TickHandler"),"INSTANCE"),"getGridList")){
+            Object storage=get(grid,"myStorage");if(storage==null)continue;long id=(Long)call(storage,"getID");if(!expected.contains(id))continue;check(found.add(id),"native selected grid ids are unique");
+            Object row=nbt();putLong(row,"g",id);String reason=quantumPathPending(grid);putText(row,"pendingReason",reason);putBool(row,"ready",reason.isEmpty());append(rows,row);ready&=reason.isEmpty();
+        }
+        ready&=found.equals(expected);putInt(report,"expectedGroups",expected.size());putInt(report,"observedNativeGroups",found.size());putBool(report,"ready",ready);putText(report,"scope","Every grid in this exact same-tick detached graph, including outer/isolated grids; actual native PathGridCache recalculateControllerNextTick, updateNetwork, booting false and no controller conflict. Existing registry/storage/cache reads only.");tag(result,kind+"AllGraphPathReadiness",report);return ready;
+    }
+    private static String aeReportKey(String kind){check(Arrays.asList("source","self","share","raw","rawCutSource","shareBank").contains(kind),"fixed AE sample kind");return kind.equals("source")?"sourceAEAtBaselineComplete":kind.equals("rawCutSource")?"rawAEImmediatelyBeforeCut":kind.equals("shareBank")?"shareBankAEBeforePlacement":kind+"AEAfterNativeFormation";}
     /** Detached observation is borrowed once by the server receipt writer; never embedded in report(). */
     public Object pendingAeSample(String kind){aeReportKey(kind);return pendingAeSamples.get(kind);}
     public void commitAeSample(String kind,String artifact,String sha256,long bytes)throws Exception {
@@ -345,6 +577,7 @@ public final class CompositeWorldWitness {
     }
     public void fundPlacement(String kind)throws Exception {
         check(funded.isEmpty(),"one finite supply outstanding");Object s=session();check((Boolean)get(s,"virtualPlacement")&&(Boolean)get(s,"virtualLocked"),"actual locked product placement");
+        if(kind.equals("share"))captureShareBankBeforePlacement();
         checkOnlyMeSettings(get(s,"materialSettings"),"actual session before funding");
         checkOnlyMeSettings(call(product("HologramMaterials"),"read",call(actor,"func_70694_bm")),"held projector before funding");
         int[] at=ints(manifest,kind);check((Integer)get(s,"x")==at[0]&&(Integer)get(s,"y")==at[1]&&(Integer)get(s,"z")==at[2],"exact canonical target");
@@ -368,6 +601,19 @@ public final class CompositeWorldWitness {
         checkOnlyMeSettings(call(product("HologramMaterials"),"read",call(actor,"func_70694_bm")),"held projector after funding");
         check((Integer)get(s,"planMissing")==0,"actual finite ME bank made complete plan payable: "+get(s,"status"));
         funded=kind;tag(result,kind+"FundedStock",stockSnapshot());putText(result,kind+"QuotedEU",euQuote.toString());
+    }
+    private void captureShareBankBeforePlacement()throws Exception {
+        Object sample=aeSnapshot(bankOrigin,"share-bank-before-placement"),binding=nbt();tag(binding,"seedShareTerminal",call(seedShareTerminal,"func_74737_b"));putBool(binding,"authorizesPass",false);
+        Object anchor=compound(seedShareTerminal,"tag");int x=integer(anchor,"QT_AnchorX"),y=integer(anchor,"QT_AnchorY"),z=integer(anchor,"QT_AnchorZ"),dimension=integer(anchor,"QT_AnchorDim");
+        putInt(binding,"dimension",dimension);putInt(binding,"x",x);putInt(binding,"y",y);putInt(binding,"z",z);putLong(binding,"worldTick",(Long)call(world,"func_82737_E"));putText(binding,"status","UNKNOWN");
+        try{Object controller=dimension==integer(manifest,"dimension")?existingTileAt(x,y,z):null;putText(binding,"actualNativeClass",controller==null?"<not resident>":controller.getClass().getName());
+            if(controller!=null&&controller.getClass().getName().equals("appeng.tile.networking.TileController")){
+                Object identity=call(controller,"gtswn$getControllerIdentity");putText(binding,"actualControllerGeneration",identity==null?"<null>":identity.toString());
+                Object proxy=get(controller,"gridProxy"),node=proxy==null?null:get(proxy,"node"),grid=node==null?null:get(node,"myGrid"),storage=grid==null?null:get(grid,"myStorage");
+                if(storage!=null){putLong(binding,"actualGridStorageId",(Long)call(storage,"getID"));putText(binding,"status","OBSERVED");}else putText(binding,"unknownReason","existing controller has no existing node/grid/storage; no lazy getter called");
+            }else putText(binding,"unknownReason","terminal-designated native controller is not resident/exact supported class");
+        }catch(Exception unavailable){putText(binding,"unknownReason",unavailable.toString());}
+        putText(binding,"scope","Original server seed terminal tag and exact designated live controller; existing chunk map/proxy/node/grid fields only, no +14 inference, identity repair, wait or world-PASS permission.");tag(sample,"shareTerminalBinding",binding);publishAeSample("shareBank",sample);
     }
 
     private static void checkOnlyMeSettings(Object settings,String scope)throws Exception {

@@ -43,7 +43,7 @@ public final class V0111CompositeNativeProbe {
     private long started, phaseStarted, heartbeat, generation = -1, longFlowStarted;
     private Object generationScreen;
     private Object guidanceAwaitingGui;
-    private long wholeFlowStarted, processingStarted;
+    private long wholeFlowStarted, processingStarted, constructionStarted;
     private long nativeLabProgressAt;
     private long awaitedTaskToken, awaitedTaskSequence=-1;
     private String awaitedTaskKind="", awaitedTaskSession="";
@@ -75,6 +75,7 @@ public final class V0111CompositeNativeProbe {
     private Object rawRenderStateWitness, rawRenderSession;
     private long rawPreviewStarted, rawRenderStarted, rawFramesBefore;
     private int rawNaturalFrames, rawWorldEvents, rawGlStateChecks, rawGlStateMismatches;
+    private boolean rawPrepareSent;
     private String lightWaitKey="", lightingGlLabel="", lightingGlBefore="";
     private long lightWaitStarted;
     private Object lightingGlWitness;
@@ -169,12 +170,17 @@ public final class V0111CompositeNativeProbe {
                 if (action.equals("move")) move(host,kind);
                 else if (action.equals("fund")) call(bridge,"fundPlacement",kind);
                 else if (action.equals("check")) call(bridge,"checkPlacement",kind);
+                else if (action.equals("rawPrepare")) {check(seedMode,"server-owned durable raw witness requires seeded independent baseline");if(!(Boolean)call(bridge,"prepareRawCut")){writeNbt("composite-server-oracle.nbt",call(bridge,"report"));pulse();return;}persistAeSamples();}
+                else if (action.equals("rawCapture")) {try{call(bridge,"captureRawCut",readNbt("composite-raw-cut-ack.nbt"));}finally{persistRawSamples();}}
+                else if (action.equals("rawPreviewVerify")) call(bridge,"verifyRawPreview",readNbt("composite-raw-preview-reply.nbt"));
                 else if (action.equals("rawCheck")) call(bridge,"checkRaw");
                 else if (action.equals("complete")) {if(seedMode&&!scenario.equals("all"))call(bridge,"completeScenario",scenario);else call(bridge,"complete");}
                 else throw new IllegalStateException("Unknown fixture-only control: "+action);
                 acknowledged = sequence; proof.setProperty("fixtureAcknowledged",String.valueOf(sequence)); persist("RUNNING");
             }
+            if(seedMode)persistRawSamples();
             report = call(bridge,"report"); writeNbt("composite-server-oracle.nbt",report);
+            for(String key:new String[]{"rawPrepared","rawDurableCaptured","rawPreviewMatchesServerDurable"})proof.setProperty(key,String.valueOf(bool(report,key)));
             for (String kind : new String[]{"self","share","raw"}) {
                 proof.setProperty(kind+"Passed",String.valueOf(bool(report,kind+"Passed")));
                 Object commit = compound(report,kind+"SaveCommit");
@@ -195,7 +201,10 @@ public final class V0111CompositeNativeProbe {
                 proof.setProperty("clientVerdict","PASS"); persist("COMPLETE"); done=true; call(host,"func_71263_m"); return;
             }
             pulse();
-        } catch(Throwable failure) { fail(failure); }
+        } catch(Throwable failure) {
+            if(seedMode&&bridge!=null)try{call(bridge,"retainRawFailureEvidence");persistAeSamples();persistRawSamples();}catch(Throwable evidence){failure.addSuppressed(evidence);}
+            fail(failure);
+        }
     }
 
     private void observeNativeLabFailure()throws Exception {
@@ -420,7 +429,12 @@ public final class V0111CompositeNativeProbe {
             }
             if(phase==19) {
                 if(integer(data,"job")!=3||busy())return;
-                timing.setProperty(kind()+".placementNanos",String.valueOf(System.nanoTime()-longFlowStarted));timing.setProperty(kind()+".longFlowProductCompleteNanos",String.valueOf(System.nanoTime()-wholeFlowStarted));fixture("check",kind());advance(20);return;
+                long finished=System.nanoTime();
+                timing.setProperty(kind()+".placementNanos",String.valueOf(finished-longFlowStarted)); // Historical alias includes private upload and review.
+                timing.setProperty(kind()+".privatePlacementWorkflowNanos",String.valueOf(finished-longFlowStarted));
+                check(constructionStarted>0,"actual confirmation timestamp precedes completed construction");
+                timing.setProperty(kind()+".constructionConfirmToCompleteNanos",String.valueOf(finished-constructionStarted));
+                timing.setProperty(kind()+".longFlowProductCompleteNanos",String.valueOf(finished-wholeFlowStarted));fixture("check",kind());advance(20);return;
             }
             if(phase==20) {
                 if(!ack(peer)||!"true".equals(peer.getProperty(kind()+"Passed")))return;
@@ -472,7 +486,7 @@ public final class V0111CompositeNativeProbe {
                 if(drawnControlReady(ui,55)){proof.setProperty(kind()+"DirectPlacementReview","native final55 already drawn; no redundant50 dispatch");advance(18);return;}
                 if(!drawnControlReady(ui,50))return;
                 click(gui,ui,50,gen);advance(18);
-            } else if(phase==18) {if(!drawnControlReady(ui,55))return;long previousTask=nativeTaskWatermark();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
+            } else if(phase==18) {if(!drawnControlReady(ui,55))return;long previousTask=nativeTaskWatermark();constructionStarted=System.nanoTime();click(gui,ui,55,gen);watchNativeTask("placement",true,previousTask);advance(19);}
             pulse();
         } catch(Throwable failure) {fail(failure);}
     }
@@ -480,6 +494,8 @@ public final class V0111CompositeNativeProbe {
     private void raw(Properties peer)throws Exception {
         if(phase==30){
             if(!ack(peer))return;
+            if(!rawPrepareSent){fixture("rawPrepare","raw");rawPrepareSent=true;return;}
+            check("true".equals(peer.getProperty("rawPrepared")),"independent current native source graph gate acknowledged before product CUT timer");
             if(seedMode&&!clientLightReady("raw-before-cut",get(mc,"field_71441_e"),get(mc,"field_71439_g")))return;
             Object cut=get(clientType("HologramCutClient"),"INSTANCE");
             if((Boolean)call(cut,"busy"))return;
@@ -495,8 +511,9 @@ public final class V0111CompositeNativeProbe {
             check(bool(reply,"success"),str(reply,"message"));check(rawId.equals(str(reply,"id")),"actual raw clipboard identity");
             check(count(list(compound(reply,"preview"),"cells"))==64000,"actual complete selected raw 64k payload");
             proof.setProperty("rawCellCount","64000");timing.setProperty("raw.cutNanos",String.valueOf(System.nanoTime()-longFlowStarted));
-            rawPreviewStarted=System.nanoTime();advance(35);return;
+            writeNbt("composite-raw-cut-ack.nbt",reply);fixture("rawCapture","raw");proof.setProperty("rawTimingProfile","precut graph excluded from product timer; full post-CUT durable evidence handshake included in end-to-end long flow; individual CUT/PASTE timers remain actual request-to-ACK");advance(37);return;
         }
+        if(phase==37){if(!ack(peer))return;check("true".equals(peer.getProperty("rawDurableCaptured")),"server independently captured committed owner-bound disk entry before preview/paste");timing.setProperty("raw.durableWitnessHandshakeNanos",String.valueOf(System.nanoTime()-phaseStarted));rawPreviewStarted=System.nanoTime();advance(35);return;}
         if(phase==35){
             Object cut=get(clientType("HologramCutClient"),"INSTANCE");
             if((Boolean)call(cut,"busy"))return;
@@ -541,6 +558,7 @@ public final class V0111CompositeNativeProbe {
                 call(transport,"func_74782_a","fragments",fragments);writeNbt("composite-raw-preview-transport.nbt",transport);
                 proof.setProperty("raw.previewObservedFragments",String.valueOf(observed));proof.setProperty("raw.previewEncodedBytes",String.valueOf(bytes));
                 writeNbt("composite-raw-preview-reply.nbt",reply);
+                fixture("rawPreviewVerify","raw");
                 proof.setProperty("raw.previewDecodedCells","64000");
                 rawRenderStarted=System.nanoTime();timing.setProperty("raw.previewHydrationNanos",String.valueOf(rawRenderStarted-rawPreviewStarted));
             }
@@ -550,6 +568,8 @@ public final class V0111CompositeNativeProbe {
             check(integer(inspection,"failureCount")==0,"native raw renderer failures: "+inspection);
             check(str(inspection,"ghostFailure").isEmpty()&&str(inspection,"ghostRenderFailure").isEmpty(),"native ghost render failure: "+inspection);
             if(rawNaturalFrames<8||integer(inspection,"pendingVisibleCells")!=0)return;
+            if(!ack(peer))return;
+            check("true".equals(peer.getProperty("rawPreviewMatchesServerDurable")),"server verified the entire client preview against independent durable disk payload before paste");
             check(number(inspection,"staticRendered")>0&&integer(inspection,"displayLists")>0,"natural WorldLast compiled real visible native block geometry");
             check(number(inspection,"ghostComposites")>=8,"natural WorldLast executed native ghost compositing on multiple frames");
             check(rawGlStateChecks>=8,"native CTM state witness observed multiple natural world frames");
@@ -1111,7 +1131,7 @@ public final class V0111CompositeNativeProbe {
         catch(Exception failure){Throwable cause=failure;while(cause instanceof java.lang.reflect.InvocationTargetException&&cause.getCause()!=null)cause=cause.getCause();if(cause instanceof IOException)throw new ReceiptIoException("write NBT "+name,(IOException)cause);throw failure;}
     }
     private void persistAeSamples()throws Exception {
-        for(String kind:new String[]{"source","self","share","raw"}){
+        for(String kind:new String[]{"source","self","share","raw","rawCutSource","shareBank"}){
             Object sample=call(bridge,"pendingAeSample",kind);if(sample==null)continue;
             String name="composite-"+kind+"-ae-network.nbt";Path target=receiptPath(name);
             check(!Files.exists(target),"fixed AE sample artifact written only once");
@@ -1120,11 +1140,20 @@ public final class V0111CompositeNativeProbe {
             call(bridge,"commitAeSample",kind,name,hash(actual),(long)actual.length);
         }
     }
+    private void persistRawSamples()throws Exception {
+        for(String kind:new String[]{"durable-entry","baseline-to-cut-differences","postnative-differences","ae-relocation-proof"}){
+            Object sample=call(bridge,"pendingRawSample",kind);if(sample==null)continue;
+            String name="composite-raw-"+kind+".nbt";Path target=receiptPath(name);check(!Files.exists(target),"raw evidence artifact written only once");writeNbt(name,sample);
+            byte[] bytes=Files.readAllBytes(target);call(bridge,"commitRawSample",kind,name,hash(bytes),(long)bytes.length);
+        }
+    }
     private Path receiptPath(String name)throws IOException {
         String base=name.endsWith(".tmp")?name.substring(0,name.length()-4):name;
         check(Arrays.asList("composite-client.properties","composite-server.properties","composite-client-timing.properties","composite-server-timing.properties","fixture-request.properties",
             "composite-manifest.nbt","composite-actor.nbt","composite-seed-receipt.nbt","composite-source-baseline.nbt","composite-server-oracle.nbt","composite-native-lab-failure.nbt",
             "composite-source-ae-network.nbt","composite-self-ae-network.nbt","composite-share-ae-network.nbt","composite-raw-ae-network.nbt",
+            "composite-shareBank-ae-network.nbt",
+            "composite-rawCutSource-ae-network.nbt","composite-raw-cut-ack.nbt","composite-raw-durable-entry.nbt","composite-raw-baseline-to-cut-differences.nbt","composite-raw-postnative-differences.nbt","composite-raw-ae-relocation-proof.nbt",
             "composite-raw-preview-transport.nbt","composite-raw-preview-reply.nbt","composite-raw-preview-render.nbt",
             "composite-self-private-import.nbt","composite-share-private-import.nbt",
             "composite-self-blocked-control.nbt","composite-share-blocked-control.nbt","composite-raw-blocked-control.nbt",

@@ -418,9 +418,45 @@ public final class HologramLibraryRegression {
         Path file = Files.createTempDirectory("gtmb-library-config-")
             .resolve("library.cfg");
         HologramLibraryConfig config = new HologramLibraryConfig(file.toFile());
-        SimpleAssert.eq(128, config.view().uploadKiB, "fresh default aggregate upload");
+        SimpleAssert.eq(1024, config.view().uploadKiB, "fresh default aggregate upload is 1 MiB/s");
         SimpleAssert.eq(128, config.view().downloadKiB, "fresh default aggregate download");
         SimpleAssert.eq(10, config.view().maxUploads, "default UUID quota");
+        NBTTagCompound defaults = config.view()
+            .tag(true);
+        SimpleAssert.eq(1024, defaults.getInteger("uploadKiB"), "administrator UI receives new upload default");
+        SimpleAssert.eq(128, defaults.getInteger("downloadKiB"), "administrator UI retains download default");
+        HologramLibraryConfig freshReopened = new HologramLibraryConfig(file.toFile());
+        SimpleAssert.eq(1024, freshReopened.view().uploadKiB, "new upload default persists in actual Forge file");
+        SimpleAssert.eq(128, freshReopened.view().downloadKiB, "new file keeps existing download behavior");
+        Path previousDefaultFile = file.resolveSibling("existing-128.cfg");
+        Files.write(
+            previousDefaultFile,
+            ("serverblueprintlibrary {\n I:uploadKiBPerSecond=128\n I:downloadKiBPerSecond=128\n I:maxUploadsPerPlayer=7\n}\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        HologramLibraryConfig previousDefault = new HologramLibraryConfig(previousDefaultFile.toFile());
+        SimpleAssert
+            .eq(128, previousDefault.view().uploadKiB, "existing 128 is not assumed to be an untouched default");
+        HologramLibraryConfig previousReopened = new HologramLibraryConfig(previousDefaultFile.toFile());
+        SimpleAssert.eq(128, previousReopened.view().uploadKiB, "existing 128 remains unchanged after reopen");
+        SimpleAssert.eq(128, previousReopened.view().downloadKiB, "existing download remains unchanged after reopen");
+        SimpleAssert.eq(7, previousReopened.view().maxUploads, "existing quota remains unchanged after reopen");
+        previousDefault.update(true, previousDefault.view().revision, 1024, 128, 7);
+        HologramLibraryConfig administratorUpdated = new HologramLibraryConfig(previousDefaultFile.toFile());
+        SimpleAssert.eq(
+            1024,
+            administratorUpdated.view().uploadKiB,
+            "administrator can explicitly upgrade existing upload to 1 MiB/s");
+        SimpleAssert
+            .eq(128, administratorUpdated.view().downloadKiB, "explicit upload upgrade preserves chosen download");
+        Path missingUploadFile = file.resolveSibling("missing-upload.cfg");
+        Files.write(
+            missingUploadFile,
+            ("serverblueprintlibrary {\n I:downloadKiBPerSecond=16\n I:maxUploadsPerPlayer=7\n}\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        HologramLibraryConfig missingUpload = new HologramLibraryConfig(missingUploadFile.toFile());
+        SimpleAssert.eq(1024, missingUpload.view().uploadKiB, "missing upload key uses new upload default");
+        SimpleAssert.eq(16, missingUpload.view().downloadKiB, "missing upload key does not migrate existing download");
+        SimpleAssert.eq(7, missingUpload.view().maxUploads, "missing upload key does not migrate existing quota");
         Path legacyFile = file.resolveSibling("existing-16.cfg");
         Files.write(
             legacyFile,

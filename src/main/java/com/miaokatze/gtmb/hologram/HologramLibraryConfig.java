@@ -12,7 +12,11 @@ import net.minecraftforge.common.config.Configuration;
 /** The GUI and command share this single persistent Forge configuration and revision. */
 public final class HologramLibraryConfig {
 
-    public static final int DEFAULT_KIB_PER_SECOND = 128;
+    public static final int DEFAULT_UPLOAD_KIB_PER_SECOND = 1024;
+    public static final int DEFAULT_DOWNLOAD_KIB_PER_SECOND = 128;
+    /** Legacy shared default remains 128 for callers compiled against the original constant. */
+    @Deprecated
+    public static final int DEFAULT_KIB_PER_SECOND = DEFAULT_DOWNLOAD_KIB_PER_SECOND;
     private static final String CATEGORY = "serverBlueprintLibrary";
     private final Path file;
     private volatile View current;
@@ -30,15 +34,26 @@ public final class HologramLibraryConfig {
             Configuration loaded = new Configuration(source.toFile());
             loaded.load();
             View candidate = new View(
-                loaded.get(CATEGORY, "uploadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate upload KiB/s.")
-                    .getInt(DEFAULT_KIB_PER_SECOND),
-                loaded.get(CATEGORY, "downloadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate download KiB/s.")
-                    .getInt(DEFAULT_KIB_PER_SECOND),
+                // Missing keys use the new default; an existing 128 may be an administrator's choice.
+                loaded
+                    .get(
+                        CATEGORY,
+                        "uploadKiBPerSecond",
+                        DEFAULT_UPLOAD_KIB_PER_SECOND,
+                        "Global aggregate upload KiB/s (default 1024 = 1 MiB/s; existing values are preserved).")
+                    .getInt(DEFAULT_UPLOAD_KIB_PER_SECOND),
+                loaded
+                    .get(
+                        CATEGORY,
+                        "downloadKiBPerSecond",
+                        DEFAULT_DOWNLOAD_KIB_PER_SECOND,
+                        "Global aggregate download KiB/s.")
+                    .getInt(DEFAULT_DOWNLOAD_KIB_PER_SECOND),
                 loaded.get(CATEGORY, "maxUploadsPerPlayer", 10, "Maximum published blueprints per player UUID.")
                     .getInt(10),
                 1);
             if (!valid(candidate.uploadKiB, candidate.downloadKiB, candidate.maxUploads))
-                candidate = new View(DEFAULT_KIB_PER_SECOND, DEFAULT_KIB_PER_SECOND, 10, 1);
+                candidate = new View(DEFAULT_UPLOAD_KIB_PER_SECOND, DEFAULT_DOWNLOAD_KIB_PER_SECOND, 10, 1);
             persist(candidate);
             current = candidate;
         } finally {
@@ -93,9 +108,19 @@ public final class HologramLibraryConfig {
         Path temp = Files.createTempFile(file.getParent(), "hologram-library-config-write-", ".cfg");
         try {
             Configuration output = new Configuration(temp.toFile());
-            output.get(CATEGORY, "uploadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate upload KiB/s.")
+            output
+                .get(
+                    CATEGORY,
+                    "uploadKiBPerSecond",
+                    DEFAULT_UPLOAD_KIB_PER_SECOND,
+                    "Global aggregate upload KiB/s (default 1024 = 1 MiB/s; existing values are preserved).")
                 .set(view.uploadKiB);
-            output.get(CATEGORY, "downloadKiBPerSecond", DEFAULT_KIB_PER_SECOND, "Global aggregate download KiB/s.")
+            output
+                .get(
+                    CATEGORY,
+                    "downloadKiBPerSecond",
+                    DEFAULT_DOWNLOAD_KIB_PER_SECOND,
+                    "Global aggregate download KiB/s.")
                 .set(view.downloadKiB);
             output.get(CATEGORY, "maxUploadsPerPlayer", 10, "Maximum published blueprints per player UUID.")
                 .set(view.maxUploads);
