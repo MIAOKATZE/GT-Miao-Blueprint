@@ -7,10 +7,17 @@ final class TestLabZone {
 
     static final int SIZE = 32, HEIGHT = 16;
     final String id;
-    final int x, y, z;
+    final int x, y, z, sizeX, sizeY, sizeZ;
 
     TestLabZone(String id, int x, int y, int z) {
+        this(id, x, y, z, SIZE, HEIGHT, SIZE);
+    }
+
+    TestLabZone(String id, int x, int y, int z, int sizeX, int sizeY, int sizeZ) {
         this.id = id;
+        this.sizeX = sizeX;
+        this.sizeY = sizeY;
+        this.sizeZ = sizeZ;
         this.x = x;
         this.y = y;
         this.z = z;
@@ -22,18 +29,18 @@ final class TestLabZone {
             && px >= x
             && py >= y
             && pz >= z
-            && (long) px + sx <= (long) x + SIZE
-            && (long) py + sy <= (long) y + HEIGHT
-            && (long) pz + sz <= (long) z + SIZE;
+            && (long) px + sx <= (long) x + sizeX
+            && (long) py + sy <= (long) y + sizeY
+            && (long) pz + sz <= (long) z + sizeZ;
     }
 
     int cells() {
-        return SIZE * HEIGHT * SIZE;
+        return sizeX * sizeY * sizeZ;
     }
 
     int[] cell(int index) {
         if (index < 0 || index >= cells()) throw new IllegalArgumentException("facility cell index");
-        return new int[] { x + index % SIZE, y + index / (SIZE * SIZE), z + index / SIZE % SIZE };
+        return new int[] { x + index % sizeX, y + index / (sizeX * sizeZ), z + index / sizeX % sizeZ };
     }
 
     NBTTagCompound tag() {
@@ -42,9 +49,9 @@ final class TestLabZone {
         n.setInteger("x", x);
         n.setInteger("y", y);
         n.setInteger("z", z);
-        n.setInteger("sizeX", SIZE);
-        n.setInteger("sizeY", HEIGHT);
-        n.setInteger("sizeZ", SIZE);
+        n.setInteger("sizeX", sizeX);
+        n.setInteger("sizeY", sizeY);
+        n.setInteger("sizeZ", sizeZ);
         return n;
     }
 }

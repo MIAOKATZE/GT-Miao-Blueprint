@@ -37,7 +37,7 @@ import gregtech.common.blocks.ItemMachines;
 final class HologramPresets {
 
     // The whole library has a separate budget; one large entry must not consume every other slot.
-    static final int MAX_LIBRARY_BYTES = 64 * 1024 * 1024;
+    static final int MAX_LIBRARY_BYTES = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
     private static final Gson GSON = new GsonBuilder().create();
     private static final Pattern REGISTRY_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,256}");
     private static List<Preset> cached;
@@ -51,6 +51,23 @@ final class HologramPresets {
 
     static synchronized void clearCache() {
         cached = null;
+    }
+
+    /** Explicit library navigation/refresh only; snapshots and ticks keep the existing in-memory catalog. */
+    static synchronized void refreshLocalArtifacts() throws IOException {
+        Path library = libraryPath();
+        List<Preset> refreshed = readLibrary(library);
+        java.util.Iterator<Preset> entries = refreshed.iterator();
+        while (entries.hasNext()) {
+            Preset preset = entries.next();
+            // Legacy collection-only templates remain readable. Native artifacts must still have both members.
+            if (preset.nativeBlueprint == null) continue;
+            Path json = library.getParent()
+                .resolve("local_" + preset.id + ".json");
+            Path preview = HologramBlueprintArtifact.previewPath(json);
+            if (!Files.isRegularFile(json) || !Files.isRegularFile(preview)) entries.remove();
+        }
+        cached = refreshed;
     }
 
     static final class Cell {
@@ -208,7 +225,8 @@ final class HologramPresets {
     private static List<Preset> readLibrary(Path file) throws IOException {
         List<Preset> result = new ArrayList<>();
         if (Files.exists(file)) {
-            if (Files.size(file) > MAX_LIBRARY_BYTES) throw new IOException("蓝图库超过64MiB上限");
+            if (Files.size(file) > MAX_LIBRARY_BYTES)
+                throw new IOException("蓝图库超过 " + MAX_LIBRARY_BYTES / (1024 * 1024) + " MiB 上限");
             try {
                 FileData data = decode(
                     new String(HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8));
@@ -352,15 +370,24 @@ final class HologramPresets {
 
     /** Keep the logical collection and both native artifact members together on failed deletion. */
     static synchronized void delete(String id, ArtifactDeleteOperation removeArtifact) throws IOException {
-        List<Preset> list = all();
+        List<Preset> list = readLibrary(libraryPath());
         remove(list, id);
         if (id == null || !id.matches("[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"))
             throw new IOException("蓝图必须具有当前原生保存格式的完整 JSON 和 PNG 文件");
         Path library = libraryPath();
         Path artifact = library.getParent()
             .resolve("local_" + id + ".json");
-        Preset artifactBlueprint = HologramBlueprintSharing.read(artifact);
-        if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+        if (Files.exists(artifact)) {
+            // Missing PNG/JSON after an external deletion must still allow removing the surviving pair member.
+            // A complete pair retains the existing identity check before any destructive operation.
+            if (Files.exists(HologramBlueprintArtifact.previewPath(artifact))) {
+                Preset artifactBlueprint = HologramBlueprintSharing.read(artifact);
+                if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+            } else {
+                Preset artifactBlueprint = decodeArtifactIdentity(artifact);
+                if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+            }
+        }
         byte[] previousBytes = HologramBlueprintSharing.readBytes(library, MAX_LIBRARY_BYTES);
         List<Preset> previousCache = cached;
         write(library, list);
@@ -377,8 +404,18 @@ final class HologramPresets {
         }
     }
 
+    private static Preset decodeArtifactIdentity(Path artifact) throws IOException {
+        // Native artifacts retain the Sharing envelope even when the matching preview was removed.
+        // Decode through the same schema/version/payload gate as a complete pair, without requiring PNG.
+        return HologramBlueprintSharing.decode(
+            new String(
+                HologramBlueprintSharing.readBytes(artifact, HologramBlueprintSharing.MAX_BYTES),
+                StandardCharsets.UTF_8));
+    }
+
     private static void restoreLibraryBytes(Path file, byte[] bytes) throws IOException {
-        if (bytes.length > MAX_LIBRARY_BYTES) throw new IOException("蓝图库超过64MiB上限");
+        if (bytes.length > MAX_LIBRARY_BYTES)
+            throw new IOException("蓝图库超过 " + MAX_LIBRARY_BYTES / (1024 * 1024) + " MiB 上限");
         Path temp = Files.createTempFile(file.getParent(), "hologram-presets-restore-", ".tmp");
         try {
             Files.write(temp, bytes);

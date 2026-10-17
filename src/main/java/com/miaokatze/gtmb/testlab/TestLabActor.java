@@ -1,13 +1,20 @@
 package com.miaokatze.gtmb.testlab;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.Teleporter;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.FakePlayer;
@@ -16,10 +23,15 @@ import net.minecraftforge.common.util.FakePlayerFactory;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.mojang.authlib.GameProfile;
 
-/** A survival FakePlayer, not an online human. Its tagged effects have no global item/event hooks. */
+/** Survival FakePlayer for small suites, or one configured connected test client for native composite workflows. */
 final class TestLabActor {
 
-    final FakePlayer player;
+    final EntityPlayerMP player;
+    private NBTTagList originalInventory;
+    private int originalDimension, originalSlot;
+    private double originalX, originalY, originalZ;
+    private float originalYaw, originalPitch;
+    private boolean returned;
     final UUID id;
     private final String owner, run;
     private final WorldServer world;
@@ -28,21 +40,59 @@ final class TestLabActor {
     private final ItemStack tool;
 
     TestLabActor(WorldServer world, TestLabOwnership ownership, TestLabConfig config, String run) {
+        this(world, ownership, config, run, false);
+    }
+
+    TestLabActor(WorldServer world, TestLabOwnership ownership, TestLabConfig config, String run, boolean connected) {
         this.world = world;
         this.config = config;
         this.owner = ownership.owner.toString();
         this.run = run;
-        id = UUID.nameUUIDFromBytes(("gtmb-testlab-agent:" + owner).getBytes(StandardCharsets.UTF_8));
-        for (Object online : MinecraftServer.getServer()
-            .getConfigurationManager().playerEntityList)
-            if (id.equals(((EntityPlayerMP) online).getUniqueID()))
-                throw new IllegalStateException("Lab actor UUID is online; refusing impersonation");
-        player = FakePlayerFactory.get(world, new GameProfile(id, "GTMBLabAgent"));
-        if (player.worldObj != world) throw new IllegalStateException("FakePlayer belongs to another world");
-        player.dimension = config.dimension;
-        player.capabilities.isCreativeMode = false;
-        player.capabilities.allowFlying = false;
-        clear();
+        if (ProjectorRegistry.projector == null) throw new IllegalStateException("Projector registry is unavailable");
+        if (connected) {
+            if (config.compositeActorUuid.isEmpty())
+                throw new IllegalStateException("Composite requires configured test client UUID");
+            id = UUID.fromString(config.compositeActorUuid);
+            EntityPlayerMP selected = null;
+            for (Object online : MinecraftServer.getServer()
+                .getConfigurationManager().playerEntityList) {
+                EntityPlayerMP candidate = (EntityPlayerMP) online;
+                if (id.equals(candidate.getUniqueID())) selected = candidate;
+            }
+            if (selected == null || selected instanceof FakePlayer
+                || selected.playerNetServerHandler == null
+                || selected.capabilities.isCreativeMode
+                || selected.theItemInWorldManager.getGameType() != net.minecraft.world.WorldSettings.GameType.SURVIVAL
+                || selected.isDead)
+                throw new IllegalStateException(
+                    "Configured composite test client must be connected, alive and survival");
+            player = selected;
+            originalInventory = player.inventory.writeToNBT(new NBTTagList());
+            originalDimension = player.dimension;
+            originalSlot = player.inventory.currentItem;
+            originalX = player.posX;
+            originalY = player.posY;
+            originalZ = player.posZ;
+            originalYaw = player.rotationYaw;
+            originalPitch = player.rotationPitch;
+            TestLabZone bank = config.zone("composite-bank");
+            for (int dx = 1; dx <= 3; dx++) for (int dz = 19; dz <= 21; dz++)
+                world.setBlock(bank.x + dx, bank.y, bank.z + dz, net.minecraft.init.Blocks.glass, 0, 3);
+            transfer(world, bank.x + 2.5, bank.y + 1, bank.z + 20.5);
+        } else {
+            id = UUID.nameUUIDFromBytes(("gtmb-testlab-agent:" + owner).getBytes(StandardCharsets.UTF_8));
+            for (Object online : MinecraftServer.getServer()
+                .getConfigurationManager().playerEntityList)
+                if (id.equals(((EntityPlayerMP) online).getUniqueID()))
+                    throw new IllegalStateException("Lab actor UUID is online; refusing impersonation");
+            player = FakePlayerFactory.get(world, new GameProfile(id, "GTMBLabAgent"));
+            if (player.worldObj != world) throw new IllegalStateException("FakePlayer belongs to another world");
+            player.dimension = config.dimension;
+            player.capabilities.isCreativeMode = false;
+            player.capabilities.allowFlying = false;
+        }
+        for (int i = 0; i < player.inventory.getSizeInventory(); i++)
+            player.inventory.setInventorySlotContents(i, null);
         if (ProjectorRegistry.projector == null) throw new IllegalStateException("Projector registry is unavailable");
         tool = new ItemStack(ProjectorRegistry.projector);
         NBTTagCompound tag = new NBTTagCompound();
@@ -55,7 +105,12 @@ final class TestLabActor {
     }
 
     void at(TestLabZone zone) {
-        player.setPosition(zone.x + 8.5, zone.y + 1, zone.z + 8.5);
+        if (player instanceof FakePlayer) player.setPosition(zone.x + 8.5, zone.y + 1, zone.z + 8.5);
+        else {
+            TestLabZone bank = config.zone("composite-bank");
+            player.playerNetServerHandler
+                .setPlayerLocation(bank.x + 2.5, bank.y + 1, bank.z + 20.5, player.rotationYaw, player.rotationPitch);
+        }
     }
 
     ItemStack tool() {
@@ -79,17 +134,94 @@ final class TestLabActor {
     }
 
     void clear() {
+        if (originalInventory != null) {
+            if (returned) return;
+            player.inventory.readFromNBT((NBTTagList) originalInventory.copy());
+            player.inventory.currentItem = originalSlot;
+            player.inventory.markDirty();
+            WorldServer target = MinecraftServer.getServer()
+                .worldServerForDimension(originalDimension);
+            if (target == null) throw new IllegalStateException("Original actor return world is unavailable");
+            boolean online = MinecraftServer.getServer()
+                .getConfigurationManager().playerEntityList.contains(player) && player.playerNetServerHandler != null
+                && player.playerNetServerHandler.netManager.isChannelOpen();
+            if (online) {
+                transfer(target, originalX, originalY, originalZ);
+                player.playerNetServerHandler
+                    .setPlayerLocation(originalX, originalY, originalZ, originalYaw, originalPitch);
+            } else restoreDisconnected(target);
+            returned = true;
+            return;
+        }
         for (int i = 0; i < player.inventory.getSizeInventory(); i++)
             player.inventory.setInventorySlotContents(i, null);
         player.inventory.markDirty();
     }
 
+    /** A logged-out test actor must not re-enter online dimension-change hooks or receive packets. */
+    private void restoreDisconnected(WorldServer target) {
+        World previous = player.worldObj;
+        if (previous != null && previous.playerEntities.contains(player))
+            previous.removePlayerEntityDangerously(player);
+        player.worldObj = target;
+        player.dimension = originalDimension;
+        player.theItemInWorldManager.setWorld(target);
+        player.setPositionAndRotation(originalX, originalY, originalZ, originalYaw, originalPitch);
+        NBTTagCompound expected = new NBTTagCompound();
+        player.writeToNBT(expected);
+        target.getSaveHandler()
+            .getSaveHandler()
+            .writePlayerData(player);
+        Path file = target.getSaveHandler()
+            .getWorldDirectory()
+            .toPath()
+            .resolve("playerdata")
+            .resolve(
+                player.getUniqueID()
+                    .toString() + ".dat");
+        try (InputStream input = Files.newInputStream(file)) {
+            NBTTagCompound saved = CompressedStreamTools.readCompressed(input);
+            for (String key : new String[] { "Inventory", "SelectedItemSlot", "Dimension", "Pos", "Rotation" })
+                if (expected.getTag(key) == null || !expected.getTag(key)
+                    .equals(saved.getTag(key)))
+                    throw new IOException("Restored disconnected native playerdata differs at " + key);
+        } catch (IOException failure) {
+            throw new IllegalStateException(
+                "Disconnected test actor restoration did not persist native playerdata",
+                failure);
+        }
+    }
+
+    private void transfer(final WorldServer target, final double x, final double y, final double z) {
+        if (player.dimension != target.provider.dimensionId) MinecraftServer.getServer()
+            .getConfigurationManager()
+            .transferPlayerToDimension(player, target.provider.dimensionId, new Teleporter(target) {
+
+                @Override
+                public void placeInPortal(net.minecraft.entity.Entity entity, double ox, double oy, double oz,
+                    float yaw) {
+                    entity.setLocationAndAngles(x, y, z, entity.rotationYaw, entity.rotationPitch);
+                }
+            });
+        player.playerNetServerHandler.setPlayerLocation(x, y, z, player.rotationYaw, player.rotationPitch);
+    }
+
     NBTTagCompound tag() {
         NBTTagCompound tag = new NBTTagCompound();
         tag.setString("id", id.toString());
-        tag.setString("name", "GTMBLabAgent");
-        tag.setString("kind", "Forge FakePlayer");
-        tag.setBoolean("onlineHuman", false);
+        tag.setString("name", player.getCommandSenderName());
+        tag.setString("kind", player instanceof FakePlayer ? "Forge FakePlayer" : "configured connected test client");
+        tag.setBoolean("onlineHuman", !(player instanceof FakePlayer));
+        tag.setBoolean("creative", player.capabilities.isCreativeMode);
+        tag.setInteger(
+            "gameMode",
+            player.theItemInWorldManager.getGameType()
+                .getID());
+        tag.setString(
+            "gameModeName",
+            player.theItemInWorldManager.getGameType()
+                .getName());
+        tag.setBoolean("alive", !player.isDead);
         tag.setInteger("actualDimension", player.dimension);
         tag.setDouble("actualX", player.posX);
         tag.setDouble("actualY", player.posY);

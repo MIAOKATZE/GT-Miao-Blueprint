@@ -764,11 +764,29 @@ public final class HologramAeBlueprintCoreRegression {
         NBTTagList recovered = new NBTTagList();
         recovered.appendTag(new ItemStack(Items.diamond, 7).writeToNBT(new NBTTagCompound()));
         recovery.setTag("recoveredPartDrops", recovered);
+        HologramAeBlueprint.Analysis refund = HologramAeBlueprint.analyze(node, 0, recovery);
+        check(
+            !refund.blocking && refund.materials.stream()
+                .anyMatch(s -> s.getItem() == Items.diamond && s.stackSize == 7)
+                && refund.payload()
+                    .getTagList("recoveredPartDrops", 10)
+                    .equals(recovered),
+            "native pending refunds retain their exact contents and require seven real payable items");
+        NBTTagCompound generation = (NBTTagCompound) raw.copy();
+        generation.setString("anchorGeneration", "cdf90139-63c0-4e89-905e-20833e0683a2");
+        HologramAeBlueprint.Analysis normalized = HologramAeBlueprint.analyze(node, 0, generation);
+        check(
+            !normalized.blocking && !normalized.payload()
+                .hasKey("anchorGeneration"),
+            "native generation UUID is omitted before selecting the target network generation");
+        generation.setString("anchorGeneration", "invalid-generation");
+        quantumFieldBlocked(node, generation, "anchorGeneration", "malformed generation cannot borrow the UUID schema");
+        generation.setTag("anchorGeneration", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
         quantumFieldBlocked(
             node,
-            recovery,
-            "recoveredPartDrops",
-            "pending native refunds remain real assets requiring review");
+            generation,
+            "anchorGeneration",
+            "physical assets cannot masquerade as a generation UUID");
         NBTTagCompound future = (NBTTagCompound) raw.copy();
         future.setLong("futureMigrationState", 0L);
         quantumFieldBlocked(node, future, "futureMigrationState", "new unknown persistence fields remain blocked");
@@ -1167,10 +1185,15 @@ public final class HologramAeBlueprintCoreRegression {
             "actual upgrade card DTO is whole native ItemStack/NBT equal to physical source");
         check(
             analysis.materials.size() == 2 && analysis.materials.stream()
-                .anyMatch(stack -> ItemStack.areItemStacksEqual(stack, pattern))
+                .anyMatch(
+                    stack -> AEApi.instance()
+                        .definitions()
+                        .materials()
+                        .blankPattern()
+                        .isSameAs(stack) && stack.stackSize == 1)
                 && analysis.materials.stream()
                     .anyMatch(stack -> ItemStack.areItemStacksEqual(stack, card)),
-            "native physical pattern/card material projection remains exact and paid once");
+            "encoded recipe stays intact while one blank pattern and the exact physical card are paid once");
         check(
             analysis.payload()
                 .equals(canonicalBefore) && raw.equals(sourceBefore)

@@ -15,6 +15,7 @@ public final class HologramProcessingFlowRegression {
     public static void run() {
         explicitChoiceGuidance();
         nativeSaveStages();
+        resourceDecisionsStayScoped();
         HologramProcessingFlow optional = new HologramProcessingFlow(new NBTTagCompound());
         optional.requirements((1 << 4) | (1 << 5));
         check(optional.optional() && optional.chosen(), "An empty preset stage permits Next without choosing a preset");
@@ -263,6 +264,56 @@ public final class HologramProcessingFlowRegression {
         check(
             !progress.waitingExpired(begin + 1000 * second) && !progress.idleExpired(begin + 1000 * second),
             "A retired save cannot expire a later unrelated operation");
+    }
+
+    private static void resourceDecisionsStayScoped() {
+        HologramProcessingFlow flow = new HologramProcessingFlow(new NBTTagCompound());
+        flow.stage = 4;
+        NBTTagCompound first = new NBTTagCompound();
+        first.setInteger("x", 12);
+        first.setString("scope", "tile");
+        first.setString("path", "tile:/inventory/nested");
+        first.setString("rootKey", "inventory");
+        NBTTagCompound second = (NBTTagCompound) first.copy();
+        second.setInteger("x", 13);
+        second.setBoolean("canPreserve", true);
+        net.minecraft.nbt.NBTTagList resources = new net.minecraft.nbt.NBTTagList();
+        resources.appendTag(first);
+        resources.appendTag(second);
+        check(!flow.resourceChoicesReady(resources), "Unknown inventory still requires an explicit resolution");
+        flow.resourceDecision(first, "preserve");
+        check(
+            flow.resourceDecision(first)
+                .isEmpty(),
+            "An unknown resource cannot bypass pricing through preserve");
+        flow.resourceDecision(first, "migrate");
+        check(
+            flow.resourceDecision(first)
+                .isEmpty(),
+            "Unknown schemas cannot request arbitrary migration");
+        flow.resourceDecision(first, "remove");
+        check(
+            flow.resourceChoicesReady(resources) && flow.resourceDecision(second)
+                .isEmpty(),
+            "Supported inventory defaults to retained pricing without copying the other cell's remove decision");
+        flow.resourceDecision(second, "preserve");
+        check(flow.resourceChoicesReady(resources), "Supported retained resources remain subject to server pricing");
+        second.setBoolean("canPreserve", false);
+        check(!flow.resourceChoicesReady(resources), "A changed report revokes a stale preserve capability");
+        second.setBoolean("canMigrate", true);
+        flow.resourceDecision(second, "migrate");
+        check(
+            flow.resourceChoicesReady(resources) && flow.values()
+                .getTagList("resourceDecisions", 10)
+                .tagCount() == 2,
+            "Migration replaces the exact cell decision without accumulating contradictory actions");
+        HologramProcessingFlow restored = HologramProcessingFlow.restoreBackgroundUiState(flow.backgroundUiState());
+        check(
+            restored.resourceChoicesReady(resources),
+            "Background suspension preserves deliberate resource decisions");
+        restored.preset(flow.policy());
+        check(!restored.resourceChoicesReady(resources), "Reusable presets never transfer cell resource authorization");
+        check(flow.resourceChoicesReady(resources), "Applying a preset never mutates the original policy");
     }
 
     private static void check(boolean passed, String message) {

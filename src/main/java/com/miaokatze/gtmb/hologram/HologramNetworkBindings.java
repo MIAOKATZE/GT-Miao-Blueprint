@@ -74,6 +74,12 @@ final class HologramNetworkBindings {
                     if (cursor.getType() != long.class) throw new NoSuchFieldException("incorporation cursor changed");
                     cursor.setAccessible(true);
                     anchor.setLong("lastAppliedMigration", cursor.getLong(entry));
+                    if (HologramGtswnQuantumAccess.anchorGenerationAware()) {
+                        Field generation = type.getField("anchorGeneration");
+                        if (generation.getType() != String.class)
+                            throw new NoSuchFieldException("incorporation generation changed");
+                        anchor.setString("anchorGeneration", (String) generation.get(entry));
+                    }
                 }
                 tag.setTag(CAPTURE_ANCHOR, anchor);
                 captureOriginal(tile.getWorldObj(), tag, anchor);
@@ -95,8 +101,11 @@ final class HologramNetworkBindings {
         if (HologramGtswnQuantumAccess.generationAware()) {
             if (!anchor.hasKey("lastAppliedMigration", 4) || anchor.getLong("lastAppliedMigration") < 0L)
                 throw new IOException("原量子网络迁移游标不可核验，请重新采集");
-            HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess
-                .follow(world, coordinates(anchor, NODE_ANCHOR), anchor.getLong("lastAppliedMigration"));
+            HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess.follow(
+                world,
+                coordinates(anchor, NODE_ANCHOR),
+                anchor.getLong("lastAppliedMigration"),
+                anchor.getString("anchorGeneration"));
             for (int i = 0; i < NODE_ANCHOR.length; i++) original.setInteger(NODE_ANCHOR[i], migrated.anchor[i]);
             WorldServer target = DimensionManager.getWorld(migrated.anchor[0]);
             TileEntity controller = target != null
@@ -104,6 +113,11 @@ final class HologramNetworkBindings {
                     ? target.getTileEntity(migrated.anchor[1], migrated.anchor[2], migrated.anchor[3])
                     : null;
             original.setInteger("version", 2);
+            if (HologramGtswnQuantumAccess.anchorGenerationAware()) {
+                if (!validOwnerField(anchor, "anchorGeneration", true)) throw new IOException("量子原网络世代格式无效");
+                original.setInteger("version", 3);
+                original.setString("anchorGeneration", migrated.generation);
+            }
             original.setLong("migrationCursor", migrated.cursor);
             original.setString(
                 "controllerIdentity",
@@ -121,11 +135,13 @@ final class HologramNetworkBindings {
         NBTTagCompound original = payload.getCompoundTag(ORIGINAL);
         int fields = original.func_150296_c()
             .size();
-        if (!original.hasKey("world", 8) || (fields != 5 && fields != 8)) throw new IOException("量子原网络描述字段无效");
-        if (fields == 8 && (!original.hasKey("version", 3) || original.getInteger("version") != 2
+        if (!original.hasKey("world", 8) || (fields != 5 && fields != 8 && fields != 9))
+            throw new IOException("量子原网络描述字段无效");
+        if (fields >= 8 && (!original.hasKey("version", 3) || original.getInteger("version") != (fields == 9 ? 3 : 2)
             || !original.hasKey("migrationCursor", 4)
             || original.getLong("migrationCursor") < 0L
             || !validOwnerField(original, "controllerIdentity", true))) throw new IOException("量子原网络世代或迁移描述无效");
+        if (fields == 9 && !validOwnerField(original, "anchorGeneration", true)) throw new IOException("量子原网络世代身份无效");
         try {
             if (!java.util.UUID.fromString(original.getString("world"))
                 .toString()
@@ -150,10 +166,17 @@ final class HologramNetworkBindings {
             if (HologramGtswnQuantumAccess.generationAware()) {
                 if (!original.hasKey("version", 3) || original.getString("controllerIdentity")
                     .isEmpty()) throw new IOException("原网络世代信息不可核验，请加载原控制器后重新采集；不能推断旧坐标上的新网络");
-                HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess
-                    .follow(player.worldObj, coordinates(original, NODE_ANCHOR), original.getLong("migrationCursor"));
+                if (HologramGtswnQuantumAccess.anchorGenerationAware() && original.getInteger("version") != 3)
+                    throw new IOException("旧蓝图缺少当前网络世代，请重新采集或明确改用自己的终端绑定");
+                HologramGtswnQuantumAccess.Migration migrated = HologramGtswnQuantumAccess.follow(
+                    player.worldObj,
+                    coordinates(original, NODE_ANCHOR),
+                    original.getLong("migrationCursor"),
+                    original.getString("anchorGeneration"));
                 target = (NBTTagCompound) original.copy();
                 for (int i = 0; i < NODE_ANCHOR.length; i++) target.setInteger(NODE_ANCHOR[i], migrated.anchor[i]);
+                if (HologramGtswnQuantumAccess.anchorGenerationAware())
+                    target.setString("anchorGeneration", migrated.generation);
                 if (java.util.Arrays.equals(coordinates(original, NODE_ANCHOR), migrated.anchor)) {
                     WorldServer sourceWorld = DimensionManager.getWorld(migrated.anchor[0]);
                     TileEntity source = sourceWorld != null
@@ -306,6 +329,7 @@ final class HologramNetworkBindings {
                             cell.y,
                             cell.z));
                 }
+                if (validOwnerField(tag, "anchorGeneration", true)) tag.removeTag("anchorGeneration");
             }
             String tileId = tag.getString("id");
             if (tileId.equals("gtswn.network_info_panel")) {
@@ -428,7 +452,12 @@ final class HologramNetworkBindings {
             if (!live.hasTagCompound() || !live.getTagCompound()
                 .getBoolean("QT_Bound")
                 || !anchorKey(live.getTagCompound(), TERMINAL_ANCHOR)
-                    .equals(anchorKey(selection.stack.getTagCompound(), TERMINAL_ANCHOR)))
+                    .equals(anchorKey(selection.stack.getTagCompound(), TERMINAL_ANCHOR))
+                || HologramGtswnQuantumAccess.anchorGenerationAware() && !live.getTagCompound()
+                    .getString("QT_AnchorGeneration")
+                    .equals(
+                        selection.stack.getTagCompound()
+                            .getString("QT_AnchorGeneration")))
                 throw new IOException("所选量子终端的目标网络已变化，请重新为该类群选择终端");
             return anchor(player, live); // Recheck only the selected network and structural availability.
         }
@@ -477,6 +506,8 @@ final class HologramNetworkBindings {
             && (!tag.hasKey("QT_LastAppliedMigration", 4) || tag.getLong("QT_LastAppliedMigration") < 0L))
             throw new IOException("量子终端迁移游标无效，请核对原生终端");
         if (tag.hasKey("QT_Bound") && !tag.hasKey("QT_Bound", 1)) throw new IOException("量子终端绑定标记类型无效");
+        if (tag.hasKey("QT_AnchorGeneration") && !validOwnerField(tag, "QT_AnchorGeneration", true))
+            throw new IOException("量子终端网络世代格式无效");
         if (tag.getBoolean("QT_Bound")) anchorKey(tag, TERMINAL_ANCHOR);
     }
 
@@ -511,6 +542,12 @@ final class HologramNetworkBindings {
                 .invoke(instance, x, y, z)) throw new IOException("锚点控制器尚未量子化，请先建立量子网络再绑定终端");
             if (!HologramGtswnQuantumAccess.currentController(world, x, y, z))
                 throw new IOException("量子控制器世代已变化，不能沿用被替换控制器的登记状态");
+            HologramGtswnQuantumAccess.checkAnchorGeneration(
+                world,
+                x,
+                y,
+                z,
+                tag.getString(fields == TERMINAL_ANCHOR ? "QT_AnchorGeneration" : "anchorGeneration"));
         } catch (IOException failure) {
             throw failure;
         } catch (Exception | LinkageError failure) {
@@ -520,6 +557,9 @@ final class HologramNetworkBindings {
         for (int i = 0; i < TERMINAL_ANCHOR.length; i++)
             clean.setInteger(TERMINAL_ANCHOR[i], tag.getInteger(fields[i]));
         clean.setBoolean("QT_Bound", true);
+        if (HologramGtswnQuantumAccess.anchorGenerationAware()) clean.setString(
+            "QT_AnchorGeneration",
+            tag.getString(fields == TERMINAL_ANCHOR ? "QT_AnchorGeneration" : "anchorGeneration"));
         return clean;
     }
 

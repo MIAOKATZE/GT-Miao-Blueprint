@@ -8,7 +8,8 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
  * Input priority shared by the world controller and regression tests.
  * The server-owned queue is independent of the selected tool and every local stage.
  * Choosing CUT enters SELECTING; a saved cut starts a fresh empty selection until Escape.
- * Shift-right opens storage from every cut stage; an explicit row action starts MOVING -> LOCKED -> paste.
+ * Selection stays editable until Shift-right confirms; elsewhere Shift-right opens storage.
+ * An explicit storage row action starts MOVING -> LOCKED -> paste.
  * Escape exits CUT entirely; only a confirmed server paste/undo consumes a stored cut.
  */
 final class HologramCutInput {
@@ -29,7 +30,9 @@ final class HologramCutInput {
         UNDO,
         MARK,
         LOCK,
-        CONFIRM
+        CONFIRM,
+        MORE,
+        CONFIRM_SELECTION
     }
 
     private HologramCutInput() {}
@@ -48,7 +51,12 @@ final class HologramCutInput {
     /** Mode selection is local and remains reachable while a cut write awaits its authoritative result. */
     static Intent right(Stage stage, boolean shift, boolean alt, boolean blueprintBusy, boolean cutMode,
         boolean control) {
-        if (control && shift && !alt && !blueprintBusy) return Intent.SWITCHER;
+        if (stage != Stage.SELECTING && control && shift && !alt && !blueprintBusy) return Intent.SWITCHER;
+        if (stage == Stage.SELECTING && !blueprintBusy) {
+            if (shift && alt) return Intent.MORE;
+            if (shift && !control) return Intent.CONFIRM_SELECTION;
+            return Intent.MARK;
+        }
         if (shift && alt && !blueprintBusy) return Intent.SELECT;
         // Alt is also held while adjusting selection distance; corner 2 must keep priority over undo.
         if (stage != Stage.SELECTING && cutMode && alt && !shift && !blueprintBusy) return Intent.UNDO;
@@ -79,6 +87,8 @@ final class HologramCutInput {
     static boolean requiresCutReady(Intent intent) {
         return intent == Intent.SELECT || intent == Intent.PREVIEW
             || intent == Intent.UNDO
+            || intent == Intent.MORE
+            || intent == Intent.CONFIRM_SELECTION
             || intent == Intent.MARK
             || intent == Intent.CONFIRM;
     }

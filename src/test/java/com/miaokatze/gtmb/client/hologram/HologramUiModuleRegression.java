@@ -16,6 +16,7 @@ public final class HologramUiModuleRegression {
     public static void run() {
         localPlanConsumersWaitWithoutLockingEditing();
         outgoingSelectionScope();
+        switchReviewOwnsOverlappingLibraryRows();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -91,6 +92,25 @@ public final class HologramUiModuleRegression {
                 HologramUiTabMemory.openingTab(opening, true),
                 "the explicit " + purpose + " opening overrides remembered structure navigation");
         }
+    }
+
+    private static void switchReviewOwnsOverlappingLibraryRows() {
+        List<HologramUiCanvas.Control> controls = new ArrayList<>();
+        controls.add(new HologramUiCanvas.Control(14002, 457, 179, 215, 28, true));
+        HologramUiCanvas.Control confirm = new HologramUiCanvas.Control(224, 338, 201, 244, 22, true);
+        controls.add(confirm);
+        SimpleAssert.that(
+            HologramUiLibrary.switchReviewControl(controls, 470, 203) == confirm,
+            "discard/overwrite confirmation owns clicks that overlap the underlying selected library row");
+        HologramUiCanvas.Control disabled = new HologramUiCanvas.Control(224, 338, 201, 244, 22, false);
+        controls.add(disabled);
+        SimpleAssert.that(
+            HologramUiLibrary.switchReviewControl(controls, 470, 203) == disabled,
+            "a disabled modal control still consumes the hit instead of activating the underlying library");
+        SimpleAssert.eq(
+            null,
+            HologramUiLibrary.switchReviewControl(controls, 470, 190),
+            "empty modal space never resolves to an underlying library row");
     }
 
     private static void outgoingSelectionScope() {

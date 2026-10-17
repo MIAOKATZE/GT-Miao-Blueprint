@@ -29,7 +29,7 @@ final class TestLabLease {
         this.run = run;
     }
 
-    void acquire(TestLabZone zone) throws IOException {
+    void acquire(TestLabZone... zones) throws IOException {
         release();
         ticket = ForgeChunkManager.requestTicket(GTMiaoBlueprint.instance, world, ForgeChunkManager.Type.NORMAL);
         if (ticket == null) throw new IOException("Forge refused a bounded lab ticket");
@@ -42,8 +42,8 @@ final class TestLabLease {
         int limit = ticket.getChunkListDepth() <= 0 ? config.maxChunks
             : Math.min(config.maxChunks, ticket.getChunkListDepth());
         try {
-            for (int x = zone.x >> 4; x <= (zone.x + TestLabZone.SIZE - 1) >> 4; x++)
-                for (int z = zone.z >> 4; z <= (zone.z + TestLabZone.SIZE - 1) >> 4; z++) {
+            for (TestLabZone zone : zones) for (int x = zone.x >> 4; x <= (zone.x + zone.sizeX - 1) >> 4; x++)
+                for (int z = zone.z >> 4; z <= (zone.z + zone.sizeZ - 1) >> 4; z++) {
                     if (chunks.size() >= limit) throw new IOException("Lab chunk lease budget exceeded");
                     ChunkCoordIntPair point = new ChunkCoordIntPair(x, z);
                     chunks.add(point);

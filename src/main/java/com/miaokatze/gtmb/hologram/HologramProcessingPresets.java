@@ -103,6 +103,7 @@ final class HologramProcessingPresets {
         detached.confirmedStages.clear();
         // Per-cell asset selections belong to their blueprint rather than reusable policy defaults.
         detached.cellNbtOverrides.clear();
+        detached.resourceDecisions.clear();
         Entry entry = new Entry();
         entry.id = id;
         entry.name = name.trim();

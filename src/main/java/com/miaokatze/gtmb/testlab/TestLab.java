@@ -23,6 +23,8 @@ public final class TestLab {
     private static TestLabConfig config;
     private static TestLabRuntime runtime;
     private static boolean dimensionRegistered, providerRegistered, handlerRegistered;
+    private static volatile boolean serverLifecycleActive;
+    private static final TestLabClientMapping clientMapping = new TestLabClientMapping();
     private static String reason = "Local config opt-in has not been loaded";
 
     private TestLab() {}
@@ -59,6 +61,12 @@ public final class TestLab {
             reason = "Registration failed: " + failure;
             GTMiaoBlueprint.LOG.error("GTMB testlab registration rolled back", failure);
         }
+    }
+
+    /** Integrated startup must not see a pending remote client's transient mapping in loadAllWorlds. */
+    public static void beforeServerWorldsLoad() {
+        serverLifecycleActive = true;
+        clientMapping.beforeServerWorldsLoad(dimensionRegistered);
     }
 
     public static void serverStarting(FMLServerStartingEvent event) {
@@ -114,12 +122,45 @@ public final class TestLab {
     }
 
     public static void serverStopped() {
+        serverLifecycleActive = false;
         if (!dimensionRegistered || config == null) return;
         if (DimensionManager.isDimensionRegistered(config.dimension)
             && DimensionManager.getProviderType(config.dimension) == config.provider)
             DimensionManager.unregisterDimension(config.dimension);
         dimensionRegistered = false;
         reason = "Server stopped; provider retained, next save requires a fresh ownership validation";
+    }
+
+    /** Local opt-in/provider readiness only. Does not grant server admission or create a world. */
+    public static boolean clientMappingAvailable() {
+        return config != null && config.enabled && providerRegistered;
+    }
+
+    /** Physical-client connection lifecycle only; no property, remote packet or dedicated-server path opts in. */
+    public static void clientConnected(Object connection, boolean local) {
+        if (!clientMappingAvailable() || !FMLCommonHandler.instance()
+            .getSide()
+            .isClient()) return;
+        clientMapping.connected(
+            connection,
+            local,
+            true,
+            providerRegistered,
+            dimensionRegistered || serverLifecycleActive,
+            config.dimension,
+            config.provider);
+    }
+
+    public static void clientDisconnected(Object connection) {
+        if (!clientMappingAvailable() || !FMLCommonHandler.instance()
+            .getSide()
+            .isClient()) return;
+        clientMapping.disconnected(connection, dimensionRegistered);
+    }
+
+    /** Provider spawn hints are read-only on the client, where server save admission never runs. */
+    static TestLabZone configuredEntrance() {
+        return clientMappingAvailable() ? config.zones.get(0) : null;
     }
 
     public static boolean isEnabled() {
@@ -138,6 +179,7 @@ public final class TestLab {
         n.setBoolean("dimensionRegistered", dimensionRegistered);
         n.setBoolean("providerRegistered", providerRegistered);
         n.setBoolean("providerReady", providerRegistered);
+        n.setBoolean("clientDimensionMapped", clientMapping.owned());
         n.setBoolean("handlerRegistered", handlerRegistered);
         n.setString("reason", reason);
         n.setInteger("dimensionId", config == null ? TestLabConfig.DEFAULT_DIMENSION : config.dimension);
@@ -158,6 +200,17 @@ public final class TestLab {
 
     public static NBTTagCompound report() {
         return runtime == null ? new NBTTagCompound() : runtime.report();
+    }
+
+    /** Detached coordinates for the current configured composite run; never enables or loads the lab. */
+    public static NBTTagCompound compositeManifest() {
+        return runtime == null ? new NBTTagCompound() : runtime.compositeManifest();
+    }
+
+    /** Fixed owned facility switch for the active configured actor. No arbitrary coordinates or world authority. */
+    public static void useCompositeFacility(World world, EntityPlayerMP actor, String facility) throws IOException {
+        if (!isEnabled() || runtime == null) throw new IOException("Composite lab is not active");
+        runtime.useCompositeFacility(world, actor, facility);
     }
 
     public static ItemStack testItem() {

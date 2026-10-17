@@ -37,7 +37,7 @@ final class HologramServerLibrary {
     private static final int MAX_ENTRIES = 1024;
     private static final int MAX_PEERS = 64;
     private static final long MAX_STORED_BYTES = 64L * 1024 * 1024;
-    private static final long MAX_RESERVED_BYTES = 16L * 1024 * 1024;
+    private static final long MAX_RESERVED_BYTES = 2L * HologramBlueprintArtifact.MAX_BYTES;
     private static final Field LIST_FIELD = listField();
     private final Path directory;
     private final ScheduledThreadPoolExecutor worker;

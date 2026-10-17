@@ -20,6 +20,7 @@ public final class HologramCutRegression {
 
     public static void run() {
         try {
+            compositeSelection();
             NBTTagCompound floating = new NBTTagCompound();
             floating.setFloat("nativeFloat", Float.NaN);
             floating.setDouble("nativeDouble", Double.NaN);
@@ -300,6 +301,140 @@ public final class HologramCutRegression {
             action.run();
             throw new AssertionError(label);
         } catch (IOException expected) {}
+    }
+
+    private static void compositeSelection() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        area.point(1, 10, 80, 20, "replace");
+        area.point(2, 12, 80, 20, "replace");
+        area.point(1, 15, 80, 20, "add");
+        area.point(2, 16, 80, 20, "add");
+        area.point(1, 11, 80, 20, "subtract");
+        area.point(2, 11, 80, 20, "subtract");
+        // A pending next corner must not discard the completed region composition.
+        area.beginNext("add");
+        area.point(1, 17, 80, 20, "replace");
+        NBTTagCompound request = new NBTTagCompound();
+        request.setTag("areaSelection", area.snapshot());
+        HologramAreaSelection decoded = HologramCutEntry.selection(request);
+        java.util.BitSet mask = HologramCutEntry.selectionMask(decoded, 10, 80, 20, 7, 1, 1);
+        SimpleAssert.eq(4, mask.cardinality(), "composite selects unique cells within the bounded envelope");
+        SimpleAssert.that(!mask.get(1), "subtracted cell is outside the cut");
+        SimpleAssert.that(!mask.get(3) && !mask.get(4), "space between positive boxes is outside the cut");
+        NBTTagCompound maximumRequest = (NBTTagCompound) request.copy();
+        NBTTagList maximumRows = maximumRequest.getCompoundTag("areaSelection")
+            .getTagList("areaRegions", 10);
+        while (maximumRows.tagCount() < 128) maximumRows.appendTag(
+            maximumRows.getCompoundTagAt(0)
+                .copy());
+        ByteBuf packet = Unpooled.buffer();
+        try {
+            new HologramNetwork.CutAction(maximumRequest).toBytes(packet);
+            HologramNetwork.CutAction unpacked = new HologramNetwork.CutAction();
+            unpacked.fromBytes(packet);
+            SimpleAssert.that(maximumRequest.equals(unpacked.tag), "128-box selection fits the bounded cut packet");
+            HologramCutEntry.selection(unpacked.tag);
+        } finally {
+            packet.release();
+        }
+        maximumRows.appendTag(
+            maximumRows.getCompoundTagAt(0)
+                .copy());
+        rejected(() -> HologramCutEntry.selection(maximumRequest), "cut rejects more than 128 selection regions");
+        NBTTagCompound sparse = new NBTTagCompound();
+        sparse.setInteger("selectionVersion", 1);
+        sparse.setInteger("selectedCells", mask.cardinality());
+        sparse.setInteger("sizeX", 7);
+        sparse.setInteger("sizeY", 1);
+        sparse.setInteger("sizeZ", 1);
+        NBTTagList cells = new NBTTagList();
+        for (int x = mask.nextSetBit(0); x >= 0; x = mask.nextSetBit(x + 1)) {
+            NBTTagCompound cell = new NBTTagCompound();
+            cell.setInteger("x", x);
+            cell.setInteger("y", 0);
+            cell.setInteger("z", 0);
+            cell.setString("block", x == 2 ? "minecraft:air" : "minecraft:stone");
+            cells.appendTag(cell);
+        }
+        sparse.setTag("cells", cells);
+        HologramCutEntry.validate(sparse);
+        NBTTagCompound preview = HologramCutEntry.preview(sparse);
+        SimpleAssert.that(sparse.equals(preview), "raw preview retains the exact sparse selection including air");
+        SimpleAssert.eq(
+            "minecraft:air",
+            preview.getTagList("cells", 10)
+                .getCompoundTagAt(1)
+                .getString("block"),
+            "selected air remains an explicit placement cell");
+        NBTTagCompound truncated = (NBTTagCompound) sparse.copy();
+        truncated.getTagList("cells", 10)
+            .removeTag(0);
+        rejected(() -> HologramCutEntry.validate(truncated), "truncated sparse entry cannot mutate the world");
+        NBTTagCompound duplicated = (NBTTagCompound) sparse.copy();
+        duplicated.getTagList("cells", 10)
+            .getCompoundTagAt(1)
+            .setInteger("x", 0);
+        rejected(() -> HologramCutEntry.validate(duplicated), "duplicate cells cannot hide a missing selected cell");
+        NBTTagCompound outside = (NBTTagCompound) sparse.copy();
+        outside.getTagList("cells", 10)
+            .getCompoundTagAt(0)
+            .setInteger("x", 7);
+        rejected(() -> HologramCutEntry.validate(outside), "sparse mask cannot escape its admitted volume");
+        NBTTagCompound legacy = (NBTTagCompound) sparse.copy();
+        legacy.removeTag("selectionVersion");
+        legacy.removeTag("selectedCells");
+        rejected(() -> HologramCutEntry.validate(legacy), "legacy entries still require every cuboid cell");
+        legacy.setInteger("sizeX", 1);
+        NBTTagList one = new NBTTagList();
+        one.appendTag(
+            cells.getCompoundTagAt(0)
+                .copy());
+        legacy.setTag("cells", one);
+        HologramCutEntry.validate(legacy);
+        area = new HologramAreaSelection();
+        area.point(1, 10, 80, 20, "replace");
+        area.point(2, 10, 80, 20, "replace");
+        area.point(1, 10, 80, 20, "subtract");
+        area.point(2, 10, 80, 20, "subtract");
+        HologramAreaSelection empty = area;
+        rejected(
+            () -> HologramCutEntry.selectionMask(empty, 10, 80, 20, 1, 1, 1),
+            "fully subtracted selections fail before capture or journal creation");
+        // An interrupted transaction must persist both the original and the derived sparse placement exactly.
+        Path root = Files.createTempDirectory("gtmb-cut-composite");
+        UUID owner = UUID.randomUUID();
+        HologramCutStorage store = new HologramCutStorage(root, owner);
+        NBTTagCompound state = store.load();
+        state.getTagList("entries", 10)
+            .appendTag(sparse.copy());
+        NBTTagCompound pending = new NBTTagCompound();
+        pending.setTag(
+            "entry",
+            HologramCutTransforms
+                .apply(sparse, new com.miaokatze.gtmb.api.CutTransforms.Transform(1, 1, 0, 1), 0, 80, 0));
+        state.setTag("pending", pending);
+        store.save(state);
+        SimpleAssert.that(state.equals(store.load()), "journal roundtrip preserves selected air and omitted gaps");
+        HologramCutEntry.validate(
+            store.load()
+                .getCompoundTag("pending")
+                .getCompoundTag("entry"));
+        Path blockedWrite = root.resolve("gtmb-cut")
+            .resolve(owner + ".nbt.tmp");
+        Files.createDirectory(blockedWrite);
+        NBTTagCompound attemptedCommit = (NBTTagCompound) state.copy();
+        attemptedCommit.removeTag("pending");
+        attemptedCommit.setTag("entries", new NBTTagList());
+        rejected(() -> store.save(attemptedCommit), "failed sparse transaction commit remains visible");
+        SimpleAssert.that(
+            state.equals(store.load()),
+            "unknown sparse commit outcome retains the complete original cache and recovery journal");
+        Files.delete(blockedWrite);
+        Files.delete(
+            root.resolve("gtmb-cut")
+                .resolve(owner + ".nbt"));
+        Files.delete(root.resolve("gtmb-cut"));
+        Files.delete(root);
     }
 
     private static void hostile(int version, int length, String label) {

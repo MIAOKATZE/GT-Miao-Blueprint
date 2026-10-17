@@ -78,8 +78,8 @@ public final class HologramCutInputRegression {
         for (boolean shift : new boolean[] { false, true }) for (boolean alt : new boolean[] { false, true }) {
             check(HologramCutInput.Intent.NONE, idle, true, shift, alt, true);
             check(
-                shift && alt ? HologramCutInput.Intent.SELECT
-                    : shift ? HologramCutInput.Intent.STORAGE : HologramCutInput.Intent.MARK,
+                shift && alt ? HologramCutInput.Intent.MORE
+                    : shift ? HologramCutInput.Intent.CONFIRM_SELECTION : HologramCutInput.Intent.MARK,
                 HologramCutInput.Stage.SELECTING,
                 true,
                 shift,
@@ -185,7 +185,8 @@ public final class HologramCutInputRegression {
             requests.begin("verify", "list", requests.unresolvedWrite(), HologramCutRequests.WRITE_TIMEOUT_NS);
             for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
                 SimpleAssert.eq(
-                    HologramCutInput.Intent.SWITCHER,
+                    stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MARK
+                        : HologramCutInput.Intent.SWITCHER,
                     HologramCutInput.right(stage, true, false, false, true, true),
                     "an unresolved " + operation + " allows Ctrl-Shift mode selection even from " + stage);
             }
@@ -251,7 +252,8 @@ public final class HologramCutInputRegression {
             .that(remembered.release(false) && !remembered.cut(), "one additional right press returns to blueprint");
         for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
             SimpleAssert.eq(
-                HologramCutInput.Intent.SELECT,
+                stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MORE
+                    : HologramCutInput.Intent.SELECT,
                 HologramCutInput.right(stage, true, true, false, true, false),
                 "Shift-Alt-right starts a fresh local selection before mark/lock/confirm from " + stage);
             SimpleAssert.eq(
@@ -319,9 +321,10 @@ public final class HologramCutInputRegression {
 
         for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
             SimpleAssert.eq(
-                HologramCutInput.Intent.STORAGE,
+                stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.CONFIRM_SELECTION
+                    : HologramCutInput.Intent.STORAGE,
                 HologramCutInput.right(stage, true, false, false, true, false),
-                "Shift-right opens even an empty list from " + stage);
+                "Shift-right confirms an editable cut selection and opens storage outside selection: " + stage);
         }
         for (boolean cutMode : new boolean[] { false, true }) {
             SimpleAssert.eq(
@@ -329,7 +332,7 @@ public final class HologramCutInputRegression {
                 HologramCutInput.right(HologramCutInput.Stage.SELECTING, false, true, false, cutMode, false),
                 "holding Alt to adjust selection distance never replaces the second corner with undo");
             SimpleAssert.eq(
-                HologramCutInput.Intent.SELECT,
+                HologramCutInput.Intent.MORE,
                 HologramCutInput.right(HologramCutInput.Stage.SELECTING, true, true, false, cutMode, false),
                 "explicit Shift-Alt selection reset remains available");
         }

@@ -591,6 +591,8 @@ final class HologramLibraryClient {
             }
             main(() -> {
                 local = labels;
+                if (selectedRow(false).getString("id")
+                    .isEmpty()) selectedLocal = "";
                 loading = false;
                 localCatalogProgress.finish(operation, System.nanoTime());
             });
@@ -618,6 +620,10 @@ final class HologramLibraryClient {
     void select(boolean publicLibrary, String id) {
         if (publicLibrary) selectedServer = id;
         else selectedLocal = id;
+    }
+
+    void clearSelection() {
+        selectedLocal = selectedServer = "";
     }
 
     NBTTagCompound selectedRow(boolean publicLibrary) {
@@ -1187,8 +1193,8 @@ final class HologramLibraryClient {
             try {
                 HologramLibraryDownload
                     .header(reply.getString("transfer"), total, encoding, decodedTotal, reply.getString("hash"));
-                if (capturePreview && decodedTotal > HologramClientLibrary.MAX_BYTES)
-                    throw new java.io.IOException("Decoded blueprint exceeds 8 MiB");
+                if (capturePreview && decodedTotal > HologramClientLibrary.MAX_BYTES) throw new java.io.IOException(
+                    "Decoded blueprint exceeds " + HologramClientLibrary.MAX_BYTES / (1024 * 1024) + " MiB");
                 incoming = new HologramLibraryDownload.Assembly(total);
             } catch (java.io.IOException invalid) {
                 cancel();

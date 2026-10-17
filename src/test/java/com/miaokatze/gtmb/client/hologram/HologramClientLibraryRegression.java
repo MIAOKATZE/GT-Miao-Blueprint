@@ -25,12 +25,54 @@ public final class HologramClientLibraryRegression {
     public static void run() {
         try {
             exercise();
+            exerciseCapacity();
             exerciseSaveReadbackReuse();
             exerciseSaveMessages();
             exerciseSaveRequest();
             exerciseQuickFence();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
+        }
+    }
+
+    private static void exerciseCapacity() throws Exception {
+        SimpleAssert.eq(
+            32 * 1024 * 1024,
+            HologramClientLibrary.MAX_BYTES,
+            "client JSON budget matches the 32MiB artifact boundary");
+        Path game = Files.createTempDirectory("gtmb-client-library-capacity-");
+        try {
+            byte[] data = new byte[8 * 1024 * 1024 + 1];
+            java.util.Arrays.fill(data, (byte) ' ');
+            byte[] prefix = json("Above old capacity", "Alice");
+            System.arraycopy(prefix, 0, data, 0, prefix.length);
+            SimpleAssert.eq(
+                1,
+                HologramBlueprintPreview.snapshot(data)
+                    .getTagList("cells", 10)
+                    .tagCount(),
+                "JSON above the old 8MiB limit reaches detached native preview");
+            HologramClientLibrary library = new HologramClientLibrary(game);
+            String id = library.save(data, png(0xff335577), "");
+            HologramClientLibrary restarted = new HologramClientLibrary(game);
+            SimpleAssert.that(
+                java.util.Arrays.equals(data, restarted.read(id)),
+                "large private save reloads exact bytes for its owner acknowledgement");
+            SimpleAssert.eq(
+                1,
+                restarted.list()
+                    .size(),
+                "large saved pair remains discoverable after restart");
+            HologramBlueprintArtifact.Artifact bundle = HologramBlueprintArtifact.decode(restarted.artifact(id));
+            SimpleAssert.eq(
+                HologramBlueprintArtifact.hash(data),
+                bundle.jsonSha256,
+                "large private upload bundle retains saved JSON digest");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
         }
     }
 

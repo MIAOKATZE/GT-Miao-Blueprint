@@ -60,7 +60,7 @@ public final class TestLabRegression {
             TestLab.serverStopped();
             NBTTagCompound status = TestLab.status();
             for (String flag : new String[] { "configEnabled", "enabled", "dimensionRegistered", "providerRegistered",
-                "providerReady", "handlerRegistered", "worldLoaded", "active" })
+                "providerReady", "handlerRegistered", "clientDimensionMapped", "worldLoaded", "active" })
                 SimpleAssert.that(!status.getBoolean(flag), "disabled lifecycle has no " + flag);
             SimpleAssert
                 .that(!TestLab.useTestItem(null, null, null, 0, 0, 0), "disabled effect entry is inert and null-safe");
@@ -117,6 +117,96 @@ public final class TestLabRegression {
         SimpleAssert.eq("second", labelJson.get(1), "JSON keeps final list value");
         SimpleAssert.eq(2, labels.tagCount(), "JSON does not mutate native report list");
         lifecycleCleanup(defaults);
+        clientMappingLifecycle();
+    }
+
+    /** Exercise actual Forge mappings without initializing any world or linking client classes. */
+    private static void clientMappingLifecycle() {
+        final int dimension = 1999988, provider = 1999988;
+        SimpleAssert.that(
+            !net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+            "dedicated client-mapping regression ID starts unclaimed");
+        SimpleAssert.that(
+            net.minecraftforge.common.DimensionManager
+                .registerProviderType(provider, TestLabWorldProvider.class, false),
+            "regression provider type registered without a world");
+        Object oldConnection = new Object(), newConnection = new Object();
+        TestLabClientMapping mapping = new TestLabClientMapping();
+        try {
+            SimpleAssert.that(
+                !mapping.connected(oldConnection, false, false, true, false, dimension, provider),
+                "disabled client cannot create a dimension mapping");
+            SimpleAssert.that(
+                !mapping.connected(oldConnection, false, true, false, false, dimension, provider),
+                "missing provider cannot create a client dimension mapping");
+            SimpleAssert.that(
+                !mapping.connected(oldConnection, true, true, true, false, dimension, provider),
+                "local integrated connection leaves server ownership alone");
+            SimpleAssert.that(
+                !mapping.connected(oldConnection, false, true, true, true, dimension, provider),
+                "server-admitted mapping is never claimed by client lifecycle");
+            SimpleAssert.that(
+                !net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+                "rejected client lifecycle paths are inert");
+            SimpleAssert.that(
+                mapping.connected(oldConnection, false, true, true, false, dimension, provider),
+                "enabled remote connection registers its configured mapping");
+            SimpleAssert.eq(
+                provider,
+                net.minecraftforge.common.DimensionManager.getProviderType(dimension),
+                "client mapping points at the existing configured provider");
+            SimpleAssert.that(
+                net.minecraftforge.common.DimensionManager.getWorld(dimension) == null,
+                "client registration does not construct a world");
+            SimpleAssert.that(
+                mapping.connected(newConnection, false, true, true, false, dimension, provider),
+                "new remote session takes ownership of the same client-owned mapping");
+            mapping.disconnected(oldConnection, false);
+            SimpleAssert.that(
+                net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+                "late old-session disconnect cannot remove the new session mapping");
+            mapping.disconnected(newConnection, false);
+            mapping.disconnected(newConnection, false);
+            SimpleAssert.that(
+                !mapping.owned() && !net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+                "matching disconnect releases its own mapping exactly once");
+            net.minecraftforge.common.DimensionManager.registerDimension(dimension, provider);
+            SimpleAssert.that(
+                !mapping.connected(newConnection, false, true, true, false, dimension, provider),
+                "client never adopts an existing unowned mapping, even with matching provider");
+            mapping.disconnected(newConnection, false);
+            SimpleAssert.that(
+                net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+                "unowned integrated or foreign mapping survives client disconnect");
+            net.minecraftforge.common.DimensionManager.unregisterDimension(dimension);
+            mapping.connected(newConnection, false, true, true, false, dimension, provider);
+            mapping.beforeServerWorldsLoad(false);
+            SimpleAssert.that(
+                !net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+                "integrated startup drops only its pending client-owned mapping before loadAllWorlds");
+            mapping.disconnected(newConnection, false);
+            mapping.connected(newConnection, false, true, true, false, dimension, provider);
+            mapping.beforeServerWorldsLoad(true);
+            SimpleAssert.that(
+                net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension),
+                "integrated-server ownership prevents client unregister");
+            net.minecraftforge.common.DimensionManager.unregisterDimension(dimension);
+            mapping.connected(newConnection, false, true, true, false, dimension, provider);
+            net.minecraftforge.common.DimensionManager.unregisterDimension(dimension);
+            net.minecraftforge.common.DimensionManager.registerDimension(dimension, 0);
+            mapping.disconnected(newConnection, false);
+            SimpleAssert.eq(
+                0,
+                net.minecraftforge.common.DimensionManager.getProviderType(dimension),
+                "changed foreign mapping is not released under stale client ownership");
+            SimpleAssert.that(
+                new TestLabWorldProvider().getEntrancePortalLocation() == null,
+                "unadmitted disabled provider entrance is inert and does not require server configuration");
+        } finally {
+            if (net.minecraftforge.common.DimensionManager.isDimensionRegistered(dimension))
+                net.minecraftforge.common.DimensionManager.unregisterDimension(dimension);
+            net.minecraftforge.common.DimensionManager.unregisterProviderType(provider);
+        }
     }
 
     /** Exercise failed cleanup retention and retry without constructing or loading a Minecraft world. */

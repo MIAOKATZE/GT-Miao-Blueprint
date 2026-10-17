@@ -25,8 +25,8 @@ final class TestLabFixtureWorld {
     }
 
     static void finish(WorldServer world, TestLabZone zone) {
-        for (int x = zone.x >> 4; x <= (zone.x + TestLabZone.SIZE - 1) >> 4; x++)
-            for (int z = zone.z >> 4; z <= (zone.z + TestLabZone.SIZE - 1) >> 4; z++) {
+        for (int x = zone.x >> 4; x <= (zone.x + zone.sizeX - 1) >> 4; x++)
+            for (int z = zone.z >> 4; z <= (zone.z + zone.sizeZ - 1) >> 4; z++) {
                 Chunk chunk = world.getChunkFromChunkCoords(x, z);
                 chunk.generateSkylightMap();
                 chunk.setChunkModified();

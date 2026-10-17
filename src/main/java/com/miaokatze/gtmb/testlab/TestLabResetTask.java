@@ -46,7 +46,7 @@ final class TestLabResetTask implements TestLabTasks.Task {
                     .check(
                         "owned_facilities_reset",
                         "PASS",
-                        "Only five manifest-owned 32x16x32 facilities cleared; no DIM or region files deleted");
+                        "Only manifest-owned facility cells cleared; no DIM or region files deleted");
                 if (!refresh) return TestLabTasks.DONE;
                 zone = cell = 0;
                 phase = 3;
@@ -70,7 +70,7 @@ final class TestLabResetTask implements TestLabTasks.Task {
                     .check(
                         "owned_facilities_refreshed",
                         "PASS",
-                        "Five distant small fixture floors and markers rebuilt under the same tick budget");
+                        "Owned fixture floors and markers rebuilt under the same tick budget");
                 return TestLabTasks.DONE;
             }
             TestLabZone target = runtime.config().zones.get(zone);

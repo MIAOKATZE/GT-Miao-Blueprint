@@ -44,7 +44,7 @@ final class HologramArea extends HologramAreaSelection {
     long expandedNbt;
     String active = "";
 
-    boolean contains(int xx, int yy, int zz) {
+    public boolean contains(int xx, int yy, int zz) {
         if (regions.isEmpty()) return xx >= minX && xx <= maxX && yy >= minY && yy <= maxY && zz >= minZ && zz <= maxZ;
         boolean selected = false;
         for (Region region : regions) if (region.contains(xx, yy, zz)) selected = !"subtract".equals(region.mode);

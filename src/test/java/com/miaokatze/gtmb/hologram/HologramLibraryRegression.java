@@ -67,6 +67,7 @@ public final class HologramLibraryRegression {
             HologramLibraryProtocol.hex(
                 HologramLibraryProtocol.digest()
                     .digest(new byte[slice + 1])));
+        HologramLibraryProtocol.header(id, HologramBlueprintArtifact.MAX_BYTES, repeat('a', 64));
         denied(() -> HologramLibraryProtocol.header("../../escape", 1, repeat('a', 64)), "path-like transfer rejected");
         denied(
             () -> HologramLibraryProtocol.header(id, HologramLibraryProtocol.MAX_BYTES + 1, repeat('a', 64)),
@@ -272,6 +273,12 @@ public final class HologramLibraryRegression {
                 random,
                 HologramLibraryDownload.decode(identity.bytes, identity.encoding, random.length, identity.hash)),
             "identity fallback preserves bytes and final SHA");
+        byte[] maximum = new byte[HologramBlueprintArtifact.MAX_BYTES];
+        HologramLibraryDownload.Encoded full = HologramLibraryDownload.encode(maximum);
+        SimpleAssert.that(
+            Arrays
+                .equals(maximum, HologramLibraryDownload.decode(full.bytes, full.encoding, maximum.length, full.hash)),
+            "maximum JSON plus PNG artifact survives bounded whole-file decode and final SHA");
     }
 
     private static void downloadReservations() throws Exception {
@@ -283,15 +290,15 @@ public final class HologramLibraryRegression {
             runWorker(store, () -> {});
             Object[] peers = new Object[5];
             for (int i = 0; i < peers.length; i++) peers[i] = peer(player(UUID.randomUUID(), "Download" + i));
-            byte[] large = new byte[6 * 1024 * 1024];
+            byte[] large = new byte[HologramBlueprintArtifact.MAX_BYTES];
             runWorker(store, () -> {
                 queueDownload(store, peers[0], large);
                 queueDownload(store, peers[1], large);
             });
             SimpleAssert.eq(
-                12L * 1024 * 1024,
+                2L * HologramBlueprintArtifact.MAX_BYTES,
                 get(store, "downloadBytes"),
-                "compressed downloads reserve their full original byte footprint");
+                "two maximum artifacts reserve their full original byte footprint");
             denied(
                 () -> runWorker(store, () -> queueDownload(store, peers[2], large)),
                 "compression cannot bypass the aggregate original-byte reservation");
@@ -318,6 +325,31 @@ public final class HologramLibraryRegression {
             runWorker(store, () -> handle(store, peers[0], staleCancel));
             SimpleAssert.that(get(peers[0], "download") == null, "matching task cancel stops its server download");
             SimpleAssert.eq(0L, get(store, "downloadBytes"), "matching task cancel releases original-byte allowance");
+            NBTTagCompound begin = HologramLibraryProtocol.request("uploadBegin");
+            begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            begin.setInteger("total", HologramBlueprintArtifact.MAX_BYTES);
+            begin.setString(
+                "transfer",
+                UUID.randomUUID()
+                    .toString());
+            begin.setString("hash", repeat('a', 64));
+            runWorker(store, () -> {
+                handle(store, peers[0], begin);
+                handle(store, peers[1], begin);
+            });
+            SimpleAssert.eq(
+                2L * HologramBlueprintArtifact.MAX_BYTES,
+                get(store, "reservedBytes"),
+                "two maximum upload artifacts are admitted with bounded reservation");
+            denied(
+                () -> runWorker(store, () -> handle(store, peers[2], begin)),
+                "third maximum upload cannot exceed the aggregate reservation");
+            runWorker(store, () -> {
+                invoke(store, "abort", peers[0]);
+                invoke(store, "abort", peers[1]);
+            });
+            SimpleAssert.eq(0L, get(store, "reservedBytes"), "cancel releases maximum upload reservations");
+            SimpleAssert.eq(0, get(store, "activeUploads"), "cancel releases maximum upload admission slots");
         } finally {
             store.stop();
         }
@@ -489,7 +521,7 @@ public final class HologramLibraryRegression {
         SimpleAssert.eq(
             2 * slice,
             ((Integer) get(assembly, "offset")).intValue(),
-            "snapshot budget is independent of 8MiB file budget");
+            "snapshot budget is independent of the JSON artifact budget");
         assembly.accept(3, large, 2, new byte[slice], hash, HologramLibraryProtocol.TIMEOUT_NANOS + 3);
         SimpleAssert.eq(0, ((Integer) get(assembly, "offset")).intValue(), "inactive hydration releases its assembly");
         assembly.reset();

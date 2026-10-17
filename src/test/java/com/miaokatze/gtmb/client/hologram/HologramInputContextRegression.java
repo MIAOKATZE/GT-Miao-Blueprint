@@ -9,6 +9,7 @@ public final class HologramInputContextRegression {
 
     public static void run() {
         HologramWorldTargetRegression.run();
+        selectionHints();
         Object world = new Object(), item = new Object(), stack = new Object();
         HologramInputContext context = new HologramInputContext();
         HologramWorldFlow.UsePressFence fence = new HologramWorldFlow.UsePressFence();
@@ -50,5 +51,42 @@ public final class HologramInputContextRegression {
             HologramWorldGuide.highlight("区域框选 · Ctrl+Shift 减选 · Esc 退出", "\u00a7b")
                 .contains("\u00a7eCtrl+Shift\u00a7r\u00a7b"),
             "world guidance colors complete shortcuts without splitting their modifiers");
+    }
+
+    private static void selectionHints() {
+        com.miaokatze.gtmb.hologram.HologramAreaSelection selection = new com.miaokatze.gtmb.hologram.HologramAreaSelection();
+        try {
+            SimpleAssert.eq(
+                "worldGuideSelectionBoth",
+                HologramWorldGuide.selectionCursorKey(selection.snapshot()),
+                "empty selection prompts both mouse buttons");
+            selection.point(2, 3, 64, 3, "replace");
+            SimpleAssert.eq(
+                "worldGuideSelectionFirst",
+                HologramWorldGuide.selectionCursorKey(selection.snapshot()),
+                "right-first selection prompts only the missing left point");
+            selection.point(1, 0, 64, 0, "replace");
+            SimpleAssert.eq(
+                "worldGuideSelectionDone",
+                HologramWorldGuide.selectionCursorKey(selection.snapshot()),
+                "a complete pair reports selected without confirming or leaving selection");
+            selection.beginNext("add");
+            SimpleAssert.eq(
+                "worldGuideSelectionMore",
+                HologramWorldGuide.selectionCursorKey(selection.snapshot()),
+                "one more-box gesture changes the cursor prompt immediately");
+            selection.point(1, 4, 64, 4, "replace");
+            SimpleAssert.eq(
+                "worldGuideSelectionSecond",
+                HologramWorldGuide.selectionCursorKey(selection.snapshot()),
+                "the added box prompts only its missing right point");
+            selection.undoRegion();
+            SimpleAssert.eq(
+                "worldGuideSelectionMore",
+                HologramWorldGuide.selectionCursorKey(selection.snapshot()),
+                "per-point undo returns the armed more-box prompt");
+        } catch (java.io.IOException invalid) {
+            throw new AssertionError("selection cursor hints", invalid);
+        }
     }
 }

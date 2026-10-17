@@ -72,6 +72,7 @@ public final class HologramBlueprintResourcesRegression {
                 "server AE lifecycle is initialized before data stack and fluid ledger checks");
             taggedFluidRejection();
             nativeNumberedFluidWriter();
+            HologramGtMeShadowRegression.craftingWithAe();
             fluidLedger();
             if (cpw.mods.fml.common.Loader.isModLoaded("CarpentersBlocks"))
                 HologramDecorMaterialsRegression.nativeCarpenterResources();

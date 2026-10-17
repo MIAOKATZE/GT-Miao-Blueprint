@@ -110,6 +110,7 @@ public final class HologramCutService {
                         "x2",
                         "y2",
                         "z2",
+                        "areaSelection",
                         "originX",
                         "originY",
                         "originZ",
@@ -119,6 +120,8 @@ public final class HologramCutService {
                         "mirror")
                     .contains(name)) throw new IOException("剪切请求只能包含操作、坐标、名称和条目编号");
             }
+            if (request.hasKey("areaSelection") && !"cut".equals(request.getString("action")))
+                throw new IOException("只有剪切操作可以提交区域组合");
             if (request.hasKey("name") && (!"cut".equals(request.getString("action")) || !request.hasKey("name", 8)))
                 throw new IOException("只有剪切操作可以提交文本名称");
             if (request.hasKey(HologramCutNaming.SKIP_PROMPT)
@@ -140,6 +143,7 @@ public final class HologramCutService {
             } else if ("preview".equals(action)) {
                 NBTTagCompound entry = find(state, request.getString("id"));
                 if (entry == null) throw new IOException("剪切暂存不存在");
+                HologramCutEntry.validate(entry);
                 select(
                     response,
                     HologramCutTransforms.apply(
@@ -163,18 +167,21 @@ public final class HologramCutService {
                     if (cut) {
                         if (state.getTagList("entries", 10)
                             .tagCount() >= HologramCutProtocol.MAX_ENTRIES) throw new IOException("剪切暂存队列已满，请先放置或撤销");
-                        int ax = request.getInteger("x1"), ay = request.getInteger("y1"), az = request.getInteger("z1");
-                        int bx = request.getInteger("x2"), by = request.getInteger("y2"), bz = request.getInteger("z2");
-                        long sx = Math.abs((long) ax - bx) + 1, sy = Math.abs((long) ay - by) + 1,
-                            sz = Math.abs((long) az - bz) + 1;
-                        if (sx > HologramCutProtocol.MAX_SIDE || sy > HologramCutProtocol.MAX_SIDE
-                            || sz > HologramCutProtocol.MAX_SIDE) throw new IOException("剪切范围超过边界");
-                        x = Math.min(ax, bx);
-                        y = Math.min(ay, by);
-                        z = Math.min(az, bz);
+                        HologramAreaSelection selection = HologramCutEntry.selection(request);
+                        int[] box = selection.bounds();
+                        x = box[0];
+                        y = box[1];
+                        z = box[2];
                         dimension = player.dimension;
-                        entry = HologramCutEntry
-                            .capture((WorldServer) player.worldObj, x, y, z, (int) sx, (int) sy, (int) sz);
+                        entry = HologramCutEntry.capture(
+                            (WorldServer) player.worldObj,
+                            x,
+                            y,
+                            z,
+                            box[3] - x + 1,
+                            box[4] - y + 1,
+                            box[5] - z + 1,
+                            selection);
                         entry.setString("id", requestId);
                         long sequence = state.getLong("sequence") + 1;
                         state.setLong("sequence", sequence);
@@ -185,6 +192,7 @@ public final class HologramCutService {
                     } else {
                         entry = find(state, request.getString("id"));
                         if (entry == null) throw new IOException("剪切暂存不存在");
+                        // The durable pending payload is validated once in World.apply, before any mutation.
                         consumeId = entry.getString("id");
                         boolean undo = "undo".equals(action);
                         dimension = undo ? entry.getInteger("dimension") : player.dimension;

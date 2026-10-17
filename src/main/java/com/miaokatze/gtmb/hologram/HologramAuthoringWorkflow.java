@@ -938,7 +938,8 @@ final class HologramAuthoringWorkflow {
     }
 
     static boolean processingAction(HologramSession s, NBTTagCompound action, String op) {
-        if (!("processBlueprint".equals(op) || "saveProcessingPreset".equals(op)
+        if (!("beginBlueprintReprocessing".equals(op) || "processBlueprint".equals(op)
+            || "saveProcessingPreset".equals(op)
             || "loadProcessingPreset".equals(op)
             || "updateProcessingPreset".equals(op)
             || "deleteProcessingPreset".equals(op)
@@ -950,16 +951,38 @@ final class HologramAuthoringWorkflow {
         try {
             if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)
                 throw new java.io.IOException("蓝图计划已更新，请重新核对处理目标");
-            if ("saveProcessingPreset".equals(op)) {
-                HologramProcessingPresets.save(
-                    action.getString("name"),
-                    HologramBlueprintProcessing.Policy.read(action.getCompoundTag("policy")));
+            if ("beginBlueprintReprocessing".equals(op)) {
+                if (s.capture == null || s.capture.incomplete
+                    || s.capturePending
+                    || s.localPlanPending
+                    || s.virtualPlacement
+                    || !s.blueprintSaveReceipt.isEmpty()) throw new java.io.IOException("请等待当前蓝图编辑与保存完成后再重新进行预设");
+                HologramPresets.Preset current = HologramBlueprintProjection
+                    .blueprint(s, s.virtualPreset == null ? "未命名蓝图" : s.virtualPreset.name);
+                HologramBlueprintProcessing.Policy policy = s.processingPolicy == null
+                    ? HologramBlueprintProcessing.policy(current)
+                    : HologramBlueprintProcessing.Policy.read(s.processingPolicy.write());
+                policy.confirmedStages.clear();
+                policy.resourceDecisions.clear();
+                policy.coordinateOverrides.clear();
+                policy.cellNbtOverrides.clear();
+                s.processingSource = current;
+                s.processingPolicy = policy;
+                s.processingReviewed = false;
+                s.processingWorkflowStarted = true;
+                s.blueprintDirty = true;
+                s.ae.invalidateReviews();
+                clearSourceSwitch(s);
+                s.status = "已按当前修改准备六步蓝图预设；已移除的数据不会恢复";
+            } else if ("saveProcessingPreset".equals(op)) {
+                HologramProcessingPresets
+                    .save(action.getString("name"), reusableProcessingPolicy(action.getCompoundTag("policy")));
                 s.status = "处理流程预设已保存";
             } else if ("updateProcessingPreset".equals(op)) {
                 HologramProcessingPresets.update(
                     action.getString("presetId"),
                     action.getString("name"),
-                    HologramBlueprintProcessing.Policy.read(action.getCompoundTag("policy")));
+                    reusableProcessingPolicy(action.getCompoundTag("policy")));
                 s.status = "处理流程预设已更新";
             } else if ("deleteProcessingPreset".equals(op)) {
                 HologramProcessingPresets.delete(action.getString("presetId"));
@@ -1057,6 +1080,13 @@ final class HologramAuthoringWorkflow {
             s.status = "蓝图处理失败：" + failure.getMessage();
         }
         return true;
+    }
+
+    private static HologramBlueprintProcessing.Policy reusableProcessingPolicy(NBTTagCompound policy)
+        throws java.io.IOException {
+        NBTTagCompound reusable = (NBTTagCompound) policy.copy();
+        reusable.removeTag("resourceDecisions");
+        return HologramBlueprintProcessing.Policy.read(reusable);
     }
 
     static int[] rawCellIndices(HologramSession s, HologramPresets.Preset raw, NBTTagCompound action)

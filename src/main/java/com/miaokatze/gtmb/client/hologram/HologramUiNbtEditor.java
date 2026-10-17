@@ -4,6 +4,7 @@ import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
 import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 import net.minecraft.nbt.NBTTagCompound;
@@ -93,6 +94,23 @@ final class HologramUiNbtEditor {
             .getTagList("entries", 10) : ui.session.state().data.getTagList("nbtEntries", 10);
     }
 
+    private List<String> editorNbtPaths() {
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        if (nbtCellScope && !nbtPlacement) {
+            NBTTagList entries = cellNbtRow().getTagList("entries", 10);
+            for (int i = 0; i < entries.tagCount(); i++) {
+                NBTTagCompound entry = entries.getCompoundTagAt(i);
+                if (!entry.getBoolean("protected") && !entry.getString("path")
+                    .isEmpty()) paths.add(entry.getString("path"));
+            }
+        } else {
+            NBTTagList entries = ui.processing.processingList("nbtPaths", 8);
+            for (int i = 0; i < entries.tagCount(); i++) paths.add(entries.getStringTagAt(i));
+        }
+        paths.addAll(nbtIgnoredPaths);
+        return new ArrayList<>(paths);
+    }
+
     void drawNbtEditor(int mx, int my) {
         drawRect(50, 58, 548, 304, 0xff172f36);
         ui.canvas.text(
@@ -138,10 +156,10 @@ final class HologramUiNbtEditor {
         NBTTagList entries = ui.nbt.editorNbtEntries();
         if (this.nbtPathsView) {
             entries = new NBTTagList();
-            NBTTagList paths = ui.processing.processingList("nbtPaths", 8);
-            for (int i = 0; i < paths.tagCount(); i++) {
+            List<String> paths = editorNbtPaths();
+            for (String path : paths) {
                 NBTTagCompound entry = new NBTTagCompound();
-                entry.setString("key", paths.getStringTagAt(i));
+                entry.setString("key", path);
                 entries.appendTag(entry);
             }
         }
@@ -200,8 +218,16 @@ final class HologramUiNbtEditor {
             ui.canvas.button(228, 62, 267, 474, 13, this.nbtPathsView ? "返回条目编辑" : "编辑忽略 NBT 路径（配置细节）", true, mx, my);
         else ui.canvas.text("库存：背包 / AE · 流体：AE · 电力：无线电网；材料确认页可查看可用量与缺口。", 62, 270, 474, 0x94afb4);
         ui.canvas.button(172, 62, 283, 230, 17, "取消", true, mx, my);
-        ui.canvas
-            .button(173, 306, 283, 230, 17, this.nbtPlacement ? "仅应用本次降级" : "应用蓝图保存选项", ui.session.editable(), mx, my);
+        ui.canvas.button(
+            173,
+            306,
+            283,
+            230,
+            17,
+            this.nbtPlacement ? "仅应用本次降级" : this.nbtCellScope ? "应用所选格 · 重新核价" : "应用蓝图保存选项",
+            ui.session.editable(),
+            mx,
+            my);
         ui.canvas.button(
             211,
             62,
@@ -226,8 +252,9 @@ final class HologramUiNbtEditor {
     boolean selectEntryControl(int id) {
         if (this.nbtDrawer && id >= 17000 && id < 18000) {
             if (this.nbtPathsView) {
-                String path = ui.processing.processingList("nbtPaths", 8)
-                    .getStringTagAt(id - 17000);
+                List<String> paths = editorNbtPaths();
+                if (id - 17000 >= paths.size()) return true;
+                String path = paths.get(id - 17000);
                 if (!this.nbtIgnoredPaths.remove(path)) this.nbtIgnoredPaths.add(path);
                 return true;
             }
@@ -368,8 +395,7 @@ final class HologramUiNbtEditor {
                 Math.min(
                     Math.max(
                         0,
-                        (this.nbtPathsView ? ui.processing.processingList("nbtPaths", 8)
-                            .tagCount()
+                        (this.nbtPathsView ? editorNbtPaths().size()
                             : ui.nbt.editorNbtEntries()
                                 .tagCount())
                             - (this.nbtCellScope ? 5 : 7)),

@@ -626,6 +626,12 @@ final class HologramAreaWorkflow {
         staged.placementReviewNonce = previous.placementReviewNonce;
         staged.blueprintDirty = true;
         staged.blueprintSource = "area";
+        ItemStack tool = HologramSessionPolicy.currentTool(staged);
+        if (tool != null && tool.hasTagCompound()) {
+            tool.getTagCompound()
+                .removeTag(HologramSessionKeys.SELECTED_PRESET);
+            staged.player.inventory.markDirty();
+        }
         staged.status = "区域已导入；识别 " + area.structures.size() + " 个声明控制器，可分别编辑与保存蓝图";
         staged.open = true;
         staged.openPurpose = "blueprintEdit";

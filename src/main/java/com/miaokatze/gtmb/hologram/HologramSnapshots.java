@@ -730,6 +730,8 @@ final class HologramSnapshots {
             area != null && (!area.regionUndo.isEmpty() || area.first != null || area.second != null));
         state.setString("areaToolId", area == null ? "" : s.toolId);
         state.setString("areaPointMode", area == null ? "replace" : area.pointMode);
+        state.setInteger("areaCurrentRegion", area == null ? -1 : area.currentRegion());
+        state.setBoolean("areaMore", area != null && area.addingRegion());
         state.setInteger(
             "areaPendingCorner",
             area == null ? 0

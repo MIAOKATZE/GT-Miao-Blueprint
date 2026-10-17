@@ -78,6 +78,8 @@ public final class TestLabRuntime {
     void start(String requestedKind) throws Exception {
         if (!TestLab.isEnabled()) throw new IOException("Lab disabled");
         if (active()) throw new IOException("Another lab run is active; stop it first");
+        if ("composite".equals(requestedKind) && !config.composite)
+            throw new IOException("Composite suite requires local compositeEnabled configuration");
         if (hasWorldResources()) {
             cleanupResources();
             if (cleanupPending)
@@ -112,7 +114,7 @@ public final class TestLabRuntime {
         report = new TestLabReport(runId, kind, config);
         try {
             lease = new TestLabLease(world, config, ownership, runId);
-            actor = new TestLabActor(world, ownership, config, runId);
+            actor = new TestLabActor(world, ownership, config, runId, "composite".equals(kind));
             report.data.setTag("actor", actor.tag());
             backend = new TestLabBackend(this);
             if (config.performance) report.data.setTag("metricsStart", HologramRuntimeMetrics.snapshot());
@@ -158,7 +160,10 @@ public final class TestLabRuntime {
         requireActor();
         if (!config.zones.contains(zone)) throw new IOException("Unknown lab facility");
         if (leasedZone != zone) {
-            lease.acquire(zone);
+            if ("composite".equals(kind) && !"composite-bank".equals(zone.id)) {
+                if ("composite-source".equals(zone.id)) lease.acquire(zone, config.zone("composite-bank"));
+                else lease.acquire(zone, config.zone("composite-source"), config.zone("composite-bank"));
+            } else lease.acquire(zone);
             leasedZone = zone;
         }
         actor.at(zone);
@@ -183,10 +188,13 @@ public final class TestLabRuntime {
         if (actor == null || actor.player.worldObj != world
             || actor.player.dimension != config.dimension
             || !TestLab.isEnabled()
+            || actor.player.isDead
             || actor.player.capabilities.isCreativeMode
+            || (!(actor.player instanceof FakePlayer) && actor.player.theItemInWorldManager.getGameType()
+                != net.minecraft.world.WorldSettings.GameType.SURVIVAL)
             || !ItemNekoHologramProjector.isProjector(actor.player.getHeldItem()))
             throw new IOException("Lab actor/world/tool ownership invalid");
-        for (Object user : world.playerEntities) if (!(user instanceof FakePlayer))
+        for (Object user : world.playerEntities) if (!(user instanceof FakePlayer) && user != actor.player)
             throw new IOException("Human presence entered the lab; automatic mutation stopped");
     }
 
@@ -198,7 +206,11 @@ public final class TestLabRuntime {
             || lease == null
             || lease.size() == 0
             || leasedZone == null
-            || !leasedZone.contains(x, y, z, sx, sy, sz)) return false;
+            || !(leasedZone.contains(x, y, z, sx, sy, sz) || ("composite".equals(kind) && (config.zone("composite-bank")
+                .contains(x, y, z, sx, sy, sz)
+                || config.zone("composite-source")
+                    .contains(x, y, z, sx, sy, sz)))))
+            return false;
         try {
             requireActor();
         } catch (IOException invalid) {
@@ -211,6 +223,37 @@ public final class TestLabRuntime {
         for (int cx = x >> 4; cx <= (x + sx - 1) >> 4; cx++) for (int cz = z >> 4; cz <= (z + sz - 1) >> 4; cz++)
             if (!world.theChunkProviderServer.chunkExists(cx, cz)) return false;
         return true;
+    }
+
+    NBTTagCompound compositeManifest() {
+        NBTTagCompound manifest = new NBTTagCompound();
+        if (!config.composite || !"composite".equals(kind) || !active()) return manifest;
+        for (String name : new String[] { "source", "self", "share", "raw", "bank" }) {
+            TestLabZone zone = config.zone("composite-" + name);
+            manifest.setIntArray(name, new int[] { zone.x, zone.y, zone.z });
+        }
+        manifest.setIntArray("size", new int[] { 40, 40, 40 });
+        manifest.setInteger("machineCount", config.compositeMachines);
+        manifest.setString("runId", runId);
+        manifest.setString("fixtureVersion", "native-composite-40-v1");
+        manifest.setString(
+            "actor",
+            actor.player.getUniqueID()
+                .toString());
+        manifest.setInteger("dimension", config.dimension);
+        return manifest;
+    }
+
+    void useCompositeFacility(World target, EntityPlayerMP user, String facility) throws IOException {
+        if (!active() || !"composite".equals(kind)
+            || target != world
+            || actor == null
+            || user != actor.player
+            || !("source".equals(facility) || "self".equals(facility)
+                || "share".equals(facility)
+                || "raw".equals(facility)))
+            throw new IOException("Composite facility switch refused");
+        useZone(config.zone("composite-" + facility));
     }
 
     void stop(String reason) {
@@ -226,6 +269,14 @@ public final class TestLabRuntime {
     private void finish(String result, String detail) {
         if (stopping) return;
         stopping = true;
+        if (task != null) {
+            try {
+                task.cleanup();
+            } catch (Exception failure) {
+                result = "FAIL";
+                detail = "Task cleanup failed: " + failure;
+            }
+        }
         task = null;
         state = result;
         if (report != null) {

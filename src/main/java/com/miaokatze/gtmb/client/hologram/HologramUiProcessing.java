@@ -33,6 +33,12 @@ final class HologramUiProcessing {
 
     private long processingPresetLoadSequence = -1;
 
+    private boolean processingResourcesView;
+
+    private boolean reprocessCurrent;
+
+    private long processingReopenSequence = -1;
+
     boolean processingReady() {
         return !ui.session.state().data.getBoolean("blueprintProcessingRequired")
             || ui.session.state().data.getBoolean("blueprintProcessingComplete");
@@ -54,7 +60,51 @@ final class HologramUiProcessing {
     }
 
     boolean processingChoiceReady() {
-        return this.processingFlow.chosen();
+        return this.processingFlow.chosen()
+            && (this.processingFlow.stage != 4 || this.processingFlow.resourceChoicesReady(resourceReview()));
+    }
+
+    private NBTTagList resourceReview() {
+        NBTTagCompound data = ui.session.state().data;
+        if (data.hasKey("resourceReview", 9)) return data.getTagList("resourceReview", 10);
+        if (data.hasKey("resourceBlockers", 9)) return data.getTagList("resourceBlockers", 10);
+        NBTTagCompound processing = processingState();
+        return processing.hasKey("resourceReview", 9) ? processing.getTagList("resourceReview", 10)
+            : processing.getTagList("resourceBlockers", 10);
+    }
+
+    private NBTTagCompound resourceReport() {
+        NBTTagCompound data = ui.session.state().data;
+        return data.hasKey("resourceReview", 9) || data.hasKey("resourceBlockers", 9) ? data : processingState();
+    }
+
+    void reopenProcessing() {
+        if (!ui.session.editable() || processingReopenSequence >= 0) return;
+        reprocessCurrent = true;
+        ui.session.notice("正在按当前修改准备蓝图流程；已移除的数据不会恢复。");
+        ui.session.send("beginBlueprintReprocessing", new NBTTagCompound(), true);
+        processingReopenSequence = ui.session.sequence();
+    }
+
+    private void openProcessing(boolean resume) {
+        NBTTagCompound policy = ui.session.state().data.hasKey("processingPolicy")
+            ? ui.session.state().data.getCompoundTag("processingPolicy")
+            : processingState().getCompoundTag("policy");
+        processingFlow = new HologramProcessingFlow(policy, resume, processingFullReview);
+        processingFlow.requirements(
+            (processingState().hasKey("requiredStages") ? processingState().getInteger("requiredStages") : 63)
+                | (resourceReview().tagCount() > 0 ? 16 : 0));
+        if (processingFlow.stage > 4 && !processingFlow.resourceChoicesReady(resourceReview())) {
+            processingFlow.stage = 4;
+            processingFlow.clearChoice();
+        }
+        processingResourcesView = resourceReview().tagCount() > 0;
+        processingPresetField = new HologramMuiTextField(ui.host.parent(), 42, 220, 288, 18);
+        processingPresetField.setMaxStringLength(64);
+        processingPresetField.setText(
+            ui.library.presetNameField()
+                .getText()
+                .trim() + " · 流程");
     }
 
     long saveQuantumGroups(NBTTagList groups, long sourceRevision) {
@@ -322,37 +372,65 @@ final class HologramUiProcessing {
             }
             if (relations.tagCount() == 0) ui.canvas.text("没有已登记坐标关系；请选择默认方式确认本步骤", 42, 155, 588, 0x94afb4);
         } else if (stage == 4) {
-            ui.canvas.text("忽略根条目会清除所有方块的同名 NBT；方块细节可在处理后继续编辑", 42, 103, 588, 0xb9d5d4);
-            ui.canvas.button(280, 42, 122, 288, 18, "全部保留并确认", true, mx, my);
-            ui.canvas.button(281, 342, 122, 288, 18, "确认当前忽略清单", true, mx, my);
-            NBTTagList keys = ui.processing.processingList("nbtKeys", 8);
-            for (int i = this.processingFlow.offset; i
-                < Math.min(keys.tagCount(), this.processingFlow.offset + 5); i++) {
-                String key = keys.getStringTagAt(i);
-                ui.canvas.button(
-                    72000 + i,
-                    42,
-                    147 + (i - this.processingFlow.offset) * 20,
-                    588,
-                    17,
-                    (this.processingFlow.contains("ignoredNbtKeys", key) ? "忽略 × " : "保留 ✓ ") + key,
-                    true,
-                    mx,
-                    my);
-                if (mx >= 42 && mx < 630
-                    && my >= 147 + (i - this.processingFlow.offset) * 20
-                    && my < 164 + (i - this.processingFlow.offset) * 20)
-                    ui.canvas.tooltip(
-                        ui.host.font()
-                            .listFormattedStringToWidth(
-                                key + "：" + HologramUiText.nbtMeaning(key) + " 忽略后不会保存这一根条目；资源与身份保护仍由服务端复核。",
-                                430));
+            boolean budgetExceeded = resourceReport().getBoolean("resourceReviewTruncated");
+            ui.canvas.text(
+                budgetExceeded
+                    ? "报告超过 8192 项预算（共 " + resourceReport().getLong("resourceReviewTotal") + " 项）；尚未完整列出，请先在根条目中明确移除相关项"
+                    : processingResourcesView ? "逐格核对资源路径（滚轮翻页）；保留需准确核算，移除只清理该格的该路径"
+                        : "忽略根条目会清除所有方块的同名 NBT；精确处理请打开资源路径",
+                42,
+                103,
+                588,
+                budgetExceeded ? 0xff5952 : 0xb9d5d4);
+            ui.canvas.button(280, 42, 122, 186, 18, "保留普通 NBT 根条目", true, mx, my);
+            ui.canvas.button(281, 240, 122, 186, 18, "确认当前忽略清单", true, mx, my);
+            ui.canvas.button(
+                298,
+                438,
+                122,
+                192,
+                18,
+                processingResourcesView
+                    ? "根条目 · 资源 " + Math.min(processingFlow.offset + 1, resourceReview().tagCount())
+                        + "–"
+                        + Math.min(processingFlow.offset + 4, resourceReview().tagCount())
+                        + "/"
+                        + resourceReview().tagCount()
+                    : "精确资源路径 · " + resourceReview().tagCount() + (budgetExceeded ? "（未完整）" : ""),
+                true,
+                mx,
+                my);
+            if (processingResourcesView) drawResourceReview(mx, my);
+            else {
+                NBTTagList keys = ui.processing.processingList("nbtKeys", 8);
+                for (int i = this.processingFlow.offset; i
+                    < Math.min(keys.tagCount(), this.processingFlow.offset + 5); i++) {
+                    String key = keys.getStringTagAt(i);
+                    ui.canvas.button(
+                        72000 + i,
+                        42,
+                        147 + (i - this.processingFlow.offset) * 20,
+                        588,
+                        17,
+                        (this.processingFlow.contains("ignoredNbtKeys", key) ? "忽略 × " : "保留 ✓ ") + key,
+                        true,
+                        mx,
+                        my);
+                    if (mx >= 42 && mx < 630
+                        && my >= 147 + (i - this.processingFlow.offset) * 20
+                        && my < 164 + (i - this.processingFlow.offset) * 20)
+                        ui.canvas.tooltip(
+                            ui.host.font()
+                                .listFormattedStringToWidth(
+                                    key + "：" + HologramUiText.nbtMeaning(key) + " 忽略后不会保存这一根条目；资源与身份保护仍由服务端复核。",
+                                    430));
+                }
+                if (mx >= 42 && mx < 630 && my >= 103 && my < 140) ui.canvas.tooltip(
+                    ui.host.font()
+                        .listFormattedStringToWidth(
+                            "NBT 包含设备配置、网络身份、库存、流体与能量。忽略某根条目会从所有匹配方块移除该项；身份保护和资源校验仍由服务端执行。方块级忽略路径在后续 NBT 编辑中设置。",
+                            430));
             }
-            if (mx >= 42 && mx < 630 && my >= 103 && my < 140) ui.canvas.tooltip(
-                ui.host.font()
-                    .listFormattedStringToWidth(
-                        "NBT 包含设备配置、网络身份、库存、流体与能量。忽略某根条目会从所有匹配方块移除该项；身份保护和资源校验仍由服务端执行。方块级忽略路径在后续 NBT 编辑中设置。",
-                        430));
         } else {
             ui.canvas.text("自动提示补充已登记配置问题，不改写您已有的提示词", 42, 103, 588, 0xb9d5d4);
             String[] values = { "light", "full", "none" }, names = { "轻度 · 关键绑定与放置提醒", "完整 · 全部已登记问题说明", "不自动添加提示词" };
@@ -386,7 +464,9 @@ final class HologramUiProcessing {
             274,
             318,
             20,
-            stage == 5 ? "完成处理 · 等待服务器校验" : this.processingFlow.optional() ? "下一步 · 本步可跳过" : "下一步",
+            stage == 5 ? "完成处理 · 等待服务器校验"
+                : stage == 4 && !processingFlow.resourceChoicesReady(resourceReview()) ? "请先选择每项资源路径的处理方式"
+                    : this.processingFlow.optional() ? "下一步 · 本步可跳过" : "下一步",
             ui.session.editable() && ui.processing.processingChoiceReady(),
             mx,
             my);
@@ -394,28 +474,14 @@ final class HologramUiProcessing {
 
     boolean activateProcessing(int id) {
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
+        if (id == 297) {
+            if (HologramGuidance.authorWorkspace(ui.session.state().data) && ui.session.editable()) reopenProcessing();
+            return true;
+        }
         if (id == 220) {
             if (!HologramGuidance.authorWorkspace(ui.session.state().data)) return true;
-            NBTTagCompound policy = ui.session.state().data.hasKey("processingPolicy")
-                ? ui.session.state().data.getCompoundTag("processingPolicy")
-                : ui.processing.processingState()
-                    .getCompoundTag("policy");
-            this.processingFlow = new HologramProcessingFlow(
-                policy,
-                ui.session.state().data.getBoolean("processingResumeAllowed"),
-                this.processingFullReview);
-            this.processingFlow.requirements(
-                ui.processing.processingState()
-                    .hasKey("requiredStages")
-                        ? ui.processing.processingState()
-                            .getInteger("requiredStages")
-                        : 63);
-            this.processingPresetField = new HologramMuiTextField(ui.host.parent(), 42, 220, 288, 18);
-            this.processingPresetField.setMaxStringLength(64);
-            this.processingPresetField.setText(
-                ui.library.presetNameField()
-                    .getText()
-                    .trim() + " · 流程");
+            openProcessing(ui.session.state().data.getBoolean("processingResumeAllowed"));
+            reprocessCurrent = false;
             return true;
         }
         if (id == 221) {
@@ -431,6 +497,11 @@ final class HologramUiProcessing {
             return true;
         }
         if (this.processingFlow == null) return false;
+        if (id == 298) {
+            processingResourcesView = !processingResourcesView;
+            processingFlow.offset = 0;
+            return true;
+        }
         if (id == 296) {
             this.processingFullReview = !this.processingFlow.fullReview();
             this.processingFlow.fullReview(this.processingFullReview);
@@ -463,6 +534,7 @@ final class HologramUiProcessing {
                 if (!this.processingFlow.complete()) return true;
                 NBTTagCompound request = new NBTTagCompound();
                 request.setTag("policy", this.processingFlow.policy());
+                request.setBoolean("reprocessCurrent", reprocessCurrent);
                 this.processingFlow = null;
                 ui.session.send("processBlueprint", request, true);
             }
@@ -511,6 +583,11 @@ final class HologramUiProcessing {
                 ui.processing.processingList("nbtKeys", 8)
                     .getStringTagAt(id - 72000));
             this.processingFlow.choose();
+        } else if (id >= 73000 && id < 100000) {
+            int row = (id - 73000) / 3;
+            if (row < resourceReview().tagCount()) this.processingFlow.resourceDecision(
+                resourceReview().getCompoundTagAt(row),
+                new String[] { "remove", "preserve", "migrate" }[(id - 73000) % 3]);
         } else if (id >= 240 && id <= 250) {
             values.setInteger("deidentificationLevel", id - 240);
             this.processingFlow.choose();
@@ -533,6 +610,46 @@ final class HologramUiProcessing {
             this.processingFlow.choose();
         }
         return true;
+    }
+
+    private void drawResourceReview(int mx, int my) {
+        NBTTagList resources = resourceReview();
+        processingFlow.offset = Math.max(0, Math.min(processingFlow.offset, Math.max(0, resources.tagCount() - 4)));
+        for (int i = processingFlow.offset; i < Math.min(resources.tagCount(), processingFlow.offset + 4); i++) {
+            NBTTagCompound resource = resources.getCompoundTagAt(i);
+            int y = 147 + (i - processingFlow.offset) * 25;
+            String location = resource.getInteger("x") + ","
+                + resource.getInteger("y")
+                + ","
+                + resource.getInteger("z");
+            String decision = processingFlow.resourceDecision(resource);
+            ui.canvas.text("原图格 " + location + " · " + resource.getString("path"), 42, y + 4, 279, 0xf2dca5);
+            String[] actions = { "remove", "preserve", "migrate" }, names = { "移除该路径", "保留并核价", "迁移格式" };
+            for (int action = 0; action < 3; action++) ui.canvas.button(
+                73000 + i * 3 + action,
+                324 + action * 103,
+                y,
+                100,
+                20,
+                (actions[action].equals(decision) ? "✓ " : "") + names[action],
+                action == 0 || resource.getBoolean(action == 1 ? "canPreserve" : "canMigrate"),
+                mx,
+                my);
+            if (mx >= 42 && mx < 630 && my >= y && my < y + 20) ui.canvas.tooltip(
+                ui.host.font()
+                    .listFormattedStringToWidth(
+                        "原图格 " + location
+                            + "（蓝图局部坐标） · "
+                            + resource.getString("scope")
+                            + " · "
+                            + resource.getString("path")
+                            + "："
+                            + resource.getString("message")
+                            + (resource.getBoolean("canPreserve") ? "。保留由服务器重新核算物品、流体与能量。"
+                                : "。此值尚不能安全核算；可精确移除此路径，或取消后编辑为受支持值再处理。"),
+                        430));
+        }
+        if (resources.tagCount() == 0) ui.canvas.text("当前没有待核对的资源路径；可切回普通 NBT 根条目。", 42, 154, 588, 0x94afb4);
     }
 
     String coordinateDisplayMode(NBTTagCompound relation) {
@@ -651,9 +768,13 @@ final class HologramUiProcessing {
                 .tagCount()
                 : this.processingFlow.stage == 3 ? ui.processing.processingList("relations", 10)
                     .tagCount()
-                    : this.processingFlow.stage == 4 ? ui.processing.processingList("nbtKeys", 8)
-                        .tagCount() : 0;
-            int rows = this.processingFlow.stage == 0 ? 3 : this.processingFlow.stage == 4 ? 5 : 4;
+                    : this.processingFlow.stage == 4
+                        ? processingResourcesView ? resourceReview().tagCount()
+                            : ui.processing.processingList("nbtKeys", 8)
+                                .tagCount()
+                        : 0;
+            int rows = this.processingFlow.stage == 0 ? 3
+                : this.processingFlow.stage == 4 && !processingResourcesView ? 5 : 4;
             this.processingFlow.offset = Math
                 .max(0, Math.min(Math.max(0, count - rows), this.processingFlow.offset + (wheel > 0 ? -1 : 1)));
             return true;
@@ -662,6 +783,11 @@ final class HologramUiProcessing {
     }
 
     void acknowledgePreset(HologramState next) {
+        if (processingReopenSequence >= 0 && next.data.getLong("uiSequence") >= processingReopenSequence) {
+            processingReopenSequence = -1;
+            if (next.data.getBoolean("processingPresetOperationSuccess")) openProcessing(false);
+            else ui.session.notice(next.data.getString("status"));
+        }
         if (processingPresetLoadSequence >= 0 && next.data.getLong("uiSequence") >= processingPresetLoadSequence) {
             processingPresetLoadSequence = -1;
             if (processingFlow != null) {
@@ -674,6 +800,7 @@ final class HologramUiProcessing {
 
     void rejectCommand(long sequence) {
         if (processingPresetLoadSequence == sequence) processingPresetLoadSequence = -1;
+        if (processingReopenSequence == sequence) processingReopenSequence = -1;
     }
 
     HologramProcessingFlow processingFlow() {
@@ -719,7 +846,8 @@ final class HologramUiProcessing {
     }
 
     void prepareCommand(String op, NBTTagCompound request) {
-        if (!request.hasKey("planRevision") && ("processBlueprint".equals(op) || "saveProcessingPreset".equals(op)
+        if (!request.hasKey("planRevision") && ("processBlueprint".equals(op) || "beginBlueprintReprocessing".equals(op)
+            || "saveProcessingPreset".equals(op)
             || "loadProcessingPreset".equals(op)
             || "updateProcessingPreset".equals(op)
             || "deleteProcessingPreset".equals(op))) request.setLong("planRevision", ui.session.revision());
@@ -738,6 +866,9 @@ final class HologramUiProcessing {
         state.setBoolean("retainCovers", retainCovers);
         state.setBoolean("fullReview", processingFullReview);
         state.setBoolean("saveReview", processingPresetSaveReview);
+        state.setBoolean("resourcesView", processingResourcesView);
+        state.setBoolean("reprocessCurrent", reprocessCurrent);
+        state.setLong("reopenSequence", processingReopenSequence);
         state.setString("selectedPreset", selectedProcessingPreset);
         if (processingFlow != null) state.setTag("flow", processingFlow.backgroundUiState());
         if (processingPresetField != null) state.setString("name", processingPresetField.getText());
@@ -748,6 +879,9 @@ final class HologramUiProcessing {
         retainNbt = state.getBoolean("retainNbt");
         retainCovers = state.getBoolean("retainCovers");
         processingFullReview = state.getBoolean("fullReview");
+        processingResourcesView = state.getBoolean("resourcesView");
+        reprocessCurrent = state.getBoolean("reprocessCurrent");
+        processingReopenSequence = state.hasKey("reopenSequence", 4) ? state.getLong("reopenSequence") : -1;
         selectedProcessingPreset = state.getString("selectedPreset");
         // Completed processing invalidates an older local flow; reopening must not offer to submit it again.
         if (state.getLong("revision") != ui.session.revision()) return;

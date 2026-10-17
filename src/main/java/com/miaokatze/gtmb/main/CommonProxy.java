@@ -48,6 +48,9 @@ public class CommonProxy {
         engineReady = true;
     }
 
+    /** Called after local testlab provider setup; dedicated servers never link client event classes. */
+    public void testLabClientReady() {}
+
     public void serverStopping() {
         com.miaokatze.gtmb.hologram.HologramCutService.clear();
         HologramService.clear();

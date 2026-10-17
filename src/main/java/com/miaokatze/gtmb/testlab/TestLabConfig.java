@@ -17,9 +17,38 @@ final class TestLabConfig {
     final boolean enabled, performance;
     final int dimension, provider, maxChunks, operations, tickMillis, runSeconds, iterations, payloadKiB;
     final List<TestLabZone> zones;
+    final boolean composite;
+    final int compositeMachines;
+    String compositeActorUuid = "";
 
     TestLabConfig(boolean enabled, boolean performance, int dimension, int provider, int baseX, int baseZ, int spacing,
         int y, int maxChunks, int operations, int tickMillis, int runSeconds, int iterations, int payloadKiB) {
+        this(
+            enabled,
+            performance,
+            dimension,
+            provider,
+            baseX,
+            baseZ,
+            spacing,
+            y,
+            maxChunks,
+            operations,
+            tickMillis,
+            runSeconds,
+            iterations,
+            payloadKiB,
+            false,
+            100);
+    }
+
+    TestLabConfig(boolean enabled, boolean performance, int dimension, int provider, int baseX, int baseZ, int spacing,
+        int y, int maxChunks, int operations, int tickMillis, int runSeconds, int iterations, int payloadKiB,
+        boolean composite, int compositeMachines) {
+        if (compositeMachines < 1 || compositeMachines > 128 || (composite && (y > 216 || maxChunks < 22)))
+            throw new IllegalArgumentException("Composite requires 1..128 machines, zoneY <=216 and >=22 owned chunks");
+        this.composite = composite;
+        this.compositeMachines = compositeMachines;
         if (dimension < 2 || dimension > 2000000 || provider < 2 || provider > 2000000)
             throw new IllegalArgumentException("testlab IDs must be 2..2000000");
         if (spacing < 256 || spacing > 65536
@@ -38,7 +67,7 @@ final class TestLabConfig {
             || tickMillis < 1
             || tickMillis > 20
             || runSeconds < 10
-            || runSeconds > 300
+            || runSeconds > (composite ? 3600 : 300)
             || iterations < 1
             || iterations > 10000
             || payloadKiB < 1
@@ -57,6 +86,12 @@ final class TestLabConfig {
         String[] names = { "minimal", "capture", "cut", "codec", "stress" };
         for (int i = 0; i < names.length; i++)
             layout.add(new TestLabZone(names[i], baseX + i * spacing, y, baseZ + (i == 4 ? spacing * 2 : 0)));
+        if (composite) {
+            String[] compositeNames = { "composite-source", "composite-self", "composite-share", "composite-raw" };
+            for (int i = 0; i < compositeNames.length; i++)
+                layout.add(new TestLabZone(compositeNames[i], baseX + 5 * spacing, y, baseZ + i * 48, 40, 40, 40));
+            layout.add(new TestLabZone("composite-bank", baseX + 5 * spacing + 48, y, baseZ));
+        }
         zones = Collections.unmodifiableList(layout);
     }
 
@@ -117,7 +152,19 @@ final class TestLabConfig {
                 cfg.get(c, "stressIterations", 64)
                     .getInt(64),
                 cfg.get(c, "stressPayloadKiB", 512)
-                    .getInt(512));
+                    .getInt(512),
+                cfg.get(c, "compositeEnabled", false, "Opt in to owned 40 cubed native composite facilities.")
+                    .getBoolean(false),
+                cfg.get(c, "compositeMachines", 100, "Actual idle EBF/LCR controllers, alternating; 1..128.")
+                    .getInt(100));
+            value.compositeActorUuid = cfg.get(
+                c,
+                "compositeActorUuid",
+                "",
+                "Exact UUID of the connected owned test client. Composite runs refuse missing/offline/creative actors.")
+                .getString()
+                .trim();
+            if (!value.compositeActorUuid.isEmpty()) java.util.UUID.fromString(value.compositeActorUuid);
             if (!Files.exists(file)) {
                 cfg.save();
                 if (!Files.isRegularFile(copy) || Files.size(copy) == 0)
@@ -137,9 +184,33 @@ final class TestLabConfig {
         return false;
     }
 
+    TestLabZone zone(String id) {
+        for (TestLabZone zone : zones) if (zone.id.equals(id)) return zone;
+        throw new IllegalArgumentException("No owned facility: " + id);
+    }
+
+    String compositeLayout() {
+        StringBuilder out = new StringBuilder("composite-v1;");
+        for (TestLabZone zone : zones.subList(5, zones.size())) out.append(zone.id)
+            .append(':')
+            .append(zone.x)
+            .append(',')
+            .append(zone.y)
+            .append(',')
+            .append(zone.z)
+            .append(',')
+            .append(zone.sizeX)
+            .append(',')
+            .append(zone.sizeY)
+            .append(',')
+            .append(zone.sizeZ)
+            .append(';');
+        return out.toString();
+    }
+
     String layout() {
         StringBuilder out = new StringBuilder();
-        for (TestLabZone zone : zones) out.append(zone.id)
+        for (TestLabZone zone : zones.subList(0, 5)) out.append(zone.id)
             .append(':')
             .append(zone.x)
             .append(',')

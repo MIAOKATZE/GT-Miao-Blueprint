@@ -94,8 +94,12 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             TestLabZone capture = runtime.config().zones.get(1);
             runtime.useZone(capture);
             if (!blueprintChecked) {
-                NBTTagCompound result = HologramTestLabBlueprintProbe
-                    .run(runtime.world(), runtime.actor().player, capture.x + 8, capture.y + 1, capture.z + 16);
+                NBTTagCompound result = HologramTestLabBlueprintProbe.run(
+                    runtime.world(),
+                    (net.minecraftforge.common.util.FakePlayer) runtime.actor().player,
+                    capture.x + 8,
+                    capture.y + 1,
+                    capture.z + 16);
                 TestLabTasks.require(result.getBoolean("success"), "Ordinary production blueprint fixture failed");
                 report.data.setTag("ordinaryBlueprint", result.copy());
                 report.check(

@@ -76,6 +76,8 @@ final class HologramProcessingFlow {
     void preset(NBTTagCompound value) {
         String tendency = policy.getString("tendency");
         policy = (NBTTagCompound) value.copy();
+        // Coordinates belong to the reviewed blueprint, never to a reusable workflow preset.
+        policy.setTag("resourceDecisions", new NBTTagList());
         policy.setInteger("version", 1);
         if (!policy.hasKey("tendency")) policy.setString("tendency", tendency);
         for (int i = 0; i < chosen.length; i++) {
@@ -250,5 +252,67 @@ final class HologramProcessingFlow {
             return list.getCompoundTagAt(i)
                 .getString("mode");
         return policy.getString("coordinateDefault");
+    }
+
+    void resourceDecision(NBTTagCompound resource, String action) {
+        if (!"remove".equals(action) && !("preserve".equals(action) && resource.getBoolean("canPreserve"))
+            && !("migrate".equals(action) && resource.getBoolean("canMigrate"))) return;
+        NBTTagList previous = policy.getTagList("resourceDecisions", 10), decisions = new NBTTagList();
+        for (int i = 0; i < previous.tagCount(); i++)
+            if (!sameResource(previous.getCompoundTagAt(i), resource)) decisions.appendTag(
+                previous.getCompoundTagAt(i)
+                    .copy());
+        NBTTagCompound decision = new NBTTagCompound();
+        decision.setInteger("x", resource.getInteger("x"));
+        decision.setInteger("y", resource.getInteger("y"));
+        decision.setInteger("z", resource.getInteger("z"));
+        decision.setString("scope", resource.getString("scope"));
+        decision.setString("path", resource.getString("path"));
+        decision.setString("action", action);
+        decisions.appendTag(decision);
+        policy.setTag("resourceDecisions", decisions);
+        choose();
+    }
+
+    String resourceDecision(NBTTagCompound resource) {
+        NBTTagList decisions = policy.getTagList("resourceDecisions", 10);
+        for (int i = 0; i < decisions.tagCount(); i++)
+            if (sameResource(decisions.getCompoundTagAt(i), resource)) return decisions.getCompoundTagAt(i)
+                .getString("action");
+        return "";
+    }
+
+    boolean resourceChoicesReady(NBTTagList resources) {
+        java.util.Map<String, String> decisions = new java.util.HashMap<>();
+        NBTTagList selected = policy.getTagList("resourceDecisions", 10),
+            ignored = policy.getTagList("ignoredNbtKeys", 8);
+        for (int i = 0; i < selected.tagCount(); i++) {
+            NBTTagCompound decision = selected.getCompoundTagAt(i);
+            decisions.put(resourceKey(decision), decision.getString("action"));
+        }
+        java.util.Set<String> ignoredRoots = new java.util.HashSet<>();
+        for (int i = 0; i < ignored.tagCount(); i++) ignoredRoots.add(ignored.getStringTagAt(i));
+        for (int i = 0; i < resources.tagCount(); i++) {
+            NBTTagCompound resource = resources.getCompoundTagAt(i);
+            if (ignoredRoots.contains(resource.getString("rootKey"))) continue;
+            String action = decisions.get(resourceKey(resource));
+            if ((action == null || action.isEmpty()) && resource.getBoolean("canPreserve")) continue;
+            if ("remove".equals(action) || "preserve".equals(action) && resource.getBoolean("canPreserve")
+                || "migrate".equals(action) && resource.getBoolean("canMigrate")) continue;
+            return false;
+        }
+        return true;
+    }
+
+    private static String resourceKey(NBTTagCompound resource) {
+        return resource.getInteger(
+            "x") + "," + resource.getInteger("y") + "," + resource.getInteger("z") + ":" + resource.getString("path");
+    }
+
+    private static boolean sameResource(NBTTagCompound left, NBTTagCompound right) {
+        return left.getInteger("x") == right.getInteger("x") && left.getInteger("y") == right.getInteger("y")
+            && left.getInteger("z") == right.getInteger("z")
+            && left.getString("path")
+                .equals(right.getString("path"));
     }
 }

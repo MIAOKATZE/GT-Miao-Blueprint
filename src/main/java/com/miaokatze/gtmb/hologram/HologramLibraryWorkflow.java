@@ -12,6 +12,55 @@ final class HologramLibraryWorkflow {
 
     private HologramLibraryWorkflow() {}
 
+    /** Retires only the active draft. Saved artifacts and the player's world are not changed. */
+    static void discardBlueprint(HologramSession s, NBTTagCompound request) {
+        if (!request.getBoolean("confirmDiscard") || !request.hasKey("planRevision", 4)
+            || request.getLong("planRevision") != s.planRevision
+            || !HologramSessionPolicy.valid(s)
+            || s.job == 1
+            || s.job == 2
+            || s.capturePending
+            || s.localPlanPending
+            || HologramSessionPolicy.blockedByAreaImport(s)
+            || !s.blueprintSaveReceipt.isEmpty()) {
+            s.status = "蓝图状态已变化，请等待当前任务完成后重新确认放弃";
+            HologramSnapshots.send(s);
+            return;
+        }
+        net.minecraft.item.ItemStack tool = HologramSessionPolicy.currentTool(s);
+        if (tool != null && tool.hasTagCompound()) {
+            tool.getTagCompound()
+                .removeTag(HologramSessionKeys.SELECTED_PRESET);
+            HologramDraftPersistence.clearDraft(s);
+            s.player.inventory.markDirty();
+        }
+        HologramAuthoringWorkflow.clearSourceSwitch(s);
+        HologramWorkspace.clearAreaSelection(s);
+        HologramSession next = HologramWorkspace.create(s.player, s.x, s.y, s.z, false, s.side);
+        next.open = true;
+        next.libraryUiActive = true;
+        next.blueprintPreview = true;
+        next.blueprintSource = "discarded";
+        next.openPurpose = "blueprintBrowse";
+        next.status = "已放弃当前蓝图预设；可重新选择蓝图或框选导入。已保存蓝图保留";
+        HologramWorkspace.activate(s.player.getUniqueID(), next);
+        HologramSnapshots.send(next);
+    }
+
+    static void refreshPresetLibrary(HologramSession s) {
+        if (!s.blueprintSaveReceipt.isEmpty() || s.capturePending
+            || s.job == 1
+            || s.job == 2
+            || HologramSessionPolicy.blockedByAreaImport(s)) return;
+        if (!HologramLibraryFacade.enabled()) try {
+            HologramPresets.refreshLocalArtifacts();
+            s.status = "蓝图库已重新读取本地文件";
+        } catch (java.io.IOException failure) {
+            s.status = "蓝图库刷新失败：" + failure.getMessage();
+        }
+        HologramSnapshots.sendUi(s);
+    }
+
     /** Correlates a disposable client task; owner/session/receipt checks remain the authorization boundary. */
     static void captureClientTaskToken(HologramSession s, NBTTagCompound request) {
         String op = request.getString("op");

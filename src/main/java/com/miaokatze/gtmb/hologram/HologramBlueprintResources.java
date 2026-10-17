@@ -608,6 +608,8 @@ public final class HologramBlueprintResources {
         Plan result = new Plan();
         if (selectedPayload == null) return result;
         selectedPayload = HologramGtMeShadow.project(HologramEnergyPayload.withoutBuffers(selectedPayload));
+        boolean craftingHatch = HologramGtCraftingResources.supports(selectedPayload);
+        selectedPayload = HologramGtCraftingResources.paymentPayload(selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         HologramEssentia.validateNonJarContents(selectedPayload);
         Inspection inspection = new Inspection(selectedPayload, nativeComponents);
@@ -620,6 +622,19 @@ public final class HologramBlueprintResources {
         for (Object raw : selectedPayload.func_150296_c()) {
             String key = (String) raw;
             if (HologramEssentia.isJar(selectedPayload) && (key.equals("Aspect") || key.equals("Amount"))) continue;
+            if (craftingHatch && key.equals("gtmbCraftingResourceCosts")) {
+                inspect(
+                    selectedPayload.getTag(key),
+                    "Inventory",
+                    "internalInventory",
+                    "internalInventory",
+                    result,
+                    inspection,
+                    0,
+                    true,
+                    false);
+                continue;
+            }
             inspect(selectedPayload.getTag(key), key, key, key, result, inspection, 0, false, false);
         }
         return result;

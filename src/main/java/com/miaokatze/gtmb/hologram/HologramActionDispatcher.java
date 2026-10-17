@@ -43,6 +43,14 @@ final class HologramActionDispatcher {
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
         HologramLibraryWorkflow.captureClientTaskToken(s, action);
+        if ("refreshPresetLibrary".equals(op)) {
+            if (HologramSessionPolicy.valid(s)) HologramLibraryWorkflow.refreshPresetLibrary(s);
+            return;
+        }
+        if ("discardBlueprint".equals(op)) {
+            HologramLibraryWorkflow.discardBlueprint(s, action);
+            return;
+        }
         if ("cancelSourceSwitch".equals(op)) {
             if (HologramWorkspace.areaSessionOwned(s)) HologramAuthoringWorkflow.cancelSourceSwitch(s, action);
             HologramSnapshots.send(s);

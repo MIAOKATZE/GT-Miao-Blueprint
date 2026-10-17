@@ -1,6 +1,6 @@
 # GTMB agent test laboratory
 
-The agent laboratory is an administrator tool for repeatable, common-side tests. It is disabled by default. It uses an isolated, save-local dimension and a survival Forge FakePlayer; no human needs to enter it. It is not a claim that every installed mod, client renderer, GUI or network connection has passed testing.
+The agent laboratory is an administrator tool for repeatable, common-side tests. It is disabled by default. It uses an isolated, save-local dimension and a survival Forge FakePlayer for the small suites; the separately opted-in composite suite uses one explicitly configured, connected survival test client. It is not a claim that every installed mod, client renderer, GUI or network connection has passed testing.
 
 ## Enable locally
 
@@ -22,6 +22,11 @@ Start GTMB once to generate `config/gtmb-testlab.cfg`. In its `testlab` category
 | `stressPayloadKiB` | `512` | 1–1,024 KiB deterministic, incompressible test payload |
 
 The ID follows the high-ID approach used by GTSR; its default is separate from GTSR's 1,048,577 and Outpost's 1,048,576. Configuration bounds and collision checks still apply. A configuration error fails closed. Existing configuration bytes are not rewritten while reading. Initialization registers only the provider type. After normal server worlds have loaded, `serverStarting` validates the actual save's ownership marker before registering the dimension. This avoids Forge eagerly loading the lab with its ordinary startup dimension list. `providerReady` and `dimensionRegistered` are separate status fields. After server worlds stop, the owned dimension is unregistered so another integrated-server save requires its own ownership check.
+On an explicitly enabled physical client, a separate connection lifecycle maps the already configured provider
+before remote play packets create its client world. It does not set server admission, load a world or run
+save ownership checks. Disconnect removes only that connection's own mapping; stale connections and
+local integrated-server connections cannot remove a server/foreign mapping. Disabled clients install no
+such handler. Provider entrance coordinates are read-only local configuration hints, not server admission.
 
 There is no laboratory teleport command. A client with the default disabled setting does not register the provider. Administrators should keep ordinary players in their normal dimension; enabled-server/default-disabled-client Overworld login is a separate integration check, not something these headless probes establish.
 
@@ -36,6 +41,7 @@ Use the server console or a command sender with permission level 4. Commands hav
 | `/gtmbtestlab reset` | Restore queued lab cuts through production undo and clear only owned facilities |
 | `/gtmbtestlab run minimal` | Run the bounded small-unit suite below |
 | `/gtmbtestlab run stress` | Explicitly run finite in-memory frame/codec and server task queue load |
+| `/gtmbtestlab run composite` | Build the explicitly enabled native 40 cubed fixture and wait for connected self/share/RAW workflow verification; fixture readiness alone is never PASS |
 | `/gtmbtestlab stop` | Cancel the current run cooperatively and release its tickets |
 | `/gtmbtestlab report` | Persist the current in-memory report; refuses if no run/report exists |
 
@@ -79,3 +85,100 @@ When configured, `metricsStart` and `metricsEnd` are snapshots of the global com
 Main integration calls `TestLab.preInit(configDirectory)`, `init()`, `serverStarting(event)`, `serverStopping()` and `serverStopped()`. Default-off pure regressions validate configuration/bounds/ownership/report isolation. The separately installed test-only headless observer drives real server commands and observes actual dimensions, actors, cleanup and reports. It cannot enable the lab through a property. Builds, dedicated launch, real mod-pack behavior and default-disabled-client login require independent run receipts; source inspection and this document do not replace those checks.
 
 The design follows local GTSWN and GTSR opt-in dimension, FakePlayer and bounded facility patterns. It does not reuse their running worlds or identities. The evidence design is recorded in `plan/tmp/progress-testlab/testlab-design.md`.
+
+
+## Opt-in native composite suite (v0.1.11 work in progress)
+
+This is a separate local opt-in on top of `testlab.enabled`. Set `B:compositeEnabled=true`,
+`S:compositeActorUuid=<exact owned test-client UUID>`, `I:maxOwnedChunks=32` (at least 22),
+and an appropriate `I:runTimeoutSeconds` (composite permits up to 3600). The machine-count default is
+`I:compositeMachines=100`: alternating registered EBF/LCR controllers gives 50 electric blast furnaces and
+50 large chemical reactors. The fixed capture dimensions are **40 by 40 by 40 = 64,000 selected cells**,
+including actual machine air cavities; this is not a claim of 64,000 solid blocks. Configuration changes
+require restart. No command, message, JVM property or native probe enables either opt-in.
+
+The configured client must already be online, alive and in survival mode, with a real server network
+handler. A FakePlayer is explicitly rejected by this suite. Both owned fixture client and server must
+have the laboratory provider enabled for dimension transfer. The ordinary default-disabled-client
+Overworld login check remains a separate case. The lab saves that test client's original inventory,
+hotbar slot, dimension, position and camera pose in memory, temporarily equips its owner/run-tagged
+projector, transfers it to the bank safety platform, then restores the inventory and returns the client
+on completion/cancellation. An already disconnected client is restored without online dimension-change
+hooks or packet sends: GTMB restores the actor's world/pose and invokes the native player-data writer,
+then reads back its compressed data to verify inventory, selected slot, dimension, position and rotation.
+A failed native write/readback remains a cleanup failure. This is for an owned test client and isolated save; in-memory return state
+is not crash recovery. Only this exact actor is exempt from the lab's human-presence stop condition.
+Another human entering the dimension stops mutation. Existing unrelated online identities cannot be
+selected implicitly, and an existing nonzero wireless EU balance is not overwritten by fixture setup.
+
+The five original 32 by 16 by 32 facilities and their version-1 ownership-layout string remain unchanged.
+Composite adds four 40 by 40 by 40 facilities and a 32 by 16 by 32 bank. With `sx=baseX+5*zoneSpacing`,
+source/self/share/raw origins are `(sx,zoneY,baseZ+0/48/96/144)`; bank origin is
+`(sx+48,zoneY,baseZ)`. Their proximity permits actual finite-range AE wireless payment. An additive
+`composite-ownership-<dimension>.nbt` claim binds the exact dimensions/layout to the same save owner.
+A missing composite claim refuses any already-existing target region file; enabling composite never
+adopts another region. The original marker is not rewritten to expand ownership. Reset/refresh clear
+only the configured cells and never delete DIM/region files. Ordinary suites keep their four-chunk
+leases. Composite keeps source plus the bank loaded (13 chunks), and source plus the current target
+plus the bank loaded during target work (22 chunks); Forge's actual ticket depth still limits this.
+
+`TestLabCompositeFixture` places real registered machines through GT's `ItemMachines.placeBlockAt`,
+sets their actual facing/owner, fills the native EBF and LCR casing/coil shapes, gives each controller
+an integrated-circuit configuration, and disables working. Every controller has actual configured ME
+item/fluid input and output hatches, standard HV and wireless HV energy hatches, and automatic-maintenance
+supplies. Formation is observed from natural GT world ticks. The fixture never invokes a machine tick,
+never calls `checkMachine` itself and never sets `mMachine` or a recipe-completion flag. An unformed,
+working or nonzero-progress controller cannot pass the fixture gate. A one-time finite native wireless
+EU credit of 100,000,000,000 EU powers the owned fixture account; native wireless hatches perform their
+own transfers. Unused account credit is removed through the same native manager during normal cleanup,
+and initial credit, cumulative actual placement credits, remaining credit and net consumption are reported.
+Cleanup checks the remainder against the complete native credit ledger, including cancellation after funding.
+The bridge releases its live world/baseline reference after its detached final report is retained. There is no
+debug energy hatch or creative payment.
+
+Additional source contents include twenty GT single-block recipe-map roles with reproducible actual
+covers, three copies of each of 24 AE device definitions (including interfaces, crafting devices,
+independent drives/chests with physical cells), three copies of 12 EnderIO device registrations, forty
+actual AE cable multipart hosts with real attached terminals, four GTSWN information panels with native
+owner/monitor configuration, and four GT machines linked through the actual GTSWN link terminal. Native
+bound quantum-terminal interactions create the gateway nodes next to the configured ME devices.
+A separate real GT crafting-input ME hatch and AE interface contain actual encoded processing patterns.
+An actual placed AE pattern-terminal part encodes sulfur plus oxygen into sulfur-dioxide output, consuming
+one physical blank through its native encoder. The GT hatch creates its real nested `PatternSlot`, whose
+native insertion API receives 13 sulfur dust and 26,000 mB oxygen as finite buffered inputs. The source
+receipt retains the native encoder's blank-before/consumed evidence, encoded recipe, complete native
+hatch/interface NBT and `PatternSlot.writeToNBT` output; the independent baseline therefore compares real
+nonempty pattern and buffer payloads. The terminal's encoded output also remains an actual physical item.
+These standalone devices do not replace any of the 100 multiblock structures or run a fixture recipe. Missing
+registrations, invalid native placement or unavailable current GTSWN APIs fail the run; there is no
+placeholder tile or invented terminal NBT fallback. Distinct recipe roles and device definitions are
+counted, rather than inflating the content count with decorative metadata or unformed large controllers.
+
+The common-side `HologramCompositeLabBridge` owns finite AE banks, terminal binding, immutable direct-world
+baseline observations and independent paid-placement/RAW checks. Source and share quantum anchors keep
+their original positions. A third, physically separate payment controller at bank-relative `(18,3,12)`
+has its own finite dense cells, drive, WAP and ordinary bound wireless terminal. Source/share each retain
+358M initial AE; payment has 64 reserve cells plus one bank cell, each supplied exactly 1M AE, for 65M.
+The three native grids must be pairwise distinct. The 781 finite power cells receive 781M AE once in total;
+none are infinite or automatically refilled. Only the payment grid is checked empty, supplied from the
+actual quote, and checked for exact native debits. Source cells cannot receive quoted payment stock.
+The explicit `paymentReceipt.physicalDrivePosition` identifies the actual payment drive for native seed
+replays. AE chests retain their physical cells with empty automatic input ports; source interfaces have
+real storage items and matching native configuration counts, so natural idle behavior retains those
+items instead of exporting them into other source cells and changing the immutable baseline. The task exposes `NATIVE_READY` only
+after bank readiness, natural idle formation and the complete 64k baseline. At that point the separate
+owned-client native probe must drive actual import, self processing, owner Save and placement, share
+processing, owner Save and placement, and raw CUT/paste through production client/server paths. The
+suite remains active while those actions run. Only the bridge's completed self/share/RAW postchecks,
+actual finite material debit and both connected owner Save commits permit terminal PASS. Encode/readback,
+common backend calls, disconnected FakePlayer snapshots, manually written PNGs or fixture readiness
+cannot establish native Save completion.
+
+Reports retain the fixture's real controller/device registration and classes, configuration counts,
+gateway/wireless-hatch coordinates, reproducible cover seed and live formation/recipe-progress evidence.
+Stage observations contain wall time, real lab ticks and global metrics snapshots; normal run timing
+also reports maximum lab tick duration and budget overruns. Metrics are global observations, not exclusive
+packet attribution or TPS. Full server tick-stall observations and matching client JSON/PNG owner artifacts
+belong to the separate native probe receipts. Fair version comparison requires the same fixture inputs,
+input digest, assertions, heap limits, mod environment and actor mode. Each absent runtime receipt remains
+**PENDING**. Source implementation and this document do not certify that a new composite run passed.

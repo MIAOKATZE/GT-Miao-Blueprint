@@ -67,7 +67,11 @@ final class HologramAreaOverlay {
             NBTTagList regions = selection.getTagList("areaRegions", 10);
             for (int i = 0; i < regions.tagCount(); i++) {
                 NBTTagCompound region = regions.getCompoundTagAt(i);
-                if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, .8f);
+                boolean current = selection.hasKey("areaCurrentRegion", 3)
+                    && i == selection.getInteger("areaCurrentRegion");
+                GL11.glLineWidth(current ? 4 : 2);
+                if (current) GL11.glColor4f(.35f, .85f, 1, 1);
+                else if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, .8f);
                 else GL11.glColor4f(.35f, 1, .6f, .8f);
                 draw(
                     region.getInteger("minX"),
@@ -82,6 +86,7 @@ final class HologramAreaOverlay {
             }
             // A completed box is already part of areaRegions (including red subtraction boxes).
             if (points.length >= 3 && (points.length < 6 || regions.tagCount() == 0)) {
+                GL11.glLineWidth(2);
                 int bx = points[0], by = points[1], bz = points[2];
                 if (points.length >= 6) {
                     bx = points[3];

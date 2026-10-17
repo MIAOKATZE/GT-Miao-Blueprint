@@ -416,7 +416,7 @@ final class HologramUiCanvas {
         boolean savingConfirmation) {
         if (!state.getBoolean("localPlanPending")) return false;
         return switch (id) {
-            case 50, 55, 132, 140, 159, 162, 179, 181, 192, 220, 221, 293, 294 -> true;
+            case 50, 55, 132, 140, 159, 162, 179, 181, 192, 220, 221, 293, 294, 297 -> true;
             case 51 -> state.getInteger("job") == 2;
             case 231 -> finalProcessingStep;
             case 224 -> savingConfirmation;

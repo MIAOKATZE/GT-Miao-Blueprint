@@ -52,6 +52,36 @@ final class TestLabOwnership {
             tag.setString("layout", cfg.layout());
             write(marker, HologramSnapshotCodec.compress(tag));
         }
+        if (cfg.composite) claimComposite(cfg);
+    }
+
+    /** Additive claim leaves the five original facility layout bytes unchanged. Never adopts existing regions. */
+    private void claimComposite(TestLabConfig cfg) throws IOException {
+        Path marker = directory.resolve("composite-ownership-" + cfg.dimension + ".nbt");
+        if (Files.exists(marker)) {
+            if (Files.isSymbolicLink(marker) || !Files.isRegularFile(marker) || Files.size(marker) > 65536)
+                throw new IOException("Invalid composite ownership marker");
+            NBTTagCompound tag = HologramSnapshotCodec.decode(Files.readAllBytes(marker));
+            if (!owner.toString()
+                .equals(tag.getString("owner"))
+                || !cfg.compositeLayout()
+                    .equals(tag.getString("layout")))
+                throw new IOException("Composite ownership/layout differs; restore its original configuration");
+            return;
+        }
+        Path regions = root.resolve("DIM" + cfg.dimension)
+            .resolve("region");
+        for (TestLabZone zone : cfg.zones.subList(5, cfg.zones.size())) {
+            for (int rx = zone.x >> 9; rx <= (zone.x + zone.sizeX - 1) >> 9; rx++)
+                for (int rz = zone.z >> 9; rz <= (zone.z + zone.sizeZ - 1) >> 9; rz++)
+                    if (Files.exists(regions.resolve("r." + rx + "." + rz + ".mca")))
+                        throw new IOException("Unclaimed composite region already exists; no world adoption");
+        }
+        NBTTagCompound tag = new NBTTagCompound();
+        tag.setInteger("version", 1);
+        tag.setString("owner", owner.toString());
+        tag.setString("layout", cfg.compositeLayout());
+        write(marker, HologramSnapshotCodec.compress(tag));
     }
 
     static void write(Path file, byte[] bytes) throws IOException {

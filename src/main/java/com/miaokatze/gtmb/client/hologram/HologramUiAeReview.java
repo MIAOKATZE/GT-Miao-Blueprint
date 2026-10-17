@@ -180,6 +180,7 @@ final class HologramUiAeReview {
                     true,
                     mx,
                     my);
+                if ("blocker".equals(group.severity)) drawBlockerBadge(45, y + 3);
             } else if (this.aeReviewTab == 1) {
                 HologramAeReviewModel.Issue issue = ui.ae.aeIssueRows()
                     .get(row);
@@ -194,6 +195,7 @@ final class HologramUiAeReview {
                     true,
                     mx,
                     my);
+                if ("blocker".equals(issue.severity)) drawBlockerBadge(45, y + 3);
             } else {
                 HologramAeReviewModel.Material material = this.aeReview.materials.get(row);
                 ui.canvas.text(material.line(), 46, y + 3, 588, "0".equals(material.missing) ? 0xa9d6cf : 0xffcf88);
@@ -251,6 +253,18 @@ final class HologramUiAeReview {
         ui.canvas.button(190, 536, 238, 44, 15, "上文", this.aeDetailOffset > 0, mx, my);
         ui.canvas.button(191, 586, 238, 52, 15, "下文", this.aeDetailOffset + 3 < detail.size(), mx, my);
         ui.canvas.button(
+            300,
+            426,
+            258,
+            102,
+            15,
+            "蓝图流程解决",
+            ui.session.editable() && ui.session.state().data.getBoolean("virtual")
+                && this.aeReview.blockerCount > 0
+                && ui.session.pendingSequence() < 0,
+            mx,
+            my);
+        ui.canvas.button(
             192,
             536,
             258,
@@ -296,8 +310,27 @@ final class HologramUiAeReview {
             my);
     }
 
+    private void drawBlockerBadge(int x, int y) {
+        drawRect(x - 1, y - 1, x + 10, y + 10, 0xffff3b35);
+        for (int stroke = 0; stroke < 7; stroke++) {
+            drawRect(x + stroke, y + stroke, x + stroke + 2, y + stroke + 2, 0xff000000);
+            drawRect(x + 6 - stroke, y + stroke, x + 8 - stroke, y + stroke + 2, 0xff000000);
+        }
+    }
+
     void activateAeReview(int id) {
         if (this.aeReview == null) return;
+        if (id == 300) {
+            if (!ui.session.editable() || !ui.session.state().data.getBoolean("virtual")
+                || ui.session.pendingSequence() >= 0) return;
+            if (!this.aeReview.matches(ui.session.state().session, ui.session.revision())) {
+                ui.session.notice("报告已更新，请重新查看后选择处理路径。");
+                return;
+            }
+            activateAeReview(182);
+            ui.processing.reopenProcessing();
+            return;
+        }
         if (id == 214 || id == 216) {
             ui.identity.deidentificationLevel(ui.identity.deidentificationChoice(false));
             ui.identity.activateDeidentification(id);

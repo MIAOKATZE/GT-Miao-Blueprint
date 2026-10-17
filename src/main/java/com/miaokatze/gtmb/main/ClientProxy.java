@@ -11,6 +11,11 @@ public final class ClientProxy extends CommonProxy {
     }
 
     @Override
+    public void testLabClientReady() {
+        com.miaokatze.gtmb.client.testlab.TestLabClientLifecycle.install();
+    }
+
+    @Override
     public void preInit() {
         super.preInit();
         com.miaokatze.gtmb.hologram.HologramLibraryFacade

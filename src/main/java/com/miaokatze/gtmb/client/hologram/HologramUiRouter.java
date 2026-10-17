@@ -234,6 +234,18 @@ final class HologramUiRouter {
                 }
                 if (!ui.session.state().data.getString("activeStructure")
                     .isEmpty()) ui.canvas.button(165, 452, 300, 220, 13, "返回区域总览", ui.session.editable(), mx, my);
+                if (ui.session.state().data.getBoolean("virtual")
+                    && !ui.session.state().data.getBoolean("virtualPlacement"))
+                    ui.canvas.button(
+                        297,
+                        252,
+                        300,
+                        184,
+                        13,
+                        "重新进行蓝图预设",
+                        ui.session.editable() && !ui.session.state().cells.isEmpty(),
+                        mx,
+                        my);
             }
             if (!ui.library.libraryDrawer()) {
                 ui.canvas.button(
@@ -524,6 +536,7 @@ final class HologramUiRouter {
                 if (control.enabled && control.contains(mx, my)) activate(control.id);
             return;
         }
+        if (ui.library.consumeSwitchReviewMouse(mx, my, button)) return;
         if (ui.processing.consumeAuthoringModalMouse(mx, my, button)) return;
         if (button >= 0 && (ui.canvas.inViewport(mx, my) || ui.canvas.controls()
             .stream()

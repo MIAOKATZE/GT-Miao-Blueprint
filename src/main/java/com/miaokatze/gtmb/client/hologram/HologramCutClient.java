@@ -47,7 +47,9 @@ final class HologramCutClient {
     private HologramState preview;
     private NBTTagCompound rawPreview;
     private Transform pose = new Transform(0, 0, 0, 0);
-    private int[] first, second, locked;
+    private int[] locked;
+    private com.miaokatze.gtmb.hologram.HologramAreaSelection selection;
+    private final HologramSelectionInput selectionInput = new HologramSelectionInput();
     private HologramCutInput.Stage stage = HologramCutInput.Stage.IDLE;
 
     private HologramCutClient() {}
@@ -160,6 +162,7 @@ final class HologramCutClient {
             if (alt()) openTransform();
             else rotate(key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL) ? 0 : 1, 1);
         }
+        selectionInput.tick(selection, selecting() && held() && !busy() && !blueprintBusy());
         lockedNudge();
     }
 
@@ -237,6 +240,16 @@ final class HologramCutClient {
             case SELECT:
                 beginSelection();
                 break;
+            case MORE:
+                try {
+                    selection.beginNext(HologramClient.controlHeld() ? "subtract" : "add");
+                } catch (java.io.IOException invalid) {
+                    status.show(invalid.getMessage());
+                }
+                break;
+            case CONFIRM_SELECTION:
+                confirmSelection();
+                break;
             case STORAGE:
                 refreshDirectory();
                 mc().displayGuiScreen(new HologramCutStorageScreen());
@@ -281,7 +294,8 @@ final class HologramCutClient {
         pose = new Transform(0, 0, 0, 0);
         stage = HologramCutInput.Stage.SELECTING;
         cutSession = true;
-        first = second = locked = null;
+        selection = new com.miaokatze.gtmb.hologram.HologramAreaSelection();
+        locked = null;
         preview = null;
         previewId = "";
         nudgeContext++;
@@ -294,35 +308,75 @@ final class HologramCutClient {
             return;
         }
         int[] point = HologramClient.cutAnchor(false);
-        if (firstCorner) first = point;
-        else second = point;
-        if (first == null || second == null) return;
-        int[] a = first.clone(), b = second.clone();
-        String detail = text("confirmCutDetail") + " " + coordinates(a) + " → " + coordinates(b);
-        // Naming is also the cut confirmation: no first click can already mutate the world.
-        if (skipNamePrompt) mc().displayGuiScreen(
-            new HologramCutConfirmScreen(text("confirmCut"), detail, () -> submitCut(a, b, "", false), this::cancel));
-        else mc().displayGuiScreen(
-            new HologramCutNameScreen(detail, (name, skip) -> submitCut(a, b, name, skip), this::cancel));
+        try {
+            selection.point(
+                firstCorner ? 1 : 2,
+                point[0],
+                point[1],
+                point[2],
+                HologramClient.areaSelectionMode(HologramClient.controlHeld(), shift()));
+        } catch (java.io.IOException invalid) {
+            status.show(invalid.getMessage());
+        }
     }
 
-    private void submitCut(int[] a, int[] b, String name, boolean skipPrompt) {
-        if (!held() || !selecting()) return;
+    /** A complete pair remains editable until a separate Shift-right confirmation. */
+    private void confirmSelection() {
+        final NBTTagCompound chosen = selection.snapshot();
+        final int[] bounds;
+        try {
+            if (selection.regionSnapshot()
+                .tagCount() == 0) {
+                status.show(HologramClient.text("worldGuideSelectionBoth", "Left: point 1 · Right: point 2"));
+                return;
+            }
+            bounds = selection.bounds();
+        } catch (java.io.IOException invalid) {
+            status.show(invalid.getMessage());
+            return;
+        }
+        String detail = text("confirmCutDetail") + " "
+            + coordinates(new int[] { bounds[0], bounds[1], bounds[2] })
+            + " → "
+            + coordinates(new int[] { bounds[3], bounds[4], bounds[5] });
+        if (skipNamePrompt) mc().displayGuiScreen(
+            new HologramCutConfirmScreen(
+                text("confirmCut"),
+                detail,
+                () -> submitCut(chosen, bounds, "", false),
+                () -> {}));
+        else mc().displayGuiScreen(
+            new HologramCutNameScreen(detail, (name, skip) -> submitCut(chosen, bounds, name, skip), () -> {}));
+    }
+
+    private void submitCut(NBTTagCompound chosen, int[] bounds, String name, boolean skipPrompt) {
+        if (!held() || !selecting() || selection == null || !chosen.equals(selection.snapshot())) return;
         if (busy()) {
             retryCutStorage();
             return;
         }
         NBTTagCompound n = action("cut", "");
         n.setString("name", name);
+        n.setTag("areaSelection", chosen);
         if (skipPrompt) n.setBoolean(HologramCutNaming.SKIP_PROMPT, true);
         for (int i = 0; i < 3; i++) {
-            n.setInteger(new String[] { "x1", "y1", "z1" }[i], a[i]);
-            n.setInteger(new String[] { "x2", "y2", "z2" }[i], b[i]);
+            n.setInteger(new String[] { "x1", "y1", "z1" }[i], bounds[i]);
+            n.setInteger(new String[] { "x2", "y2", "z2" }[i], bounds[i + 3]);
         }
         continuous.submitted(n.getString("requestId"));
         send(n);
         stage = HologramCutInput.Stage.IDLE;
-        first = second = null;
+        selection = null;
+    }
+
+    boolean selectionWheel(int wheel) {
+        if (!selecting() || !held() || mc().currentScreen != null || selection == null) return false;
+        selection.cycle(wheel > 0 ? -1 : 1);
+        return true;
+    }
+
+    NBTTagCompound selectionSnapshot() {
+        return selecting() && held() && selection != null ? selection.snapshot() : null;
     }
 
     List<NBTTagCompound> entries() {
@@ -556,7 +610,8 @@ final class HologramCutClient {
         pose = new Transform(0, 0, 0, 0);
         stage = HologramCutInput.Stage.IDLE;
         cutSession = false;
-        first = second = locked = null;
+        selection = null;
+        locked = null;
         preview = null;
         previewId = "";
     }
@@ -711,6 +766,15 @@ final class HologramCutClient {
             lines.add(text("queue") + " " + (index + 1) + " / " + entries.size() + " · " + text("cycle"));
         }
         if (aiming()) lines.add(text("target") + " " + coordinates(HologramClient.cutAnchor(!selecting())));
+        if (selecting()) {
+            lines.add(
+                HologramClient
+                    .text("worldGuideSelectionEdit", "Left/right: adjust corners · Shift+Alt+right: more boxes"));
+            lines.add(
+                HologramClient.text(
+                    "worldGuideSelectionKeys",
+                    "Arrows: move · Alt+Up/Down: vertical · Scroll: current box · Delete: remove · Ctrl+Z: undo"));
+        }
         if (active() && !selecting()) {
             lines.add(poseSummary());
             lines.add("R: Y +90 | Ctrl+R: X +90 | Alt+R: " + text("transform"));
@@ -733,10 +797,7 @@ final class HologramCutClient {
     boolean render(float ticks) {
         if (!active() || !held()) return false;
         if (selecting()) {
-            NBTTagCompound data = new NBTTagCompound();
-            if (first != null && second != null) data
-                .setIntArray("areaPoints", new int[] { first[0], first[1], first[2], second[0], second[1], second[2] });
-            else if (first != null || second != null) data.setIntArray("areaPoints", first == null ? second : first);
+            NBTTagCompound data = selection.snapshot();
             HologramAreaOverlay.render(new HologramState(data), ticks, HologramClient.cutAnchor(false));
         } else if (rawPreview != null && previewId.equals(selected)) {
             int[] at = anchor();

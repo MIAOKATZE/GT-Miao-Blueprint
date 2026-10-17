@@ -134,6 +134,7 @@ final class HologramBlueprintServiceRegression {
             apply.invoke(undo, session);
             capture = (HologramCapture) get(session, "capture");
             SimpleAssert.that(capture.positions.containsKey("1,64,0"), "geometry undo restores source coordinate");
+            reprocessingUsesCurrentEdits((HologramSession) session);
             authorWorkflow(session);
             sourceSwitchLifecycle(session, player);
             gtPaymentIdentity(session, player, unsafe);
@@ -1385,6 +1386,65 @@ final class HologramBlueprintServiceRegression {
             original.getTagCompound()
                 .setBoolean("gtitHologramAreaSelecting", true);
             areas.put(player.getUniqueID(), area);
+        }
+    }
+
+    private static void reprocessingUsesCurrentEdits(HologramSession session) throws java.io.IOException {
+        HologramPresets.Preset previousSource = session.processingSource;
+        HologramBlueprintProcessing.Policy previousPolicy = session.processingPolicy;
+        boolean reviewed = session.processingReviewed, started = session.processingWorkflowStarted,
+            dirty = session.blueprintDirty;
+        String operation = session.processingPresetOperation, status = session.status;
+        boolean success = session.processingPresetOperationSuccess;
+        HologramCapture capture = session.capture;
+        HologramPresets.Preset preset = session.virtualPreset;
+        String prompt = capture.cells.get(0).prompt;
+        try {
+            session.processingSource = HologramPresets.copy(preset);
+            session.processingSource.cells.get(0).prompt = "stale imported prompt";
+            session.processingPolicy = HologramBlueprintProcessing.defaults("self", 0);
+            session.processingPolicy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+            session.processingPolicy.coordinateOverrides.put("old-location", "clear");
+            session.processingReviewed = true;
+            capture.cells.get(0).prompt = "latest unsaved editor prompt";
+            NBTTagCompound action = new NBTTagCompound();
+            action.setLong("planRevision", session.planRevision);
+            SimpleAssert.that(
+                HologramAuthoringWorkflow.processingAction(session, action, "beginBlueprintReprocessing"),
+                "explicit current-blueprint review is handled by the real processing workflow");
+            SimpleAssert.that(session.processingPresetOperationSuccess, "current-blueprint preparation succeeds");
+            SimpleAssert.that(
+                session.capture == capture && session.virtualPreset == preset,
+                "reopening review retains the exact edited blueprint and capture");
+            SimpleAssert.eq(
+                "latest unsaved editor prompt",
+                session.processingSource.cells.get(0).prompt,
+                "six-step review starts from current unsaved edits instead of the original processing source");
+            SimpleAssert.eq(
+                capture.cells.get(0).x - session.x,
+                session.processingSource.cells.get(0).x,
+                "current editor coordinates become the processing baseline");
+            SimpleAssert.that(
+                session.processingPolicy.confirmedStages.isEmpty()
+                    && session.processingPolicy.coordinateOverrides.isEmpty()
+                    && !session.processingReviewed,
+                "old confirmations and position-bound decisions cannot silently approve the current blueprint");
+            HologramPresets.Preset prepared = session.processingSource;
+            action.setLong("planRevision", session.planRevision - 1);
+            HologramAuthoringWorkflow.processingAction(session, action, "beginBlueprintReprocessing");
+            SimpleAssert.that(
+                !session.processingPresetOperationSuccess && session.processingSource == prepared,
+                "a stale reopen request cannot replace the newly reviewed source");
+        } finally {
+            capture.cells.get(0).prompt = prompt;
+            session.processingSource = previousSource;
+            session.processingPolicy = previousPolicy;
+            session.processingReviewed = reviewed;
+            session.processingWorkflowStarted = started;
+            session.blueprintDirty = dirty;
+            session.processingPresetOperation = operation;
+            session.processingPresetOperationSuccess = success;
+            session.status = status;
         }
     }
 

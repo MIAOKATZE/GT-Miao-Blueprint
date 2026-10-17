@@ -203,6 +203,60 @@ final class HologramPresetPersistenceRegression {
             expectIo(resolve, "Hologram-Presets");
             expectIo(resolve, "local_11111111-1111-1111-1111-111111111111");
             expectIo(resolve, "public_11111111-1111-1111-1111-111111111111");
+
+            byte[] survivingJson = Files.readAllBytes(sourcePair);
+            Files.delete(HologramBlueprintArtifact.previewPath(sourcePair));
+            HologramPresets.refreshLocalArtifacts();
+            SimpleAssert.eq(
+                0,
+                HologramPresets.labels()
+                    .tagCount(),
+                "an explicit refresh hides externally deleted native pair members from the cached catalog");
+            SimpleAssert.that(
+                java.util.Arrays.equals(survivingJson, Files.readAllBytes(sourcePair)),
+                "refresh does not delete or rewrite the surviving user artifact");
+            com.google.gson.JsonObject wrongIdentity = new com.google.gson.JsonParser()
+                .parse(new String(survivingJson, java.nio.charset.StandardCharsets.UTF_8))
+                .getAsJsonObject();
+            wrongIdentity.getAsJsonObject("blueprint")
+                .addProperty(
+                    "id",
+                    UUID.randomUUID()
+                        .toString());
+            byte[] unrelatedJson = wrongIdentity.toString()
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] unchangedIndex = Files.readAllBytes(expected);
+            Files.write(sourcePair, unrelatedJson);
+            try {
+                HologramPresets.delete(saved.id);
+                throw new AssertionError("a missing PNG must not authorize deleting another blueprint's JSON");
+            } catch (IOException expectedMismatch) {
+                SimpleAssert.that(
+                    java.util.Arrays.equals(unrelatedJson, Files.readAllBytes(sourcePair))
+                        && java.util.Arrays.equals(unchangedIndex, Files.readAllBytes(expected)),
+                    "mismatched identity preserves both the surviving artifact and the logical index");
+            }
+            Files.write(sourcePair, survivingJson);
+            HologramPresets.delete(saved.id);
+            SimpleAssert.that(
+                !Files.exists(sourcePair),
+                "explicit deletion removes the surviving JSON after PNG was externally deleted");
+            HologramPresets.clearCache();
+            SimpleAssert.eq(
+                0,
+                HologramPresets.all()
+                    .size(),
+                "the missing pair's stale logical index can be removed even after a refresh hid it");
+
+            HologramPresets.Preset removedJson = preset("unsaved", "Externally removed JSON");
+            HologramPresets.save(removedJson);
+            Path orphan = game.resolve("MiaoBlueprints/local_" + removedJson.id + ".json");
+            HologramBlueprintSharing.write(orphan, removedJson, preview);
+            Files.delete(orphan);
+            HologramPresets.delete(removedJson.id);
+            SimpleAssert.that(
+                !Files.exists(HologramBlueprintArtifact.previewPath(orphan)),
+                "explicit deletion also removes the owned preview when JSON was externally deleted");
         } catch (Exception failure) {
             throw new AssertionError("blueprint directory regression", failure);
         } finally {

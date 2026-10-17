@@ -18,7 +18,7 @@ import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 /** Client-owned files, independent of world saves and server identities. Call from the library worker only. */
 final class HologramClientLibrary {
 
-    static final int MAX_BYTES = 8 * 1024 * 1024, MAX_ENTRIES = 128;
+    static final int MAX_BYTES = HologramBlueprintArtifact.MAX_JSON_BYTES, MAX_ENTRIES = 128;
     private final Path directory;
     private final Path metadataFile;
     private final PairIo pairIo;
@@ -221,7 +221,8 @@ final class HologramClientLibrary {
         if (!artifact.jsonSha256.equals(expectedJsonHash)) return false;
         Path catalog = directory.resolve("hologram-presets.json");
         if (!Files.isRegularFile(catalog)) return false;
-        if (Files.size(catalog) > 64L * 1024 * 1024) throw new IOException("蓝图库超过64MiB上限");
+        if (Files.size(catalog) > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES) throw new IOException(
+            "蓝图库超过 " + HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES / (1024 * 1024) + " MiB 上限");
         JsonObject expected = blueprint(artifact.json);
         try {
             JsonObject collection = new JsonParser()
@@ -381,7 +382,8 @@ final class HologramClientLibrary {
     }
 
     private static JsonObject parse(byte[] data) throws IOException {
-        if (data == null || data.length > MAX_BYTES) throw new IOException("客户端蓝图超过 8 MiB");
+        if (data == null || data.length > MAX_BYTES)
+            throw new IOException("客户端蓝图超过 " + MAX_BYTES / (1024 * 1024) + " MiB");
         try {
             String json = new String(data, StandardCharsets.UTF_8);
             int depth = 0;

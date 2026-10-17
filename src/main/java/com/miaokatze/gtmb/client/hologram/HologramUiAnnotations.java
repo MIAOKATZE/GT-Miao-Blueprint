@@ -140,12 +140,19 @@ final class HologramUiAnnotations {
             }
             this.visibleMarkers.add(marker);
             int x = marker.x, y = marker.y;
-            int color = marker.key.equals(this.pinnedAnnotation) ? 0xff7ce1ec
-                : marker.key.startsWith("ae:") ? 0xffffb65e : 0xffe6c980;
+            int color = marker.blocker ? 0xffff3b35
+                : marker.key.equals(this.pinnedAnnotation) ? 0xff7ce1ec
+                    : marker.key.startsWith("ae:") ? 0xffffb65e : 0xffe6c980;
             drawRect(x - 6, y - 5, x + 5, y + 6, 0xff514634);
             drawRect(x - 4, y - 7, x + 7, y + 4, color);
             drawRect(x + 5, y - 5, x + 8, y + 6, 0xff9e8353);
-            ui.canvas.text(marker.key.startsWith("ae:") ? "!" : "?", x - 1, y - 5, 8, 0xff172f36);
+            if (marker.blocker) {
+                // Pixel strokes remain legible regardless of the resource pack's multiplication glyph.
+                for (int stroke = 0; stroke < 7; stroke++) {
+                    drawRect(x - 2 + stroke, y - 5 + stroke, x + stroke, y - 3 + stroke, 0xff000000);
+                    drawRect(x + 4 - stroke, y - 5 + stroke, x + 6 - stroke, y - 3 + stroke, 0xff000000);
+                }
+            } else ui.canvas.text(marker.key.startsWith("ae:") ? "!" : "?", x - 1, y - 5, 8, 0xff172f36);
             if (marker.contains(mx, my)) {
                 if (ui.canvas.tooltip() == null) ui.canvas.tooltip(new ArrayList<>());
                 else ui.canvas.tooltip(new ArrayList<>(ui.canvas.tooltip()));
@@ -180,7 +187,8 @@ final class HologramUiAnnotations {
                 pinned.title + " · 滚轮查看 · Esc 收起",
                 HologramUiCanvas.viewportX + 8,
                 224,
-                HologramUiCanvas.viewportWidth - (pinned.key.startsWith("ae:") ? 108 : 32),
+                HologramUiCanvas.viewportWidth
+                    - (pinned.key.startsWith("ae:") || pinned.key.startsWith("resource:") ? 108 : 32),
                 0xffe59b);
             if (pinned.key.startsWith("ae:")) ui.canvas.button(
                 184,
@@ -190,6 +198,16 @@ final class HologramUiAnnotations {
                 15,
                 "AE 全部详情",
                 true,
+                mx,
+                my);
+            if (pinned.key.startsWith("resource:")) ui.canvas.button(
+                297,
+                HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 104,
+                221,
+                78,
+                15,
+                "处理阻塞",
+                ui.session.editable(),
                 mx,
                 my);
             drawRect(
@@ -209,10 +227,11 @@ final class HologramUiAnnotations {
     }
 
     boolean toggleAnnotationAt(int mx, int my) {
-        for (Control control : ui.canvas.controls()) if (control.id == 184 && control.contains(mx, my)) {
-            ui.router.activate(184);
-            return true;
-        }
+        for (Control control : ui.canvas.controls())
+            if ((control.id == 184 || control.id == 297) && control.contains(mx, my)) {
+                if (control.enabled) ui.router.activate(control.id);
+                return true;
+            }
         if (!this.pinnedAnnotation.isEmpty() && mx >= HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 20
             && mx < HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth - 5
             && my >= 221

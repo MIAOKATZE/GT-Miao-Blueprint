@@ -272,7 +272,7 @@ public final class HologramClient {
     }
 
     private final HologramWorldFlow.KeyEdge rotationKey = new HologramWorldFlow.KeyEdge();
-    private final HologramWorldFlow.KeyEdge areaUndoKey = new HologramWorldFlow.KeyEdge();
+    private final HologramSelectionInput areaSelectionInput = new HologramSelectionInput();
     private final HologramWorldFlow.KeyRepeat[] nudgeKeys = { new HologramWorldFlow.KeyRepeat(),
         new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat() };
     private final HologramWorldFlow.NudgeDispatch nudgeDispatch = new HologramWorldFlow.NudgeDispatch();
@@ -294,6 +294,18 @@ public final class HologramClient {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
         if (HologramBackgroundTasks.busy()) return;
+        if (event.dwheel != 0 && projectorWorld() && !altHeld()) {
+            if (HologramCutClient.INSTANCE.selectionWheel(event.dwheel)) {
+                event.setCanceled(true);
+                return;
+            }
+            if (localArea != null && areaProjectorWorld() && !localAreaFinishing) {
+                localArea.cycle(event.dwheel > 0 ? -1 : 1);
+                localAreaView = null;
+                event.setCanceled(true);
+                return;
+            }
+        }
         if (event.dwheel == 0 || !projectorWorld()
             || !HologramCutClient.INSTANCE.aiming()
                 && (worldStage() != HologramWorldFlow.Stage.MOVING && worldStage() != HologramWorldFlow.Stage.AREA
@@ -312,6 +324,17 @@ public final class HologramClient {
             || !areaProjectorWorld()
             || localArea == null && (state == null || !state.data.getBoolean("areaSelecting"))) return;
         boolean control = controlHeld(), shift = shiftHeld();
+        if (event.button == 1 && shift && altHeld()) {
+            event.setCanceled(true);
+            if (usePressFence.consume() && localArea != null) try {
+                localArea.beginNext(control ? "subtract" : "add");
+                localAreaView = null;
+            } catch (java.io.IOException invalid) {
+                if (mc.thePlayer != null)
+                    mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(invalid.getMessage()));
+            }
+            return;
+        }
         if (event.button == 1 && shift && !control) {
             event.setCanceled(true);
             if (!usePressFence.consume()) return;
@@ -355,6 +378,9 @@ public final class HologramClient {
         HologramProgress libraryProgress = HologramLibraryClient.INSTANCE.progress();
         if (projectorWorld() && libraryProgress != null)
             lines.add(HologramProgressView.summary(libraryProgress, System.nanoTime()));
+        NBTTagCompound cursorSelection = HologramCutClient.INSTANCE.selectionSnapshot();
+        if (cursorSelection == null && areaProjectorWorld()) cursorSelection = localAreaRenderSelection();
+        if (cursorSelection != null) HologramWorldGuide.drawSelectionCursor(cursorSelection, event.resolution);
         if (HologramCutClient.INSTANCE.guide(lines)) {
             HologramWorldGuide.draw(lines, event.resolution);
             return;
@@ -404,17 +430,11 @@ public final class HologramClient {
                     text("worldGuideAreaRegions", "Regions %d, subtract %d"),
                     regions.tagCount() - subtracted,
                     subtracted));
+            lines.add(text("worldGuideSelectionEdit", "Left/right: adjust corners · Shift+Alt+right: more boxes"));
             lines.add(
                 text(
-                    "worldGuideAreaOrder",
-                    "Mark either corner first · Ctrl / Ctrl+Shift at the first mark locks the combination mode"));
-            if (areaSelection.getInteger("areaPendingCorner") != 0) lines.add(
-                String.format(
-                    java.util.Locale.ROOT,
-                    text("worldGuideAreaMode", "Locked mode: %s · Mark the other corner to complete"),
-                    text(
-                        "worldGuideAreaMode." + areaSelection.getString("areaPointMode"),
-                        areaSelection.getString("areaPointMode"))));
+                    "worldGuideSelectionKeys",
+                    "Arrows: move · Alt+Up/Down: vertical · Scroll: current box · Delete: remove · Ctrl+Z: undo"));
         }
         if (stage == HologramWorldFlow.Stage.MOVING || stage == HologramWorldFlow.Stage.AREA) {
             int[] anchor = stage == HologramWorldFlow.Stage.AREA ? areaSelectionAnchor() : movingAnchor(state);
@@ -471,10 +491,7 @@ public final class HologramClient {
         if (HologramCutClient.INSTANCE.active()) return;
         lockedNudge(mc, changed);
         boolean rotate = rotationKey.sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed);
-        boolean undoArea = areaUndoKey.sample(
-            Keyboard.isCreated() && controlHeld() && Keyboard.isKeyDown(Keyboard.KEY_Z) && !shiftHeld(),
-            changed);
-        if (undoArea && areaProjectorWorld()) undoLocalAreaSelection();
+        if (areaSelectionInput.tick(localArea, areaProjectorWorld() && !localAreaFinishing)) localAreaView = null;
         if (!projectorWorld() || state == null || mc.theWorld != snapshotWorld) return;
         if (!rotate
             || HologramWorldFlow.intent(worldStage(), HologramWorldFlow.Gesture.ROTATE)
@@ -797,17 +814,17 @@ public final class HologramClient {
         return worldTarget(adjacent).anchor;
     }
 
-    private static boolean altHeld() {
+    static boolean altHeld() {
         return Keyboard.isCreated()
             && (Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU));
     }
 
-    private static boolean controlHeld() {
+    static boolean controlHeld() {
         return Keyboard.isCreated()
             && (Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL));
     }
 
-    private static boolean shiftHeld() {
+    static boolean shiftHeld() {
         return Keyboard.isCreated()
             && (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT));
     }
@@ -1097,6 +1114,10 @@ public final class HologramClient {
         receivedAt = now;
         HologramJobVisuals.bind(next);
         HologramRenderer.snapshotChanged(state, next);
+        if (state != null && state.data.getBoolean("areaImporting")
+            && !nbt.getBoolean("areaImporting")
+            && nbt.getBoolean("areaImported")
+            && "area".equals(nbt.getString("blueprintSource"))) HologramLibraryClient.INSTANCE.clearSelection();
         state = next;
         HologramUiConfiguration.observePresetSnapshot(next);
         HologramBackgroundTasks.snapshot(next);

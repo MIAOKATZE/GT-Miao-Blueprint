@@ -51,7 +51,7 @@ public final class TestLabWorldProvider extends WorldProvider {
 
     @Override
     public ChunkCoordinates getEntrancePortalLocation() {
-        TestLabZone zone = TestLab.configuration().zones.get(0);
-        return new ChunkCoordinates(zone.x + 8, zone.y + 1, zone.z + 8);
+        TestLabZone zone = TestLab.configuredEntrance();
+        return zone == null ? null : new ChunkCoordinates(zone.x + 8, zone.y + 1, zone.z + 8);
     }
 }

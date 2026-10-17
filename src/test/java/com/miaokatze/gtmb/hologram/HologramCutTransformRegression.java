@@ -110,6 +110,50 @@ public final class HologramCutTransformRegression {
         HologramCutTransforms.apply(entry, new CutTransforms.Transform(1, 0, 0, 0), 0, 0, 0);
         SimpleAssert.eq(1, calls[0], "closed exact registration no longer runs");
         SimpleAssert.that(entry.equals(original), "all extension operations preserve raw original");
+        sparsePoses(entry);
+    }
+
+    private static void sparsePoses(NBTTagCompound full) {
+        NBTTagCompound sparse = (NBTTagCompound) full.copy();
+        sparse.setInteger("sizeX", 4);
+        sparse.setInteger("selectionVersion", 1);
+        sparse.setInteger("selectedCells", 2);
+        NBTTagList cells = sparse.getTagList("cells", 10);
+        for (int i = 0; i < cells.tagCount(); i++) {
+            cells.getCompoundTagAt(i)
+                .setInteger("x", i == 0 ? 0 : 3);
+            cells.getCompoundTagAt(i)
+                .setInteger("y", 0);
+            cells.getCompoundTagAt(i)
+                .setInteger("z", 0);
+        }
+        NBTTagCompound original = (NBTTagCompound) sparse.copy();
+        for (int x = 0; x < 4; x++)
+            for (int y = 0; y < 4; y++) for (int z = 0; z < 4; z++) for (int mirror = 0; mirror < 8; mirror++) {
+                CutTransforms.Transform pose = new CutTransforms.Transform(y, x, z, mirror);
+                NBTTagCompound transformed = HologramCutTransforms.apply(sparse, pose, 10, 80, 10);
+                try {
+                    HologramCutEntry.validate(transformed);
+                } catch (java.io.IOException invalid) {
+                    throw new AssertionError("every transformed sparse mask remains complete and bounded", invalid);
+                }
+                NBTTagList changed = transformed.getTagList("cells", 10);
+                SimpleAssert.eq(2, changed.tagCount(), "poses never fill unselected gaps with air");
+                for (int i = 0; i < changed.tagCount(); i++) {
+                    int[] expected = pose.point(i == 0 ? 0 : 3, 0, 0, 4, 1, 1);
+                    NBTTagCompound cell = changed.getCompoundTagAt(i);
+                    SimpleAssert.that(
+                        cell.getInteger("x") == expected[0] && cell.getInteger("y") == expected[1]
+                            && cell.getInteger("z") == expected[2],
+                        "selected cells and mask share one exact pose");
+                }
+                SimpleAssert.eq(
+                    "minecraft:air",
+                    changed.getCompoundTagAt(1)
+                        .getString("block"),
+                    "selected air survives every rotation and mirror");
+                SimpleAssert.that(sparse.equals(original), "pose previews never edit the original sparse clipboard");
+            }
     }
 
     private static void identityPreviewEnvelope(NBTTagCompound entry, NBTTagCompound original) {

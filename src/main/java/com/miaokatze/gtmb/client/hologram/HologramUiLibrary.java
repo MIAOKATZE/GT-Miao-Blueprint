@@ -258,7 +258,8 @@ final class HologramUiLibrary {
         int x = HologramScreenLayout.COMPACT_PANEL_X, w = HologramScreenLayout.COMPACT_PANEL_WIDTH;
         NBTTagList presets = ui.session.state().data.getTagList("presets", 10);
         drawRect(x, 57, x + w, 314, 0xef172f36);
-        ui.canvas.text("蓝图库 · " + presets.tagCount() + " 项", x + 5, 62, w - 10, 0xf5e4b9);
+        ui.canvas.text("蓝图库 · " + presets.tagCount() + " 项", x + 5, 62, w - 70, 0xf5e4b9);
+        ui.canvas.button(303, x + w - 62, 60, 57, 15, "刷新", ui.session.editable(), mx, my);
         this.presetNameField.drawTextBox();
         if (this.presetNameField.getText()
             .isEmpty() && !this.presetNameField.isFocused()) ui.canvas.text("当前蓝图名称", x + 8, 83, w - 16, 0x647c7f);
@@ -333,6 +334,16 @@ final class HologramUiLibrary {
             17,
             "编辑所选",
             ui.session.editable() && ui.library.selectedPresetExists(),
+            mx,
+            my);
+        ui.canvas.button(
+            299,
+            x + 112,
+            241,
+            103,
+            17,
+            "放弃蓝图预设",
+            ui.session.editable() && !ui.session.state().cells.isEmpty(),
             mx,
             my);
         ui.canvas.button(142, x + 5, 261, 103, 17, "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"), true, mx, my);
@@ -467,7 +478,7 @@ final class HologramUiLibrary {
             ui.canvas.text(this.publicLibrary ? "切换客户端页，上传自己的蓝图" : "保存蓝图后可携带到其他服务器", x + 12, 158, w - 24, 0x8ba7ad);
         }
         ui.canvas.button(139, x + 5, 241, 103, 17, "编辑所选", idle && chosen, mx, my);
-        ui.canvas.button(206, x + 112, 241, 103, 17, "取消传输", library.busy(), mx, my);
+        ui.canvas.button(299, x + 112, 241, 103, 17, "放弃蓝图预设", idle && !ui.session.state().cells.isEmpty(), mx, my);
         ui.canvas.button(142, x + 5, 261, 103, 17, "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"), true, mx, my);
         ui.canvas.button(143, x + 112, 261, 103, 17, "覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"), true, mx, my);
         ui.canvas.button(203, x + 5, 281, 103, 17, this.publicLibrary ? "下载至客户端" : "上传 / 更新公库", idle && chosen, mx, my);
@@ -569,12 +580,12 @@ final class HologramUiLibrary {
             395,
             0xb9d5d4);
         ui.canvas.button(
-            220,
+            ui.processing.processingReady() ? 297 : 220,
             41,
             239,
             143,
             17,
-            ui.processing.processingReady() ? "重新处理蓝图" : "开始蓝图处理流程",
+            ui.processing.processingReady() ? "重新进行蓝图预设" : "开始蓝图处理流程",
             ui.session.editable() && !ui.session.state().cells.isEmpty(),
             mx,
             my);
@@ -631,7 +642,8 @@ final class HologramUiLibrary {
         }
         ui.canvas.text(this.overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动", 96, 106, 486, 0xf5e4b9);
         ui.canvas.text(
-            this.overwriteReview ? "将以当前蓝图替换：" + this.overwriteName : "当前蓝图尚未保存；继续将放弃这些改动并切换蓝图。",
+            this.overwriteReview ? "将以当前蓝图替换：" + this.overwriteName
+                : this.deferredLibraryAction == 299 ? "放弃当前蓝图预设及未保存改动，返回蓝图库。已保存文件保留。" : "当前蓝图尚未保存；继续将放弃这些改动并切换蓝图。",
             96,
             138,
             486,
@@ -647,8 +659,16 @@ final class HologramUiLibrary {
             486,
             0x94afb4);
         ui.canvas.button(225, 96, 201, 230, 22, "取消", true, mx, my);
-        ui.canvas
-            .button(224, 338, 201, 244, 22, this.overwriteReview ? "确认覆盖保存" : "放弃改动并继续", ui.session.editable(), mx, my);
+        ui.canvas.button(
+            224,
+            338,
+            201,
+            244,
+            22,
+            this.overwriteReview ? "确认覆盖保存" : "放弃改动并继续",
+            ui.session.editable() || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0,
+            mx,
+            my);
     }
 
     void drawLibraryAdmin(int mx, int my) {
@@ -865,13 +885,25 @@ final class HologramUiLibrary {
 
     boolean confirmOverwrite(int id) {
         if (id == 224 && this.overwriteReview) {
+            if (!ui.session.editable()) return true;
             if (ui.canvas.rejectLocalPlanAction(id)) return true;
+            NBTTagList rows = HologramLibraryClient.dedicated() ? HologramLibraryClient.INSTANCE.rows(false)
+                : ui.session.state().data.getTagList("presets", 10);
+            boolean found = false;
+            for (int i = 0; i < rows.tagCount(); i++) if (overwriteTarget.equals(
+                rows.getCompoundTagAt(i)
+                    .getString("id")))
+                found = true;
+            if (!found) {
+                overwriteReview = false;
+                ui.session.notice("覆盖目标已变化，请刷新蓝图库后重新选择");
+                return true;
+            }
             NBTTagCompound request = ui.library.blueprintSaveOptions();
             request.setString("presetId", this.overwriteTarget);
             request.setBoolean("confirmOverwrite", true);
             this.overwriteReview = false;
-            if (HologramLibraryClient.dedicated() && !this.publicLibrary)
-                HologramLibraryClient.INSTANCE.expectDraftDownload();
+            HologramLibraryClient.INSTANCE.expectDraftDownload();
             ui.session.send("saveBlueprintReplace", request, true);
             this.presetSaveSequence = ui.session.sequence();
             return true;
@@ -902,6 +934,12 @@ final class HologramUiLibrary {
     boolean toggleOverwriteMode(int id) {
         if (id == 222) {
             this.overwriteMode = !this.overwriteMode;
+            if (this.overwriteMode && HologramLibraryClient.dedicated() && this.publicLibrary) {
+                this.publicLibrary = false;
+                this.libraryOffset = 0;
+                ui.session.notice("请在客户端蓝图库选择覆盖目标；公库使用上传／更新公库");
+                HologramLibraryClient.INSTANCE.refreshLocal();
+            }
             this.overwriteTarget = this.overwriteName = "";
             return true;
         }
@@ -909,6 +947,12 @@ final class HologramUiLibrary {
     }
 
     boolean prepareLibraryNavigation(int id) {
+        if (id == 299 && !discardConfirmed) {
+            if (!ui.session.editable()) return true;
+            this.discardReview = true;
+            this.deferredLibraryAction = id;
+            return true;
+        }
         boolean rowSelection = id >= 14000 && id < 15000;
         boolean switching = id == 139 || id == 141 || rowSelection || id == 161;
         if (switching && (!this.overwriteMode || !rowSelection)
@@ -955,6 +999,16 @@ final class HologramUiLibrary {
     boolean activateControl(int id) {
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
+            case 303:
+                refreshLibrary();
+                return true;
+            case 299:
+                if (discardConfirmed && ui.session.editable()) {
+                    NBTTagCompound discard = new NBTTagCompound();
+                    discard.setLong("planRevision", ui.session.revision());
+                    ui.session.send("discardBlueprint", discard, true);
+                }
+                return true;
             case 141:
                 if (ui.session.editable() && ui.library.selectedPresetExists()) {
                     NBTTagCompound placement = new NBTTagCompound();
@@ -974,6 +1028,7 @@ final class HologramUiLibrary {
             case 149:
                 this.blueprintTab = true;
                 this.libraryDrawer = true;
+                refreshLibrary();
                 ui.memory.rememberUi();
                 return true;
             case 159:
@@ -991,6 +1046,7 @@ final class HologramUiLibrary {
             case 130:
                 this.blueprintTab = true;
                 this.libraryDrawer = true;
+                refreshLibrary();
                 ui.config.resetReview(false);
                 if (ui.session.state().data.getBoolean("virtual") && this.presetNameField.getText()
                     .isEmpty()) this.presetNameField.setText(ui.session.state().data.getString("virtualPresetName"));
@@ -1208,6 +1264,12 @@ final class HologramUiLibrary {
     }
 
     void acknowledgeSnapshot(HologramState next, SnapshotTransition change, boolean newSession) {
+        if (change.sourceChanged && ("area".equals(next.data.getString("blueprintSource"))
+            || "discarded".equals(next.data.getString("blueprintSource")))) {
+            HologramLibraryClient.INSTANCE.clearSelection();
+            overwriteMode = overwriteReview = false;
+            overwriteTarget = overwriteName = "";
+        }
         boolean saved = change.saveAck && !newSession;
         if (saved) {
             if (!next.data.getBoolean("blueprintOperationSuccess")) HologramLibraryClient.INSTANCE.cancelDraftReview();
@@ -1419,6 +1481,31 @@ final class HologramUiLibrary {
     void prepareInitialization() {
         if (ui.library.presetNameField() != null) ui.memory.rememberUi();
         if (HologramLibraryClient.dedicated()) HologramLibraryClient.INSTANCE.open();
+        else refreshLibrary();
+    }
+
+    private void refreshLibrary() {
+        if (HologramLibraryClient.dedicated()) HologramLibraryClient.INSTANCE.refreshLocal();
+        else ui.session.send("refreshPresetLibrary", null, false);
+    }
+
+    /** Modal controls are appended after the library rows; only the top modal may own this click. */
+    boolean consumeSwitchReviewMouse(int mx, int my, int button) {
+        if (!discardReview && !overwriteReview && !ui.processing.processingPresetSaveReview()) return false;
+        if (ui.processing.processingPresetSaveReview() && ui.processing.processingPresetField() != null)
+            ui.processing.processingPresetField()
+                .mouseClicked(mx, my, button);
+        Control control = switchReviewControl(ui.canvas.controls(), mx, my);
+        if (button == 0 && control != null && control.enabled) ui.router.activate(control.id);
+        return true;
+    }
+
+    static Control switchReviewControl(java.util.List<Control> controls, int mx, int my) {
+        for (int i = controls.size() - 1; i >= 0; i--) {
+            Control control = controls.get(i);
+            if ((control.id == 224 || control.id == 225) && control.contains(mx, my)) return control;
+        }
+        return null;
     }
 
     void initializeFields() {

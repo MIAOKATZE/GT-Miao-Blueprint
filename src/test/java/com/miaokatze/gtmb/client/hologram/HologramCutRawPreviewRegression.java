@@ -28,6 +28,16 @@ public final class HologramCutRawPreviewRegression {
         registeredHandlerRouting();
         AtomicInteger failures = new AtomicInteger();
         HologramCutRawPreviewWorld world = shell((cell, error) -> failures.incrementAndGet());
+        NBTTagCompound selectedAir = new NBTTagCompound();
+        selectedAir.setString("block", "minecraft:air");
+        selectedAir.setInteger("x", 4);
+        selectedAir.setInteger("y", 3);
+        selectedAir.setInteger("z", 4);
+        world.cells.put(HologramCutRawPreviewWorld.key(4, 3, 4), new HologramCutRawPreviewWorld.Cell(selectedAir));
+        check(world.blockExists(4, 3, 4) && world.isAirBlock(4, 3, 4), "selected air remains in the raw preview mask");
+        check(
+            !world.blockExists(3, 3, 4) && world.cell(3, 3, 4) == null,
+            "unselected gaps have no raw preview cell or renderable payload");
         NBTTagCompound row = new NBTTagCompound();
         row.setInteger("x", 2);
         row.setInteger("y", 3);

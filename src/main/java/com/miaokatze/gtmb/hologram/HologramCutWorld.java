@@ -125,14 +125,12 @@ final class HologramCutWorld {
     }
 
     static void apply(WorldServer world, NBTTagCompound entry, int ox, int oy, int oz, boolean air) throws IOException {
+        HologramCutEntry.validate(entry);
         HologramCutEntry
             .bounds(ox, oy, oz, entry.getInteger("sizeX"), entry.getInteger("sizeY"), entry.getInteger("sizeZ"));
         if (!(world.theChunkProviderServer.currentChunkLoader instanceof AnvilChunkLoader))
             throw new IOException("剪切需要可验证存盘的 Anvil 世界");
         NBTTagList cells = entry.getTagList("cells", 10);
-        if (cells.tagCount()
-            != HologramCutEntry.volume(entry.getInteger("sizeX"), entry.getInteger("sizeY"), entry.getInteger("sizeZ")))
-            throw new IOException("剪切记录不完整");
         HologramCutChunks.loadWithLightNeighbors(world, ox, oz, entry.getInteger("sizeX"), entry.getInteger("sizeZ"));
         List<TileEntity> tiles = new ArrayList<>();
         // Read every original NBT before touching the destination. Only root xyz are relocated.

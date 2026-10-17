@@ -681,6 +681,31 @@ public final class HologramAeBlueprint {
             }
             data.removeTag("lastAppliedMigration");
         }
+        if (data.hasKey("anchorGeneration")) {
+            work.roots.add("anchorGeneration");
+            if (!HologramNetworkBindings.validOwnerField(data, "anchorGeneration", true))
+                work.issue("unreviewed_tile_field", "blocker", "anchorGeneration", "量子网络世代必须为空值或规范 UUID");
+            else work.issue("quantum_migration_reset", "warning", "anchorGeneration", "原网络世代不写入新节点；由目标网络重新设置");
+            data.removeTag("anchorGeneration");
+        }
+        if (data.hasKey("recoveredPartDrops")) {
+            work.roots.add("recoveredPartDrops");
+            if (!data.hasKey("recoveredPartDrops", 9)) throw new IOException("Malformed GTSWN recovered part drops");
+            NBTTagList recovered = (NBTTagList) data.getTag("recoveredPartDrops");
+            if (recovered.tagCount() > 512 || recovered.tagCount() > 0 && recovered.func_150303_d() != 10)
+                throw new IOException("Malformed GTSWN recovered part drop entries");
+            for (int i = 0; i < recovered.tagCount(); i++) {
+                NBTTagCompound record = recovered.getCompoundTagAt(i);
+                ItemStack stack = !record.hasKey("Count", 99) || record.getTag("Count")
+                    .getId() > 4
+                    || record.getLong("Count") > Integer.MAX_VALUE
+                    || record.hasKey("tag") && !record.hasKey("tag", 10) ? null
+                        : HologramAeBlueprintSchemas.readStack(record);
+                if (stack == null) {
+                    work.issue("missing_physical_item", "blocker", "recoveredPartDrops/" + i, "迁移恢复的部件物品无效，必须明确移除");
+                } else work.materials.add(HologramAeBlueprintSchemas.nativeStack(stack));
+            }
+        }
         if (data.hasKey("partContainer")) {
             if (!data.hasKey("partContainer", 10)) throw new IOException("Malformed GTSWN part container");
             cable(work, data.getCompoundTag("partContainer"), new String[] { "partContainer" });
@@ -705,6 +730,7 @@ public final class HologramAeBlueprint {
                 "z",
                 "color",
                 "partContainer",
+                "recoveredPartDrops",
                 HologramDisplaySnapshot.QUANTUM_SIDES,
                 HologramNetworkBindings.GROUP,
                 HologramNetworkBindings.ROLE,
@@ -1763,7 +1789,7 @@ public final class HologramAeBlueprint {
                                 }
                             } else {
                                 try {
-                                    work.materials.add(nativeStack(stack));
+                                    work.materials.add(HologramGtCraftingResources.patternMaterial(nativeStack(stack)));
                                     if (stack.stackSize > limit) work.issue(
                                         "slot_overflow",
                                         "blocker",
@@ -2136,7 +2162,7 @@ public final class HologramAeBlueprint {
                                 stack.writeToNBT(clean);
                                 data.setTag(key, clean);
                             }
-                        } else work.materials.add(nativeStack(stack));
+                        } else work.materials.add(HologramGtCraftingResources.patternMaterial(nativeStack(stack)));
                     }
                 }
             }
