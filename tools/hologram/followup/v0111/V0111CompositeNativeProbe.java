@@ -658,8 +658,11 @@ public final class V0111CompositeNativeProbe {
         String[] labels={"activeTexture","clientTexture","matrixMode","depthWrite","depthFunc","blendSrc","blendDst","activeUnitTexture2D"};
         for(int i=0;i<names.length;i++)out.append(',').append(labels[i]).append('=').append(call(gl,"glGetInteger",names[i]));
         for(int name:new int[]{0x0b50,0x0b60,0x0be2,0x0bc0,0x0b71,0x0c11})out.append(",enabled:").append(Integer.toHexString(name)).append('=').append(call(gl,"glIsEnabled",name));
-        java.nio.FloatBuffer values=java.nio.ByteBuffer.allocateDirect(16).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
-        call(gl,"glGetFloat",0x0b00,values);out.append(",color=");for(int i=0;i<4;i++)out.append(values.get(i)).append('/');
+        java.nio.FloatBuffer values=java.nio.ByteBuffer.allocateDirect(64).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+        // Reflection is not rewritten by lwjgl3ify's LWJGL2 bytecode compatibility transformer.
+        try{call(gl,"glGetFloatv",0x0b00,values);proof.setProperty("lightingGlColorGetter","GL11.glGetFloatv(int,FloatBuffer)");}
+        catch(NoSuchMethodException lwjgl2){call(gl,"glGetFloat",0x0b00,values);proof.setProperty("lightingGlColorGetter","GL11.glGetFloat(int,FloatBuffer)");}
+        out.append(",color=");for(int i=0;i<4;i++)out.append(values.get(i)).append('/');
         return out.toString();
     }
 

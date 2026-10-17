@@ -185,7 +185,7 @@ public final class CompositeWorldWitness {
     private static Object lightAt(Object world,int x,int y,int z)throws Exception {
         Object out=nbt();putInt(out,"x",x);putInt(out,"y",y);putInt(out,"z",z);
         boolean client=(Boolean)get(world,"field_72995_K");Object provider=call(world,"func_72863_F");
-        Object chunks=get(provider,client?"field_73236_b":"loadedChunkHashMap");
+        Object chunks=get(provider,client?"field_73236_b":"field_73244_f");
         Object chunk=call(chunks,"func_76164_a",call(Class.forName("net.minecraft.world.ChunkCoordIntPair"),"func_77272_a",x>>4,z>>4));
         boolean valid=y>=0&&y<256&&Math.abs((long)x)<30000000&&Math.abs((long)z)<30000000;
         boolean real=valid&&chunk!=null&&!Class.forName("net.minecraft.world.chunk.EmptyChunk").isInstance(chunk);

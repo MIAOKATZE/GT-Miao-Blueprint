@@ -484,10 +484,44 @@ public final class HologramNativePlacementSmoke {
                 fill(player, java.util.Collections.singletonList(primary), false);
                 ItemStack[] before = inventory(player);
                 boolean placed = operate(session, target);
+                HologramSession actualSession = (HologramSession) session;
+                TileEntity actualTile = world.getTileEntity(x, y, z);
+                String actualIdentity = actualTile == null ? "none"
+                    : actualTile.getClass()
+                        .getName();
+                if (actualTile instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity) {
+                    gregtech.api.interfaces.tileentity.IGregTechTileEntity actualGt = (gregtech.api.interfaces.tileentity.IGregTechTileEntity) actualTile;
+                    actualIdentity += ":id=" + actualGt.getMetaTileID() + ":front=" + actualGt.getFrontFacing();
+                    if (actualGt
+                        .getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEBasicMachine)
+                        actualIdentity += ":main="
+                            + ((gregtech.api.metatileentity.implementations.MTEBasicMachine) actualGt
+                                .getMetaTileEntity()).mMainFacing;
+                }
+                String outcome = "scenario=" + scenario
+                    + ", returned="
+                    + placed
+                    + ", cellStatus="
+                    + target.status
+                    + ", sessionStatus="
+                    + actualSession.status
+                    + ", resourceError="
+                    + target.resourceError
+                    + ", block="
+                    + Block.blockRegistry.getNameForObject(world.getBlock(x, y, z))
+                    + ", metadata="
+                    + world.getBlockMetadata(x, y, z)
+                    + ", tile="
+                    + actualIdentity
+                    + ", materialsRemaining="
+                    + materialsCount(player)
+                    + ", inventoryRestored="
+                    + sameInventory(before, player);
+                System.out.println(PREFIX + "BASIC FACING TRANSACTION " + outcome);
                 if (scenario == 0) {
                     require(
                         placed && "placed".equals(target.status),
-                        "basic_full_nbt_restores_before_output_validation");
+                        "basic_full_nbt_restores_before_output_validation [" + outcome + "]");
                     NBTTagCompound actual = snapshot(world.getTileEntity(x, y, z));
                     require(
                         actual.getInteger("mID") == primary.getItemDamage() && actual.getInteger("mMainFacing") == 2
@@ -498,8 +532,8 @@ public final class HologramNativePlacementSmoke {
                     !placed && world.isAirBlock(x, y, z)
                         && world.getTileEntity(x, y, z) == null
                         && sameInventory(before, player),
-                    scenario == 1 ? "invalid_output_equal_to_restored_main_rolls_back_and_refunds"
-                        : "omitted_nbt_keeps_native_facing_validation_and_refunds");
+                    (scenario == 1 ? "invalid_output_equal_to_restored_main_rolls_back_and_refunds"
+                        : "omitted_nbt_keeps_native_facing_validation_and_refunds") + " [" + outcome + "]");
             }
         } finally {
             player.rotationYaw = oldYaw;

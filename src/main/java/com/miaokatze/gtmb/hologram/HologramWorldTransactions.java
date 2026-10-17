@@ -53,6 +53,7 @@ final class HologramWorldTransactions {
         try {
             return operateChecked(s, c, index);
         } catch (RuntimeException | LinkageError failure) {
+            if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) failure.printStackTrace(System.err);
             c.status = "unsupported";
             s.status = "设备状态或回收数据无法读取，该格未施工";
             return false;
@@ -431,6 +432,22 @@ final class HologramWorldTransactions {
                         }
                     nativeCancelled = events.cancelled();
                 }
+                if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) System.out.println(
+                    "[GTMB-NATIVE-CONTRACTS] placementResult=" + result
+                        + ", nativePlacement="
+                        + nativePlacement
+                        + ", nativeCancelled="
+                        + nativeCancelled
+                        + ", reservationUsed="
+                        + (reservation == null ? "none" : reservation.used)
+                        + ", planned="
+                        + Block.blockRegistry.getNameForObject(c.block)
+                        + ":"
+                        + c.meta
+                        + ", actual="
+                        + Block.blockRegistry.getNameForObject(w.getBlock(c.x, c.y, c.z))
+                        + ":"
+                        + w.getBlockMetadata(c.x, c.y, c.z));
                 if (result == PlaceResult.STOP) {
                     HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
                     rollbackMaterials(s, transaction, inventory);
@@ -675,6 +692,7 @@ final class HologramWorldTransactions {
                 s.status = cacheNotice;
             }
         } catch (java.io.IOException | RuntimeException | LinkageError e) {
+            if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) e.printStackTrace(System.err);
             if (newQuantumJoin != null) {
                 try {
                     HologramNetworkBindings.rollbackJoin(newQuantumJoin, s.player);
