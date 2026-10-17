@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.Random;
+import java.util.Set;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.Mod;
@@ -26,6 +27,8 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 @Mod(modid = "gtmb_v0110_background_save_probe", name = "GTMB background real Save stimulus", version = "1")
 public final class V0110BackgroundSaveProbe {
     private final Properties proof = new Properties();
+    private int preLoginRetries;
+    private boolean enteredFixtureWorld;
     private File output;
     private Object mc, actor, backend;
     private boolean client, server, done, fixtureReady, configRequested, restoreRequested, configured;
@@ -293,6 +296,7 @@ public final class V0110BackgroundSaveProbe {
                 call(fml, "connectToServer", gui, construct("net.minecraft.client.multiplayer.ServerData", "GTMB real background Save", address));
                 advance(1); return;
             }
+            if(recoverPreLogin(gui,world,player))return;
             if (world == null || player == null) return;
             check(!(Boolean) call(call(call(mc, "func_147114_u"), "func_147298_b"), "func_150731_c"), "actual dedicated Netty socket required");
             if (phase == 1) {
@@ -332,16 +336,18 @@ public final class V0110BackgroundSaveProbe {
                     proof.setProperty("saveReviewRoute", "observer terminal before optional AE review"); advance(11);
                 }
             }
+            Object selection = phase >= 2 && phase <= 4 ? call(clientType("HologramClient"), "localAreaSelection") : null;
             if (phase == 2) {
-                if (!bool(data, "areaSelecting")) return;
-                areaPoint(state, 1, 0, 80, 0); advance(3); return;
+                if (selection == null || !bool(selection, "areaSelecting")) return;
+                areaPoint(1, 0, 80, 0); advance(3); return;
             }
             if (phase == 3) {
-                if (!Arrays.equals((int[]) call(data, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0 })) return;
-                areaPoint(state, 2, sourceWidth - 1, 79 + sourceHeight, sourceDepth - 1); advance(4); return;
+                if (selection == null || !Arrays.equals((int[]) call(selection, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0 })) return;
+                areaPoint(2, sourceWidth - 1, 79 + sourceHeight, sourceDepth - 1); advance(4); return;
             }
             if (phase == 4) {
-                if (!Arrays.equals((int[]) call(data, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0, sourceWidth - 1, 79 + sourceHeight, sourceDepth - 1 })) return;
+                if (selection == null || !Arrays.equals((int[]) call(selection, "func_74759_k", "areaPoints"), new int[] { 0, 80, 0, sourceWidth - 1, 79 + sourceHeight, sourceDepth - 1 })) return;
+                proof.setProperty("areaSelectionStimulus", "production localAreaPoint and actual localAreaSelection geometry; real worldAction finish submits final selection once");
                 installTransportFailureWatch();
                 runtimeMetricSession = String.valueOf(get(state, "session")); runtimeMetricToken = 0;
                 runtimeMetricsSnapshot("before-import");
@@ -1212,13 +1218,9 @@ public final class V0110BackgroundSaveProbe {
         call(construct("com.miaokatze.gtmb.hologram.HologramLibraryCommand"), "func_71515_b", host,
             new String[] { "set", String.valueOf(up), String.valueOf(down), String.valueOf(quota) });
     }
-    private void areaPoint(Object state, int point, int x, int y, int z) throws Exception {
-        Object packet = construct("net.minecraft.nbt.NBTTagCompound");
-        call(packet, "func_74778_a", "action", "areaPoint"); call(packet, "func_74778_a", "session", get(state, "session"));
-        call(packet, "func_74772_a", "planRevision", call(get(state, "data"), "func_74763_f", "planRevision"));
-        for (Object[] v : new Object[][] { { "point", point }, { "x", x }, { "y", y }, { "z", z } }) call(packet, "func_74768_a", v[0], v[1]);
-        call(packet, "func_74778_a", "mode", "replace");
-        call(Class.forName("com.miaokatze.gtmb.hologram.HologramNetwork"), "sendAction", packet);
+    private void areaPoint(int point, int x, int y, int z) throws Exception {
+        check((Boolean) call(clientType("HologramClient"), "localAreaPoint", point, x, y, z, "replace"),
+            "production local area point accepted");
     }
     private boolean displayedSource(Object gui, Object ui, Object state) throws Exception {
         return call(clientType("HologramUiDiagnostics"), "readDiagnosticField", gui, "state") == state
@@ -1321,6 +1323,45 @@ public final class V0110BackgroundSaveProbe {
         }
     }
     private static void check(boolean ok, String message) { if (!ok) throw new IllegalStateException(message); }
+    /** Test-only: one bounded reconnect before world entry, with zero actual product codec requests. */
+    private boolean recoverPreLogin(Object gui,Object world,Object player)throws Exception {
+        if(world!=null||player!=null) {
+            enteredFixtureWorld=true;
+            if(preLoginRetries==1)proof.setProperty("loginRecoverySucceeded","true");
+            return false;
+        }
+        if(phase!=1||enteredFixtureWorld||gui==null||!gui.getClass().getName().equals("net.minecraft.client.gui.GuiDisconnected"))return false;
+        Object sample=call(Class.forName("com.miaokatze.gtmb.hologram.HologramRuntimeMetrics"),"snapshot");
+        check((Boolean)call(sample,"func_74767_n","enabled"),"pre-login recovery requires enabled real codec observation");
+        Object network=call(sample,"func_74775_l","network");long requests=0;boolean observed=false;
+        for(Object key:(Set<?>)call(network,"func_150296_c")) {
+            Object row=call(network,"func_74775_l",key.toString());
+            if((Boolean)call(row,"func_74764_b","c2sTxPackets")){observed=true;requests+=(Long)call(row,"func_74763_f","c2sTxPackets");}
+        }
+        check(observed&&requests==0,"pre-login recovery forbidden after any real product C2S packet");
+        Properties evidence=new Properties();
+        evidence.setProperty("failureDomain","pre-login-transport");evidence.setProperty("productLatencySample","false");
+        evidence.setProperty("attempt",String.valueOf(preLoginRetries+1));evidence.setProperty("driverPhase",String.valueOf(phase));
+        evidence.setProperty("observedAtNanos",String.valueOf(System.nanoTime()));evidence.setProperty("observedWallMillis",String.valueOf(System.currentTimeMillis()));
+        evidence.setProperty("guiClass",gui.getClass().getName());evidence.setProperty("guiIdentity",String.valueOf(System.identityHashCode(gui)));
+        Object reason=get(gui,"field_146304_f");String text=String.valueOf(call(reason,"func_150260_c"));
+        evidence.setProperty("reason",text);evidence.setProperty("reasonComponent",String.valueOf(reason));
+        evidence.setProperty("worldEverEntered",String.valueOf(enteredFixtureWorld));evidence.setProperty("productC2STxPackets",String.valueOf(requests));
+        store("pre-login-disconnect-"+(preLoginRetries+1)+".properties",evidence);
+        proof.setProperty("preLoginRetryLimit","1");proof.setProperty("preLoginTransportFailures",String.valueOf(preLoginRetries+1));
+        if(preLoginRetries!=0) {
+            proof.setProperty("failureDomain","pre-login-transport");proof.setProperty("productLatencySample","false");
+            throw new IllegalStateException("second pre-login transport disconnect; no further retry: "+text);
+        }
+        proof.setProperty("firstPreLoginGuiClass",gui.getClass().getName());proof.setProperty("firstPreLoginReason",text);
+        preLoginRetries=1;proof.setProperty("preLoginRetries","1");persist("RUNNING");
+        String address=System.getProperty("gtmb.v0110.address","127.0.0.1:25678");
+        check(address.equals("127.0.0.1:25678"),"pre-login retry uses only the existing owned loopback endpoint");
+        Object fml=call(Class.forName("cpw.mods.fml.client.FMLClientHandler"),"instance");call(fml,"setupServerList");
+        call(fml,"connectToServer",gui,construct("net.minecraft.client.multiplayer.ServerData","GTMB bounded pre-login recovery",address));
+        return true;
+    }
+
     private static Field member(Class<?> type, String name) throws Exception {
         for (Class<?> c = type; c != null; c = c.getSuperclass()) try { Field f = c.getDeclaredField(name); f.setAccessible(true); return f; } catch (NoSuchFieldException ignored) { }
         throw new NoSuchFieldException(type.getName() + "." + name);

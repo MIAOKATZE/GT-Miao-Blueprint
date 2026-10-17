@@ -1,6 +1,12 @@
-# v0.1.10 packaged native stimulus (prepared, not executed)
+# v0.1.10 packaged native stimulus
 
-`V0110BackgroundSaveProbe.java` is a separate FML addon. It replaces no product class and supplies no synthetic state, transfer, disk result, or Save ACK. Root owns all compilation, installation, game/server runs, OS input, and Git. This preparation has not run javac, Gradle, or Minecraft and is not a PASS receipt.
+`V0110BackgroundSaveProbe.java` is a separate FML addon. It replaces no product class and supplies no synthetic state, transfer, disk result, or Save ACK. Root owns all compilation, installation, game/server runs, OS input, and Git. This document describes tooling and prerequisites; only exact source/addon-bound case receipts establish a result.
+
+The canonical BG driver uses the current production selection path: both corners call `HologramClient.localAreaPoint(...,"replace")`, and phases2–4 read the real bounded `localAreaSelection()` model. They do not send legacy per-point Actions or wait for `state.data.areaPoints`. Final import still calls the real `worldAction("finishAreaSelection")`, which submits the completed selection once; exact server capture and every later processing/UI/Save/ACK/guidance assertion remain unchanged. Local point feedback is not an authoritative import ACK.
+
+BG and loaded-latency addons allow at most one ordinary FML reconnect only in phase1, before any world/player has ever been observed, after a real `GuiDisconnected`, and with enabled actual codec counters proving zero product C2S packets. Each disconnect preserves its real GUI class/identity, reason and timestamps. A second disconnect terminates with `failureDomain=pre-login-transport` and `productLatencySample=false`; no later phase is retried and no task deadline is reset. Earlier failed cases retain their own receipts. The300-second client/server socket setting belongs only to the loaded latency benchmark; this login recovery does not change product work, default timeouts or budgets.
+
+The canonical runner reads only the allowlisted `background-client.properties` and `background-server.properties` below a canonical owned case parent. It verifies the actual shared Windows handle before and after reading, discards replaced/deleted-handle bytes and retries only the known same-volume NTFS `$Extend/$Deleted` race up to8 times at10ms. Outside redirects and unknown leaves remain failures; global containment remains strict. Canonical `ROOT` stays at `parents[4]` and has no preparation-copy path dependency.
 
 Build through the new `build_addon.py` using root's existing Java8 `--javac` and `--fml-compile-jar` (same FML-only compile contract as v019). Choose a fresh `--output` under workspace `build`, and keep the default `gtmb-v0110-background-save-probe.jar`. Install the same resulting addon on the two existing owned `build/hologram-packaged-v018-mui/{client,server}` directories. Use actual packaged RC2 GTMB on both sides; only root determines/version-binds that artifact.
 
@@ -31,6 +37,8 @@ Server adds `-Dgtmb.v0110.backgroundServer=true`. Client adds:
 ```
 
 Disable every other optional client driver, including v019 background/download/CTM and the native CUT driver. The fixture's actual loopback connection must be a dedicated Netty socket. The addon checks actual loaded source and actor chunks before submitting the normal area commands. The server builds 4096 source blocks including a real chest, delivers a projector, and changes download bandwidth through the actual library admin console command to1 KiB/s; all original limits are restored on terminal cleanup. This slower link makes UI-close background ownership observable; it is not a throughput benchmark.
+
+The artificial1 KiB/s BG limit is a functional continuation fixture only. Its Save/download durations must not be used for bandwidth or performance multipliers against ordinary/default-bandwidth runs. Use the separate loaded-workspace case for like-for-like interaction measurements. Historical `V0110LatencyProbe.java`/`run_latency.py` remain compatibility diagnostics and do not represent modern local interaction performance.
 
 The background run checks production CUT entry then the production GuiOpenEvent Escape handler. This is a bounded handler assertion, not OS keyboard evidence. Existing production CUT native flow remains responsible for comprehensive keyboard/cache/late-ACK coverage.
 

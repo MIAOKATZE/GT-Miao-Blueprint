@@ -20,6 +20,8 @@ public final class V0110LoadedLatencyProbe {
     private final Properties proof=new Properties(), measurements=new Properties();
     private final AtomicLong rx=new AtomicLong();
     private final List<Envelope> envelopes=new ArrayList<Envelope>();
+    private int preLoginRetries;
+    private boolean enteredFixtureWorld;
     private File output;
     private Object mc, actor, metrics;
     private Consumer<Object> receiver,progressReceiver;
@@ -108,6 +110,7 @@ public final class V0110LoadedLatencyProbe {
                 Object fml=call(Class.forName("cpw.mods.fml.client.FMLClientHandler"),"instance"); call(fml,"setupServerList");
                 call(fml,"connectToServer",gui,construct("net.minecraft.client.multiplayer.ServerData","GTMB latency",System.getProperty("gtmb.v0110.address","127.0.0.1:25678"))); phase=1; return;
             }
+            if(recoverPreLogin(gui,world,player))return;
             if (world==null||player==null) { check(phase<2,"connected test world was lost before completion"); return; }
             check(!(Boolean)call(call(call(mc,"func_147114_u"),"func_147298_b"),"func_150731_c"),"real dedicated socket");
             if (phase==1) {
@@ -515,6 +518,45 @@ public final class V0110LoadedLatencyProbe {
     private static boolean bool(Object nbt,String name)throws Exception{return (Boolean)call(nbt,"func_74767_n",name);}
     private static String str(Object nbt,String name)throws Exception{return (String)call(nbt,"func_74779_i",name);}
     private static void check(boolean value,String message){if(!value)throw new IllegalStateException(message);}
+    /** Test-only: one bounded reconnect before world entry, with zero actual product codec requests. */
+    private boolean recoverPreLogin(Object gui,Object world,Object player)throws Exception {
+        if(world!=null||player!=null) {
+            enteredFixtureWorld=true;
+            if(preLoginRetries==1)proof.setProperty("loginRecoverySucceeded","true");
+            return false;
+        }
+        if(phase!=1||enteredFixtureWorld||gui==null||!gui.getClass().getName().equals("net.minecraft.client.gui.GuiDisconnected"))return false;
+        Object sample=call(Class.forName("com.miaokatze.gtmb.hologram.HologramRuntimeMetrics"),"snapshot");
+        check((Boolean)call(sample,"func_74767_n","enabled"),"pre-login recovery requires enabled real codec observation");
+        Object network=call(sample,"func_74775_l","network");long requests=0;boolean observed=false;
+        for(Object key:(Set<?>)call(network,"func_150296_c")) {
+            Object row=call(network,"func_74775_l",key.toString());
+            if((Boolean)call(row,"func_74764_b","c2sTxPackets")){observed=true;requests+=(Long)call(row,"func_74763_f","c2sTxPackets");}
+        }
+        check(observed&&requests==0,"pre-login recovery forbidden after any real product C2S packet");
+        Properties evidence=new Properties();
+        evidence.setProperty("failureDomain","pre-login-transport");evidence.setProperty("productLatencySample","false");
+        evidence.setProperty("attempt",String.valueOf(preLoginRetries+1));evidence.setProperty("driverPhase",String.valueOf(phase));
+        evidence.setProperty("observedAtNanos",String.valueOf(System.nanoTime()));evidence.setProperty("observedWallMillis",String.valueOf(System.currentTimeMillis()));
+        evidence.setProperty("guiClass",gui.getClass().getName());evidence.setProperty("guiIdentity",String.valueOf(System.identityHashCode(gui)));
+        Object reason=get(gui,"field_146304_f");String text=String.valueOf(call(reason,"func_150260_c"));
+        evidence.setProperty("reason",text);evidence.setProperty("reasonComponent",String.valueOf(reason));
+        evidence.setProperty("worldEverEntered",String.valueOf(enteredFixtureWorld));evidence.setProperty("productC2STxPackets",String.valueOf(requests));
+        store("pre-login-disconnect-"+(preLoginRetries+1)+".properties",evidence);
+        proof.setProperty("preLoginRetryLimit","1");proof.setProperty("preLoginTransportFailures",String.valueOf(preLoginRetries+1));
+        if(preLoginRetries!=0) {
+            proof.setProperty("failureDomain","pre-login-transport");proof.setProperty("productLatencySample","false");
+            throw new IllegalStateException("second pre-login transport disconnect; no further retry: "+text);
+        }
+        proof.setProperty("firstPreLoginGuiClass",gui.getClass().getName());proof.setProperty("firstPreLoginReason",text);
+        preLoginRetries=1;proof.setProperty("preLoginRetries","1");persist("RUNNING");
+        String address=System.getProperty("gtmb.v0110.address","127.0.0.1:25678");
+        check(address.equals("127.0.0.1:25678"),"pre-login retry uses only the existing owned loopback endpoint");
+        Object fml=call(Class.forName("cpw.mods.fml.client.FMLClientHandler"),"instance");call(fml,"setupServerList");
+        call(fml,"connectToServer",gui,construct("net.minecraft.client.multiplayer.ServerData","GTMB bounded pre-login recovery",address));
+        return true;
+    }
+
     private static Field member(Class<?> type,String name)throws Exception{for(Class<?> c=type;c!=null;c=c.getSuperclass())try{Field f=c.getDeclaredField(name);f.setAccessible(true);return f;}catch(NoSuchFieldException ignored){}throw new NoSuchFieldException(type.getName()+"."+name);}
     private static Object get(Object o,String name)throws Exception{return member(o instanceof Class?(Class<?>)o:o.getClass(),name).get(o instanceof Class?null:o);}
     private static void set(Object o,String name,Object value)throws Exception{member(o.getClass(),name).set(o,value);}

@@ -213,11 +213,48 @@ def changed_server_properties(original, world):
     return ("\n".join(lines) + "\n").encode("latin-1")
 
 
-def shared_bytes(path):
-    """Allow the addon's Windows replace/open race without granting false terminal observations."""
+RECEIPT_LEAVES = frozenset(("background-client.properties", "background-server.properties"))
+RECEIPT_READ_ATTEMPTS = 8
+
+
+class _ReceiptReplaced(Exception):
+    """A known NTFS delete-pending leaf: discard this observation and reopen by name."""
+
+
+def receipt_named_path(path):
+    """Canonicalize the stable parent, retaining only a whitelisted plain receipt leaf."""
+    path = standard_namespace(Path(path).absolute())
+    if path.name not in RECEIPT_LEAVES:
+        raise ValueError("Only known atomically replaced background receipt leaves may use shared reads")
+    parent = within(path.parent, OUTPUTS, exists=True)
+    outputs = within(OUTPUTS, ROOT, exists=True)
+    if parent.parent != outputs or not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", parent.name):
+        raise ValueError("Receipt must be directly inside a canonical owned case directory")
+    return parent / path.name
+
+
+def receipt_target(resolved, named):
+    """Retry only the exact same-volume NTFS $Extend/$Deleted race, never outside links."""
+    resolved = standard_namespace(resolved)
+    parts = resolved.parts
+    if (os.name == "nt" and len(parts) == 4 and resolved.drive.casefold() == named.drive.casefold()
+            and parts[1].casefold() == "$extend" and parts[2].casefold() == "$deleted"
+            and re.fullmatch(r"[0-9a-fA-F]{16,128}", parts[3])):
+        raise _ReceiptReplaced(str(resolved))
+    resolved.relative_to(named.parent)  # Outside symlink/junction targets remain immediate failures.
+    if resolved != named:
+        raise ValueError("Receipt leaf redirected away from its canonical owned name")
+
+
+def _read_shared_receipt(path):
+    """Open the current name; validate the actual Windows handle both before and after reading."""
     if os.name != "nt":
         try:
-            return path.read_bytes()
+            with path.open("rb") as stream:
+                receipt_target(path.resolve(strict=True), path)
+                data = stream.read()
+                receipt_target(path.resolve(strict=False), path)
+                return data
         except FileNotFoundError:
             return b""
     import msvcrt
@@ -225,19 +262,56 @@ def shared_bytes(path):
     api.CreateFileW.restype = ctypes.c_void_p
     api.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
                                ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+    api.GetFinalPathNameByHandleW.restype = ctypes.c_ulong
+    api.GetFinalPathNameByHandleW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+                                           ctypes.c_ulong, ctypes.c_ulong]
+    api.CloseHandle.argtypes = [ctypes.c_void_p]
+    api.CloseHandle.restype = ctypes.c_int
     handle = api.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
     if handle == ctypes.c_void_p(-1).value:
         code = ctypes.get_last_error()
         if code in (2, 3):
             return b""
         raise ctypes.WinError(code)
-    descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    def verify_handle():
+        size = 1024
+        while True:
+            buffer = ctypes.create_unicode_buffer(size)
+            length = api.GetFinalPathNameByHandleW(handle, buffer, size, 0)
+            if not length:
+                raise ctypes.WinError(ctypes.get_last_error())
+            if length < size:
+                receipt_target(Path(buffer.value), path)
+                return
+            size = length + 1
+
+    try:
+        verify_handle()  # Never read bytes from a handle redirected outside the owned case.
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        api.CloseHandle(handle)
+        raise
     with os.fdopen(descriptor, "rb") as stream:
-        return stream.read()
+        data = stream.read()
+        verify_handle()  # A replaced/deleted handle's bytes are discarded, even if read succeeded.
+        return data
+
+
+def shared_bytes(path):
+    """Bounded retry of known atomic receipt races; global within() remains strict."""
+    for attempt in range(RECEIPT_READ_ATTEMPTS):
+        named = receipt_named_path(path)  # Revalidate canonical parent on EVERY attempt.
+        try:
+            receipt_target(named.resolve(strict=False), named)
+            return _read_shared_receipt(named)
+        except _ReceiptReplaced as replaced:
+            if attempt + 1 == RECEIPT_READ_ATTEMPTS:
+                raise RuntimeError("Receipt remained NTFS delete-pending after bounded reopen retries") from replaced
+            time.sleep(0.01)
 
 
 def properties(path):
-    text = shared_bytes(within(path, ROOT)).decode("latin-1")
+    text = shared_bytes(path).decode("latin-1")
     result = {}
     for line in text.splitlines():
         if not line or line.lstrip().startswith(("#", "!")):
