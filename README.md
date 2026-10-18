@@ -20,89 +20,267 @@
   <a href="https://miaokatze.com/">主页 / Homepage</a>
 </p>
 
-从一台多方块机器到整片工厂：用投影仪查看结构，导入区域、识别结构并编辑蓝图，再用真实材料施工。搬家时，使用当前存档中每位玩家独立保存的**剪切暂存队列**，通过原生数据快照保留方块、机器数据与库存。
+从一台多方块机器到整片工厂，**先看清结构，再编辑蓝图，最后用自己的材料施工。** 猫猫蓝图把结构投影、区域导入、三维编辑、精确材料核对与剪切搬家放进同一把投影仪：既可以设计下一条产线，也可以把已经建好的机器排队搬走。
 
-From one multiblock to a factory: preview structures, import regions, identify structures and edit blueprints, then **construct them with your materials**. Move existing builds with a persistent **Cut queue**, stored separately for each player in the current save and carrying block, machine and inventory data through native snapshots.
+*Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
 <p align="center">
-  <a href="README/screenshots/projector-preview.png"><img src="README/screenshots/projector-preview.png" alt="世界中的半透明结构投影 / Translucent structure projection in the world" width="680"></a><br>
-  <em>先看清结构，再准备材料施工。 / See the structure before committing your materials.</em>
+  <a href="README/screenshots/projector-preview.png"><img src="README/screenshots/projector-preview.png" alt="世界中的半透明结构投影 / Translucent structure projection in the world" width="620"></a><br>
+  <strong>把结构直接投到现场：外壳、仓室、控制器与内部空间一眼看清。</strong><br>
+  <em>See the structure in place before committing your materials.</em>
 </p>
 
-## Features / 主要功能
+<p align="center">
+  <a href="#preview">结构投影 / Projector</a> ·
+  <a href="#regions">区域大图 / Regions</a> ·
+  <a href="#editing">蓝图编辑 / Editor</a> ·
+  <a href="#materials">材料与补料 / Materials</a> ·
+  <a href="#cut">剪切搬家 / Cut</a> ·
+  <a href="#install">安装与上手 / Install</a>
+</p>
 
-| 功能 / Feature | 用途 / What it does |
+## 想完成什么？ / Choose your workflow
+
+| 你的目标 / Your goal | 从这里开始 / Start here |
 | --- | --- |
-| **结构投影 / Structure projector** | 对准真实控制器导入结构，预览并进入建造、替换或拆除流程。 / Import a structure from its real controller, preview it and use build, replace or dismantle workflows. |
-| **区域与编辑 / Regions & editing** | 框选大区域，识别其中结构，调整方块与蓝图设置，按需进行量子分组。 / Capture large regions, identify structures, adjust blocks and blueprint settings, and optionally group quantum nodes. |
-| **蓝图库 / Blueprint library** | 三维预览、分层查看、私用或分享处理；在客户端与服务器蓝图库间上传、下载。 / Inspect 3D and layer previews, process blueprints for private use or sharing, and transfer them between client and server libraries. |
-| **剪切队列 / Cut queue** | 连续剪切、独立预览、定位粘贴；暂存归当前存档与玩家所有，独立于蓝图库与分享流程。 / Queue cuts, preview each entry and position it for paste; storage belongs to the current save and player, separate from blueprint sharing. |
-| **世界定位 / World placement** | 贴面或悬空预览，锁定位置、旋转与镜像，核对材料后确认施工。 / Preview on a surface or in the air, lock the position, rotate or mirror, then review materials and confirm construction. |
+| **建一台机器 / Build a multiblock** | [对准真实控制器导入结构](#preview)，查看仓室、调整目标，再核对材料施工。 / Import from its real controller, adjust targets and review materials. |
+| **规划整片工厂 / Plan a factory** | [框选区域并识别成员结构](#regions)，在三维预览中编辑方块与结构参数。 / Capture a region, recognize its structures and edit the plan. |
+| **保存自己的设计 / Save a design** | [区分「结构调整」与「蓝图设置」](#editing)，按私用或分享需求处理，再命名保存。 / Edit geometry, review private/shared settings and save. |
+| **搬走已经建好的东西 / Move a build** | [切换剪切模式](#cut)，连续暂存多份结构，分别预览、转向与粘贴。 / Queue cuts, preview each entry and place it elsewhere. |
+| **准备施工物资 / Prepare supplies** | [查看精确材料与 NBT 需求](#materials)，按需提交 ME 补料订单或使用装饰抵用券。 / Inspect exact costs, request AE crafting or select a decoration voucher. |
+| **交流与复用设计 / Share and reuse** | [打开蓝图站](#sharing)浏览、下载与分享，或转交同名 JSON + PNG 文件对。 / Browse the blueprint site or share a JSON + PNG pair. |
+
+<a id="preview"></a>
+
+## 01 · 从控制器开始，看清后再施工 / Project & inspect
+
+手持投影仪右键打开工作台；**对准真实控制器可导入它的结构**。在三维预览里旋转、分层查看，选中方块后调整外壳、仓室或朝向，再选择建造、替换或拆除。预览让你先检查结构和目标，材料与现场条件则在施工确认中核对。
+
+*Import a structure from its real controller, inspect the 3D and layer views, then choose build, replace or dismantle.*
+
+<p align="center">
+  <a href="README/screenshots/controller-projector.png"><img src="README/screenshots/controller-projector.png" alt="控制器结构工作台：仓室目标、材料来源与施工操作 / Controller workspace with hatch targets, material sources and construction controls" width="640"></a><br>
+  <strong>右击控制器导入结构，调整仓室与目标，按需建造、替换或拆除。</strong><br>
+  <em>Inspect structure targets and construction controls together.</em>
+</p>
+
+**操作要点：**用「结构调整」修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
+
+*Use Structure Adjustment for planning changes. Check the displayed construction scope; the idle top HUD shows available actions and shortcuts.*
+
+<a id="regions"></a>
+
+## 02 · 从一台机器到整片区域 / Capture a larger plan
+
+使用「框选区域」把世界中的一片建设区域导入工作台，**识别其中的成员结构，再在同一张蓝图内查看与编辑**。机器之间的布局、建筑外壳与公共空间可以放在一起规划；识别结果和待处理问题也会在预览中给出提示。
+
+*Capture a world region, recognize its member structures and work on the surrounding layout in one blueprint.*
+
+<p align="center">
+  <a href="README/screenshots/large-region-recognition.png"><img src="README/screenshots/large-region-recognition.png" alt="大型区域导入后识别控制器、仓室与待处理内容 / Imported region with recognized controllers, hatches and review markers" width="640"></a><br>
+  <strong>框选整片区域，识别成员结构，在同一张蓝图内继续编辑与保存。</strong><br>
+  <em>Review the whole layout and its recognized structures.</em>
+</p>
+
+大图的导入、快照准备与传输按阶段显示状态：总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。**关闭工作台后长任务仍可继续**，再次打开恢复原业务页面、选区与视角。稳定几何上的局部编辑会保留未改动的 16³ 预览分区；几何增删与专门审核在需要时完整刷新。
+
+*Progress follows the actual task stages. Long tasks can continue after closing the workspace; reopening restores the page, selection and view. Local edits retain unchanged preview regions where applicable.*
+
+<p align="center">
+  <a href="README/screenshots/region-import-progress.png"><img src="README/screenshots/region-import-progress.png" alt="区域导入快照准备进度79%，可返回世界后台继续 / Region snapshot preparation at 79 percent with background continuation" width="620"></a><br>
+  <strong>分阶段显示区域导入与蓝图快照准备进度，返回世界后任务继续。</strong><br>
+  <em>See the current preparation stage and continue in the background.</em>
+</p>
+
+保存准备会跟随实际快照与序列化工作更新进度；传输结束后仍须等待原生预览、JSON + PNG 配对文件和最终保存确认。图中是 **79% 的准备中状态**，不代表保存已经完成。
+
+*Transfer completion is followed by preview validation, paired files and final save confirmation. The screenshot shows preparation in progress.*
+
+<a id="editing"></a>
+
+## 03 · 在三维蓝图库里选，在结构编辑器里改 / Browse, edit & save
+
+**蓝图库负责选设计，「结构调整」负责改结构。** 从列表选择蓝图，拖动三维预览检查整体，按层查看内部；需要修改时进入编辑，选择方块、调整材料与朝向、移动所选内容，或编辑 NBT 与提示词。规划修改不会立刻改动世界。
+
+*Select and inspect designs in the library; use Structure Adjustment to edit blocks, placement, NBT and annotations before construction.*
 
 <table>
   <tr>
-    <td width="50%"><a href="README/screenshots/large-region-recognition.png"><img src="README/screenshots/large-region-recognition.png" alt="区域大图导入与结构识别 / Large region import and structure recognition"></a></td>
-    <td width="50%"><a href="README/screenshots/blueprint-library.png"><img src="README/screenshots/blueprint-library.png" alt="蓝图库列表与三维结构预览 / Blueprint library list and 3D structure preview"></a></td>
+    <td width="50%"><a href="README/screenshots/blueprint-library.png"><img src="README/screenshots/blueprint-library.png" alt="蓝图库列表与独立三维预览 / Blueprint library and 3D preview" width="310"></a></td>
+    <td width="50%"><a href="README/screenshots/blueprint-editor.png"><img src="README/screenshots/blueprint-editor.png" alt="区域蓝图中的多选与移动轴编辑 / Multiple selected cells and movement axes in the blueprint editor" width="310"></a></td>
   </tr>
   <tr>
-    <td align="center">从区域大图识别结构<br><em>Recognize structures in a large region</em></td>
-    <td align="center">在蓝图库中预览与选择<br><em>Preview and select from the library</em></td>
+    <td align="center"><strong>蓝图库：按条目选择，三维旋转与分层检查，再进入世界放置。</strong><br><em>Choose a design, inspect its layers, then place it.</em></td>
+    <td align="center"><strong>结构编辑：多选、移动与调整方块，让规划先在预览里完成。</strong><br><em>Select, move and adjust blocks before construction.</em></td>
   </tr>
 </table>
 
-## Downloads & Requirements / 下载与依赖
+**结构参数也能继续调整。** 蓝图成员的主信号、等级、高度等子信道可重新设置，重新生成所选成员时保留其他成员及其编辑；请核对预览中的实际尺寸。旧蓝图归属不完整时先恢复可确认的范围，无法可靠确定时保留原图并提示重新导入。
 
-目标 / Target: **GTNH 2.9.0 RC-2 · Minecraft 1.7.10 · Forge 10.13.4.1614**。
+结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后出现操作帮助，任何动作都会收起帮助并继续响应输入。
 
-**客户端与服务端均需安装 / Install on both client and server.** 成品下载 / Packaged jars: [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases).
+*Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles movement axes, and idle help dismisses on input.*
 
-必需依赖 / Required: GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.92-1.7.10**。目标 GTNH 整包已提供这些依赖 / These dependencies are included in the target GTNH pack. **GTIT 为可选模组 / GTIT is optional.**
+### 私用还是分享，由你逐步确认 / Review for private use or sharing
 
-**获取投影仪 / Get the projector:** 无序配方为 **1 个 StructureLib 多方块结构全息投影仪 → 1 个猫猫蓝图全息投影仪**。同装兼容版本 GTIT 时，也可在猫猫机用 **1 枚普通猫猫币**兑换。
+「蓝图设置」负责处理与保存：按私用或分享倾向核对身份、坐标、网络和资源等选项，再命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导会说明「蓝图设置」和「结构调整」的区别，也支持不再显示。
 
-Shapeless recipe: **1 StructureLib Hologram Projector → 1 Neko Blueprint Hologram Projector**. With compatible GTIT, the Neko Vending Machine also exchanges **1 ordinary Neko Coin** for one projector.
+*Blueprint Settings handles processing and saving. Review identity, coordinate, network and resource choices for private use or sharing, resolve conflicts, then save.*
 
-**装饰抵用券 / Decoration voucher：**无序合成 **2 个原生 StructureLib 全息投影仪 → 1 张券**。材料确认中主动选用后，主背包中的一张券可抵扣**本次施工**允许的建筑 Mod 材料；GT、AE、工业部件、库存、流体和能量仍按实际需求支付。未成功放置抵扣材料不会消耗券。服务器可在 `config/gtmb-decoration-voucher.cfg` 的 `decorationVoucher.enabled` 与 `allowedModIds` 中调整启用状态和建筑 Mod，修改后重启生效。
-Shapeless recipe: **2 native StructureLib Hologram Projectors → 1 Decoration Voucher**. Explicitly select it in material review to waive eligible decoration costs for **one construction job**, using one voucher from the main inventory. Industrial parts, inventories, fluids and energy remain payable. The voucher is consumed only when covered material is successfully placed. Server configuration controls availability and allowed decoration mod IDs.
+<p align="center">
+  <a href="README/screenshots/blueprint-processing.png"><img src="README/screenshots/blueprint-processing.png" alt="蓝图处理流程：私用或分享倾向与去标识等级确认 / Blueprint processing with private-use and sharing choices" width="640"></a><br>
+  <strong>按用途核对处理选项，再保存自己的蓝图。</strong><br>
+  <em>Review processing choices for the way you intend to use the blueprint.</em>
+</p>
 
-## Quick Start / 快速使用
+<a id="placement"></a>
 
-| 步骤 / Step | 操作 / Controls |
+## 04 · 把蓝图带回世界，锁定后再确认 / Position in the world
+
+从蓝图库点击「放置所选蓝图」，在真实环境中检查占地与高度。预览可贴合命中表面，也可悬空；**右键立即固定当前位置，边框由绿色切为青色**。调整位置与姿态后，再右键打开材料确认；Esc 取消。
+
+*Place a selected blueprint into the world preview, align it with the site and right-click to lock the position. Review materials before construction.*
+
+<p align="center">
+  <a href="README/screenshots/placement-preview.png"><img src="README/screenshots/placement-preview.png" alt="蓝图青色锁定预览与顶部定位操作提示 / Locked cyan blueprint preview with placement guidance" width="620"></a><br>
+  <strong>在世界里看位置、看朝向，确认后再投入材料。</strong><br>
+  <em>Check position and orientation at the actual site.</em>
+</p>
+
+| 定位操作 / Placement | 用途 / Result |
 | --- | --- |
-| **1 · 导入 / Import** | 手持投影仪右键打开工作台；对准真实控制器可导入结构，或使用「框选区域」导入世界区域。 / Right-click with the projector to open the workspace; target a real controller to import its structure, or select a world region. |
-| **2 · 编辑与保存 / Edit & save** | 用「结构调整」编辑结构，用「蓝图设置」完成私用／分享处理，再命名保存；从蓝图库选择蓝图并查看三维预览。 / Adjust the structure, complete private-use or sharing processing in Blueprint Settings, then name and save it; select entries in the library for a 3D preview. |
-| **3 · 定位与施工 / Position & build** | 点「放置所选蓝图」进入世界预览，右键立即固定位置并将绿色边框切为青色；位置核对完成后，再右键核对材料并确认，Esc 取消。 / Click Place to enter the world preview. Right-click immediately freezes the position and turns the outline cyan; after the position check, right-click again to review materials and confirm. Esc cancels. |
-| **4 · 调整位置 / Adjust position** | 框选取命中方块，放置预览贴合命中表面；无命中时悬空，Alt 强制悬空，**Alt+滚轮调距 0–64 格**（0 为脚下）。**普通滚轮保持原版快捷栏切换**。 / Selection uses the hit block and placement attaches to its face; without a hit it floats. Alt forces floating; **Alt+wheel adjusts 0–64 blocks** (0 = your feet). **The plain wheel keeps vanilla hotbar switching.** |
-| **5 · 切换剪切 / Switch to Cut** | 蓝图模式下 Shift+右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；空闲时 Ctrl+Shift+右键可重开。选择「剪切」即开始框选。 / In Blueprint mode, Shift+right-click opens the mode selector; keep Shift held and right-click to cycle, then release Shift to enter. Ctrl+Shift+right-click reopens it while idle. Choosing Cut starts selection. |
+| **Alt + 滚轮 / Alt + wheel** | 调整悬空距离 **0–64 格**，0 为脚下；Alt 强制悬空。普通滚轮保留原版快捷栏切换。 / Adjust floating distance; plain wheel keeps vanilla hotbar switching. |
+| **R · Ctrl + R · Alt + R** | 分别绕 Y 轴、X 轴旋转，或打开旋转／镜像／朝向面板。 / Rotate around Y or X, or open pose controls. |
+| **锁定后方向键 / Arrows after locking** | 水平微调位置，Alt + 上下调高度；Shift + 右键解锁。 / Nudge horizontally, adjust height with Alt + up/down, or unlock with Shift + right-click. |
 
-手持投影仪空闲时，屏幕顶部 HUD 也会显示当前可用操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
+普通蓝图的**空气空位不参与现场校验、材料核算与施工，也不会清空现场方块**；实际检查与放置针对非空气目标。空位仍保留在结构声明中，可继续调整结构或手动指定方块。忠实剪切粘贴与拆除沿用各自规则。
 
-While holding an idle projector, the top HUD shows available actions: open the workspace, select a region, and, when available, quickly place the last blueprint or open stored cuts.
+已确认的施工可在大图范围内继续，走离预览锚点不会单独终止任务；须保持**原工具槽中的同一把投影仪、当前世界与维度**，区块、权限与放置事件仍会检查。停止、部分完成和全部成功分别显示，进度走完不代表机器已经成型。
 
-结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后显示操作帮助，任何动作都会收起帮助并继续响应输入。
+*Ordinary blueprint placement preserves existing blocks in air gaps. Admitted jobs can continue beyond the preview anchor's range with the same projector in its original slot, world and dimension; site checks still apply. Completion status does not certify multiblock formation.*
 
-In Structure Adjustment, **G toggles the movement axes**; the button shows its on/off state. Help appears after 2 idle seconds and dismisses on any action while letting that input take effect.
+<a id="materials"></a>
 
-蓝图内的成员结构仍可调整主信号、等级与高度等子信道；修改参数会重新生成所选结构，保留其他成员及其编辑。旧蓝图也可在这里重新设置参数；旧结构归属不完整时，先按保存内容恢复可确认的范围，无法可靠确定时保留原图并提示重新导入。请核对预览中的实际尺寸。
+## 05 · 看清每一笔材料，再开工 / Review exact costs
 
-Member structures remain adjustable: change the main signal or named channels such as tier and height to regenerate the selected member while retaining other members and their edits. Existing blueprints can use the same controls. Incomplete legacy membership is recovered from verified saved content; if its extent cannot be established reliably, the original is retained with a request to import it again. Check the resulting dimensions in the preview.
+施工前打开独立的 **MUI2 材料确认窗口**，逐项查看**需求 / 已有 / 缺失**。每行对应图标、精确物品／NBT 与单位，同名材料不会混成一项；创造模式也显示完整需求。材料整行左右留白一致，表头与各列对齐；没有可处理内容的按钮禁用，悬停可查看原因。
 
-普通蓝图放置时，空气空位不参与现场校验、材料核算或施工，也不会清空现场方块；实际检查与放置只针对非空气目标。空位仍保留在结构声明中，可继续调整结构或手动指定方块。忠实剪切粘贴和拆除沿用各自的处理方式。
+*Review exact required, available and missing quantities by item and NBT identity, including full demand in creative mode.*
 
-Ordinary blueprint placement skips empty air positions during site checks, material accounting and construction, leaving existing blocks in those gaps intact. Checks and placement apply to non-air targets. Air remains in the structure declaration for editing or assigning a block. Faithful cut-and-paste and dismantling retain their own behavior.
+<p align="center">
+  <a href="README/screenshots/blueprint-material-review.png"><img src="README/screenshots/blueprint-material-review.png" alt="蓝图材料预检：精确条目、缺料、EU需求、补料与装饰券 / Blueprint material review with exact costs, shortages, EU, crafting and voucher controls" width="620"></a><br>
+  <strong>施工范围、材料缺口、EU 与本次选项集中核对。</strong><br>
+  <em>Review scope, shortages, energy and construction choices together.</em>
+</p>
 
-资源复核中，可解析的库存数据可选择「完全保留」，施工时匹配完整物品数据并扣除对应材料。确实无法解析的信息会指出具体路径，需要移除后才能保存。倾向自用时可尽量保留原配置；与坐标或去标识选项冲突时，界面会要求先解决冲突。
+**同一材料方案只需确认一次。** 报价或施工条件变化时仍须重新核对；打开清单、切换抵用券复用已核定的材料数据，主动「刷新材料」核对清单中的库存，实际施工前再检查现场与材料。普通按钮使用默认猫猫材质，需要处理的操作与确认才作强调；EU 只有不足时标红。
 
-In resource review, choose **Keep unchanged** for inventory data whose complete material cost can be decoded. Construction matches the full item data and consumes those materials. Unreadable data identifies the path to remove before saving. Private-use processing can retain the original configuration; resolve any conflicting coordinate or identity-processing choices first.
+*Confirm the same material plan once; quote or construction-condition changes require another review. Refresh updates listed stock, and construction checks the site and materials again. EU turns red only when insufficient.*
 
-施工前使用独立的 **MUI2 材料确认窗口**：按图标、精确物品 / NBT 与单位逐项查看**需求 / 已有 / 缺失**，同名材料不会合并成一项，创造模式也显示完整需求。材料整行在外框内左右留白一致，表头与各列对齐。打开清单、切换抵用券复用已核定的材料数据；主动「刷新材料」只核对清单中的库存，确认施工前再核对现场和材料。**同一材料方案只需确认一次**，报价或施工条件变化时仍需重新核对。没有可处理内容的按钮禁用，悬停可查看原因；普通按钮使用默认猫猫材质，仅强调需要处理的操作和确认。ME 缺料可明确提交独立的真实 AE 合成订单；关闭窗口后继续，重新打开可看总进度与结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料再确认施工**；取消只取消本次订单，已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏不表示订单继续。
-The separate **MUI2 material confirmation window** shows icons and exact **required / available / missing** quantities, preserving distinct item and NBT identities and showing full demand in creative mode. Material rows have equal left and right margins, with headers aligned to their columns. Opening the list and toggling a voucher reuse reviewed material data. Explicit refresh checks stock for those rows; construction checks the site and materials before starting. **Confirm the same material plan once**; changes to the quote or construction conditions still require another review. Controls without applicable content are disabled with a tooltip. Ordinary controls use the default cat theme, with emphasis reserved for relevant actions and confirmation. Explicitly submit missing materials through an independent AE crafting request; closing the window keeps it running with progress and terminal notifications. Actual outputs are delivered to ME storage; **refresh the quote and confirm construction** afterward. Undelivered outputs already received are preserved in player recovery storage when leaving or resetting runtime. Leaving the game ends the active order.
+### 库存与 AE 样板，保留配置也核对成本 / Inventory & pattern configuration
 
-EU 不足时才标红。创造模式持有抵用券时，也可切换抵扣方案核对范围；创造施工不消耗抵用券。
-EU requirements turn red only when available energy is insufficient. Carry a voucher in creative mode to inspect its coverage; creative construction does not consume it.
+可完整解析材料成本的库存数据可选择「完全保留」，施工时匹配完整物品数据并扣除对应材料。可解析的 AE 编码样板保留配方，并将所需空白样板计入材料；样板输入总成等设备与配置材料分别列出。确实无法解析的信息会指出具体路径，移除后才能保存。
 
-到 [**蓝图站 · 浏览、下载与分享**](https://miaokatze.com/blueprints) 寻找机器与建筑设计，或分享自己保存的蓝图。游戏内蓝图库入口常态为橙色，选中有效的已保存蓝图时显示渐变流彩；保存成功后，引导会强调浏览与分享入口，聊天中也会提供青色可点击链接。
-Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.com/blueprints) to find machine and building designs or share your saved blueprints. The in-game library link is orange by default and shows an animated color gradient when a valid saved blueprint is selected. After a successful save, guidance highlights browsing and sharing, and chat provides a clickable cyan link.
+*Keep inventory data whose complete cost can be decoded, paying with matching item data. Supported encoded patterns retain their recipes and account for physical blank patterns; unreadable paths must be removed before saving.*
+
+<p align="center">
+  <a href="README/screenshots/pattern-configuration.png"><img src="README/screenshots/pattern-configuration.png" alt="材料明细中的ME样板输入总成与空白样板 / ME pattern input hatch and blank patterns listed as separate material entries" width="640"></a><br>
+  <strong>样板配方随蓝图保留；设备与空白样板分项计数，配置所需物资也看得见。</strong><br>
+  <em>The hatch and blank patterns appear as separate material costs.</em>
+</p>
+
+### 缺料时主动下单，等待时回到世界 / Request missing materials
+
+ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继续，重新打开可查看总进度和结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料，再确认施工**。取消只取消本次订单；已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏结束活动订单。
+
+*Submit missing materials through an independent AE crafting request. Closing the window keeps it running; after delivery to ME storage, refresh and confirm construction. Leaving the game ends the active order, with received but undelivered outputs retained for recovery.*
+
+### 建筑装饰可选抵用券 / Optional Decoration Voucher
+
+无序合成 **2 个原生 StructureLib 全息投影仪 → 1 张装饰抵用券**。在材料确认中主动选用，主背包中的一张券可抵扣**本次施工**允许的建筑 Mod 材料；**GT、AE、工业部件、库存、流体与能量仍按实际需求支付**。只有成功放置抵扣材料后才消耗券；创造模式持券可核对覆盖范围，创造施工不消耗券。
+
+*Craft a voucher from two native StructureLib projectors and select it for one construction job. It covers eligible decoration only, is consumed when covered material is placed, and is not consumed in creative mode.*
+
+服务器可在 `config/gtmb-decoration-voucher.cfg` 的 `decorationVoucher.enabled` 与 `allowedModIds` 调整启用状态和建筑 Mod，修改后重启生效。
+
+*Server configuration controls availability and allowed decoration mod IDs; restart after changes.*
+
+<a id="cut"></a>
+
+## 06 · 连续剪切，排队搬家 / Queue cuts & move builds
+
+想移动已经建好的机器或建筑，切换到**剪切模式**。它使用当前存档中每位玩家独立的暂存队列，通过原生快照携带方块、机器数据与库存，**与蓝图库、私用／分享处理独立**。先连续剪切需要搬走的内容，再逐项预览并决定放在哪里。
+
+*Cut stores existing builds in a persistent queue for each player and save, carrying native block, machine and inventory data separately from blueprint sharing.*
+
+<p align="center">
+  <a href="README/screenshots/mode-switcher.png"><img src="README/screenshots/mode-switcher.png" alt="蓝图与剪切模式选择器 / Blueprint and Cut mode selector" width="600"></a><br>
+  <strong>设计新蓝图，或搬走已有结构：从模式选择开始。</strong><br>
+  <em>Choose Blueprint for designs or Cut for moving existing builds.</em>
+</p>
+
+**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；空闲时 Ctrl + Shift + 右键可重开。选择「剪切」开始框选，完整选区后 Shift + 右键确认剪切。保存条目后继续下一次框选；没有完整框时，这个快捷键打开暂存列表并保留已有角点。
+
+*Hold Shift and right-click to cycle modes, then release Shift to enter. Confirm a complete cut selection with Shift + right-click; without a complete box, it opens stored cuts.*
+
+<p align="center">
+  <a href="README/screenshots/cut-queue.png"><img src="README/screenshots/cut-queue.png" alt="剪切暂存列表、每项尺寸与独立三维预览，画面包含诊断文字 / Stored cuts with dimensions and individual 3D preview; screenshot includes diagnostic text" width="620"></a><br>
+  <strong>连续剪切多份机器与建筑，暂存队列逐条预览，再旋转、镜像与定位粘贴。</strong><br>
+  <em>Choose and preview each queued build before placing it.</em>
+</p>
+
+**放置与撤销：**在列表中选择条目，点「放置」进入带方块边框的半透明原生模型预览；Alt + A/D 切换条目，确认前可旋转、镜像与调整朝向。右键锁定，再右键确认；非框选时 Alt + 右键可撤销剪切。只有成功粘贴或撤销后才消费条目，**Esc 完整退出剪切模式，保留全部暂存**。
+
+可选「确认且以后不提醒」：偏好按当前存档与玩家保存，与剪切命名独立，只跳过放置确认框。确认框展示位置与姿态，姿态须提前调整。
+
+*Preview, rotate or mirror each entry before confirming. Only a successful paste or undo consumes it; Esc exits Cut mode while retaining every entry. The optional player/save preference skips only the placement prompt.*
+
+<a id="sharing"></a>
+
+## 07 · 保存之后，让设计继续流转 / Save & share
+
+到 [**蓝图站 · 浏览、下载与分享**](https://miaokatze.com/blueprints) 寻找机器与建筑设计，或分享自己的蓝图。游戏内蓝图库入口常态为**橙色**，选中有效的已保存蓝图时显示**渐变流彩**；保存成功后，引导会强调浏览与分享入口，聊天中也提供**青色可点击链接**。
+
+*Browse, download and share on the blueprint site. The in-game entry is orange by default, becomes an animated gradient for a valid saved selection, and is linked from successful-save guidance and chat.*
+
+| 分享方式 / Share through | 操作 / How |
+| --- | --- |
+| **蓝图站 / Blueprint site** | 在 [miaokatze.com/blueprints](https://miaokatze.com/blueprints) 浏览、下载或分享设计。 / Browse, download or share designs on the site. |
+| **游戏内公库 / In-game server library** | 蓝图库「客户端／服务器」切换，完成上传与下载。 / Switch Client/Server for library transfers. |
+| **直接转交文件 / Manual transfer** | 将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`。 / Copy the same-basename JSON + PNG pair into the recipient's game-directory `MiaoBlueprints/`. |
+
+剪切暂存归当前存档与玩家，不参与蓝图分享。保存后的配置、资源与网络选择请按实际用途核对；完整处理规则见 [使用指南](https://miaokatze.com/wiki?mod=gtmb)。
+
+*Stored cuts remain separate from sharing. Review configuration, resource and network choices for the intended use.*
+
+<a id="install"></a>
+
+## 安装、获取与快速上手 / Install & start
+
+| 项目 / Requirement | 版本或说明 / Version or notes |
+| --- | --- |
+| **目标整包 / Target pack** | **GTNH 2.9.0 RC-2** |
+| **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
+| **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
+| **必需依赖 / Required mods** | GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.92-1.7.10**；目标 GTNH 整包已提供。 / Included in the target GTNH pack. |
+| **可选模组 / Optional mod** | **GTIT**；兼容版本可提供猫猫机兑换。 / Compatible versions add the vending-machine exchange. |
+| **下载 / Download** | [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) |
+
+**获取投影仪：**无序合成 **1 个 StructureLib 多方块结构全息投影仪 → 1 个猫猫蓝图全息投影仪**。同装兼容版本 GTIT 时，也可在猫猫机用 **1 枚普通猫猫币**兑换。
+
+*Shapeless recipe: one StructureLib Hologram Projector → one Neko Blueprint Hologram Projector. Compatible GTIT also offers one projector for one ordinary Neko Coin.*
+
+| 第一次使用 / First use | 操作 / Action |
+| --- | --- |
+| **1 · 导入 / Import** | 手持投影仪右键打开工作台，对准控制器导入结构，或框选区域。 / Open the workspace and import a controller structure or region. |
+| **2 · 编辑 / Edit** | 「结构调整」修改结构；「蓝图设置」核对私用／分享处理并命名保存。 / Adjust the structure, review processing and save. |
+| **3 · 定位 / Position** | 从蓝图库选择蓝图并放置预览，调整朝向，右键锁定位置。 / Select a blueprint, preview it in the world and lock its position. |
+| **4 · 施工 / Build** | 再右键核对材料，处理缺料或绑定要求，然后确认；Esc 取消。 / Review materials and bindings, then confirm; Esc cancels. |
+
+感谢玩家提供全部 **12 张功能展示截图**；点击图片可查看原尺寸。[素材清单 / Image credits](README/screenshots/manifest.json)。
+
+## 快捷键与更多说明 / Controls & further reading
+
 
 <details>
 <summary><strong>剪切、选区与旋转 / Cut, selection and rotation controls</strong></summary>
@@ -118,58 +296,7 @@ Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.c
 
 </details>
 
-## Gallery / 更多界面
-
-<details>
-<summary><strong>展开 9 张操作界面 / Show 9 more workflow screenshots</strong></summary>
-
-**控制器结构工作台：建造、替换与拆除 / Controller structure workspace: build, replace and dismantle**
-
-![控制器结构工作台 / Controller structure workspace](README/screenshots/controller-projector.png)
-
-**导入后的结构调整与蓝图编辑 / Structure adjustment and blueprint editing after import**
-
-![导入后的蓝图编辑 / Blueprint editing after import](README/screenshots/blueprint-editor.png)
-
-**按私用或分享需求确认蓝图标识处理 / Confirm blueprint identity processing for private use or sharing**
-
-![蓝图处理流程 / Blueprint processing workflow](README/screenshots/blueprint-processing.png)
-
-**在世界中预览与定位蓝图 / Preview and position a blueprint in the world**
-
-![蓝图放置预览 / Blueprint placement preview](README/screenshots/placement-preview.png)
-
-**施工前核对精确材料、缺料与 EU 需求 / Review exact materials, shortages and EU before construction**
-
-![蓝图放置材料预检 / Blueprint placement material review](README/screenshots/blueprint-material-review.png)
-
-**样板输入总成与空白样板的材料明细 / Material details for the pattern input hatch and blank patterns**
-
-![样板支持与配置材料 / Pattern support and configuration materials](README/screenshots/pattern-configuration.png)
-
-**蓝图与剪切模式切换 / Blueprint and Cut mode switcher**
-
-![双模式切换 / Mode switcher](README/screenshots/mode-switcher.png)
-
-**剪切暂存队列与独立三维预览 / Stored Cut queue and independent 3D preview**
-
-![剪切暂存队列界面示例 / Stored Cut queue UI example](README/screenshots/cut-queue.png)
-
-**区域导入与准备蓝图快照的任务进度 / Region import and blueprint snapshot preparation progress**
-
-![区域导入进度79% / Region import progress at 79 percent](README/screenshots/region-import-progress.png)
-
-导入任务显示进度，返回世界后也可继续。 / Import progress stays visible, and the task can continue in the background.
-
-</details>
-
-感谢玩家提供功能展示截图。 / Thanks to the player who contributed these screenshots. [素材清单 / Image credits](README/screenshots/manifest.json)。
-
-## Sharing & Further Reading / 分享与更多说明
-
-手动分享时，将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`；公库上传、下载使用蓝图库「客户端／服务器」切换。剪切暂存独立保存，不参与分享。
-
-To share manually, copy the **same-basename JSON + PNG pair** into the recipient's game-directory `MiaoBlueprints/`. Use the library's Client/Server switch for uploads and downloads. Stored cuts remain separate from sharing.
+### 传输、维护与开发者 / Transfers, administration & development
 
 <details>
 <summary><strong>传输、后台任务与开发者说明 / Transfers, background tasks and developer notes</strong></summary>
