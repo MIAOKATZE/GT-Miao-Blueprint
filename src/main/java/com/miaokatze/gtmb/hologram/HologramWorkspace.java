@@ -26,8 +26,120 @@ final class HologramWorkspace {
     static void activate(UUID player, HologramSession session) {
         if (!player.equals(session.player.getUniqueID())) throw new IllegalArgumentException("Session owner mismatch");
         HologramSession previous = SESSIONS.get(player);
-        if (previous != null && previous != session) HologramDeferredPlanRefresh.cancel(previous);
+        if (previous != null && previous != session) {
+            previous.presentationTransition = null;
+            HologramDeferredPlanRefresh.cancel(previous);
+        }
         SESSIONS.put(player, session);
+    }
+
+    /** A preset preview is provisional until its first complete baseline is accepted by the encoder. */
+    static final class PresentationTransition {
+
+        final HologramSession origin, target;
+        final String originId, targetId, selected;
+        final long sequence, sourceTask, targetTask;
+        final boolean hadSelection;
+
+        PresentationTransition(HologramSession origin, HologramSession target) {
+            this.origin = origin;
+            this.target = target;
+            originId = origin.id;
+            targetId = target.id;
+            sequence = origin.uiSequence;
+            sourceTask = origin.blueprintClientTaskToken;
+            targetTask = target.blueprintClientTaskToken;
+            ItemStack held = HologramSessionPolicy.currentTool(origin);
+            hadSelection = held != null && held.getTagCompound()
+                .hasKey(HologramSessionKeys.SELECTED_PRESET, 8);
+            selected = hadSelection ? held.getTagCompound()
+                .getString(HologramSessionKeys.SELECTED_PRESET) : "";
+        }
+
+        boolean matchesTarget(EntityPlayerMP player, String session, long sequence) {
+            return find(player.getUniqueID()) == target && target.player == player
+                && origin.player == player
+                && targetId.equals(target.id)
+                && targetId.equals(session)
+                && originId.equals(origin.id)
+                && this.sequence == sequence
+                && target.uiSequence == sequence
+                && origin.uiSequence == sequence
+                && target.blueprintClientTaskToken == targetTask
+                && origin.blueprintClientTaskToken == sourceTask
+                && !origin.cancelled
+                && !target.cancelled
+                && player.worldObj == origin.libraryWorld
+                && target.libraryWorld == origin.libraryWorld
+                && player.dimension == origin.dimension
+                && target.dimension == origin.dimension
+                && target.tool == origin.tool
+                && target.slot == origin.slot
+                && target.toolId.equals(origin.toolId)
+                && HologramSessionPolicy.currentTool(target) != null;
+        }
+    }
+
+    static boolean presentationAllowed(HologramSession session) {
+        return session.job != 1 && session.job != 2
+            && !session.capturePending
+            && session.blueprintSaveReceipt.isEmpty()
+            && !HologramAeCraftingOrders.active(session.player);
+    }
+
+    static PresentationTransition preparePresentation(HologramSession origin, HologramSession target) {
+        return find(origin.player.getUniqueID()) == origin && presentationAllowed(origin)
+            && target.player == origin.player
+            && target.libraryWorld == origin.libraryWorld
+            && target.dimension == origin.dimension
+            && target.tool == origin.tool
+            && target.slot == origin.slot
+            && target.toolId.equals(origin.toolId)
+            && HologramSessionPolicy.currentTool(origin) != null ? new PresentationTransition(origin, target) : null;
+    }
+
+    /** Suspend, rather than mark a half-built original plan complete. No inventory or geometry is traversed. */
+    static boolean activatePresentation(PresentationTransition transition) {
+        HologramSession origin = transition.origin, target = transition.target;
+        if (find(origin.player.getUniqueID()) != origin || !presentationAllowed(origin)
+            || !origin.id.equals(transition.originId)
+            || origin.uiSequence != transition.sequence) return false;
+        HologramDeferredPlanRefresh.suspend(origin);
+        origin.presentationTransition = null;
+        target.uiSequence = transition.sequence;
+        target.presentationTransition = transition;
+        SESSIONS.put(origin.player.getUniqueID(), target);
+        return true;
+    }
+
+    static void commitPresentation(HologramSession target, net.minecraft.nbt.NBTTagCompound baseline) {
+        if (target == null || target.presentationTransition == null
+            || !baseline.hasKey("cells", 9)
+            || baseline.getBoolean("partial")) return;
+        PresentationTransition transition = target.presentationTransition;
+        if (transition.matchesTarget(target.player, baseline.getString("session"), baseline.getLong("uiSequence")))
+            target.presentationTransition = null;
+    }
+
+    /** Only a still-current, unpublished display switch may restore the exact former server route. */
+    static HologramSession rollbackPresentation(EntityPlayerMP player, String session, long sequence) {
+        HologramSession target = find(player.getUniqueID());
+        PresentationTransition transition = target == null ? null : target.presentationTransition;
+        if (transition == null || !transition.matchesTarget(player, session, sequence)
+            || !presentationAllowed(target)
+            || !presentationAllowed(transition.origin)) return null;
+        HologramNetwork.retirePresentationState(target);
+        HologramSnapshotPreparation.cancel(target);
+        target.presentationTransition = null;
+        HologramSession origin = transition.origin;
+        activate(player.getUniqueID(), origin);
+        ItemStack held = HologramSessionPolicy.currentTool(origin);
+        if (transition.hadSelection) held.getTagCompound()
+            .setString(HologramSessionKeys.SELECTED_PRESET, transition.selected);
+        else held.getTagCompound()
+            .removeTag(HologramSessionKeys.SELECTED_PRESET);
+        player.inventory.markDirty();
+        return origin;
     }
 
     static HologramSession create(EntityPlayerMP player, int x, int y, int z) {

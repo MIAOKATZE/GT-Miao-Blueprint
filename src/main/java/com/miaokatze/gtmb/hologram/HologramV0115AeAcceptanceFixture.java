@@ -232,6 +232,14 @@ public final class HologramV0115AeAcceptanceFixture implements AutoCloseable {
             .getItemInventory();
     }
 
+    /** Keep this naturally initialized native network alive for the opt-in combined quote/snapshot contract. */
+    public HologramV0116AeQuoteAcceptanceSmoke quoteAcceptance() throws Exception {
+        require(
+            finished && "PASS".equals(receipt.getString("status")),
+            "native crafting must pass before combined quote");
+        return HologramV0116AeQuoteAcceptanceSmoke.create(world, actor, bank, items(), new PlayerSource(actor, iface));
+    }
+
     private long amount(IMEMonitor<IAEItemStack> items, ItemStack sample) {
         IAEItemStack request = AEItemStack.create(sample);
         request.setStackSize(Long.MAX_VALUE);

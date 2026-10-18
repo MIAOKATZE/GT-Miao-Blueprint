@@ -360,6 +360,32 @@ final class HologramUiSession {
         rejectTransport(event, message);
     }
 
+    /** A failed presentation transfer releases its own UI request, never a world/save/order task owner. */
+    boolean presentationTransportFailed(NBTTagCompound event, String message) {
+        if (!event.getBoolean("transportError") || !event.getString("errorCode")
+            .startsWith("snapshot.")
+            || !event.hasKey("uiSequence", 4)
+            || event.getLong("clientTaskToken") != 0
+            || HologramBackgroundTasks.busy()
+            || event.getString("session")
+                .isEmpty()
+            || !state.session.equals(event.getString("session"))
+            || pendingTicket.sequence() < 0
+            || pendingTicket.sequence() != event.getLong("uiSequence")
+            || event.hasKey("planRevision", 4) && event.getLong("planRevision") != revision()) return false;
+        int presentation = switch (pendingOperation) {
+            case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset" -> 1;
+            case "lockVirtual", "unlockVirtual" -> 2;
+            default -> 0;
+        };
+        if (presentation == 0) return false;
+        rejectTransport(event, message);
+        if (pendingTicket.sequence() >= 0) return false;
+        if (presentation == 1) ui.library.cancelLibraryNavigation();
+        pendingOperation = "";
+        return true;
+    }
+
     /** Exact terminal owner notification; never sends another cancellation or touches a newer command. */
     void libraryTaskFinished(String taskSession, long taskSequence, long taskToken, String detail) {
         if (taskToken == 0 || taskToken != libraryTaskToken

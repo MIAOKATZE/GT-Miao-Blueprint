@@ -72,10 +72,10 @@ public final class HologramMaterialQuote {
     static final class StockSnapshot implements ItemStock {
 
         final ItemStock source;
-        final Map<HologramBlueprintResources.ExactKey, Long> exact = new LinkedHashMap<>(),
+        final Map<HologramBlueprintResources.ExactKey, Observation> exact = new LinkedHashMap<>(),
             fuzzy = new LinkedHashMap<>();
-        final Map<HologramBlueprintResources.ExactKey, Long> fluids = new LinkedHashMap<>();
-        final Map<String, Long> essentia = new LinkedHashMap<>();
+        final Map<HologramBlueprintResources.ExactKey, Observation> fluids = new LinkedHashMap<>();
+        final Map<String, Observation> essentia = new LinkedHashMap<>();
         BigInteger energy;
 
         StockSnapshot(ItemStock source) {
@@ -83,38 +83,81 @@ public final class HologramMaterialQuote {
         }
 
         public long exact(ItemStack item, long limit) {
-            return Math.min(
+            return observed(
+                exact,
+                new HologramBlueprintResources.ExactKey(item, null),
                 limit,
-                exact.computeIfAbsent(
-                    new HologramBlueprintResources.ExactKey(item, null),
-                    ignored -> Math.max(0L, source.exact(item, Long.MAX_VALUE))));
+                () -> source.exact(item, limit));
         }
 
         public long fuzzy(ItemStack item, long limit) {
-            return Math.min(
+            return observed(
+                fuzzy,
+                new HologramBlueprintResources.ExactKey(item, null),
                 limit,
-                fuzzy.computeIfAbsent(
-                    new HologramBlueprintResources.ExactKey(item, null),
-                    ignored -> Math.max(0L, source.fuzzy(item, Long.MAX_VALUE))));
+                () -> source.fuzzy(item, limit));
         }
 
         long fluid(HologramSession s, FluidStack sample, long limit) {
             if (sample == null) return 0;
-            return Math.min(
+            return observed(
+                fluids,
+                new HologramBlueprintResources.ExactKey(null, sample),
                 limit,
-                fluids.computeIfAbsent(
-                    new HologramBlueprintResources.ExactKey(null, sample),
-                    ignored -> HologramMaterialAccess.materialSource(s)
-                        .fluidCount(sample, Long.MAX_VALUE)));
+                () -> HologramMaterialAccess.materialSource(s)
+                    .fluidCount(sample, limit));
         }
 
         long essentia(HologramSession s, String aspect, long limit) {
-            return Math.min(
+            return observed(
+                essentia,
+                aspect,
                 limit,
-                essentia.computeIfAbsent(
-                    aspect,
-                    ignored -> HologramMaterialAccess.materialSource(s)
-                        .essentiaCount(aspect, Long.MAX_VALUE)));
+                () -> HologramMaterialAccess.materialSource(s)
+                    .essentiaCount(aspect, limit));
+        }
+
+        private static final class Observation {
+
+            final long limit, amount;
+
+            Observation(long limit, long amount) {
+                this.limit = limit;
+                this.amount = Math.max(0L, Math.min(limit, amount));
+            }
+        }
+
+        private static <K> long observed(Map<K, Observation> observations, K key, long limit,
+            java.util.function.LongSupplier query) {
+            if (limit <= 0) return 0;
+            Observation previous = observations.get(key);
+            if (previous == null || limit > previous.limit && previous.amount == previous.limit) {
+                // A larger simulation replaces the earlier capped observation; it never adds the same stock twice.
+                previous = new Observation(limit, query.getAsLong());
+                observations.put(key, previous);
+            }
+            return Math.min(limit, previous.amount);
+        }
+
+        ItemStock cachedItems() {
+            return new ItemStock() {
+
+                public long exact(ItemStack item, long limit) {
+                    return cached(exact, new HologramBlueprintResources.ExactKey(item, null), limit);
+                }
+
+                public long fuzzy(ItemStack item, long limit) {
+                    return cached(fuzzy, new HologramBlueprintResources.ExactKey(item, null), limit);
+                }
+            };
+        }
+
+        private static <K> long cached(Map<K, Observation> observations, K key, long limit) {
+            if (limit <= 0) return 0;
+            Observation known = observations.get(key);
+            if (known == null || limit > known.limit && known.amount == known.limit)
+                throw new IllegalStateException("Quote allocation requested an unprepared exact-NBT stock budget");
+            return Math.min(limit, known.amount);
         }
 
         BigInteger energy(HologramSession s) {
@@ -371,49 +414,210 @@ public final class HologramMaterialQuote {
 
     static NBTTagCompound snapshot(HologramSession s, NBTTagList materials, NBTTagList voucherMaterials,
         NBTTagList resources, StockSnapshot inventory) {
-        countItems(s, materials, inventory);
-        countItems(s, voucherMaterials, inventory);
-        NBTTagCompound ordinary = observedQuote(s, materials, resources, inventory);
-        NBTTagCompound voucher = observedQuote(s, voucherMaterials, resources, inventory);
-        s.materialQuoteCache = new Cache(s, ordinary, voucher);
-        try {
-            project(s);
-        } catch (IOException incomplete) {
-            s.materialQuote = s.jobVoucherRequested ? voucher : ordinary;
+        Preparation preparation = new Preparation(s, materials, voucherMaterials, resources, inventory);
+        while (!preparation.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        return preparation.result();
+    }
+
+    private static List<NBTTagCompound> rows(NBTTagList rows) {
+        List<NBTTagCompound> result = new ArrayList<>();
+        for (int i = 0; i < rows.tagCount(); i++) result.add(rows.getCompoundTagAt(i));
+        return result;
+    }
+
+    /** Main-thread quote preparation: native stock calls are separate from pure shared-budget allocation. */
+    static final class Preparation {
+
+        private final HologramSession s;
+        private final Thread owner = Thread.currentThread();
+        private final String session;
+        private final long revision;
+        private final HologramCapture capture;
+        private final NBTTagList materials, voucherMaterials, resources;
+        private final List<NBTTagCompound> ordinaryRows, waivedRows;
+        private final StockSnapshot inventory;
+        private final RecordingStock requirements = new RecordingStock();
+        private final Predicate<ItemStack> fuzzy;
+        private QuoteCounter counter;
+        private NBTTagCompound ordinary, voucher, result;
+        private NBTTagList wireRows;
+        private int stage, index;
+        private long completedWork;
+
+        Preparation(HologramSession s, NBTTagList materials, NBTTagList voucherMaterials, NBTTagList resources,
+            StockSnapshot inventory) {
+            this.s = s;
+            session = s.id;
+            revision = s.planRevision;
+            capture = s.capture;
+            this.materials = materials;
+            this.voucherMaterials = voucherMaterials;
+            this.resources = resources;
+            this.inventory = inventory;
+            ordinaryRows = rows(materials);
+            waivedRows = rows(voucherMaterials);
+            fuzzy = item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item);
+            counter = new QuoteCounter(ordinaryRows, requirements, fuzzy);
         }
-        return (NBTTagCompound) s.materialQuote.copy();
-    }
 
-    private static void countItems(HologramSession s, NBTTagList rows, ItemStock inventory) {
-        List<NBTTagCompound> demands = new ArrayList<>();
-        for (int i = 0; i < rows.tagCount(); i++) demands.add(rows.getCompoundTagAt(i));
-        QuoteCounter counter = new QuoteCounter(
-            demands,
-            inventory,
-            item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item));
-        for (NBTTagCompound row : demands) row.setLong("available", counter.count(row));
-    }
+        boolean step(int maxWork, long deadline) {
+            if (Thread.currentThread() != owner) throw new IllegalStateException("Quote stock requires owner thread");
+            if (!done() && (!session.equals(s.id) || revision != s.planRevision || capture != s.capture))
+                throw new IllegalStateException("Obsolete quote preparation cannot observe or publish a new plan");
+            int work = 0;
+            while (!done() && work < maxWork && (work == 0 || System.nanoTime() < deadline)) {
+                advance();
+                completedWork++;
+                work++;
+            }
+            return done();
+        }
 
-    private static NBTTagCompound observedQuote(HologramSession s, NBTTagList materialRows, NBTTagList resourceRows,
-        StockSnapshot inventory) {
-        NBTTagCompound quote = fromRows(materialRows, resourceRows);
-        NBTTagList rows = quote.getTagList("rows", 10);
-        for (int index = 0; index < rows.tagCount(); index++) {
-            NBTTagCompound row = rows.getCompoundTagAt(index);
-            if ("fluid".equals(row.getString("kind"))) {
-                FluidStack fluid = readFluid(row);
-                counts(row, row.getLong("required"), inventory.fluid(s, fluid, row.getLong("required")));
-            } else if ("essentia".equals(row.getString("kind"))) {
-                counts(
-                    row,
-                    row.getLong("required"),
-                    inventory.essentia(s, row.getString("aspect"), row.getLong("required")));
+        boolean done() {
+            return stage == 8;
+        }
+
+        int completed() {
+            return index;
+        }
+
+        long completedWork() {
+            return completedWork;
+        }
+
+        int total() {
+            if (stage == 0 || stage == 3) return ordinaryRows.size();
+            if (stage == 1 || stage == 4) return waivedRows.size();
+            if (stage == 2) return requirements.queries.size();
+            if (stage == 5 || stage == 6) return wireRows == null ? 0 : wireRows.tagCount();
+            return 1;
+        }
+
+        String phase() {
+            switch (stage) {
+                case 0:
+                    return "quote.demands.ordinary";
+                case 1:
+                    return "quote.demands.voucher";
+                case 2:
+                    return "quote.inventory";
+                case 3:
+                    return "quote.allocate.ordinary";
+                case 4:
+                    return "quote.allocate.voucher";
+                case 5:
+                    return "quote.resources.ordinary";
+                case 6:
+                    return "quote.resources.voucher";
+                default:
+                    return "quote.publish";
             }
         }
+
+        NBTTagCompound result() {
+            if (!done()) throw new IllegalStateException("Quote preparation incomplete");
+            return (NBTTagCompound) result.copy();
+        }
+
+        private void advance() {
+            if (stage < 7 && index >= total()) {
+                stage++;
+                index = 0;
+                if (stage == 1) counter = new QuoteCounter(waivedRows, requirements, fuzzy);
+                else if (stage == 3) counter = new QuoteCounter(ordinaryRows, inventory.cachedItems(), fuzzy);
+                else if (stage == 4) counter = new QuoteCounter(waivedRows, inventory.cachedItems(), fuzzy);
+                else if (stage == 5) {
+                    ordinary = fromRows(materials, resources);
+                    wireRows = ordinary.getTagList("rows", 10);
+                } else if (stage == 6) {
+                    voucher = fromRows(voucherMaterials, resources);
+                    wireRows = voucher.getTagList("rows", 10);
+                }
+                // Publish the new phase's real 0/total before its first potentially blocking native call.
+                return;
+            }
+            if (stage <= 1) {
+                // Returning the requested bound proves the largest protected-stock request for either ledger.
+                counter.count((stage == 0 ? ordinaryRows : waivedRows).get(index++));
+            } else if (stage == 2) {
+                StockRequest query = requirements.queries.get(index++);
+                if (query.fuzzy) inventory.fuzzy(query.sample, query.limit);
+                else inventory.exact(query.sample, query.limit);
+            } else if (stage <= 4) {
+                NBTTagCompound row = (stage == 3 ? ordinaryRows : waivedRows).get(index++);
+                row.setLong("available", counter.count(row));
+            } else if (stage <= 6) {
+                observeResource(s, wireRows.getCompoundTagAt(index++), inventory);
+            } else {
+                completeQuote(s, ordinary);
+                completeQuote(s, voucher);
+                s.materialQuoteCache = new Cache(s, ordinary, voucher);
+                try {
+                    project(s);
+                } catch (IOException incomplete) {
+                    s.materialQuote = s.jobVoucherRequested ? voucher : ordinary;
+                }
+                result = (NBTTagCompound) s.materialQuote.copy();
+                index = 1;
+                stage = 8;
+            }
+        }
+    }
+
+    private static final class StockRequest {
+
+        final ItemStack sample;
+        final boolean fuzzy;
+        long limit;
+
+        StockRequest(ItemStack sample, long limit, boolean fuzzy) {
+            this.sample = sample.copy();
+            this.limit = limit;
+            this.fuzzy = fuzzy;
+        }
+    }
+
+    private static final class RecordingStock implements ItemStock {
+
+        final Map<HologramBlueprintResources.ExactKey, StockRequest> exact = new LinkedHashMap<>(),
+            fuzzy = new LinkedHashMap<>();
+        final List<StockRequest> queries = new ArrayList<>();
+
+        public long exact(ItemStack item, long limit) {
+            return record(item, limit, false);
+        }
+
+        public long fuzzy(ItemStack item, long limit) {
+            return record(item, limit, true);
+        }
+
+        private long record(ItemStack item, long limit, boolean shell) {
+            if (limit <= 0) return 0;
+            Map<HologramBlueprintResources.ExactKey, StockRequest> pool = shell ? fuzzy : exact;
+            HologramBlueprintResources.ExactKey key = new HologramBlueprintResources.ExactKey(item, null);
+            StockRequest known = pool.get(key);
+            if (known == null) {
+                known = new StockRequest(item, limit, shell);
+                pool.put(key, known);
+                queries.add(known);
+            } else known.limit = Math.max(known.limit, limit);
+            return limit;
+        }
+    }
+
+    private static void observeResource(HologramSession s, NBTTagCompound row, StockSnapshot inventory) {
+        if ("fluid".equals(row.getString("kind")))
+            counts(row, row.getLong("required"), inventory.fluid(s, readFluid(row), row.getLong("required")));
+        else if ("essentia".equals(row.getString("kind"))) counts(
+            row,
+            row.getLong("required"),
+            inventory.essentia(s, row.getString("aspect"), row.getLong("required")));
+    }
+
+    private static void completeQuote(HologramSession s, NBTTagCompound quote) {
         stamp(s, quote);
         quote.setBoolean("complete", !HologramSessionPolicy.authoring(s) && !s.localPlanPending);
         quote.setLong("inventorySnapshotTick", s.player.worldObj.getTotalWorldTime());
-        return quote;
     }
 
     /** Recheck only cached payable identities. No cell/world traversal, plan rebuild or render-payload encoding. */

@@ -294,6 +294,8 @@ public final class HologramSnapshotPublishRegression {
             cancelledSaveSourceDoesNotRebuild(player, work);
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
+            consecutivePlacementSnapshots(player, work);
+            provisionalPresetFailureRestoresRoute(player, work, unsafe);
             areaStagingHandoff(player, work);
             lightweightAreaSelection(player, work);
             for (int i = 0; i < 8; i++) SimpleAssert.that(
@@ -593,6 +595,127 @@ public final class HologramSnapshotPublishRegression {
         }
     }
 
+    /** Survival placement and a second blueprint use fresh exact stock observations and retire both tickets. */
+    @SuppressWarnings("unchecked")
+    private static void consecutivePlacementSnapshots(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        boolean creative = player.capabilities.isCreativeMode;
+        java.lang.reflect.Method factory = HologramResourcePlannerRegression.class
+            .getDeclaredMethod("session", EntityPlayerMP.class, int.class);
+        factory.setAccessible(true);
+        Field tasksField = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
+        tasksField.setAccessible(true);
+        HologramSession current = null;
+        Object previousCache = null;
+        try {
+            player.capabilities.isCreativeMode = false;
+            for (int size : new int[] { 64, 17 }) {
+                current = (HologramSession) factory.invoke(null, player, size);
+                current.virtualLocked = true;
+                current.virtualPreset.schema = 2;
+                current.virtualPreset.id = "placement_snapshot_" + size;
+                current.virtualPreset.name = "Placement snapshot " + size;
+                current.virtualPreset.controllerType = "";
+                current.virtualPreset.sourceMod = "minecraft";
+                current.virtualPreset.sourceClass = "";
+                current.virtualPreset.prompt = "";
+                current.virtualPreset.authorName = "SnapshotFixture";
+                current.virtualPreset.authorUuid = player.getUniqueID()
+                    .toString();
+                current.materialSettings.me = current.materialSettings.containers = false;
+                current.materialContext = new HologramMaterials.Context(player, current.materialSettings);
+                HologramPresets.validate(current.virtualPreset);
+                HologramWorkspace.activate(player.getUniqueID(), current);
+                HologramResourcePlanner.refreshPlan(current);
+                SimpleAssert.that(
+                    current.capture.cells.stream()
+                        .anyMatch(cell -> "pending".equals(cell.status)),
+                    "the regression uses real pending survival placement cells rather than a creative author preview");
+                current.open = true;
+                WIRE.clear();
+                HologramSnapshots.send(current);
+                Object task = ((java.util.Map<?, ?>) tasksField.get(null)).get(current);
+                Field inventoryField = task.getClass()
+                    .getDeclaredField("inventory");
+                inventoryField.setAccessible(true);
+                AtomicInteger queries = new AtomicInteger();
+                int demand = size;
+                HologramMaterialQuote.ItemStock stock = new HologramMaterialQuote.ItemStock() {
+
+                    public long exact(net.minecraft.item.ItemStack item, long limit) {
+                        return query(limit);
+                    }
+
+                    public long fuzzy(net.minecraft.item.ItemStack item, long limit) {
+                        return query(limit);
+                    }
+
+                    private long query(long limit) {
+                        SimpleAssert.that(
+                            limit > 0 && limit <= demand,
+                            "native stock observation is bounded by this blueprint's payable demand");
+                        SimpleAssert.that(
+                            WIRE.stream()
+                                .anyMatch(
+                                    packet -> packet instanceof HologramNetwork.State
+                                        && "inventory.inventory".equals(
+                                            ((HologramNetwork.State) packet).tag.getCompoundTag("progress")
+                                                .getString("detail"))
+                                        && ((HologramNetwork.State) packet).tag.getCompoundTag("progress")
+                                            .getLong("total") > 0),
+                            "inventory phase is published before a native stock observation can throw or block");
+                        queries.incrementAndGet();
+                        return Math.min(limit, 1L);
+                    }
+                };
+                inventoryField.set(task, new HologramMaterialQuote.StockSnapshot(stock));
+                drainPublication(current, work);
+                NBTTagCompound full = latestFull();
+                SimpleAssert.eq(
+                    size,
+                    full.getTagList("cells", 10)
+                        .tagCount(),
+                    "each completed source emits its own complete geometry");
+                SimpleAssert.that(
+                    !HologramSnapshotPreparation.pending(current) && work.isEmpty(),
+                    "completion retires the previous source preparation and encoding queue before the next blueprint");
+                NBTTagList materials = full.getTagList("materials", 10);
+                SimpleAssert
+                    .eq(1, materials.tagCount(), "identical pending shells retain one legacy material identity");
+                NBTTagCompound material = materials.getCompoundTagAt(0);
+                SimpleAssert
+                    .eq((long) size, material.getLong("required"), "legacy demand belongs to the current capture");
+                SimpleAssert.eq(1L, material.getLong("available"), "final quotation fills the legacy available field");
+                SimpleAssert.that(
+                    material.hasKey("mainAvailable") && material.hasKey("controllerAvailable"),
+                    "incremental quotation preserves the legacy main and controller fields");
+                SimpleAssert.that(
+                    queries.get() > 0 && queries.get() <= 2,
+                    "ordinary and voucher ledgers share this exact stock observation without an earlier duplicate quote");
+                SimpleAssert.that(
+                    HologramMaterialQuote.cached(current) && current.materialQuoteCache != previousCache,
+                    "a second source publishes a fresh quotation instead of retaining the completed blueprint cache");
+                SimpleAssert.eq(
+                    size - 1,
+                    full.getInteger("missing"),
+                    "final shortage is published after the completed quotation rather than the discarded early estimate");
+                previousCache = current.materialQuoteCache;
+                HologramNetwork.clearServerQueues();
+            }
+        } finally {
+            if (current != null) HologramSnapshotPreparation.cancel(current);
+            player.capabilities.isCreativeMode = creative;
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
+            HologramNetwork.clearServerQueues();
+            WIRE.clear();
+        }
+    }
+
     private static void drainPublication(HologramSession s, Queue<Runnable> work) {
         long deadline = System.nanoTime() + 5_000_000_000L;
         do {
@@ -606,6 +729,215 @@ public final class HologramSnapshotPublishRegression {
         } while (s.localPlanError.isEmpty() && s.localPlanPending || HologramSnapshotPreparation.pending(s)
             || !work.isEmpty());
         tick();
+    }
+
+    /** Real dispatcher switches, worker failure and a second request exercise both server and UI correlation. */
+    @SuppressWarnings("unchecked")
+    private static void provisionalPresetFailureRestoresRoute(EntityPlayerMP player, Queue<Runnable> work,
+        sun.misc.Unsafe unsafe) throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        NBTTagCompound heldTag = player.getHeldItem()
+            .getTagCompound();
+        boolean hadSelection = heldTag.hasKey(HologramSessionKeys.SELECTED_PRESET, 8);
+        String selection = heldTag.getString(HologramSessionKeys.SELECTED_PRESET);
+        Field serverGlobal = net.minecraft.server.MinecraftServer.class.getDeclaredField("mcServer");
+        serverGlobal.setAccessible(true);
+        Object previousServer = serverGlobal.get(null);
+        double previousY = player.posY;
+        player.posY = 64;
+        try {
+            // Private uploads are resolved from the authenticated session only on the dedicated-server path.
+            // The integrated/headless path deliberately reads local artifacts instead.
+            serverGlobal.set(null, unsafe.allocateInstance(net.minecraft.server.dedicated.DedicatedServer.class));
+            for (String operation : new String[] { "previewPreset", "editPreset" }) {
+                HologramSession origin = presentationOrigin(player);
+                Object geometry = origin.capture;
+                heldTag.setString(HologramSessionKeys.SELECTED_PRESET, "previous-selection");
+                HologramDeferredPlanRefresh.request(origin, java.util.Collections.singleton(0));
+                Object previousPlan = origin.localPlanTask;
+                HologramSession target = dispatchPresentation(origin, operation, 41);
+                SimpleAssert.that(
+                    origin.localPlanPending && origin.localPlanTask == null,
+                    "display switch suspends its old pending plan without publishing it as complete");
+                SimpleAssert.eq(41L, target.uiSequence, "new display carries the original request sequence");
+                SimpleAssert.that(target.presentationTransition != null, "display has not committed before encoding");
+                long deadline = System.nanoTime() + 5_000_000_000L;
+                while (work.isEmpty() && System.nanoTime() < deadline) {
+                    HologramWorkspaceScheduler.tick();
+                    tick();
+                }
+                SimpleAssert.that(!work.isEmpty(), "real first-full preparation reaches the encoding executor");
+                HologramSnapshotEncoding.Job encoding = (HologramSnapshotEncoding.Job) work.remove();
+                Field checkpoint = HologramSnapshotEncoding.Job.class.getDeclaredField("checkpoint");
+                checkpoint.setAccessible(true);
+                checkpoint.set(
+                    encoding,
+                    (java.util.function.LongConsumer) written -> {
+                        throw new IllegalStateException("fixture presentation encoder failure");
+                    });
+                encoding.run();
+                SimpleAssert.that(
+                    encoding.done && encoding.failure != null && encoding.bytes == null,
+                    "failure is raised inside the actual production encoder before acceptance");
+                tick();
+                SimpleAssert.that(
+                    HologramWorkspace.find(player.getUniqueID()) == origin && origin.capture == geometry,
+                    "encoder failure restores the exact original route and geometry owner");
+                SimpleAssert.that(
+                    target.presentationTransition == null && !HologramSnapshotPreparation.pending(target),
+                    "failed target retires its preparation and provisional owner");
+                SimpleAssert.eq(
+                    "previous-selection",
+                    heldTag.getString(HologramSessionKeys.SELECTED_PRESET),
+                    "rollback restores the original tool selection");
+                NBTTagCompound failure = null;
+                for (IMessage message : WIRE) if (message instanceof HologramNetwork.State) {
+                    NBTTagCompound state = ((HologramNetwork.State) message).tag;
+                    if (state.getBoolean("transportError")) failure = state;
+                }
+                SimpleAssert.that(failure != null, "first-full failure emits an immediate small terminal receipt");
+                SimpleAssert
+                    .eq(origin.id, failure.getString("session"), "terminal receipt uses the client's old session");
+                SimpleAssert
+                    .eq(41L, failure.getLong("uiSequence"), "terminal receipt retires the original request ticket");
+                SimpleAssert
+                    .eq(0L, failure.getLong("clientTaskToken"), "display failure claims no background task owner");
+                SimpleAssert
+                    .that(!failure.hasKey("planRevision"), "target revision is not attached to the old geometry");
+                SimpleAssert
+                    .eq("snapshot.encode", failure.getString("errorCode"), "actual failing stage survives rollback");
+                SimpleAssert.that(origin.localPlanPending, "failed display does not discard the original pending plan");
+                HologramDeferredPlanRefresh.tick(origin, 1, 1_000_000_000L, ignored -> {});
+                SimpleAssert.that(
+                    origin.localPlanPending && origin.localPlanTask != null && origin.localPlanTask != previousPlan,
+                    "restored original route resumes a fresh bounded continuation for the unfinished plan");
+                WIRE.clear();
+                HologramSession retry = dispatchPresentation(origin, operation, 42);
+                drainPublication(retry, work);
+                NBTTagCompound full = latestFull();
+                SimpleAssert.eq(
+                    retry.id,
+                    full.getString("session"),
+                    "retry through the original dispatcher route publishes its new baseline");
+                SimpleAssert.eq(42L, full.getLong("uiSequence"), "successful retry retains its own request sequence");
+                SimpleAssert.that(
+                    retry.presentationTransition == null,
+                    "accepted first full commits and releases the original owner");
+                HologramNetwork
+                    .transportFailure(player, retry.id, 42, "snapshot.encode", new java.io.IOException("late failure"));
+                SimpleAssert.that(
+                    HologramWorkspace.find(player.getUniqueID()) == retry,
+                    "post-commit failure cannot roll back the new display");
+                HologramNetwork.clearServerQueues();
+                work.clear();
+                WIRE.clear();
+            }
+            for (String fence : new String[] { "sourceId", "sourceSequence", "sourceTask", "targetId", "targetSequence",
+                "targetTask", "job", "newSession" }) {
+                HologramSession origin = presentationOrigin(player);
+                HologramSession target = dispatchPresentation(origin, "previewPreset", 51);
+                String targetId = target.id;
+                HologramSession current = target;
+                if ("sourceId".equals(fence)) origin.id = UUID.randomUUID()
+                    .toString();
+                else if ("sourceSequence".equals(fence)) origin.uiSequence++;
+                else if ("sourceTask".equals(fence)) origin.blueprintClientTaskToken++;
+                else if ("targetId".equals(fence)) target.id = UUID.randomUUID()
+                    .toString();
+                else if ("targetSequence".equals(fence)) target.uiSequence++;
+                else if ("targetTask".equals(fence)) target.blueprintClientTaskToken++;
+                else if ("job".equals(fence)) target.job = 1;
+                else {
+                    current = new HologramSession(player, 0, 64, 0, false, 2);
+                    HologramWorkspace.activate(player.getUniqueID(), current);
+                }
+                HologramNetwork.transportFailure(
+                    player,
+                    targetId,
+                    51,
+                    "snapshot.prepare",
+                    new java.io.IOException("stale " + fence));
+                SimpleAssert.that(
+                    HologramWorkspace.find(player.getUniqueID()) == current,
+                    "late failure preserves a changed owner: " + fence);
+                HologramSnapshotPreparation.cancel(target);
+                target.job = 0;
+                HologramNetwork.clearServerQueues();
+                work.clear();
+                WIRE.clear();
+            }
+        } finally {
+            HologramSession current = sessions.get(player.getUniqueID());
+            if (current != null) HologramSnapshotPreparation.cancel(current);
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
+            if (hadSelection) heldTag.setString(HologramSessionKeys.SELECTED_PRESET, selection);
+            else heldTag.removeTag(HologramSessionKeys.SELECTED_PRESET);
+            player.posY = previousY;
+            serverGlobal.set(null, previousServer);
+        }
+    }
+
+    private static HologramSession presentationOrigin(EntityPlayerMP player)
+        throws ReflectiveOperationException, java.io.IOException {
+        java.lang.reflect.Method factory = HologramResourcePlannerRegression.class
+            .getDeclaredMethod("session", EntityPlayerMP.class, int.class);
+        factory.setAccessible(true);
+        HologramSession origin = (HologramSession) factory.invoke(null, player, 3);
+        origin.virtualPlacement = false;
+        origin.virtualPreset.schema = 2;
+        origin.virtualPreset.id = "private_" + UUID.randomUUID();
+        origin.virtualPreset.name = "Presentation retry";
+        origin.virtualPreset.controllerType = "";
+        origin.virtualPreset.sourceMod = "minecraft";
+        origin.virtualPreset.sourceClass = "";
+        origin.virtualPreset.prompt = "";
+        origin.virtualPreset.authorName = "SnapshotFixture";
+        origin.virtualPreset.authorUuid = player.getUniqueID()
+            .toString();
+        HologramPresets.validate(origin.virtualPreset);
+        origin.libraryPrivatePreset = HologramPresets.copy(origin.virtualPreset);
+        origin.libraryUiActive = true;
+        origin.openPurpose = "blueprintEdit";
+        origin.materialSettings.me = false;
+        origin.materialSettings.containers = false;
+        HologramWorkspace.activate(player.getUniqueID(), origin);
+        SimpleAssert.that(
+            HologramLibraryFacade.get(player, origin.libraryPrivatePreset.id) != null,
+            "real library facade resolves the server-owned private upload before dispatcher admission");
+        return origin;
+    }
+
+    private static HologramSession dispatchPresentation(HologramSession origin, String operation, long sequence) {
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("session", origin.id);
+        action.setString("op", operation);
+        action.setString("presetId", origin.libraryPrivatePreset.id);
+        action.setLong("uiSequence", sequence);
+        action.setBoolean("confirmDiscard", true);
+        origin.actionCount = 0;
+        HologramActionDispatcher.handle(origin.player, action);
+        HologramSession target = HologramWorkspace.find(origin.player.getUniqueID());
+        SimpleAssert.that(
+            target != origin && target.presentationTransition != null,
+            "real dispatcher installs a provisional " + operation
+                + " valid="
+                + HologramSessionPolicy.valid(origin)
+                + " allowed="
+                + HologramWorkspace.presentationAllowed(origin)
+                + " dirtyConfirmation="
+                + origin.discardConfirmationRequired
+                + " status="
+                + origin.status);
+        target.materialSettings.me = false;
+        target.materialSettings.containers = false;
+        return target;
     }
 
     /** Actual Area scan, canonicalization, Population, PlanTask and publishImport replace the Java owner. */

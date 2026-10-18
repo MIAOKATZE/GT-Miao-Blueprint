@@ -206,6 +206,7 @@ final class HologramPresetWorkflow {
     }
 
     static HologramSession editPreset(HologramSession previous, String id) {
+        if (!HologramWorkspace.presentationAllowed(previous)) return previous;
         int x = previous.target != null || previous.virtual ? previous.x
             : net.minecraft.util.MathHelper.floor_double(previous.player.posX);
         int y = previous.target != null || previous.virtual ? previous.y
@@ -222,6 +223,9 @@ final class HologramPresetWorkflow {
         }
         HologramSession editing = HologramWorkspace.create(previous.player, x, y, z, false, previous.side);
         HologramLibraryWorkflow.copyLibraryIntent(previous, editing);
+        editing.uiSequence = previous.uiSequence;
+        HologramWorkspace.PresentationTransition transition = HologramWorkspace.preparePresentation(previous, editing);
+        if (transition == null) return previous;
         editing.virtual = true;
         loadPreset(editing, id, false);
         if (editing.virtualPreset == null) {
@@ -232,7 +236,7 @@ final class HologramPresetWorkflow {
         editing.openPurpose = "blueprintEdit";
         editing.settingsOnly = false;
         editing.status = "已打开自定义预设编辑；保存回原预设或另存为，仅保存规划，不施工";
-        HologramWorkspace.activate(previous.player.getUniqueID(), editing);
+        if (!HologramWorkspace.activatePresentation(transition)) return previous;
         presetGuidance(editing, "编辑完成后可保存或另存为；点击放置预览位置，右击确定位置，再核对材料并确认施工。");
         return editing;
     }

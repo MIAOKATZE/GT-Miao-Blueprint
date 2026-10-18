@@ -24,6 +24,7 @@ public final class HologramUiModuleRegression {
         idleHintTiming();
         confirmedLibraryTargets();
         controllerConstructionConfirmation();
+        presentationSnapshotFailure();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -98,6 +99,146 @@ public final class HologramUiModuleRegression {
                 Boolean.TRUE,
                 HologramUiTabMemory.openingTab(opening, true),
                 "the explicit " + purpose + " opening overrides remembered structure navigation");
+        }
+    }
+
+    private static void presentationSnapshotFailure() {
+        try {
+            for (String operation : new String[] { "previewPreset", "choosePlacementPreset", "lockVirtual" }) {
+                HologramUiModules ui = presentationUi("presentation-" + operation, 0);
+                ui.session.send(operation, null, true);
+                long failedSequence = ui.session.pendingSequence();
+                NBTTagCompound progress = new NBTTagCompound();
+                progress.setString("scope", "server");
+                progress.setString("session", ui.session.state().session);
+                progress.setLong("uiSequence", failedSequence);
+                progress.setLong("planRevision", 7);
+                progress.setString("phase", "snapshot.prepare");
+                progress.setLong("sequence", 1);
+                progress.setLong("done", 99);
+                progress.setLong("total", 100);
+                HologramClientProgress.receive(progress);
+                NBTTagCompound failure = presentationFailure(ui, failedSequence);
+                for (String stale : new String[] { "session", "sequence", "token", "revision" }) {
+                    NBTTagCompound wrong = (NBTTagCompound) failure.copy();
+                    if ("session".equals(stale)) wrong.setString("session", "older-presentation");
+                    if ("sequence".equals(stale)) wrong.setLong("uiSequence", failedSequence - 1);
+                    if ("token".equals(stale)) wrong.setLong("clientTaskToken", 77);
+                    if ("revision".equals(stale)) wrong.setLong("planRevision", 6);
+                    SimpleAssert.that(
+                        !HologramClient.presentationTransportFailed(ui.session, wrong)
+                            && ui.session.pendingSequence() == failedSequence
+                            && HologramClientProgress.view("server", ui.session.state().session) != null,
+                        "stale " + stale + " failure preserves the current presentation ticket and progress");
+                }
+                HologramState previous = ui.session.state();
+                SimpleAssert.that(
+                    HologramClient.presentationTransportFailed(ui.session, failure) && ui.session.pendingSequence() < 0
+                        && ui.session.editable()
+                        && HologramClientProgress.view("server", previous.session) == null
+                        && ui.session.progress() == null
+                        && ui.session.notice()
+                            .contains("准备失败")
+                        && ui.session.state() == previous,
+                    "an exact ownerless " + operation
+                        + " snapshot failure releases UI/progress and retains the preview");
+                ui.session.send("choosePlacementPreset", null, true);
+                NBTTagCompound retry = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+                SimpleAssert.that(
+                    retry.getLong("uiSequence") > failedSequence
+                        && "choosePlacementPreset".equals(retry.getString("op"))
+                        && !HologramClient.presentationTransportFailed(ui.session, failure)
+                        && ui.session.pendingSequence() == retry.getLong("uiSequence"),
+                    "the next blueprint request is emitted immediately and survives a late prior failure");
+                HologramClientProgress.clear();
+            }
+            for (int oldJob : new int[] { 1, 2, 3 }) {
+                HologramUiModules ui = presentationUi("old-completed-job-" + oldJob, oldJob);
+                ui.session.send("choosePlacementPreset", null, true);
+                SimpleAssert.that(
+                    HologramClient
+                        .presentationTransportFailed(ui.session, presentationFailure(ui, ui.session.pendingSequence()))
+                        && ui.session.pendingSequence() < 0,
+                    "stale job metadata cannot retain an exact new presentation failure after its owner ended");
+                ui.session.send("lockVirtual", null, true);
+                SimpleAssert.that(
+                    ui.session.pendingSequence() > 1,
+                    "after the terminal presentation receipt a new lock request can acquire a distinct ticket");
+            }
+            activeOwnerRejectsPresentationFailure();
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("actual UI presentation failure lifecycle", failure);
+        } finally {
+            HologramClientProgress.clear();
+        }
+    }
+
+    private static HologramUiModules presentationUi(String session, int job) throws ReflectiveOperationException {
+        HologramUiModules ui = headlessUi();
+        NBTTagCompound data = new NBTTagCompound();
+        data.setString("session", session);
+        data.setLong("planRevision", 7);
+        data.setInteger("job", job);
+        setUiField(ui.session, "state", new HologramState(data));
+        setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
+        return ui;
+    }
+
+    private static NBTTagCompound presentationFailure(HologramUiModules ui, long sequence) {
+        NBTTagCompound failure = new NBTTagCompound();
+        failure.setBoolean("transportError", true);
+        failure.setString("errorCode", "snapshot.prepare");
+        failure.setString("session", ui.session.state().session);
+        failure.setLong("uiSequence", sequence);
+        failure.setLong("planRevision", 7);
+        return failure;
+    }
+
+    private static void activeOwnerRejectsPresentationFailure() throws ReflectiveOperationException {
+        java.lang.reflect.Field ownerField = HologramBackgroundTasks.class.getDeclaredField("OWNER");
+        ownerField.setAccessible(true);
+        HologramTaskOwner owner = (HologramTaskOwner) ownerField.get(null);
+        java.lang.reflect.Field callbacks = HologramTaskOwner.class.getDeclaredField("notifications");
+        callbacks.setAccessible(true);
+        Object original = callbacks.get(owner);
+        callbacks.set(owner, new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {}
+        });
+        long token = 0;
+        try {
+            for (String kind : new String[] { "server", "material", "library" }) {
+                HologramUiModules ui = presentationUi("active-owner-" + kind, 0);
+                ui.session.send("previewPreset", null, true);
+                long pending = ui.session.pendingSequence();
+                token = owner.begin(kind, ui.session.state().session + ":" + pending, kind);
+                SimpleAssert.that(
+                    token > 0
+                        && !HologramClient.presentationTransportFailed(ui.session, presentationFailure(ui, pending))
+                        && owner.busy()
+                        && owner.token() == token
+                        && ui.session.pendingSequence() == pending,
+                    "a presentation snapshot error cannot end an active " + kind + " owner or its UI ticket");
+                owner.finish(token, HologramTaskOwner.Result.CANCELLED, "test cleanup");
+                token = 0;
+            }
+            for (String operation : new String[] { "build", "orderMissingMaterials", "confirmAeSave",
+                "saveBlueprint" }) {
+                HologramUiModules ui = presentationUi("unrelated-operation-" + operation, 0);
+                setUiField(ui.session, "pendingOperation", operation);
+                ui.session.pendingSequence(8);
+                SimpleAssert.that(
+                    !HologramClient.presentationTransportFailed(ui.session, presentationFailure(ui, 8))
+                        && ui.session.pendingSequence() == 8,
+                    "the presentation fallback never consumes a " + operation + " ticket even without an owner");
+            }
+        } finally {
+            if (token != 0) owner.finish(token, HologramTaskOwner.Result.CANCELLED, "test cleanup");
+            callbacks.set(owner, original);
         }
     }
 

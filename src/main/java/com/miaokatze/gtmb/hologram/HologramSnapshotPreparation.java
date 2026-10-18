@@ -64,7 +64,16 @@ final class HologramSnapshotPreparation {
         Task previous = TASKS.get(s);
         if (previous != null && previous.valid()) return;
         if (previous != null) cancel(previous);
-        if (TASKS.size() >= MAX_TASKS) return;
+        if (TASKS.size() >= MAX_TASKS) {
+            if (s.presentationTransition != null) HologramNetwork.transportFailure(
+                s.player,
+                s.id,
+                s.uiSequence,
+                "snapshot.queue",
+                s.blueprintClientTaskToken,
+                new IllegalStateException("snapshot preparation queue full"));
+            return;
+        }
         HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveOwnedState(s);
         if (ticket == null) return;
         Task task = new Task(s, ticket);
@@ -92,6 +101,9 @@ final class HologramSnapshotPreparation {
                 HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS)),
                 System::nanoTime);
         } catch (RuntimeException | LinkageError failure) {
+            String failedPhase = task.metadata == null ? task.stageDetail() : task.metadata.phase();
+            long failedDone = task.metadata == null ? task.stageDone() : task.metadata.done();
+            long failedTotal = task.metadata == null ? task.stageTotal() : task.metadata.total();
             cancel(task);
             HologramNetwork.transportFailure(
                 s.player,
@@ -99,7 +111,13 @@ final class HologramSnapshotPreparation {
                 task.ui,
                 "snapshot.prepare",
                 task.clientTask,
-                new IllegalStateException("Hologram snapshot preparation failed", failure));
+                new IllegalStateException(
+                    "Hologram snapshot preparation failed phase=" + failedPhase
+                        + " done="
+                        + failedDone
+                        + "/"
+                        + failedTotal,
+                    failure));
         }
         return true;
     }
@@ -154,6 +172,15 @@ final class HologramSnapshotPreparation {
         return work;
     }
 
+    static long stockLimit(long demand, long reserved, long pending) {
+        long protectedStock = Math.max(0L, reserved);
+        long pendingStock = Math.max(0L, pending);
+        protectedStock = pendingStock > Long.MAX_VALUE - protectedStock ? Long.MAX_VALUE
+            : protectedStock + pendingStock;
+        long wanted = Math.max(0L, demand);
+        return wanted > Long.MAX_VALUE - protectedStock ? Long.MAX_VALUE : wanted + protectedStock;
+    }
+
     private static final class Task {
 
         final HologramSession s;
@@ -179,8 +206,8 @@ final class HologramSnapshotPreparation {
         final HologramDecorMaterials.Ledger ordinaryLedger, voucherLedger;
         final HologramMaterialQuote.StockSnapshot inventory;
         Iterator<NBTTagCompound> materialIterator;
-        HologramMaterialQuote.QuoteCounter materialStock;
-        int stage, index, protectedCount, missing, total, workTotal, recoveryRows, recoveryItems;
+        HologramMaterialQuote.Preparation materialQuote;
+        int stage, index, protectedCount, total, workTotal, recoveryRows, recoveryItems;
         boolean encoding;
         long lastTick = Long.MIN_VALUE;
         long lastDone = -1, lastTotal = -1;
@@ -268,8 +295,8 @@ final class HologramSnapshotPreparation {
                 stage = 2;
                 if (clock.getAsLong() >= deadline) return;
             }
-            runSlice(this::unit, () -> encoding, deadline, clock);
-            if (!encoding) progress("snapshot.prepare", stageDetail(), index, stageTotal(), false);
+            runSlice(() -> unit(deadline), () -> encoding, deadline, clock);
+            if (!encoding) progress("snapshot.prepare", stageDetail(), stageDone(), stageTotal(), false);
         }
 
         String stageDetail() {
@@ -288,12 +315,22 @@ final class HologramSnapshotPreparation {
                     return "materials";
                 case 8:
                     return "recovery";
+                case 9:
+                    return materialQuote == null ? "inventory"
+                        : "inventory." + materialQuote.phase()
+                            .substring(6);
+                case 10:
+                    return "metadata";
                 default:
                     return "metadata";
             }
         }
 
-        int stageTotal() {
+        long stageDone() {
+            return stage == 9 && materialQuote != null ? materialQuote.completed() : index;
+        }
+
+        long stageTotal() {
             if (stage == 2)
                 return s.localEdits.snapshotReuseIndices || s.virtualPreset == null ? 0 : s.virtualPreset.cells.size();
             if (stage == 3) return s.localEdits.snapshotReuseIndices || s.processingSource == null ? 0
@@ -302,24 +339,24 @@ final class HologramSnapshotPreparation {
                 : s.processingSource.palette.size();
             if (stage == 5) return size;
             if (draftOnly && stage >= 6) return 0;
+            if (stage == 9) return materialQuote == null ? 0 : materialQuote.total();
+            if (stage == 10) return 1;
             if (stage == 6) return s.blueprintResources == null ? 0 : s.blueprintResources.items.size();
             if (stage == 7) return requirements.size();
             return s.recovered.size();
         }
 
-        void unit() {
+        void unit(long deadline) {
+            int previousStage = stage;
             while (stage >= 2 && stage <= 8 && index >= stageTotal()) {
                 stage++;
                 index = 0;
                 if (stage == 7) {
                     materialIterator = requirements.values()
                         .iterator();
-                    materialStock = new HologramMaterialQuote.QuoteCounter(
-                        requirements.values(),
-                        inventory,
-                        item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item));
                 }
             }
+            if (stage != previousStage) progress("snapshot.prepare", stageDetail(), stageDone(), stageTotal(), true);
             if (stage == 2) HologramLocalPlanRefresh.snapshotSeedDefaults(s, index++);
             else if (stage == 3) HologramLocalPlanRefresh.snapshotSeedSource(s, index++);
             else if (stage == 4) HologramLocalPlanRefresh.snapshotSeedPalette(s, index++);
@@ -331,16 +368,39 @@ final class HologramSnapshotPreparation {
                 NBTTagCompound req = materialIterator.next();
                 quoteMaterial(req);
                 materials.appendTag(req);
-                missing = (int) Math.min(
-                    Integer.MAX_VALUE,
-                    (long) missing + Math.max(0L, req.getLong("required") - req.getLong("available")));
                 index++;
             } else if (stage == 8) {
                 ItemStack drop = s.recovered.get(index++);
                 recoveryRows++;
                 recoveryItems += drop.stackSize;
                 if (recovery.tagCount() < 96) recovery.appendTag(HologramSnapshots.recoverySummary(drop, false));
-            } else if (stage == 9) finish();
+            } else if (stage == 9) {
+                if (draftOnly) {
+                    stage = 10;
+                    return;
+                }
+                if (materialQuote == null) {
+                    NBTTagList voucherMaterials = HologramMaterialQuote.voucherRows(materials);
+                    HologramMaterialQuote.mergeRows(materials, ordinaryDecor.values());
+                    HologramMaterialQuote.mergeRows(voucherMaterials, voucherDecor.values());
+                    state.setTag("materials", materials);
+                    materialQuote = new HologramMaterialQuote.Preparation(
+                        s,
+                        materials,
+                        voucherMaterials,
+                        state.getTagList("blueprintResources", 10),
+                        inventory);
+                    progress("snapshot.prepare", stageDetail(), stageDone(), stageTotal(), true);
+                }
+                progress("snapshot.prepare", stageDetail(), stageDone(), stageTotal(), false);
+                boolean quoted = materialQuote.step(1, deadline);
+                progress("snapshot.prepare", stageDetail(), stageDone(), stageTotal(), false);
+                if (quoted) {
+                    state.setTag("materialQuote", materialQuote.result());
+                    stage = 10;
+                    index = 0;
+                }
+            } else if (stage == 10) finish();
         }
 
         void addCell(int index) {
@@ -466,16 +526,19 @@ final class HologramSnapshotPreparation {
         void addDecoration(HologramDecorMaterials.Descriptor descriptor, HologramDecorMaterials.Ledger ledger,
             Map<HologramBlueprintResources.ExactKey, Long> reserved,
             Map<HologramBlueprintResources.ExactKey, NBTTagCompound> rows) throws java.io.IOException {
-            HologramDecorMaterials.Quote quote = ledger.quote(
-                descriptor,
-                (item,
-                    limit) -> (int) Math.min(
-                        Integer.MAX_VALUE,
-                        Math.max(
-                            0L,
-                            inventory.exact(item, Long.MAX_VALUE)
-                                - reserved.getOrDefault(HologramValues.lookupKey(item), 0L)
-                                - s.pendingAssetBudget.getOrDefault(HologramValues.lookupKey(item), 0L))));
+            HologramDecorMaterials.Quote quote = ledger.quote(descriptor, (item, limit) -> {
+                HologramBlueprintResources.ExactKey key = HologramValues.lookupKey(item);
+                long pending = s.pendingAssetBudget.getOrDefault(key, 0L);
+                long protectedStock = stockLimit(0, reserved.getOrDefault(key, 0L), pending);
+                long perCell = Math.max(1L, limit);
+                long geometryDemand = size > Long.MAX_VALUE / perCell ? Long.MAX_VALUE : (long) size * perCell;
+                long request = Math.max(
+                    stockLimit(limit, reserved.getOrDefault(key, 0L), pending),
+                    Math.max(
+                        stockLimit(geometryDemand, pending, 0),
+                        stockLimit(oldDecor.getOrDefault(key, 0L), pending, 0)));
+                return (int) Math.min(Integer.MAX_VALUE, Math.max(0L, inventory.exact(item, request) - protectedStock));
+            });
             for (ItemStack item : quote.items) {
                 HologramValues.mergeStack(reserved, item, (long) item.stackSize, Long::sum);
                 HologramBlueprintResources.ExactKey key = HologramValues.stackKey(item);
@@ -492,7 +555,6 @@ final class HologramSnapshotPreparation {
         void quoteMaterial(NBTTagCompound row) {
             ItemStack identity = ItemStack.loadItemStackFromNBT(row);
             int required = (int) Math.min(Integer.MAX_VALUE, Math.max(4096L, row.getLong("required")));
-            row.setLong("available", materialStock.count(row));
             row.setInteger(
                 "mainAvailable",
                 HologramMaterialAccess.materialSource(s)
@@ -523,20 +585,6 @@ final class HologramSnapshotPreparation {
                         && structureFound));
             state.setInteger("cellCount", cells.tagCount());
             state.setTag("cells", cells);
-            if (!draftOnly) {
-                NBTTagList voucherMaterials = HologramMaterialQuote.voucherRows(materials);
-                HologramMaterialQuote.mergeRows(materials, ordinaryDecor.values());
-                HologramMaterialQuote.mergeRows(voucherMaterials, voucherDecor.values());
-                state.setTag("materials", materials);
-                state.setTag(
-                    "materialQuote",
-                    HologramMaterialQuote.snapshot(
-                        s,
-                        materials,
-                        voucherMaterials,
-                        state.getTagList("blueprintResources", 10),
-                        inventory));
-            }
             state.setBoolean("planIncomplete", s.localPlanPending);
             state.setBoolean("quotesIncomplete", draftOnly);
             if (draftOnly) {
@@ -547,7 +595,7 @@ final class HologramSnapshotPreparation {
             state.setInteger("recoveryTotal", recoveryItems);
             if (!draftOnly) state.setTag("recovery", recovery);
             state.setInteger("protected", protectedCount);
-            state.setInteger("missing", draftOnly ? 0 : Math.max(missing, s.planMissing));
+            state.setInteger("missing", draftOnly ? 0 : s.planMissing);
             state.setInteger("total", total);
             state.setInteger("workTotal", workTotal);
             state.setString(

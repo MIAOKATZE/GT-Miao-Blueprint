@@ -37,8 +37,10 @@ import appeng.api.config.SecurityPermissions;
 import appeng.api.features.IWirelessTermHandler;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.energy.IEnergySource;
+import appeng.api.networking.security.BaseActionSource;
 import appeng.api.networking.security.ISecurityGrid;
 import appeng.api.networking.security.PlayerSource;
+import appeng.api.storage.IMEInventory;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
@@ -68,6 +70,28 @@ public final class HologramMaterials {
     private static final Logger LOG = LogManager.getLogger("gtmb");
 
     private HologramMaterials() {}
+
+    /** AE's additive ceilDiv overflows at Long.MAX_VALUE even for a unit divisor of one. */
+    static long transferUnits(long amount, int unit) {
+        if (amount < 0 || unit <= 0) throw new IllegalArgumentException("Invalid native transfer quantity/unit");
+        return amount / unit + (amount % unit == 0 ? 0 : 1);
+    }
+
+    /** Native AE simulation semantics with overflow-safe long fee division; one storage simulation, no debit. */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    static <T extends IAEStack> T simulatePoweredExtraction(IEnergySource energy, IMEInventory<T> inventory, T request,
+        BaseActionSource source) {
+        long amount = request.getStackSize();
+        if (amount <= 0) return null;
+        int unit = request.getAmountPerUnit();
+        double available = energy
+            .extractAEPower(transferUnits(amount, unit), Actionable.SIMULATE, PowerMultiplier.CONFIG);
+        long powered = Math.min(amount, Math.max(0L, (long) (available * unit + 0.9)));
+        if (powered <= 0) return null;
+        T bounded = (T) request.copy();
+        bounded.setStackSize(powered);
+        return inventory.extractItems(bounded, Actionable.SIMULATE, source);
+    }
 
     private static boolean coordinatePayment(ItemStack expected) {
         return HologramCoordinatePolicies.reviewedCoordinateItem(expected);
@@ -271,12 +295,11 @@ public final class HologramMaterials {
             for (IAEItemStack request : requests) {
                 if (request == null || total >= limit || !terminalAvailable()) break;
                 request.setStackSize(limit - total);
-                IAEItemStack simulated = Platform.poweredExtraction(
+                IAEItemStack simulated = simulatePoweredExtraction(
                     energySource(null),
                     monitor,
                     request,
-                    new PlayerSource(player, terminal),
-                    Actionable.SIMULATE);
+                    new PlayerSource(player, terminal));
                 if (simulated != null) total += Math.max(0L, Math.min(limit - total, simulated.getStackSize()));
             }
             return total;
@@ -344,7 +367,7 @@ public final class HologramMaterials {
                 public long poweredCount(IAEStack<?> stack) {
                     if (!available()) return 0;
                     double power = networkPower(
-                        Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                        transferUnits(stack.getStackSize(), stack.getAmountPerUnit()),
                         Actionable.SIMULATE,
                         PowerMultiplier.CONFIG,
                         transaction);
@@ -441,7 +464,7 @@ public final class HologramMaterials {
                 public long poweredCount(IAEFluidStack stack) {
                     if (!available()) return 0;
                     double power = networkPower(
-                        Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                        transferUnits(stack.getStackSize(), stack.getAmountPerUnit()),
                         Actionable.SIMULATE,
                         PowerMultiplier.CONFIG,
                         transaction);
@@ -890,7 +913,7 @@ public final class HologramMaterials {
 
         private int poweredCount(IAEItemStack stack) {
             double available = networkPower(
-                Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                transferUnits(stack.getStackSize(), stack.getAmountPerUnit()),
                 Actionable.SIMULATE,
                 PowerMultiplier.CONFIG,
                 null);
@@ -898,11 +921,7 @@ public final class HologramMaterials {
         }
 
         private void charge(long items, int amountPerUnit, Transaction transaction) {
-            networkPower(
-                Platform.ceilDiv(items, amountPerUnit),
-                Actionable.MODULATE,
-                PowerMultiplier.CONFIG,
-                transaction);
+            networkPower(transferUnits(items, amountPerUnit), Actionable.MODULATE, PowerMultiplier.CONFIG, transaction);
         }
 
         private IEnergySource energySource(Transaction transaction) {

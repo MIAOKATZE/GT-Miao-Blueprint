@@ -170,6 +170,7 @@ final class HologramSession {
     int deferAttempts, deferredIndex = -1;
     boolean open;
     long planRevision, uiSequence, batchSeq;
+    HologramWorkspace.PresentationTransition presentationTransition;
     long configurationAcceptedSequence = -1;
     final HologramAeProtocol.State ae = new HologramAeProtocol.State();
     int ackIndex = -1, planMissing;

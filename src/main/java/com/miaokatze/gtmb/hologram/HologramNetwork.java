@@ -619,6 +619,15 @@ public final class HologramNetwork {
         box.snapshots.clear();
     }
 
+    /** Retire only this provisional target's transport before restoring its former display owner. */
+    static void retirePresentationState(HologramSession target) {
+        Outbox box = outgoing.get(target.player.getUniqueID());
+        if (box != null && box.owner == target && box.player == target.player) {
+            outgoing.remove(target.player.getUniqueID());
+            retire(box);
+        }
+    }
+
     static void transportFailure(EntityPlayerMP player, String session, long uiSequence, String code,
         Exception failure) {
         transportFailure(player, session, uiSequence, code, 0, failure);
@@ -629,6 +638,12 @@ public final class HologramNetwork {
         HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_DROPPED, 1);
         com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
             .warn("Hologram " + code + " failed for " + session + " uiSequence=" + uiSequence, failure);
+        HologramSession restored = HologramWorkspace.rollbackPresentation(player, session, uiSequence);
+        if (restored != null) {
+            session = restored.id;
+            uiSequence = restored.uiSequence;
+            clientTask = 0;
+        }
         if (channel != null && progressConnected(player)) {
             NBTTagCompound state = new NBTTagCompound();
             state.setBoolean("transportError", true);
@@ -716,6 +731,7 @@ public final class HologramNetwork {
             if (snapshot.owned.hasKey("cells", 9)) HologramRuntimeMetrics
                 .add(HologramRuntimeMetrics.Counter.FULL_CELLS_COMPRESSED_BYTES, snapshot.bytes.length);
             snapshot.ready.run();
+            HologramWorkspace.commitPresentation(box.owner, snapshot.owned);
             snapshot.ready = null;
             snapshot.owned = null;
             snapshot.valid = null;

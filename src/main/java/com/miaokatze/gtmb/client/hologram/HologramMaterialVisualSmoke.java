@@ -36,6 +36,7 @@ public final class HologramMaterialVisualSmoke {
     private final long installed = System.nanoTime();
     private final JsonArray frames = new JsonArray();
     private final JsonObject receipt = new JsonObject();
+    private final JsonArray lifecycle = new JsonArray();
     private File output;
     private HologramScreen screen;
     private NBTTagCompound scene;
@@ -45,6 +46,8 @@ public final class HologramMaterialVisualSmoke {
     private long stageAt, requestedGeneration, frame, requestedFrame, taskToken, command;
     private long lastStartupDiagnostic, terminalNotificationsBefore;
     private long stageFrame, stageGeneration;
+    private long lastLifecycleAt;
+    private String lastLifecycleReason = "";
     private String capture;
     private boolean finished;
     private boolean orderRefusalCaptured;
@@ -89,6 +92,15 @@ public final class HologramMaterialVisualSmoke {
             // Wheel animation is queued on its first natural DrawScreenEvent.Pre and advanced on the next.
             // Dialog quote/toggle updates also run inside real draws; elapsed wall time alone proves neither.
             if (frame - stageFrame < 2 || screen.ui.canvas.renderGeneration() - stageGeneration < 2) return;
+            // A root canvas draw does not establish that updateScreen has opened and drawn the child dialog.
+            // Await the normal child lifecycle, without manufacturing a tick/open/draw in the fixture.
+            if (stage != 9 && stage != 10) {
+                NBTTagCompound dialog = screen.ui.review.materialDialogProbeState();
+                if (!dialog.getBoolean("open") || dialog.getLong("drawnFrames") == 0) {
+                    recordLifecycle("waiting-for-dialog-stage-" + stage);
+                    return;
+                }
+            }
             if (stage == 1) {
                 verifyQuietControls(false);
                 request("01-normal-gt-machine-nbt-fluid-long-counts");
@@ -331,6 +343,7 @@ public final class HologramMaterialVisualSmoke {
             }
         } catch (Throwable failure) {
             failure.printStackTrace();
+            if (screen != null) recordLifecycle("failure");
             finish(mc, false, failure.toString());
         }
     }
@@ -374,6 +387,7 @@ public final class HologramMaterialVisualSmoke {
         screen = new HologramScreen(state);
         HologramUiDiagnostics.writeDiagnosticField(screen, "captureRenderSmokeAction", captureActions);
         mc.displayGuiScreen(screen);
+        recordLifecycle("after-normal-displayGuiScreen");
     }
 
     private void update(HologramState state) {
@@ -472,6 +486,7 @@ public final class HologramMaterialVisualSmoke {
     }
 
     private void request(String name) {
+        recordLifecycle("before-capture-" + name);
         require(Minecraft.getMinecraft().currentScreen == screen, "capture must observe the retained screen");
         if (!"05-background-overall-progress-strip".equals(name)) {
             NBTTagCompound dialog = screen.ui.review.materialDialogProbeState();
@@ -565,12 +580,38 @@ public final class HologramMaterialVisualSmoke {
         receipt.addProperty("blueprintMaterialCompletenessVerified", false);
         receipt.addProperty("soundPlaybackVerified", false);
         receipt.add("frames", frames);
+        receipt.add("lifecycle", lifecycle);
         Files.write(
             new File(output, "material-visual-receipt.json").toPath(),
             new com.google.gson.GsonBuilder().setPrettyPrinting()
                 .create()
                 .toJson(receipt)
                 .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void recordLifecycle(String reason) {
+        long now = System.nanoTime();
+        if (reason.equals(lastLifecycleReason) && now - lastLifecycleAt < 2_000_000_000L) return;
+        lastLifecycleAt = now;
+        lastLifecycleReason = reason;
+        NBTTagCompound observed = HologramMaterialConfirmationClientProbe.lifecycle(screen);
+        JsonObject item = new JsonObject();
+        item.addProperty("point", reason);
+        item.addProperty("stage", stage);
+        item.addProperty("frame", frame);
+        item.addProperty("generation", screen.ui.canvas.renderGeneration());
+        item.addProperty("stageFrameDelta", frame - stageFrame);
+        item.addProperty("stageGenerationDelta", screen.ui.canvas.renderGeneration() - stageGeneration);
+        for (String key : new String[] { "open", "currentScreenOwned", "confirmation", "mainPanelValid",
+            "clientStatePresent", "clientStateSameSession", "displayActive", "displayVisible", "worldPresent",
+            "connectionPresent", "blueprintAwaitingConfirmation", "nativeAnimating" })
+            item.addProperty(key, observed.getBoolean(key));
+        item.addProperty("drawnFrames", observed.getLong("drawnFrames"));
+        item.addProperty("nativeScroll", observed.getInteger("nativeScroll"));
+        item.addProperty("nativeAnimatingTo", observed.getInteger("nativeAnimatingTo"));
+        item.addProperty("detailNbt", observed.toString());
+        lifecycle.add(item);
+        System.out.println("[GTMB-MATERIAL-VISUAL] LIFECYCLE " + item);
     }
 
     private static JsonObject glState() {

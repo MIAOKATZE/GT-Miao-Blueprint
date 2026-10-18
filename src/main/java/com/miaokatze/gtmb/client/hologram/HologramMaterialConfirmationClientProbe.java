@@ -4,6 +4,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
 
+import org.lwjgl.opengl.Display;
+
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.ModularScreen;
@@ -28,6 +30,69 @@ final class HologramMaterialConfirmationClientProbe {
         observed.setIntArray("confirmPoint", point(screen, 55));
         observed.setIntArray("voucherPoint", point(screen, 245));
         return observed;
+    }
+
+    static NBTTagCompound lifecycle(HologramScreen screen) {
+        requireProbe();
+        NBTTagCompound result = observe(screen);
+        result.setBoolean("currentScreenOwned", net.minecraft.client.Minecraft.getMinecraft().currentScreen == screen);
+        result.setBoolean("worldPresent", net.minecraft.client.Minecraft.getMinecraft().theWorld != null);
+        result.setBoolean(
+            "connectionPresent",
+            net.minecraft.client.Minecraft.getMinecraft()
+                .getNetHandler() != null);
+        result.setBoolean("displayCreated", Display.isCreated());
+        result.setBoolean("displayActive", Display.isCreated() && Display.isActive());
+        result.setBoolean("displayVisible", Display.isCreated() && Display.isVisible());
+        result.setBoolean("confirmation", screen.ui.review.confirmation());
+        result.setLong("confirmedRevision", screen.ui.review.confirmedRevision());
+        result.setBoolean(
+            "mainPanelValid",
+            screen.getScreen()
+                .getMainPanel()
+                .isValid());
+        result.setBoolean("clientStatePresent", HologramClient.state != null);
+        result.setBoolean(
+            "clientStateSameSession",
+            HologramClient.state != null && HologramClient.state.session.equals(screen.ui.session.state().session));
+        NBTTagCompound state = screen.ui.session.state().data;
+        for (String key : new String[] { "blueprintAwaitingConfirmation", "presetBrowseForPlacement", "virtual",
+            "virtualPlacement", "virtualLocked", "snapshotPending", "capturePending", "localPlanPending" })
+            result.setBoolean(key, state.getBoolean(key));
+        result.setBoolean("nbtDrawer", screen.ui.nbt.nbtDrawer());
+        result.setBoolean("networkDrawer", screen.ui.bindings.networkDrawer());
+        result.setBoolean("identityDrawer", screen.ui.identity.deidentificationDrawer());
+        result.setBoolean("aeReview", screen.ui.ae.aeReview() != null);
+        result.setBoolean("aeNavigation", screen.ui.ae.aeReviewNavigation() != null);
+        result.setBoolean("discardReview", screen.ui.library.discardReview());
+        result.setBoolean("overwriteReview", screen.ui.library.overwriteReview());
+        result.setBoolean("processingPresetReview", screen.ui.processing.processingPresetSaveReview());
+        NBTTagList panels = new NBTTagList();
+        for (ModularPanel panel : screen.getScreen()
+            .getPanelManager()
+            .getOpenPanels()) {
+            panels.appendTag(
+                new NBTTagString(
+                    panel.getName() + ":"
+                        + panel.getState()
+                        + ":valid="
+                        + panel.isValid()
+                        + ":enabled="
+                        + panel.isEnabled()
+                        + ":scale="
+                        + panel.getScale()));
+            for (IWidget child : panel.getChildren()) if (child instanceof AbstractScrollWidget<?, ?>scrollWidget) {
+                VerticalScrollData data = scrollWidget.getScrollArea()
+                    .getScrollY();
+                if (data != null) {
+                    result.setInteger("nativeScroll", data.getScroll());
+                    result.setBoolean("nativeAnimating", data.isAnimating());
+                    result.setInteger("nativeAnimatingTo", data.getAnimatingTo());
+                }
+            }
+        }
+        result.setTag("openPanels", panels);
+        return result;
     }
 
     static void click(HologramScreen screen, int id) {

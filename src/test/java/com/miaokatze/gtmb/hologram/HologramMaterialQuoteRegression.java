@@ -28,9 +28,270 @@ final class HologramMaterialQuoteRegression {
             coordinateQuotesAndActualPaymentSharePhysicalCards();
             boundToolSlotSurvivesHotbarSelection();
             voucherProjectionAndExactStockSnapshot();
+            headlessAeLongArithmetic();
+            boundedObservationGrowth();
+            preparedQuotesUseObservedBudgetsAndFenceTheNextBlueprint();
         } catch (Exception failure) {
             throw new AssertionError("Material quote regression", failure);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void headlessAeLongArithmetic() {
+        ItemStack identity = machine(9, 77);
+        // AEItemStack initializes AEApi/Platform and therefore requires a real FML lifecycle.
+        // Native AE equivalence and its original overflow are covered by the default-off FML helper.
+        appeng.api.storage.data.IAEItemStack request = aeStackFixture(identity, Long.MAX_VALUE);
+        long stock = 5_000_000_256L;
+        int[] powerCalls = { 0 }, storageCalls = { 0 };
+        double[] powerLimit = { 6_000_000_000d };
+        java.math.BigInteger[] expectedFee = { java.math.BigInteger.valueOf(Long.MAX_VALUE) };
+        appeng.api.networking.security.BaseActionSource source = new appeng.api.networking.security.BaseActionSource();
+        appeng.api.networking.energy.IEnergySource power = (amount, mode, multiplier) -> {
+            require(
+                mode == appeng.api.config.Actionable.SIMULATE && multiplier == appeng.api.config.PowerMultiplier.CONFIG,
+                "native quote power mode and multiplier");
+            require(
+                amount == expectedFee[0].doubleValue(),
+                "native transfer fee agrees with independent BigInteger arithmetic");
+            powerCalls[0]++;
+            return Math.min(amount, powerLimit[0]);
+        };
+        appeng.api.storage.IMEInventory<appeng.api.storage.data.IAEItemStack> inventory = (appeng.api.storage.IMEInventory<appeng.api.storage.data.IAEItemStack>) java.lang.reflect.Proxy
+            .newProxyInstance(
+                HologramMaterialQuoteRegression.class.getClassLoader(),
+                new Class<?>[] { appeng.api.storage.IMEInventory.class },
+                (proxy, method, args) -> {
+                    if (!"extractItems".equals(method.getName())) throw new AssertionError(method.getName());
+                    require(
+                        args[1] == appeng.api.config.Actionable.SIMULATE && args[2] == source,
+                        "native long quote retains the authenticated source and never debits storage");
+                    appeng.api.storage.data.IAEItemStack requested = (appeng.api.storage.data.IAEItemStack) args[0];
+                    require(
+                        identity.getItem() == requested.getItemStack()
+                            .getItem() && identity.getItemDamage()
+                                == requested.getItemStack()
+                                    .getItemDamage()
+                            && ItemStack.areItemStackTagsEqual(identity, requested.getItemStack()),
+                        "native long simulation preserves complete item NBT");
+                    storageCalls[0]++;
+                    appeng.api.storage.data.IAEItemStack found = requested.copy();
+                    found.setStackSize(Math.min(stock, requested.getStackSize()));
+                    return found;
+                });
+        require(
+            HologramMaterials.simulatePoweredExtraction(power, inventory, request, source)
+                .getStackSize() == stock,
+            "safe native long simulation handles Long.MAX_VALUE without truncating real five-billion stock");
+        require(powerCalls[0] == 1 && storageCalls[0] == 1, "one quote performs one power and one storage simulation");
+        require(
+            request.getStackSize() == Long.MAX_VALUE,
+            "simulation bounds a copy without changing the caller's demand");
+        request.setStackSize(stock);
+        expectedFee[0] = java.math.BigInteger.valueOf(stock);
+        require(
+            HologramMaterials.simulatePoweredExtraction(power, inventory, request, source)
+                .getStackSize() == stock,
+            "a bounded five-billion demand retains its full long stock count");
+        powerLimit[0] = 17;
+        require(
+            HologramMaterials.simulatePoweredExtraction(power, inventory, request, source)
+                .getStackSize() == 17,
+            "an energy shortage still limits quoted item availability");
+        powerLimit[0] = 0;
+        require(
+            HologramMaterials.simulatePoweredExtraction(power, inventory, request, source) == null && powerCalls[0] == 4
+                && storageCalls[0] == 3,
+            "zero simulated energy prevents any storage callback or debit");
+        for (int unit : new int[] { 1, 1000 }) {
+            java.math.BigInteger divisor = java.math.BigInteger.valueOf(unit);
+            for (long amount : new long[] { 0, 1, 999, 1000, 1001, stock, Long.MAX_VALUE - 1, Long.MAX_VALUE }) {
+                long expected = java.math.BigInteger.valueOf(amount)
+                    .add(divisor.subtract(java.math.BigInteger.ONE))
+                    .divide(divisor)
+                    .longValueExact();
+                require(
+                    HologramMaterials.transferUnits(amount, unit) == expected,
+                    "item and fluid transfer fees agree with an independent arbitrary-precision ceil oracle");
+            }
+        }
+    }
+
+    private static appeng.api.storage.data.IAEItemStack aeStackFixture(ItemStack identity, long initialSize) {
+        ItemStack sample = identity.copy();
+        long[] size = { initialSize };
+        return (appeng.api.storage.data.IAEItemStack) java.lang.reflect.Proxy.newProxyInstance(
+            HologramMaterialQuoteRegression.class.getClassLoader(),
+            new Class<?>[] { appeng.api.storage.data.IAEItemStack.class },
+            (proxy, method, args) -> {
+                switch (method.getName()) {
+                    case "getStackSize":
+                        return size[0];
+                    case "setStackSize":
+                        size[0] = (Long) args[0];
+                        return proxy;
+                    case "getAmountPerUnit":
+                        return 1;
+                    case "copy":
+                        return aeStackFixture(sample, size[0]);
+                    case "getItemStack":
+                        return sample.copy();
+                    default:
+                        throw new AssertionError("Unexpected AE interface fixture operation: " + method.getName());
+                }
+            });
+    }
+
+    private static void boundedObservationGrowth() {
+        int[] reads = { 0 };
+        long stock = 5_000_000_256L;
+        ItemStack tagged = machine(9, 1), other = machine(9, 2), plain = new ItemStack(Items.stick, 1, 9);
+        HologramMaterialQuote.StockSnapshot snapshot = new HologramMaterialQuote.StockSnapshot(
+            new HologramMaterialQuote.ItemStock() {
+
+                public long exact(ItemStack item, long limit) {
+                    require(limit <= 5_000_000_400L, "stock observation uses the real bounded demand");
+                    reads[0]++;
+                    return Math.min(limit, item.hasTagCompound() ? stock : 2);
+                }
+
+                public long fuzzy(ItemStack item, long limit) {
+                    return exact(item, limit);
+                }
+            });
+        require(
+            snapshot.exact(tagged, 1) == 1 && snapshot.exact(tagged, 5_000_000_000L) == 5_000_000_000L,
+            "a first one-item observation cannot cap a later five-billion demand");
+        require(
+            snapshot.exact(tagged, 5_000_000_400L) == stock && snapshot.exact(tagged, Long.MAX_VALUE) == stock,
+            "an exhausted observation remains reusable without repeating or adding storage simulations");
+        require(reads[0] == 3, "growth replaces capped observations rather than adding them");
+        require(
+            snapshot.exact(other, 1) == 1 && snapshot.exact(plain, 3) == 2 && reads[0] == 5,
+            "different complete NBT and no-NBT identities never share the observation cache");
+        boolean refused = false;
+        try {
+            snapshot.cachedItems()
+                .exact(other, 2);
+        } catch (IllegalStateException missing) {
+            refused = true;
+        }
+        require(refused && reads[0] == 5, "allocation cannot silently observe a larger unprepared stock budget");
+    }
+
+    private static void preparedQuotesUseObservedBudgetsAndFenceTheNextBlueprint() throws Exception {
+        EntityPlayerMP player = materialPlayer();
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        player.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) ((sun.misc.Unsafe) unsafeField.get(null))
+            .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+        player.capabilities = new net.minecraft.entity.player.PlayerCapabilities();
+        player.inventory.mainInventory[0] = new ItemStack(Items.feather);
+        HologramSession session = new HologramSession(player, 0, 64, 0, false, 1);
+        session.virtual = session.virtualPlacement = true;
+        session.virtualPreset = new HologramPresets.Preset();
+        session.virtualPreset.schema = 2;
+        session.virtualPreset.deidentificationLevel = 1;
+        session.capture = new HologramCapture(null, new ItemStack(Items.feather));
+        NBTTagList normal = new NBTTagList();
+        NBTTagCompound shell = legacy(machine(9, 1), 6, 0, 6), exact = legacy(machine(9, 2), 5, 0, 0);
+        shell.setLong("voucherShellRequired", 6);
+        normal.appendTag(shell);
+        normal.appendTag(exact);
+        int[] reads = { 0 };
+        HologramMaterialQuote.ItemStock source = new HologramMaterialQuote.ItemStock() {
+
+            public long exact(ItemStack item, long limit) {
+                reads[0]++;
+                require(limit <= 11, "prepared exact inventory limit follows the aggregate demand");
+                return Math.min(limit, 4);
+            }
+
+            public long fuzzy(ItemStack item, long limit) {
+                reads[0]++;
+                require(limit <= 11, "prepared shell inventory limit follows the aggregate demand");
+                return Math.min(limit, 7);
+            }
+        };
+        HologramMaterialQuote.Preparation preparation = new HologramMaterialQuote.Preparation(
+            session,
+            normal,
+            HologramMaterialQuote.voucherRows(normal),
+            new NBTTagList(),
+            new HologramMaterialQuote.StockSnapshot(source));
+        long completed = 0;
+        while (!preparation.done()) {
+            int before = reads[0];
+            preparation.step(1, Long.MAX_VALUE);
+            require(reads[0] - before <= 1, "a quote preparation unit performs at most one native inventory query");
+            require(preparation.completedWork() > completed, "quote work progress never resets between ledgers");
+            completed = preparation.completedWork();
+        }
+        require(
+            reads[0] == 2 && shell.getLong("available") == 3 && exact.getLong("available") == 4,
+            "actual shortage allocation shares bounded stock and protects the later exact-NBT bill");
+        NBTTagCompound first = preparation.result();
+        HologramMaterialQuote.Cache previous = session.materialQuoteCache;
+        for (int i = 0; i < 10; i++) {
+            session.jobVoucherRequested = i % 2 == 0;
+            HologramMaterialQuote.project(session);
+        }
+        require(
+            reads[0] == 2 && session.materialQuoteCache == previous,
+            "ten voucher projections neither rescan inventory nor replace the demand cache");
+        HologramMaterialQuote.Preparation stale = new HologramMaterialQuote.Preparation(
+            session,
+            normal,
+            HologramMaterialQuote.voucherRows(normal),
+            new NBTTagList(),
+            new HologramMaterialQuote.StockSnapshot(source));
+        stale.step(1, Long.MAX_VALUE);
+        session.job = 3;
+        session.capture = new HologramCapture(null, new ItemStack(Items.feather));
+        session.planRevision++;
+        require(
+            !HologramMaterialQuote.cached(session),
+            "completed construction cannot lend its stock cache to a new capture");
+        boolean retired = false;
+        try {
+            stale.step(1, Long.MAX_VALUE);
+        } catch (IllegalStateException correct) {
+            retired = true;
+        }
+        require(
+            retired && reads[0] == 2,
+            "obsolete quote preparation cannot observe or publish the replacement blueprint");
+        session.job = 0;
+        session.jobVoucherRequested = false;
+        NBTTagList next = new NBTTagList();
+        next.appendTag(legacy(machine(9, 2), 2, 0, 0));
+        HologramMaterialQuote.ItemStock empty = new HologramMaterialQuote.ItemStock() {
+
+            public long exact(ItemStack item, long limit) {
+                return 0;
+            }
+
+            public long fuzzy(ItemStack item, long limit) {
+                return 0;
+            }
+        };
+        NBTTagCompound second = HologramMaterialQuote.snapshot(
+            session,
+            next,
+            HologramMaterialQuote.voucherRows(next),
+            new NBTTagList(),
+            new HologramMaterialQuote.StockSnapshot(empty));
+        require(
+            session.materialQuoteCache != previous && HologramMaterialQuote.cached(session)
+                && second.getTagList("rows", 10)
+                    .getCompoundTagAt(0)
+                    .getLong("available") == 0,
+            "the next blueprint observes its own empty inventory instead of reusing the previous stock");
+        require(
+            first.getTagList("rows", 10)
+                .getCompoundTagAt(0)
+                .getLong("available") == 3,
+            "the previous prepared result remains detached after the next blueprint publishes");
     }
 
     private static void voucherProjectionAndExactStockSnapshot() {

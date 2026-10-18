@@ -925,12 +925,15 @@ public final class HologramClient {
             Minecraft mc = Minecraft.getMinecraft();
             boolean taskFailed = HologramLibraryClient.INSTANCE.transportFailed(nbt)
                 || HologramBackgroundTasks.transportFailed(nbt);
+            boolean presentationFailed = !taskFailed && mc.currentScreen instanceof HologramScreen screen
+                && presentationTransportFailed(screen.ui.session, nbt);
             if (taskFailed) {
                 HologramClientProgress.transportFailed(nbt);
                 if (mc.currentScreen instanceof HologramScreen screen)
                     screen.ui.session.transportFailed(nbt, HologramBackgroundTasks.transportFailureMessage(nbt));
             }
-            if (!taskFailed && !HologramBackgroundTasks.busy()
+            if (!taskFailed && !presentationFailed
+                && !HologramBackgroundTasks.busy()
                 && !HologramBackgroundTasks.retiredTransportFailure(nbt)
                 && mc.thePlayer != null
                 && (state == null || state.session.equals(nbt.getString("session"))))
@@ -964,6 +967,13 @@ public final class HologramClient {
             installDecoded(snapshotInbox.awaitNext());
         }
         installDecoded(snapshotInbox.poll());
+    }
+
+    static boolean presentationTransportFailed(HologramUiSession session, NBTTagCompound failure) {
+        if (!session.presentationTransportFailed(failure, HologramBackgroundTasks.transportFailureMessage(failure)))
+            return false;
+        HologramClientProgress.transportFailed(failure);
+        return true;
     }
 
     private static void syncSnapshotWorld() {
