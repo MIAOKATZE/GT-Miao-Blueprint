@@ -8,6 +8,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -44,6 +45,14 @@ public final class HologramLibraryRegression {
     }
 
     public static void run() throws Exception {
+        publicExpandedBudgetBeforePublish();
+        contentAdmissionWithoutWorkspace();
+        trustedCacheQuotasAndSavedReceipt();
+        activationControlAdmission();
+        localExecutionConsent();
+        contentIdentity();
+        trustedCacheIsolation();
+        publicPreviewPrivacy();
         protocolAndThrottle();
         uploadWindowAndMailboxes();
         uploadAdmissionLifecycle();
@@ -58,6 +67,333 @@ public final class HologramLibraryRegression {
         permissions();
         streamingDraftProgress();
         cancelledServerPreparationReleasesQueue();
+    }
+
+    private static void publicExpandedBudgetBeforePublish() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-public-dto-budget-");
+        Path entries = root.resolve("library");
+        HologramServerLibrary store = new HologramServerLibrary(entries, root.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            set(store, "publicDtoBytes", HologramServerLibrary.MAX_PUBLIC_DTO_BYTES);
+            Object actor = peer(player(UUID.randomUUID(), "BudgetPublisher"));
+            byte[] json = HologramServerLibrary.encodeShare(blueprint());
+            denied(
+                () -> transfer(store, actor, json, "", false),
+                "expanded DTO cap rejects before public artifact publication");
+            SimpleAssert.eq(0L, (Long) get(store, "storedBytes"), "failed publication consumes no stored bytes");
+            try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(entries, "public_*.json")) {
+                SimpleAssert.that(
+                    !files.iterator()
+                        .hasNext(),
+                    "expanded budget failure writes no public original");
+            }
+        } finally {
+            store.stop();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void contentAdmissionWithoutWorkspace() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-pure-admission-");
+        HologramServerLibrary store = new HologramServerLibrary(root.resolve("library"), root.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            EntityPlayerMP actor = player(UUID.randomUUID(), "ContentOnlyOwner");
+            Object peer = peer(actor);
+            UUID owner = HologramLibraryFacade.actorId(actor);
+            synchronized (store) {
+                ((Map<UUID, Object>) get(store, "peers")).put(owner, peer);
+            }
+            HologramPresets.Preset source = blueprint();
+            byte[] compact = HologramServerLibrary.encodeShare(source);
+            String contentHash = HologramBlueprintContentHash.of(compact);
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+                HologramBlueprintArtifact.WIDTH,
+                HologramBlueprintArtifact.HEIGHT,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(image, "png", png);
+            byte[] legacy = new com.google.gson.GsonBuilder().setPrettyPrinting()
+                .create()
+                .toJson(HologramBlueprintCompactCodec.parse(compact))
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] artifact = HologramBlueprintArtifact.encode(legacy, png.toByteArray());
+            NBTTagCompound request = HologramLibraryProtocol.request("privateBegin");
+            request.setString(
+                "transfer",
+                UUID.randomUUID()
+                    .toString());
+            request.setLong("clientTaskToken", 711);
+            request.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            request.setInteger("total", artifact.length);
+            request.setString("hash", HologramBlueprintArtifact.hash(artifact));
+            request.setString("jsonHash", contentHash);
+            request.setBoolean("contentOnly", true);
+            request.setBoolean("hashProbe", true);
+            Object before = HologramWorkspace.find(owner);
+            runWorker(store, () -> handle(store, peer, request));
+            SimpleAssert.that(get(peer, "upload") != null, "UI content miss admits bounded upload without a workspace");
+            for (int offset = 0, index = 0; offset
+                < artifact.length; offset += HologramLibraryProtocol.CHUNK_BYTES, index++) {
+                NBTTagCompound chunk = HologramLibraryProtocol.request("privateChunk");
+                chunk.setString("transfer", request.getString("transfer"));
+                chunk.setLong("clientTaskToken", 711);
+                chunk.setInteger("index", index);
+                chunk.setByteArray(
+                    "data",
+                    Arrays.copyOfRange(
+                        artifact,
+                        offset,
+                        Math.min(artifact.length, offset + HologramLibraryProtocol.CHUNK_BYTES)));
+                runWorker(store, () -> handle(store, peer, chunk));
+            }
+            HologramTrustedBlueprintCache cache = (HologramTrustedBlueprintCache) get(store, "trusted");
+            SimpleAssert.that(
+                cache.contains(owner, peer, get(peer, "world"), (Long) get(store, "runtimeEpoch"), contentHash),
+                "a fully received canonical original becomes reusable content");
+            SimpleAssert.that(
+                before == HologramWorkspace.find(owner),
+                "content admission never creates or replaces author state");
+            runWorker(store, () -> handle(store, peer, request));
+            SimpleAssert.that(get(peer, "upload") == null, "pure content hit allocates no upload");
+            request.setBoolean("contentOnly", false);
+            request.setBoolean("admittedOnly", true);
+            request.setString("jsonHash", repeat('a', 64));
+            runWorker(store, () -> handle(store, peer, request));
+            SimpleAssert
+                .that(get(peer, "upload") == null, "a final missing reference cannot silently upload in the world");
+            NBTTagCompound ready = HologramServerLibrary.contentReply(request, contentHash, true, false);
+            SimpleAssert.eq("contentReady", ready.getString("op"), "content readiness has its own result kind");
+            SimpleAssert.that(
+                !ready.hasKey("session") && !ready.hasKey("planRevision") && !ready.hasKey("placementReviewNonce"),
+                "content readiness is not a placement or review capability");
+        } finally {
+            store.stop();
+        }
+    }
+
+    private static void trustedCacheQuotasAndSavedReceipt() throws Exception {
+        SimpleAssert.eq(10, HologramTrustedBlueprintCache.OWNER_ENTRIES, "owner cache holds at most ten sources");
+        SimpleAssert
+            .eq(100_000_000L, HologramTrustedBlueprintCache.OWNER_BYTES, "owner content quota uses decimal 100 MB");
+        HologramTrustedBlueprintCache cache = new HologramTrustedBlueprintCache();
+        UUID owner = UUID.randomUUID();
+        Object connection = new Object(), save = new Object();
+        HologramPresets.Preset source = blueprint();
+        for (int index = 0; index < 4; index++) SimpleAssert.that(
+            cache.put(owner, connection, save, 1, "bytes" + index, source, 25_000_000),
+            "exact quota portions fit");
+        cache.put(owner, connection, save, 1, "extra", source, 1);
+        SimpleAssert.that(
+            !cache.contains(owner, connection, save, 1, "bytes0"),
+            "one byte over the aggregate quota evicts the oldest source");
+        SimpleAssert.that(
+            !cache.put(owner, connection, save, 1, "oversize", source, 100_000_001),
+            "single sources above 100 MB cannot be promised ready");
+        cache.clear();
+        cache.stage(owner, connection, save, 1, "saved", source, 1024, "receipt", "server-original-sha");
+        SimpleAssert.that(
+            !cache.contains(owner, connection, save, 1, "saved"),
+            "uncommitted saved originals do not count as ready");
+        SimpleAssert
+            .eq("", cache.commitSaved(connection, "receipt", "forged-sha"), "ACKs cannot substitute another original");
+        SimpleAssert.eq(
+            "",
+            cache.commitSaved(new Object(), "receipt", "server-original-sha"),
+            "another connection cannot commit a saved source");
+        SimpleAssert.eq(
+            "saved",
+            cache.commitSaved(connection, "receipt", "server-original-sha"),
+            "the issued exact-original receipt fills the cache");
+        SimpleAssert.that(
+            cache.contains(owner, connection, save, 1, "saved"),
+            "committed server-owned source is ready without a new upload");
+        cache.stage(owner, connection, save, 1, "cancelled", source, 1024, "cancelled-receipt", "sha2");
+        cache.discardPending(connection, "cancelled-receipt");
+        SimpleAssert.eq(
+            "",
+            cache.commitSaved(connection, "cancelled-receipt", "sha2"),
+            "an ACK with no retained original cannot manufacture trust");
+    }
+
+    private static void activationControlAdmission() throws Exception {
+        NBTTagCompound request = new NBTTagCompound();
+        request.setIntArray("previewPose", new int[] { 0, 1, 0, 1, 0, 1 });
+        SimpleAssert
+            .eq(6, HologramLibraryWorkflow.activationControls(request).length, "all six-step cube poses can submit");
+        request.setString("previewPose", "0");
+        denied(() -> HologramLibraryWorkflow.activationControls(request), "pose must be an integer array");
+        request.setIntArray("previewPose", new int[] { 0, 0, 0, 0, 0, 0, 0 });
+        denied(() -> HologramLibraryWorkflow.activationControls(request), "oversized pose controls are rejected");
+        request.setIntArray("previewPose", new int[] { 2 });
+        denied(() -> HologramLibraryWorkflow.activationControls(request), "unknown rotation axes are rejected");
+        request.setIntArray("previewPose", new int[0]);
+        request.setInteger("side", 6);
+        denied(() -> HologramLibraryWorkflow.activationControls(request), "malicious placement sides are rejected");
+        request.setInteger("side", 1);
+        request.setInteger("placementX", 1);
+        denied(() -> HologramLibraryWorkflow.activationControls(request), "partial anchor coordinates are rejected");
+        SimpleAssert
+            .that(!HologramWorldFlow.worldPosition(0, -1, 0, 256), "negative final world height cannot be placed");
+        SimpleAssert
+            .that(!HologramWorldFlow.worldPosition(30000000, 64, 0, 256), "out-of-world final anchor cannot be placed");
+    }
+
+    private static void localExecutionConsent() throws Exception {
+        NBTTagCompound accepted = new NBTTagCompound(), quote = new NBTTagCompound();
+        accepted.setInteger("version", 1);
+        accepted.setBoolean("complete", true);
+        NBTTagList budgets = new NBTTagList(), actual = new NBTTagList();
+        NBTTagCompound budget = HologramMaterialQuote.itemRow(new ItemStack(Blocks.stone), 10, 0);
+        budget.setString("requiredExact", "10");
+        budgets.appendTag(budget);
+        NBTTagCompound demand = HologramMaterialQuote.itemRow(new ItemStack(Blocks.stone), 8, 8);
+        actual.appendTag(demand);
+        accepted.setTag("rows", budgets);
+        quote.setTag("rows", actual);
+        SimpleAssert.that(
+            HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "smaller exact authoritative demand fits user consent");
+        demand.setLong("required", 11);
+        SimpleAssert.that(
+            !HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "new costs require a fresh review");
+        demand.setLong("required", 8);
+        demand.setLong("missing", 1);
+        SimpleAssert.that(
+            !HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "missing stock cannot auto-start");
+        demand.setLong("missing", 0);
+        demand.setBoolean("optionalCache", true);
+        SimpleAssert.that(
+            !HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "unpriced optional cache fees require review");
+        demand.setBoolean("optionalCache", false);
+        NBTTagCompound privateVariant = new NBTTagCompound();
+        privateVariant.setString("owner", "another identity");
+        demand.getCompoundTag("item")
+            .setTag("tag", privateVariant);
+        SimpleAssert.that(
+            !HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "same item with different NBT is a different payable identity");
+        demand.getCompoundTag("item")
+            .removeTag("tag");
+        budget.setString("requiredExact", repeat('9', 129));
+        SimpleAssert.that(
+            !HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "unbounded decimal quantities fail closed");
+        budget.setString("requiredExact", "10");
+        accepted.setBoolean("complete", false);
+        SimpleAssert.that(
+            !HologramLibraryExecution.withinAcknowledged(accepted, quote, false),
+            "incomplete local bills cannot authorize automatic execution");
+    }
+
+    private static void contentIdentity() throws Exception {
+        byte[] original = "{\"schema\":2,\"blueprint\":{\"id\":\"local_a\",\"name\":\"A\",\"retainNbt\":true,\"cells\":[{\"itemNbt\":\"owner=A\",\"x\":1}]}}"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] renamed = "{ \"blueprint\": {\"cells\":[{\"x\":1,\"itemNbt\":\"owner=A\"}],\"retainNbt\":true,\"name\":\"B\",\"id\":\"public_b\"},\"schema\":1}"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String hash = HologramBlueprintContentHash.of(original);
+        SimpleAssert.eq(
+            hash,
+            HologramBlueprintContentHash.of(renamed),
+            "file IDs, descriptions, envelopes and formatting do not change content identity");
+        SimpleAssert.that(
+            !hash.equals(
+                HologramBlueprintContentHash.of(
+                    new String(original, java.nio.charset.StandardCharsets.UTF_8).replace("owner=A", "owner=B")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+            "retained owner payload remains part of content identity");
+        SimpleAssert.that(
+            !hash.equals(
+                HologramBlueprintContentHash.of(
+                    new String(original, java.nio.charset.StandardCharsets.UTF_8).replace("true", "false")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+            "retention policy remains part of content identity");
+    }
+
+    private static void trustedCacheIsolation() throws Exception {
+        HologramTrustedBlueprintCache cache = new HologramTrustedBlueprintCache();
+        UUID owner = UUID.randomUUID();
+        Object connection = new Object(), world = new Object();
+        HologramPresets.Preset source = blueprint();
+        NBTTagCompound originalOwner = new NBTTagCompound();
+        originalOwner.setString("mOwnerUuid", "original-template-owner");
+        originalOwner.setString("mOwnerName", "Original");
+        source.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(originalOwner);
+        cache.put(owner, connection, world, 1, "first", source, 1024);
+        source.cells.get(0).x = 99;
+        HologramPresets.Preset first = cache.get(owner, connection, world, 1, "first");
+        SimpleAssert.eq(0, first.cells.get(0).x, "admission stores a detached base");
+        first.cells.get(0).x = 55;
+        UUID secondActor = UUID.randomUUID();
+        NBTTagCompound actorOne = HologramBlueprintNbt
+            .forPlacement(first.cells.get(0).tileNbt, owner, "Builder One", 1, 64, 2, true, true);
+        NBTTagCompound actorTwo = HologramBlueprintNbt
+            .forPlacement(first.cells.get(0).tileNbt, secondActor, "Builder Two", 3, 70, 4, true, true);
+        SimpleAssert
+            .eq(owner.toString(), actorOne.getString("mOwnerUuid"), "first placement binds its authenticated actor");
+        SimpleAssert.eq(
+            secondActor.toString(),
+            actorTwo.getString("mOwnerUuid"),
+            "shared source binds a different placing actor");
+        SimpleAssert.eq("Builder Two", actorTwo.getString("mOwnerName"), "runtime actor name accompanies UUID");
+        SimpleAssert.eq(
+            "original-template-owner",
+            HologramBlueprintNbt.decode(cache.get(owner, connection, world, 1, "first").cells.get(0).tileNbt)
+                .getString("mOwnerUuid"),
+            "late actor binding leaves trusted source ownership unchanged");
+        SimpleAssert.eq(
+            0,
+            cache.get(owner, connection, world, 1, "first").cells.get(0).x,
+            "pose mutations never contaminate the cached base");
+        SimpleAssert
+            .that(cache.get(UUID.randomUUID(), connection, world, 1, "first") == null, "owners never share trust");
+        SimpleAssert.that(cache.get(owner, new Object(), world, 1, "first") == null, "reconnect retires trust");
+        SimpleAssert
+            .that(cache.get(owner, connection, new Object(), 1, "first") == null, "world identity scopes trust");
+        SimpleAssert.that(cache.get(owner, connection, world, 2, "first") == null, "runtime epoch scopes trust");
+        for (int index = 0; index < HologramTrustedBlueprintCache.OWNER_ENTRIES; index++)
+            cache.put(owner, connection, world, 1, "next" + index, blueprint(), 1024);
+        SimpleAssert.that(cache.get(owner, connection, world, 1, "first") == null, "per-owner LRU is bounded");
+        cache.put(owner, connection, world, 1, "oversize", blueprint(), 128 * 1024 * 1024);
+        SimpleAssert
+            .that(cache.get(owner, connection, world, 1, "oversize") == null, "oversized bases are not retained");
+        cache.retire(connection);
+        SimpleAssert.that(cache.get(owner, connection, world, 1, "next9") == null, "disconnect removes owned entries");
+    }
+
+    private static void publicPreviewPrivacy() throws Exception {
+        HologramPresets.Preset source = blueprint();
+        NBTTagCompound original = new NBTTagCompound();
+        original.setString("owner", "private actor");
+        original.setString("inventory", "private inventory");
+        original.setInteger("texturePage", 4);
+        original.setInteger("textureIndex", 12);
+        NBTTagList covers = new NBTTagList();
+        NBTTagCompound cover = new NBTTagCompound();
+        cover.setInteger("id", 3);
+        cover.setByte("s", (byte) 1);
+        cover.setString("data", "private cover configuration");
+        covers.appendTag(cover);
+        original.setTag("gt.covers", covers);
+        source.cells.get(0).tileNbt = HologramBlueprintNbt.encodeData(original);
+        NBTTagCompound projected = HologramPublicPreview.project(source);
+        NBTTagCompound display = projected.getTagList("cells", 10)
+            .getCompoundTagAt(0)
+            .getCompoundTag("targetDisplay");
+        SimpleAssert.eq(12, display.getInteger("textureIndex"), "public preview keeps the reviewed casing appearance");
+        SimpleAssert.that(
+            !projected.toString()
+                .contains("private"),
+            "public preview omits actor, inventory and cover configuration");
+        SimpleAssert.that(
+            !projected.hasKey("authorUuid") && !display.hasKey("nativeTile"),
+            "public display cannot carry provenance or generic native persistence");
+        SimpleAssert
+            .eq("private actor", original.getString("owner"), "public projection preserves its original source");
     }
 
     private static void streamingDraftProgress() throws Exception {
@@ -79,9 +415,7 @@ public final class HologramLibraryRegression {
         });
         SimpleAssert.eq(total, observed[0], "all actual streamed rows reach completion");
         SimpleAssert.that(observed[1] >= total, "long exports checkpoint as cells serialize");
-        com.google.gson.JsonObject envelope = new com.google.gson.JsonParser()
-            .parse(new String(encoded, java.nio.charset.StandardCharsets.UTF_8))
-            .getAsJsonObject();
+        com.google.gson.JsonObject envelope = HologramBlueprintCompactCodec.parse(encoded);
         SimpleAssert.eq(
             2,
             envelope.get("schema")

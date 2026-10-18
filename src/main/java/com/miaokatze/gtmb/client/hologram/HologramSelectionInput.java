@@ -32,8 +32,7 @@ final class HologramSelectionInput {
             selection.deleteCurrent();
             altered = true;
         }
-        int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT, Keyboard.KEY_W,
-            Keyboard.KEY_S };
+        int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT };
         boolean[] pressed = new boolean[keys.length];
         for (int i = 0; i < keys.length; i++) pressed[i] = key(keys[i]);
         int[] points = selection == null ? new int[0] : selection.points();

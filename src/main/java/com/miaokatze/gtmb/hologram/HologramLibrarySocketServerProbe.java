@@ -20,7 +20,6 @@ import net.minecraft.server.management.UserListOpsEntry;
 import net.minecraftforge.common.config.Configuration;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -70,8 +69,7 @@ public final class HologramLibrarySocketServerProbe {
             if (!file.startsWith(root)) throw new IllegalStateException("Probe path escaped fixture");
             if ("uploaded".equals(op)) {
                 byte[] bytes = HologramBlueprintSharing.readBytes(file);
-                JsonObject envelope = new JsonParser().parse(new String(bytes, StandardCharsets.UTF_8))
-                    .getAsJsonObject();
+                JsonObject envelope = HologramBlueprintCompactCodec.parse(bytes);
                 String name = envelope.getAsJsonObject("blueprint")
                     .get("name")
                     .getAsString();

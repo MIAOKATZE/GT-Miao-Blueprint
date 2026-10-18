@@ -746,10 +746,10 @@ final class HologramUiRouter {
             return;
         }
         if (ui.config.resetReview()) return;
-        if (key == Keyboard.KEY_T && !ui.router.textFieldFocused()) return;
         if (ui.library.consumeBrowserKey(c, key)) return;
         if (ui.preview.consumeCameraKey(c, key)) return;
         if (ui.preview.handleEditorShortcut(key, HologramKeyBindings.modifiers())) return;
+        if (key == Keyboard.KEY_T && !ui.router.textFieldFocused()) return;
         if (ui.position.positionDrawer() && !ui.review.confirmation()) {
             if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) ui.router.activate(76);
             else {

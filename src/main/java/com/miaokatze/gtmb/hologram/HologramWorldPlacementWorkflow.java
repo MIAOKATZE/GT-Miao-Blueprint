@@ -493,6 +493,12 @@ final class HologramWorldPlacementWorkflow {
 
     /** Stage every coordinate and front before committing; stable cell order keeps all indexed targets selected. */
     static boolean transformVirtual(HologramSession s, int x, int y, int z, boolean rotate, boolean vertical) {
+        return transformVirtual(s, x, y, z, rotate, vertical, true);
+    }
+
+    /** Intermediate template turns retain schema checks; physical pose rules apply to the final orientation. */
+    static boolean transformVirtual(HologramSession s, int x, int y, int z, boolean rotate, boolean vertical,
+        boolean validateFinalPose) {
         HologramPresets.Preset preset = s.virtualPreset;
         ExtendedFacing controller = null;
         if (rotate) {
@@ -507,9 +513,10 @@ final class HologramWorldPlacementWorkflow {
             gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = preset.controllerId < 0
                 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length ? null
                     : GregTechAPI.METATILEENTITIES[preset.controllerId];
-            if ((preset.schema < 2 || preset.controllerId >= 0) && (!(prototype instanceof MTEEnhancedMultiBlockBase)
-                || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits()
-                    .isNewExtendedFacingValid(controller)))
+            if (validateFinalPose && (preset.schema < 2 || preset.controllerId >= 0)
+                && (!(prototype instanceof MTEEnhancedMultiBlockBase)
+                    || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits()
+                        .isNewExtendedFacingValid(controller)))
                 return false;
             preset.controllerFacing = controller.ordinal();
             Map<String, Integer> currentFacings = new HashMap<>();
@@ -540,7 +547,8 @@ final class HologramWorldPlacementWorkflow {
                 saved.facing = HologramBlockTransforms.isPipe(saved.stack()) ? -1
                     : saved.controller && preset.schema < 2 ? controller.getDirection()
                         .ordinal() : HologramVirtualTransform.front(front, vertical);
-                if (saved.stack() != null && !saved.missing()
+                if (validateFinalPose && saved.stack() != null
+                    && !saved.missing()
                     && !HologramCellPolicy.virtualFrontAllowed(saved.stack(), saved.facing)) return false;
             }
         }
@@ -589,11 +597,16 @@ final class HologramWorldPlacementWorkflow {
             int[] offset = new int[] { old.x - s.x, old.y - s.y, old.z - s.z };
             if (rotate) offset = HologramVirtualTransform.turn(offset[0], offset[1], offset[2], vertical);
             long xx = (long) x + offset[0], yy = (long) y + offset[1], zz = (long) z + offset[2];
-            if (xx < -30000000L || xx >= 30000000L
+            if (xx < Integer.MIN_VALUE || xx > Integer.MAX_VALUE
+                || yy < Integer.MIN_VALUE
+                || yy > Integer.MAX_VALUE
+                || zz < Integer.MIN_VALUE
+                || zz > Integer.MAX_VALUE) return false;
+            if (validateFinalPose && (xx < -30000000L || xx >= 30000000L
                 || yy < 0
                 || yy >= s.player.worldObj.getHeight()
                 || zz < -30000000L
-                || zz >= 30000000L) return false;
+                || zz >= 30000000L)) return false;
             HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(old, (int) xx, (int) yy, (int) zz);
             if (rotate && preset.schema >= 2) {
                 try {
@@ -619,7 +632,7 @@ final class HologramWorldPlacementWorkflow {
                 if (rotate)
                     front = "templateController".equals(old.role) && preset.schema < 2 ? controller.getDirection()
                         .ordinal() : HologramVirtualTransform.front(front, vertical);
-                if (HologramCellPolicy.targetFor(s, old, i) != null
+                if (validateFinalPose && HologramCellPolicy.targetFor(s, old, i) != null
                     && !HologramCellPolicy.virtualFrontAllowed(HologramCellPolicy.targetFor(s, old, i), front))
                     return false;
                 facings.put(key, front);

@@ -4,7 +4,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -36,7 +35,6 @@ import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramV011Evidence;
@@ -1973,9 +1971,8 @@ public final class HologramSulfurLineSmokeClientProbe {
             .resolve(id + ".json");
     }
 
-    private static JsonObject blueprint(byte[] bytes) {
-        JsonObject root = new JsonParser().parse(new String(bytes, StandardCharsets.UTF_8))
-            .getAsJsonObject();
+    private static JsonObject blueprint(byte[] bytes) throws java.io.IOException {
+        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(bytes);
         return root.has("blueprint") ? root.getAsJsonObject("blueprint") : root;
     }
 

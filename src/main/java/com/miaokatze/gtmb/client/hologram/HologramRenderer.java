@@ -471,14 +471,17 @@ final class HologramRenderer {
             // flicker while keeping back edges hidden; all cells retain clear wireframes.
             GL11.glDepthMask(false);
             t.startDrawing(GL11.GL_LINES);
+            java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
+                : selection.related(state);
             if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
                 boolean chosen = face.cell.index == selected
                     || selection != null && selection.contains(face.cell.index);
+                boolean relatedCasing = !chosen && related.contains(face.cell.index);
                 t.setColorRGBA_F(
-                    chosen ? 1 : .2f,
-                    chosen ? .92f : .7f,
-                    chosen ? .5f : .8f,
-                    chosen ? 1 : face.empty ? .18f : .45f);
+                    chosen ? 1 : relatedCasing ? .78f : .2f,
+                    chosen ? .92f : relatedCasing ? .61f : .7f,
+                    chosen ? .5f : relatedCasing ? 1 : .8f,
+                    chosen || relatedCasing ? 1 : face.empty ? .18f : .45f);
                 for (int[] edge : EDGES) {
                     double[] a = face.points[edge[0]], b = face.points[edge[1]];
                     t.addVertex(a[0], a[1], a[2] * depthScale + .15);
@@ -896,6 +899,7 @@ final class HologramRenderer {
         try {
             GL11.glTranslated(-px, -py, -pz);
             GL11.glTranslated(offsetX, offsetY, offsetZ);
+            if (state.data.getBoolean("localPreview")) HologramLocalPlacement.INSTANCE.rotateGl();
             GL11.glDisable(GL11.GL_LIGHTING);
             mc.getTextureManager()
                 .bindTexture(TextureMap.locationBlocksTexture);
@@ -911,12 +915,21 @@ final class HologramRenderer {
             GL11.glLineWidth(1.25f);
             for (WorldGroup group : worldGroups.values()) {
                 double gx = group.x + offsetX, gy = group.y + offsetY, gz = group.z + offsetZ;
-                double dx = Math.max(gx - px, Math.max(0, px - gx - 16));
-                double dy = Math.max(gy - py, Math.max(0, py - gy - 16));
-                double dz = Math.max(gz - pz, Math.max(0, pz - gz - 16));
-                if (dx * dx + dy * dy + dz * dz > range * range || !frustum
-                    .isBoundingBoxInFrustum(AxisAlignedBB.getBoundingBox(gx, gy, gz, gx + 16, gy + 16, gz + 16)))
-                    continue;
+                double ex = gx + 16, ey = gy + 16, ez = gz + 16;
+                if (state.data.getBoolean("localPreview")) {
+                    double[] bounds = HologramLocalPlacement.INSTANCE.bounds(group.x, group.y, group.z);
+                    gx = bounds[0] + offsetX;
+                    gy = bounds[1] + offsetY;
+                    gz = bounds[2] + offsetZ;
+                    ex = bounds[3] + offsetX;
+                    ey = bounds[4] + offsetY;
+                    ez = bounds[5] + offsetZ;
+                }
+                double dx = Math.max(gx - px, Math.max(0, px - ex));
+                double dy = Math.max(gy - py, Math.max(0, py - ey));
+                double dz = Math.max(gz - pz, Math.max(0, pz - ez));
+                if (dx * dx + dy * dy + dz * dz > range * range
+                    || !frustum.isBoundingBoxInFrustum(AxisAlignedBB.getBoundingBox(gx, gy, gz, ex, ey, ez))) continue;
                 // Finish occupancy first so faces shared by different groups stay hidden.
                 if (worldIndex == state.cells.size()) {
                     while (group.built < group.cells.size() && System.nanoTime() < deadline) {

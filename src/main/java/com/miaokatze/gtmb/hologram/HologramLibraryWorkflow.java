@@ -194,15 +194,16 @@ final class HologramLibraryWorkflow {
         else if ("place".equals(action)) operation = "choosePlacementPreset";
         else if ("edit".equals(action)) operation = "editPreset";
         else throw new java.io.IOException("未知私库蓝图操作");
-        HologramAePolicy.Draft reviewed = HologramAePolicy.sanitize(uploaded);
-        HologramPresets.validate(reviewed.preset);
+        // Reject malformed small pose controls before changing any session state.
+        int[] pose = activationControls(request);
+        // Only canonical, server-owned input reaches this internal receiver. The cache never exposes its base.
         if (!librarySessionCurrent(player, request)) throw new java.io.IOException("蓝图会话已更新");
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (!HologramAuthoringWorkflow.allowBlueprintDiscard(s, request, operation, request.getString("localId"))) {
             HologramSnapshots.send(s);
             throw new java.io.IOException("当前蓝图有未保存修改；请确认放弃后重新选择");
         }
-        HologramPresets.Preset staged = reviewed.preset;
+        HologramPresets.Preset staged = uploaded;
         String localId = request.getString("localId");
         if (localId.isEmpty()) localId = uploaded.id == null ? "" : uploaded.id;
         s.libraryLocalId = HologramLibraryService.localId(localId, false);
@@ -217,16 +218,60 @@ final class HologramLibraryWorkflow {
         activation.setString("presetId", staged.id);
         activation.setBoolean("confirmDiscard", request.getBoolean("confirmDiscard"));
         HologramActionDispatcher.handle(player, activation);
+        s = HologramWorkspace.find(player.getUniqueID());
+        if (s == null || s.virtualPreset == null || !staged.id.equals(s.virtualPreset.id))
+            throw new java.io.IOException("Blueprint activation failed");
+        for (int index = 0; index < pose.length; index++) if (!HologramWorldPlacementWorkflow
+            .transformVirtual(s, s.x, s.y, s.z, true, pose[index] == 1, index == pose.length - 1))
+            throw new java.io.IOException("This blueprint cannot represent the selected orientation");
+        if (!HologramWorldPlacementWorkflow.virtualBoundsValid(s))
+            throw new java.io.IOException("Blueprint final placement exceeds world bounds");
+        if (!HologramLibraryFacade.enabled() && !request.getString("integratedPresetId")
+            .isEmpty()) {
+            String originalId = request.getString("integratedPresetId");
+            // The loaded placement owns its complete detached data; retire only the temporary lookup alias.
+            s.virtualPreset.id = originalId;
+            if (s.processingSource != null) s.processingSource.id = originalId;
+            s.libraryPrivatePreset = null;
+            s.libraryLocalId = "";
+            HologramSessionPolicy.currentTool(s)
+                .getTagCompound()
+                .setString(HologramSessionKeys.SELECTED_PRESET, originalId);
+            s.player.inventory.markDirty();
+        }
         if (request.getBoolean("quickPlace")) {
             s.libraryQuickPending = false;
             s.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
             if (s.libraryQuickClientTaskToken > 0) {
-                HologramWorldPlacementWorkflow.lockVirtual(player, s.x, s.y, s.z, s.side);
+                int x = request.hasKey("placementX", 3) ? request.getInteger("placementX") : s.x;
+                int y = request.hasKey("placementY", 3) ? request.getInteger("placementY") : s.y;
+                int z = request.hasKey("placementZ", 3) ? request.getInteger("placementZ") : s.z;
+                int side = request.hasKey("side", 3) ? request.getInteger("side") : s.side;
+                HologramWorldPlacementWorkflow.lockVirtual(player, x, y, z, side);
                 if (!s.virtualLocked)
                     throw new java.io.IOException("Quick placement could not lock its original anchor");
+                HologramLibraryExecution.submitOrReview(s, request);
             }
         }
-        return staged.id;
+        return s.virtualPreset.id;
+    }
+
+    static int[] activationControls(NBTTagCompound request) throws java.io.IOException {
+        if (request.hasKey("previewPose") && !request.hasKey("previewPose", 11))
+            throw new java.io.IOException("Invalid preview orientation");
+        int[] pose = request.getIntArray("previewPose");
+        if (pose.length > HologramPreviewPose.MAX_RECIPE_LENGTH)
+            throw new java.io.IOException("Invalid preview orientation");
+        for (int axis : pose)
+            if (axis != 0 && axis != 1) throw new java.io.IOException("Invalid preview orientation axis");
+        if (request.hasKey("side")
+            && (!request.hasKey("side", 3) || request.getInteger("side") < 0 || request.getInteger("side") > 5))
+            throw new java.io.IOException("Invalid placement side");
+        if (request.hasKey("placementX") || request.hasKey("placementY") || request.hasKey("placementZ")) {
+            for (String coordinate : new String[] { "placementX", "placementY", "placementZ" })
+                if (!request.hasKey(coordinate, 3)) throw new java.io.IOException("Invalid placement anchor type");
+        }
+        return pose;
     }
 
     static void libraryExportDraft(EntityPlayerMP player, NBTTagCompound request) throws java.io.IOException {

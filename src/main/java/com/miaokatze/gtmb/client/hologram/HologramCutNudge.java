@@ -6,8 +6,7 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 final class HologramCutNudge {
 
     private final HologramWorldFlow.KeyRepeat[] keys = { new HologramWorldFlow.KeyRepeat(),
-        new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat(),
-        new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat() };
+        new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat(), new HologramWorldFlow.KeyRepeat() };
     private long context = Long.MIN_VALUE;
     private boolean enabled;
 
@@ -18,7 +17,7 @@ final class HologramCutNudge {
         enabled = active;
         int fired = -1, count = 0;
         for (int i = 0; i < keys.length; i++) {
-            boolean down = pressed[i] && (i < 4 || alt);
+            boolean down = pressed[i];
             if (down) count++;
             if (keys[i].sample(down, active, changed, tick)) fired = i;
         }

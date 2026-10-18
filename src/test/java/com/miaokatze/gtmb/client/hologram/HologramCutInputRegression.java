@@ -241,9 +241,9 @@ public final class HologramCutInputRegression {
                 HologramCutInput.right(idle, true, true, false, cut, false),
                 "Shift-Alt-right starts another selection without a placement preview");
             SimpleAssert.eq(
-                HologramCutInput.Intent.SWITCHER,
+                HologramCutInput.Intent.STORAGE,
                 HologramCutInput.right(idle, true, false, false, cut, true),
-                "Ctrl-Shift-right reopens the mode selector in either mode");
+                "Ctrl-Shift-right directly opens stored cuts in either mode");
         }
         HologramCutInput.Switcher remembered = new HologramCutInput.Switcher(true);
         SimpleAssert.that(remembered.cut(), "reopened mode selector starts on the selected CUT mode");
@@ -343,46 +343,46 @@ public final class HologramCutInputRegression {
                 HologramCutInput.allowsWorldAction(intent, true),
                 "background task owns world operations while allowing local UI: " + intent);
         }
-        for (int yaw : new int[] { 0, 90, 180, 270 }) for (int index = 0; index < 6; index++) {
-            HologramCutNudge nudge = new HologramCutNudge();
-            int[] anchor = { 8, 80, 16 };
-            boolean[] keys = new boolean[6];
-            nudge.sample(anchor, true, 1, keys, false, yaw, 0, 256);
-            keys[index] = true;
-            boolean alt = index >= 4;
-            int[] expected = HologramWorldFlow.nudgeOffset(yaw, HologramCutInput.nudgeDirection(index, alt));
-            int[] moved = nudge.sample(anchor, true, 1, keys, alt, yaw, 1, 256);
-            for (int axis = 0; axis < 3; axis++)
-                SimpleAssert.eq(anchor[axis] + expected[axis], moved[axis], "local nudge shares blueprint direction");
-            SimpleAssert.eq(80, anchor[1], "nudge detaches the anchor rather than mutating confirmation snapshots");
-            SimpleAssert.that(
-                nudge.sample(moved, true, 1, keys, alt, yaw, 8, 256) == moved,
-                "held nudge waits the normal repeat delay");
-            int[] repeated = nudge.sample(moved, true, 1, keys, alt, yaw, 9, 256);
-            SimpleAssert.that(repeated != moved, "held nudge repeats after eight ticks");
-            SimpleAssert.that(
-                nudge.sample(repeated, false, 1, keys, alt, yaw, 10, 256) == repeated,
-                "background or open screen suppresses local movement");
-            SimpleAssert.that(
-                nudge.sample(repeated, true, 1, keys, alt, yaw, 30, 256) == repeated,
-                "returning with a held key cannot leak a nudge");
-        }
-        SimpleAssert.eq(
-            HologramWorldFlow.Nudge.UP,
-            HologramCutInput.nudgeDirection(0, true),
-            "Alt-Up is the same height step as Alt-W");
-        SimpleAssert.eq(
-            HologramWorldFlow.Nudge.DOWN,
-            HologramCutInput.nudgeDirection(1, true),
-            "Alt-Down is the same height step as Alt-S");
+        for (int yaw : new int[] { 0, 90, 180, 270 })
+            for (boolean alt : new boolean[] { false, true }) for (int index = 0; index < 4; index++) {
+                HologramCutNudge nudge = new HologramCutNudge();
+                int[] anchor = { 8, 80, 16 };
+                boolean[] keys = new boolean[4];
+                nudge.sample(anchor, true, 1, keys, false, yaw, 0, 256);
+                keys[index] = true;
+                int[] expected = HologramWorldFlow.nudgeOffset(yaw, HologramCutInput.nudgeDirection(index, alt));
+                int[] moved = nudge.sample(anchor, true, 1, keys, alt, yaw, 1, 256);
+                for (int axis = 0; axis < 3; axis++) SimpleAssert
+                    .eq(anchor[axis] + expected[axis], moved[axis], "local nudge shares blueprint direction");
+                SimpleAssert.eq(80, anchor[1], "nudge detaches the anchor rather than mutating confirmation snapshots");
+                SimpleAssert.that(
+                    nudge.sample(moved, true, 1, keys, alt, yaw, 8, 256) == moved,
+                    "held nudge waits the normal repeat delay");
+                int[] repeated = nudge.sample(moved, true, 1, keys, alt, yaw, 9, 256);
+                SimpleAssert.that(repeated != moved, "held nudge repeats after eight ticks");
+                SimpleAssert.that(
+                    nudge.sample(repeated, false, 1, keys, alt, yaw, 10, 256) == repeated,
+                    "background or open screen suppresses local movement");
+                SimpleAssert.that(
+                    nudge.sample(repeated, true, 1, keys, alt, yaw, 30, 256) == repeated,
+                    "returning with a held key cannot leak a nudge");
+            }
+        SimpleAssert
+            .eq(HologramWorldFlow.Nudge.UP, HologramCutInput.nudgeDirection(0, true), "Alt-Up moves vertically");
+        SimpleAssert
+            .eq(HologramWorldFlow.Nudge.DOWN, HologramCutInput.nudgeDirection(1, true), "Alt-Down moves vertically");
+        try {
+            HologramCutInput.nudgeDirection(4, true);
+            throw new AssertionError("removed Alt-W/S slots must not resolve to a movement direction");
+        } catch (IllegalArgumentException expected) {}
     }
 
     private static void checkRecoveryRouting(boolean queued, String situation) {
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         SimpleAssert.eq(
-            HologramCutInput.Intent.SWITCHER,
+            HologramCutInput.Intent.STORAGE,
             HologramCutInput.right(idle, true, false, false, queued, true),
-            situation + ": Ctrl-Shift-right opens the local mode selector immediately");
+            situation + ": Ctrl-Shift-right opens stored cuts immediately");
         SimpleAssert.eq(
             false,
             HologramCutInput.interceptsUse(idle, false, false, false),

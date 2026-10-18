@@ -174,8 +174,7 @@ final class HologramCutClient {
             && preview != null
             && !busy()
             && !blueprintBusy();
-        int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT, Keyboard.KEY_W,
-            Keyboard.KEY_S };
+        int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT };
         boolean[] pressed = new boolean[keys.length];
         for (int i = 0; i < keys.length; i++) pressed[i] = key(keys[i]);
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;

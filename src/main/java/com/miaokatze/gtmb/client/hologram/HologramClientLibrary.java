@@ -11,7 +11,6 @@ import java.util.UUID;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 
@@ -129,7 +128,9 @@ final class HologramClientLibrary {
                                 HologramBlueprintArtifact.previewPath(file),
                                 HologramBlueprintArtifact.MAX_PNG_BYTES))) {
                         HologramBlueprintArtifact.Artifact actual = pairIo.read(file);
-                        cached = new CachedEntry(new Entry(id, blueprint(actual.json), actual.json.length), actual);
+                        JsonObject display = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+                            .parse(actual.json);
+                        cached = new CachedEntry(new Entry(id, blueprint(display), actual.json.length), actual);
                         entryCache.put(id, cached);
                     }
                     entries.add(cached.entry);
@@ -225,9 +226,8 @@ final class HologramClientLibrary {
             "蓝图库超过 " + HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES / (1024 * 1024) + " MiB 上限");
         JsonObject expected = blueprint(artifact.json);
         try {
-            JsonObject collection = new JsonParser()
-                .parse(new String(Files.readAllBytes(catalog), StandardCharsets.UTF_8))
-                .getAsJsonObject();
+            JsonObject collection = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+                .parse(Files.readAllBytes(catalog), HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
             JsonElement rows = collection.get("presets");
             if (rows == null || !rows.isJsonArray()) return false;
             for (JsonElement row : rows.getAsJsonArray()) if (expected.equals(row)) return true;
@@ -246,6 +246,12 @@ final class HologramClientLibrary {
     byte[] artifact(String id) throws IOException {
         HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
         parse(saved.json);
+        return HologramBlueprintArtifact.encode(saved.json, saved.png);
+    }
+
+    /** Display reads have byte/PNG bounds, but never run construction policy validation. */
+    byte[] previewArtifact(String id) throws IOException {
+        HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
         return HologramBlueprintArtifact.encode(saved.json, saved.png);
     }
 
@@ -399,9 +405,7 @@ final class HologramClientLibrary {
                     if (++depth > 64) throw new IOException("蓝图 JSON 嵌套过深");
                 } else if (character == '}' || character == ']') depth--;
             }
-            JsonElement root = new JsonParser().parse(json);
-            if (!root.isJsonObject()) throw new IOException("蓝图 JSON 无效");
-            JsonObject object = root.getAsJsonObject();
+            JsonObject object = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(data);
             blueprint(object);
             HologramLibraryFacade.validateNativeJson(data);
             return object;

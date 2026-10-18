@@ -119,11 +119,19 @@
 
 结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后出现操作帮助，任何动作都会收起帮助并继续响应输入。
 
+与机器等级关联的线圈、分级外壳、框架和玻璃可单独选中；相关外壳显示紫色框及持续的「全选 T」提示，按 **T** 才扩选同一结构的相关外壳，已设置的仓室保持独立。
+
+*Tier-related casings can be selected individually. Purple outlines and the T hint identify related cells in the same structure; press T to select them together while keeping configured hatches independent.*
+
 *Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles movement axes, and idle help dismisses on input.*
 
 ### 私用还是分享，由你逐步确认 / Review for private use or sharing
 
 「蓝图设置」负责处理与保存：按私用或分享倾向核对身份、坐标、网络和资源等选项，再命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导会说明「蓝图设置」和「结构调整」的区别，也支持不再显示。
+
+自动提示词在私用和分享倾向下均默认轻度。木匠方块原生包含玩家身份字段，身份报告使用通用蓝图标题；等级 1–9 的去标识处理保留可计价饰面，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
+
+*Automatic annotations default to Light for both private and shared designs. Carpenter identity review retains payable decoration at levels 1–9; construction still charges its materials. Vanilla standing and wall signs consume one sign and retain their text.*
 
 *Blueprint Settings handles processing and saving. Review identity, coordinate, network and resource choices for private use or sharing, resolve conflicts, then save.*
 
@@ -138,6 +146,10 @@
 ## 04 · 把蓝图带回世界，锁定后再确认 / Position in the world
 
 从蓝图库点击「放置所选蓝图」，在真实环境中检查占地与高度。预览可贴合命中表面，也可悬空；**右键立即固定当前位置，边框由绿色切为青色**。调整位置与姿态后，再右键打开材料确认；Esc 取消。
+
+蓝图库浏览使用独立的客户端显示数据。点击「放置所选蓝图」后，先在界面内按内容哈希查找玩家缓存和服务器蓝图库；未命中时显示上传与校验进度，准备完成再进入世界预览。之后移动、旋转、锁定与微调不上传蓝图、不重复整图校验，锁定后仍可旋转。服务器蓝图的显示副本按版本缓存在本次连接中；完整下载才取得原件。
+
+*Browsing uses independent client display data. Place selected blueprint first resolves the content hash in the UI, showing upload and validation progress on a miss before entering the world preview. Moving, turning, locking and nudging then require no blueprint upload or repeated validation. Server-library previews are cached by revision for the current connection; a full download retrieves the original.*
 
 *Place a selected blueprint into the world preview, align it with the site and right-click to lock the position. Review materials before construction.*
 
@@ -162,6 +174,14 @@
 <a id="materials"></a>
 
 ## 05 · 看清每一笔材料，再开工 / Review exact costs
+
+世界预览再次右键先打开**本地材料预估**，分批计算并复用理论需求，未查询的已有与缺失显示「未知」。点击「开始建设 · 服务器复核」引用已经准入的内容；若缓存已失效，回到界面重新准备。服务器从当前放置者取得身份，核对真实材料、放置位置、权限与现场；费用超出本地确认范围、缺料或尚未完整核算时，转入完整材料确认。
+
+*The local estimate reuses theoretical demand and shows unknown stock. Start construction references the admitted content; expired content returns to the preparation UI. The server binds the current player and checks actual payment, target legality and permissions; changed or incomplete costs return to the full review.*
+
+蓝图使用无损字典压缩，重复方块描述与 NBT 内容只保存一份，旧格式仍可读取。服务端为每位玩家缓存最多 **10 份、合计 100 MB** 的可信内容，并可直接复用服务器蓝图库中相同哈希的原件；压缩不改变材料、配置与归属信息，实际施工仍绑定当前放置者。
+
+*Lossless dictionaries store repeated block descriptions and NBT once while retaining legacy-file support. Each player can cache up to 10 admitted blueprints totaling 100 MB; matching server-library originals can also be reused. Construction still binds the current placing player.*
 
 施工前打开独立的 **MUI2 材料确认窗口**，逐项查看**需求 / 已有 / 缺失**。每行对应图标、精确物品／NBT 与单位，同名材料不会混成一项；创造模式也显示完整需求。材料整行左右留白一致，表头与各列对齐；没有可处理内容的按钮禁用，悬停可查看原因。
 
@@ -219,9 +239,9 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
   <em>Choose Blueprint for designs or Cut for moving existing builds.</em>
 </p>
 
-**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；空闲时 Ctrl + Shift + 右键可重开。选择「剪切」开始框选，完整选区后 Shift + 右键确认剪切。保存条目后继续下一次框选；没有完整框时，这个快捷键打开暂存列表并保留已有角点。
+**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；非框选时 Ctrl + Shift + 右键直接打开剪切列表。选择「剪切」开始框选，完整选区后 Shift + 右键确认剪切。保存条目后继续下一次框选；没有完整框时，这个快捷键打开暂存列表并保留已有角点。
 
-*Hold Shift and right-click to cycle modes, then release Shift to enter. Confirm a complete cut selection with Shift + right-click; without a complete box, it opens stored cuts.*
+*Hold Shift and right-click to cycle modes, then release Shift to enter. Outside selection, Ctrl+Shift+right-click opens stored cuts directly. Confirm a complete cut selection with Shift+right-click; without a complete box, it opens stored cuts.*
 
 <p align="center">
   <a href="README/screenshots/cut-queue.png"><img src="README/screenshots/cut-queue.png" alt="剪切暂存列表、每项尺寸与独立三维预览，画面包含诊断文字 / Stored cuts with dimensions and individual 3D preview; screenshot includes diagnostic text" width="620"></a><br>

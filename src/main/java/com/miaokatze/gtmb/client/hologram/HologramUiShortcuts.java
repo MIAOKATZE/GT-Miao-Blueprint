@@ -8,7 +8,7 @@ import org.lwjgl.input.Keyboard;
 /** Internal shortcuts workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiShortcuts {
 
-    private static final String SELECTION_HELP = "T 同种 · Ctrl 多选 · Shift 框选 · Ctrl+A 全选";
+    private static final String SELECTION_HELP = "T 同种全选 · Ctrl 多选 · Shift 框选 · Ctrl+A 全选";
     private static final String GEOMETRY_HELP = "Alt 选空气 · G 开/关移动轴 · Ctrl+拖轴复制";
     private static final String VIEW_HELP = "拖动旋转 · 滚轮缩放 · WASD 平移";
     private static final String CLOSE_HELP = "Esc/E 关闭";

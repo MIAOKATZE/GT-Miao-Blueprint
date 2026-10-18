@@ -65,6 +65,24 @@ final class HologramUiLibrary {
     private HologramMuiTextField presetNameField;
 
     private boolean libraryDrawer;
+    private boolean browsePreview;
+    private String browseServerPresetId = "";
+
+    boolean browsePreviewActive() {
+        return libraryDrawer && browsePreview;
+    }
+
+    private String selectedServerPresetId() {
+        return browseServerPresetId.isEmpty() ? ui.session.state().data.getString("selectedPresetId")
+            : browseServerPresetId;
+    }
+
+    private void browsePreset(String id, boolean server) {
+        cancelLibraryNavigation();
+        browsePreview = true;
+        if (server) HologramLibraryClient.INSTANCE.previewPublic(id, false);
+        else HologramLibraryClient.INSTANCE.previewLocal(id, false);
+    }
 
     private boolean blueprintTab;
 
@@ -277,12 +295,22 @@ final class HologramUiLibrary {
         this.presetNameField.drawTextBox();
         if (this.presetNameField.getText()
             .isEmpty() && !this.presetNameField.isFocused()) ui.canvas.text("当前蓝图名称", x + 8, 83, w - 16, 0x647c7f);
-        boolean canSave = ui.session.editable() && ui.processing.processingReady()
+        boolean canSave = !browsePreviewActive() && ui.session.editable()
+            && ui.processing.processingReady()
             && !ui.session.state().data.getBoolean("settingsOnly")
             && !ui.session.state().cells.isEmpty();
         drawRect(x + 3, 97, x + w - 3, 117, 0xff24444d);
         ui.canvas.button(140, x + 5, 99, 103, 16, "保存蓝图", canSave, mx, my);
-        ui.canvas.button(222, x + 112, 99, 103, 16, "覆盖保存 " + (this.overwriteMode ? "✓" : "×"), true, mx, my);
+        ui.canvas.button(
+            222,
+            x + 112,
+            99,
+            103,
+            16,
+            "覆盖保存 " + (this.overwriteMode ? "✓" : "×"),
+            !browsePreviewActive(),
+            mx,
+            my);
         ui.canvas.button(
             141,
             x + 112,
@@ -298,19 +326,12 @@ final class HologramUiLibrary {
         for (int i = 0; i < presets.tagCount(); i++) {
             NBTTagCompound row = presets.getCompoundTagAt(i);
             if (row.getString("id")
-                .equals(ui.session.state().data.getString("selectedPresetId"))) selectedRow = row;
+                .equals(selectedServerPresetId())) selectedRow = row;
             if (i < this.libraryOffset || i >= this.libraryOffset + 4) continue;
             int y = 123 + (i - this.libraryOffset) * 28;
             boolean active = row.getString("id")
-                .equals(
-                    this.overwriteMode ? this.overwriteTarget : ui.session.state().data.getString("selectedPresetId"));
-            Control entry = new Control(
-                14000 + i,
-                x + 5,
-                y,
-                w - 10,
-                28,
-                ui.session.editable() && !HologramBackgroundTasks.busy());
+                .equals(this.overwriteMode ? this.overwriteTarget : selectedServerPresetId());
+            Control entry = new Control(14000 + i, x + 5, y, w - 10, 28, !HologramBackgroundTasks.busy());
             ui.canvas.controls()
                 .add(entry);
             entry.label = (active ? "\u25b6 " : "") + row.getString(
@@ -361,8 +382,26 @@ final class HologramUiLibrary {
             ui.session.editable() && !ui.session.state().cells.isEmpty(),
             mx,
             my);
-        ui.canvas.button(142, x + 5, 261, 103, 17, "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"), true, mx, my);
-        ui.canvas.button(143, x + 112, 261, 103, 17, "覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"), true, mx, my);
+        ui.canvas.button(
+            142,
+            x + 5,
+            261,
+            103,
+            17,
+            "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"),
+            !browsePreviewActive(),
+            mx,
+            my);
+        ui.canvas.button(
+            143,
+            x + 112,
+            261,
+            103,
+            17,
+            "覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"),
+            !browsePreviewActive(),
+            mx,
+            my);
         ui.canvas.button(
             159,
             x + 5,
@@ -385,7 +424,7 @@ final class HologramUiLibrary {
             mx,
             my);
         ui.canvas.button(150, x + 5, 301, 103, 13, "来源版本", true, mx, my);
-        ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", ui.session.editable(), mx, my);
+        ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", !browsePreviewActive() && ui.session.editable(), mx, my);
         ui.library.drawBlueprintWorkbench(mx, my);
         drawRect(35, 261, 442, 279, 0xe8172f36);
         HologramProgress waiting = HologramLibraryClient.INSTANCE.progress();
@@ -449,10 +488,19 @@ final class HologramUiLibrary {
             103,
             16,
             "保存蓝图",
-            idle && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
+            !browsePreviewActive() && idle && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
             mx,
             my);
-        ui.canvas.button(222, x + 112, 99, 103, 16, "覆盖保存 " + (this.overwriteMode ? "✓" : "×"), true, mx, my);
+        ui.canvas.button(
+            222,
+            x + 112,
+            99,
+            103,
+            16,
+            "覆盖保存 " + (this.overwriteMode ? "✓" : "×"),
+            !browsePreviewActive(),
+            mx,
+            my);
         ui.canvas.button(141, x + 112, 34, 103, 17, "放置所选蓝图", idle && chosen, mx, my);
         this.libraryOffset = Math.max(0, Math.min(this.libraryOffset, Math.max(0, rows.tagCount() - 4)));
         for (int i = this.libraryOffset; i < Math.min(rows.tagCount(), this.libraryOffset + 4); i++) {
@@ -460,7 +508,13 @@ final class HologramUiLibrary {
             int y = 123 + (i - this.libraryOffset) * 28;
             boolean active = row.getString("id")
                 .equals(this.overwriteMode ? this.overwriteTarget : library.selected(this.publicLibrary));
-            Control entry = new Control(14000 + i, x + 5, y, w - 10, 28, idle);
+            Control entry = new Control(
+                14000 + i,
+                x + 5,
+                y,
+                w - 10,
+                28,
+                !library.busy() && !HologramBackgroundTasks.busy());
             ui.canvas.controls()
                 .add(entry);
             String author = row.getString("authorName");
@@ -486,7 +540,7 @@ final class HologramUiLibrary {
                 if (this.publicLibrary) ui.canvas.tooltip()
                     .add("上传者（服务器验证）：" + row.getString("uploadedBy"));
                 ui.canvas.tooltip()
-                    .add(this.publicLibrary ? "选择后可直接放置；下载会保存到客户端" : "客户端蓝图可随您连接不同服务器");
+                    .add("单击只读预览；点击“放置所选蓝图”进入世界定位");
             }
         }
         if (rows.tagCount() == 0) {
@@ -496,8 +550,26 @@ final class HologramUiLibrary {
         }
         ui.canvas.button(139, x + 5, 241, 103, 17, "编辑所选", idle && chosen, mx, my);
         ui.canvas.button(299, x + 112, 241, 103, 17, "放弃蓝图预设", idle && !ui.session.state().cells.isEmpty(), mx, my);
-        ui.canvas.button(142, x + 5, 261, 103, 17, "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"), true, mx, my);
-        ui.canvas.button(143, x + 112, 261, 103, 17, "覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"), true, mx, my);
+        ui.canvas.button(
+            142,
+            x + 5,
+            261,
+            103,
+            17,
+            "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"),
+            !browsePreviewActive(),
+            mx,
+            my);
+        ui.canvas.button(
+            143,
+            x + 112,
+            261,
+            103,
+            17,
+            "覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"),
+            !browsePreviewActive(),
+            mx,
+            my);
         ui.canvas.button(203, x + 5, 281, 103, 17, this.publicLibrary ? "下载至客户端" : "上传 / 更新公库", idle && chosen, mx, my);
         ui.canvas.button(
             205,
@@ -514,7 +586,7 @@ final class HologramUiLibrary {
             ui.canvas.text((library.page() + 1) + " / " + library.pages(), x + 36, 303, 40, 0x8ba7ad);
             ui.canvas.button(209, x + 78, 301, 30, 13, "下页", library.page() + 1 < library.pages(), mx, my);
         } else ui.canvas.button(202, x + 5, 301, 103, 13, "刷新", !library.busy(), mx, my);
-        ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", ui.session.editable(), mx, my);
+        ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", !browsePreviewActive() && ui.session.editable(), mx, my);
         ui.library.drawBlueprintWorkbench(mx, my);
         drawRect(35, 261, 442, 279, 0xe8172f36);
         HologramProgress progress = library.progress();
@@ -588,6 +660,12 @@ final class HologramUiLibrary {
     }
 
     void drawBlueprintWorkbench(int mx, int my) {
+        if (browsePreviewActive()) {
+            drawRect(35, HologramScreenLayout.LIBRARY_FOOTER_Y, 442, 259, 0xf0172f36);
+            ui.canvas.text("只读预览 · 拖动旋转，滚轮缩放 · 点击“编辑所选”后编辑", 41, 244, 395, 0xb9d5d4);
+            ui.canvas.button(223, 41, 282, 120, 17, "旋转查看 ↻", true, mx, my);
+            return;
+        }
         ui.canvas.drawLocalPlanProgress(41, 260, 395, mx, my);
         if (!HologramGuidance.authorWorkspace(ui.session.state())) {
             drawRect(35, HologramScreenLayout.LIBRARY_FOOTER_Y, 442, 259, 0xf0172f36);
@@ -750,14 +828,8 @@ final class HologramUiLibrary {
         if (id >= 14000 && id < 15000) {
             NBTTagCompound row = library.rows(this.publicLibrary)
                 .getCompoundTagAt(id - 14000);
-            if (this.publicLibrary || !library.busy())
-                ui.library.rememberLibraryNavigation(row.getString("id"), "blueprintBrowse");
             library.select(this.publicLibrary, row.getString("id"));
-            if (this.publicLibrary) {
-                NBTTagCompound preview = new NBTTagCompound();
-                preview.setString("presetId", row.getString("id"));
-                ui.session.send("previewPreset", preview, true);
-            } else library.sendLocal(ui.session.state(), "preview", false, this.discardConfirmed);
+            browsePreset(row.getString("id"), this.publicLibrary);
             return true;
         }
         switch (id) {
@@ -765,6 +837,8 @@ final class HologramUiLibrary {
                 ui.library.cancelLibraryNavigation();
                 this.publicLibrary = !this.publicLibrary;
                 this.libraryOffset = 0;
+                browsePreview = true;
+                library.clearBrowsePreview();
                 if (this.publicLibrary) library.refreshServer(0);
                 return true;
             case 202:
@@ -789,10 +863,14 @@ final class HologramUiLibrary {
                 ui.library.openLibraryAdmin();
                 return true;
             case 208:
+                browsePreview = true;
+                library.clearBrowsePreview();
                 library.refreshServer(library.page() - 1);
                 this.libraryOffset = 0;
                 return true;
             case 209:
+                browsePreview = true;
+                library.clearBrowsePreview();
                 library.refreshServer(library.page() + 1);
                 this.libraryOffset = 0;
                 return true;
@@ -802,13 +880,18 @@ final class HologramUiLibrary {
                 return true;
             case 141:
             case 139:
+                if (id == 139) browsePreview = false;
                 if (id == 139 && (this.publicLibrary || !library.busy()))
                     ui.library.rememberLibraryNavigation(library.selected(this.publicLibrary), "blueprintEdit");
                 else if (id == 141) ui.library.cancelLibraryNavigation();
                 if (this.publicLibrary) {
+                    if (id == 141) {
+                        library.previewPublic(library.selected(true));
+                        return true;
+                    }
                     NBTTagCompound action = new NBTTagCompound();
                     action.setString("presetId", library.selected(true));
-                    ui.session.send(id == 141 ? "choosePlacementPreset" : "editPreset", action, true);
+                    ui.session.send("editPreset", action, true);
                 } else
                     library.sendLocal(ui.session.state(), id == 141 ? "place" : "edit", false, this.discardConfirmed);
                 if (id == 139) {
@@ -818,6 +901,7 @@ final class HologramUiLibrary {
                 return true;
             case 140:
             case 132:
+                if (browsePreviewActive()) return true;
                 if (!ui.processing.processingReady()) return true;
                 String name = this.presetNameField.getText()
                     .trim();
@@ -885,6 +969,14 @@ final class HologramUiLibrary {
 
     boolean selectedPresetExists() {
         boolean dedicated = HologramLibraryClient.dedicated();
+        if (!dedicated && !browseServerPresetId.isEmpty()) {
+            NBTTagList rows = ui.session.state().data.getTagList("presets", 10);
+            for (int i = 0; i < rows.tagCount(); i++) if (browseServerPresetId.equals(
+                rows.getCompoundTagAt(i)
+                    .getString("id")))
+                return true;
+            return false;
+        }
         return HologramGuidance.selectedSavedBlueprint(
             ui.session.state().data,
             dedicated,
@@ -912,7 +1004,7 @@ final class HologramUiLibrary {
         NBTTagList presets = dedicated ? HologramLibraryClient.INSTANCE.rows(this.publicLibrary)
             : ui.session.state().data.getTagList("presets", 10);
         String selectedId = dedicated ? HologramLibraryClient.INSTANCE.selected(this.publicLibrary)
-            : ui.session.state().data.getString("selectedPresetId");
+            : selectedServerPresetId();
         for (int i = 0; i < presets.tagCount(); i++) {
             if (!selectedId.equals(
                 presets.getCompoundTagAt(i)
@@ -1004,7 +1096,18 @@ final class HologramUiLibrary {
     }
 
     private void sendPresetSwitch(String operation, String target, boolean confirmDiscard) {
+        if ("previewPreset".equals(operation)) {
+            browsePreset(target, !HologramLibraryClient.dedicated() || target.startsWith("public_"));
+            return;
+        }
+        if ("choosePlacementPreset".equals(operation)) {
+            HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+            if (HologramLibraryClient.dedicated() && !target.startsWith("public_")) library.previewLocal(target, true);
+            else library.previewPublic(target, true);
+            return;
+        }
         if ("editPreset".equals(operation)) {
+            browsePreview = false;
             blueprintTab = libraryDrawer = true;
             if (presetNameField != null) presetNameField.setFocused(false);
         }
@@ -1059,7 +1162,8 @@ final class HologramUiLibrary {
             return true;
         }
         boolean rowSelection = id >= 14000 && id < 15000;
-        boolean switching = id == 139 || id == 141 || rowSelection || id == 161;
+        // Browsing and world positioning are client displays; only authenticated authoring replaces the draft.
+        boolean switching = id == 139 || id == 161;
         if (switching && (!this.overwriteMode || !rowSelection)
             && ui.session.state().data.getBoolean("blueprintDirty")
             && !this.discardConfirmed) {
@@ -1072,7 +1176,7 @@ final class HologramUiLibrary {
                     .getString("id");
             else this.deferredLibraryTargetId = id == 139 || id == 141
                 ? HologramLibraryClient.dedicated() ? HologramLibraryClient.INSTANCE.selected(this.publicLibrary)
-                    : ui.session.state().data.getString("selectedPresetId")
+                    : selectedServerPresetId()
                 : "";
             return true;
         }
@@ -1098,13 +1202,10 @@ final class HologramUiLibrary {
 
     boolean selectServerPresetRow(int id) {
         if (this.libraryDrawer && id >= 14000) {
-            if (!ui.session.editable()) return true;
             NBTTagCompound preset = ui.session.state().data.getTagList("presets", 10)
                 .getCompoundTagAt(id - 14000);
-            NBTTagCompound request = new NBTTagCompound();
-            request.setString("presetId", preset.getString("id"));
-            this.keepLibraryOffset = true;
-            ui.session.send("previewPreset", request, true);
+            browseServerPresetId = preset.getString("id");
+            browsePreset(browseServerPresetId, true);
             return true;
         }
         return false;
@@ -1129,9 +1230,7 @@ final class HologramUiLibrary {
                 return true;
             case 141:
                 if (ui.session.editable() && ui.library.selectedPresetExists()) {
-                    NBTTagCompound placement = new NBTTagCompound();
-                    placement.setString("presetId", ui.session.state().data.getString("selectedPresetId"));
-                    ui.session.send("choosePlacementPreset", placement, true);
+                    HologramLibraryClient.INSTANCE.previewPublic(selectedServerPresetId(), true);
                 }
                 return true;
             case 148:
@@ -1153,7 +1252,7 @@ final class HologramUiLibrary {
             case 161:
                 if (ui.session.editable()) {
                     NBTTagCompound transfer = new NBTTagCompound();
-                    transfer.setString("presetId", ui.session.state().data.getString("selectedPresetId"));
+                    transfer.setString("presetId", selectedServerPresetId());
                     transfer.setString(
                         "fileId",
                         this.presetNameField.getText()
@@ -1177,7 +1276,7 @@ final class HologramUiLibrary {
                 return true;
             case 175:
                 if (!ui.session.editable() || !ui.library.selectedPresetExists()) return true;
-                this.deletePresetId = ui.session.state().data.getString("selectedPresetId");
+                this.deletePresetId = selectedServerPresetId();
                 NBTTagList deleteRows = ui.session.state().data.getTagList("presets", 10);
                 for (int i = 0; i < deleteRows.tagCount(); i++) {
                     NBTTagCompound row = deleteRows.getCompoundTagAt(i);
@@ -1199,8 +1298,9 @@ final class HologramUiLibrary {
                 return true;
             case 139:
                 if (!ui.session.editable() || !ui.library.selectedPresetExists()) return true;
+                browsePreview = false;
                 NBTTagCompound editPreset = new NBTTagCompound();
-                editPreset.setString("presetId", ui.session.state().data.getString("selectedPresetId"));
+                editPreset.setString("presetId", selectedServerPresetId());
                 this.blueprintTab = true;
                 this.libraryDrawer = true;
                 this.presetNameField.setFocused(false);
@@ -1297,6 +1397,7 @@ final class HologramUiLibrary {
 
     boolean consumeBrowserKey(char c, int key) {
         if (this.libraryDrawer) {
+            if (browsePreviewActive()) return true;
             if (!ui.config.resetReview()) {
                 if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) ui.router.activate(140);
                 else this.presetNameField.textboxKeyTyped(c, key);
@@ -1383,6 +1484,8 @@ final class HologramUiLibrary {
     }
 
     void restoreSession(HologramState next, SnapshotTransition change) {
+        browsePreview = false;
+        browseServerPresetId = "";
         UiMemory memory = HologramUiMemory.UI_MEMORY()
             .get(next.session);
         blueprintTab = memory == null ? next.data.getBoolean("presetBrowseForPlacement") || HologramUiMemory.tabMemory()

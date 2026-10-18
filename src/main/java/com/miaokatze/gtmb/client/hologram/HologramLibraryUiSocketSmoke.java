@@ -15,7 +15,6 @@ import net.minecraft.nbt.NBTTagList;
 import org.lwjgl.input.Keyboard;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 
 /** Optional real mouse/socket/disk witness, embedded before the existing placement and Escape scenarios. */
 final class HologramLibraryUiSocketSmoke {
@@ -410,8 +409,7 @@ final class HologramLibraryUiSocketSmoke {
         require(id.matches("local_[a-f0-9-]{36}"), "canonical private file ID");
         Path path = mc.mcDataDir.toPath()
             .resolve("MiaoBlueprints/" + id + ".json");
-        JsonObject root = new JsonParser().parse(new String(Files.readAllBytes(path), StandardCharsets.UTF_8))
-            .getAsJsonObject();
+        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(Files.readAllBytes(path));
         return root.getAsJsonObject("blueprint");
     }
 

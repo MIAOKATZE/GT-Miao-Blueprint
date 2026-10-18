@@ -224,25 +224,55 @@ public final class HologramSelectionRegression {
     private static void replacementFamilyRegression() {
         NBTTagCompound data = (NBTTagCompound) volume().fullData();
         NBTTagList cells = data.getTagList("cells", 10);
-        cells.getCompoundTagAt(0)
-            .setString("family", "coil");
-        cells.getCompoundTagAt(4)
-            .setString("family", "coil");
-        cells.getCompoundTagAt(8)
-            .setString("family", "coil");
-        HologramState state = new HologramState(data);
-        HologramSelection selection = new HologramSelection();
-        selection.previewClick(state, 0, "", false, false);
-        SimpleAssert.that(
-            selection.size() == 2 && selection.contains(0) && selection.contains(4),
-            "declared coil family selects its structure members automatically across grades");
-        SimpleAssert.that(
-            !selection.contains(8) && !selection.contains(1),
-            "family expansion never reaches another scope or unrelated casing");
-        selection.previewClick(state, 0, "", true, false);
-        SimpleAssert.that(
-            selection.size() == 4 && selection.contains(1) && !selection.contains(4),
-            "T uses exact identity rather than replacement family");
+        for (String family : new String[] { "coil", "tiered:fixture", "frame:fixture", "glass:fixture" }) {
+            for (int index : new int[] { 0, 4, 8 }) cells.getCompoundTagAt(index)
+                .setString("family", family);
+            // A hatch can retain its source casing's declaration family after an independent edit.
+            cells.getCompoundTagAt(2)
+                .setString("family", family);
+            cells.getCompoundTagAt(2)
+                .setString("wantId", "gregtech:gt.blockmachines");
+            HologramState state = new HologramState(data);
+            HologramSelection selection = new HologramSelection();
+            selection.previewClick(state, 0, "", false, false);
+            SimpleAssert.eq(1, selection.size(), "grade casing stays independently editable: " + family);
+            SimpleAssert.that(selection.canSelectRelated(state), "unselected related casings keep the T hint visible");
+            SimpleAssert.that(
+                selection.related(state)
+                    .contains(4)
+                    && !selection.related(state)
+                        .contains(8)
+                    && !selection.related(state)
+                        .contains(2),
+                "related outlines stay in the structure and exclude current hatch targets");
+            selection.selectRelated(state, false);
+            SimpleAssert.that(
+                selection.size() == 2 && selection.contains(0) && selection.contains(4),
+                "explicit T selects the declared grade family across metadata variants");
+            SimpleAssert.that(!selection.canSelectRelated(state), "fully selected grade group clears the hint");
+            selection.previewClick(state, 2, "", false, false);
+            SimpleAssert.eq(1, selection.size(), "current hatch with casing provenance remains independently editable");
+            SimpleAssert.that(!selection.canSelectRelated(state), "current hatch never offers casing grade expansion");
+            selection.previewClick(state, 2, "", true, false);
+            SimpleAssert.eq(1, selection.size(), "T on the current hatch uses its exact device identity");
+            selection.clear();
+            SimpleAssert.that(
+                selection.related(state)
+                    .isEmpty(),
+                "clearing selection invalidates related outlines");
+        }
+        for (String family : new String[] { "declared:fixture", "wildcard:fixture" }) {
+            for (int index : new int[] { 0, 4, 8 }) cells.getCompoundTagAt(index)
+                .setString("family", family);
+            HologramState state = new HologramState(data);
+            HologramSelection selection = new HologramSelection();
+            selection.previewClick(state, 0, "", false, false);
+            SimpleAssert.eq(2, selection.size(), "ordinary declared family retains existing selection semantics");
+            selection.previewClick(state, 0, "", true, false);
+            SimpleAssert.that(
+                selection.size() == 3 && selection.contains(1) && !selection.contains(4),
+                "T on ordinary declared families retains exact variant semantics");
+        }
     }
 
     private static void metaTileIdentityRegression() {

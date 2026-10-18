@@ -88,7 +88,8 @@ public final class HologramClientSmoke {
     }
 
     static void install() {
-        if (Boolean.getBoolean("gtmb.hologram.materialVisualSmoke")) {
+        if (Boolean.getBoolean("gtmb.hologram.materialVisualSmoke")
+            || Boolean.getBoolean("gtmb.hologram.localMaterialVisualSmoke")) {
             HologramMaterialVisualSmoke.install();
             return;
         }

@@ -16,7 +16,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonIOException;
-import com.google.gson.JsonParser;
 
 /** Independent share files; client supplied names never become arbitrary filesystem paths. */
 final class HologramBlueprintSharing {
@@ -65,9 +64,7 @@ final class HologramBlueprintSharing {
         HologramPresets.Preset copy = HologramPresets.copy(preset);
         HologramBlueprintVersions.validate(copy);
         HologramPresets.validate(copy);
-        Share share = new Share();
-        share.blueprint = copy;
-        byte[] bytes = encodeBounded(GSON, share, MAX_BYTES);
+        byte[] bytes = HologramBlueprintCompactCodec.encode(copy, (done, total) -> {});
         HologramBlueprintArtifact.writePair(file, bytes, preview);
     }
 
@@ -174,9 +171,16 @@ final class HologramBlueprintSharing {
     }
 
     static HologramPresets.Preset decode(String json) throws IOException {
+        HologramPresets.Preset preset = decodeUnchecked(json);
+        HologramPresets.validate(preset);
+        return preset;
+    }
+
+    /** Structural JSON admission only; caller must run the canonical safety boundary before use. */
+    static HologramPresets.Preset decodeUnchecked(String json) throws IOException {
         boundedJson(json);
         try {
-            JsonElement root = new JsonParser().parse(json);
+            JsonElement root = HologramBlueprintCompactCodec.parse(json, MAX_BYTES);
             if (!root.isJsonObject() || !root.getAsJsonObject()
                 .has("schema")
                 || !root.getAsJsonObject()
@@ -198,7 +202,6 @@ final class HologramBlueprintSharing {
                 root.getAsJsonObject()
                     .get("blueprint"));
             Share share = GSON.fromJson(root, Share.class);
-            HologramPresets.validate(share.blueprint);
             return share.blueprint;
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图分享JSON无效", invalid);

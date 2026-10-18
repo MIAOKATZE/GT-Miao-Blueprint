@@ -53,7 +53,6 @@ import org.lwjgl.opengl.GLContext;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
@@ -87,8 +86,7 @@ public final class HologramBlueprintPreview {
         boolean witness = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         byte[] sourceJson = witness ? exactJson.clone() : exactJson;
         try {
-            JsonObject share = new JsonParser().parse(new String(sourceJson, StandardCharsets.UTF_8))
-                .getAsJsonObject();
+            JsonObject share = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(sourceJson);
             JsonObject blueprint = share.getAsJsonObject("blueprint");
             if (blueprint == null) throw new IOException("Blueprint preview requires the exact exported share file");
             JsonArray sourceCells = blueprint.getAsJsonArray("cells");
@@ -96,6 +94,22 @@ public final class HologramBlueprintPreview {
             NBTTagCompound data = new NBTTagCompound();
             data.setString("session", "blueprint-artifact");
             data.setInteger("mode", 0);
+            data.setBoolean("localMaterialPolicyPresent", blueprint.has("retainNbt"));
+            data.setBoolean(
+                "retainNbt",
+                !blueprint.has("retainNbt") || blueprint.get("retainNbt")
+                    .getAsBoolean());
+            data.setBoolean(
+                "retainCovers",
+                !blueprint.has("retainCovers") || blueprint.get("retainCovers")
+                    .getAsBoolean());
+            if (blueprint.has("retainedNbtKeys") && blueprint.get("retainedNbtKeys")
+                .isJsonArray()) {
+                NBTTagList retained = new NBTTagList();
+                for (JsonElement key : blueprint.getAsJsonArray("retainedNbtKeys"))
+                    retained.appendTag(new net.minecraft.nbt.NBTTagString(key.getAsString()));
+                data.setTag("retainedNbtKeys", retained);
+            }
             NBTTagList cells = new NBTTagList();
             Payloads payloads = new Payloads();
             for (JsonElement row : sourceCells) {
@@ -132,6 +146,28 @@ public final class HologramBlueprintPreview {
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid blueprint preview JSON", invalid);
         }
+    }
+
+    /** Structural decoding bounds only, deliberately independent of construction policy. */
+    static String boundedJson(byte[] bytes) throws IOException {
+        String json = new String(bytes, StandardCharsets.UTF_8);
+        int depth = 0;
+        boolean quoted = false, escaped = false;
+        for (int i = 0; i < json.length(); i++) {
+            char ch = json.charAt(i);
+            if (quoted) {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == '"') quoted = false;
+            } else if (ch == '"') quoted = true;
+            else if (ch == '{' || ch == '[') {
+                if (++depth > 64) throw new IOException("Blueprint preview JSON nesting budget");
+            } else if (ch == '}' || ch == ']') {
+                if (--depth < 0) throw new IOException("Blueprint preview JSON nesting");
+            }
+        }
+        if (quoted || depth != 0) throw new IOException("Incomplete blueprint preview JSON");
+        return json;
     }
 
     /** Called from a worker. This takes its own immutable input copy and queues exactly one render-context capture. */
@@ -429,72 +465,80 @@ public final class HologramBlueprintPreview {
         NBTTagList cells = data.getTagList("cells", 10);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
-            Object item = Item.itemRegistry.getObject(cell.getString("previewItem"));
-            ItemStack stack = item instanceof Item ? new ItemStack((Item) item, 1, cell.getInteger("previewDamage"))
-                : null;
-            if (stack == null && !cell.getString("previewItem")
-                .isEmpty())
-                throw new IOException("Blueprint preview item is missing: " + cell.getString("previewItem"));
-            if (stack != null && stack.getItem() instanceof gregtech.common.blocks.ItemMachines) {
-                int id = stack.getItemDamage();
-                if (id < 0 || id >= gregtech.api.GregTechAPI.METATILEENTITIES.length
-                    || gregtech.api.GregTechAPI.METATILEENTITIES[id] == null)
-                    throw new IOException("Blueprint preview GT machine is missing: " + id);
-            }
-            if (stack != null && cell.hasKey("previewItemTag", 10)) {
-                NBTTagCompound itemTag = cell.getCompoundTag("previewItemTag");
-                restoreStableItems(itemTag);
-                stack.setTagCompound(itemTag);
-            }
-            boolean inferredBlock = cell.getString("wantId")
-                .isEmpty();
-            Block block = inferredBlock && stack != null ? Block.getBlockFromItem(stack.getItem())
-                : Block.getBlockFromName(cell.getString("wantId"));
-            if (block == null) throw new IOException("Blueprint preview block is missing: " + cell.getString("wantId"));
-            if (block == Blocks.air && !"minecraft:air".equals(cell.getString("wantId")))
-                throw new IOException("Blueprint preview material has no native block");
-            if (inferredBlock && stack != null && !(stack.getItem() instanceof gregtech.common.blocks.ItemMachines))
-                cell.setInteger(
-                    "wantMeta",
-                    stack.getItem()
-                        .getMetadata(stack.getItemDamage()));
-            cell.setString("wantId", String.valueOf(Block.blockRegistry.getNameForObject(block)));
-            NBTTagCompound tile = cell.hasKey("previewTile", 10) ? cell.getCompoundTag("previewTile") : null;
-            if (tile != null) restoreStableItems(tile);
-            NBTTagCompound display = new NBTTagCompound();
-            display.setInteger("color", -1);
-            int facing = cell.getInteger("targetFacing");
-            if (facing >= 0) display.setInteger("facing", facing);
-            if (HologramAeNativePreview.supports(block)) {
-                display.setTag(
-                    "nativeTile",
-                    HologramAeNativePreview.target(block, tile == null ? new NBTTagCompound() : tile));
-            } else if (tile != null) display.setTag("nativeTile", tile.copy());
-            if (tile != null) {
-                for (String key : new String[] { "texturePage", "textureIndex" })
-                    if (tile.hasKey(key, 3)) display.setInteger(key, tile.getInteger(key));
-                if (tile.hasKey("mColor")) display.setInteger("color", tile.getByte("mColor") - 1);
-                if (tile.hasKey("mConnections")) display.setInteger("connections", tile.getByte("mConnections") & 63);
-                if (tile.hasKey("mActive")) display.setBoolean("active", tile.getBoolean("mActive"));
-                if (facing < 0 && tile.hasKey("mFacing")) {
-                    cell.setInteger("targetFacing", tile.getShort("mFacing"));
-                    display.setInteger("facing", tile.getShort("mFacing"));
-                }
-                if (tile.hasKey("gt.covers", 9)) display.setTag(
-                    "gt.covers",
-                    tile.getTag("gt.covers")
-                        .copy());
-            }
-            if (stack != null) cell.setTag("targetStack", stack.writeToNBT(new NBTTagCompound()));
-            cell.setTag("targetDisplay", display);
-            cell.setString("id", cell.getString("wantId"));
-            cell.setInteger("meta", cell.getInteger("wantMeta"));
-            cell.removeTag("previewTile");
-            cell.removeTag("previewItemTag");
-            cell.removeTag("previewItem");
-            cell.removeTag("previewDamage");
+            completeCell(cell);
         }
         return new HologramState(data);
+    }
+
+    /** Resolve one disposable display row on the client thread, without world or payment validation. */
+    static void completeCell(NBTTagCompound cell) throws IOException {
+        completeCell(cell, false);
+    }
+
+    static void completeCell(NBTTagCompound cell, boolean materialData) throws IOException {
+        Object item = Item.itemRegistry.getObject(cell.getString("previewItem"));
+        ItemStack stack = item instanceof Item ? new ItemStack((Item) item, 1, cell.getInteger("previewDamage")) : null;
+        if (stack == null && !cell.getString("previewItem")
+            .isEmpty()) throw new IOException("Blueprint preview item is missing: " + cell.getString("previewItem"));
+        if (stack != null && stack.getItem() instanceof gregtech.common.blocks.ItemMachines) {
+            int id = stack.getItemDamage();
+            if (id < 0 || id >= gregtech.api.GregTechAPI.METATILEENTITIES.length
+                || gregtech.api.GregTechAPI.METATILEENTITIES[id] == null)
+                throw new IOException("Blueprint preview GT machine is missing: " + id);
+        }
+        if (stack != null && cell.hasKey("previewItemTag", 10)) {
+            NBTTagCompound itemTag = cell.getCompoundTag("previewItemTag");
+            restoreStableItems(itemTag);
+            stack.setTagCompound(itemTag);
+        }
+        boolean inferredBlock = cell.getString("wantId")
+            .isEmpty();
+        Block block = inferredBlock && stack != null ? Block.getBlockFromItem(stack.getItem())
+            : Block.getBlockFromName(cell.getString("wantId"));
+        if (block == null) throw new IOException("Blueprint preview block is missing: " + cell.getString("wantId"));
+        if (block == Blocks.air && !"minecraft:air".equals(cell.getString("wantId")))
+            throw new IOException("Blueprint preview material has no native block");
+        if (inferredBlock && stack != null && !(stack.getItem() instanceof gregtech.common.blocks.ItemMachines))
+            cell.setInteger(
+                "wantMeta",
+                stack.getItem()
+                    .getMetadata(stack.getItemDamage()));
+        cell.setString("wantId", String.valueOf(Block.blockRegistry.getNameForObject(block)));
+        NBTTagCompound tile = cell.hasKey("previewTile", 10) ? cell.getCompoundTag("previewTile") : null;
+        if (tile != null) restoreStableItems(tile);
+        NBTTagCompound display = new NBTTagCompound();
+        display.setInteger("color", -1);
+        int facing = cell.getInteger("targetFacing");
+        if (facing >= 0) display.setInteger("facing", facing);
+        if (HologramAeNativePreview.supports(block)) {
+            display.setTag(
+                "nativeTile",
+                HologramAeNativePreview.target(block, tile == null ? new NBTTagCompound() : tile));
+        } else if (tile != null) display.setTag("nativeTile", tile.copy());
+        if (tile != null) {
+            for (String key : new String[] { "texturePage", "textureIndex" })
+                if (tile.hasKey(key, 3)) display.setInteger(key, tile.getInteger(key));
+            if (tile.hasKey("mColor")) display.setInteger("color", tile.getByte("mColor") - 1);
+            if (tile.hasKey("mConnections")) display.setInteger("connections", tile.getByte("mConnections") & 63);
+            if (tile.hasKey("mActive")) display.setBoolean("active", tile.getBoolean("mActive"));
+            if (facing < 0 && tile.hasKey("mFacing")) {
+                cell.setInteger("targetFacing", tile.getShort("mFacing"));
+                display.setInteger("facing", tile.getShort("mFacing"));
+            }
+            if (tile.hasKey("gt.covers", 9)) display.setTag(
+                "gt.covers",
+                tile.getTag("gt.covers")
+                    .copy());
+        }
+        if (stack != null) cell.setTag("targetStack", stack.writeToNBT(new NBTTagCompound()));
+        cell.setTag("targetDisplay", display);
+        cell.setString("id", cell.getString("wantId"));
+        cell.setInteger("meta", cell.getInteger("wantMeta"));
+        if (materialData && tile != null) cell.setTag("localMaterialTile", tile.copy());
+        cell.removeTag("previewTile");
+        cell.removeTag("previewItemTag");
+        cell.removeTag("previewItem");
+        cell.removeTag("previewDamage");
     }
 
     /** The same stable item/cover transport identities used by the native blueprint codec. */

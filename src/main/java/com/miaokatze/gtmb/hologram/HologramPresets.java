@@ -25,7 +25,6 @@ import net.minecraft.nbt.NBTTagList;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 
 import gregtech.api.GregTechAPI;
@@ -238,7 +237,6 @@ final class HologramPresets {
                     Preset loaded = preset != null && preset.schema == 1 ? upgradeLegacy(preset) : preset;
                     HologramBlueprintProcessing.markLegacy(loaded);
                     validate(loaded);
-                    HologramBlueprintSharing.encodeBounded(GSON, loaded, HologramBlueprintSharing.MAX_BYTES);
                     if (!ids.add(loaded.id)) throw new IOException("模板ID重复");
                     result.add(loaded);
                 }
@@ -592,9 +590,8 @@ final class HologramPresets {
         data.presets = copies(list);
         for (Preset preset : data.presets) {
             HologramBlueprintVersions.stamp(preset);
-            HologramBlueprintSharing.encodeBounded(GSON, preset, HologramBlueprintSharing.MAX_BYTES);
         }
-        byte[] bytes = HologramBlueprintSharing.encodeBounded(GSON, data, MAX_LIBRARY_BYTES);
+        byte[] bytes = HologramBlueprintCompactCodec.encodeLibrary(data.presets);
         Files.createDirectories(file.getParent());
         Path temp = Files.createTempFile(file.getParent(), "hologram-presets-", ".tmp");
         try {
@@ -629,7 +626,7 @@ final class HologramPresets {
 
     private static FileData decode(String json) throws IOException {
         HologramBlueprintSharing.boundedJson(json, MAX_LIBRARY_BYTES);
-        JsonElement root = new JsonParser().parse(json);
+        JsonElement root = HologramBlueprintCompactCodec.parse(json, MAX_LIBRARY_BYTES);
         if (!root.isJsonObject() || !root.getAsJsonObject()
             .has("schema")
             || !root.getAsJsonObject()

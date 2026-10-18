@@ -213,6 +213,19 @@ public final class HologramRegressionTest {
         cases.put(
             "virtual_preset_world_turns_preserve_geometry_edits_and_controller_roll",
             HologramVirtualRotationRegression::run);
+        cases.put(
+            "local_preview_cube_poses_preserve_handedness_and_canonical_recipes",
+            HologramPreviewPoseRegression::run);
+        cases.put("local_display_decoding_grants_no_server_construction_authority", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramLocalPreviewRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError("Local display decoding", failure);
+            }
+        });
+        cases.put(
+            "local_material_estimates_never_grant_payment_or_inventory_authority",
+            HologramStaticMaterialsRegression::run);
         cases.put("rotation_cycles_all_six_legal_fronts", HologramRegressionTest::faceRotation);
         cases.put("hatch_direction_policy_keeps_built_snapshot", HologramRegressionTest::hatchDirectionSnapshot);
         cases.put("hatch_matching_preserves_override_and_legacy_class_rules", HologramRegressionTest::hatchMatching);
@@ -280,6 +293,9 @@ public final class HologramRegressionTest {
             "blueprint_metadata_records_release_and_exact_pack_versions",
             HologramBlueprintVersionsRegression::run);
         cases.put("blueprint_json_png_artifacts_preserve_atomic_pairs", HologramBlueprintArtifactRegression::run);
+        cases.put(
+            "compact_blueprints_preserve_semantics_and_bound_dictionary_expansion",
+            HologramBlueprintCompactRegression::run);
         cases.put(
             "ae_virtual_container_isolates_marks_from_real_inventory",
             com.miaokatze.gtmb.client.hologram.HologramAeContainerRegression::run);

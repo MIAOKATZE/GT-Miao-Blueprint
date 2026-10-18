@@ -10,7 +10,7 @@ import net.minecraftforge.fluids.FluidStack;
 
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 
-/** Read-only server quote. Only visible rows resolve registry objects; identities are never merged by name. */
+/** Read-only material rows. Local estimates explicitly keep unknown stock separate from server quotes. */
 final class HologramMaterialReview {
 
     private NBTTagCompound quote;
@@ -27,8 +27,9 @@ final class HologramMaterialReview {
 
     boolean update(NBTTagCompound state) {
         NBTTagCompound next = state.getCompoundTag("materialQuote");
-        current = next.getBoolean("complete") && (!next.hasKey("session", 8) || next.getString("session")
-            .equals(state.getString("session")))
+        current = (next.getBoolean("complete") || next.getBoolean("localEstimate"))
+            && (!next.hasKey("session", 8) || next.getString("session")
+                .equals(state.getString("session")))
             && (!next.hasKey("planRevision", 4) || next.getLong("planRevision") == state.getLong("planRevision"))
             && (!next.hasKey("placementReviewNonce", 4)
                 || next.getLong("placementReviewNonce") == state.getLong("placementReviewNonce"));
@@ -43,7 +44,10 @@ final class HologramMaterialReview {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             voucherDemand |= row.getBoolean("voucherEligible");
             itemShortage |= "item".equals(row.getString("kind")) && !row.getString("itemRegistry")
-                .isEmpty() && row.getLong("missing") > 0 && !row.getBoolean("unlimited");
+                .isEmpty()
+                && row.getLong("missing") > 0
+                && !row.getBoolean("unlimited")
+                && (!row.hasKey("availableKnown", 1) || row.getBoolean("availableKnown"));
         }
         // A voucher projection changes amounts, not list geometry. Keep unchanged decoded icons and tooltip rows.
         visible.entrySet()
@@ -98,9 +102,10 @@ final class HologramMaterialReview {
             this.data = data;
             this.index = index;
             required = amount(data, "required");
-            available = data.getBoolean("unlimited") ? "∞" : amount(data, "available");
-            missing = amount(data, "missing");
-            shortage = !"0".equals(missing) && !missing.isEmpty();
+            boolean known = !data.hasKey("availableKnown", 1) || data.getBoolean("availableKnown");
+            available = !known ? "未知" : data.getBoolean("unlimited") ? "∞" : amount(data, "available");
+            missing = known ? amount(data, "missing") : "未知";
+            shortage = known && !"0".equals(missing) && !missing.isEmpty();
             unit = data.getString("unit");
             // Numeric registry IDs are not portable across installations. Never fall back to an unrelated item.
             item = HologramMaterialQuote.readItem(data);

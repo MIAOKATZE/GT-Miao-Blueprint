@@ -25,7 +25,6 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 
 /** One IO worker, bounded mailboxes and aggregate fair transfer budgets; never sleeps on a server tick. */
@@ -35,19 +34,25 @@ final class HologramServerLibrary {
     private static final int MAX_ENTRIES = 1024;
     private static final int MAX_PEERS = 64;
     private static final long MAX_STORED_BYTES = 64L * 1024 * 1024;
+    static final long MAX_PUBLIC_DTO_BYTES = 512L * 1024 * 1024;
     private static final long MAX_RESERVED_BYTES = 2L * HologramBlueprintArtifact.MAX_BYTES;
     private static final Field LIST_FIELD = listField();
     private final Path directory;
     private final ScheduledThreadPoolExecutor worker;
     private final Map<UUID, Peer> peers = new LinkedHashMap<>();
+    private final HologramTrustedBlueprintCache trusted = new HologramTrustedBlueprintCache();
+    private final java.util.ArrayDeque<Entry> materialPreviews = new java.util.ArrayDeque<>();
+    private final LinkedHashMap<String, byte[]> previews = new LinkedHashMap<>(16, .75f, true);
+    private long previewBytes;
     private final ArrayBlockingQueue<Runnable> tasks = new ArrayBlockingQueue<>(16);
     private volatile Map<String, Entry> published = Collections.emptyMap();
+    private volatile Map<String, Entry> contentIndex = Collections.emptyMap();
     private volatile HologramLibraryConfig config;
     private volatile boolean closed;
     private volatile boolean ready;
     private volatile long runtimeEpoch;
     private volatile String loadFailure;
-    private long storedBytes, reservedBytes, downloadBytes, catalogRevision = 1;
+    private long storedBytes, publicDtoBytes, reservedBytes, downloadBytes, catalogRevision = 1;
     private int activeDownloads;
     private int activeUploads, cursor;
     private final HologramLibraryProtocol.FairBudget uploadBudget = new HologramLibraryProtocol.FairBudget(true);
@@ -86,6 +91,7 @@ final class HologramServerLibrary {
         if (peer == null || peer.player != player) {
             if (peer != null) {
                 peer.online = false;
+                trusted.retire(peer);
                 if (peer.preparation != null) {
                     peer.preparation.valid = false;
                     tasks.remove(peer.preparation);
@@ -103,8 +109,10 @@ final class HologramServerLibrary {
                     if (candidate.upload == null && candidate.download == null
                         && candidate.pendingDraft == null
                         && candidate.preparation == null
+                        && candidate.materialPreview == null
                         && candidate.requests.isEmpty()) {
                         candidate.online = false;
+                        trusted.retire(candidate);
                         idle.remove();
                         break;
                     }
@@ -162,10 +170,14 @@ final class HologramServerLibrary {
             peer.online = peer.player.playerNetServerHandler != null
                 && peer.player.playerNetServerHandler.netManager != null
                 && peer.player.playerNetServerHandler.netManager.isChannelOpen();
+            if (!peer.online) trusted.retire(peer);
             peer.admin = HologramLibraryFacade.isAdmin(peer.player);
             Upload upload = peer.upload;
             if (upload != null && upload.privateUpload
-                && !HologramLibraryService.sessionCurrent(peer.player, upload.request)) upload.valid = false;
+                && !(upload.request.getBoolean("contentOnly")
+                    ? HologramLibraryService.contentCurrent(peer.player, upload.request)
+                    : HologramLibraryService.sessionCurrent(peer.player, upload.request)))
+                upload.valid = false;
             if (upload != null && upload.previewUpload
                 && !HologramLibraryService.saveCurrent(peer.player, upload.request)) upload.valid = false;
             if (peer.preparation != null
@@ -177,6 +189,28 @@ final class HologramServerLibrary {
             Download download = peer.download;
             if (download != null && download.boundRequest != null
                 && !HologramLibraryService.draftCurrent(peer.player, download.boundRequest)) download.valid = false;
+        }
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(2);
+        while (!materialPreviews.isEmpty() && System.nanoTime() < deadline) {
+            Entry entry = materialPreviews.removeFirst();
+            if (published.get(entry.blueprint.id) != entry) {
+                entry.materialBuilder = null;
+                continue;
+            }
+            try {
+                if (entry.materialBuilder.step()) {
+                    entry.preparedMaterials = entry.materialBuilder.result;
+                    entry.materialBuilder = null;
+                } else materialPreviews.addLast(entry);
+            } catch (IOException | RuntimeException unavailable) {
+                NBTTagCompound prepared = new NBTTagCompound();
+                NBTTagCompound missing = new NBTTagCompound();
+                missing.setBoolean("complete", false);
+                missing.setString("detail", "Public material summary is unavailable");
+                prepared.setTag("localMaterials", missing);
+                entry.preparedMaterials = prepared;
+                entry.materialBuilder = null;
+            }
         }
     }
 
@@ -257,6 +291,17 @@ final class HologramServerLibrary {
     }
 
     private void pump() {
+        for (Entry entry : published.values()) {
+            NBTTagCompound prepared = entry.preparedMaterials;
+            if (prepared == null) continue;
+            try {
+                retainPreview(entry.blueprint.id + ":materials", HologramSnapshotCodec.compress(prepared));
+                entry.preparedMaterials = null;
+            } catch (IOException | RuntimeException failure) {
+                entry.preparedMaterials = null;
+                GTMiaoBlueprint.LOG.warn("Public material summary encoding failed", failure);
+            }
+        }
         Runnable task = tasks.poll();
         if (task != null) task.run();
         List<Peer> round;
@@ -348,7 +393,72 @@ final class HologramServerLibrary {
     private void handle(Peer peer, NBTTagCompound request) throws IOException {
         String op = request.getString("op");
         if ("list".equals(op)) list(peer, request.getInteger("page"));
-        else if ("configGet".equals(op)) send(peer, statusTag(peer.admin));
+        else if ("contentResolve".equals(op)) {
+            String hash;
+            if (HologramLibraryFacade.enabled()) {
+                Entry entry = publicEntry(request);
+                if (!request.getString("sourceHash")
+                    .isEmpty()) requirePublicRevision(entry, request);
+                hash = entry.hash;
+            } else {
+                String id = request.getString("integratedPresetId");
+                if (id.isEmpty() || !id.equals(request.getString("id")))
+                    throw new IOException("Invalid integrated blueprint identity");
+                HologramPresets.Preset source = HologramPresets.get(id);
+                if (source == null) throw new IOException("Saved blueprint no longer exists");
+                hash = HologramBlueprintContentHash.of(source);
+            }
+            HologramLibraryProtocol.header(request.getString("transfer"), 1, hash);
+            if (draftTaskCurrent(peer.player, request)) send(peer, contentReply(request, hash, true, false));
+        } else if ("preview".equals(op)) {
+            Entry entry = publicEntry(request);
+            NBTTagCompound identity = (NBTTagCompound) request.copy();
+            identity.setString("sourceHash", entry.hash);
+            identity.setLong("sourceRevision", entry.revision);
+            byte[] preview = previews.get(entry.blueprint.id);
+            if (preview == null) {
+                preview = HologramSnapshotCodec.compress(HologramPublicPreview.project(entry.blueprint));
+                retainPreview(entry.blueprint.id, preview);
+            }
+            queueDownload(peer, preview, entry.blueprint.name, identity, entry.blueprint.id);
+        } else if ("previewMaterials".equals(op)) {
+            Entry entry = publicEntry(request);
+            requirePublicRevision(entry, request);
+            synchronized (this) {
+                if (entry.materialBuilder == null && entry.preparedMaterials == null
+                    && !previews.containsKey(entry.blueprint.id + ":materials")) {
+                    if (materialPreviews.size() >= 4)
+                        throw new IOException("Public material preparation queue is busy");
+                    entry.materialBuilder = new HologramPublicPreview.Builder(entry.blueprint);
+                    materialPreviews.addLast(entry);
+                }
+                peer.materialPreview = entry;
+                peer.materialPreviewRequest = (NBTTagCompound) request.copy();
+                peer.materialPreviewRequest.setString("sourceHash", entry.hash);
+                peer.materialPreviewRequest.setLong("sourceRevision", entry.revision);
+            }
+        } else if ("publicPrepare".equals(op)) {
+            HologramPresets.Preset source;
+            if (HologramLibraryFacade.enabled()) {
+                Entry entry = publicEntry(request);
+                requirePublicRevision(entry, request);
+                source = HologramPresets.copy(entry.blueprint);
+            } else {
+                String id = request.getString("integratedPresetId");
+                if (id.isEmpty() || !id.equals(request.getString("id")))
+                    throw new IOException("Invalid integrated blueprint identity");
+                source = HologramPresets.get(id);
+                if (source == null) throw new IOException("Saved blueprint no longer exists");
+                if (!request.getString("sourceHash")
+                    .isEmpty()
+                    && !HologramBlueprintContentHash.of(source)
+                        .equals(request.getString("sourceHash")))
+                    throw new IOException("Saved blueprint changed; prepare its current content again");
+            }
+            NBTTagCompound activation = (NBTTagCompound) request.copy();
+            activation.setString("localId", "local_" + UUID.randomUUID());
+            HologramLibraryFacade.importPrivate(peer.player, activation, source, "publicPrepared");
+        } else if ("configGet".equals(op)) send(peer, statusTag(peer.admin));
         else if ("configSet".equals(op)) {
             config.update(
                 peer.admin,
@@ -363,8 +473,9 @@ final class HologramServerLibrary {
             HologramBlueprintArtifact.deletePair(directory.resolve(id + ".json"));
             Map<String, Entry> next = new LinkedHashMap<>(published);
             next.remove(id);
-            published = Collections.unmodifiableMap(next);
+            publishIndex(next);
             storedBytes -= entry.bytes;
+            publicDtoBytes -= entry.dtoBytes;
             catalogRevision++;
             NBTTagCompound deleted = HologramLibraryProtocol.reply("deleted");
             deleted.setString("id", id);
@@ -402,12 +513,77 @@ final class HologramServerLibrary {
         } else throw new IOException("Unknown library operation");
     }
 
+    private static void requirePublicRevision(Entry entry, NBTTagCompound request) throws IOException {
+        if (!entry.hash.equals(request.getString("sourceHash")) || !String.valueOf(entry.revision)
+            .equals(
+                request.hasKey("sourceRevision", 8) ? request.getString("sourceRevision")
+                    : String.valueOf(request.getLong("sourceRevision"))))
+            throw new IOException("Server blueprint changed; reopen its preview");
+    }
+
+    private void retainPreview(String key, byte[] bytes) {
+        if (bytes.length > MAX_STORED_BYTES) return;
+        byte[] previous = previews.remove(key);
+        if (previous != null) previewBytes -= previous.length;
+        while (!previews.isEmpty() && (previews.size() >= 32 || previewBytes + bytes.length > MAX_STORED_BYTES)) {
+            java.util.Iterator<byte[]> iterator = previews.values()
+                .iterator();
+            previewBytes -= iterator.next().length;
+            iterator.remove();
+        }
+        previews.put(key, bytes);
+        previewBytes += bytes.length;
+    }
+
+    private Entry publicEntry(NBTTagCompound request) throws IOException {
+        Entry entry = published.get(HologramLibraryService.publicId(request.getString("id")));
+        if (entry == null) throw new IOException("Blueprint no longer exists");
+        return entry;
+    }
+
+    static NBTTagCompound contentReply(NBTTagCompound request, String hash, boolean cached, boolean missing) {
+        NBTTagCompound result = HologramLibraryProtocol.reply(missing ? "contentMissing" : "contentReady");
+        result.setString("transfer", request.getString("transfer"));
+        result.setLong("clientTaskToken", request.getLong("clientTaskToken"));
+        result.setString("contentHash", hash);
+        result.setBoolean("cached", cached);
+        return result;
+    }
+
     private void begin(Peer peer, NBTTagCompound request) throws IOException {
         if (request.getInteger("artifactVersion") != HologramBlueprintArtifact.VERSION)
             throw new IOException("Unsupported blueprint artifact version");
         HologramLibraryProtocol
             .header(request.getString("transfer"), request.getInteger("total"), request.getString("hash"));
         if (peer.upload != null) throw new IOException("An upload is already active");
+        boolean contentOnly = request.getBoolean("contentOnly");
+        if ("privateBegin".equals(request.getString("op"))
+            && (request.getBoolean("hashProbe") || contentOnly || request.getBoolean("admittedOnly"))) {
+            String jsonHash = request.getString("jsonHash");
+            if (!jsonHash.matches("[a-f0-9]{64}")) throw new IOException("Invalid blueprint content digest");
+            Entry publicSource = contentIndex.get(jsonHash);
+            boolean publicHit = publicSource != null && published.get(publicSource.blueprint.id) == publicSource;
+            if (contentOnly) {
+                if (trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, jsonHash) || publicHit) {
+                    if (draftTaskCurrent(peer.player, request))
+                        send(peer, contentReply(request, jsonHash, true, false));
+                    return;
+                }
+            } else {
+                HologramPresets.Preset cached = trusted.get(peer.owner, peer, peer.world, runtimeEpoch, jsonHash);
+                // Public source access is separate from every other player's private cache.
+                if (cached == null && publicHit) cached = HologramPresets.copy(publicSource.blueprint);
+                if (cached != null) {
+                    HologramLibraryFacade.importPrivate(peer.player, request, cached, "privateCached");
+                    return;
+                }
+                if (request.getBoolean("admittedOnly")) {
+                    if (draftTaskCurrent(peer.player, request))
+                        send(peer, contentReply(request, jsonHash, false, true));
+                    return;
+                }
+            }
+        }
         boolean privateUpload = "privateBegin".equals(request.getString("op"));
         boolean previewUpload = "previewBegin".equals(request.getString("op"));
         String replace = request.getString("replaceId");
@@ -465,9 +641,23 @@ final class HologramServerLibrary {
                 HologramLibraryFacade.verifySavedPreview(peer.player, upload.request, artifact);
             } else {
                 HologramPresets.Preset blueprint = canonical(
-                    HologramBlueprintSharing.decode(new String(artifact.json, StandardCharsets.UTF_8)));
-                if (upload.privateUpload) HologramLibraryFacade.importPrivate(peer.player, upload.request, blueprint);
-                else publish(peer, upload, blueprint, artifact.png);
+                    HologramBlueprintSharing.decodeUnchecked(new String(artifact.json, StandardCharsets.UTF_8)));
+                if (upload.privateUpload) {
+                    String jsonHash = HologramBlueprintContentHash.of(artifact.json);
+                    if ((upload.request.getBoolean("hashProbe") || upload.request.getBoolean("contentOnly"))
+                        && !jsonHash.equals(upload.request.getString("jsonHash")))
+                        throw new IOException("Blueprint JSON digest mismatch");
+                    if (draftTaskCurrent(peer.player, upload.request) && upload.valid) {
+                        int contentBytes = HologramBlueprintCompactCodec.encode(blueprint, (done, total) -> {}).length;
+                        boolean retained = trusted
+                            .put(peer.owner, peer, peer.world, runtimeEpoch, jsonHash, blueprint, contentBytes);
+                        if (upload.request.getBoolean("contentOnly")) {
+                            if (!retained) throw new IOException(
+                                "Blueprint exceeds the temporary content cache allowance; preparation was not retained");
+                            send(peer, contentReply(upload.request, jsonHash, false, false));
+                        } else HologramLibraryFacade.importPrivate(peer.player, upload.request, blueprint);
+                    }
+                } else publish(peer, upload, blueprint, artifact.png);
             }
             abort(peer);
         } else upload.ackPending = true;
@@ -488,15 +678,25 @@ final class HologramServerLibrary {
         envelope.owner = peer.owner.toString();
         envelope.uploadedBy = peer.name;
         envelope.blueprint = blueprint;
-        byte[] bytes = HologramBlueprintSharing.encodeBounded(GSON, envelope, HologramBlueprintSharing.MAX_BYTES);
+        byte[] bytes = HologramBlueprintCompactCodec.encodeEnvelope(blueprint, envelope.owner, envelope.uploadedBy);
         byte[] boundPreview = HologramBlueprintArtifact.bindPreview(bytes, preview);
         long nextBytes = storedBytes - (previous == null ? 0 : previous.bytes) + bytes.length + boundPreview.length;
         if (nextBytes > MAX_STORED_BYTES) throw new IOException("Server library byte budget is full");
+        Entry replacement = new Entry(
+            envelope,
+            bytes.length + boundPreview.length,
+            HologramBlueprintContentHash.of(blueprint),
+            catalogRevision + 1,
+            bytes.length);
+        long nextDtoBytes = publicDtoBytes - (previous == null ? 0 : previous.dtoBytes) + replacement.dtoBytes;
+        if (nextDtoBytes > MAX_PUBLIC_DTO_BYTES)
+            throw new IOException("Server library expanded DTO memory budget is full");
         HologramBlueprintArtifact.writePair(directory.resolve(blueprint.id + ".json"), bytes, boundPreview);
         Map<String, Entry> next = new LinkedHashMap<>(published);
-        next.put(blueprint.id, new Entry(envelope, bytes.length + boundPreview.length));
-        published = Collections.unmodifiableMap(next);
+        next.put(blueprint.id, replacement);
+        publishIndex(next);
         storedBytes = nextBytes;
+        publicDtoBytes = nextDtoBytes;
         catalogRevision++;
         NBTTagCompound result = HologramLibraryProtocol.reply("uploaded");
         result.setLong("clientTaskToken", upload.request.getLong("clientTaskToken"));
@@ -518,6 +718,8 @@ final class HologramServerLibrary {
             NBTTagCompound label = new NBTTagCompound();
             label.setString("id", entry.blueprint.id);
             label.setString("name", entry.blueprint.name);
+            label.setString("sourceHash", entry.hash);
+            label.setLong("sourceRevision", entry.revision);
             label.setString("authorName", entry.blueprint.authorName == null ? "" : entry.blueprint.authorName);
             label.setString("owner", entry.owner.toString());
             label.setString("uploadedBy", entry.uploadedBy);
@@ -577,13 +779,9 @@ final class HologramServerLibrary {
                 byte[] bytes = artifact.json;
                 if (bytes.length + artifact.png.length > MAX_STORED_BYTES - storedBytes)
                     throw new IOException("Server blueprint index byte budget");
-                String json = new String(bytes, StandardCharsets.UTF_8);
-                HologramBlueprintSharing.boundedJson(json);
-                HologramBlueprintVersions.validateJson(
-                    new JsonParser().parse(json)
-                        .getAsJsonObject()
-                        .get("blueprint"));
-                Envelope envelope = GSON.fromJson(json, Envelope.class);
+                com.google.gson.JsonObject root = HologramBlueprintCompactCodec.parse(bytes);
+                HologramBlueprintVersions.validateJson(root.get("blueprint"));
+                Envelope envelope = GSON.fromJson(root, Envelope.class);
                 if (envelope == null || envelope.schema != 1
                     || envelope.blueprint == null
                     || !name.equals(envelope.blueprint.id + ".json")
@@ -591,11 +789,29 @@ final class HologramServerLibrary {
                     || envelope.uploadedBy.length() > 64) throw new IOException("Invalid server blueprint envelope");
                 UUID.fromString(envelope.owner);
                 envelope.blueprint = canonical(envelope.blueprint);
-                loaded.put(envelope.blueprint.id, new Entry(envelope, bytes.length + artifact.png.length));
+                Entry entry = new Entry(
+                    envelope,
+                    bytes.length + artifact.png.length,
+                    HologramBlueprintContentHash.of(envelope.blueprint),
+                    1,
+                    bytes.length);
+                if (entry.dtoBytes > MAX_PUBLIC_DTO_BYTES - publicDtoBytes)
+                    throw new IOException("Server library expanded DTO memory budget exceeded");
+                loaded.put(envelope.blueprint.id, entry);
+                publicDtoBytes += entry.dtoBytes;
                 storedBytes += bytes.length + artifact.png.length;
             }
         }
-        published = Collections.unmodifiableMap(loaded);
+        publishIndex(loaded);
+    }
+
+    private void publishIndex(Map<String, Entry> entries) {
+        Map<String, Entry> byContent = new LinkedHashMap<>();
+        for (Entry entry : entries.values()) byContent.put(entry.hash, entry);
+        published = Collections.unmodifiableMap(entries);
+        contentIndex = Collections.unmodifiableMap(byContent);
+        previews.clear();
+        previewBytes = 0;
     }
 
     static HologramPresets.Preset canonical(HologramPresets.Preset source) throws IOException {
@@ -614,7 +830,7 @@ final class HologramServerLibrary {
             Collections.emptyMap(),
             HologramAePolicy.PreparationProgress.NONE);
         if (draft.blocking) throw new IOException("Blueprint contains unresolved AE payloads; repair before upload");
-        HologramPresets.validate(draft.preset);
+        // Sanitization only removes or normalizes admitted payloads; full validation ran once above.
         return draft.preset;
     }
 
@@ -670,6 +886,20 @@ final class HologramServerLibrary {
         peer.pendingDraft = new Draft(bytes, name, (NBTTagCompound) request.copy());
         peer.preparation = null;
         peer.preparationRequest = null;
+    }
+
+    synchronized String savedContentCommitted(EntityPlayerMP player, NBTTagCompound proof) {
+        Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+        if (closed || peer == null || peer.player != player || !peer.online) return "";
+        String hash = trusted.commitSaved(peer, proof.getString("saveReceipt"), proof.getString("jsonSha256"));
+        if (!hash.isEmpty()) return hash;
+        hash = proof.getString("contentHash");
+        return trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, hash) ? hash : "";
+    }
+
+    synchronized void discardSavedContent(EntityPlayerMP player, NBTTagCompound request) {
+        Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+        if (peer != null && peer.player == player) trusted.discardPending(peer, request.getString("saveReceipt"));
     }
 
     void prepareDraft(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) throws IOException {
@@ -736,8 +966,31 @@ final class HologramServerLibrary {
                         HologramNetwork.sendLibraryReply(player, progress);
                     }
                 });
-                if (preparation.valid && epoch == runtimeEpoch && !closed)
+                if (preparation.valid && epoch == runtimeEpoch && !closed) {
+                    if (!identity.getString("saveReceipt")
+                        .isEmpty()) {
+                        String hash = HologramBlueprintContentHash.of(detached);
+                        Peer peer;
+                        synchronized (this) {
+                            peer = peers.get(HologramLibraryFacade.actorId(player));
+                            if (!draftTaskCurrent(player, identity))
+                                throw new IOException("Blueprint save preparation was retired");
+                        }
+                        identity.setString("contentHash", hash);
+                        trusted.stage(
+                            peer.owner,
+                            peer,
+                            peer.world,
+                            epoch,
+                            hash,
+                            detached,
+                            encoded.length,
+                            identity.getString("saveReceipt"),
+                            HologramBlueprintArtifact.hash(encoded));
+                        if (closed || epoch != runtimeEpoch || !peer.online) trusted.retire(peer);
+                    }
                     HologramLibraryFacade.draftPrepared(player, identity, encoded, detached.name);
+                }
             } catch (IOException | RuntimeException failure) {
                 if (preparation.valid && epoch == runtimeEpoch && !closed)
                     HologramLibraryFacade.draftPreparationFailed(player, identity, failure.getMessage());
@@ -761,6 +1014,8 @@ final class HologramServerLibrary {
     /** Retire capabilities immediately; serialize temporary-file cleanup with the existing writer. */
     synchronized void restartRuntime() {
         runtimeEpoch++;
+        trusted.clear();
+        materialPreviews.clear();
         List<Peer> retired = new ArrayList<>(peers.values());
         for (Peer peer : retired) {
             peer.online = false;
@@ -811,6 +1066,13 @@ final class HologramServerLibrary {
         begin.setString("name", name == null ? "" : name);
         begin.setString("purpose", "exportDraft".equals(request.getString("op")) ? "draft" : "public");
         begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+        if ("preview".equals(request.getString("op")) || "previewMaterials".equals(request.getString("op"))) {
+            begin.setBoolean("materialsOnly", "previewMaterials".equals(request.getString("op")));
+            begin.setBoolean("previewOnly", true);
+            begin.setString("publicId", id);
+            begin.setString("sourceHash", request.getString("sourceHash"));
+            begin.setLong("sourceRevision", request.getLong("sourceRevision"));
+        }
         begin.setBoolean("capturePreview", "exportDraft".equals(request.getString("op")));
         begin.setBoolean(
             "localSaveReceipt",
@@ -826,6 +1088,33 @@ final class HologramServerLibrary {
     }
 
     private void sendDownload(Peer peer, long now) {
+        Entry materialEntry = peer.materialPreview;
+        if (materialEntry != null && peer.download == null) {
+            NBTTagCompound request = peer.materialPreviewRequest;
+            if (published.get(materialEntry.blueprint.id) != materialEntry
+                || request.getLong("clientTaskToken") <= peer.retiredThrough) {
+                peer.materialPreview = null;
+                peer.materialPreviewRequest = null;
+            } else if (previews.containsKey(materialEntry.blueprint.id + ":materials")) try {
+                byte[] bytes = previews.get(materialEntry.blueprint.id + ":materials");
+                queueDownload(peer, bytes, materialEntry.blueprint.name, request, materialEntry.blueprint.id);
+                peer.materialPreview = null;
+                peer.materialPreviewRequest = null;
+            } catch (IOException | RuntimeException failure) {
+                peer.materialPreview = null;
+                peer.materialPreviewRequest = null;
+                error(peer, failure.getMessage(), request.getLong("clientTaskToken"));
+            }
+            else synchronized (this) {
+                // Another public preview can evict this summary while its subscriber is waiting.
+                // Requeue a bounded preparation instead of leaving that request without a producer.
+                if (materialEntry.materialBuilder == null && materialEntry.preparedMaterials == null
+                    && materialPreviews.size() < 4) {
+                    materialEntry.materialBuilder = new HologramPublicPreview.Builder(materialEntry.blueprint);
+                    materialPreviews.addLast(materialEntry);
+                }
+            }
+        }
         Draft draft;
         synchronized (this) {
             draft = peer.pendingDraft;
@@ -936,6 +1225,7 @@ final class HologramServerLibrary {
 
     void stop() {
         closed = true;
+        trusted.clear();
         worker.execute(() -> {
             List<Peer> copy;
             synchronized (this) {
@@ -964,8 +1254,15 @@ final class HologramServerLibrary {
         final String uploadedBy;
         final HologramPresets.Preset blueprint;
         final int bytes;
+        final String hash;
+        final long revision, dtoBytes;
+        volatile HologramPublicPreview.Builder materialBuilder;
+        volatile NBTTagCompound preparedMaterials;
 
-        Entry(Envelope envelope, int bytes) {
+        Entry(Envelope envelope, int bytes, String hash, long revision, int jsonBytes) throws IOException {
+            dtoBytes = HologramTrustedBlueprintCache.dtoWeight(envelope.blueprint, jsonBytes);
+            this.hash = hash;
+            this.revision = revision;
             owner = UUID.fromString(envelope.owner);
             uploadedBy = envelope.uploadedBy;
             blueprint = envelope.blueprint;
@@ -976,6 +1273,7 @@ final class HologramServerLibrary {
     private static final class Peer {
 
         final EntityPlayerMP player;
+        final Object world;
         final UUID owner;
         final String name;
         final HologramLibraryProtocol.RequestQueue requests = new HologramLibraryProtocol.RequestQueue();
@@ -983,12 +1281,15 @@ final class HologramServerLibrary {
         volatile Upload upload;
         volatile Download download;
         Draft pendingDraft;
+        volatile Entry materialPreview;
+        volatile NBTTagCompound materialPreviewRequest;
         volatile long retiredThrough;
         Preparation preparation;
         NBTTagCompound preparationRequest;
 
         Peer(EntityPlayerMP player) {
             this.player = player;
+            world = net.minecraft.server.MinecraftServer.getServer();
             owner = HologramLibraryFacade.actorId(player);
             name = player.getCommandSenderName();
         }

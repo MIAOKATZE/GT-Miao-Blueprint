@@ -556,8 +556,8 @@ public final class HologramCutNativeClientProbe {
         nudge("locked-cut-arrow-left", KeyEvent.VK_LEFT, HologramWorldFlow.Nudge.LEFT);
         nudge("locked-cut-arrow-right", KeyEvent.VK_RIGHT, HologramWorldFlow.Nudge.RIGHT);
         hold("locked-cut-height-alt-down", KeyEvent.VK_ALT, true);
-        nudge("locked-cut-Alt-W", KeyEvent.VK_W, HologramWorldFlow.Nudge.UP);
-        nudge("locked-cut-Alt-S", KeyEvent.VK_S, HologramWorldFlow.Nudge.DOWN);
+        nudge("locked-cut-Alt-W-keeps-anchor", KeyEvent.VK_W, null);
+        nudge("locked-cut-Alt-S-keeps-anchor", KeyEvent.VK_S, null);
         nudge("locked-cut-Alt-Up", KeyEvent.VK_UP, HologramWorldFlow.Nudge.UP);
         nudge("locked-cut-Alt-Down", KeyEvent.VK_DOWN, HologramWorldFlow.Nudge.DOWN);
         hold("locked-cut-height-alt-up", KeyEvent.VK_ALT, false);
@@ -590,7 +590,8 @@ public final class HologramCutNativeClientProbe {
             int[] at = client().anchor();
             net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer
                 : mc.renderViewEntity;
-            int[] offset = HologramWorldFlow.nudgeOffset(camera.rotationYaw, direction);
+            int[] offset = direction == null ? new int[3]
+                : HologramWorldFlow.nudgeOffset(camera.rotationYaw, direction);
             nudgeExpected = new int[] { at[0] + offset[0], at[1] + offset[1], at[2] + offset[2] };
             return true;
         });
@@ -601,7 +602,8 @@ public final class HologramCutNativeClientProbe {
                     && java.util.Arrays.equals(nudgeExpected, client().anchor())
                     && cutPacketsSent() == nudgePackets
                     && nudgeRaw.equals(HologramCutRawPreview.snapshot()),
-                "real native key nudges exactly one local block and preserves every raw source field");
+                direction == null ? "removed Alt-W/S aliases preserve the locked anchor and every raw source field"
+                    : "real native arrow nudges exactly one local block and preserves every raw source field");
             return true;
         });
     }

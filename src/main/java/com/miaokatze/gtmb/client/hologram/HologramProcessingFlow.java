@@ -70,7 +70,7 @@ final class HologramProcessingFlow {
         if (!explicit[1]) policy.setInteger("deidentificationLevel", share ? 6 : 0);
         if (!explicit[2]) policy.setString("quantum", share ? "rebind" : "preserve");
         if (!explicit[3]) policy.setString("coordinateDefault", "auto");
-        if (!explicit[5]) policy.setString("autoHints", share ? "full" : "light");
+        if (!explicit[5]) policy.setString("autoHints", "light");
     }
 
     void preset(NBTTagCompound value) {

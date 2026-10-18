@@ -118,8 +118,15 @@ final class HologramUiAeReview {
         GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         drawRect(30, 42, 650, 302, 0xfc172f36);
-        ui.canvas.text(this.aeReview.review ? "AE 保存综合告知 · " + this.aeReview.name : "AE 预览综合提示", 42, 49, 598, 0xffe59b);
-        ui.canvas.text("支持的存储元件仅保留同类型空元件；其中物品 / 流体 / 外置内容不保存。", 42, 63, 598, 0xe5c28d);
+        ui.canvas.text(this.aeReview.review ? "蓝图保存综合告知 · " + this.aeReview.name : "蓝图综合提示", 42, 49, 598, 0xffe59b);
+        boolean identityOnly = !this.aeReview.issues.isEmpty() && this.aeReview.issues.stream()
+            .allMatch(issue -> issue.code.startsWith("identity."));
+        ui.canvas.text(
+            identityOnly ? "当前报告涉及玩家身份；装饰材质与设备配置按蓝图 NBT 和实际物料核验。" : "支持的存储元件仅保留同类型空元件；其中物品 / 流体 / 外置内容不保存。",
+            42,
+            63,
+            598,
+            0xe5c28d);
         ui.canvas.text(
             "保存等级 " + ui.identity.deidentificationChoice(false)
                 + " · 当前 "
@@ -131,7 +138,12 @@ final class HologramUiAeReview {
             75,
             598,
             0xe5c28d);
-        ui.canvas.text("编码配方、升级卡、空元件需要施工物料；ghost 配置免费；缺料仍可保存。", 42, 87, 598, 0xa9d6cf);
+        ui.canvas.text(
+            identityOnly ? "至少等级 1 可清除原玩家身份；施工仍需对应方块及装饰材料。" : "编码配方、升级卡、空元件需要施工物料；ghost 配置免费；缺料仍可保存。",
+            42,
+            87,
+            598,
+            0xa9d6cf);
         ui.canvas.text(
             "完整报告 " + this.aeReview.issues.size()
                 + " 项 · 注意 "

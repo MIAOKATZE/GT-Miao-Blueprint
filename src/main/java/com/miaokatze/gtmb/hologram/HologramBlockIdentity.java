@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.hologram;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
+import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 
@@ -17,12 +18,17 @@ public final class HologramBlockIdentity {
     /** A saved world state and its construction item can have different registered identities. */
     public static ItemStack materialStack(Block block, int metadata) {
         if (block == null || block == Blocks.air) return null;
+        if (vanillaSign(block)) return new ItemStack(Items.sign, 1, 0);
         // Vanilla's state-only blocks consume the ordinary construction item.
         Block material = block == Blocks.lit_redstone_lamp ? Blocks.redstone_lamp
             : block == Blocks.lit_furnace ? Blocks.furnace
                 : block == Blocks.unlit_redstone_torch ? Blocks.redstone_torch : block;
         Item item = Item.getItemFromBlock(material);
         return item == null ? null : new ItemStack(item, 1, metadata);
+    }
+
+    static boolean vanillaSign(Block block) {
+        return block == Blocks.standing_sign || block == Blocks.wall_sign;
     }
 
     public static boolean same(Block first, int firstMeta, Block second, int secondMeta) {

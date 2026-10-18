@@ -482,6 +482,8 @@ final class HologramState {
         final String candidateBoundary;
         final ItemStack actualStack, targetStack;
         final NBTTagCompound actualDisplay, targetDisplay;
+        /** Exact retained payload exists only for an owned local artifact, never a public appearance DTO. */
+        final NBTTagCompound localMaterialTile;
         final String[] hintIcons = new String[6];
         final int hintIndex;
         final int[] hintTint;
@@ -543,6 +545,7 @@ final class HologramState {
                 .copy();
             targetDisplay = (NBTTagCompound) n.getCompoundTag("targetDisplay")
                 .copy();
+            localMaterialTile = raw.hasKey("localMaterialTile", 10) ? raw.getCompoundTag("localMaterialTile") : null;
             hintIndex = n.hasKey("hintIndex") ? n.getInteger("hintIndex") : -1;
             hintTint = n.getIntArray("hintTint");
             NBTTagList icons = n.getTagList("hintIcons", 8);
