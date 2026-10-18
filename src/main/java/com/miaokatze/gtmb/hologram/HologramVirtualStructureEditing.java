@@ -53,6 +53,7 @@ final class HologramVirtualStructureEditing {
         if (retired == null || s.virtualStructureTask != retired) return;
         s.virtualStructureTask = null;
         if (retired.nativeCapture != null) retired.nativeCapture.cancelPending();
+        if (retired.legacyScope != null) retired.legacyScope.cancel();
         retired.rollback();
     }
 
@@ -147,7 +148,7 @@ final class HologramVirtualStructureEditing {
         try {
             if (!task.step()) {
                 s.capturePending = true;
-                s.status = "正在更新所选结构声明，其他结构与编辑保留";
+                s.status = task.recoveringLegacy() ? "正在恢复旧结构归属，其他结构与编辑保留" : "正在更新所选结构声明，其他结构与编辑保留";
                 return;
             }
             s.capturePending = false;
@@ -182,6 +183,8 @@ final class HologramVirtualStructureEditing {
         final NBTTagCompound channels, previousChannels;
         final Map<String, HologramCapture.Cell> generated = new LinkedHashMap<>();
         final Map<String, ItemStack> targets = new HashMap<>();
+        final HologramLegacyStructureScope legacyScope;
+        boolean legacyComplete;
         HologramCapture nativeCapture;
         int cursor;
 
@@ -223,6 +226,14 @@ final class HologramVirtualStructureEditing {
             if (!trigger.hasTagCompound()) trigger.setTagCompound(new NBTTagCompound());
             trigger.getTagCompound()
                 .setTag("channels", channels.copy());
+            legacyScope = HologramLegacyStructureScope.needed(
+                s,
+                previousSource,
+                controllerTileNbt,
+                controllerItemNbt,
+                machine.getExtendedFacing()
+                    .ordinal()) ? new HologramLegacyStructureScope(s, original, previousSource, machine, trigger)
+                        : null;
         }
 
         boolean current() {
@@ -269,6 +280,12 @@ final class HologramVirtualStructureEditing {
         }
 
         boolean step() throws IOException {
+            if (recoveringLegacy()) {
+                if (!legacyScope.step(HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS))) return false;
+                legacyComplete = true;
+                // The inference used the same disposable controller; the requested capture re-enters construct.
+                return false;
+            }
             if (nativeCapture == null || nativeCapture.pending) {
                 nativeCapture = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), nativeCapture);
                 if (nativeCapture.pending) return false;
@@ -325,6 +342,10 @@ final class HologramVirtualStructureEditing {
             return true;
         }
 
+        boolean recoveringLegacy() {
+            return legacyScope != null && !legacyComplete;
+        }
+
         void publish() throws IOException {
             HologramCapture merged = new HologramCapture(null, HologramSessionPolicy.trigger(s));
             Map<String, ItemStack> previousPins = new HashMap<>();
@@ -333,16 +354,25 @@ final class HologramVirtualStructureEditing {
                 String key = HologramValues.position(cell);
                 if (s.pins.containsKey(i)) previousPins.put(key, s.pins.get(i));
                 HologramCapture.Cell replacement = generated.remove(key);
-                boolean own = cell.belongsTo(source.id), shared = cell.memberships()
-                    .size() > 1;
-                if (!own || shared || s.virtualEdited.contains(key)) {
+                boolean own = cell.belongsTo(source.id) || legacyScope != null && legacyScope.recovered.contains(key),
+                    shared = cell.memberships()
+                        .size() > 1;
+                boolean payload = !cell.tileNbt.isEmpty() || !cell.itemNbt.isEmpty();
+                if (!own || shared
+                    || s.virtualEdited.contains(key)
+                    || payload
+                        && (replacement == null || cell.block != replacement.block || cell.meta != replacement.meta)) {
                     if (own && shared && replacement == null && !s.virtualEdited.contains(key)) {
                         List<String> ids = new ArrayList<>(cell.memberships());
                         ids.remove(source.id);
                         cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
                         HologramBlueprintData.setMemberships(cell, ids);
                     }
-                    if (replacement != null && !own) {
+                    if (replacement != null && !own
+                        && cell.memberships()
+                            .isEmpty()
+                        && !s.virtualEdited.contains(key)
+                        && !payload) {
                         List<String> ids = new ArrayList<>(cell.memberships());
                         ids.add(source.id);
                         cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
@@ -460,6 +490,13 @@ final class HologramVirtualStructureEditing {
             HologramAuthoringWorkflow.clearSourceSwitch(s);
             s.ae.invalidateReviews();
             s.blueprintDirty = true;
+            HologramLegacyStructureScope.verified(
+                merged,
+                HologramBlueprintData.blueprintSource(replacementPreset, source.id),
+                controllerTileNbt,
+                controllerItemNbt,
+                machine.getExtendedFacing()
+                    .ordinal());
         }
 
         private static void append(HologramCapture capture, HologramCapture.Cell cell) {

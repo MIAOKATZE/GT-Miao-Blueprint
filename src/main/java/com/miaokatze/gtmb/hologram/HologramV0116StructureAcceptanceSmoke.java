@@ -2,7 +2,9 @@ package com.miaokatze.gtmb.hologram;
 
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 import net.minecraft.block.Block;
@@ -100,7 +102,15 @@ public final class HologramV0116StructureAcceptanceSmoke {
                 sourceBefore.equals(HologramNativeCapture.capture((TileEntity) live.getBaseMetaTileEntity())),
                 "inference leaves source persistence exact");
 
-            HologramSession session = legacyMember(actor, id);
+            HologramSession session = legacyMember(actor, id, captures[2], captures[0]);
+            Set<String> protectedLegacy = protectLegacy(session, captures[0]);
+            Map<String, HologramCapture.Cell> legacyBefore = new java.util.HashMap<>(session.capture.positions);
+            Map<String, String> protectedPayloads = new java.util.HashMap<>();
+            for (String key : protectedLegacy) {
+                HologramCapture.Cell cell = legacyBefore.get(key);
+                protectedPayloads.put(key, cell.tileNbt + ":" + cell.itemNbt);
+            }
+            int unownedBefore = unownedPhysical(session.capture);
             HologramPresets.Structure selected = session.virtualPreset.structures.get(0);
             NBTTagList capabilities = HologramVirtualStructureEditing.capabilities(session, selected)
                 .toNBT();
@@ -114,10 +124,58 @@ public final class HologramV0116StructureAcceptanceSmoke {
                 require(found, "legacy empty-channel member discovers editable " + channel);
             }
             int[] editedCells = new int[3];
-            for (int i = 2; i >= 0; i--) {
+            // The first operation on this genuinely incomplete-membership file is a shrink, never a prior grow.
+            edit(session, 1, 3);
+            int removedPlain = 0, replacedCap = 0;
+            for (Map.Entry<String, HologramCapture.Cell> entry : legacyBefore.entrySet()) {
+                HologramCapture.Cell old = entry.getValue();
+                HologramCapture.Cell small = captures[0].positions.get(entry.getKey());
+                if (old.block != Blocks.air && !old.anchor
+                    && small == null
+                    && !protectedLegacy.contains(entry.getKey())) {
+                    require(
+                        !session.capture.positions.containsKey(entry.getKey()),
+                        "first shrink removes verified unowned old upper/cap cell");
+                    removedPlain++;
+                }
+                if (small != null && !small.anchor
+                    && !protectedLegacy.contains(entry.getKey())
+                    && (small.block != old.block || small.meta != old.meta)) {
+                    HologramCapture.Cell current = session.capture.positions.get(entry.getKey());
+                    require(
+                        current != null && current.block == small.block && current.meta == small.meta,
+                        "first shrink replaces the old body with the requested native cap target");
+                    require(
+                        HologramValues.sameMaterial(
+                            session.pins.get(session.capture.cells.indexOf(current)),
+                            HologramBlockIdentity.materialStack(small.block, small.meta)),
+                        "new cap pays and places its requested native material rather than the old literal body");
+                    replacedCap++;
+                }
+            }
+            require(
+                removedPlain > 0 && replacedCap > 0,
+                "first shrink has real old upper and changed new-cap witnesses");
+            for (String key : protectedLegacy) {
+                HologramCapture.Cell current = session.capture.positions.get(key);
+                require(current == legacyBefore.get(key), "foreign/edited/NBT/outside literal remains exact");
+                require(
+                    protectedPayloads.get(key)
+                        .equals(current.tileNbt + ":" + current.itemNbt),
+                    "protected literal keeps its full original encoded native payload");
+            }
+            int unownedAfter = unownedPhysical(session.capture);
+            int firstShrinkCells = session.capture.cells.size();
+            require(
+                unownedAfter < unownedBefore,
+                "first shrink reclaims literal upper body rather than only adding a new declaration");
+            for (int i = 0; i < heights.length; i++) {
                 edit(session, heights[i], 3);
-                editedCells[i] = session.capture.cells.size();
-                require(editedCells[i] == captures[i].cells.size(), "virtual selected member rebuild " + heights[i]);
+                editedCells[i] = selectedCells(session);
+                require(
+                    editedCells[i] <= captures[i].cells.size()
+                        && editedCells[i] >= captures[i].cells.size() - protectedLegacy.size(),
+                    "virtual selected member rebuild with protected literal overlays " + heights[i]);
             }
             edit(session, 25, 3);
             String tier3 = materials(session.capture);
@@ -160,7 +218,14 @@ public final class HologramV0116StructureAcceptanceSmoke {
                 "prototypeUnchanged",
                 "sourceNbtUnchanged",
                 "spatialWorkOrder",
-                "controllerCompletionMarked")) result.setBoolean(key, true);
+                "controllerCompletionMarked",
+                "legacyFirstShrinkRemovesUnownedBody",
+                "legacyOldCapReplaced",
+                "legacyForeignPreserved")) result.setBoolean(key, true);
+            result.setInteger("legacyRecoveredPlainCells", removedPlain);
+            result.setInteger("legacyUnownedBefore", unownedBefore);
+            result.setInteger("legacyUnownedAfterFirstShrink", unownedAfter);
+            result.setInteger("legacyFirstShrinkCells", firstShrinkCells);
             result.setBoolean("directCheckMachineInvoked", false);
             result.setBoolean("actualFormationVerified", false);
             result.setString("prototypeSha256", digest(prototypeBefore));
@@ -175,7 +240,8 @@ public final class HologramV0116StructureAcceptanceSmoke {
         }
     }
 
-    private static HologramSession legacyMember(EntityPlayerMP actor, int id) {
+    private static HologramSession legacyMember(EntityPlayerMP actor, int id, HologramCapture high,
+        HologramCapture low) {
         HologramSession session = new HologramSession(actor, X, Y, Z, false, 2);
         session.virtual = true;
         session.main = 1;
@@ -190,26 +256,103 @@ public final class HologramV0116StructureAcceptanceSmoke {
         session.virtualPreset.structures.add(selected);
         session.blueprintActiveStructure = selected.id;
         ItemStack shell = new ItemStack(GregTechAPI.sBlockMachines, 1, id);
-        HologramPresets.Cell saved = HologramPresets.cell(
-            shell,
-            0,
-            0,
-            0,
-            ExtendedFacing.DEFAULT.getDirection()
-                .ordinal(),
-            true);
-        saved.structureId = selected.id;
-        session.virtualPreset.cells.add(saved);
-        HologramCapture.Cell cell = new HologramCapture.Cell(null, X, Y, Z);
-        cell.block = GregTechAPI.sBlockMachines;
-        cell.role = "templateController";
-        cell.userPosition = true;
-        HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(selected.id));
         session.capture = new HologramCapture(null, shell);
+        for (HologramCapture.Cell original : high.cells) {
+            HologramCapture.Cell cell = HologramBlueprintData
+                .blueprintCell(original, original.x, original.y, original.z);
+            cell.anchor = false;
+            cell.userPosition = true;
+            cell.role = original.anchor ? "templateController" : "prefab";
+            ItemStack target = original.anchor ? shell : HologramBlockIdentity.materialStack(cell.block, cell.meta);
+            cell.blueprintBlock = String.valueOf(Block.blockRegistry.getNameForObject(cell.block));
+            cell.blueprintItem = target == null ? ""
+                : String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(target.getItem()));
+            cell.blueprintDamage = target == null ? 0 : target.getItemDamage();
+            HologramBlueprintData.setMemberships(
+                cell,
+                low.positions.containsKey(HologramValues.position(cell))
+                    ? java.util.Collections.singletonList(selected.id)
+                    : java.util.Collections.emptyList());
+            addLegacyCell(session, cell, target);
+        }
+        return session;
+    }
+
+    private static void addLegacyCell(HologramSession session, HologramCapture.Cell cell, ItemStack target) {
+        HologramPresets.Cell saved = target == null ? new HologramPresets.Cell()
+            : HologramPresets.cell(
+                target,
+                cell.x - X,
+                cell.y - Y,
+                cell.z - Z,
+                "templateController".equals(cell.role) ? ExtendedFacing.DEFAULT.getDirection()
+                    .ordinal() : -1,
+                "templateController".equals(cell.role));
+        saved.x = cell.x - X;
+        saved.y = cell.y - Y;
+        saved.z = cell.z - Z;
+        saved.block = cell.blueprintBlock;
+        saved.metadata = cell.meta;
+        saved.structureId = cell.structureId;
+        saved.structureIds = new java.util.ArrayList<>(cell.memberships());
+        saved.tileNbt = cell.tileNbt;
+        saved.itemNbt = cell.itemNbt;
+        session.virtualPreset.cells.add(saved);
+        if (target != null) session.pins.put(session.capture.cells.size(), target.copy());
         session.capture.cells.add(cell);
         session.capture.positions.put(HologramValues.position(cell), cell);
-        session.pins.put(0, shell);
-        return session;
+    }
+
+    private static Set<String> protectLegacy(HologramSession session, HologramCapture low) throws java.io.IOException {
+        Set<String> protectedCells = new HashSet<>();
+        int kind = 0;
+        for (int i = 0; i < session.capture.cells.size() && kind < 4; i++) {
+            HologramCapture.Cell cell = session.capture.cells.get(i);
+            String key = HologramValues.position(cell);
+            if (cell.block == Blocks.air || low.positions.containsKey(key)
+                || !cell.memberships()
+                    .isEmpty())
+                continue;
+            HologramPresets.Cell saved = session.virtualPreset.cells.get(i);
+            if (kind == 0) {
+                HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList("foreign-sentinel"));
+                saved.structureId = "foreign-sentinel";
+            } else if (kind == 1) session.virtualEdited.add(key);
+            else {
+                NBTTagCompound sentinel = new NBTTagCompound();
+                sentinel.setString(
+                    kind == 2 ? "legacyTileSentinel" : "legacyItemSentinel",
+                    "preserved unknown native leaf");
+                String encoded = HologramBlueprintNbt.encodeCaptured(sentinel);
+                if (kind == 2) cell.tileNbt = saved.tileNbt = encoded;
+                else cell.itemNbt = saved.itemNbt = encoded;
+            }
+            protectedCells.add(key);
+            kind++;
+        }
+        require(kind == 4, "four upper-body protection witnesses");
+        HologramCapture.Cell outside = new HologramCapture.Cell(null, X + 64, Y + 32, Z + 64);
+        outside.block = Blocks.gold_block;
+        outside.userPosition = true;
+        outside.blueprintBlock = "minecraft:gold_block";
+        outside.blueprintItem = "minecraft:gold_block";
+        addLegacyCell(session, outside, new ItemStack(Blocks.gold_block));
+        protectedCells.add(HologramValues.position(outside));
+        return protectedCells;
+    }
+
+    private static int selectedCells(HologramSession session) {
+        int count = 0;
+        for (HologramCapture.Cell cell : session.capture.cells)
+            if (cell.belongsTo(session.blueprintActiveStructure)) count++;
+        return count;
+    }
+
+    private static int unownedPhysical(HologramCapture capture) {
+        int count = 0;
+        for (HologramCapture.Cell cell : capture.cells) if (cell.memberships()
+            .isEmpty() && cell.block != Blocks.air) count++;
+        return count;
     }
 
     private static void edit(HologramSession session, int height, int casing) throws Exception {
@@ -223,6 +366,7 @@ public final class HologramV0116StructureAcceptanceSmoke {
             channels);
         session.main = 1;
         session.channels = (NBTTagCompound) channels.copy();
+        HologramBlueprintData.storeStructureConfiguration(session, selected);
         int polls = 0;
         while (!task.step() && ++polls < 4096) {}
         require(polls < 4096, "virtual parameter rebuild completes");

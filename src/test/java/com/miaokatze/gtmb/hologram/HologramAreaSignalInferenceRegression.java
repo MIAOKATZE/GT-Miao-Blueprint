@@ -67,6 +67,7 @@ public final class HologramAreaSignalInferenceRegression {
             witness(source, world, 2);
             SimpleAssert.eq(0, prototype.constructions, "inference never constructs the registry prototype");
             SimpleAssert.eq(1, prototype.height, "probe temporary size cannot leak to the prototype");
+            HologramLegacyStructureScopeRegression.run((sun.misc.Unsafe) field.get(null));
         } catch (Exception failure) {
             throw new AssertionError("area native signal inference", failure);
         } finally {

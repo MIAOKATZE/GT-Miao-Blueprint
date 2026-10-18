@@ -79,9 +79,9 @@ Shapeless recipe: **2 native StructureLib Hologram Projectors → 1 Decoration V
 
 In Structure Adjustment, **G toggles the movement axes**; the button shows its on/off state. Help appears after 2 idle seconds and dismisses on any action while letting that input take effect.
 
-蓝图内的成员结构仍可调整主信号、等级与高度等子信道；修改参数会重新生成所选结构，保留其他成员及其编辑。旧蓝图也可在这里重新设置参数，请核对预览中的实际尺寸。
+蓝图内的成员结构仍可调整主信号、等级与高度等子信道；修改参数会重新生成所选结构，保留其他成员及其编辑。旧蓝图也可在这里重新设置参数；旧结构归属不完整时，先按保存内容恢复可确认的范围，无法可靠确定时保留原图并提示重新导入。请核对预览中的实际尺寸。
 
-Member structures remain adjustable: change the main signal or named channels such as tier and height to regenerate the selected member while retaining other members and their edits. Existing blueprints can use the same controls; check the resulting dimensions in the preview.
+Member structures remain adjustable: change the main signal or named channels such as tier and height to regenerate the selected member while retaining other members and their edits. Existing blueprints can use the same controls. Incomplete legacy membership is recovered from verified saved content; if its extent cannot be established reliably, the original is retained with a request to import it again. Check the resulting dimensions in the preview.
 
 普通蓝图放置时，空气空位不参与现场校验、材料核算或施工，也不会清空现场方块；实际检查与放置只针对非空气目标。空位仍保留在结构声明中，可继续调整结构或手动指定方块。忠实剪切粘贴和拆除沿用各自的处理方式。
 

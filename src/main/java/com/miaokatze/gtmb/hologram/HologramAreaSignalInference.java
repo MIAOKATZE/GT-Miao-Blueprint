@@ -21,14 +21,32 @@ import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 
+import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 
 /** Per-import, resumable inference from native declarations and the actual source world. */
 final class HologramAreaSignalInference {
 
+    interface Scene {
+
+        boolean exists(int x, int y, int z);
+
+        Block block(int x, int y, int z);
+
+        int metadata(int x, int y, int z);
+
+        boolean air(int x, int y, int z);
+
+        ItemStack material(int x, int y, int z);
+
+        IMetaTileEntity machine(int x, int y, int z);
+    }
+
     private final MTEEnhancedMultiBlockBase<?> machine;
     private final World actual;
+    private final Scene scene;
+    private final boolean strict;
     private final List<String> signals = new ArrayList<>();
     private final Map<String, Candidate> geometries = new LinkedHashMap<>();
     private final IdentityHashMap<IStructureElement<?>, List<Options>> alternatives = new IdentityHashMap<>();
@@ -38,12 +56,36 @@ final class HologramAreaSignalInference {
     private int signalIndex, value = 1, candidateIndex, matchIndex, materialIndex;
     private List<Candidate> ordered;
     private boolean initialized, matching, bestKnownValid, restoredBestState, inferredMaterials, done;
+    private boolean ambiguous;
+    private HologramCapture signalWinner;
+    private long winnerWeight;
     private final Map<String, ItemStack> actualMaterials = new HashMap<>();
     private int declarationQueries, rejectedQueries, fullCaptures;
     private long comparedCells, activeNanos;
 
     HologramAreaSignalInference(MTEEnhancedMultiBlockBase<?> source, ItemStack seed) throws IOException {
-        machine = HologramDetachedController.fromLive(source);
+        this(
+            source,
+            seed,
+            new WorldScene(
+                source.getBaseMetaTileEntity()
+                    .getWorld()),
+            false,
+            true);
+    }
+
+    static HologramAreaSignalInference detachedScene(MTEEnhancedMultiBlockBase<?> owned, ItemStack seed, Scene scene)
+        throws IOException {
+        if (!(owned.getBaseMetaTileEntity()
+            .getWorld() instanceof HologramResourceWorld)) throw new IOException("旧结构声明必须使用独立只读控制器");
+        return new HologramAreaSignalInference(owned, seed, scene, true, false);
+    }
+
+    private HologramAreaSignalInference(MTEEnhancedMultiBlockBase<?> source, ItemStack seed, Scene scene,
+        boolean strict, boolean copySource) throws IOException {
+        machine = copySource ? HologramDetachedController.fromLive(source) : source;
+        this.scene = scene;
+        this.strict = strict;
         actual = source.getBaseMetaTileEntity()
             .getWorld();
         trigger = seed.copy();
@@ -63,6 +105,10 @@ final class HologramAreaSignalInference {
 
     HologramCapture capture() {
         return best;
+    }
+
+    boolean verifiedScope() {
+        return done && bestKnownValid && !ambiguous && best != null && !best.incomplete;
     }
 
     void cancel() {
@@ -88,6 +134,8 @@ final class HologramAreaSignalInference {
         result.setLong("comparedCells", comparedCells);
         result.setLong("activeNanos", activeNanos);
         result.setBoolean("done", done);
+        result.setBoolean("verifiedScope", verifiedScope());
+        result.setBoolean("ambiguousScope", ambiguous);
         return result;
     }
 
@@ -147,9 +195,16 @@ final class HologramAreaSignalInference {
             }
             if (!matching) {
                 Candidate next = ordered.get(candidateIndex);
+                if (strict && signalWinner != null && next.weight < winnerWeight) {
+                    nextSignal();
+                    continue;
+                }
                 if (next.baseline && bestKnownValid) {
                     // Smaller valid subsets must never replace a larger, already verified source footprint.
-                    nextSignal();
+                    if (strict) {
+                        candidate = best;
+                        acceptStrict(next);
+                    } else nextSignal();
                     continue;
                 }
                 if (candidate == null) {
@@ -178,10 +233,13 @@ final class HologramAreaSignalInference {
                 }
             }
             if (matching && matchIndex == candidate.cells.size()) {
-                best = candidate;
-                bestKnownValid = true;
-                trigger = best.trigger.copy();
-                nextSignal();
+                if (strict) acceptStrict(ordered.get(candidateIndex));
+                else {
+                    best = candidate;
+                    bestKnownValid = true;
+                    trigger = best.trigger.copy();
+                    nextSignal();
+                }
             }
         }
         if (signalIndex < signals.size()) return false;
@@ -193,15 +251,13 @@ final class HologramAreaSignalInference {
             layouts.clear();
             restoredBestState = true;
         }
+        if (strict) return done = true;
         // Infer material signals once, after geometry. This reuses the exact factory candidate sets per element.
         while (materialIndex < best.cells.size() && System.nanoTime() < deadline) {
             HologramCapture.Cell cell = best.cells.get(materialIndex++);
-            if (cell.anchor || !actual.blockExists(cell.x, cell.y, cell.z)) continue;
+            if (cell.anchor || !scene.exists(cell.x, cell.y, cell.z)) continue;
             cell.candidates = options(cell);
-            ItemStack observed = HologramArea.serverSample(
-                actual.getBlock(cell.x, cell.y, cell.z),
-                actual.getBlockMetadata(cell.x, cell.y, cell.z),
-                actual.getTileEntity(cell.x, cell.y, cell.z));
+            ItemStack observed = scene.material(cell.x, cell.y, cell.z);
             if (observed != null) actualMaterials.put(HologramValues.position(cell), observed);
         }
         if (materialIndex < best.cells.size()) return false;
@@ -240,6 +296,13 @@ final class HologramAreaSignalInference {
     }
 
     private void nextSignal() {
+        if (strict && signalWinner != null) {
+            best = signalWinner;
+            bestKnownValid = true;
+            trigger = best.trigger.copy();
+        }
+        signalWinner = null;
+        winnerWeight = Long.MIN_VALUE;
         signalIndex++;
         value = 1;
         ordered = null;
@@ -250,23 +313,31 @@ final class HologramAreaSignalInference {
         matching = false;
     }
 
+    private void acceptStrict(Candidate accepted) {
+        if (signalWinner == null) {
+            signalWinner = candidate;
+            winnerWeight = accepted.weight;
+        } else if (accepted.weight == winnerWeight && !signalWinner.positions.keySet()
+            .equals(candidate.positions.keySet())) ambiguous = true;
+        nextCandidate();
+    }
+
     private boolean matches(HologramCapture.Cell cell) {
         comparedCells++;
         if (cell.anchor) return true;
-        if (!actual.blockExists(cell.x, cell.y, cell.z)) return false;
-        Block block = actual.getBlock(cell.x, cell.y, cell.z);
-        int meta = actual.getBlockMetadata(cell.x, cell.y, cell.z);
-        if (cell.block == Blocks.air && !cell.unknown) return actual.isAirBlock(cell.x, cell.y, cell.z);
+        if (!scene.exists(cell.x, cell.y, cell.z)) return false;
+        Block block = scene.block(cell.x, cell.y, cell.z);
+        int meta = scene.metadata(cell.x, cell.y, cell.z);
+        if (cell.block == Blocks.air && !cell.unknown) return scene.air(cell.x, cell.y, cell.z);
         if (HologramCellPolicy.knownSatisfied(cell, block, meta) || HologramCellPolicy.destructive(cell, block, meta)
             || HologramFrameSupport.acceptsCovered(cell.element, block, meta)) return true;
-        TileEntity tile = actual.getTileEntity(cell.x, cell.y, cell.z);
-        if (tile instanceof IGregTechTileEntity) {
+        IMetaTileEntity machine = scene.machine(cell.x, cell.y, cell.z);
+        if (machine != null) {
             for (IStructureElement<?> part : HologramElementCatalog.parts(cell.element))
                 for (gregtech.api.interfaces.IHatchElement<?> type : HologramHatchPolicy.declared(part))
-                    if (HologramHatchPolicy.matchesHatch(type, ((IGregTechTileEntity) tile).getMetaTileEntity()))
-                        return true;
+                    if (HologramHatchPolicy.matchesHatch(type, machine)) return true;
         }
-        ItemStack observed = HologramArea.serverSample(block, meta, tile);
+        ItemStack observed = scene.material(cell.x, cell.y, cell.z);
         for (ItemStack option : options(cell)) if (HologramValues.sameMaterial(option, observed)) return true;
         return false;
     }
@@ -417,6 +488,40 @@ final class HologramAreaSignalInference {
             this.elements = elements;
             length = elements.length;
             this.signature = signature;
+        }
+    }
+
+    private static final class WorldScene implements Scene {
+
+        final World world;
+
+        WorldScene(World world) {
+            this.world = world;
+        }
+
+        public boolean exists(int x, int y, int z) {
+            return world.blockExists(x, y, z);
+        }
+
+        public Block block(int x, int y, int z) {
+            return world.getBlock(x, y, z);
+        }
+
+        public int metadata(int x, int y, int z) {
+            return world.getBlockMetadata(x, y, z);
+        }
+
+        public boolean air(int x, int y, int z) {
+            return world.isAirBlock(x, y, z);
+        }
+
+        public ItemStack material(int x, int y, int z) {
+            return HologramArea.serverSample(block(x, y, z), metadata(x, y, z), world.getTileEntity(x, y, z));
+        }
+
+        public IMetaTileEntity machine(int x, int y, int z) {
+            TileEntity tile = world.getTileEntity(x, y, z);
+            return tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getMetaTileEntity() : null;
         }
     }
 }

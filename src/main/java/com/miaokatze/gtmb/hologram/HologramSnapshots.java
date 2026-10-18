@@ -554,6 +554,13 @@ final class HologramSnapshots {
             progress.setLong("done", current.done);
             progress.setString("unit", area.importUnit());
             progress.setString("detail", current.phase);
+        } else if (s.capturePending && s.virtualStructureTask != null && s.virtualStructureTask.recoveringLegacy()) {
+            HologramLegacyStructureScope scope = s.virtualStructureTask.legacyScope;
+            progress.setString("phase", "capture.legacyScope");
+            progress.setLong("done", scope.completed());
+            progress.setLong("total", scope.total());
+            progress.setString("unit", "operations");
+            progress.setString("detail", "恢复旧结构归属");
         } else if (s.capturePending) {
             progress.setString("phase", "capture");
             progress.setLong("done", s.capture == null ? 0 : s.capture.cells.size());
