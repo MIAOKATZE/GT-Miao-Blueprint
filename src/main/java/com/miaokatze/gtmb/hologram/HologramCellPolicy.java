@@ -1092,8 +1092,13 @@ final class HologramCellPolicy {
             && cell.blueprintDamage == sample.getItemDamage()
             && cell.blueprintItem.equals(Item.itemRegistry.getNameForObject(sample.getItem()))) return true;
         if (cell.structureTargets != null || (!s.areaStructureId.isEmpty() && !cell.memberships()
-            .isEmpty())) return candidates(s, cell).stream()
-                .anyMatch(option -> HologramValues.sameMaterial(option, sample));
+            .isEmpty())) {
+            if (candidates(s, cell).stream()
+                .anyMatch(option -> HologramValues.sameMaterial(option, sample))) return true;
+            // Old height-dependent declarations can describe a different cap at this coordinate.
+            // Only an exact, verified plain source may bypass that stale editing list; never enlarge it.
+            return HologramBlueprintSourceMaterial.plainReplay(s, cell, sample);
+        }
         return true;
     }
 

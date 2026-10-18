@@ -27,6 +27,20 @@ final class HologramVirtualStructureEditing {
 
     private HologramVirtualStructureEditing() {}
 
+    /** A canonical StructureLib air declaration keeps a known identity when no physical target exists. */
+    static void identifyDeclaredAir(HologramCapture.Cell cell) {
+        if (cell.block != Blocks.air || cell.unknown
+            || cell.anchor
+            || !cell.userPosition
+            || cell.element != com.gtnewhorizon.structurelib.structure.StructureUtility.isAir()
+            || "templateController".equals(cell.role)
+            || !cell.tileNbt.isEmpty()
+            || !cell.itemNbt.isEmpty()) return;
+        cell.blueprintBlock = "minecraft:air";
+        cell.blueprintItem = "";
+        cell.meta = cell.blueprintDamage = 0;
+    }
+
     static boolean pending(HologramSession s) {
         return s.virtualStructureTask != null;
     }
@@ -304,7 +318,7 @@ final class HologramVirtualStructureEditing {
                         .valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(target.getItem()));
                     cell.blueprintDamage = target.getItemDamage();
                     cell.blueprintBlock = String.valueOf(Block.blockRegistry.getNameForObject(cell.block));
-                }
+                } else identifyDeclaredAir(cell);
                 targets.put(HologramValues.position(cell), target);
                 generated.put(HologramValues.position(cell), cell);
             }

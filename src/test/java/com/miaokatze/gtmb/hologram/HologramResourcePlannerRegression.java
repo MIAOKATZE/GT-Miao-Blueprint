@@ -214,6 +214,7 @@ public final class HologramResourcePlannerRegression {
                 profile.setAccessible(true);
                 profile.set(player, new com.mojang.authlib.GameProfile(identity, "planner"));
             }
+        HologramSparseAirRegression.run(player);
         HologramSession sync = session(player, 2048);
         HologramSession staged = session(player, 2048);
         HologramResourcePlanner.refreshPlan(sync);

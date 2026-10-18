@@ -128,11 +128,13 @@ final class HologramWorldPlacementWorkflow {
     }
 
     static boolean virtualBoundsValid(HologramSession s) {
-        for (HologramCapture.Cell cell : s.capture.cells)
+        for (HologramCapture.Cell cell : s.capture.cells) {
+            if (HologramSessionPolicy.ignoredPlacementAir(s, cell, cell.stableIndex)) continue;
             if (!HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, s.player.worldObj.getHeight())) {
                 s.status = "蓝图结构范围超出世界边界或高度";
                 return false;
             }
+        }
         return true;
     }
 

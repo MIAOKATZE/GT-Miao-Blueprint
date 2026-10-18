@@ -1111,6 +1111,7 @@ final class HologramSnapshots {
 
     private static CellRow cellRowCurrent(HologramSession s, int index, boolean draftOnly, CellRows context) {
         HologramCapture.Cell c = s.capture.cells.get(index);
+        if (!draftOnly && HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return ignoredAirRow(s, c, index);
         boolean authoring = context.authoring;
         World world = s.player.worldObj;
         ItemStack pinned = HologramCellPolicy.targetFor(s, c, index);
@@ -1311,6 +1312,35 @@ final class HologramSnapshots {
         row.setIntArray("candidateTiers", candidateTiers);
         if (!draftOnly) row.setIntArray("candidateAvailable", candidateAvailable);
         return new CellRow(row, pinned, loaded, inScope, current, meta, actualTile);
+    }
+
+    private static CellRow ignoredAirRow(HologramSession s, HologramCapture.Cell c, int index) {
+        NBTTagCompound row = new NBTTagCompound();
+        row.setInteger("x", c.x);
+        row.setInteger("y", c.y);
+        row.setInteger("z", c.z);
+        row.setInteger("dx", c.x - s.x);
+        row.setInteger("dy", c.y - s.y);
+        row.setInteger("dz", c.z - s.z);
+        row.setString("id", "minecraft:air");
+        row.setString("wantId", "minecraft:air");
+        row.setString("exactIdentity", HologramBlockIdentity.key(Blocks.air, 0));
+        row.setString("status", "satisfied");
+        row.setString("reason", "蓝图空气不参与施工，保留现场");
+        row.setString("operation", "IGNORE");
+        row.setBoolean("ignoredAir", true);
+        row.setBoolean("userPosition", c.userPosition);
+        row.setBoolean("excluded", c.excluded);
+        row.setString("prompt", c.prompt);
+        row.setString("role", c.role);
+        row.setString("structureId", c.structureId);
+        row.setTag("structureIds", HologramSessionPolicy.nbtKeys(c.memberships()));
+        row.setInteger("hatchFacing", -1);
+        row.setInteger("targetFacing", -1);
+        row.setInteger("actualFacing", -1);
+        boolean inScope = HologramSessionPolicy.inScope(s, c, index);
+        row.setBoolean("inScope", inScope);
+        return new CellRow(row, null, false, inScope, Blocks.air, 0, null);
     }
 
     static NBTTagCompound recoverySummary(ItemStack drop, boolean estimated) {

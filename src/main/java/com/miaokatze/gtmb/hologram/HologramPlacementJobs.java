@@ -191,8 +191,9 @@ final class HologramPlacementJobs {
         s.forcePlacementReady = false;
         s.work.clear();
         for (int i = 0; i < s.capture.cells.size(); i++) {
-            if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i) && "pending".equals(s.planStatus.get(i)))
-                s.work.add(i);
+            if (!HologramSessionPolicy.ignoredPlacementAir(s, s.capture.cells.get(i), i)
+                && HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i)
+                && "pending".equals(s.planStatus.get(i))) s.work.add(i);
         }
         spatialWorkOrder(s);
         if (s.work.isEmpty()) {
@@ -200,6 +201,7 @@ final class HologramPlacementJobs {
             String reason = "";
             for (int i = 0; i < s.capture.cells.size(); i++) {
                 HologramCapture.Cell cell = s.capture.cells.get(i);
+                if (HologramSessionPolicy.ignoredPlacementAir(s, cell, i)) continue;
                 if (!HologramSessionPolicy.inScope(s, cell, i) || cell.anchor) continue;
                 String status = s.planStatus.get(i);
                 if ("satisfied".equals(status)) satisfied++;

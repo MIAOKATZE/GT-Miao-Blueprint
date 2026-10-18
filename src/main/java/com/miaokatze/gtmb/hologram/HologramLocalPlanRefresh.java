@@ -203,7 +203,8 @@ final class HologramLocalPlanRefresh {
             for (String member : cell.memberships()) cache.memberships.computeIfAbsent(member, ignored -> new Indices())
                 .add(index);
         }
-        cache.summaries[index] = (byte) summary(cell.status, inScope);
+        cache.summaries[index] = (byte) (HologramSessionPolicy.ignoredPlacementAir(s, cell, index) ? 0
+            : summary(cell.status, inScope));
         cache.statuses[index] = cell.status;
         cache.complexCells[index] = inScope
             && (!cell.tileNbt.isEmpty() || !cell.itemNbt.isEmpty() || target != null && target.hasTagCompound());
@@ -252,6 +253,7 @@ final class HologramLocalPlanRefresh {
 
     private static int summary(HologramSession s, int index) {
         HologramCapture.Cell cell = s.capture.cells.get(index);
+        if (HologramSessionPolicy.ignoredPlacementAir(s, cell, index)) return 0;
         return summary(cell.status, HologramSessionPolicy.inScope(s, cell, index));
     }
 
@@ -332,6 +334,7 @@ final class HologramLocalPlanRefresh {
         for (int index : dirty) {
             if (index < 0 || index >= cache.size) return false;
             HologramCapture.Cell cell = s.capture.cells.get(index);
+            if (HologramSessionPolicy.ignoredPlacementAir(s, cell, index)) continue;
             ItemStack proposed = HologramCellPolicy.draftTarget(s, cell, index);
             if (!cell.tileNbt.isEmpty() || !cell.itemNbt.isEmpty()
                 || proposed != null && proposed.hasTagCompound()
@@ -366,7 +369,8 @@ final class HologramLocalPlanRefresh {
             Integer pin = s.facingPins.get(HologramValues.position(cell));
             if (pin != null) for (int side : HologramCellPolicy.legalFacings(s, cell, s.planTargets.get(index)))
                 if (side == pin) s.planFacings.put(index, pin);
-            boolean loaded = world.blockExists(cell.x, cell.y, cell.z);
+            boolean ignoredAir = HologramSessionPolicy.ignoredPlacementAir(s, cell, index);
+            boolean loaded = !ignoredAir && world.blockExists(cell.x, cell.y, cell.z);
             s.expectedBlocks.set(index, loaded ? world.getBlock(cell.x, cell.y, cell.z) : Blocks.air);
             s.expectedMeta.set(index, loaded ? world.getBlockMetadata(cell.x, cell.y, cell.z) : 0);
             TileEntity tile = loaded ? world.getTileEntity(cell.x, cell.y, cell.z) : null;
@@ -375,8 +379,9 @@ final class HologramLocalPlanRefresh {
                 index,
                 tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
                     .ordinal() : -1);
-            cell.status = HologramPlanPolicy
-                .classify(s, cell, index, loaded, s.expectedBlocks.get(index), s.expectedMeta.get(index), tile);
+            cell.status = ignoredAir ? "satisfied"
+                : HologramPlanPolicy
+                    .classify(s, cell, index, loaded, s.expectedBlocks.get(index), s.expectedMeta.get(index), tile);
             s.planStatus.set(index, cell.status);
             int now = summary(s, index);
             cache.summaries[index] = (byte) now;

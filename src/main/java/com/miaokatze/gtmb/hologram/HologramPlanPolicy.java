@@ -18,6 +18,7 @@ final class HologramPlanPolicy {
 
     /** Pure preflight: never posts Forge events or calls element.check/checkMachine. */
     static String classify(HologramSession s, HologramCapture.Cell c, int index) {
+        if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return "satisfied";
         World w = s.player.worldObj;
         boolean loaded = w.blockExists(c.x, c.y, c.z);
         return classify(
@@ -33,6 +34,7 @@ final class HologramPlanPolicy {
     /** One atomic classification reuses its just-read primary state; native permissions remain live callbacks. */
     static String classify(HologramSession s, HologramCapture.Cell c, int index, boolean loaded, Block old, int meta,
         TileEntity tile) {
+        if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return "satisfied";
         World w = s.player.worldObj;
         if (c.y < 0 || c.y >= w.getHeight() || !loaded) return "unsupported";
         if (c.anchor) return "protected";
@@ -110,6 +112,7 @@ final class HologramPlanPolicy {
 
     private static String reasonCurrent(HologramSession s, HologramCapture.Cell c, int index, Boolean loaded,
         TileEntity tile) {
+        if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return "蓝图空气不参与施工，保留现场";
         if (!c.sourceWarning.isEmpty() && "templateController".equals(c.role)) return c.sourceWarning;
         if ("templateController".equals(c.role) && !HologramCellPolicy.explicitTarget(s, c, index))
             return "控制器缺少合法施工目标；请重新载入原图纸并核对来源控制器身份";
@@ -135,6 +138,7 @@ final class HologramPlanPolicy {
 
     static boolean expectedCurrent(HologramSession s, int index) {
         HologramCapture.Cell c = s.capture.cells.get(index);
+        if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return true;
         World w = s.player.worldObj;
         return w.blockExists(c.x, c.y, c.z) && w.getBlock(c.x, c.y, c.z) == s.expectedBlocks.get(index)
             && w.getBlockMetadata(c.x, c.y, c.z) == s.expectedMeta.get(index)

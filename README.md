@@ -83,6 +83,10 @@ In Structure Adjustment, **G toggles the movement axes**; the button shows its o
 
 Member structures remain adjustable: change the main signal or named channels such as tier and height to regenerate the selected member while retaining other members and their edits. Existing blueprints can use the same controls; check the resulting dimensions in the preview.
 
+普通蓝图放置时，空气空位不参与现场校验、材料核算或施工，也不会清空现场方块；实际检查与放置只针对非空气目标。空位仍保留在结构声明中，可继续调整结构或手动指定方块。忠实剪切粘贴和拆除沿用各自的处理方式。
+
+Ordinary blueprint placement skips empty air positions during site checks, material accounting and construction, leaving existing blocks in those gaps intact. Checks and placement apply to non-air targets. Air remains in the structure declaration for editing or assigning a block. Faithful cut-and-paste and dismantling retain their own behavior.
+
 资源复核中，可解析的库存数据可选择「完全保留」，施工时匹配完整物品数据并扣除对应材料。确实无法解析的信息会指出具体路径，需要移除后才能保存。倾向自用时可尽量保留原配置；与坐标或去标识选项冲突时，界面会要求先解决冲突。
 
 In resource review, choose **Keep unchanged** for inventory data whose complete material cost can be decoded. Construction matches the full item data and consumes those materials. Unreadable data identifies the path to remove before saving. Private-use processing can retain the original configuration; resolve any conflicting coordinate or identity-processing choices first.

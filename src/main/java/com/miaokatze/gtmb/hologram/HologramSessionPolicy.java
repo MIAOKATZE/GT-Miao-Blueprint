@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -20,6 +21,38 @@ final class HologramSessionPolicy {
 
     static boolean authoring(HologramSession s) {
         return s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && !s.virtualPlacement;
+    }
+
+    /** Saved plain air is geometry, not a placement or world-emptiness requirement. No native/world calls. */
+    static boolean ignoredPlacementAir(HologramSession s, HologramCapture.Cell cell, int index) {
+        return s.virtual && s.virtualPlacement
+            && s.virtualPreset != null
+            && s.virtualPreset.schema >= 2
+            && s.mode == 0
+            && cell != null
+            && cell.userPosition
+            && cell.block == Blocks.air
+            && "minecraft:air".equals(cell.blueprintBlock)
+            && (cell.blueprintItem.isEmpty() || "minecraft:air".equals(cell.blueprintItem))
+            && !cell.unknown
+            && !cell.anchor
+            && !"templateController".equals(cell.role)
+            && cell.tileNbt.isEmpty()
+            && cell.itemNbt.isEmpty()
+            && HologramCellPolicy.draftTarget(s, cell, index) == null;
+    }
+
+    static boolean ignoredPlacementAirAt(HologramSession s, int x, int y, int z) {
+        if (!s.virtual || !s.virtualPlacement
+            || s.virtualPreset == null
+            || s.virtualPreset.schema < 2
+            || s.mode != 0
+            || s.capture == null) return false;
+        HologramCapture.Cell cell = s.capture.positions.get(x + "," + y + "," + z);
+        return cell != null && cell.stableIndex >= 0
+            && cell.stableIndex < s.capture.cells.size()
+            && s.capture.cells.get(cell.stableIndex) == cell
+            && ignoredPlacementAir(s, cell, cell.stableIndex);
     }
 
     static boolean blockedByAreaImport(HologramSession s) {

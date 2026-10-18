@@ -63,6 +63,10 @@ final class HologramWorldTransactions {
 
     @SuppressWarnings("unchecked")
     static boolean operateChecked(HologramSession s, HologramCapture.Cell c, int index) {
+        if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
+            c.status = "satisfied";
+            return true;
+        }
         World w = s.player.worldObj;
         if (s.mode != 2 && s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2) {
             try {

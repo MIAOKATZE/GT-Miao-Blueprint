@@ -134,6 +134,7 @@ final class HologramBuildPreparation {
         try {
             if (HologramDeidentification.level(s.virtualPreset) == 0)
                 for (HologramCapture.Cell cell : s.capture.cells) {
+                    if (HologramSessionPolicy.ignoredPlacementAir(s, cell, cell.stableIndex)) continue;
                     if (HologramSessionPolicy.inScope(s, cell, HologramSessionPolicy.cellIndex(s, cell))
                         && HologramCellPolicy.foreignBlueprintOwner(s, cell)) {
                         s.status = "0 级蓝图包含其他玩家所有权；请主动选择至少 1 级去标识，再按当前玩家身份放置";
@@ -155,6 +156,7 @@ final class HologramBuildPreparation {
                 }
             }
             for (HologramCapture.Cell cell : s.capture.cells) {
+                if (HologramSessionPolicy.ignoredPlacementAir(s, cell, cell.stableIndex)) continue;
                 if (!cell.excluded && HologramSessionPolicy.membershipEnabled(s, cell)) {
                     try {
                         HologramNetworkBindings

@@ -91,6 +91,7 @@ final class HologramBlueprintServiceRegression {
             SimpleAssert
                 .that(!capture.incomplete, "schema2 item-only factory cells infer their block: " + capture.failure);
             spatialWorkOrder((HologramSession) session);
+            HologramBlueprintSourceMaterialRegression.run((HologramSession) session);
             capture.cells.get(0).prompt = "keep configuration";
             NBTTagCompound data = new NBTTagCompound();
             data.setString("setting", "saved-value");

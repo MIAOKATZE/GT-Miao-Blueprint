@@ -55,16 +55,17 @@ final class HologramResourcePlanner {
         World w = s.player.worldObj;
         if (s.virtual && !s.allocationsFrozen) allocateVirtualTargets(s);
         buildPreset(s);
-        if (s.mode == 2) s.planFacings.clear();
-        else refreshFacings(s);
         for (int i = 0; i < s.capture.cells.size(); i++) {
             s.capture.cells.get(i).stableIndex = i;
             s.planTargets.add(HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i));
             if (HologramSessionPolicy.authoring(s)) s.capture.cells.get(i).status = "preview";
         }
+        if (s.mode == 2) s.planFacings.clear();
+        else refreshFacings(s);
         if (HologramSessionPolicy.authoring(s)) return;
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell c = s.capture.cells.get(i);
+            if (observeIgnoredAir(s, c, i)) continue;
             boolean loaded = w.blockExists(c.x, c.y, c.z);
             net.minecraft.block.Block actual = loaded ? w.getBlock(c.x, c.y, c.z) : Blocks.air;
             int actualMeta = loaded ? w.getBlockMetadata(c.x, c.y, c.z) : 0;
@@ -79,6 +80,19 @@ final class HologramResourcePlanner {
             s.planStatus.add(c.status);
         }
         refreshResources(s);
+    }
+
+    private static boolean observeIgnoredAir(HologramSession s, HologramCapture.Cell cell, int index) {
+        if (!HologramSessionPolicy.ignoredPlacementAir(s, cell, index)) return false;
+        // Preserve stable-index alignment without observing the world at this geometry-only position.
+        s.expectedBlocks.add(Blocks.air);
+        s.expectedMeta.add(0);
+        s.expectedTiles.add(null);
+        s.expectedFacings.add(-1);
+        cell.status = "satisfied";
+        s.planStatus.add(cell.status);
+        if (s.localPlanPending) HologramLocalPlanRefresh.classified(s, index);
+        return true;
     }
 
     private static void resetPlan(HologramSession s) {
@@ -263,8 +277,10 @@ final class HologramResourcePlanner {
                     if (needsExterior) {
                         exterior = new HologramExteriorTask(
                             geometry,
-                            (x, y, z) -> HologramSessionPolicy.authoring(s) || s.player.worldObj.blockExists(x, y, z)
-                                && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
+                            (x, y, z) -> HologramSessionPolicy.authoring(s)
+                                || HologramSessionPolicy.ignoredPlacementAirAt(s, x, y, z)
+                                || s.player.worldObj.blockExists(x, y, z)
+                                    && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
                         stage = 4;
                     } else {
                         cursor = 0;
@@ -316,6 +332,7 @@ final class HologramResourcePlanner {
 
         private void classifyCurrent(int i) {
             HologramCapture.Cell c = s.capture.cells.get(i);
+            if (observeIgnoredAir(s, c, i)) return;
             World world = s.player.worldObj;
             boolean loaded = world.blockExists(c.x, c.y, c.z);
             net.minecraft.block.Block actual = loaded ? world.getBlock(c.x, c.y, c.z) : Blocks.air;
@@ -566,6 +583,7 @@ final class HologramResourcePlanner {
         s.cellAssetBudgets.clear();
         if (!s.player.capabilities.isCreativeMode) for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell cell = s.capture.cells.get(i);
+            if (HologramSessionPolicy.ignoredPlacementAir(s, cell, i)) continue;
             if (!HologramSessionPolicy.inScope(s, cell, i) || !"pending".equals(cell.status)) continue;
             try {
                 Map<ExactKey, Long> costs = new HashMap<>();
@@ -586,6 +604,7 @@ final class HologramResourcePlanner {
         List<ItemStack> recovery = new ArrayList<>();
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell c = s.capture.cells.get(i);
+            if (HologramSessionPolicy.ignoredPlacementAir(s, c, i)) continue;
             if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) continue;
             ItemStack target = HologramCellPolicy.targetFor(s, c, i);
             if (s.mode != 2 && s.virtual && s.virtualPreset.schema >= 2) {
@@ -683,9 +702,12 @@ final class HologramResourcePlanner {
                 }
                 total.addItems(base);
                 s.blueprintTotalResources = total;
-                String missing = HologramMaterialAccess.fuzzyBlueprintShells(s)
-                    ? s.blueprintResources.missing(HologramMaterialAccess.materialSource(s))
-                    : total.missing(HologramMaterialAccess.materialSource(s));
+                HologramBlueprintResources.Plan payable = HologramMaterialAccess.fuzzyBlueprintShells(s)
+                    ? s.blueprintResources
+                    : total;
+                String missing = payable.items.isEmpty() && payable.fluids.isEmpty() && payable.essentia.isEmpty()
+                    ? null
+                    : payable.missing(HologramMaterialAccess.materialSource(s));
                 if (HologramMaterialAccess.fuzzyBlueprintShells(s))
                     for (Map.Entry<ExactKey, ItemStack> entry : stacks.entrySet()) {
                         ItemStack shell = entry.getValue();
@@ -717,6 +739,7 @@ final class HologramResourcePlanner {
         // Unsupported cells are excluded from material totals, but their audited native blockers remain visible.
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell cell = s.capture.cells.get(i);
+            if (HologramSessionPolicy.ignoredPlacementAir(s, cell, i)) continue;
             if (!HologramSessionPolicy.inScope(s, cell, i) || !"unsupported".equals(cell.status)
                 || cell.resourceError.isEmpty()) continue;
             s.planRecoveryFits = false;
@@ -823,8 +846,10 @@ final class HologramResourcePlanner {
         java.util.Set<String> exterior = !needsExterior ? Collections.emptySet()
             : HologramHatchGeometry.exterior(
                 cells,
-                (x, y, z) -> HologramSessionPolicy.authoring(s) || s.player.worldObj.blockExists(x, y, z)
-                    && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
+                (x, y, z) -> HologramSessionPolicy.authoring(s)
+                    || HologramSessionPolicy.ignoredPlacementAirAt(s, x, y, z)
+                    || s.player.worldObj.blockExists(x, y, z)
+                        && HologramCellPolicy.trivial(s.player.worldObj, x, y, z));
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell c = s.capture.cells.get(i);
             ItemStack target = HologramCellPolicy.draftTarget(s, c, i);

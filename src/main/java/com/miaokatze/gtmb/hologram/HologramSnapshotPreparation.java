@@ -347,6 +347,12 @@ final class HologramSnapshotPreparation {
             HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.FULL_CELLS_VISITED, 1);
             HologramLocalPlanRefresh.snapshotSeedCapture(s, index);
             HologramCapture.Cell c = s.capture.cells.get(index);
+            if (!draftOnly && HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
+                HologramSnapshots.CellRow air = HologramSnapshots.cellRowData(s, index, false, rowContext);
+                cells.appendTag(air.row);
+                HologramLocalPlanRefresh.snapshotCell(s, index, air.row, null, air.inScope);
+                return;
+            }
             if (!draftOnly) HologramHatchProfiles.captureCell(s, index, hatchEntries);
             if (!draftOnly && !s.virtual && s.machine != null && !s.machine.mMachine && structureValid) {
                 int built = HologramPlanPolicy.replacementCellBuilt(s, c);

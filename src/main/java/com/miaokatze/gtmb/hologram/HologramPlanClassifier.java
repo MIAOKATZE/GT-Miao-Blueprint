@@ -83,6 +83,7 @@ final class HologramPlanClassifier {
 
     String classify(HologramSession s, HologramCapture.Cell cell, int index, boolean loaded, Block actual,
         int actualMeta, TileEntity actualTile) {
+        if (HologramSessionPolicy.ignoredPlacementAir(s, cell, index)) return "satisfied";
         if (cell.y < 0 || cell.y >= s.player.worldObj.getHeight() || !loaded) return "unsupported";
         if (cell.anchor) return "protected";
         ItemStack target = target(s, cell, index);
@@ -100,7 +101,8 @@ final class HologramPlanClassifier {
                     accepted = true;
                     break;
                 }
-            if (!accepted) return "unsupported";
+            if (!accepted && !HologramBlueprintSourceMaterial.plainReplay(s, cell, target, validation))
+                return "unsupported";
         }
         int previewMeta;
         Block previewBlock;

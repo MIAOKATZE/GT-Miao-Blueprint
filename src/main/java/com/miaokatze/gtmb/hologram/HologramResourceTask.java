@@ -208,8 +208,16 @@ final class HologramResourceTask {
                 checked++;
             } else {
                 s.blueprintTotalResources = total.plan;
+                HologramBlueprintResources.Plan payable = HologramMaterialAccess.fuzzyBlueprintShells(s)
+                    ? s.blueprintResources
+                    : total.plan;
+                if (payable.items.isEmpty() && payable.fluids.isEmpty() && payable.essentia.isEmpty()) {
+                    cursor = 0;
+                    stage = HologramMaterialAccess.fuzzyBlueprintShells(s) ? 9 : 12;
+                    return;
+                }
                 missing = new HologramBlueprintResources.MissingTask(
-                    HologramMaterialAccess.fuzzyBlueprintShells(s) ? s.blueprintResources : total.plan,
+                    payable,
                     HologramMaterialAccess.materialSource(s),
                     false);
                 stage = 8;
@@ -293,6 +301,7 @@ final class HologramResourceTask {
             }
             activeIndex = cursor++;
             HologramCapture.Cell cell = s.capture.cells.get(activeIndex);
+            if (HologramSessionPolicy.ignoredPlacementAir(s, cell, activeIndex)) return;
             if (!HologramSessionPolicy.inScope(s, cell, activeIndex) || !"pending".equals(cell.status)) return;
             active = cell;
             costs = new HashMap<>();
@@ -320,6 +329,7 @@ final class HologramResourceTask {
 
     private void resourceCell(int i) throws IOException {
         HologramCapture.Cell c = s.capture.cells.get(i);
+        if (HologramSessionPolicy.ignoredPlacementAir(s, c, i)) return;
         if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) return;
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
         if (s.mode != 2 && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
