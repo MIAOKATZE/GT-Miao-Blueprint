@@ -110,6 +110,7 @@ final class HologramServerLibrary {
                         && candidate.pendingDraft == null
                         && candidate.preparation == null
                         && candidate.materialPreview == null
+                        && candidate.upgradeReport == null
                         && candidate.requests.isEmpty()) {
                         candidate.online = false;
                         trusted.retire(candidate);
@@ -356,6 +357,7 @@ final class HologramServerLibrary {
         }
         for (Peer peer : round) {
             flushUploadAck(peer);
+            sendUpgradeReport(peer);
             try {
                 sendDownload(peer, now); // Downloads retain their existing once-per-50ms pump semantics.
             } catch (RuntimeException failure) {
@@ -458,7 +460,8 @@ final class HologramServerLibrary {
             NBTTagCompound activation = (NBTTagCompound) request.copy();
             activation.setString("localId", "local_" + UUID.randomUUID());
             HologramLibraryFacade.importPrivate(peer.player, activation, source, "publicPrepared");
-        } else if ("configGet".equals(op)) send(peer, statusTag(peer.admin));
+        } else if ("upgradeLibrary".equals(op)) upgradeLibrary(peer, request);
+        else if ("configGet".equals(op)) send(peer, statusTag(peer.admin));
         else if ("configSet".equals(op)) {
             config.update(
                 peer.admin,
@@ -470,7 +473,7 @@ final class HologramServerLibrary {
         } else if ("delete".equals(op)) {
             String id = request.getString("id");
             Entry entry = owned(peer.owner, id);
-            HologramBlueprintArtifact.deletePair(directory.resolve(id + ".json"));
+            HologramBlueprintFiles.delete(directory, id);
             Map<String, Entry> next = new LinkedHashMap<>(published);
             next.remove(id);
             publishIndex(next);
@@ -488,8 +491,7 @@ final class HologramServerLibrary {
         else if ("download".equals(op)) {
             Entry entry = published.get(request.getString("id"));
             if (entry == null) throw new IOException("Blueprint no longer exists");
-            HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact
-                .readPair(directory.resolve(entry.blueprint.id + ".json"));
+            HologramBlueprintArtifact.Artifact artifact = storedArtifact(entry);
             queueDownload(
                 peer,
                 HologramBlueprintArtifact.encode(encodeShare(entry.blueprint), artifact.png),
@@ -687,11 +689,17 @@ final class HologramServerLibrary {
             bytes.length + boundPreview.length,
             HologramBlueprintContentHash.of(blueprint),
             catalogRevision + 1,
-            bytes.length);
+            bytes);
         long nextDtoBytes = publicDtoBytes - (previous == null ? 0 : previous.dtoBytes) + replacement.dtoBytes;
         if (nextDtoBytes > MAX_PUBLIC_DTO_BYTES)
             throw new IOException("Server library expanded DTO memory budget is full");
-        HologramBlueprintArtifact.writePair(directory.resolve(blueprint.id + ".json"), bytes, boundPreview);
+        String cleanupWarning = writePublicPair(
+            blueprint.id,
+            bytes,
+            boundPreview,
+            () -> peer.online && !closed
+                && (upload.request.getLong("clientTaskToken") == 0
+                    || upload.request.getLong("clientTaskToken") > peer.retiredThrough));
         Map<String, Entry> next = new LinkedHashMap<>(published);
         next.put(blueprint.id, replacement);
         publishIndex(next);
@@ -702,6 +710,7 @@ final class HologramServerLibrary {
         result.setLong("clientTaskToken", upload.request.getLong("clientTaskToken"));
         result.setString("id", blueprint.id);
         result.setString("transfer", upload.transfer);
+        result.setString("cleanupWarning", cleanupWarning);
         send(peer, result);
         list(peer, 0);
     }
@@ -764,45 +773,214 @@ final class HologramServerLibrary {
 
     private void load() throws IOException {
         Files.createDirectories(directory);
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, "incoming-*.tmp")) {
+            for (Path path : files) Files.deleteIfExists(path);
+        }
         Map<String, Entry> loaded = new LinkedHashMap<>();
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory)) {
-            for (Path path : files) {
-                String name = path.getFileName()
-                    .toString();
-                if (name.startsWith("incoming-") && name.endsWith(".tmp")) {
-                    Files.deleteIfExists(path);
-                    continue;
-                }
-                if (!name.matches("public_[a-f0-9-]{36}\\.json")) continue;
-                if (loaded.size() >= MAX_ENTRIES) throw new IOException("Server blueprint index entry budget");
-                HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(path);
-                byte[] bytes = artifact.json;
-                if (bytes.length + artifact.png.length > MAX_STORED_BYTES - storedBytes)
-                    throw new IOException("Server blueprint index byte budget");
-                com.google.gson.JsonObject root = HologramBlueprintCompactCodec.parse(bytes);
-                HologramBlueprintVersions.validateJson(root.get("blueprint"));
-                Envelope envelope = GSON.fromJson(root, Envelope.class);
-                if (envelope == null || envelope.schema != 1
-                    || envelope.blueprint == null
-                    || !name.equals(envelope.blueprint.id + ".json")
-                    || envelope.uploadedBy == null
-                    || envelope.uploadedBy.length() > 64) throw new IOException("Invalid server blueprint envelope");
-                UUID.fromString(envelope.owner);
-                envelope.blueprint = canonical(envelope.blueprint);
-                Entry entry = new Entry(
-                    envelope,
-                    bytes.length + artifact.png.length,
-                    HologramBlueprintContentHash.of(envelope.blueprint),
-                    1,
-                    bytes.length);
-                if (entry.dtoBytes > MAX_PUBLIC_DTO_BYTES - publicDtoBytes)
-                    throw new IOException("Server library expanded DTO memory budget exceeded");
-                loaded.put(envelope.blueprint.id, entry);
-                publicDtoBytes += entry.dtoBytes;
-                storedBytes += bytes.length + artifact.png.length;
-            }
+        for (Map.Entry<String, Path> member : HologramBlueprintFiles.managedPublic(directory)
+            .entrySet()) {
+            String id = HologramLibraryService.publicId(member.getKey());
+            if (loaded.size() >= MAX_ENTRIES) throw new IOException("Server blueprint index entry budget");
+            HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(member.getValue());
+            byte[] bytes = artifact.json;
+            if (bytes.length + artifact.png.length > MAX_STORED_BYTES - storedBytes)
+                throw new IOException("Server blueprint index byte budget");
+            com.google.gson.JsonObject root = HologramBlueprintCompactCodec.parse(bytes);
+            HologramBlueprintVersions.validateJson(root.get("blueprint"));
+            Envelope envelope = GSON.fromJson(root, Envelope.class);
+            if (envelope == null || envelope.schema != 1
+                || envelope.blueprint == null
+                || !id.equals(envelope.blueprint.id)
+                || envelope.uploadedBy == null
+                || envelope.uploadedBy.length() > 64) throw new IOException("Invalid server blueprint envelope");
+            UUID.fromString(envelope.owner);
+            envelope.blueprint = canonical(envelope.blueprint);
+            Entry entry = new Entry(
+                envelope,
+                bytes.length + artifact.png.length,
+                HologramBlueprintContentHash.of(envelope.blueprint),
+                1,
+                bytes);
+            if (entry.dtoBytes > MAX_PUBLIC_DTO_BYTES - publicDtoBytes)
+                throw new IOException("Server library expanded DTO memory budget exceeded");
+            loaded.put(id, entry);
+            publicDtoBytes += entry.dtoBytes;
+            storedBytes += bytes.length + artifact.png.length;
         }
         publishIndex(loaded);
+    }
+
+    private HologramBlueprintArtifact.Artifact storedArtifact(Entry entry) throws IOException {
+        HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact
+            .readPair(HologramBlueprintFiles.resolve(directory, entry.blueprint.id));
+        if (!entry.storedJsonHash.equals(artifact.jsonSha256))
+            throw new IOException("Server blueprint original changed after catalog loading; reload before using it");
+        return artifact;
+    }
+
+    /** The pair and logical filename mapping share one receipt. Cleanup warnings follow an accepted commit. */
+    private String writePublicPair(String id, byte[] json, byte[] png, java.util.function.BooleanSupplier current)
+        throws IOException {
+        Path target = HologramBlueprintFiles.target(directory, id, json);
+        HologramBlueprintArtifact.PairWrite receipt = HologramBlueprintArtifact
+            .writePairPending(target, json, png, current);
+        try {
+            HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(target);
+            if (!receipt.jsonSha256.equals(actual.jsonSha256) || !receipt.pngSha256.equals(actual.pngSha256))
+                throw new IOException("Published blueprint pair failed readback verification");
+            if (!current.getAsBoolean()) throw new IOException("Blueprint storage operation was retired");
+            HologramBlueprintFiles.track(directory, id, receipt);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                receipt.rollback();
+            } catch (IOException rollback) {
+                failure.addSuppressed(rollback);
+            }
+            throw failure;
+        }
+        // commit accepts the new pair/index even if old recovery files cannot be cleaned up.
+        receipt.commit();
+        return receipt.cleanupWarning();
+    }
+
+    private void upgradeLibrary(Peer peer, NBTTagCompound request) throws IOException {
+        requireUpgradeAdmin(peer.admin);
+        long token = request.getLong("clientTaskToken");
+        if (token <= 0) throw new IOException("Invalid library upgrade task");
+        if (peer.upgradeReport != null && peer.upgradeReport.token > peer.retiredThrough)
+            throw new IOException("A library upgrade report is already active");
+        List<NBTTagCompound> report = new ArrayList<>();
+        int upgraded = 0, current = 0, skipped = 0;
+        long epoch = runtimeEpoch;
+        for (Entry previous : new ArrayList<>(published.values())) {
+            if (!peer.online || token <= peer.retiredThrough || closed || epoch != runtimeEpoch) break;
+            NBTTagCompound row = new NBTTagCompound();
+            row.setString("id", previous.blueprint.id);
+            try {
+                requireUpgradeAdmin(peer.admin);
+                if (!peer.online || closed || epoch != runtimeEpoch)
+                    throw new IOException("Library connection or runtime changed");
+                HologramBlueprintArtifact.Artifact original = storedArtifact(previous);
+                byte[] compact = HologramBlueprintCompactCodec
+                    .recompress(original.json, HologramBlueprintArtifact.MAX_JSON_BYTES);
+                if (!HologramBlueprintContentHash.of(original.json)
+                    .equals(HologramBlueprintContentHash.of(compact)))
+                    throw new IOException("Lossless upgrade changed blueprint content identity");
+                Path oldPath = HologramBlueprintFiles.resolve(directory, previous.blueprint.id);
+                Path target = HologramBlueprintFiles.target(directory, previous.blueprint.id, compact);
+                byte[] bound = HologramBlueprintArtifact.bindPreview(compact, original.png);
+                if (oldPath.equals(target) && java.util.Arrays.equals(original.json, compact)
+                    && java.util.Arrays.equals(original.png, bound)) {
+                    row.setString("state", "current");
+                    current++;
+                } else {
+                    Envelope envelope = new Envelope();
+                    envelope.owner = previous.owner.toString();
+                    envelope.uploadedBy = previous.uploadedBy;
+                    envelope.blueprint = previous.blueprint;
+                    Entry replacement = new Entry(
+                        envelope,
+                        compact.length + bound.length,
+                        previous.hash,
+                        previous.revision,
+                        compact);
+                    long nextBytes = storedBytes - previous.bytes + replacement.bytes;
+                    long nextDtoBytes = publicDtoBytes - previous.dtoBytes + replacement.dtoBytes;
+                    if (nextBytes > MAX_STORED_BYTES) throw new IOException("Server library byte budget is full");
+                    if (nextDtoBytes > MAX_PUBLIC_DTO_BYTES)
+                        throw new IOException("Server library expanded DTO memory budget is full");
+                    String warning = writePublicPair(
+                        previous.blueprint.id,
+                        compact,
+                        bound,
+                        () -> peer.online && peer.admin
+                            && token > peer.retiredThrough
+                            && !closed
+                            && epoch == runtimeEpoch);
+                    Map<String, Entry> next = new LinkedHashMap<>(published);
+                    next.put(previous.blueprint.id, replacement);
+                    publishIndex(next);
+                    storedBytes = nextBytes;
+                    publicDtoBytes = nextDtoBytes;
+                    catalogRevision++;
+                    row.setString("state", "upgraded");
+                    row.setString("reason", warning.substring(0, Math.min(512, warning.length())));
+                    upgraded++;
+                }
+            } catch (IOException | RuntimeException failure) {
+                row.setString("state", "skipped");
+                String reason = failure.getMessage() == null ? failure.getClass()
+                    .getSimpleName() : failure.getMessage();
+                row.setString("reason", reason.substring(0, Math.min(512, reason.length())));
+                skipped++;
+            }
+            report.add(row);
+        }
+        peer.upgradeReport = new UpgradeReport(token, report, upgraded, current, skipped);
+    }
+
+    private void sendUpgradeReport(Peer peer) {
+        UpgradeReport report = peer.upgradeReport;
+        if (report == null) return;
+        if (!peer.online || report.token <= peer.retiredThrough) {
+            peer.upgradeReport = null;
+            return;
+        }
+        NBTTagCompound reply = report.next();
+        send(peer, reply);
+        if (reply.getBoolean("complete")) {
+            peer.upgradeReport = null;
+            list(peer, 0);
+        }
+    }
+
+    static final class UpgradeReport {
+
+        final long token;
+        final List<NBTTagCompound> entries;
+        final int upgraded, current, skipped, pages;
+        int page;
+
+        UpgradeReport(long token, List<NBTTagCompound> entries, int upgraded, int current, int skipped) {
+            this.token = token;
+            this.entries = entries;
+            this.upgraded = upgraded;
+            this.current = current;
+            this.skipped = skipped;
+            pages = Math
+                .max(1, (entries.size() + HologramLibraryProtocol.PAGE_SIZE - 1) / HologramLibraryProtocol.PAGE_SIZE);
+        }
+
+        NBTTagCompound next() {
+            if (page >= pages) throw new IllegalStateException("Library upgrade report already completed");
+            NBTTagCompound result = HologramLibraryProtocol.reply("upgradeLibraryResult");
+            result.setLong("clientTaskToken", token);
+            result.setInteger("upgraded", upgraded);
+            result.setInteger("current", current);
+            result.setInteger("skipped", skipped);
+            result.setInteger("page", page);
+            result.setInteger("pages", pages);
+            result.setBoolean("complete", page == pages - 1);
+            NBTTagList rows = new NBTTagList();
+            for (int index = page * HologramLibraryProtocol.PAGE_SIZE; index
+                < Math.min(entries.size(), (page + 1) * HologramLibraryProtocol.PAGE_SIZE); index++)
+                rows.appendTag(entries.get(index));
+            result.setTag("entries", rows);
+            result.setString(
+                "message",
+                "Server blueprint upgrade: " + upgraded
+                    + " upgraded, "
+                    + current
+                    + " current, "
+                    + skipped
+                    + " skipped");
+            page++;
+            return result;
+        }
+    }
+
+    static void requireUpgradeAdmin(boolean admin) throws IOException {
+        if (!admin) throw new IOException("Only a server library administrator can upgrade public blueprint storage");
     }
 
     private void publishIndex(Map<String, Entry> entries) {
@@ -1256,11 +1434,13 @@ final class HologramServerLibrary {
         final int bytes;
         final String hash;
         final long revision, dtoBytes;
+        final String storedJsonHash;
         volatile HologramPublicPreview.Builder materialBuilder;
         volatile NBTTagCompound preparedMaterials;
 
-        Entry(Envelope envelope, int bytes, String hash, long revision, int jsonBytes) throws IOException {
-            dtoBytes = HologramTrustedBlueprintCache.dtoWeight(envelope.blueprint, jsonBytes);
+        Entry(Envelope envelope, int bytes, String hash, long revision, byte[] json) throws IOException {
+            dtoBytes = HologramTrustedBlueprintCache.dtoWeight(envelope.blueprint, json.length);
+            storedJsonHash = HologramBlueprintArtifact.hash(json);
             this.hash = hash;
             this.revision = revision;
             owner = UUID.fromString(envelope.owner);
@@ -1281,6 +1461,7 @@ final class HologramServerLibrary {
         volatile Upload upload;
         volatile Download download;
         Draft pendingDraft;
+        UpgradeReport upgradeReport;
         volatile Entry materialPreview;
         volatile NBTTagCompound materialPreviewRequest;
         volatile long retiredThrough;

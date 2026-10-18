@@ -12,6 +12,7 @@ import java.util.UUID;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 
 /** Client-owned files, independent of world saves and server identities. Call from the library worker only. */
@@ -113,12 +114,11 @@ final class HologramClientLibrary {
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
-        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*.json")) {
-            for (Path file : files) {
-                String id = file.getFileName()
-                    .toString()
-                    .replaceFirst("\\.json$", "");
-                if (!id.matches("local_[a-fA-F0-9-]{36}")) continue;
+        {
+            for (java.util.Map.Entry<String, Path> member : HologramBlueprintFiles.managed(directory)
+                .entrySet()) {
+                String id = member.getKey();
+                Path file = member.getValue();
                 seen.add(id);
                 try {
                     CachedEntry cached = entryCache.get(id);
@@ -162,8 +162,9 @@ final class HologramClientLibrary {
     LocalSave prepareLocalSave(byte[] data, byte[] preview, String id, java.util.function.BooleanSupplier stillCurrent)
         throws IOException {
         JsonObject blueprint = blueprint(data);
-        Path target = file(id);
-        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        Path previous = file(id);
+        if (!Files.exists(previous) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        Path target = HologramBlueprintFiles.target(directory, id, data);
         if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
             throw new IOException("蓝图缺少服务器确认的作者信息");
         HologramBlueprintArtifact.PairWrite written = pairIo.write(target, data, preview, stillCurrent);
@@ -172,6 +173,7 @@ final class HologramClientLibrary {
             if (!written.jsonSha256.equals(actual.jsonSha256) || !written.pngSha256.equals(actual.pngSha256))
                 throw new IOException("Actual saved artifact differs from written bytes");
             if (!stillCurrent.getAsBoolean()) throw new IOException("Blueprint save source changed");
+            HologramBlueprintFiles.track(directory, id, written);
             entryCache.put(id, new CachedEntry(new Entry(id, blueprint, actual.json.length), actual));
             return new LocalSave(written, string(blueprint, "name"), target, actual);
         } catch (IOException | RuntimeException failure) {
@@ -190,13 +192,9 @@ final class HologramClientLibrary {
 
     String save(byte[] data, byte[] preview, String replaceId, java.util.function.BooleanSupplier stillCurrent)
         throws IOException {
-        JsonObject blueprint = blueprint(data);
         String id = replaceId == null || replaceId.isEmpty() ? "local_" + UUID.randomUUID() : replaceId;
-        Path target = file(id);
-        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
-        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
-            throw new IOException("蓝图缺少服务器确认的作者信息");
-        HologramBlueprintArtifact.writePair(target, data, preview, stillCurrent);
+        LocalSave saved = prepareLocalSave(data, preview, id, stillCurrent);
+        saved.write.commit();
         return id;
     }
 
@@ -208,12 +206,18 @@ final class HologramClientLibrary {
 
     HologramBlueprintArtifact.PairWrite savePending(byte[] data, byte[] preview, String id,
         java.util.function.BooleanSupplier stillCurrent) throws IOException {
-        JsonObject blueprint = blueprint(data);
-        Path target = file(id);
-        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
-        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
-            throw new IOException("蓝图缺少服务器确认的作者信息");
-        return HologramBlueprintArtifact.writePairPending(target, data, preview, stillCurrent);
+        return prepareLocalSave(data, preview, id, stillCurrent).write;
+    }
+
+    String upgradeLegacy() throws IOException {
+        return upgradeLegacy(() -> true, (done, total) -> {});
+    }
+
+    String upgradeLegacy(java.util.function.BooleanSupplier current,
+        java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
+        String result = HologramBlueprintFiles.upgrade(directory, current, progress);
+        entryCache.clear();
+        return result;
     }
 
     /** Resolve only this local integrated save if shutdown outpaces its final network reply. */
@@ -264,7 +268,8 @@ final class HologramClientLibrary {
     }
 
     void delete(String id) throws IOException {
-        HologramBlueprintArtifact.deletePair(file(id));
+        file(id);
+        HologramBlueprintFiles.delete(directory, id);
     }
 
     String uploadedId(String server, String localId) throws IOException {
@@ -380,11 +385,7 @@ final class HologramClientLibrary {
 
     private Path file(String id) throws IOException {
         if (id == null || !id.matches("local_[a-fA-F0-9-]{36}")) throw new IOException("客户端蓝图 ID 无效");
-        Path path = directory.resolve(id + ".json")
-            .normalize();
-        if (!path.getParent()
-            .equals(directory)) throw new IOException("客户端蓝图路径无效");
-        return path;
+        return HologramBlueprintFiles.resolve(directory, id);
     }
 
     private static JsonObject parse(byte[] data) throws IOException {

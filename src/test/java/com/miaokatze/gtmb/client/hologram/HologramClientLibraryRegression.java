@@ -31,8 +31,36 @@ public final class HologramClientLibraryRegression {
             exerciseSaveRequest();
             HologramLibrarySaveLifecycleRegression.run();
             exerciseQuickFence();
+            exerciseLegacyMappings();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
+        }
+    }
+
+    private static void exerciseLegacyMappings() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-upgrade-memory-");
+        try {
+            HologramClientLibrary library = new HologramClientLibrary(game);
+            String id = "local_11111111-1111-1111-1111-111111111111";
+            String publicId = "public_22222222-2222-2222-2222-222222222222";
+            Files.createDirectories(library.directory());
+            Path old = library.directory()
+                .resolve(id + ".json");
+            HologramBlueprintArtifact.writePair(old, json("Legacy memory", "Alice"), png(0xff335577));
+            library.rememberLocal("server", id);
+            library.uploadedId("server", id, publicId);
+            library.upgradeLegacy();
+            SimpleAssert.that(
+                !Files.exists(old) && library.list()
+                    .size() == 1,
+                "legacy upgrade replaces one pair without duplicating its library entry");
+            SimpleAssert.eq(id, library.lastSource("server").localId, "renaming preserves the recent logical ID");
+            SimpleAssert.eq(publicId, library.uploadedId("server", id), "renaming preserves the upload link");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
         }
     }
 
@@ -101,11 +129,12 @@ public final class HologramClientLibraryRegression {
                     .toAbsolutePath(),
                 library.directory(),
                 "private files are rooted under the actual client game directory");
-            SimpleAssert.eq(
-                game.resolve("MiaoBlueprints/" + first + ".json")
-                    .toAbsolutePath(),
-                library.savedPath(first),
-                "new saves use the exact top-level blueprint path");
+            SimpleAssert.that(
+                library.savedPath(first)
+                    .getFileName()
+                    .toString()
+                    .matches("Original_[a-f0-9]{64}\\.json"),
+                "new saves use the blueprint name and full semantic hash independently of logical ID");
             SimpleAssert.that(Files.isRegularFile(library.savedPath(first)), "new blueprint is persisted at that path");
             SimpleAssert.that(
                 Files.isRegularFile(HologramBlueprintArtifact.previewPath(library.savedPath(first))),

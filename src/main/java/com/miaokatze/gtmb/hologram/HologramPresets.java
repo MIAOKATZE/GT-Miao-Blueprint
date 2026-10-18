@@ -52,6 +52,14 @@ final class HologramPresets {
         cached = null;
     }
 
+    /** Storage migration shares the catalog writer monitor and never overwrites a newer logical save. */
+    static synchronized void replaceCompressedCatalog(Path file, byte[] expected, byte[] compact) throws IOException {
+        byte[] actual = HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES);
+        if (!java.util.Arrays.equals(expected, actual)) throw new IOException("蓝图库在升级期间已更新，请重试");
+        HologramBlueprintFiles.replace(file, compact);
+        cached = null;
+    }
+
     /** Explicit library navigation/refresh only; snapshots and ticks keep the existing in-memory catalog. */
     static synchronized void refreshLocalArtifacts() throws IOException {
         Path library = libraryPath();
@@ -61,8 +69,7 @@ final class HologramPresets {
             Preset preset = entries.next();
             // Legacy collection-only templates remain readable. Native artifacts must still have both members.
             if (preset.nativeBlueprint == null) continue;
-            Path json = library.getParent()
-                .resolve("local_" + preset.id + ".json");
+            Path json = HologramBlueprintFiles.resolve(library.getParent(), "local_" + preset.id);
             Path preview = HologramBlueprintArtifact.previewPath(json);
             if (!Files.isRegularFile(json) || !Files.isRegularFile(preview)) entries.remove();
         }
@@ -358,7 +365,7 @@ final class HologramPresets {
     }
 
     static synchronized void delete(String id) throws IOException {
-        delete(id, HologramBlueprintArtifact::deletePair);
+        delete(id, path -> HologramBlueprintFiles.delete(path.getParent(), "local_" + id));
     }
 
     interface ArtifactDeleteOperation {
@@ -373,8 +380,7 @@ final class HologramPresets {
         if (id == null || !id.matches("[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"))
             throw new IOException("蓝图必须具有当前原生保存格式的完整 JSON 和 PNG 文件");
         Path library = libraryPath();
-        Path artifact = library.getParent()
-            .resolve("local_" + id + ".json");
+        Path artifact = HologramBlueprintFiles.resolve(library.getParent(), "local_" + id);
         if (Files.exists(artifact)) {
             // Missing PNG/JSON after an external deletion must still allow removing the surviving pair member.
             // A complete pair retains the existing identity check before any destructive operation.

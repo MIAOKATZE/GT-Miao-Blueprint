@@ -423,8 +423,9 @@ final class HologramUiLibrary {
             ui.session.editable() && ui.library.selectedPresetExists(),
             mx,
             my);
-        ui.canvas.button(150, x + 5, 301, 103, 13, "来源版本", true, mx, my);
-        ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", !browsePreviewActive() && ui.session.editable(), mx, my);
+        ui.canvas.button(150, x + 5, 301, 67, 13, "来源版本", true, mx, my);
+        drawUpgradeButton(x + 77, mx, my);
+        ui.canvas.button(227, x + 148, 301, 67, 13, "全局提示词", !browsePreviewActive() && ui.session.editable(), mx, my);
         ui.library.drawBlueprintWorkbench(mx, my);
         drawRect(35, 261, 442, 279, 0xe8172f36);
         HologramProgress waiting = HologramLibraryClient.INSTANCE.progress();
@@ -585,8 +586,13 @@ final class HologramUiLibrary {
             ui.canvas.button(208, x + 5, 301, 30, 13, "上页", library.page() > 0, mx, my);
             ui.canvas.text((library.page() + 1) + " / " + library.pages(), x + 36, 303, 40, 0x8ba7ad);
             ui.canvas.button(209, x + 78, 301, 30, 13, "下页", library.page() + 1 < library.pages(), mx, my);
-        } else ui.canvas.button(202, x + 5, 301, 103, 13, "刷新", !library.busy(), mx, my);
-        ui.canvas.button(227, x + 112, 301, 103, 13, "全局提示词", !browsePreviewActive() && ui.session.editable(), mx, my);
+            if (library.config()
+                .getBoolean("admin")) drawUpgradeButton(x + 113, mx, my);
+        } else {
+            ui.canvas.button(202, x + 5, 301, 67, 13, "刷新", !library.busy(), mx, my);
+            drawUpgradeButton(x + 77, mx, my);
+        }
+        ui.canvas.button(227, x + 148, 301, 67, 13, "全局提示词", !browsePreviewActive() && ui.session.editable(), mx, my);
         ui.library.drawBlueprintWorkbench(mx, my);
         drawRect(35, 261, 442, 279, 0xe8172f36);
         HologramProgress progress = library.progress();
@@ -627,6 +633,46 @@ final class HologramUiLibrary {
                 && !HologramLibraryClient.INSTANCE.busy(),
             mx,
             my);
+    }
+
+    private void drawUpgradeButton(int x, int mx, int my) {
+        boolean server = HologramLibraryClient.dedicated() && this.publicLibrary;
+        if (server && !HologramLibraryClient.INSTANCE.config()
+            .getBoolean("admin")) return;
+        int width = server ? 30 : 66;
+        ui.canvas.button(
+            226,
+            x,
+            301,
+            width,
+            13,
+            server ? "升级" : "升级旧蓝图",
+            !HologramLibraryClient.INSTANCE.busy() && !HologramBackgroundTasks.busy()
+                && ui.session.pendingSequence() < 0,
+            mx,
+            my);
+        if (mx >= x && mx < x + width && my >= 301 && my < 314) {
+            ui.canvas.tooltip(new ArrayList<>());
+            ui.canvas.tooltip()
+                .add(server ? "管理员：无损压缩服务器公库，校准 JSON / PNG 文件名。" : "一键无损压缩本地旧蓝图，校准 JSON / PNG 文件名。");
+            ui.canvas.tooltip()
+                .add("保留逻辑ID、最近蓝图与上传映射；缺图或配对不明确时保留原件并报告。");
+            String status = HologramLibraryClient.INSTANCE.status();
+            if (!status.isEmpty()) ui.canvas.tooltip()
+                .add(status);
+            java.util.List<String> details = HologramLibraryClient.INSTANCE.upgradeDetails();
+            for (int index = 0; index < Math.min(8, details.size()); index++) ui.canvas.tooltip()
+                .add(details.get(index));
+            if (details.size() > 8) ui.canvas.tooltip()
+                .add("另有 " + (details.size() - 8) + " 条跳过原因，完整明细见游戏日志。");
+        }
+    }
+
+    private void upgradedLibrary() {
+        libraryResult = HologramLibraryClient.INSTANCE.status();
+        ui.session.notice(libraryResult);
+        if (HologramLibraryClient.dedicated() && this.publicLibrary) HologramLibraryClient.INSTANCE.refreshServer(0);
+        else refreshLibrary();
     }
 
     void openLibraryAdmin() {
@@ -1212,6 +1258,13 @@ final class HologramUiLibrary {
     }
 
     boolean activateControl(int id) {
+        if (id == 226) {
+            if (HologramLibraryClient.dedicated() && this.publicLibrary) {
+                if (HologramLibraryClient.INSTANCE.config()
+                    .getBoolean("admin")) HologramLibraryClient.INSTANCE.upgradeServer(this::upgradedLibrary);
+            } else HologramLibraryClient.INSTANCE.upgradeLocal(this::upgradedLibrary);
+            return true;
+        }
         if (id == 309 || id == 310) {
             HologramBlueprintWebsite.open(ui.host.parent());
             return true;
@@ -1748,7 +1801,7 @@ final class HologramUiLibrary {
         ui.library.presetNameField(
             new HologramMuiTextField(ui.host.parent(), 457, 78, HologramScreenLayout.COMPACT_PANEL_WIDTH - 10, 16));
         ui.library.presetNameField()
-            .setMaxStringLength(48);
+            .setMaxStringLength(240);
         if (ui.session.state().data.getBoolean("virtual")) ui.library.presetNameField()
             .setText(ui.session.state().data.getString("virtualPresetName"));
         UiMemory memory = HologramUiMemory.UI_MEMORY()

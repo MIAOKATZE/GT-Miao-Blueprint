@@ -269,6 +269,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | **游戏内公库 / In-game server library** | 蓝图库「客户端／服务器」切换，完成上传与下载。 / Switch Client/Server for library transfers. |
 | **直接转交文件 / Manual transfer** | 将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`。 / Copy the same-basename JSON + PNG pair into the recipient's game-directory `MiaoBlueprints/`. |
 
+独立蓝图现在以 **蓝图名＋完整内容哈希** 命名，JSON 与 PNG 使用同一个文件名主体。蓝图库中的「升级旧蓝图」会一键重新无损压缩、校准配对文件名，并保留最近蓝图与上传关联；旧文件仍可读取。缺图、配对不明确或写入失败的条目会保留原件并报告原因。服务器公库升级由管理员执行。
+
+*Individual blueprints use their name plus the full content hash, with matching JSON/PNG basenames. Upgrade old blueprints recompresses and renames existing pairs while retaining recent and upload associations. Unreadable or ambiguous pairs remain intact and are reported; server-library upgrades require an administrator.*
+
 剪切暂存归当前存档与玩家，不参与蓝图分享。保存后的配置、资源与网络选择请按实际用途核对；完整处理规则见 [使用指南](https://miaokatze.com/wiki?mod=gtmb)。
 
 *Stored cuts remain separate from sharing. Review configuration, resource and network choices for the intended use.*

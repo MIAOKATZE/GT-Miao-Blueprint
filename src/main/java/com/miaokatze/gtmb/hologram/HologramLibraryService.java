@@ -24,9 +24,9 @@ public final class HologramLibraryService {
 
     /** No callback from a completed transfer can recreate or reopen a closed/replaced session. */
     public static boolean sessionCurrent(EntityPlayerMP player, NBTTagCompound request) {
-        return (HologramLibraryFacade.enabled() || request != null && "publicPrepare".equals(request.getString("op"))
-            && !request.getString("integratedPresetId")
-                .isEmpty())
+        return (HologramLibraryFacade.enabled() || request != null && ("privateBegin".equals(request.getString("op"))
+            || "publicPrepare".equals(request.getString("op")) && !request.getString("integratedPresetId")
+                .isEmpty()))
             && connectedProjector(player)
             && HologramService.librarySessionCurrent(player, request);
     }

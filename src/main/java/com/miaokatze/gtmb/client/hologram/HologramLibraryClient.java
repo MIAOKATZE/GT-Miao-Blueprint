@@ -96,6 +96,25 @@ final class HologramLibraryClient {
     private String browseStatus = "";
     private String lastIntegratedPreview = "";
     private ContentAdmission contentAdmission;
+    private volatile UpgradeTask upgradeTask;
+    private final java.util.List<String> upgradeDetails = new java.util.ArrayList<>();
+
+    private static final class UpgradeTask {
+
+        final long task, epoch;
+        final boolean server;
+        final Runnable refresh;
+        int page, pages;
+        volatile int done, total;
+        volatile long progressedAt;
+
+        UpgradeTask(long task, long epoch, boolean server, Runnable refresh) {
+            this.task = task;
+            this.epoch = epoch;
+            this.server = server;
+            this.refresh = refresh;
+        }
+    }
 
     private static final class ContentAdmission {
 
@@ -512,6 +531,20 @@ final class HologramLibraryClient {
                 rememberPublic(selected);
             }
         }
+        UpgradeTask upgrading = upgradeTask;
+        if (upgrading != null && upgrading.task == backgroundTaskToken
+            && upgrading.epoch == generation
+            && upgrading.progressedAt != 0) {
+            lastActivity = Math.max(lastActivity, upgrading.progressedAt);
+            transferProgress.update(
+                "library:" + generation,
+                "library.disk",
+                upgrading.done,
+                upgrading.total,
+                "steps",
+                false,
+                lastActivity);
+        }
         if ((outgoing != null || incoming != null
             || downloadExpected
             || preparing
@@ -630,12 +663,12 @@ final class HologramLibraryClient {
         NBTTagCompound request = request("quickCancel");
         request.setLong("clientTaskToken", cancelledTask);
         request.setString("quickToken", token);
-        if (dedicated()) HologramNetwork.sendLibrary(request);
+        HologramNetwork.sendLibrary(request);
         if (!quickSession.isEmpty()) HologramClient.dismissRootView(quickSession, 0);
         if (outgoingQuick && outgoing != null) {
             NBTTagCompound cancel = request("cancel");
             cancel.setString("transfer", outgoingId);
-            if (dedicated()) HologramNetwork.sendLibrary(cancel);
+            HologramNetwork.sendLibrary(cancel);
             outgoing = null;
             uploadWindow = null;
             outgoingId = "";
@@ -692,6 +725,103 @@ final class HologramLibraryClient {
                 finishLocalRefresh(token, operation, labels);
             });
         });
+    }
+
+    /** File conversion runs on the existing bounded worker and refreshes through the normal library UI route. */
+    void upgradeLocal(Runnable refreshCatalog) {
+        if (busy() || !beginBackgroundTask("升级本地蓝图")) return;
+        ensureStore();
+        long token = generation;
+        UpgradeTask upgrading = new UpgradeTask(backgroundTaskToken, token, false, refreshCatalog);
+        upgradeTask = upgrading;
+        upgradeDetails.clear();
+        preparing = true;
+        localProgressPhase = "library.disk";
+        transferProgress.update("library:" + token, localProgressPhase, 0, 0, "steps", false, System.nanoTime());
+        status = "正在压缩并升级本地蓝图";
+        work(() -> {
+            String result = store.upgradeLegacy(
+                () -> token == generation && upgrading.task == backgroundTaskToken && upgradeTask == upgrading,
+                (done, total) -> {
+                    if (token != generation || upgrading.task != backgroundTaskToken || upgradeTask != upgrading)
+                        return;
+                    upgrading.done = done;
+                    upgrading.total = total;
+                    upgrading.progressedAt = System.nanoTime();
+                });
+            main(() -> {
+                if (token != generation || upgrading.task != backgroundTaskToken || upgradeTask != upgrading) return;
+                upgradeTask = null;
+                preparing = false;
+                status = result;
+                progressCompleted();
+                finishBackgroundTask(backgroundTaskToken, true, result);
+                refreshLocal();
+                if (refreshCatalog != null) refreshCatalog.run();
+            });
+        });
+    }
+
+    void upgradeServer(Runnable refreshCatalog) {
+        if (!dedicated() || !config.getBoolean("admin") || busy() || !beginBackgroundTask("升级服务器蓝图")) return;
+        upgradeTask = new UpgradeTask(backgroundTaskToken, generation, true, refreshCatalog);
+        upgradeDetails.clear();
+        preparing = true;
+        localProgressPhase = "library.disk";
+        transferProgress.update("library:" + generation, localProgressPhase, 0, 0, "steps", false, System.nanoTime());
+        status = "正在升级服务器蓝图库，等待管理员操作结果";
+        NBTTagCompound request = request("upgradeLibrary");
+        request.setLong("clientTaskToken", backgroundTaskToken);
+        HologramNetwork.sendLibrary(request);
+    }
+
+    java.util.List<String> upgradeDetails() {
+        return new java.util.ArrayList<>(upgradeDetails);
+    }
+
+    private void receiveUpgradeResult(NBTTagCompound reply) {
+        UpgradeTask upgrading = upgradeTask;
+        if (upgrading == null || !upgrading.server
+            || upgrading.epoch != generation
+            || upgrading.task != backgroundTaskToken
+            || reply.getLong("clientTaskToken") != upgrading.task) return;
+        int page = reply.getInteger("page"), pages = reply.getInteger("pages");
+        if (page < upgrading.page) return;
+        NBTTagList entries = reply.getTagList("entries", 10);
+        if (page != upgrading.page || pages < 1
+            || pages > 86
+            || page >= pages
+            || upgrading.pages != 0 && upgrading.pages != pages
+            || entries.tagCount() > HologramLibraryProtocol.PAGE_SIZE
+            || reply.getBoolean("complete") != (page == pages - 1)) {
+            failTask("upgrade.report.invalid", "服务器蓝图升级报告不完整，请重新读取蓝图库");
+            return;
+        }
+        upgrading.pages = pages;
+        upgrading.page++;
+        for (int index = 0; index < entries.tagCount(); index++) {
+            NBTTagCompound entry = entries.getCompoundTagAt(index);
+            if (!"skipped".equals(entry.getString("state"))) continue;
+            String id = entry.getString("id"), reason = entry.getString("reason");
+            String detail = id.substring(0, Math.min(96, id.length())) + "："
+                + reason.substring(0, Math.min(512, reason.length()));
+            upgradeDetails.add(detail);
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info("Blueprint server upgrade skipped " + detail);
+        }
+        status = "服务器蓝图升级：已升级 " + Math.max(0, reply.getInteger("upgraded"))
+            + "，已最新 "
+            + Math.max(0, reply.getInteger("current"))
+            + "，跳过 "
+            + Math.max(0, reply.getInteger("skipped"));
+        lastActivity = System.nanoTime();
+        transferProgress
+            .update("library:" + generation, localProgressPhase, upgrading.page, pages, "steps", false, lastActivity);
+        if (!reply.getBoolean("complete")) return;
+        upgradeTask = null;
+        preparing = false;
+        progressCompleted();
+        finishBackgroundTask(upgrading.task, true, status);
+        if (upgrading.refresh != null) upgrading.refresh.run();
     }
 
     private void finishLocalRefresh(long token, String operation, NBTTagList labels) {
@@ -844,7 +974,8 @@ final class HologramLibraryClient {
             HologramProgress observed = preparationProgress.view(now);
             if (observed != null) return observed;
             transferProgress.update(identity, "library.prepare", 0, 0, "", false, now);
-        } else if (preparing) transferProgress.update(identity, localProgressPhase, 0, 0, "", false, now);
+        } else if (preparing && upgradeTask == null)
+            transferProgress.update(identity, localProgressPhase, 0, 0, "", false, now);
         else if (quick.active()) transferProgress.update(identity, "library.session", 0, 0, "", false, now);
         else if (deletingServer) transferProgress.update(identity, "library.delete", 0, 0, "", false, now);
         HologramProgress transfer = transferProgress.view(now);
@@ -881,6 +1012,11 @@ final class HologramLibraryClient {
         if (backgroundTaskToken != 0) return true;
         backgroundTaskToken = HologramBackgroundTasks.beginLibrary(label);
         if (backgroundTaskToken != 0) {
+            // Every owner gets its own idle budget, including disk-only preview and the following admission.
+            // A fresh client has no prior packet activity; zero is not a valid task start time.
+            lastActivity = System.nanoTime();
+            transferProgress.clear();
+            localProgressPhase = "library.prepare";
             cancelledSourceSave = null;
             resetLifecycle();
         }
@@ -1182,6 +1318,7 @@ final class HologramLibraryClient {
         long epoch = beginBrowsePreview(placement);
         String previewServer = connection;
         preparing = true;
+        localProgressPhase = "library.read";
         work(() -> {
             byte[] bytes = store.previewArtifact(id);
             HologramBlueprintArtifact.Artifact source = HologramBlueprintArtifact.decode(bytes);
@@ -1203,6 +1340,7 @@ final class HologramLibraryClient {
         HologramContentPreparationScreen.open();
         ensureStore();
         preparing = true;
+        localProgressPhase = "library.read";
         long token = generation;
         work(() -> {
             HologramClientLibrary.LastSource source = store.lastSource(connection);
@@ -1257,6 +1395,7 @@ final class HologramLibraryClient {
             PublicPreview retained = cached;
             long token = generation;
             preparing = true;
+            localProgressPhase = "library.read";
             work(() -> {
                 NBTTagCompound preview = com.miaokatze.gtmb.hologram.HologramSnapshotCodec.decode(retained.bytes);
                 if (retained.materials != null) preview.setTag("localMaterials", retained.materials);
@@ -1319,8 +1458,10 @@ final class HologramLibraryClient {
         java.nio.file.Path directory = Minecraft.getMinecraft().mcDataDir.toPath()
             .resolve("MiaoBlueprints");
         preparing = true;
+        localProgressPhase = "library.read";
         work(() -> {
-            java.nio.file.Path member = directory.resolve("local_" + id + ".json");
+            java.nio.file.Path member = com.miaokatze.gtmb.hologram.HologramBlueprintFiles
+                .resolve(directory, "local_" + id);
             byte[] json;
             if (java.nio.file.Files.isRegularFile(member)) {
                 if (java.nio.file.Files.size(member) > HologramBlueprintArtifact.MAX_JSON_BYTES)
@@ -1492,16 +1633,18 @@ final class HologramLibraryClient {
         bootstrap.setString("op", "quickBootstrap");
         bootstrap.setString("quickToken", quick.token());
         bootstrap.setLong("clientTaskToken", backgroundTaskToken);
-        if (!dedicated()) {
+        if (!dedicated() && quickBytes == null) {
             placementIntent.setString("integratedPresetId", placement.publicId());
             quickFallback = (NBTTagCompound) placementIntent.copy();
         }
         if (quickBytes != null) {
             byte[] bytes = quickBytes;
+            long token = generation;
+            String quickToken = quick.token();
             work(() -> {
                 String digest = hash(bytes);
                 main(() -> {
-                    if (!quick.active()) return;
+                    if (token != generation || !quick.matches(quickToken)) return;
                     quickHash = digest;
                     HologramNetwork.sendLibrary(bootstrap);
                 });
@@ -1618,6 +1761,7 @@ final class HologramLibraryClient {
             lastSaveStatus = System.nanoTime();
         }
         advanceGeneration();
+        upgradeTask = null;
         saveProgress.clear();
         downloadExpected = false;
         draftPending = false;
@@ -1642,6 +1786,10 @@ final class HologramLibraryClient {
 
     private void receive(NBTTagCompound reply) {
         String op = reply.getString("op");
+        if ("upgradeLibraryResult".equals(op)) {
+            receiveUpgradeResult(reply);
+            return;
+        }
         if ("sourceCancelled".equals(op)) {
             SaveCommand cancelled = cancelledSourceSave;
             if (cancelled == null || backgroundTaskToken != 0
@@ -1665,6 +1813,8 @@ final class HologramLibraryClient {
             || "previewReady".equals(op)
             || "uploaded".equals(op)
             || "privateImported".equals(op)
+            || "contentReady".equals(op)
+            || "contentMissing".equals(op)
             || "previewVerified".equals(op)
             || "downloadBegin".equals(op)
             || "downloadChunk".equals(op)
@@ -1679,6 +1829,7 @@ final class HologramLibraryClient {
                 reply.getLong("clientTaskToken"),
                 reply.getString("transfer"),
                 reply.getString("contentHash"))) return;
+            lastActivity = System.nanoTime();
             contentAdmission = null;
             outgoing = null;
             uploadWindow = null;

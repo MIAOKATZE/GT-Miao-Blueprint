@@ -186,9 +186,9 @@ public final class HologramCutInputRegression {
             for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
                 SimpleAssert.eq(
                     stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MARK
-                        : HologramCutInput.Intent.SWITCHER,
+                        : HologramCutInput.Intent.STORAGE,
                     HologramCutInput.right(stage, true, false, false, true, true),
-                    "an unresolved " + operation + " allows Ctrl-Shift mode selection even from " + stage);
+                    "an unresolved " + operation + " allows Ctrl-Shift storage browsing even from " + stage);
             }
             HologramCutInput.Switcher mode = new HologramCutInput.Switcher();
             SimpleAssert.that(mode.release(false) && !mode.cut(), "Shift release chooses ordinary blueprint");

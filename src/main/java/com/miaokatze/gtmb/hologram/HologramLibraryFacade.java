@@ -129,14 +129,7 @@ public final class HologramLibraryFacade {
     /** Netty ingress is capped before anything is posted to the main-thread queue. */
     static void receive(EntityPlayerMP player, NBTTagCompound request) {
         String operation = request.getString("op");
-        if (!enabled() && !("quickBootstrap".equals(operation) || "quickCancel".equals(operation)
-            || "publicPrepare".equals(operation)
-            || "contentResolve".equals(operation)
-            || "previewBegin".equals(operation)
-            || "previewChunk".equals(operation)
-            || "cancel".equals(operation)
-            || "saveStatus".equals(operation)
-            || "saveResultConsumed".equals(operation))) return;
+        if (!enabled() && !integratedOperation(operation)) return;
         synchronized (pending) {
             UUID owner = actorId(player);
             boolean chunk = HologramLibraryProtocol.uploadChunk(request);
@@ -178,6 +171,20 @@ public final class HologramLibraryFacade {
         }
     }
 
+    /** Integrated worlds use private content transport while public publishing and administration stay disabled. */
+    static boolean integratedOperation(String operation) {
+        return "quickBootstrap".equals(operation) || "quickCancel".equals(operation)
+            || "publicPrepare".equals(operation)
+            || "contentResolve".equals(operation)
+            || "privateBegin".equals(operation)
+            || "privateChunk".equals(operation)
+            || "previewBegin".equals(operation)
+            || "previewChunk".equals(operation)
+            || "cancel".equals(operation)
+            || "saveStatus".equals(operation)
+            || "saveResultConsumed".equals(operation);
+    }
+
     static void importPrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) {
         importPrivate(player, request, preset, "privateImported");
     }
@@ -186,11 +193,7 @@ public final class HologramLibraryFacade {
         String reply) {
         scheduleLibraryCallback(player, request, () -> {
             PrivateReceiver receiver = privateReceiver;
-            if ((enabled()
-                || "publicPrepare".equals(request.getString("op")) && !request.getString("integratedPresetId")
-                    .isEmpty())
-                && receiver != null
-                && library != null
+            if (receiver != null && library != null
                 && library.draftTaskCurrent(player, request)
                 && HologramLibraryService.sessionCurrent(player, request)) {
                 try {

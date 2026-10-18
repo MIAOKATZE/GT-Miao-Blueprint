@@ -110,6 +110,13 @@ public final class HologramRegressionTest {
         cases.put(
             "client_blueprint_library_is_local_atomic_and_preserves_authorship",
             com.miaokatze.gtmb.client.hologram.HologramClientLibraryRegression::run);
+        cases.put("legacy_blueprint_upgrade_is_lossless_portable_and_pair_index_atomic", () -> {
+            try {
+                HologramBlueprintUpgradeRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put("dedicated_public_library_enforces_quota_owner_op4_and_transfer_budgets", () -> {
             try {
                 HologramLibraryRegression.run();

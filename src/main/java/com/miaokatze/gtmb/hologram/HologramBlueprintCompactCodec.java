@@ -60,6 +60,86 @@ public final class HologramBlueprintCompactCodec {
         return parse(new String(bytes, StandardCharsets.UTF_8), limit);
     }
 
+    /** Storage-only migration. Preserve every JSON field and NBT string without model/policy conversion. */
+    public static byte[] recompress(byte[] bytes, int limit) throws IOException {
+        return recompress(bytes, limit, () -> true);
+    }
+
+    public static byte[] recompress(byte[] bytes, int limit, java.util.function.BooleanSupplier current)
+        throws IOException {
+        compressionCurrent(current);
+        JsonObject original = parse(bytes, limit);
+        JsonObject root = cloneObject(original);
+        List<JsonObject> blueprints = new ArrayList<>();
+        if (root.has("blueprint") && !root.has("presets")) blueprints.add(object(root.get("blueprint")));
+        else if (root.has("presets") && !root.has("blueprint")) {
+            for (JsonElement row : array(root.get("presets"))) blueprints.add(object(row));
+        } else throw new IOException("Missing or ambiguous blueprint container");
+        // These names belong to the compact envelope. Never silently replace legacy extension fields.
+        if (root.has("materials") || root.has("nbt")) throw new IOException("Reserved compact envelope fields");
+        Map<String, Integer> materialIds = new LinkedHashMap<>(), nbtIds = new LinkedHashMap<>();
+        JsonArray materials = new JsonArray(), nbt = new JsonArray();
+        for (JsonObject blueprint : blueprints) {
+            internRawNbt(blueprint, nbtIds, nbt);
+            for (String field : new String[] { "cells", "palette" }) {
+                JsonElement rows = blueprint.get(field);
+                if (rows == null || rows.isJsonNull()) continue;
+                JsonArray compressed = new JsonArray();
+                for (JsonElement row : array(rows)) {
+                    compressionCurrent(current);
+                    JsonObject descriptor = cloneObject(object(row)), coordinates = new JsonObject();
+                    for (String coordinate : new String[] { "x", "y", "z" })
+                        if (descriptor.has(coordinate)) coordinates.add(coordinate, descriptor.remove(coordinate));
+                    internRawNbt(descriptor, nbtIds, nbt);
+                    String key = descriptor.toString();
+                    Integer id = materialIds.get(key);
+                    if (id == null) {
+                        id = materialIds.size();
+                        if (id >= MAX_DICTIONARY) throw new IOException("Blueprint material dictionary budget");
+                        materialIds.put(key, id);
+                        materials.add(descriptor);
+                    }
+                    JsonArray reference = new JsonArray();
+                    reference.add(new JsonPrimitive(id));
+                    reference.add(coordinates);
+                    compressed.add(reference);
+                }
+                blueprint.add(field, compressed);
+            }
+        }
+        root.addProperty("encoding", ENCODING);
+        root.add("materials", materials);
+        root.add("nbt", nbt);
+        byte[] result = HologramBlueprintSharing.encodeBounded(GSON, root, limit, () -> compressionCurrent(current));
+        if (!original.equals(parse(result, limit))) throw new IOException("Blueprint compression changed JSON content");
+        compressionCurrent(current);
+        return result;
+    }
+
+    private static void compressionCurrent(java.util.function.BooleanSupplier current) throws IOException {
+        if (!current.getAsBoolean()) throw new IOException("蓝图升级已取消");
+    }
+
+    private static void internRawNbt(JsonObject object, Map<String, Integer> ids, JsonArray dictionary)
+        throws IOException {
+        for (String field : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt" }) {
+            JsonElement value = object.get(field);
+            if (value == null || value.isJsonNull()) continue;
+            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
+                .isString()) throw new IOException("Invalid blueprint NBT text");
+            String text = value.getAsString();
+            if (text.length() > 2 * 1024 * 1024) throw new IOException("Blueprint NBT text budget");
+            Integer id = ids.get(text);
+            if (id == null) {
+                id = ids.size();
+                if (id >= MAX_DICTIONARY) throw new IOException("Blueprint NBT dictionary budget");
+                ids.put(text, id);
+                dictionary.add(new JsonPrimitive(text));
+            }
+            object.addProperty(field, id);
+        }
+    }
+
     static JsonObject parse(String text, int limit) throws IOException {
         HologramBlueprintSharing.boundedJson(text, limit);
         try {

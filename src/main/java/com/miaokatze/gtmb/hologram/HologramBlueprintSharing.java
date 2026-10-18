@@ -40,32 +40,58 @@ final class HologramBlueprintSharing {
     }
 
     static Path resolve(String name) throws IOException {
-        if (name == null || !name.matches("[a-zA-Z0-9_-]{1,64}")) throw new IOException("蓝图文件名只能包含字母、数字、下划线和短横线");
-        if (name.equalsIgnoreCase("hologram-presets") || name.toLowerCase(java.util.Locale.ROOT)
-            .startsWith("local_")
-            || name.toLowerCase(java.util.Locale.ROOT)
-                .startsWith("public_"))
+        if (name == null || name.isEmpty() || name.length() > 240 || name.matches(".*[\\\\/:*?\"<>|\\p{Cntrl}].*"))
+            throw new IOException("蓝图文件名无效");
+        if (name.equalsIgnoreCase("hologram-presets") || name.matches("(?i)(?:local_|public_)[a-f0-9-]{36}"))
             throw new IOException("蓝图文件名与蓝图库保留名称冲突");
-        return HologramLibraryFacade.blueprintDirectory()
-            .resolve(name + ".json");
+        return HologramBlueprintFiles.resolve(HologramLibraryFacade.blueprintDirectory(), name);
     }
 
     static void write(Path file, HologramPresets.Preset preset) throws IOException {
         String id = preset == null ? "" : preset.id;
         String basename = id.startsWith("local_") || id.startsWith("public_") ? id : "local_" + id;
         if (!basename.matches("(?:local_|public_)[a-fA-F0-9-]{36}")) throw new IOException("蓝图必须先完成真实结构预览保存");
-        HologramBlueprintArtifact.Artifact original = HologramBlueprintArtifact.readPair(
-            HologramLibraryFacade.blueprintDirectory()
-                .resolve(basename + ".json"));
-        write(file, preset, original.png);
+        HologramBlueprintArtifact.Artifact original = HologramBlueprintArtifact
+            .readPair(HologramBlueprintFiles.resolve(HologramLibraryFacade.blueprintDirectory(), basename));
+        writeNamed(file, preset, original.png);
     }
 
     static void write(Path file, HologramPresets.Preset preset, byte[] preview) throws IOException {
+        HologramBlueprintArtifact.writePair(file, encoded(preset), preview);
+    }
+
+    private static byte[] encoded(HologramPresets.Preset preset) throws IOException {
         HologramPresets.Preset copy = HologramPresets.copy(preset);
         HologramBlueprintVersions.validate(copy);
         HologramPresets.validate(copy);
-        byte[] bytes = HologramBlueprintCompactCodec.encode(copy, (done, total) -> {});
-        HologramBlueprintArtifact.writePair(file, bytes, preview);
+        return HologramBlueprintCompactCodec.encode(copy, (done, total) -> {});
+    }
+
+    private static void writeNamed(Path file, HologramPresets.Preset preset, byte[] preview) throws IOException {
+        byte[] bytes = encoded(preset);
+        Path directory = file.toAbsolutePath()
+            .normalize()
+            .getParent();
+        String member = file.getFileName()
+            .toString();
+        String alias = member.substring(0, member.length() - 5);
+        // A caller may already have resolved a legacy alias to its current physical filename.
+        alias = HologramBlueprintFiles.logicalAlias(directory, file, alias);
+        Path target = HologramBlueprintFiles.target(directory, alias, bytes);
+        HologramBlueprintArtifact.PairWrite receipt = HologramBlueprintArtifact
+            .writePairPending(target, bytes, preview, () -> true);
+        try {
+            HologramBlueprintArtifact.readPair(target);
+            HologramBlueprintFiles.track(directory, alias, receipt);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                receipt.rollback();
+            } catch (IOException rollback) {
+                failure.addSuppressed(rollback);
+            }
+            throw failure;
+        }
+        receipt.commit();
     }
 
     /** Stop serialization at the byte budget instead of allocating an unbounded JSON string first. */

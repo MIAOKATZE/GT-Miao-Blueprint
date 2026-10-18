@@ -45,8 +45,11 @@ public final class HologramLibraryRegression {
     }
 
     public static void run() throws Exception {
+        publicStorageUpgrade();
+        boundedUpgradeReport();
         publicExpandedBudgetBeforePublish();
         contentAdmissionWithoutWorkspace();
+        integratedPrivateIngress();
         trustedCacheQuotasAndSavedReceipt();
         activationControlAdmission();
         localExecutionConsent();
@@ -69,6 +72,197 @@ public final class HologramLibraryRegression {
         cancelledServerPreparationReleasesQueue();
     }
 
+    @SuppressWarnings("unchecked")
+    private static void integratedPrivateIngress() throws Exception {
+        Field global = MinecraftServer.class.getDeclaredField("mcServer");
+        global.setAccessible(true);
+        Object previous = global.get(null);
+        Field queueField = HologramLibraryFacade.class.getDeclaredField("inbound");
+        queueField.setAccessible(true);
+        java.util.Queue<Object> queue = (java.util.Queue<Object>) queueField.get(null);
+        Field pendingField = HologramLibraryFacade.class.getDeclaredField("pending");
+        pendingField.setAccessible(true);
+        Map<UUID, HologramLibraryProtocol.RequestQuota> pending = (Map<UUID, HologramLibraryProtocol.RequestQuota>) pendingField
+            .get(null);
+        Field quotaField = HologramLibraryFacade.class.getDeclaredField("inboundQuota");
+        quotaField.setAccessible(true);
+        HologramLibraryProtocol.RequestQuota globalQuota = (HologramLibraryProtocol.RequestQuota) quotaField.get(null);
+        SimpleAssert.that(queue.isEmpty(), "integrated ingress starts with no unrelated queued requests");
+        EntityPlayerMP actor = player(UUID.randomUUID(), "IntegratedPrivateOwner");
+        try {
+            global.set(
+                null,
+                unsafe().allocateInstance(Class.forName("net.minecraft.server.integrated.IntegratedServer")));
+            for (String operation : new String[] { "privateBegin", "contentResolve", "cancel" }) {
+                NBTTagCompound request = HologramLibraryProtocol.request(operation);
+                request.setLong("clientTaskToken", 919);
+                HologramLibraryFacade.receive(actor, request);
+                Object accepted = queue.poll();
+                SimpleAssert.that(accepted != null, "integrated wire admits private operation " + operation);
+                NBTTagCompound copy = (NBTTagCompound) get(accepted, "request");
+                SimpleAssert.eq(operation, copy.getString("op"), "queued private request preserves its purpose");
+                boolean chunk = (Boolean) get(accepted, "chunk");
+                HologramLibraryProtocol.RequestQuota quota = (HologramLibraryProtocol.RequestQuota) get(
+                    accepted,
+                    "quota");
+                quota.release(chunk);
+                globalQuota.release(chunk);
+                pending.remove(HologramLibraryFacade.actorId(actor), quota);
+            }
+            SimpleAssert.that(
+                HologramLibraryFacade.integratedOperation("privateChunk"),
+                "integrated transport permits the private chunk operation type");
+            NBTTagCompound unadmitted = HologramLibraryProtocol.request("privateChunk");
+            unadmitted.setLong("clientTaskToken", 919);
+            unadmitted.setString(
+                "transfer",
+                UUID.randomUUID()
+                    .toString());
+            unadmitted.setInteger("index", 0);
+            unadmitted.setByteArray("data", new byte[] { 1 });
+            HologramLibraryFacade.receive(actor, unadmitted);
+            SimpleAssert.that(queue.isEmpty(), "integrated chunks without an admitted transfer lease stay rejected");
+            SimpleAssert.that(
+                !pending.containsKey(HologramLibraryFacade.actorId(actor)),
+                "rejected unadmitted chunks retain no ingress quota");
+            for (String operation : new String[] { "uploadBegin", "uploadChunk", "configSet", "delete", "download" }) {
+                HologramLibraryFacade.receive(actor, HologramLibraryProtocol.request(operation));
+                SimpleAssert.that(queue.isEmpty(), "integrated wire keeps public operation disabled: " + operation);
+            }
+            SimpleAssert.that(
+                !HologramLibraryService.sessionCurrent(actor, HologramLibraryProtocol.request("privateBegin")),
+                "admitting private transport does not admit an absent projector session");
+        } finally {
+            global.set(null, previous);
+        }
+    }
+
+    private static void publicStorageUpgrade() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-public-upgrade-");
+        Path entries = root.resolve("entries");
+        HologramServerLibrary store = new HologramServerLibrary(entries, root.resolve("library.cfg"));
+        HologramServerLibrary reloaded = null;
+        boolean storeStopped = false;
+        try {
+            runWorker(store, () -> {});
+            UUID uploader = UUID.randomUUID();
+            Object publishingPeer = peer(player(uploader, "OriginalPublisher"));
+            transfer(store, publishingPeer, HologramServerLibrary.encodeShare(blueprint()), "", false);
+            String id = HologramBlueprintFiles.managedPublic(entries)
+                .keySet()
+                .iterator()
+                .next();
+            Path named = HologramBlueprintFiles.resolve(entries, id);
+            HologramBlueprintArtifact.Artifact first = HologramBlueprintArtifact.readPair(named);
+            com.google.gson.JsonObject legacyRoot = HologramBlueprintCompactCodec.parse(first.json);
+            legacyRoot.addProperty("futureMetadata", "preserved independently of the current DTO");
+            byte[] legacy = new com.google.gson.GsonBuilder().setPrettyPrinting()
+                .create()
+                .toJson(legacyRoot)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            Path old = entries.resolve(id + ".json");
+            HologramBlueprintArtifact.writePair(old, legacy, first.png);
+            HologramBlueprintFiles.forget(entries, id);
+            HologramBlueprintArtifact.deletePair(named);
+            store.stop();
+            storeStopped = true;
+            reloaded = new HologramServerLibrary(entries, root.resolve("library.cfg"));
+            HologramServerLibrary active = reloaded;
+            runWorker(active, () -> {});
+            SimpleAssert
+                .that(active.get(id) != null, "legacy public logical filenames remain readable without migration");
+            NBTTagCompound upgrade = HologramLibraryProtocol.request("upgradeLibrary");
+            upgrade.setLong("clientTaskToken", 811);
+            Object ordinary = peer(player(UUID.randomUUID(), "OrdinaryReader"));
+            denied(
+                () -> runWorker(active, () -> handle(active, ordinary, upgrade)),
+                "ordinary readers cannot rewrite public originals");
+            SimpleAssert.that(
+                Arrays.equals(legacy, Files.readAllBytes(old)),
+                "denied public upgrade preserves the original bytes");
+            Object administrator = peer(player(UUID.randomUUID(), "UpgradeAdministrator"));
+            set(administrator, "admin", true);
+            runWorker(active, () -> handle(active, administrator, upgrade));
+            Path upgraded = HologramBlueprintFiles.resolve(entries, id);
+            SimpleAssert.that(
+                !old.equals(upgraded) && Files.isRegularFile(upgraded)
+                    && !Files.exists(old)
+                    && !Files.exists(HologramBlueprintArtifact.previewPath(old)),
+                "accepted public upgrade publishes the new pair/index before retiring the legacy pair");
+            HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(upgraded);
+            com.google.gson.JsonObject after = HologramBlueprintCompactCodec.parse(actual.json);
+            SimpleAssert.eq(
+                uploader.toString(),
+                after.get("owner")
+                    .getAsString(),
+                "administrator upgrades preserve uploader authority");
+            SimpleAssert.eq(
+                "OriginalPublisher",
+                after.get("uploadedBy")
+                    .getAsString(),
+                "uploader metadata is not replaced by the administrator");
+            SimpleAssert.eq(
+                "preserved independently of the current DTO",
+                after.get("futureMetadata")
+                    .getAsString(),
+                "recompression preserves unknown envelope fields");
+            SimpleAssert.eq(
+                HologramBlueprintContentHash.of(legacy),
+                HologramBlueprintContentHash.of(actual.json),
+                "legacy upgrade is lossless for complete blueprint content");
+            HologramServerLibrary.UpgradeReport report = (HologramServerLibrary.UpgradeReport) get(
+                administrator,
+                "upgradeReport");
+            SimpleAssert.eq(1, report.upgraded, "successful indexed public migration is reported precisely");
+            NBTTagCompound download = HologramLibraryProtocol.request("download");
+            download.setString("id", id);
+            download.setLong("clientTaskToken", 812);
+            runWorker(active, () -> handle(active, ordinary, download));
+            SimpleAssert
+                .that(get(ordinary, "download") != null, "full download resolves the logical ID after physical rename");
+            runWorker(active, () -> invoke(active, "clearDownload", ordinary));
+            active.stop();
+            reloaded = null;
+            reloaded = new HologramServerLibrary(entries, root.resolve("library.cfg"));
+            HologramServerLibrary finalStore = reloaded;
+            runWorker(finalStore, () -> {});
+            SimpleAssert.that(finalStore.get(id) != null, "new indexed public paths survive a server-library restart");
+        } finally {
+            if (!storeStopped) store.stop();
+            if (reloaded != null) reloaded.stop();
+        }
+    }
+
+    private static void boundedUpgradeReport() throws Exception {
+        java.util.List<NBTTagCompound> rows = new java.util.ArrayList<>();
+        for (int index = 0; index < 1024; index++) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setString("id", "public_" + UUID.randomUUID());
+            row.setString("state", "skipped");
+            row.setString("reason", repeat('\u4e2d', 512));
+            rows.add(row);
+        }
+        HologramServerLibrary.UpgradeReport report = new HologramServerLibrary.UpgradeReport(813, rows, 0, 0, 1024);
+        int count = 0;
+        for (int page = 0; page < report.pages; page++) {
+            NBTTagCompound packet = report.next();
+            int size = packet.getTagList("entries", 10)
+                .tagCount();
+            SimpleAssert.that(size <= HologramLibraryProtocol.PAGE_SIZE, "upgrade report pages remain bounded");
+            SimpleAssert.eq(813L, packet.getLong("clientTaskToken"), "all report pages retain their task identity");
+            SimpleAssert.that(
+                packet.getBoolean("complete") == (page == report.pages - 1),
+                "only the final page settles the task");
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            CompressedStreamTools.write(packet, new java.io.DataOutputStream(bytes));
+            SimpleAssert.that(
+                bytes.size() <= HologramLibraryProtocol.EXPANDED_PACKET_BYTES,
+                "maximum diagnostic rows fit the expanded packet budget");
+            count += size;
+        }
+        SimpleAssert.eq(1024, count, "large public catalogs report every entry without a burst mailbox overflow");
+    }
+
     private static void publicExpandedBudgetBeforePublish() throws Exception {
         Path root = Files.createTempDirectory("gtmb-public-dto-budget-");
         Path entries = root.resolve("library");
@@ -82,12 +276,10 @@ public final class HologramLibraryRegression {
                 () -> transfer(store, actor, json, "", false),
                 "expanded DTO cap rejects before public artifact publication");
             SimpleAssert.eq(0L, (Long) get(store, "storedBytes"), "failed publication consumes no stored bytes");
-            try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(entries, "public_*.json")) {
-                SimpleAssert.that(
-                    !files.iterator()
-                        .hasNext(),
-                    "expanded budget failure writes no public original");
-            }
+            SimpleAssert.that(
+                HologramBlueprintFiles.managedPublic(entries)
+                    .isEmpty(),
+                "expanded budget failure writes no public original");
         } finally {
             store.stop();
         }
@@ -1334,18 +1526,14 @@ public final class HologramLibraryRegression {
             HologramPresets.Preset blueprint = blueprint();
             byte[] bytes = HologramServerLibrary.encodeShare(blueprint);
             transfer(store, ownPeer, bytes, "", false);
-            String savedId;
-            try (java.nio.file.DirectoryStream<Path> files = Files
-                .newDirectoryStream(directory.resolve("entries"), "public_*.json")) {
-                savedId = files.iterator()
-                    .next()
-                    .getFileName()
-                    .toString()
-                    .replace(".json", "");
-            }
+            String savedId = HologramBlueprintFiles.managedPublic(directory.resolve("entries"))
+                .keySet()
+                .iterator()
+                .next();
+            Path savedPath = HologramBlueprintFiles.resolve(directory.resolve("entries"), savedId);
             SimpleAssert.that(savedId.startsWith("public_"), "server chooses the public ID");
             SimpleAssert.that(
-                Files.isRegularFile(directory.resolve("entries/" + savedId + ".png")),
+                Files.isRegularFile(HologramBlueprintArtifact.previewPath(savedPath)),
                 "dedicated publish stores a same-basename true PNG");
             SimpleAssert.eq(
                 "OriginalCreator",
@@ -1361,20 +1549,17 @@ public final class HologramLibraryRegression {
             delete.setString("id", savedId);
             denied(() -> runWorker(store, () -> handle(store, otherPeer, delete)), "other player cannot delete");
             SimpleAssert.that(store.get(savedId) != null, "denied deletion preserves entry");
-            runtimeRestartPreservesCommittedLibrary(store, directory.resolve("entries/" + savedId + ".json"), savedId);
+            runtimeRestartPreservesCommittedLibrary(store, savedPath, savedId);
             runWorker(store, () -> handle(store, ownPeer, delete));
             SimpleAssert.that(store.get(savedId) == null, "owner can delete own upload");
             SimpleAssert.that(
-                !Files.exists(directory.resolve("entries/" + savedId + ".png")),
+                !Files.exists(HologramBlueprintArtifact.previewPath(savedPath)),
                 "owner deletion clears the corresponding preview");
             denied(() -> transfer(store, ownPeer, bytes, "", true), "wrong transfer hash is rejected");
-            try (java.nio.file.DirectoryStream<Path> files = Files
-                .newDirectoryStream(directory.resolve("entries"), "public_*.json")) {
-                SimpleAssert.that(
-                    !files.iterator()
-                        .hasNext(),
-                    "failed hash never publishes an entry");
-            }
+            SimpleAssert.that(
+                HologramBlueprintFiles.managedPublic(directory.resolve("entries"))
+                    .isEmpty(),
+                "failed hash never publishes an entry");
         } finally {
             store.stop();
         }
@@ -1481,17 +1666,20 @@ public final class HologramLibraryRegression {
             EntityPlayerMP owner = player(UUID.randomUUID(), "DirectoryPublisher");
             byte[] bytes = HologramServerLibrary.encodeShare(blueprint());
             transfer(store, peer(owner), bytes, "", false);
-            String savedId;
-            try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "public_*.json")) {
-                savedId = files.iterator()
-                    .next()
-                    .getFileName()
-                    .toString()
-                    .replace(".json", "");
-            }
+            String savedId = HologramBlueprintFiles.managedPublic(directory)
+                .keySet()
+                .iterator()
+                .next();
+            Path stored = HologramBlueprintFiles.resolve(directory, savedId);
             SimpleAssert.that(
-                Files.isRegularFile(root.resolve("MiaoBlueprints/" + savedId + ".json")),
-                "dedicated upload writes the exact new top-level directory");
+                Files.isRegularFile(stored) && stored.getParent()
+                    .equals(directory.toAbsolutePath()),
+                "dedicated upload writes the exact top-level library directory");
+            SimpleAssert.that(
+                stored.getFileName()
+                    .toString()
+                    .matches("PublicFixture_[a-f0-9]{64}\\.json"),
+                "public physical filenames carry the blueprint name and full semantic hash");
             SimpleAssert.that(Files.isRegularFile(configuration), "server limits and settings remain in config/gtmb");
             store.stop();
             storeStopped = true;

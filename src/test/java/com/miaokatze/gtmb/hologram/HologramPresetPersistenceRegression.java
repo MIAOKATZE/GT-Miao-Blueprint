@@ -179,10 +179,15 @@ final class HologramPresetPersistenceRegression {
             resolve.setAccessible(true);
             expectIo(importFile, "shared_fixture");
             HologramPresets.exportBlueprint("shared_fixture", saved);
-            SimpleAssert.eq(
-                game.resolve("MiaoBlueprints/shared_fixture.json"),
-                HologramBlueprintSharing.resolve("shared_fixture"),
-                "share import and export use the same new blueprint directory");
+            SimpleAssert.that(
+                HologramBlueprintSharing.resolve("shared_fixture")
+                    .getParent()
+                    .equals(game.resolve("MiaoBlueprints"))
+                    && HologramBlueprintSharing.resolve("shared_fixture")
+                        .getFileName()
+                        .toString()
+                        .startsWith("New directory fixture_"),
+                "share aliases resolve the new descriptive filename in the same blueprint directory");
             SimpleAssert.eq(
                 saved.id,
                 HologramPresets.importBlueprint("shared_fixture").id,
