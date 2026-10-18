@@ -78,6 +78,37 @@ final class HologramState {
         maxWorldZ = ready.maxWorldZ;
     }
 
+    /** One bounded early view shares completed cells and owns its small spatial index. */
+    private HologramState(Preparation ready, int count) {
+        parentIdentity = null;
+        changedIndices = new int[0];
+        data = metadata(ready.data, false);
+        data.setBoolean("displayPartial", true);
+        session = data.getString("session");
+        parsedCells = count;
+        List<Cell> prefix = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) prefix.add(ready.pages.get(i >> 8)[i & 255]);
+        cells = new CellPages(prefix);
+        regions = new HologramRegionCache(cells);
+        structureMembers = memberships(cells);
+        materials = Collections.emptyList();
+        Cell first = cells.get(0);
+        minY = maxY = first.dy;
+        minWorldX = maxWorldX = first.x;
+        minWorldY = maxWorldY = first.y;
+        minWorldZ = maxWorldZ = first.z;
+        for (Cell cell : cells) {
+            minY = Math.min(minY, cell.dy);
+            maxY = Math.max(maxY, cell.dy);
+            minWorldX = Math.min(minWorldX, cell.x);
+            maxWorldX = Math.max(maxWorldX, cell.x);
+            minWorldY = Math.min(minWorldY, cell.y);
+            maxWorldY = Math.max(maxWorldY, cell.y);
+            minWorldZ = Math.min(minWorldZ, cell.z);
+            maxWorldZ = Math.max(maxWorldZ, cell.z);
+        }
+    }
+
     /** Registry/item resolution and spatial indexing share a cooperative client-thread budget. */
     static final class Preparation {
 
@@ -92,10 +123,16 @@ final class HologramState {
         private int stage, cellPosition, materialPosition, memberPosition;
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
+        private final boolean displayRows;
         int lastStepWork;
 
         /** Ownership of the decoded tree transfers to this preparation; no published state mutates it. */
         Preparation(NBTTagCompound source) {
+            this(source, false);
+        }
+
+        Preparation(NBTTagCompound source, boolean displayRows) {
+            this.displayRows = displayRows;
             data = metadata(source, false);
             rows = source.getTagList("cells", 10);
             materialRows = source.getTagList("materials", 10);
@@ -116,7 +153,13 @@ final class HologramState {
                         stage++;
                         continue;
                     }
-                    Cell cell = new Cell(cellPosition, rows.getCompoundTagAt(cellPosition));
+                    NBTTagCompound row = rows.getCompoundTagAt(cellPosition);
+                    if (displayRows) try {
+                        HologramBlueprintPreview.completeCell(row);
+                    } catch (java.io.IOException invalid) {
+                        throw new IllegalArgumentException(invalid.getMessage(), invalid);
+                    }
+                    Cell cell = new Cell(cellPosition, row, displayRows);
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
@@ -182,6 +225,10 @@ final class HologramState {
             if (stage != 4) throw new IllegalStateException("Client snapshot is incomplete");
             if (result == null) result = new HologramState(this);
             return result;
+        }
+
+        HologramState firstDisplay() {
+            return cellPosition == 0 ? null : new HologramState(this, Math.min(256, cellPosition));
         }
     }
 
@@ -482,15 +529,18 @@ final class HologramState {
         final String candidateBoundary;
         final ItemStack actualStack, targetStack;
         final NBTTagCompound actualDisplay, targetDisplay;
-        /** Exact retained payload exists only for an owned local artifact, never a public appearance DTO. */
-        final NBTTagCompound localMaterialTile;
         final String[] hintIcons = new String[6];
         final int hintIndex;
         final int[] hintTint;
         final List<ItemStack> candidates = new ArrayList<>();
 
         Cell(int index, NBTTagCompound n) {
-            raw = (NBTTagCompound) n.copy();
+            this(index, n, false);
+        }
+
+        /** Display preparation owns its row tree, so publishing it needs no second NBT tree. */
+        private Cell(int index, NBTTagCompound n, boolean owned) {
+            raw = owned ? n : (NBTTagCompound) n.copy();
             this.index = index;
             x = n.getInteger("x");
             y = n.getInteger("y");
@@ -541,11 +591,12 @@ final class HologramState {
             iconOnly = n.getBoolean("iconOnly");
             actualStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("actualStack"));
             targetStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("targetStack"));
-            actualDisplay = (NBTTagCompound) n.getCompoundTag("actualDisplay")
-                .copy();
-            targetDisplay = (NBTTagCompound) n.getCompoundTag("targetDisplay")
-                .copy();
-            localMaterialTile = raw.hasKey("localMaterialTile", 10) ? raw.getCompoundTag("localMaterialTile") : null;
+            actualDisplay = owned ? n.getCompoundTag("actualDisplay")
+                : (NBTTagCompound) n.getCompoundTag("actualDisplay")
+                    .copy();
+            targetDisplay = owned ? n.getCompoundTag("targetDisplay")
+                : (NBTTagCompound) n.getCompoundTag("targetDisplay")
+                    .copy();
             hintIndex = n.hasKey("hintIndex") ? n.getInteger("hintIndex") : -1;
             hintTint = n.getIntArray("hintTint");
             NBTTagList icons = n.getTagList("hintIcons", 8);

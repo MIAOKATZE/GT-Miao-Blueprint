@@ -51,7 +51,7 @@ public final class HologramBlueprintContentHash {
         return HologramLibraryProtocol.hex(digest.digest());
     }
 
-    private static String ofBlueprint(JsonElement blueprint) {
+    static String ofBlueprint(JsonElement blueprint) {
         MessageDigest digest = HologramLibraryProtocol.digest();
         token(digest, "gtmb-content-1");
         hash(digest, blueprint, true);

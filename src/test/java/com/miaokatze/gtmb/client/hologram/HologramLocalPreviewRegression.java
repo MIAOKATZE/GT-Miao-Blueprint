@@ -15,6 +15,14 @@ public final class HologramLocalPreviewRegression {
     public static void run() throws Exception {
         admissionReceipts();
         compactDisplay();
+        sourceReuse();
+        earlyDisplay();
+        displayPicture();
+        uploadRepresentation();
+        NBTTagCompound review = HologramLocalPlacement.reviewOptions();
+        SimpleAssert.eq(true, review.getBoolean("openReview"), "second world use opens the existing server review");
+        SimpleAssert.eq(false, review.getBoolean("executeIntent"), "opening review cannot request construction");
+        SimpleAssert.eq(false, review.hasKey("acknowledgedMaterials"), "display never invents a material acceptance");
         String json = "{\"blueprint\":{\"schema\":999,\"retainNbt\":false,\"retainCovers\":true,"
             + "\"retainedNbtKeys\":[\"configuration\"],\"cells\":["
             + "{\"x\":2,\"y\":-3,\"z\":4,\"block\":\"not_installed:display_only\","
@@ -70,6 +78,112 @@ public final class HologramLocalPreviewRegression {
             HologramBlueprintPreview.snapshot(legacy.getBytes(StandardCharsets.UTF_8)),
             HologramBlueprintPreview.snapshot(compact.getBytes(StandardCharsets.UTF_8)),
             "compact material and NBT references produce exactly the same detached display");
+    }
+
+    private static void sourceReuse() throws Exception {
+        java.nio.file.Path file = java.nio.file.Files.createTempFile("gtmb-display-only-", ".json");
+        try {
+            byte[] first = "{\"blueprint\":{\"cells\":[{\"x\":1,\"block\":\"missing:display\"}]}}"
+                .getBytes(StandardCharsets.UTF_8);
+            java.nio.file.Files.write(file, first);
+            HologramLibraryClient client = new HologramLibraryClient();
+            HologramLibraryClient.DisplaySource cold = client.readDisplaySource("fixture", file, "local-fixture", "");
+            SimpleAssert.eq("", cold.hash, "ordinary source decoding computes no semantic content hash");
+            SimpleAssert.eq(null, cold.artifact, "ordinary source decoding needs no PNG or artifact bundle");
+            cold.state = new HologramState(cold.snapshot);
+            cold.snapshot = null;
+            client.retainDisplaySource(cold);
+            HologramLibraryClient.DisplaySource warm = client.readDisplaySource("fixture", file, "local-fixture", "");
+            SimpleAssert.that(
+                cold == warm && cold.state == warm.state,
+                "unchanged source identity reuses the exact prepared state without decoding or copying cells");
+            java.nio.file.Files.write(
+                file,
+                "{\"blueprint\":{\"cells\":[{\"x\":42,\"block\":\"missing:changed\"}]}}"
+                    .getBytes(StandardCharsets.UTF_8));
+            HologramLibraryClient.DisplaySource changed = client
+                .readDisplaySource("fixture", file, "local-fixture", "");
+            SimpleAssert.that(
+                changed != cold && changed.state == null && changed.artifact == null && changed.hash.isEmpty(),
+                "actual source changes discard display, bundle and admission identity together");
+        } finally {
+            java.nio.file.Files.deleteIfExists(file);
+        }
+    }
+
+    private static void earlyDisplay() {
+        NBTTagCompound source = new NBTTagCompound();
+        NBTTagList rows = new NBTTagList();
+        for (int i = 0; i < 600; i++) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("x", i * 32);
+            row.setInteger("dx", i * 32);
+            rows.appendTag(row);
+        }
+        source.setTag("cells", rows);
+        HologramState.Preparation preparation = new HologramState.Preparation(source);
+        SimpleAssert.eq(false, preparation.step(64, Long.MAX_VALUE), "a large display remains in preparation");
+        HologramState first = preparation.firstDisplay();
+        SimpleAssert.eq(64, first.cells.size(), "the first completed batch can display before full preparation");
+        SimpleAssert.eq(true, first.data.getBoolean("displayPartial"), "early geometry carries no full-ready claim");
+        int regions = first.regions.regions.size();
+        while (!preparation.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        HologramState complete = preparation.result();
+        SimpleAssert.eq(600, complete.cells.size(), "final geometry retains every cell");
+        SimpleAssert.that(
+            first.cells.get(0) == complete.cells.get(0),
+            "early and final displays share immutable completed cells");
+        SimpleAssert.eq(64, first.cells.size(), "continuing preparation never mutates published early cells");
+        SimpleAssert
+            .eq(regions, first.regions.regions.size(), "continuing preparation never mutates the early spatial index");
+        SimpleAssert
+            .that(first.regions != complete.regions, "the mutable builder is never published as an early region index");
+    }
+
+    private static void displayPicture() throws Exception {
+        java.awt.image.BufferedImage original = new java.awt.image.BufferedImage(
+            32,
+            32,
+            java.awt.image.BufferedImage.TYPE_INT_RGB);
+        original.setRGB(5, 7, 0xff234567);
+        java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(original, "png", encoded);
+        byte[] png = encoded.toByteArray();
+        java.awt.image.BufferedImage decoded = HologramLibraryClient.decodeDisplayImage(png);
+        SimpleAssert.eq(
+            original.getRGB(5, 7),
+            decoded.getRGB(5, 7),
+            "optional source pictures display without JSON binding or content admission");
+        byte[] oversized = png.clone();
+        oversized[16] = oversized[17] = oversized[19] = 0;
+        oversized[18] = 8;
+        try {
+            HologramLibraryClient.decodeDisplayImage(oversized);
+            throw new AssertionError("PNG header dimensions must be bounded before pixel allocation");
+        } catch (IOException expected) {}
+    }
+
+    private static void uploadRepresentation() throws Exception {
+        StringBuilder json = new StringBuilder("{\"blueprint\":{\"cells\":[");
+        for (int i = 0; i < 128; i++) {
+            if (i > 0) json.append(',');
+            json.append("{\"x\":")
+                .append(i)
+                .append(",\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\",\"metadata\":0,\"damage\":0}");
+        }
+        byte[] original = json.append("]}}")
+            .toString()
+            .getBytes(StandardCharsets.UTF_8), before = original.clone();
+        byte[] compact = HologramLibraryClient.uploadJson(original, () -> true);
+        SimpleAssert.that(compact.length < original.length, "a real miss uses existing lossless transport compression");
+        SimpleAssert.eq(
+            com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(original),
+            com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(compact),
+            "transport compression preserves the admitted semantic content identity");
+        SimpleAssert.that(Arrays.equals(before, original), "upload compression never rewrites the frozen source bytes");
+        SimpleAssert.that(
+            compact == HologramLibraryClient.uploadJson(compact, () -> true),
+            "already compact sources are reused without another compression pass");
     }
 
     private static void admissionReceipts() {

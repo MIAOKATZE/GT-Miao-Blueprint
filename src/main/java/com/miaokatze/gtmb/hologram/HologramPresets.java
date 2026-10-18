@@ -40,6 +40,14 @@ final class HologramPresets {
     private static final Gson GSON = new GsonBuilder().create();
     private static final Pattern REGISTRY_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,256}");
     private static List<Preset> cached;
+    private static final Map<String, ContentSource> contentSources = new LinkedHashMap<>();
+    private static List<Preset> contentCatalog;
+    private static long contentGeneration;
+    private static Path cachedPath;
+    private static FileStamp cachedStamp;
+    private static List<Preset> catalogSource;
+    private static byte[] catalogJson;
+    private static Map<Path, FileStamp> artifactStamps;
 
     private HologramPresets() {}
 
@@ -49,7 +57,38 @@ final class HologramPresets {
     }
 
     static synchronized void clearCache() {
-        cached = null;
+        replaceCache(null);
+    }
+
+    /** Runtime policy changes retire derived identities without reopening the unchanged storage catalog. */
+    static synchronized void clearContentCache() {
+        contentCatalog = null;
+        contentSources.clear();
+        contentGeneration++;
+    }
+
+    private static void replaceCache(List<Preset> next) {
+        cached = next;
+        cachedPath = null;
+        cachedStamp = null;
+        catalogSource = null;
+        catalogJson = null;
+        artifactStamps = null;
+        clearContentCache();
+    }
+
+    private static void rememberCatalog(Path path, List<Preset> source, byte[] exactJson) {
+        replaceCache(source);
+        catalogJson = exactJson;
+        try {
+            FileStamp stamp = FileStamp.read(path);
+            cachedPath = path.toAbsolutePath()
+                .normalize();
+            cachedStamp = stamp;
+            catalogSource = source;
+        } catch (IOException unavailableStamp) {
+            // A successful catalog commit stays successful; the next explicit refresh retries metadata admission.
+        }
     }
 
     /** Storage migration shares the catalog writer monitor and never overwrites a newer logical save. */
@@ -57,23 +96,84 @@ final class HologramPresets {
         byte[] actual = HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES);
         if (!java.util.Arrays.equals(expected, actual)) throw new IOException("蓝图库在升级期间已更新，请重试");
         HologramBlueprintFiles.replace(file, compact);
-        cached = null;
+        replaceCache(null);
     }
 
     /** Explicit library navigation/refresh only; snapshots and ticks keep the existing in-memory catalog. */
     static synchronized void refreshLocalArtifacts() throws IOException {
         Path library = libraryPath();
-        List<Preset> refreshed = readLibrary(library);
+        FileStamp current = FileStamp.read(library);
+        if (cached == null || catalogSource == null
+            || !library.equals(cachedPath)
+            || !java.util.Objects.equals(current, cachedStamp)) {
+            byte[][] exact = new byte[1][];
+            List<Preset> loaded = readLibrary(library, exact);
+            if (!java.util.Objects.equals(current, FileStamp.read(library))) throw new IOException("蓝图库在刷新期间已更新，请重试");
+            rememberCatalog(library, loaded, exact[0]);
+        }
+        // Navigation checks only source/member metadata. It cannot reparse or sanitize unchanged cell payloads.
+        Map<Path, FileStamp> members = new LinkedHashMap<>();
+        Map<String, Boolean> complete = new LinkedHashMap<>();
+        for (Preset preset : catalogSource) {
+            if (preset.nativeBlueprint == null) continue;
+            Path json = HologramBlueprintFiles.resolve(library.getParent(), "local_" + preset.id);
+            Path preview = HologramBlueprintArtifact.previewPath(json);
+            FileStamp jsonStamp = FileStamp.read(json), pngStamp = FileStamp.read(preview);
+            members.put(json, jsonStamp);
+            members.put(preview, pngStamp);
+            complete.put(preset.id, jsonStamp != null && jsonStamp.regular && pngStamp != null && pngStamp.regular);
+        }
+        if (members.equals(artifactStamps)) return;
+        List<Preset> refreshed = new ArrayList<>(catalogSource);
         java.util.Iterator<Preset> entries = refreshed.iterator();
         while (entries.hasNext()) {
             Preset preset = entries.next();
             // Legacy collection-only templates remain readable. Native artifacts must still have both members.
             if (preset.nativeBlueprint == null) continue;
-            Path json = HologramBlueprintFiles.resolve(library.getParent(), "local_" + preset.id);
-            Path preview = HologramBlueprintArtifact.previewPath(json);
-            if (!Files.isRegularFile(json) || !Files.isRegularFile(preview)) entries.remove();
+            if (!Boolean.TRUE.equals(complete.get(preset.id))) entries.remove();
         }
-        cached = refreshed;
+        boolean unchanged = artifactStamps == null && refreshed.equals(cached);
+        if (!unchanged) cached = refreshed;
+        artifactStamps = members;
+        if (!unchanged) clearContentCache();
+    }
+
+    /** Local invalidation hint only; trusted content is still admitted from bounded, validated source bytes. */
+    private static final class FileStamp {
+
+        final Object key;
+        final java.nio.file.attribute.FileTime modified;
+        final long size;
+        final boolean regular;
+
+        FileStamp(java.nio.file.attribute.BasicFileAttributes attributes) {
+            key = attributes.fileKey();
+            modified = attributes.lastModifiedTime();
+            size = attributes.size();
+            regular = attributes.isRegularFile();
+        }
+
+        static FileStamp read(Path path) throws IOException {
+            try {
+                return new FileStamp(Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class));
+            } catch (java.nio.file.NoSuchFileException missing) {
+                return null;
+            }
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof FileStamp)) return false;
+            FileStamp stamp = (FileStamp) other;
+            return size == stamp.size && regular == stamp.regular
+                && modified.equals(stamp.modified)
+                && java.util.Objects.equals(key, stamp.key);
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(key, modified, size, regular);
+        }
     }
 
     static final class Cell {
@@ -223,19 +323,33 @@ final class HologramPresets {
     }
 
     static synchronized List<Preset> all() throws IOException {
-        if (cached != null) return copies(cached);
-        cached = readLibrary(libraryPath());
+        ensureLoaded();
         return copies(cached);
     }
 
+    private static void ensureLoaded() throws IOException {
+        if (cached == null) {
+            Path path = libraryPath();
+            FileStamp before = FileStamp.read(path);
+            byte[][] exact = new byte[1][];
+            List<Preset> loaded = readLibrary(path, exact);
+            if (!java.util.Objects.equals(before, FileStamp.read(path))) throw new IOException("蓝图库在读取期间已更新，请重试");
+            rememberCatalog(path, loaded, exact[0]);
+        }
+    }
+
     private static List<Preset> readLibrary(Path file) throws IOException {
+        return readLibrary(file, null);
+    }
+
+    private static List<Preset> readLibrary(Path file, byte[][] exactJson) throws IOException {
         List<Preset> result = new ArrayList<>();
         if (Files.exists(file)) {
             if (Files.size(file) > MAX_LIBRARY_BYTES)
                 throw new IOException("蓝图库超过 " + MAX_LIBRARY_BYTES / (1024 * 1024) + " MiB 上限");
             try {
-                FileData data = decode(
-                    new String(HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES), StandardCharsets.UTF_8));
+                byte[] bytes = HologramBlueprintSharing.readBytes(file, MAX_LIBRARY_BYTES);
+                FileData data = decode(new String(bytes, StandardCharsets.UTF_8));
                 if (data == null || (data.schema != 1 && data.schema != 2)
                     || data.presets == null
                     || data.presets.size() > 32) throw new IOException("模板配置格式或数量无效");
@@ -247,6 +361,7 @@ final class HologramPresets {
                     if (!ids.add(loaded.id)) throw new IOException("模板ID重复");
                     result.add(loaded);
                 }
+                if (exactJson != null) exactJson[0] = bytes;
             } catch (RuntimeException invalid) {
                 throw new IOException("模板JSON无效", invalid);
             }
@@ -254,10 +369,86 @@ final class HologramPresets {
         return result;
     }
 
-    static Preset get(String id) throws IOException {
-        for (Preset preset : all()) if (preset.id.equals(id)) return HologramBlueprintProcessing.enforcePolicy(
-            HologramAePolicy.sanitizeOwned(preset, null, HologramAePolicy.PreparationProgress.NONE).preset);
-        return null;
+    static synchronized Preset get(String id) throws IOException {
+        return admitted(id, "");
+    }
+
+    /** Select the matching generation and detach its base under one monitor, including concurrent saves. */
+    static synchronized Preset admitted(String id, String expectedHash) throws IOException {
+        ContentSource source = contentSource(id);
+        if (source == null) return null;
+        if (!expectedHash.isEmpty() && !matchesContent(id, expectedHash))
+            throw new IOException("Saved blueprint changed; prepare its current content again");
+        return copy(source.canonical());
+    }
+
+    static synchronized Preset matching(String id, String expectedHash) throws IOException {
+        ContentSource source = contentSource(id);
+        return source != null && matchesContent(id, expectedHash) ? copy(source.canonical()) : null;
+    }
+
+    /** Hash-only admission reads the existing catalog generation, never copies every saved blueprint. */
+    static synchronized String contentHash(String id) throws IOException {
+        ContentSource source = contentSource(id);
+        if (source == null) return null;
+        if (source.canonicalHash == null) source.canonicalHash = HologramBlueprintContentHash.of(source.canonical());
+        return source.canonicalHash;
+    }
+
+    /** Exact file identity is distinct from a model's defaulted/sanitized representation. Admission only. */
+    static synchronized boolean matchesContent(String id, String expectedHash) throws IOException {
+        ContentSource source = contentSource(id);
+        if (source == null) return false;
+        if (expectedHash.equals(contentHash(id))) return true;
+        return expectedHash.equals(rawContentHash(id));
+    }
+
+    static synchronized String rawContentHash(String id) throws IOException {
+        ContentSource source = contentSource(id);
+        if (source == null || catalogJson == null) return null;
+        if (source.rawHash == null) {
+            // Retain bounded original bytes, never a second expanded catalog tree. Hash only the requested entry.
+            com.google.gson.JsonObject root = HologramBlueprintCompactCodec.parse(catalogJson, MAX_LIBRARY_BYTES);
+            for (JsonElement row : root.getAsJsonArray("presets")) {
+                com.google.gson.JsonObject blueprint = row.getAsJsonObject();
+                if (id.equals(
+                    blueprint.get("id")
+                        .getAsString())) {
+                    source.rawHash = HologramBlueprintContentHash.ofBlueprint(blueprint);
+                    break;
+                }
+            }
+            if (source.rawHash == null) throw new IOException("Saved blueprint original identity changed");
+        }
+        return source.rawHash;
+    }
+
+    private static ContentSource contentSource(String id) throws IOException {
+        ensureLoaded();
+        if (contentCatalog != cached) {
+            contentSources.clear();
+            for (Preset preset : cached) contentSources.put(preset.id, new ContentSource(preset));
+            contentCatalog = cached;
+        }
+        return contentSources.get(id);
+    }
+
+    /** The private base is admitted once per real catalog/policy generation; callers receive detached copies. */
+    private static final class ContentSource {
+
+        final Preset stored;
+        Preset base;
+        String canonicalHash, rawHash;
+
+        ContentSource(Preset stored) {
+            this.stored = stored;
+        }
+
+        Preset canonical() throws IOException {
+            if (base == null) base = HologramBlueprintProcessing.enforcePolicy(
+                HologramAePolicy.sanitizeOwned(copy(stored), null, HologramAePolicy.PreparationProgress.NONE).preset);
+            return base;
+        }
     }
 
     static synchronized void save(Preset preset) throws IOException {
@@ -394,13 +585,23 @@ final class HologramPresets {
         }
         byte[] previousBytes = HologramBlueprintSharing.readBytes(library, MAX_LIBRARY_BYTES);
         List<Preset> previousCache = cached;
+        byte[] previousJson = catalogJson;
+        List<Preset> previousCatalog = catalogSource;
+        Path previousPath = cachedPath;
+        FileStamp previousStamp = cachedStamp;
+        Map<Path, FileStamp> previousArtifacts = artifactStamps;
         write(library, list);
         try {
             removeArtifact.delete(artifact);
         } catch (IOException | RuntimeException failure) {
             try {
                 restoreLibraryBytes(library, previousBytes);
-                cached = previousCache;
+                replaceCache(previousCache);
+                catalogJson = previousJson;
+                catalogSource = previousCatalog;
+                cachedPath = previousPath;
+                cachedStamp = previousStamp;
+                artifactStamps = previousArtifacts;
             } catch (IOException restoreFailure) {
                 failure.addSuppressed(restoreFailure);
             }
@@ -603,14 +804,14 @@ final class HologramPresets {
         try {
             Files.write(temp, bytes);
             Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            cached = copies(data.presets);
+            rememberCatalog(file, copies(data.presets), bytes);
         } finally {
             Files.deleteIfExists(temp);
         }
     }
 
     static synchronized NBTTagList labels() throws IOException {
-        if (cached == null) all();
+        ensureLoaded();
         NBTTagList result = new NBTTagList();
         // State packets need only immutable labels/counts, never detached copies of the device payloads.
         for (Preset preset : cached) {

@@ -233,6 +233,7 @@ gtmb.hologram.progress.library.rollback=Restoring the original file pair
 gtmb.hologram.progress.library.session=Creating preview session
 gtmb.hologram.progress.library.delete=Deleting library entry
 gtmb.hologram.progress.library.complete=Blueprint operation completed
+gtmb.hologram.progress.library.display=Preparing preview models
 gtmb.hologram.progress.cut.list=Synchronizing cut directory
 gtmb.hologram.progress.cut.preview=Preparing cut preview
 gtmb.hologram.progress.cut.cut=Cutting into clipboard

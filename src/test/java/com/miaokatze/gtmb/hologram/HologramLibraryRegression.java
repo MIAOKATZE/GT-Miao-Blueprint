@@ -56,6 +56,7 @@ public final class HologramLibraryRegression {
         contentIdentity();
         trustedCacheIsolation();
         publicPreviewPrivacy();
+        publicThumbnailBounds();
         protocolAndThrottle();
         uploadWindowAndMailboxes();
         uploadAdmissionLifecycle();
@@ -324,6 +325,27 @@ public final class HologramLibraryRegression {
             request.setBoolean("contentOnly", true);
             request.setBoolean("hashProbe", true);
             Object before = HologramWorkspace.find(owner);
+            NBTTagCompound probe = HologramLibraryProtocol.request("contentResolve");
+            probe.setString("transfer", request.getString("transfer"));
+            probe.setLong("clientTaskToken", 711);
+            probe.setString("jsonHash", contentHash);
+            probe.setString("sourceHash", contentHash);
+            runWorker(store, () -> handle(store, peer, probe));
+            SimpleAssert.that(get(peer, "upload") == null, "hash-only miss allocates no upload or fake header");
+            SimpleAssert.eq(0L, get(store, "reservedBytes"), "hash-only miss reserves no artifact bytes");
+            SimpleAssert.eq(0, get(store, "activeUploads"), "hash-only miss occupies no upload slot");
+            try (java.util.stream.Stream<Path> files = Files.list(root.resolve("library"))) {
+                SimpleAssert.that(
+                    !files.anyMatch(
+                        path -> path.getFileName()
+                            .toString()
+                            .startsWith("incoming-")),
+                    "hash-only miss creates no incoming temporary artifact");
+            }
+            NBTTagCompound needed = HologramServerLibrary.contentUploadReply(probe, contentHash);
+            SimpleAssert.eq("needUpload", needed.getString("op"), "only an explicit probe miss requests bytes");
+            SimpleAssert.eq(contentHash, needed.getString("contentHash"), "upload need keeps the probed identity");
+            SimpleAssert.eq(probe.getString("transfer"), needed.getString("transfer"), "upload need keeps task fence");
             runWorker(store, () -> handle(store, peer, request));
             SimpleAssert.that(get(peer, "upload") != null, "UI content miss admits bounded upload without a workspace");
             for (int offset = 0, index = 0; offset
@@ -347,11 +369,16 @@ public final class HologramLibraryRegression {
             SimpleAssert.that(
                 before == HologramWorkspace.find(owner),
                 "content admission never creates or replaces author state");
+            runWorker(store, () -> handle(store, peer, probe));
+            SimpleAssert.that(get(peer, "upload") == null, "a hash-only content hit never requests an artifact");
+            SimpleAssert.eq(0L, get(store, "reservedBytes"), "a hash-only hit keeps reservations empty");
             runWorker(store, () -> handle(store, peer, request));
             SimpleAssert.that(get(peer, "upload") == null, "pure content hit allocates no upload");
             request.setBoolean("contentOnly", false);
             request.setBoolean("admittedOnly", true);
             request.setString("jsonHash", repeat('a', 64));
+            request.removeTag("total");
+            request.removeTag("hash");
             runWorker(store, () -> handle(store, peer, request));
             SimpleAssert
                 .that(get(peer, "upload") == null, "a final missing reference cannot silently upload in the world");
@@ -586,6 +613,67 @@ public final class HologramLibraryRegression {
             "public display cannot carry provenance or generic native persistence");
         SimpleAssert
             .eq("private actor", original.getString("owner"), "public projection preserves its original source");
+    }
+
+    private static void publicThumbnailBounds() throws Exception {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+            HologramBlueprintArtifact.WIDTH,
+            HologramBlueprintArtifact.HEIGHT,
+            java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream compactPng = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", compactPng);
+        java.awt.image.BufferedImage detailed = javax.imageio.ImageIO.read(
+            new java.io.ByteArrayInputStream(HologramServerLibrary.thumbnail(compactPng.toByteArray(), () -> true)));
+        SimpleAssert.that(
+            detailed.getWidth() == 160 && detailed.getHeight() == 160,
+            "compressible source retains the clearer thumbnail within the same packet budget");
+        java.util.Random random = new java.util.Random(191120L);
+        for (int y = 0; y < image.getHeight(); y++)
+            for (int x = 0; x < image.getWidth(); x++) image.setRGB(x, y, random.nextInt(0x1000000));
+        java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", encoded);
+        byte[] source = HologramBlueprintArtifact.bindPreview(new byte[] { 1 }, encoded.toByteArray());
+        byte[] thumbnail = HologramServerLibrary.thumbnail(source, () -> true);
+        SimpleAssert.that(
+            thumbnail.length <= HologramServerLibrary.THUMBNAIL_BYTES,
+            "incompressible source pixels produce a single bounded optional thumbnail");
+        java.awt.image.BufferedImage small = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(thumbnail));
+        SimpleAssert
+            .that(small.getWidth() == 64 && small.getHeight() == 64, "thumbnail bounds both decoded dimensions");
+        SimpleAssert.that(
+            !new String(thumbnail, java.nio.charset.StandardCharsets.ISO_8859_1)
+                .contains(HologramBlueprintArtifact.SOURCE_KEY),
+            "thumbnail exports only pixels without source digest metadata");
+        NBTTagCompound reply = HologramLibraryProtocol.reply("previewThumbnail");
+        reply.setLong("clientTaskToken", 991);
+        reply.setString("publicId", "public_" + UUID.randomUUID());
+        reply.setString("sourceHash", repeat('a', 64));
+        reply.setLong("sourceRevision", 1);
+        reply.setByteArray("thumbnailPng", thumbnail);
+        io.netty.buffer.ByteBuf wire = Unpooled.buffer();
+        new HologramNetwork.LibraryReply(reply).toBytes(wire);
+        SimpleAssert.that(
+            wire.readableBytes() < HologramLibraryProtocol.PACKET_BYTES,
+            "thumbnail and identity fit the unchanged library packet budget");
+        HologramNetwork.LibraryReply decoded = new HologramNetwork.LibraryReply();
+        decoded.fromBytes(wire.duplicate());
+        SimpleAssert.that(
+            Arrays.equals(thumbnail, ((NBTTagCompound) get(decoded, "tag")).getByteArray("thumbnailPng")),
+            "optional thumbnail uses the existing bounded library reply codec");
+        byte[] oversizedDimensions = source.clone();
+        java.nio.ByteBuffer.wrap(oversizedDimensions)
+            .putInt(16, 1000000);
+        denied(
+            () -> HologramServerLibrary.thumbnail(oversizedDimensions, () -> true),
+            "source dimensions are rejected before image allocation");
+        denied(
+            () -> HologramServerLibrary.thumbnail(new byte[HologramBlueprintArtifact.MAX_PNG_BYTES + 1], () -> true),
+            "thumbnail source byte limit is independent of compressed image pixels");
+        denied(() -> HologramServerLibrary.thumbnail(source, () -> false), "cancelled thumbnail never begins decode");
+        int[] checks = { 0 };
+        denied(
+            () -> HologramServerLibrary.thumbnail(source, () -> ++checks[0] < 2),
+            "retired thumbnail stops before encoding or publishing its decoded pixels");
     }
 
     private static void streamingDraftProgress() throws Exception {

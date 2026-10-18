@@ -63,7 +63,8 @@ final class HologramProgressView {
     private static String metric(HologramProgress value, long now) {
         String elapsed = value.elapsedSeconds(now) + "s";
         if (value.percent() < 0) return elapsed;
-        return value.percent() + "% · " + elapsed;
+        String detail = detail(value);
+        return (detail.isEmpty() ? "" : detail + " · ") + value.percent() + "% · " + elapsed;
     }
 
     static String detail(HologramProgress value) {

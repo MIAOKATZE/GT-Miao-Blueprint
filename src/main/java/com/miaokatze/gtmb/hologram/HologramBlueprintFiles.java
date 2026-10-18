@@ -40,6 +40,54 @@ public final class HologramBlueprintFiles {
         return managed(directory, "local_");
     }
 
+    /** Ordinary catalog reads enumerate candidates without adopting or validating artifact pairs. */
+    public static synchronized Map<String, Path> displayCandidates(Path directory) throws IOException {
+        Path root = directory.toAbsolutePath()
+            .normalize();
+        Map<String, Path> result = managed(root, "local_");
+        java.util.Set<Path> known = new java.util.HashSet<>(result.values());
+        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(root, "*.json")) {
+            for (Path path : files) {
+                String name = path.getFileName()
+                    .toString();
+                if (name.equals("hologram-presets.json") || known.contains(path)
+                    || !Files.isRegularFile(HologramBlueprintArtifact.previewPath(path))) continue;
+                result.put(name.substring(0, name.length() - 5), path);
+            }
+        }
+        return result;
+    }
+
+    /** Mirrors portable adoption identity rules, while leaving the persistent index untouched. */
+    public static synchronized String displayId(Path directory, Path source, String nativeId) throws IOException {
+        Path root = directory.toAbsolutePath()
+            .normalize();
+        String member = source.getFileName()
+            .toString();
+        Properties mappings = index(root);
+        for (String key : mappings.stringPropertyNames())
+            if (key.matches("local_[a-fA-F0-9-]{36}") && member.equals(mappings.getProperty(key))) return key;
+        String basename = member.substring(0, member.length() - 5);
+        String candidate = basename;
+        if (!candidate.matches("local_[a-fA-F0-9-]{36}")) {
+            if (nativeId.matches("[a-fA-F0-9-]{36}")) candidate = "local_" + nativeId;
+            else if (nativeId.matches("local_[a-fA-F0-9-]{36}")) candidate = nativeId;
+            else candidate = "local_"
+                + java.util.UUID.nameUUIDFromBytes(("gtmb-portable:" + basename).getBytes(StandardCharsets.UTF_8));
+        }
+        String existing = mappings.getProperty(candidate);
+        Path legacy = child(root, candidate + ".json");
+        if (existing != null && !member.equals(existing)
+            || existing == null && !source.equals(legacy) && Files.exists(legacy, LinkOption.NOFOLLOW_LINKS)) {
+            candidate = "local_"
+                + java.util.UUID.nameUUIDFromBytes(("gtmb-portable:" + basename).getBytes(StandardCharsets.UTF_8));
+            existing = mappings.getProperty(candidate);
+            if (existing != null && !member.equals(existing))
+                throw new IOException("Blueprint logical identity conflict");
+        }
+        return candidate;
+    }
+
     public static synchronized Map<String, Path> managedPublic(Path directory) throws IOException {
         return managed(directory, "public_");
     }

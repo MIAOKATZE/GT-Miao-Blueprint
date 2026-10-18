@@ -1,10 +1,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.io.IOException;
-
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
-import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 
@@ -12,17 +9,12 @@ import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 final class HologramLocalPlacement {
 
     static final HologramLocalPlacement INSTANCE = new HologramLocalPlacement();
-    private NBTTagCompound pending;
-    private HologramState.Preparation preparation;
     private HologramState display;
     private Object world;
-    private int row;
-    private boolean rawRows, locked, submitting;
+    private boolean locked, submitting;
     private int[] anchor;
     private HologramPreviewPose pose = new HologramPreviewPose();
     private String localId = "", publicId = "", jsonHash = "", sourceRevision = "";
-    private byte[] artifact;
-    private NBTTagCompound materialSummary;
     private final com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat[] nudgeKeys = {
         new com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat(),
         new com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat(),
@@ -60,7 +52,7 @@ final class HologramLocalPlacement {
     }
 
     boolean active() {
-        return pending != null || preparation != null || display != null;
+        return display != null;
     }
 
     boolean submitting() {
@@ -105,57 +97,31 @@ final class HologramLocalPlacement {
         return bounds;
     }
 
-    void install(NBTTagCompound preview, byte[] artifact, String localId, String publicId, String hash, String revision,
-        boolean rawRows) {
+    void install(HologramState prepared, String localId, String publicId, String hash, String revision) {
         clear();
-        this.pending = preview;
-        this.artifact = artifact;
         this.localId = localId;
         this.publicId = publicId;
         this.jsonHash = hash;
         this.sourceRevision = revision;
-        this.rawRows = rawRows;
-        materialSummary = preview.hasKey("localMaterials", 10) ? preview.getCompoundTag("localMaterials") : null;
         world = Minecraft.getMinecraft().theWorld;
-        pending.setString("session", "local-preview");
-        pending.setBoolean("localPreview", true);
-        pending.setBoolean("virtual", true);
-        pending.setBoolean("virtualPlacement", true);
-        pending.setBoolean("moving", true);
-        pending.setInteger("dimension", Minecraft.getMinecraft().thePlayer.dimension);
-        pending.setInteger("x", 0);
-        pending.setInteger("y", 0);
-        pending.setInteger("z", 0);
+        NBTTagCompound metadata = new NBTTagCompound();
+        metadata.setString("session", "local-preview");
+        metadata.setBoolean("localPreview", true);
+        metadata.setBoolean("virtual", true);
+        metadata.setBoolean("virtualPlacement", true);
+        metadata.setBoolean("moving", true);
+        metadata.setInteger("dimension", Minecraft.getMinecraft().thePlayer.dimension);
+        metadata.setInteger("x", 0);
+        metadata.setInteger("y", 0);
+        metadata.setInteger("z", 0);
+        display = prepared.withMetadata(metadata);
         Minecraft.getMinecraft()
             .displayGuiScreen(null);
     }
 
     void tick() {
-        if (!active()) return;
-        if (Minecraft.getMinecraft().theWorld != world || Minecraft.getMinecraft().thePlayer == null) {
+        if (active() && (Minecraft.getMinecraft().theWorld != world || Minecraft.getMinecraft().thePlayer == null))
             clear();
-            return;
-        }
-        try {
-            long deadline = System.nanoTime() + 2_000_000L;
-            if (pending != null) {
-                NBTTagList rows = pending.getTagList("cells", 10);
-                int work = 0;
-                while (rawRows && row < rows.tagCount() && work++ < 256 && System.nanoTime() < deadline)
-                    HologramBlueprintPreview.completeCell(rows.getCompoundTagAt(row++), true);
-                if (!rawRows || row == rows.tagCount()) {
-                    preparation = new HologramState.Preparation(pending);
-                    pending = null;
-                }
-            }
-            if (preparation != null && preparation.step(256, Math.max(1L, deadline - System.nanoTime()))) {
-                display = preparation.result();
-                preparation = null;
-            }
-        } catch (IOException | RuntimeException invalid) {
-            clear();
-            HologramClient.localPlacementNotice("蓝图预览无法读取：" + invalid.getMessage());
-        }
     }
 
     void turn(boolean vertical) {
@@ -172,7 +138,7 @@ final class HologramLocalPlacement {
             anchor = HologramClient.localPlacementAnchor();
             locked = true;
         } else {
-            HologramLocalMaterialScreen.openLocalMaterialReview(this);
+            submit(reviewOptions());
         }
     }
 
@@ -185,8 +151,11 @@ final class HologramLocalPlacement {
         submitting = false;
     }
 
-    byte[] artifact() {
-        return artifact;
+    static NBTTagCompound reviewOptions() {
+        NBTTagCompound options = new NBTTagCompound();
+        options.setBoolean("openReview", true);
+        options.setBoolean("executeIntent", false);
+        return options;
     }
 
     String localId() {
@@ -203,14 +172,6 @@ final class HologramLocalPlacement {
 
     String revision() {
         return sourceRevision;
-    }
-
-    NBTTagCompound materialSummary() {
-        return materialSummary;
-    }
-
-    void materialSummary(NBTTagCompound summary) {
-        materialSummary = summary;
     }
 
     void intent(NBTTagCompound request) {
@@ -233,15 +194,10 @@ final class HologramLocalPlacement {
 
     void clear() {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
-        pending = null;
-        preparation = null;
         display = null;
         world = null;
-        artifact = null;
-        materialSummary = null;
         localId = publicId = jsonHash = sourceRevision = "";
-        row = 0;
-        rawRows = locked = submitting = false;
+        locked = submitting = false;
         anchor = null;
         pose = new HologramPreviewPose();
         for (com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat key : nudgeKeys) key.sample(false, false, true, 0);

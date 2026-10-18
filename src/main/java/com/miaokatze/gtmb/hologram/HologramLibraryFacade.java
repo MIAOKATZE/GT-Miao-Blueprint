@@ -539,6 +539,7 @@ public final class HologramLibraryFacade {
     public static synchronized void stop() {
         HologramServerLibrary previous = library;
         library = null;
+        HologramPresets.clearCache();
         synchronized (pending) {
             inbound.clear();
             pending.clear();

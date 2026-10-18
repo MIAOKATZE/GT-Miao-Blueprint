@@ -81,6 +81,11 @@ public final class HologramBlueprintPreview {
 
     /** No GL, live world access, registry lookups, native factories, or mutable GUI state on this worker path. */
     static NBTTagCompound snapshot(byte[] exactJson) throws IOException {
+        return snapshot(exactJson, null);
+    }
+
+    static NBTTagCompound snapshot(byte[] exactJson, java.util.function.BiConsumer<Integer, Integer> progress)
+        throws IOException {
         if (exactJson == null || exactJson.length == 0 || exactJson.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
             throw new IOException("Blueprint preview JSON byte budget");
         boolean witness = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
@@ -112,7 +117,10 @@ public final class HologramBlueprintPreview {
             }
             NBTTagList cells = new NBTTagList();
             Payloads payloads = new Payloads();
+            int processed = 0;
+            if (progress != null) progress.accept(0, sourceCells.size());
             for (JsonElement row : sourceCells) {
+                if (progress != null && (++processed & 255) == 0) progress.accept(processed, sourceCells.size());
                 JsonObject source = row.getAsJsonObject();
                 JsonElement excluded = source.get("excluded");
                 if (excluded != null && excluded.isJsonPrimitive()
@@ -141,6 +149,7 @@ public final class HologramBlueprintPreview {
             }
             if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
             data.setTag("cells", cells);
+            if (progress != null) progress.accept(sourceCells.size(), sourceCells.size());
             if (witness) rememberSource(data, HologramBlueprintArtifact.hash(sourceJson));
             return data;
         } catch (RuntimeException invalid) {
@@ -472,10 +481,6 @@ public final class HologramBlueprintPreview {
 
     /** Resolve one disposable display row on the client thread, without world or payment validation. */
     static void completeCell(NBTTagCompound cell) throws IOException {
-        completeCell(cell, false);
-    }
-
-    static void completeCell(NBTTagCompound cell, boolean materialData) throws IOException {
         Object item = Item.itemRegistry.getObject(cell.getString("previewItem"));
         ItemStack stack = item instanceof Item ? new ItemStack((Item) item, 1, cell.getInteger("previewDamage")) : null;
         if (stack == null && !cell.getString("previewItem")
@@ -534,7 +539,6 @@ public final class HologramBlueprintPreview {
         cell.setTag("targetDisplay", display);
         cell.setString("id", cell.getString("wantId"));
         cell.setInteger("meta", cell.getInteger("wantMeta"));
-        if (materialData && tile != null) cell.setTag("localMaterialTile", tile.copy());
         cell.removeTag("previewTile");
         cell.removeTag("previewItemTag");
         cell.removeTag("previewItem");

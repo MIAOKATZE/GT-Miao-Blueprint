@@ -196,3 +196,5 @@ item.decoration_voucher.detail.rollback=§a未成功抵扣不消耗§7；僅勾�
 item.decoration_voucher.detail.creative=§d創造模式§7也須持有券才能勾選核查減免方案；施工§a不扣券§7。§r
 item.decoration_voucher.detail.config=§7管理員可設定§f啟用開關與模組白名單§7：§r
 item.decoration_voucher.detail.reload=§fgtmb-decoration-voucher.cfg §8（修改後重啟伺服器）§r
+
+gtmb.hologram.progress.library.display=準備預覽模型

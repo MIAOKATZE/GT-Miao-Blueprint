@@ -147,9 +147,9 @@
 
 从蓝图库点击「放置所选蓝图」，在真实环境中检查占地与高度。预览可贴合命中表面，也可悬空；**右键立即固定当前位置，边框由绿色切为青色**。调整位置与姿态后，再右键打开材料确认；Esc 取消。
 
-蓝图库浏览使用独立的客户端显示数据。点击「放置所选蓝图」后，先在界面内按内容哈希查找玩家缓存和服务器蓝图库；未命中时显示上传与校验进度，准备完成再进入世界预览。之后移动、旋转、锁定与微调不上传蓝图、不重复整图校验，锁定后仍可旋转。服务器蓝图的显示副本按版本缓存在本次连接中；完整下载才取得原件。
+蓝图库浏览使用独立的客户端显示数据。预览区域中的大图可先显示 PNG 或首批方块，再逐步补齐；现有页脚按阶段显示进度，依赖数据的操作在数据就绪后开放，小图不强制等待 PNG。点击「放置所选蓝图」后，先只按内容哈希查找玩家可信缓存和服务器蓝图库；命中时直接复用，不打包或上传整份蓝图。未命中时才打包，并在蓝图库界面底部显示上传与校验进度，完成后进入世界预览。移动、旋转与微调只更新本地预览，不上传蓝图或发起服务器校验，锁定后仍可旋转。服务器蓝图的显示副本按版本缓存在本次连接中；完整下载才取得原件。
 
-*Browsing uses independent client display data. Place selected blueprint first resolves the content hash in the UI, showing upload and validation progress on a miss before entering the world preview. Moving, turning, locking and nudging then require no blueprint upload or repeated validation. Server-library previews are cached by revision for the current connection; a full download retrieves the original.*
+*Browsing uses independent client display data. Large previews may first show a PNG or an initial batch of blocks and fill in progressively; the existing footer shows stage progress and data-dependent controls become available when ready, while small previews need not wait for a PNG. Place selected blueprint first probes the player's trusted cache and server library by content hash alone; a hit reuses the content without building or uploading the full bundle. Only a miss builds the bundle and shows upload and validation progress in the library footer before entering the world preview. Moving, turning and nudging update the local preview without upload or server validation; rotation also works while locked. Server-library previews are cached by revision for the current connection; a full download retrieves the original.*
 
 *Place a selected blueprint into the world preview, align it with the site and right-click to lock the position. Review materials before construction.*
 
@@ -175,9 +175,9 @@
 
 ## 05 · 看清每一笔材料，再开工 / Review exact costs
 
-世界预览再次右键先打开**本地材料预估**，分批计算并复用理论需求，未查询的已有与缺失显示「未知」。点击「开始建设 · 服务器复核」引用已经准入的内容；若缓存已失效，回到界面重新准备。服务器从当前放置者取得身份，核对真实材料、放置位置、权限与现场；费用超出本地确认范围、缺料或尚未完整核算时，转入完整材料确认。
+锁定世界预览后，再次右键打开**材料确认窗口**，按窗口内的核算进度与**需求 / 已有 / 缺失**清单，核对放置位置、NBT 保留选项和当前库存，再确认施工。AE 缺料下单、刷新材料与装饰抵用券也在这个窗口操作；服务器按当前放置者核对真实材料、权限与现场条件。
 
-*The local estimate reuses theoretical demand and shows unknown stock. Start construction references the admitted content; expired content returns to the preparation UI. The server binds the current player and checks actual payment, target legality and permissions; changed or incomplete costs return to the full review.*
+*After locking the world preview, right-click again to open the material confirmation dialog. Follow its calculation progress and review required, available and missing quantities, placement, retained NBT and current stock before confirming construction. AE ordering, stock refresh and decoration vouchers use this dialog; the server checks actual materials, permissions and site conditions for the current placing player.*
 
 蓝图使用无损字典压缩，重复方块描述与 NBT 内容只保存一份，旧格式仍可读取。服务端为每位玩家缓存最多 **10 份、合计 100 MB** 的可信内容，并可直接复用服务器蓝图库中相同哈希的原件；压缩不改变材料、配置与归属信息，实际施工仍绑定当前放置者。
 

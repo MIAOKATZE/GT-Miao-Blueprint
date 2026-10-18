@@ -97,79 +97,12 @@ public final class HologramMaterialReviewRegression {
         SimpleAssert.that(!model.ready(), "stale material quote cannot enable the new transaction button");
         metadataFence();
         contextAndUnchangedChoices();
-        unknownLocalStock();
-        ownedLocalEstimateCache();
+        incompleteEstimateCannotEnableConfirmation();
     }
 
-    private static void ownedLocalEstimateCache() {
-        try {
-            HologramLocalPlacement placement = new HologramLocalPlacement();
-            NBTTagCompound metadata = new NBTTagCompound();
-            metadata.setBoolean("localMaterialPolicyPresent", true);
-            metadata.setBoolean("retainNbt", true);
-            metadata.setBoolean("retainCovers", true);
-            HologramState source = new HologramState(metadata);
-            java.lang.reflect.Field display = HologramLocalPlacement.class.getDeclaredField("display");
-            java.lang.reflect.Field artifact = HologramLocalPlacement.class.getDeclaredField("artifact");
-            java.lang.reflect.Field hash = HologramLocalPlacement.class.getDeclaredField("jsonHash");
-            for (java.lang.reflect.Field field : new java.lang.reflect.Field[] { display, artifact, hash })
-                field.setAccessible(true);
-            display.set(placement, source);
-            artifact.set(placement, new byte[] { 1 });
-            hash.set(placement, "immutable-source-a");
-            HologramLocalMaterials first = new HologramLocalMaterials(placement);
-            SimpleAssert
-                .that(first.result() == null && first.step(), "first owned estimate computes before publication");
-            NBTTagCompound cached = (NBTTagCompound) placement.materialSummary()
-                .copy();
-            HologramLocalMaterials reopened = new HologramLocalMaterials(placement);
-            SimpleAssert.that(
-                reopened.result() != null && reopened.result()
-                    .getBoolean("complete"),
-                "reopening an unchanged owned source reuses its completed estimate before scanning any cells");
-            reopened.result()
-                .setBoolean("complete", false);
-            SimpleAssert.that(
-                placement.materialSummary()
-                    .getBoolean("complete"),
-                "the displayed estimate is detached from its placement-owned cache");
-            placement.materialSummary()
-                .setBoolean("complete", false);
-            placement.materialSummary()
-                .setInteger("unaccounted", 2);
-            SimpleAssert.that(
-                !new HologramLocalMaterials(placement).result()
-                    .getBoolean("complete"),
-                "reusing an explicitly partial local estimate cannot turn unknown demand into a complete bill");
-            placement.materialSummary(cached);
-            source.data.setBoolean("retainCovers", false);
-            SimpleAssert.that(
-                new HologramLocalMaterials(placement).result() == null,
-                "a changed material retention policy cannot reuse the old static bill");
-            source.data.setBoolean("retainCovers", true);
-            hash.set(placement, "immutable-source-b");
-            SimpleAssert.that(
-                new HologramLocalMaterials(placement).result() == null,
-                "a different source digest cannot inherit the previous estimate");
-            hash.set(placement, "immutable-source-a");
-            cached.setBoolean("loading", true);
-            SimpleAssert.that(
-                new HologramLocalMaterials(placement).result() == null,
-                "a loading summary never skips local estimation");
-            cached.removeTag("loading");
-            cached.removeTag("localEstimateCache");
-            cached.setBoolean("complete", false);
-            SimpleAssert.that(
-                new HologramLocalMaterials(placement).result() == null,
-                "a partial public summary is not an owned local-source estimate");
-        } catch (ReflectiveOperationException failure) {
-            throw new AssertionError("cannot install detached local estimate cache fixture", failure);
-        }
-    }
-
-    private static void unknownLocalStock() {
+    private static void incompleteEstimateCannotEnableConfirmation() {
         NBTTagCompound row = HologramMaterialQuote.itemRow(new ItemStack(Items.diamond), 37, 0);
-        row.setBoolean("availableKnown", false);
+        row.setBoolean("voucherEligible", true);
         NBTTagList rows = new NBTTagList();
         rows.appendTag(row);
         NBTTagCompound quote = new NBTTagCompound();
@@ -180,13 +113,9 @@ public final class HologramMaterialReviewRegression {
         state.setTag("materialQuote", quote);
         HologramMaterialReview model = new HologramMaterialReview();
         model.update(state);
-        SimpleAssert.that(model.ready(), "partial local estimates can display their known theoretical demand");
-        SimpleAssert.eq("37", model.row(0).required, "local theoretical demand remains exact");
-        SimpleAssert.eq("未知", model.row(0).available, "unqueried inventory must not masquerade as zero");
-        SimpleAssert.eq("未知", model.row(0).missing, "unqueried shortages must remain unknown");
         SimpleAssert.that(
-            !model.row(0).shortage && !model.hasItemShortage(),
-            "unknown stock cannot recommend a payable shortage order");
+            !model.ready() && !model.hasItemShortage() && !model.hasVoucherDemand(),
+            "an incomplete estimate cannot enable confirmation, material orders or voucher controls");
     }
 
     private static void contextAndUnchangedChoices() {

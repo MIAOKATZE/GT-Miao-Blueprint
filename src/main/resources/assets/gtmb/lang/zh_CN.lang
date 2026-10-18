@@ -233,6 +233,7 @@ gtmb.hologram.progress.library.rollback=恢复原成对文件
 gtmb.hologram.progress.library.session=创建临时预览会话
 gtmb.hologram.progress.library.delete=删除蓝图库条目
 gtmb.hologram.progress.library.complete=蓝图操作已完成
+gtmb.hologram.progress.library.display=准备预览模型
 gtmb.hologram.progress.cut.list=同步剪切目录
 gtmb.hologram.progress.cut.preview=准备剪切预览
 gtmb.hologram.progress.cut.cut=剪切并存入暂存

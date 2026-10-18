@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import net.minecraft.nbt.NBTTagCompound;
+
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Tests the production storage transaction without initializing the GT machine registry. */
@@ -38,6 +40,16 @@ final class HologramPresetPersistenceRegression {
             for (int i = 0; i < 32; i++) initial.add(preset("preset_" + i, "Original " + i));
             write.invoke(null, file, initial);
             byte[] originalBytes = Files.readAllBytes(file);
+            String initialHash = HologramPresets.contentHash("preset_5");
+            Object initialSource = contentSource("preset_5");
+            Object initialBase = field(initialSource, "base");
+            HologramPresets.labels();
+            HologramPresets.get("preset_5");
+            SimpleAssert
+                .eq(initialHash, HologramPresets.contentHash("preset_5"), "same catalog reuses content identity");
+            SimpleAssert.that(
+                initialSource == contentSource("preset_5") && initialBase == field(initialSource, "base"),
+                "labels and repeated gets preserve the private canonical source without reprocessing it");
 
             List<HologramPresets.Preset> updated = HologramPresets.all();
             HologramPresets.Preset edit = preset("preset_5", "Updated");
@@ -60,17 +72,42 @@ final class HologramPresetPersistenceRegression {
             Files.createDirectory(blocked);
             Files.write(blocked.resolve("keep"), new byte[] { 1 });
             expectIo(write, blocked, updated);
+            SimpleAssert.that(
+                initialSource == contentSource("preset_5"),
+                "failed catalog writes do not retire the current admitted source");
             SimpleAssert.eq("Original 5", HologramPresets.get("preset_5").name, "failed IO leaves cache unchanged");
             SimpleAssert.that(
                 java.util.Arrays.equals(originalBytes, Files.readAllBytes(file)),
                 "failed IO leaves prior file unchanged");
             write.invoke(null, file, updated);
+            SimpleAssert.that(
+                !initialHash.equals(HologramPresets.contentHash("preset_5"))
+                    && initialSource != contentSource("preset_5"),
+                "committed content edits retire the old source and its hash");
+            try {
+                HologramPresets.admitted("preset_5", initialHash);
+                throw new AssertionError("An old content reference cannot activate a newer saved generation");
+            } catch (IOException expectedChangedSource) {
+                SimpleAssert.that(
+                    expectedChangedSource.getMessage()
+                        .contains("changed"),
+                    "a stale admitted reference asks for preparation of the current source");
+            }
             SimpleAssert.eq("Updated", HologramPresets.get("preset_5").name, "successful update publishes cache");
             SimpleAssert
                 .eq(5, HologramPresets.get("preset_5").cells.get(0).facing, "updated target facing survives storage");
             edit.name = "Caller mutation";
             HologramPresets.get("preset_5").name = "Reader mutation";
             SimpleAssert.eq("Updated", HologramPresets.get("preset_5").name, "cache owns detached snapshots");
+            String policyHash = HologramPresets.contentHash("preset_5");
+            Object policySource = contentSource("preset_5");
+            long policyGeneration = (Long) field(HologramPresets.class, "contentGeneration");
+            HologramPresets.clearContentCache();
+            SimpleAssert.that(
+                policySource != contentSource("preset_5")
+                    && policyGeneration < (Long) field(HologramPresets.class, "contentGeneration")
+                    && policyHash.equals(HologramPresets.contentHash("preset_5")),
+                "runtime policy reset retires derived identities while retaining unchanged catalog semantics");
 
             List<HologramPresets.Preset> copies = HologramPresets.all();
             copies.remove(31);
@@ -171,6 +208,58 @@ final class HologramPresetPersistenceRegression {
             Path sourcePair = game.resolve("MiaoBlueprints/local_" + saved.id + ".json");
             HologramBlueprintSharing.write(sourcePair, saved, preview);
             HologramBlueprintSharing.write(oldShare, saved, preview);
+            String stableHash = HologramPresets.contentHash(saved.id);
+            Object stableSource = contentSource(saved.id);
+            HologramPresets.refreshLocalArtifacts();
+            HologramPresets.refreshLocalArtifacts();
+            SimpleAssert.that(
+                stableSource == contentSource(saved.id) && stableHash.equals(HologramPresets.contentHash(saved.id)),
+                "unchanged explicit library refreshes reuse the catalog and admitted identity");
+            byte[] originalCatalog = Files.readAllBytes(expected);
+            com.google.gson.JsonObject legacyCatalog = HologramBlueprintCompactCodec
+                .parse(originalCatalog, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
+            com.google.gson.JsonObject legacyEntry = legacyCatalog.getAsJsonArray("presets")
+                .get(0)
+                .getAsJsonObject();
+            legacyEntry.remove("retainCovers");
+            Files.write(
+                expected,
+                legacyCatalog.toString()
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            HologramPresets.refreshLocalArtifacts();
+            HologramPresets.labels();
+            SimpleAssert.that(
+                ((java.util.Map<?, ?>) field(HologramPresets.class, "contentSources")).isEmpty(),
+                "ordinary labels create neither canonical nor raw semantic identities");
+            Object legacySource = contentSource(saved.id);
+            SimpleAssert.that(field(legacySource, "rawHash") == null, "labels never calculate raw content identity");
+            String rawHash = HologramBlueprintContentHash.ofBlueprint(legacyEntry);
+            SimpleAssert.that(
+                !rawHash.equals(HologramPresets.contentHash(saved.id))
+                    && HologramPresets.matchesContent(saved.id, rawHash),
+                "omitted legacy defaults keep an exact raw identity tied to the admitted canonical base");
+            SimpleAssert
+                .eq(saved.id, HologramPresets.admitted(saved.id, rawHash).id, "raw identity activates its source");
+            NBTTagCompound pairHint = new NBTTagCompound();
+            pairHint.setString("localId", "local_" + saved.id);
+            SimpleAssert.eq(
+                saved.id,
+                HologramServerLibrary.integratedContentId(pairHint),
+                "a local pair selects only its corresponding integrated catalog source");
+            SimpleAssert.that(
+                HologramPresets.matching(HologramServerLibrary.integratedContentId(pairHint), rawHash) != null
+                    && HologramPresets.matching(saved.id, "different-content") == null,
+                "existing integrated content is reusable without trusting a client filename hint");
+            Object memoizedRawHash = field(legacySource, "rawHash");
+            HologramPresets.matchesContent(saved.id, rawHash);
+            SimpleAssert.that(
+                memoizedRawHash == field(legacySource, "rawHash"),
+                "repeated admission reuses the same raw identity without retaining an expanded JSON tree");
+            Files.write(expected, originalCatalog);
+            HologramPresets.refreshLocalArtifacts();
+            SimpleAssert.that(
+                legacySource != contentSource(saved.id) && !HologramPresets.matchesContent(saved.id, rawHash),
+                "external catalog replacement retires the prior raw identity mapping");
             byte[] oldShareBytes = Files.readAllBytes(oldShare);
             byte[] oldPreviewBytes = Files.readAllBytes(HologramBlueprintArtifact.previewPath(oldShare));
             Method importFile = HologramBlueprintSharing.class.getDeclaredMethod("importFile", String.class);
@@ -292,6 +381,18 @@ final class HologramPresetPersistenceRegression {
         preset.cells.add(stone);
         preset.palette.add(stone);
         return preset;
+    }
+
+    private static Object contentSource(String id) throws Exception {
+        HologramPresets.contentHash(id);
+        return ((java.util.Map<?, ?>) field(HologramPresets.class, "contentSources")).get(id);
+    }
+
+    private static Object field(Object target, String name) throws Exception {
+        Class<?> type = target instanceof Class<?> ? (Class<?>) target : target.getClass();
+        Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target instanceof Class<?> ? null : target);
     }
 
     private static void expectIo(Method method, Object... arguments) throws Exception {

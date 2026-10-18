@@ -64,7 +64,6 @@ public final class HologramMaterialVisualSmoke {
     private long spectrumFirstFrame, spectrumFirstGeneration, spectrumFirstNanos;
 
     public static void install() {
-        if (HologramLocalMaterialVisualSmoke.install()) return;
         if (Boolean.getBoolean("gtmb.hologram.materialVisualSmoke")) FMLCommonHandler.instance()
             .bus()
             .register(new HologramMaterialVisualSmoke());

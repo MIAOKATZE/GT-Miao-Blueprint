@@ -95,6 +95,7 @@ final class HologramUiPreview {
 
     private long pendingSelectionSequence = -1;
     private HologramState browseState;
+    private long browseCameraEpoch = Long.MIN_VALUE;
     private double browseYaw = Math.PI / 4, browsePitch = Math.PI / 6, browseZoom = 1;
     private int browseLayer;
     private boolean browseAllLayers = true, browseDragging;
@@ -227,15 +228,21 @@ final class HologramUiPreview {
 
     /** A library display has its own camera and no selection, session, or editing capability. */
     private void drawBrowsePreview(int mx, int my) {
-        HologramState display = HologramLibraryClient.INSTANCE.browsePreviewState();
-        if (display != browseState) {
-            browseState = display;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        HologramState display = library.browsePreviewState();
+        if (browseCameraEpoch != library.browsePreviewEpoch()) {
+            browseCameraEpoch = library.browsePreviewEpoch();
             browseAllLayers = true;
             browseLayer = display == null ? 0 : display.minY;
             browseYaw = Math.PI / 4;
             browsePitch = Math.PI / 6;
             browseZoom = 1;
             browseDragging = false;
+        }
+        if (display != browseState) {
+            if (display != null) browseLayer = browseState == null ? display.minY
+                : Math.max(display.minY, Math.min(display.maxY, browseLayer));
+            browseState = display;
         }
         int height = previewHeight();
         drawRect(viewportX, viewportY, viewportX + viewportWidth, viewportY + height, 0xff0c1e28);
@@ -244,6 +251,7 @@ final class HologramUiPreview {
         HologramRenderer.selectedStructureId = "";
         HologramRenderer.projectionLayer = browseAllLayers ? Integer.MAX_VALUE : browseLayer;
         if (display == null) {
+            if (drawBrowseImage(library, height)) return;
             String status = HologramLibraryClient.INSTANCE.browsePreviewStatus();
             ui.canvas.text(
                 status.isEmpty() ? "在右侧选择蓝图以预览" : status,
@@ -286,10 +294,48 @@ final class HologramUiPreview {
         } finally {
             GL11.glPopAttrib();
         }
+        boolean visible = HologramRenderer.previewMeshVisible(display);
+        if (!visible) drawBrowseImage(library, height);
+        if (!display.data.getBoolean("displayPartial") && HologramRenderer.previewMeshReady(display))
+            library.releaseBrowseImage();
         ui.canvas.text("只读预览", 38, 61, 76, 0x81dce9);
-        ui.canvas.button(11, 116, 55, 50, 17, browseAllLayers ? "全部层" : "层 " + browseLayer, true, mx, my);
-        ui.canvas.button(12, 168, 55, 20, 17, "−", browseLayer > display.minY, mx, my);
-        ui.canvas.button(13, 190, 55, 22, 17, "+", browseLayer < display.maxY, mx, my);
+        ui.canvas.button(11, 116, 55, 50, 17, browseAllLayers ? "全部层" : "层 " + browseLayer, visible, mx, my);
+        ui.canvas.button(12, 168, 55, 20, 17, "−", visible && browseLayer > display.minY, mx, my);
+        ui.canvas.button(13, 190, 55, 22, 17, "+", visible && browseLayer < display.maxY, mx, my);
+    }
+
+    private boolean browseMeshInteractive() {
+        return browseState != null && HologramRenderer.previewMeshVisible(browseState);
+    }
+
+    private boolean drawBrowseImage(HologramLibraryClient library, int height) {
+        net.minecraft.util.ResourceLocation texture = library.browsePreviewTexture();
+        java.awt.image.BufferedImage image = library.browsePreviewImage();
+        if (texture == null || image == null) return false;
+        double scale = Math.min((viewportWidth - 16.0) / image.getWidth(), (height - 16.0) / image.getHeight());
+        double width = image.getWidth() * scale, imageHeight = image.getHeight() * scale;
+        double left = viewportX + (viewportWidth - width) / 2, top = viewportY + (height - imageHeight) / 2;
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_CURRENT_BIT);
+        try {
+            ui.host.minecraft()
+                .getTextureManager()
+                .bindTexture(texture);
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glColor4f(1, 1, 1, 1);
+            net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.instance;
+            tessellator.startDrawingQuads();
+            tessellator.addVertexWithUV(left, top + imageHeight, 0, 0, 1);
+            tessellator.addVertexWithUV(left + width, top + imageHeight, 0, 1, 1);
+            tessellator.addVertexWithUV(left + width, top, 0, 1, 0);
+            tessellator.addVertexWithUV(left, top, 0, 0, 0);
+            tessellator.draw();
+        } finally {
+            GL11.glPopAttrib();
+        }
+        return true;
     }
 
     boolean canMoveSelection() {
@@ -860,8 +906,9 @@ final class HologramUiPreview {
 
     boolean rotateCameraControl(int id) {
         if (id == 223) {
-            if (ui.library.browsePreviewActive()) browseYaw += Math.PI / 2;
-            else this.yaw = this.yaw + (Math.PI / 2);
+            if (ui.library.browsePreviewActive()) {
+                if (browseMeshInteractive()) browseYaw += Math.PI / 2;
+            } else this.yaw = this.yaw + (Math.PI / 2);
             return true;
         }
         return false;
@@ -889,6 +936,7 @@ final class HologramUiPreview {
 
     boolean activateControl(int id) {
         if (ui.library.browsePreviewActive() && id >= 10 && id <= 15) {
+            if (!browseMeshInteractive()) return true;
             if (id == 11) browseAllLayers = !browseAllLayers;
             else if (id == 12 || id == 13) {
                 browseAllLayers = false;
@@ -1009,7 +1057,7 @@ final class HologramUiPreview {
     boolean consumeViewportLeftMouse(int mx, int my, int button) {
         if (ui.library.browsePreviewActive()) {
             if (button != 0) return false;
-            if (button == 0 && ui.canvas.inViewport(mx, my) && !previewBlockedAt(mx, my)) {
+            if (button == 0 && browseMeshInteractive() && ui.canvas.inViewport(mx, my) && !previewBlockedAt(mx, my)) {
                 browseDragging = true;
                 dragX = mx;
                 dragY = my;
@@ -1147,7 +1195,7 @@ final class HologramUiPreview {
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
         if (ui.library.browsePreviewActive()) {
-            if (browseDragging) {
+            if (browseDragging && browseMeshInteractive()) {
                 int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
                 browseYaw -= (mx - dragX) * .012;
                 browsePitch = Math.max(-1.35, Math.min(1.35, browsePitch + (my - dragY) * .012));
@@ -1434,8 +1482,9 @@ final class HologramUiPreview {
     }
 
     double zoom(double value) {
-        if (ui.library.browsePreviewActive()) browseZoom = value;
-        else this.zoom = value;
+        if (ui.library.browsePreviewActive()) {
+            if (browseMeshInteractive()) browseZoom = value;
+        } else this.zoom = value;
         return value;
     }
 
