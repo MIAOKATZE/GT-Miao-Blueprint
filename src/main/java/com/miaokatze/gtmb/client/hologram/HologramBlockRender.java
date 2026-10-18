@@ -74,6 +74,23 @@ final class HologramBlockRender {
         compiled = vertices = 0;
     }
 
+    static void advance(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
+        if (snapshot != previous) return;
+        for (HologramRegionCache.Key key : dirty) {
+            List<HologramState.Cell> cells = previous.regions.regions.get(key);
+            if (cells == null) continue;
+            for (HologramState.Cell cell : cells) {
+                Model[] pair = MODELS.remove(cell);
+                if (pair == null) continue;
+                for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
+            }
+        }
+        snapshot = next;
+        // The spatial index is shared; constructing these views does not walk all cells.
+        target = new HologramBlockAccess(next, false);
+        actual = new HologramBlockAccess(next, true);
+    }
+
     static String failure(HologramState.Cell cell, boolean current) {
         return FAILURES.getOrDefault((current ? cell.id : cell.wantId), "");
     }

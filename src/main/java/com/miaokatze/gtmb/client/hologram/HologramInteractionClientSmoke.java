@@ -27,11 +27,15 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 public final class HologramInteractionClientSmoke {
 
     private final long installed = System.nanoTime();
+    private final long startupBudgetNanos = Math
+        .max(60L, Math.min(3600L, Long.getLong("gtmb.hologram.nativeStartupSeconds", 1800L))) * 1000000000L;
+    private long executionStarted;
     private int stage, waitTicks;
     private boolean done;
     private File receipts;
     private HologramScreen realScreen;
     private long lastClickedRender = -1;
+    private HologramScreen lastClickedScreen;
     private long renderedWorldFrames, closedAtWorldFrame;
     private long closedAtServerTick;
     private HologramInteractionReceiptSmoke receiptReader;
@@ -86,6 +90,11 @@ public final class HologramInteractionClientSmoke {
     private long lockedEscapeCancelAckTick = -1;
     private boolean lockedEscapeReopenRequested;
     private String cancelledReceiptWait = "";
+    private String areaSourceSwitchNonce = "";
+    private HologramProcessingClientSmoke areaProcessing;
+    private HologramPlacementReviewClientSmoke placementReviewInput;
+    private NBTTagCompound right2Opening;
+    private HologramAreaSelectionClientSmoke areaEntryInput;
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")) {
@@ -165,6 +174,12 @@ public final class HologramInteractionClientSmoke {
                 timedStage = stage;
                 stageEnteredAt = System.nanoTime();
             }
+            if (stage == 48 && System.nanoTime() - stageEnteredAt > 10000000000L) {
+                NBTTagCompound waiting = HologramClient.state == null ? null : HologramClient.state.data;
+                saveObservation("stone-processing-timeout-state.nbt", waiting);
+                throw new IllegalStateException(
+                    "10 second actual stone processing input/ACK wait: " + stageSnapshot(waiting));
+            }
             if ((stage == 11 || stage == 17 || stage == 21 || stage == 24 || stage == 66)
                 && System.nanoTime() - stageEnteredAt >= 10000000000L) {
                 HologramScreen waitingScreen = mc.currentScreen instanceof HologramScreen
@@ -190,7 +205,10 @@ public final class HologramInteractionClientSmoke {
                     throw failure;
                 }
             }
-            if (System.nanoTime() - installed > 600000000000L)
+            if (executionStarted == 0) {
+                if (System.nanoTime() - installed > startupBudgetNanos)
+                    throw new IllegalStateException("real interaction menu/world startup timeout stage=" + stage);
+            } else if (System.nanoTime() - executionStarted > 600000000000L)
                 throw new IllegalStateException("real interaction timeout stage=" + stage);
             if (operationStartedAt != 0 && System.nanoTime() - operationStartedAt > 180000000000L)
                 throw new IllegalStateException("180 second real-player operation budget exceeded stage=" + stage);
@@ -236,6 +254,7 @@ public final class HologramInteractionClientSmoke {
                 require(
                     isOfficial(mc.thePlayer.getHeldItem()) && mc.thePlayer.getHeldItem().stackSize == 1,
                     "fresh_server_supplies_one_official_projector_instead_of_GTMB_output");
+                executionStarted = System.nanoTime();
                 operationStartedAt = System.nanoTime();
                 mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.thePlayer));
                 stage = 70;
@@ -270,7 +289,7 @@ public final class HologramInteractionClientSmoke {
                 } else {
                     mc.objectMouseOver = null;
                     airRightClick(mc, false);
-                    lastClickedRender = -1;
+                    clearClickedFrame();
                     stage = stage == 61 ? 62 : 64;
                 }
                 return;
@@ -289,7 +308,7 @@ public final class HologramInteractionClientSmoke {
             }
             if (!(mc.currentScreen instanceof HologramScreen)) return;
             HologramScreen screen = (HologramScreen) mc.currentScreen;
-            if (screen.smokeRenderGeneration() <= lastClickedRender) {
+            if (!hasFreshDraw(screen)) {
                 if ((stage == 65 || stage == 67 || stage == 28 || stage == 29 || stage == 76)
                     && System.nanoTime() - stageEnteredAt >= 10000000000L)
                     throw new IllegalStateException("10 second wait for actual grade GUI render stage=" + stage);
@@ -363,7 +382,7 @@ public final class HologramInteractionClientSmoke {
                         "peer_tab_preserves_preview_selection");
                     closedAtWorldFrame = renderedWorldFrames;
                     closedAtServerTick = receipt().getLong("tick");
-                    screen.keyTyped('\0', Keyboard.KEY_ESCAPE);
+                    HologramMuiProbeInput.key(screen, '\0', Keyboard.KEY_ESCAPE);
                     require(mc.currentScreen == null, "Escape_from_blueprints_exits_whole_GUI");
                     stage = 61;
                     break;
@@ -374,7 +393,7 @@ public final class HologramInteractionClientSmoke {
                         "reopen_after_Escape_preserves_actual_mouse_selection");
                     closedAtWorldFrame = renderedWorldFrames;
                     closedAtServerTick = receipt().getLong("tick");
-                    screen.keyTyped('e', Keyboard.KEY_E);
+                    HologramMuiProbeInput.key(screen, 'e', Keyboard.KEY_E);
                     require(mc.currentScreen == null, "E_from_blueprints_exits_whole_GUI");
                     stage = 63;
                     break;
@@ -385,7 +404,7 @@ public final class HologramInteractionClientSmoke {
                         "reopen_after_E_preserves_actual_mouse_selection");
                     closedAtWorldFrame = renderedWorldFrames;
                     closedAtServerTick = receipt().getLong("tick");
-                    screen.keyTyped('e', Keyboard.KEY_E);
+                    HologramMuiProbeInput.key(screen, 'e', Keyboard.KEY_E);
                     require(mc.currentScreen == null, "blueprint_memory_E_closes_before_actual_controller_reopen");
                     stage = 95;
                     break;
@@ -409,7 +428,7 @@ public final class HologramInteractionClientSmoke {
                         "real_EBF_coil_family_has_sixteen_distinct_world_cells");
                     assertNoItemPalette(screen);
                     logConstructionScope(screen, "actual-coil-family-sixteen-selection");
-                    lastClickedRender = screen.smokeRenderGeneration();
+                    recordClickedFrame(screen);
                     stage = 67;
                     break;
                 case 67:
@@ -458,7 +477,7 @@ public final class HologramInteractionClientSmoke {
                         HologramScreenLayout.VIEWPORT_X + HologramScreenLayout.VIEWPORT_WIDTH / 2,
                         HologramScreenLayout.VIEWPORT_Y + HologramScreenLayout.VIEWPORT_HEIGHT / 2,
                         1);
-                    lastClickedRender = screen.smokeRenderGeneration();
+                    recordClickedFrame(screen);
                     stage = 76;
                     break;
                 case 76:
@@ -610,26 +629,39 @@ public final class HologramInteractionClientSmoke {
                                 && capturedTarget.getItemDamage() == 0,
                             "real_completed_area_contains_exact_source_stone_coordinate_" + i);
                     }
-                    if (!(Boolean) observedField(screen, "libraryDrawer")) click(screen, 130);
+                    if (!(Boolean) observedField(screen, "libraryDrawer")) click(screen, 149);
+                    areaProcessing = new HologramProcessingClientSmoke(
+                        receipts,
+                        "stone-" + sufficientBlueprintPass,
+                        (processingScreen, id) -> {
+                            click(processingScreen, id);
+                            return true;
+                        });
                     stage = 48;
                     break;
                 case 48:
-                    java.lang.reflect.Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
-                    nameField.setAccessible(true);
-                    net.minecraft.client.gui.GuiTextField name = (net.minecraft.client.gui.GuiTextField) nameField
-                        .get(screen);
-                    name.setFocused(true);
+                    if (!areaProcessing.tick(screen)) return;
+                    HologramMuiTextField name = (HologramMuiTextField) ((Object) HologramUiDiagnostics
+                        .readDiagnosticField(screen, "presetNameField"));
+                    int[] namePoint = (int[]) HologramUiDiagnostics.invokeDiagnostic(
+                        screen,
+                        "smokePreviewPoint",
+                        new Class<?>[] { int.class, int.class },
+                        name.xPosition + 4,
+                        name.yPosition + 7);
+                    HologramMuiProbeInput.click(screen, namePoint[0], namePoint[1], 0);
+                    require(name.isFocused(), "actual_mouse_focuses_blueprint_name");
                     keyboard(Keyboard.KEY_LCONTROL, true);
-                    screen.keyTyped((char) 1, Keyboard.KEY_A);
+                    HologramMuiProbeInput.key(screen, (char) 1, Keyboard.KEY_A);
                     keyboard(Keyboard.KEY_LCONTROL, false);
-                    screen.keyTyped('\b', Keyboard.KEY_BACK);
+                    HologramMuiProbeInput.key(screen, '\b', Keyboard.KEY_BACK);
                     for (char character : (sufficientBlueprintPass ? "SocketSufficient" : "SocketV004").toCharArray())
-                        screen.keyTyped(character, 0);
-                    lastClickedRender = screen.smokeRenderGeneration();
+                        HologramMuiProbeInput.key(screen, character, 0);
+                    recordClickedFrame(screen);
                     stage = 68;
                     break;
                 case 68:
-                    click(screen, 132);
+                    click(screen, 140);
                     stage = 49;
                     break;
                 case 49:
@@ -660,9 +692,19 @@ public final class HologramInteractionClientSmoke {
                         if (library.busy() || library.selectedRow(false)
                             .getString("id")
                             .isEmpty()) return;
+                        if (!state.getBoolean("blueprintSaved") || state.getBoolean("blueprintDirty")
+                            || state.getBoolean("blueprintSavePending")) return;
                         require(
                             new File(mc.mcDataDir, "MiaoBlueprints/" + library.selected(false) + ".json").isFile(),
                             "actual_library_save_publishes_private_file_before_place_or_Alt");
+                        require(
+                            new File(mc.mcDataDir, "MiaoBlueprints/" + library.selected(false) + ".png").isFile(),
+                            "actual_library_save_publishes_native_preview_before_place_or_Alt");
+                        saveObservation("library-save-wait-client.nbt", screen.smokeLibraryUiState());
+                        saveObservation(
+                            "library-save-committed-" + sufficientBlueprintPass + "-client.nbt",
+                            screen.smokeLibraryUiState());
+                        saveObservation("library-save-committed-" + sufficientBlueprintPass + "-state.nbt", state);
                         if (Boolean.getBoolean("gtmb.hologram.librarySocketSmoke") && libraryUiDriver == null) {
                             libraryUiDriver = new HologramLibraryUiSocketSmoke(
                                 receipts,
@@ -682,7 +724,7 @@ public final class HologramInteractionClientSmoke {
                             ? HologramLibraryClient.INSTANCE.selected(false)
                             : state.getString("libraryLocalId");
                         require(libraryTab(screen), "saved_blueprint_shortcut_preserves_last_library_tab");
-                        screen.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                        HologramMuiProbeInput.key(screen, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                         require(mc.currentScreen == null, "quick_place_starts_from_actual_closed_workspace");
                         keyboard(Keyboard.KEY_LMENU, true);
                         rightClickSource(mc);
@@ -739,11 +781,11 @@ public final class HologramInteractionClientSmoke {
                     break;
                 case 57:
                     require(
-                        state.getBoolean("forcePlacementReady") && receipt().getInteger("blueprintPlaced") == 1,
-                        "first_missing_material_confirmation_only_arms_second_review");
-                    logConstructionScope(screen, "whole-blueprint-explicit-second-confirmation");
-                    screenshot(mc, "placement-missing-explicit-second-review");
-                    click(screen, 55);
+                        state.getBoolean("jobPartialPlacement") && !state.getBoolean("blueprintAwaitingConfirmation"),
+                        "one_missing_material_confirmation_admits_reviewed_partial_job");
+                    require(
+                        !(Boolean) observedField(screen, "confirmation"),
+                        "accepted_partial_review_does_not_reopen");
                     stage = 58;
                     break;
                 case 58:
@@ -986,19 +1028,13 @@ public final class HologramInteractionClientSmoke {
     }
 
     private static boolean libraryTab(HologramScreen screen) throws ReflectiveOperationException {
-        java.lang.reflect.Field tab = HologramScreen.class.getDeclaredField("blueprintTab");
-        tab.setAccessible(true);
-        return tab.getBoolean(screen);
+
+        return ((Boolean) HologramUiDiagnostics.readDiagnosticField(screen, "blueprintTab"));
     }
 
     private int[] selectPlainPreviewFace(HologramScreen screen, NBTTagCompound snapshot) throws Exception {
         HologramState state = new HologramState(snapshot);
-        java.lang.reflect.Field originX = HologramScreen.class.getDeclaredField("originX");
-        java.lang.reflect.Field originY = HologramScreen.class.getDeclaredField("originY");
-        java.lang.reflect.Field scale = HologramScreen.class.getDeclaredField("scale");
-        originX.setAccessible(true);
-        originY.setAccessible(true);
-        scale.setAccessible(true);
+
         for (int y = HologramScreenLayout.VIEWPORT_Y + 40; y
             < HologramScreenLayout.VIEWPORT_Y + HologramScreenLayout.VIEWPORT_HEIGHT - 50; y += 2)
             for (int x = HologramScreenLayout.VIEWPORT_X + 10; x
@@ -1008,10 +1044,11 @@ public final class HologramInteractionClientSmoke {
                         .isEmpty()) continue;
                     HologramState.Cell cell = state.cells.get(index);
                     if (!cell.family.isEmpty() || cell.targetStack == null) continue;
-                    int mouseX = originX.getInt(screen) + Math.round(x * scale.getFloat(screen));
-                    int mouseY = originY.getInt(screen) + Math.round(y * scale.getFloat(screen));
-                    screen.mouseClicked(mouseX, mouseY, 0);
-                    screen.mouseMovedOrUp(mouseX, mouseY, 0);
+                    int mouseX = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originX"))
+                        + Math.round(x * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
+                    int mouseY = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
+                        + Math.round(y * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
+                    HologramMuiProbeInput.click(screen, mouseX, mouseY, 0);
                     int[] selected = screen.smokeSelectedIndices();
                     require(
                         selected.length == 1 && selected[0] == index,
@@ -1058,14 +1095,16 @@ public final class HologramInteractionClientSmoke {
 
     private void assertNoItemPalette(HologramScreen screen) throws ReflectiveOperationException {
         for (String fieldName : new String[] { "inventory", "hatchDrawer", "sourceDrawer" }) {
-            java.lang.reflect.Field field = HologramScreen.class.getDeclaredField(fieldName);
-            field.setAccessible(true);
-            require(!field.getBoolean(screen), "coil_grade_selection_does_not_open_item_palette_" + fieldName);
+
+            require(
+                !((Boolean) HologramUiDiagnostics.readDiagnosticField(screen, fieldName)),
+                "coil_grade_selection_does_not_open_item_palette_" + fieldName);
         }
         for (String fieldName : new String[] { "inventorySlot", "sourceChoice" }) {
-            java.lang.reflect.Field field = HologramScreen.class.getDeclaredField(fieldName);
-            field.setAccessible(true);
-            require(field.getInt(screen) == -1, "coil_grade_selection_does_not_choose_item_palette_slot_" + fieldName);
+
+            require(
+                ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, fieldName)) == -1,
+                "coil_grade_selection_does_not_choose_item_palette_slot_" + fieldName);
         }
     }
 
@@ -1078,16 +1117,12 @@ public final class HologramInteractionClientSmoke {
 
     private static void previewMouseClick(HologramScreen screen, int logicalX, int logicalY, int button)
         throws Exception {
-        java.lang.reflect.Field originX = HologramScreen.class.getDeclaredField("originX");
-        java.lang.reflect.Field originY = HologramScreen.class.getDeclaredField("originY");
-        java.lang.reflect.Field scale = HologramScreen.class.getDeclaredField("scale");
-        originX.setAccessible(true);
-        originY.setAccessible(true);
-        scale.setAccessible(true);
-        int x = originX.getInt(screen) + Math.round(logicalX * scale.getFloat(screen));
-        int y = originY.getInt(screen) + Math.round(logicalY * scale.getFloat(screen));
-        screen.mouseClicked(x, y, button);
-        screen.mouseMovedOrUp(x, y, button);
+
+        int x = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originX"))
+            + Math.round(logicalX * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
+        int y = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
+            + Math.round(logicalY * ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale")));
+        HologramMuiProbeInput.click(screen, x, y, button);
     }
 
     private void beginRepeatCompletedPlacement(Minecraft mc, HologramScreen screen, NBTTagCompound state, int nextStage)
@@ -1120,7 +1155,7 @@ public final class HologramInteractionClientSmoke {
         repeatCancelledTick = receipt().getLong("tick");
         aimedProjectionGeneration = "";
         saveObservation("post-complete-Alt-before-receipt-" + nextStage + ".nbt", receipt());
-        screen.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+        HologramMuiProbeInput.key(screen, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
         require(mc.currentScreen == null, "completed_placement_E_returns_to_world_before_Alt_repeat");
         stage = 83;
         waitTicks = 0;
@@ -1290,10 +1325,10 @@ public final class HologramInteractionClientSmoke {
                     + completedStock
                     + " next="
                     + afterRepeatStage);
-            lastClickedRender = -1;
+            clearClickedFrame();
             waitTicks = 0;
             if (afterRepeatStage == 40) {
-                draft.keyTyped('e', mc.gameSettings.keyBindInventory.getKeyCode());
+                HologramMuiProbeInput.key(draft, 'e', mc.gameSettings.keyBindInventory.getKeyCode());
                 require(mc.currentScreen == null, "sufficient_repeat_reopened_draft_actual_E_closes_before_next_area");
                 repeatCancelledTick = receipt().getLong("tick");
                 stage = 90;
@@ -1589,13 +1624,20 @@ public final class HologramInteractionClientSmoke {
             if (stage == 42 && (state == null || state.getBoolean("areaSelecting"))) return true;
             mc.displayGuiScreen(null);
             keyboard(Keyboard.KEY_RETURN, false);
-            keyboard(Keyboard.KEY_LSHIFT, true);
-            rightClickSource(mc);
+            areaEntryInput = new HologramAreaSelectionClientSmoke(
+                receipts,
+                "stone-" + sufficientBlueprintPass + "-" + stage,
+                HologramInteractionClientSmoke::keyboard,
+                this::rightClickSource);
+            areaEntryInput.begin(
+                mc,
+                new net.minecraft.util.MovingObjectPosition(50, 80, 44, 2, Vec3.createVectorHelper(50.5, 80.5, 44)));
             stage = stage == 40 ? 41 : 43;
             waitTicks = 0;
             return true;
         }
         if (stage == 41 || stage == 43) {
+            if (!areaEntryInput.tick(mc)) return true;
             if (state == null || !state.getBoolean("areaSelecting")) return true;
             keyboard(Keyboard.KEY_LSHIFT, false);
             if (stage == 41) {
@@ -1625,13 +1667,49 @@ public final class HologramInteractionClientSmoke {
             // Finish deliberately points elsewhere: the gesture must not replace corner two.
             mouseCorner(mc, 1, 48);
             keyboard(Keyboard.KEY_LSHIFT, false);
+            areaSourceSwitchNonce = "";
             stage = 46;
             return true;
         }
         if (stage == 46) {
-            if (!(mc.currentScreen instanceof HologramScreen) || state == null || !awaitStoneArea(state)) return true;
+            if (!(mc.currentScreen instanceof HologramScreen) || state == null) return true;
+            HologramScreen importing = (HologramScreen) mc.currentScreen;
+            if (state.getBoolean("discardConfirmationRequired")) {
+                if (importing.smokePending() || !hasFreshDraw(importing)) return true;
+                NBTTagCompound proposal = state.getCompoundTag("discardTargetAction");
+                String nonce = proposal.getString("sourceSwitchNonce");
+                require(
+                    "importArea".equals(proposal.getString("op")) && proposal.getString("session")
+                        .equals(state.getString("session"))
+                        && proposal.getLong("planRevision") == state.getLong("planRevision")
+                        && !nonce.isEmpty(),
+                    "actual_area_source_switch_retains_server_owned_proposal");
+                require(
+                    java.util.Arrays.equals(
+                        state.getIntArray("areaPoints"),
+                        new int[] { 50, 80, 44, sufficientBlueprintPass ? 50 : 51, 80, 44 }),
+                    "actual_area_source_review_retains_both_selected_corners");
+                if (!areaSourceSwitchNonce.isEmpty()) {
+                    require(areaSourceSwitchNonce.equals(nonce), "area_source_proposal_changed_after_confirmation");
+                    if (System.nanoTime() - stageEnteredAt > 10000000000L) throw new IllegalStateException(
+                        "10 second actual area source confirmation ACK wait: " + state.getString("status"));
+                    return true;
+                }
+                saveObservation("stone-source-switch-review-" + sufficientBlueprintPass + ".nbt", state);
+                saveObservation(
+                    "stone-source-switch-review-ui-" + sufficientBlueprintPass + ".nbt",
+                    importing.smokeLibraryUiState());
+                require(
+                    importing.smokeLibraryUiState()
+                        .getBoolean("discardReview"),
+                    "server_area_proposal_opens_actual_discard_modal");
+                click(importing, 224);
+                areaSourceSwitchNonce = nonce;
+                return true;
+            }
+            if (!awaitStoneArea(state)) return true;
             keyboard(Keyboard.KEY_RETURN, false);
-            lastClickedRender = -1;
+            clearClickedFrame();
             stage = 47;
             return true;
         }
@@ -1793,21 +1871,40 @@ public final class HologramInteractionClientSmoke {
             lockedNonce = state.getLong("placementReviewNonce");
             mc.objectMouseOver = null;
             airRightClick(mc, false);
+            right2Opening = null;
             stage = 79;
             return true;
         }
         if (stage == 79) {
             if (!(mc.currentScreen instanceof HologramScreen) || state == null || !state.getBoolean("virtualLocked"))
                 return true;
+            if (right2Opening == null) {
+                require(
+                    state.getBoolean("open") && state.getLong("placementReviewNonce") > lockedNonce,
+                    "RIGHT2_is_the_only_gesture_issuing_material_review");
+                right2Opening = (NBTTagCompound) state.copy();
+                saveObservation("stone-right2-opening-" + reviewStage + ".nbt", right2Opening);
+            }
             if (nudgeSmoke != null && !nudgeSmoke.uiTick(mc)) return true;
+            if (!placementReviewReady((HologramScreen) mc.currentScreen)) return true;
+            state = ((HologramScreen) mc.currentScreen).smokeSnapshot();
             require(
-                state.getBoolean("open") && state.getLong("placementReviewNonce") > lockedNonce,
-                "RIGHT2_is_the_only_gesture_issuing_material_review");
+                right2Opening.getString("session")
+                    .equals(state.getString("session")) && state.getBoolean("virtualPlacement")
+                    && state.getBoolean("virtualLocked")
+                    && state.getBoolean("blueprintAwaitingConfirmation")
+                    && state.getLong("placementReviewNonce") >= right2Opening.getLong("placementReviewNonce")
+                    && state.getLong("planRevision") >= right2Opening.getLong("planRevision")
+                    && java.util.Arrays.equals(
+                        new int[] { right2Opening.getInteger("x"), right2Opening.getInteger("y"),
+                            right2Opening.getInteger("z") },
+                        new int[] { state.getInteger("x"), state.getInteger("y"), state.getInteger("z") }),
+                "RIGHT2_review_keeps_source_locked_anchor_and_current_plan_after_optional_identity_input");
             System.out.println(
                 "[GTMB-HOLOGRAM-INTERACTION-CLIENT] PASS v007 green RIGHT cyan SHIFT_RIGHT green RIGHT cyan RIGHT2 review "
                     + ((HologramScreen) mc.currentScreen).smokePlacementReviewContext());
             logConstructionScope((HologramScreen) mc.currentScreen, "actual-air-position-precheck-whole-blueprint");
-            lastClickedRender = -1;
+            clearClickedFrame();
             stage = reviewStage;
             return true;
         }
@@ -1849,7 +1946,7 @@ public final class HologramInteractionClientSmoke {
                     mc.objectMouseOver = null;
                     airRightClick(mc, false);
                     lockedEscapeReopenRequested = true;
-                    lastClickedRender = -1;
+                    clearClickedFrame();
                     return true;
                 }
                 if (!(mc.currentScreen instanceof HologramScreen)) return true;
@@ -2055,13 +2152,38 @@ public final class HologramInteractionClientSmoke {
             Vec3.createVectorHelper(50.5, 80.5, 44));
     }
 
+    private boolean hasFreshDraw(HologramScreen screen) {
+        long generation = screen.smokeRenderGeneration();
+        return generation > 0 && (screen != lastClickedScreen || generation > lastClickedRender);
+    }
+
+    private void recordClickedFrame(HologramScreen screen) {
+        lastClickedScreen = screen;
+        lastClickedRender = screen.smokeRenderGeneration();
+    }
+
+    private void clearClickedFrame() {
+        lastClickedScreen = null;
+        lastClickedRender = -1;
+    }
+
     private void click(HologramScreen screen, int id) throws Exception {
+        if (id == 55 && !placementReviewReady(screen)) throw new AwaitDraw();
         awaitControl(screen, id);
         if (id == 55) logConfirmClickState(screen, "before-native-mouse");
-        screen.smokeClickControl(id);
+        HologramMuiProbeInput.control(screen, id);
         if (id == 55) logConfirmClickState(screen, "after-native-mouse");
-        lastClickedRender = screen.smokeRenderGeneration();
+        recordClickedFrame(screen);
         System.out.println("[GTMB-HOLOGRAM-INTERACTION-CLIENT] mouse control=" + id + " stage=" + stage);
+    }
+
+    private boolean placementReviewReady(HologramScreen screen) throws Exception {
+        if (placementReviewInput == null)
+            placementReviewInput = new HologramPlacementReviewClientSmoke(receipts, "stone", (placementScreen, id) -> {
+                click(placementScreen, id);
+                return true;
+            }, this::receipt);
+        return placementReviewInput.tick(screen);
     }
 
     private void saveObservation(String filename, NBTTagCompound observed) throws Exception {
@@ -2077,8 +2199,8 @@ public final class HologramInteractionClientSmoke {
         StringBuilder details = new StringBuilder("stage=" + stage + " phase=" + phase);
         for (String field : new String[] { "confirmation", "libraryDrawer", "roleDropdown", "resetReview", "nbtDrawer",
             "promptDrawer", "versionsDrawer", "shortcutsDrawer", "hatchDrawer", "presetDrawer", "deletePresetId",
-            "sequence", "pendingSequence", "queuedDispatchSequence", "confirmedRevision", "pendingBuildReview",
-            "captureRenderSmokeAction", "notice" })
+            "sequence", "pendingSequence", "queuedDispatchSequence", "confirmedRevision", "captureRenderSmokeAction",
+            "notice" })
             details.append(' ')
                 .append(field)
                 .append('=')
@@ -2086,10 +2208,9 @@ public final class HologramInteractionClientSmoke {
         Object queue = observedField(screen, "editQueue");
         details.append(" editQueueSize=")
             .append(((HologramEditQueue) queue).size());
-        java.lang.reflect.Method editable = HologramScreen.class.getDeclaredMethod("editable");
-        editable.setAccessible(true);
+
         details.append(" editable=")
-            .append(editable.invoke(screen))
+            .append(HologramUiDiagnostics.invokeDiagnostic(screen, "editable", new Class<?>[] {}))
             .append(" actionQueued=")
             .append((Long) observedField(screen, "pendingSequence") >= 0)
             .append(" expectedOp=")
@@ -2134,10 +2255,8 @@ public final class HologramInteractionClientSmoke {
     }
 
     private static Object observedField(Object instance, String name) throws ReflectiveOperationException {
-        java.lang.reflect.Field field = instance.getClass()
-            .getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(instance);
+
+        return ((Object) HologramUiDiagnostics.readDiagnosticField(instance, name));
     }
 
     private String stageSnapshot(NBTTagCompound state) {
@@ -2247,7 +2366,7 @@ public final class HologramInteractionClientSmoke {
             48,
             2,
             Vec3.createVectorHelper(48.5, 80.5, 48));
-        lastClickedRender = -1;
+        clearClickedFrame();
         waitTicks = 0;
     }
 

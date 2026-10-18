@@ -29,6 +29,86 @@ public final class HologramGtMeShadowRegression {
 
     private HologramGtMeShadowRegression() {}
 
+    /** Real FML only: invoke GT's actual PatternSlot writer, preserving encoded recipes and pricing buffered assets. */
+    static void craftingWithAe() throws Exception {
+        int id = 31005;
+        IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[id];
+        try {
+            Class<?> owner = Class.forName("gregtech.common.tileentities.machines.MTEHatchCraftingInputME");
+            GregTechAPI.METATILEENTITIES[id] = (IMetaTileEntity) allocate(owner);
+            ItemStack pattern = appeng.api.AEApi.instance()
+                .definitions()
+                .items()
+                .encodedPattern()
+                .maybeStack(1)
+                .get();
+            NBTTagCompound recipe = new NBTTagCompound();
+            NBTTagList inputs = new NBTTagList(), outputs = new NBTTagList();
+            inputs.appendTag(new ItemStack(Items.iron_ingot, 2).writeToNBT(new NBTTagCompound()));
+            outputs.appendTag(new ItemStack(Items.gold_ingot).writeToNBT(new NBTTagCompound()));
+            recipe.setTag("in", inputs);
+            recipe.setTag("out", outputs);
+            recipe.setBoolean("crafting", false);
+            pattern.setTagCompound(recipe);
+            Object nativeSlot = allocate(Class.forName(owner.getName() + "$PatternSlot"));
+            for (String fieldName : new String[] { "pattern", "itemInventory", "fluidInventory" }) {
+                Field field = nativeSlot.getClass()
+                    .getDeclaredField(fieldName);
+                field.setAccessible(true);
+                Object value = fieldName.equals("pattern") ? pattern
+                    : fieldName.equals("itemInventory")
+                        ? new java.util.ArrayList<>(java.util.Arrays.asList(new ItemStack(Items.diamond, 5000)))
+                        : new java.util.ArrayList<>(java.util.Arrays.asList(new FluidStack(liquid(), 2345)));
+                field.set(nativeSlot, value);
+            }
+            NBTTagCompound body = (NBTTagCompound) nativeSlot.getClass()
+                .getMethod("writeToNBT", NBTTagCompound.class)
+                .invoke(nativeSlot, new NBTTagCompound());
+            NBTTagCompound row = new NBTTagCompound(), root = new NBTTagCompound();
+            row.setInteger("patternSlot", 0);
+            row.setTag("patternSlotNBT", body);
+            NBTTagList internal = new NBTTagList(), inventory = new NBTTagList();
+            internal.appendTag(row);
+            NBTTagCompound physicalPattern = pattern.writeToNBT(new NBTTagCompound());
+            physicalPattern.setInteger("IntSlot", 0);
+            inventory.appendTag(physicalPattern);
+            root.setString("id", "BaseMetaTileEntity");
+            root.setInteger("mID", id);
+            root.setTag("Inventory", inventory);
+            root.setTag("internalInventory", internal);
+            NBTTagCompound original = (NBTTagCompound) root.copy();
+            HologramBlueprintResources.Plan bill = HologramBlueprintResources.plan(root);
+            SimpleAssert
+                .eq(2, bill.items.size(), "physical pattern mirror is charged once alongside actual buffered items");
+            int blanks = 0, diamonds = 0;
+            for (ItemStack item : bill.items) {
+                if (appeng.api.AEApi.instance()
+                    .definitions()
+                    .materials()
+                    .blankPattern()
+                    .isSameAs(item)) blanks += item.stackSize;
+                if (item.getItem() == Items.diamond) diamonds += item.stackSize;
+            }
+            SimpleAssert.eq(1, blanks, "encoded recipe consumes one corresponding blank pattern");
+            SimpleAssert.eq(5000, diamonds, "native GT integer Count is paid without byte truncation");
+            SimpleAssert.eq(2345L, bill.fluids.get(0).amount, "physical buffered fluid remains payable");
+            SimpleAssert
+                .that(root.equals(original), "costing leaves complete native recipe and buffered contents unchanged");
+            root.removeTag("Inventory");
+            SimpleAssert.eq(
+                2,
+                HologramBlueprintResources.plan(root).items.size(),
+                "internal mirror alone still consumes its physical blank pattern");
+            row.setInteger("patternSlot", 36);
+            try {
+                HologramBlueprintResources.plan(root);
+                throw new AssertionError("out-of-range native pattern slot must reject");
+            } catch (IOException expected) { /* native bounds are enforced before a reader */ }
+        } finally {
+            GregTechAPI.METATILEENTITIES[id] = previous;
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramGtMeShadowRegression.class, args)) return;
         run();

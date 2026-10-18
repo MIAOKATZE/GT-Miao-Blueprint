@@ -45,12 +45,140 @@ public final class HologramLibraryRegression {
 
     public static void run() throws Exception {
         protocolAndThrottle();
+        uploadWindowAndMailboxes();
+        uploadAdmissionLifecycle();
+        downloads();
+        downloadReservations();
+        taskCorrelation();
         configuration();
         hydration();
         ownershipAndPublishing();
         directoryLayout();
         brokenStorageFailsClosed();
         permissions();
+        streamingDraftProgress();
+        cancelledServerPreparationReleasesQueue();
+    }
+
+    private static void streamingDraftProgress() throws Exception {
+        HologramPresets.Preset source = blueprint();
+        HologramBlueprintVersions.stampSaved(source);
+        for (int index = 0; index < 1024; index++) {
+            HologramPresets.Cell cell = new HologramPresets.Cell();
+            cell.x = index;
+            cell.block = "minecraft:stone";
+            source.cells.add(cell);
+        }
+        long total = (long) source.cells.size() + source.palette.size();
+        long[] observed = { -1, 0 };
+        byte[] encoded = HologramDraftEncoding.encode(source, (done, count) -> {
+            SimpleAssert.eq(total, count, "stream total includes both cell collections without another traversal");
+            SimpleAssert.that(done >= observed[0] && done <= count, "actual streamed rows progress monotonically");
+            observed[0] = done;
+            observed[1]++;
+        });
+        SimpleAssert.eq(total, observed[0], "all actual streamed rows reach completion");
+        SimpleAssert.that(observed[1] >= total, "long exports checkpoint as cells serialize");
+        com.google.gson.JsonObject envelope = new com.google.gson.JsonParser()
+            .parse(new String(encoded, java.nio.charset.StandardCharsets.UTF_8))
+            .getAsJsonObject();
+        SimpleAssert.eq(
+            2,
+            envelope.get("schema")
+                .getAsInt(),
+            "stream retains native share envelope");
+        SimpleAssert.eq(
+            source.cells.size(),
+            envelope.getAsJsonObject("blueprint")
+                .getAsJsonArray("cells")
+                .size(),
+            "stream does not truncate blueprint content");
+        SimpleAssert.eq(
+            new com.google.gson.Gson().toJsonTree(source),
+            envelope.get("blueprint"),
+            "stream retains every field and NBT string of the reviewed blueprint");
+        denied(
+            () -> HologramDraftEncoding
+                .encode(source, (done, count) -> { if (done > 128) throw new IOException("retired preparation"); }),
+            "retired export stops at the next serialized cell checkpoint");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void cancelledServerPreparationReleasesQueue() throws Exception {
+        Path directory = Files.createTempDirectory("gtmb-cancel-preparation-");
+        HologramServerLibrary store = new HologramServerLibrary(
+            directory.resolve("entries"),
+            directory.resolve("library.cfg"));
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        EntityPlayerMP player = player(UUID.randomUUID(), "CancelPreparation");
+        Object peer = peer(player);
+        ((java.util.Map<UUID, Object>) get(store, "peers")).put(HologramLibraryFacade.actorId(player), peer);
+        java.util.concurrent.ArrayBlockingQueue<Runnable> queue = (java.util.concurrent.ArrayBlockingQueue<Runnable>) get(
+            store,
+            "tasks");
+        HologramServerLibrary.Preparation active = new HologramServerLibrary.Preparation(81);
+        HologramServerLibrary.Preparation queued = new HologramServerLibrary.Preparation(81);
+        java.util.concurrent.atomic.AtomicBoolean published = new java.util.concurrent.atomic.AtomicBoolean();
+        HologramPresets.Preset source = blueprint();
+        HologramBlueprintVersions.stampSaved(source);
+        source.prompt = repeat('x', 65536);
+        active.action = () -> {
+            try {
+                HologramDraftEncoding.encode(source, new HologramDraftEncoding.Progress() {
+
+                    int checkpoints;
+
+                    public void update(long done, long total) throws IOException {}
+
+                    public void checkpoint() throws IOException {
+                        if (++checkpoints == 3) {
+                            entered.countDown();
+                            try {
+                                if (!release.await(5, TimeUnit.SECONDS)) throw new IOException("fixture timeout");
+                            } catch (InterruptedException failure) {
+                                Thread.currentThread()
+                                    .interrupt();
+                                throw new IOException(failure);
+                            }
+                        }
+                        if (!active.valid) throw new java.io.InterruptedIOException("retired");
+                    }
+                });
+                published.set(true);
+            } catch (IOException expectedCancellation) {}
+        };
+        try {
+            runWorker(store, () -> {});
+            set(peer, "preparation", active);
+            queue.add(active);
+            SimpleAssert.that(entered.await(5, TimeUnit.SECONDS), "real sole library pump enters draft serialization");
+            NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+            cancel.setLong("clientTaskToken", 81);
+            store.submit(player, cancel, false);
+            SimpleAssert.that(
+                !active.valid && get(peer, "preparation") == null,
+                "main-thread cancel revokes active encoding without waiting for its blocked IO pump");
+            set(peer, "preparation", queued);
+            queue.add(queued);
+            store.submit(player, cancel, false);
+            SimpleAssert.that(
+                !queue.contains(queued) && !queued.valid,
+                "same cancellation removes queued draft preparation immediately");
+            SimpleAssert.that(
+                !store.draftTaskCurrent(player, cancel),
+                "late post-encoding callback cannot restore cancelled draft capability");
+            NBTTagCompound retry = HologramLibraryProtocol.request("exportDraft");
+            retry.setLong("clientTaskToken", 82);
+            SimpleAssert
+                .that(store.draftTaskCurrent(player, retry), "successor task remains admitted on same connection");
+            release.countDown();
+            runWorker(store, () -> {});
+            SimpleAssert.that(!published.get(), "cancelled active draft never publishes after its checkpoint resumes");
+        } finally {
+            release.countDown();
+            store.stop();
+        }
     }
 
     private static void protocolAndThrottle() throws Exception {
@@ -64,6 +192,7 @@ public final class HologramLibraryRegression {
             HologramLibraryProtocol.hex(
                 HologramLibraryProtocol.digest()
                     .digest(new byte[slice + 1])));
+        HologramLibraryProtocol.header(id, HologramBlueprintArtifact.MAX_BYTES, repeat('a', 64));
         denied(() -> HologramLibraryProtocol.header("../../escape", 1, repeat('a', 64)), "path-like transfer rejected");
         denied(
             () -> HologramLibraryProtocol.header(id, HologramLibraryProtocol.MAX_BYTES + 1, repeat('a', 64)),
@@ -133,7 +262,7 @@ public final class HologramLibraryRegression {
         valid.setByteArray("data", random);
         io.netty.buffer.ByteBuf requestWire = Unpooled.buffer();
         new HologramNetwork.LibraryRequest(valid).toBytes(requestWire);
-        SimpleAssert.eq(2, requestWire.getInt(0), "library requests carry explicit protocol version 2");
+        SimpleAssert.eq(3, requestWire.getInt(0), "library requests carry explicit protocol version 3");
         SimpleAssert
             .that(requestWire.readableBytes() + 1 < 32767, "incompressible request plus FML discriminator fits C17");
         HologramNetwork.LibraryRequest decoded = new HologramNetwork.LibraryRequest();
@@ -166,12 +295,12 @@ public final class HologramLibraryRegression {
                     .writeBytes(legacy)),
             "legacy reply without a protocol version is rejected");
         io.netty.buffer.ByteBuf wrongVersion = requestWire.copy();
-        wrongVersion.setInt(0, 1);
+        wrongVersion.setInt(0, 2);
         denied(
             () -> new HologramNetwork.LibraryRequest().fromBytes(wrongVersion),
             "old request protocol version rejected");
         io.netty.buffer.ByteBuf wrongReplyVersion = replyWire.copy();
-        wrongReplyVersion.setInt(0, 1);
+        wrongReplyVersion.setInt(0, 2);
         denied(
             () -> new HologramNetwork.LibraryReply().fromBytes(wrongReplyVersion),
             "old reply protocol version rejected");
@@ -196,13 +325,560 @@ public final class HologramLibraryRegression {
         denied(() -> HologramServerLibrary.rejectDropPayload(outer), "dropItem rejected inside list-of-list");
     }
 
+    private static void downloads() throws Exception {
+        int slice = HologramLibraryProtocol.CHUNK_BYTES;
+        byte[] source = new byte[slice * 6 + 731];
+        new java.util.Random(190731L).nextBytes(source);
+        // Real whole-file compression can reuse data across packet boundaries.
+        System.arraycopy(source, 0, source, slice, slice);
+        System.arraycopy(source, 0, source, slice * 3, slice);
+        HologramLibraryDownload.Encoded payload = HologramLibraryDownload.encode(source);
+        SimpleAssert.eq("gzip", payload.encoding, "whole-file compression saves cross-packet repetitions");
+        SimpleAssert.that(payload.bytes.length > slice * 2, "fixture exercises multiple complete wire chunks");
+        HologramLibraryDownload.Assembly assembly = new HologramLibraryDownload.Assembly(payload.bytes.length);
+        byte[] first = Arrays.copyOfRange(payload.bytes, 0, slice);
+        denied(() -> assembly.append(1, first), "download gap/out-of-order chunk rejected");
+        assembly.append(0, first);
+        denied(() -> assembly.append(0, first), "duplicate download chunk rejected");
+        denied(assembly::finish, "premature download done rejected");
+        int index = 1;
+        for (int offset = slice; offset < payload.bytes.length; offset += slice) assembly
+            .append(index++, Arrays.copyOfRange(payload.bytes, offset, Math.min(offset + slice, payload.bytes.length)));
+        byte[] wire = assembly.finish();
+        byte[] decoded = HologramLibraryDownload.decode(wire, payload.encoding, source.length, payload.hash);
+        SimpleAssert.that(Arrays.equals(source, decoded), "compressed multi-chunk download preserves exact source");
+        denied(assembly::finish, "completed buffer ownership can only be transferred once");
+        Path directory = Files.createTempDirectory("gtmb-download-exact-");
+        Path file = directory.resolve("download.json");
+        try {
+            HologramBlueprintSharing.atomicWrite(file, decoded);
+            SimpleAssert.that(Arrays.equals(source, Files.readAllBytes(file)), "downloaded file is byte-identical");
+        } finally {
+            Files.deleteIfExists(file);
+            Files.deleteIfExists(directory);
+        }
+        denied(
+            () -> HologramLibraryDownload.decode(wire, "gzip", source.length, repeat('0', 64)),
+            "final original SHA mismatch rejected");
+        denied(
+            () -> HologramLibraryDownload.decode(wire, "gzip", source.length - 1, payload.hash),
+            "decoded expansion past declared bound rejected");
+        denied(
+            () -> HologramLibraryDownload.decode(wire, "gzip", source.length + 1, payload.hash),
+            "truncated decoded size rejected");
+        byte[] broken = wire.clone();
+        broken[broken.length - 5] ^= 1;
+        denied(
+            () -> HologramLibraryDownload.decode(broken, "gzip", source.length, payload.hash),
+            "corrupt gzip trailer rejected");
+        denied(
+            () -> HologramLibraryDownload
+                .decode(Arrays.copyOf(wire, wire.length - 4), "gzip", source.length, payload.hash),
+            "truncated gzip rejected");
+        String transfer = UUID.randomUUID()
+            .toString();
+        denied(
+            () -> HologramLibraryDownload
+                .header(transfer, wire.length, "gzip", HologramLibraryProtocol.MAX_BYTES + 1, payload.hash),
+            "decoded allocation bounded before decompression");
+        denied(
+            () -> HologramLibraryDownload.header(transfer, wire.length, "unknown", source.length, payload.hash),
+            "unknown transfer encoding rejected");
+        HologramLibraryDownload.Assembly cancelled = new HologramLibraryDownload.Assembly(slice + 1);
+        cancelled.append(0, new byte[slice]);
+        cancelled.cancel();
+        denied(() -> cancelled.append(1, new byte[1]), "cancelled transfer cannot receive later bytes");
+        denied(cancelled::finish, "cancelled transfer cannot finish");
+        byte[] random = new byte[slice * 2 + 1];
+        new java.util.Random(1984L).nextBytes(random);
+        HologramLibraryDownload.Encoded identity = HologramLibraryDownload.encode(random);
+        SimpleAssert.eq("identity", identity.encoding, "incompressible downloads avoid expansion");
+        SimpleAssert.that(
+            Arrays.equals(
+                random,
+                HologramLibraryDownload.decode(identity.bytes, identity.encoding, random.length, identity.hash)),
+            "identity fallback preserves bytes and final SHA");
+        byte[] maximum = new byte[HologramBlueprintArtifact.MAX_BYTES];
+        HologramLibraryDownload.Encoded full = HologramLibraryDownload.encode(maximum);
+        SimpleAssert.that(
+            Arrays
+                .equals(maximum, HologramLibraryDownload.decode(full.bytes, full.encoding, maximum.length, full.hash)),
+            "maximum JSON plus PNG artifact survives bounded whole-file decode and final SHA");
+    }
+
+    private static void downloadReservations() throws Exception {
+        Path directory = Files.createTempDirectory("gtmb-download-reservation-");
+        HologramServerLibrary store = new HologramServerLibrary(
+            directory.resolve("entries"),
+            directory.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            Object[] peers = new Object[5];
+            for (int i = 0; i < peers.length; i++) peers[i] = peer(player(UUID.randomUUID(), "Download" + i));
+            byte[] large = new byte[HologramBlueprintArtifact.MAX_BYTES];
+            runWorker(store, () -> {
+                queueDownload(store, peers[0], large);
+                queueDownload(store, peers[1], large);
+            });
+            SimpleAssert.eq(
+                2L * HologramBlueprintArtifact.MAX_BYTES,
+                get(store, "downloadBytes"),
+                "two maximum artifacts reserve their full original byte footprint");
+            denied(
+                () -> runWorker(store, () -> queueDownload(store, peers[2], large)),
+                "compression cannot bypass the aggregate original-byte reservation");
+            runWorker(store, () -> {
+                invoke(store, "clearDownload", peers[0]);
+                invoke(store, "clearDownload", peers[1]);
+            });
+            SimpleAssert.eq(0L, get(store, "downloadBytes"), "cancellation releases original-byte reservation");
+            byte[] small = new byte[1024 * 1024];
+            runWorker(store, () -> { for (int i = 0; i < 4; i++) queueDownload(store, peers[i], small); });
+            denied(
+                () -> runWorker(store, () -> queueDownload(store, peers[4], small)),
+                "compressed downloads retain the four-active-transfer bound");
+            runWorker(store, () -> { for (int i = 0; i < 4; i++) invoke(store, "clearDownload", peers[i]); });
+            SimpleAssert.eq(0, get(store, "activeDownloads"), "cancelled transfers release active admission");
+            runWorker(store, () -> queueDownload(store, peers[0], small, 92L));
+            NBTTagCompound staleCancel = HologramLibraryProtocol.request("cancel");
+            staleCancel.setLong("clientTaskToken", 91L);
+            runWorker(store, () -> handle(store, peers[0], staleCancel));
+            SimpleAssert.that(
+                get(peers[0], "download") != null,
+                "late empty-transfer cancel cannot abort a successor's real server download");
+            staleCancel.setLong("clientTaskToken", 92L);
+            runWorker(store, () -> handle(store, peers[0], staleCancel));
+            SimpleAssert.that(get(peers[0], "download") == null, "matching task cancel stops its server download");
+            SimpleAssert.eq(0L, get(store, "downloadBytes"), "matching task cancel releases original-byte allowance");
+            NBTTagCompound begin = HologramLibraryProtocol.request("uploadBegin");
+            begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            begin.setInteger("total", HologramBlueprintArtifact.MAX_BYTES);
+            begin.setString(
+                "transfer",
+                UUID.randomUUID()
+                    .toString());
+            begin.setString("hash", repeat('a', 64));
+            runWorker(store, () -> {
+                handle(store, peers[0], begin);
+                handle(store, peers[1], begin);
+            });
+            SimpleAssert.eq(
+                2L * HologramBlueprintArtifact.MAX_BYTES,
+                get(store, "reservedBytes"),
+                "two maximum upload artifacts are admitted with bounded reservation");
+            denied(
+                () -> runWorker(store, () -> handle(store, peers[2], begin)),
+                "third maximum upload cannot exceed the aggregate reservation");
+            runWorker(store, () -> {
+                invoke(store, "abort", peers[0]);
+                invoke(store, "abort", peers[1]);
+            });
+            SimpleAssert.eq(0L, get(store, "reservedBytes"), "cancel releases maximum upload reservations");
+            SimpleAssert.eq(0, get(store, "activeUploads"), "cancel releases maximum upload admission slots");
+        } finally {
+            store.stop();
+        }
+    }
+
+    private static void queueDownload(HologramServerLibrary store, Object peer, byte[] bytes) throws Exception {
+        queueDownload(store, peer, bytes, 0L);
+    }
+
+    private static void queueDownload(HologramServerLibrary store, Object peer, byte[] bytes, long taskToken)
+        throws Exception {
+        Method method = HologramServerLibrary.class.getDeclaredMethod(
+            "queueDownload",
+            peer.getClass(),
+            byte[].class,
+            String.class,
+            NBTTagCompound.class,
+            String.class);
+        method.setAccessible(true);
+        try {
+            NBTTagCompound request = HologramLibraryProtocol.request("download");
+            request.setLong("clientTaskToken", taskToken);
+            method.invoke(store, peer, bytes, "Bounded fixture", request, "");
+        } catch (InvocationTargetException failure) {
+            throw (Exception) failure.getCause();
+        }
+    }
+
+    private static void taskCorrelation() throws Exception {
+        NBTTagCompound oldHead = HologramLibraryProtocol.reply("downloadBegin");
+        oldHead.setString("session", "same-session");
+        oldHead.setLong("planRevision", 42);
+        oldHead.setLong("clientTaskToken", 91);
+        SimpleAssert.that(HologramLibraryDownload.taskMatches(91, oldHead), "current download head is accepted");
+        SimpleAssert
+            .that(!HologramLibraryDownload.taskMatches(0, oldHead), "cancel rejects a late head before allocation");
+        NBTTagCompound newHead = (NBTTagCompound) oldHead.copy();
+        newHead.setLong("clientTaskToken", 92);
+        SimpleAssert.that(
+            !HologramLibraryDownload.taskMatches(92, oldHead),
+            "immediate successor in the same session/revision rejects the cancelled task head");
+        SimpleAssert.that(HologramLibraryDownload.taskMatches(92, newHead), "successor accepts its own exact head");
+        for (String op : new String[] { "error", "downloadDone", "saveCommitted", "saveRejected" }) {
+            NBTTagCompound oldReply = (NBTTagCompound) oldHead.copy();
+            oldReply.setString("op", op);
+            SimpleAssert.that(
+                !HologramLibraryDownload.taskMatches(92, oldReply),
+                "cancelled task " + op + " cannot occupy or finish its successor");
+        }
+        HologramSession session = (HologramSession) unsafe().allocateInstance(HologramSession.class);
+        NBTTagCompound save = HologramLibraryProtocol.request("saveBlueprintAs");
+        save.setLong("clientTaskToken", 91);
+        HologramLibraryWorkflow.captureClientTaskToken(session, save);
+        SimpleAssert.eq(91L, session.blueprintClientTaskToken, "initial save captures its correlation token");
+        NBTTagCompound lateConfirm = HologramLibraryProtocol.request("confirmAeSave");
+        lateConfirm.setLong("clientTaskToken", 90);
+        HologramLibraryWorkflow.captureClientTaskToken(session, lateConfirm);
+        SimpleAssert
+            .eq(91L, session.blueprintClientTaskToken, "late AE confirmation cannot replace the reviewed task token");
+        save.setLong("clientTaskToken", 92);
+        HologramLibraryWorkflow.captureClientTaskToken(session, save);
+        SimpleAssert.eq(92L, session.blueprintClientTaskToken, "new save replaces the old task correlation");
+    }
+
+    private static NBTTagCompound uploadReply(String transfer, long task, int next) {
+        NBTTagCompound reply = HologramLibraryProtocol.reply("chunkAck");
+        reply.setString("transfer", transfer);
+        reply.setLong("clientTaskToken", task);
+        reply.setInteger("index", next - 1);
+        reply.setInteger("nextIndex", next);
+        return reply;
+    }
+
+    private static void uploadWindowAndMailboxes() throws Exception {
+        int slice = HologramLibraryProtocol.CHUNK_BYTES;
+        String transfer = UUID.randomUUID()
+            .toString();
+        NBTTagCompound ready = uploadReply(transfer, 71, 0);
+        HologramLibraryProtocol.UploadWindow legacy = new HologramLibraryProtocol.UploadWindow(transfer, 71, slice + 1);
+        SimpleAssert.that(legacy.ready(ready), "old server ready without optional credit is accepted");
+        legacy.sent(0);
+        SimpleAssert.that(!legacy.canSend(), "old server retains exactly one outstanding chunk");
+        SimpleAssert
+            .that(legacy.acknowledge(uploadReply(transfer, 71, 1)), "old server individual ACK opens one credit");
+        legacy.sent(1);
+        SimpleAssert.that(legacy.complete(uploadReply(transfer, 71, 2)), "final receipt needs no last chunk ACK");
+        NBTTagCompound noTransfer = uploadReply(transfer, 71, 2);
+        noTransfer.removeTag("transfer");
+        SimpleAssert.that(!legacy.complete(noTransfer), "missing transfer cannot complete an otherwise matching task");
+
+        NBTTagCompound badReady = uploadReply(transfer, 71, 0);
+        badReady.setString("uploadWindow", "8");
+        denied(
+            () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
+            "ready credit must be an NBT Int");
+        badReady.setInteger("uploadWindow", 9);
+        denied(
+            () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
+            "ready credit cannot exceed the hard window");
+        badReady.setInteger("uploadWindow", 8);
+        badReady.setInteger("nextIndex", 1);
+        denied(
+            () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
+            "partial resume is not silently introduced");
+        NBTTagCompound previewBegin = HologramLibraryProtocol.request("previewBegin");
+        previewBegin.setString("transfer", transfer);
+        previewBegin.setInteger("total", slice);
+        previewBegin.setLong("clientTaskToken", 71);
+        previewBegin.setLong("clientTaskToken", 92); // Actual previewBegin restores the original save task token.
+        HologramLibraryProtocol.UploadWindow preview = new HologramLibraryProtocol.UploadWindow(previewBegin);
+        SimpleAssert
+            .eq(92L, preview.task(), "sender binds the actual Begin override rather than ambient background state");
+        SimpleAssert
+            .that(!preview.ready(uploadReply(transfer, 71, 0)), "ambient other task cannot start preview sender");
+        SimpleAssert.that(preview.ready(uploadReply(transfer, 92, 0)), "original preview task accepts matching ready");
+        preview.sent(0);
+        SimpleAssert.that(!preview.complete(uploadReply(transfer, 71, 1)), "old-task final cannot complete preview");
+        SimpleAssert
+            .that(preview.complete(uploadReply(transfer, 92, 1)), "preview final binds the original task and transfer");
+
+        ready.setInteger("uploadWindow", 8);
+        HologramLibraryProtocol.UploadWindow sender = new HologramLibraryProtocol.UploadWindow(
+            transfer,
+            71,
+            20 * slice);
+        SimpleAssert.that(sender.ready(ready), "new server advertises bounded credit without a protocol bump");
+        while (sender.canSend()) sender.sent(sender.nextSent());
+        SimpleAssert.eq(8, sender.nextSent(), "one tick fills exactly eight credits");
+        boolean sendRejected = false;
+        try {
+            sender.sent(9);
+        } catch (IllegalStateException expected) {
+            sendRejected = true;
+        }
+        SimpleAssert
+            .that(sendRejected && sender.nextSent() == 8, "out-of-order send cannot change the actual sender cursor");
+        SimpleAssert.that(!sender.ready(ready), "duplicate ready cannot rewind a live transfer");
+        SimpleAssert.that(!sender.acknowledge(uploadReply(transfer, 72, 4)), "other task ACK cannot release credit");
+        SimpleAssert.that(
+            !sender.acknowledge(
+                uploadReply(
+                    UUID.randomUUID()
+                        .toString(),
+                    71,
+                    4)),
+            "other transfer ACK cannot release credit");
+        SimpleAssert.eq(0, sender.acknowledged(), "cross-scope ACKs leave the acknowledgement cursor unchanged");
+        SimpleAssert.that(!sender.canSend(), "cross-scope ACKs do not grant send credit");
+        denied(() -> sender.acknowledge(uploadReply(transfer, 71, 9)), "future ACK cannot confirm unsent data");
+        NBTTagCompound malformed = uploadReply(transfer, 71, 4);
+        malformed.setInteger("index", 1);
+        denied(() -> sender.acknowledge(malformed), "ACK index must agree with cumulative nextIndex");
+        SimpleAssert.that(sender.acknowledge(uploadReply(transfer, 71, 4)), "cumulative ACK releases four credits");
+        SimpleAssert
+            .that(!sender.acknowledge(uploadReply(transfer, 71, 4)), "duplicate ACK grants no additional credit");
+        SimpleAssert.that(!sender.acknowledge(uploadReply(transfer, 71, 2)), "late ACK never moves backward");
+        while (sender.canSend()) sender.sent(sender.nextSent());
+        SimpleAssert.eq(12, sender.nextSent(), "only newly acknowledged credit is replenished");
+        denied(() -> sender.complete(uploadReply(transfer, 71, 20)), "completion cannot skip unsent chunks");
+        HologramLibraryProtocol.UploadWindow oldClient = new HologramLibraryProtocol.UploadWindow(
+            transfer,
+            71,
+            slice + 1);
+        SimpleAssert.that(oldClient.ready(ready), "new server ready is readable by an individual sender");
+        oldClient.sent(0);
+        SimpleAssert.that(
+            oldClient.acknowledge(uploadReply(transfer, 71, 1)),
+            "new server ACK remains valid after just one received chunk");
+        oldClient.sent(1);
+        SimpleAssert.that(
+            oldClient.complete(uploadReply(transfer, 71, 2)),
+            "individual sender still receives final completion");
+
+        HologramLibraryProtocol.RequestQuota quota = new HologramLibraryProtocol.RequestQuota();
+        SimpleAssert.that(!quota.acquire(true, false), "no data admitted before an actual ready transfer");
+        SimpleAssert.eq(0, quota.chunks, "rejected admission consumes no data quota");
+        for (int i = 0; i < 8; i++) SimpleAssert.that(quota.acquire(true, true), "admitted data fits its fixed window");
+        SimpleAssert.that(!quota.acquire(true, true), "ninth data request is rejected");
+        for (int i = 0; i < 4; i++)
+            SimpleAssert.that(quota.acquire(false, false), "data cannot consume control reserve");
+        SimpleAssert
+            .that(!quota.acquire(false, false), "fifth control cannot grow the previous control attack surface");
+        for (int i = 0; i < 8; i++) quota.release(true);
+        for (int i = 0; i < 4; i++) quota.release(false);
+        SimpleAssert.that(quota.empty(), "balanced completion releases both independent scopes");
+        denied(() -> quota.release(true), "release underflow is detected");
+        SimpleAssert.that(quota.empty(), "underflow rejection does not mutate either quota scope");
+        quota.clear();
+        HologramLibraryProtocol.RequestQuota global = new HologramLibraryProtocol.RequestQuota(32, 64, 64);
+        for (int i = 0; i < 32; i++)
+            SimpleAssert.that(global.acquire(true, true), "four active windows fit global data allowance");
+        SimpleAssert.that(!global.acquire(true, true), "global data cannot fill the reserved control half");
+        SimpleAssert.eq(32, global.chunks, "failed global acquire does not change the scope counter");
+        for (int i = 0; i < 32; i++)
+            SimpleAssert.that(global.acquire(false, false), "global data reserves half the mailbox for controls");
+        SimpleAssert.that(!global.acquire(false, false), "global total remains exactly 64 queued requests");
+
+        HologramLibraryProtocol.RequestQueue queue = new HologramLibraryProtocol.RequestQueue();
+        NBTTagCompound data = uploadReply(transfer, 71, 1);
+        data.setString("op", "privateChunk");
+        SimpleAssert.that(!queue.offer(data, false), "worker mailbox also requires admitted data");
+        for (int i = 0; i < 8; i++) SimpleAssert.that(queue.offer(data, true), "worker data window is bounded");
+        SimpleAssert.that(!queue.offer(data, true), "worker refuses a ninth data chunk");
+        NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+        SimpleAssert.that(queue.offer(cancel, false), "cancel fits even while data credits are full");
+        SimpleAssert.that(queue.pollControl() != null, "low-rate data cannot head-of-line block cancel");
+        queue.discard(transfer, 72);
+        SimpleAssert.that(queue.peekChunk() != null, "other task revocation leaves this task's data alone");
+        queue.discard(transfer, 71);
+        SimpleAssert.that(queue.isEmpty(), "revocation purges matching queued data");
+
+        int rate = 1024 * 1024, delivered = 0;
+        HologramLibraryProtocol.Budget upload = new HologramLibraryProtocol.Budget(true);
+        upload.take(slice, rate, 1);
+        for (int tick = 1; tick <= 20; tick++) {
+            for (int pass = 0; pass < 4; pass++)
+                if (upload.take(slice, rate, 1L + tick * 50000000L)) delivered += slice;
+            SimpleAssert
+                .that(delivered <= (long) rate * tick / 20, "bounded drain never exceeds administrator aggregate rate");
+        }
+        SimpleAssert.eq(rate, delivered, "four rounds plus upload burst can sustain 1 MiB/s at 50ms polls");
+        HologramLibraryProtocol.Budget low = new HologramLibraryProtocol.Budget(true);
+        low.take(slice, 128 * 1024, 1);
+        int burst = 0;
+        for (int i = 0; i < 8; i++) if (low.take(slice, 128 * 1024, 1000000001L)) burst++;
+        SimpleAssert.eq(2, burst, "existing 128 KiB upload retains the original two-chunk burst");
+        HologramLibraryProtocol.Budget download = new HologramLibraryProtocol.Budget();
+        download.take(slice, rate, 1);
+        burst = 0;
+        for (int i = 0; i < 8; i++) if (download.take(slice, rate, 50000001L)) burst++;
+        SimpleAssert.eq(2, burst, "download burst remains unchanged even at a high administrator setting");
+        HologramLibraryProtocol.FairBudget fair = new HologramLibraryProtocol.FairBudget(true);
+        UUID[] owners = { UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID() };
+        int[] served = new int[4];
+        delivered = 0;
+        for (int tick = 0; tick <= 200; tick++) {
+            long now = 1L + tick * 50000000L;
+            for (int pass = 0; pass < 4; pass++) for (int n = 0; n < 4; n++) {
+                int owner = (tick + n) % 4;
+                if (fair.take(owners[owner], slice, rate, now)) {
+                    served[owner]++;
+                    delivered += slice;
+                }
+            }
+            SimpleAssert
+                .that(delivered <= (long) rate * tick / 20, "multiple owners share one global upload allowance");
+        }
+        for (int count : served) SimpleAssert.that(count >= 120, "bounded rounds cannot starve any active owner");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void uploadAdmissionLifecycle() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-upload-window-");
+        HologramServerLibrary store = new HologramServerLibrary(root.resolve("library"), root.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            EntityPlayerMP actor = player(UUID.randomUUID(), "WindowPublisher");
+            Object peer = peer(actor);
+            synchronized (store) {
+                ((java.util.Map<UUID, Object>) get(store, "peers")).put(HologramLibraryFacade.actorId(actor), peer);
+            }
+            runWorker(store, () -> {
+                String transfer = UUID.randomUUID()
+                    .toString();
+                NBTTagCompound begin = HologramLibraryProtocol.request("uploadBegin");
+                begin.setString("transfer", transfer);
+                begin.setLong("clientTaskToken", 31);
+                begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                begin.setInteger("total", 12 * HologramLibraryProtocol.CHUNK_BYTES + 1);
+                begin.setString("hash", repeat('a', 64));
+                handle(store, peer, begin);
+                NBTTagCompound chunk = uploadReply(transfer, 31, 1);
+                chunk.setString("op", "uploadChunk");
+                chunk.setByteArray("data", new byte[HologramLibraryProtocol.CHUNK_BYTES]);
+                SimpleAssert.that(store.uploadAdmitted(actor, chunk), "ready publishes actual owner-bound admission");
+                chunk.setLong("clientTaskToken", 30);
+                SimpleAssert
+                    .that(!store.uploadAdmitted(actor, chunk), "old task cannot use the current transfer admission");
+                chunk.setLong("clientTaskToken", 31);
+                chunk.setString("op", "privateChunk");
+                SimpleAssert.that(!store.uploadAdmitted(actor, chunk), "different upload purpose cannot use admission");
+                chunk.setString("op", "uploadChunk");
+                handle(store, peer, chunk);
+                Object partial = get(peer, "upload");
+                SimpleAssert.that(
+                    (Boolean) get(partial, "ackPending"),
+                    "one received old-client chunk schedules an ACK without waiting for a batch");
+                invoke(store, "flushUploadAck", peer);
+                SimpleAssert
+                    .that(!(Boolean) get(partial, "ackPending"), "pump flush publishes old-client individual ACK");
+                chunk.setInteger("index", 1);
+                handle(store, peer, chunk);
+                chunk.setInteger("index", 2);
+                handle(store, peer, chunk);
+                SimpleAssert.eq(
+                    3,
+                    (Integer) get(partial, "index"),
+                    "each contiguous received chunk advances native upload index once");
+                SimpleAssert.that(
+                    (Boolean) get(partial, "ackPending"),
+                    "multiple data chunks retain one pending cumulative ACK");
+                invoke(store, "flushUploadAck", peer);
+                SimpleAssert.that(
+                    !(Boolean) get(partial, "ackPending"),
+                    "one flush consumes the cumulative ACK without changing transfer data");
+                for (int i = 0; i < 8; i++) {
+                    chunk.setInteger("index", i + 3);
+                    store.submit(actor, chunk, false);
+                }
+                HologramLibraryProtocol.RequestQueue mailbox = (HologramLibraryProtocol.RequestQueue) get(
+                    peer,
+                    "requests");
+                SimpleAssert
+                    .that(!mailbox.offer(chunk, true), "real peer data mailbox is full after eight submissions");
+                NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+                cancel.setString("transfer", transfer);
+                cancel.setLong("clientTaskToken", 31);
+                store.submit(actor, cancel, false);
+                NBTTagCompound queuedControl = mailbox.pollControl();
+                SimpleAssert.that(queuedControl != null, "real full data mailbox still accepts cancel");
+                handle(store, peer, queuedControl);
+                SimpleAssert.that(
+                    get(peer, "upload") == null && mailbox.isEmpty(),
+                    "actual cancel atomically revokes and purges data");
+                SimpleAssert.that(!store.uploadAdmitted(actor, chunk), "cancelled transfer has no further admission");
+                String replacement = UUID.randomUUID()
+                    .toString();
+                begin.setString("transfer", replacement);
+                begin.setLong("clientTaskToken", 32);
+                handle(store, peer, begin);
+                handle(store, peer, cancel);
+                chunk.setString("transfer", replacement);
+                chunk.setLong("clientTaskToken", 32);
+                SimpleAssert
+                    .that(store.uploadAdmitted(actor, chunk), "late old cancellation cannot revoke replacement task");
+                Object current = get(peer, "upload");
+                set(current, "lastActivity", System.nanoTime() - HologramLibraryProtocol.TIMEOUT_NANOS - 1);
+                Method pump = HologramServerLibrary.class.getDeclaredMethod("pump");
+                pump.setAccessible(true);
+                pump.invoke(store);
+                SimpleAssert.that(
+                    get(peer, "upload") == null && !store.uploadAdmitted(actor, chunk),
+                    "actual timeout revokes admission");
+                SimpleAssert.eq(
+                    0,
+                    ((Number) get(store, "reservedBytes")).intValue(),
+                    "cancel and timeout release every reserved byte");
+                SimpleAssert
+                    .eq(0, (Integer) get(store, "activeUploads"), "cancel and timeout release every active slot");
+                handle(store, peer, begin);
+                set(peer, "online", false);
+                SimpleAssert
+                    .that(!store.uploadAdmitted(actor, chunk), "offline identity immediately loses upload admission");
+                pump.invoke(store);
+                SimpleAssert.that(get(peer, "upload") == null, "offline pump cleans its active transfer");
+            });
+        } finally {
+            store.stop();
+        }
+    }
+
     private static void configuration() throws Exception {
         Path file = Files.createTempDirectory("gtmb-library-config-")
             .resolve("library.cfg");
         HologramLibraryConfig config = new HologramLibraryConfig(file.toFile());
-        SimpleAssert.eq(128, config.view().uploadKiB, "fresh default aggregate upload");
+        SimpleAssert.eq(1024, config.view().uploadKiB, "fresh default aggregate upload is 1 MiB/s");
         SimpleAssert.eq(128, config.view().downloadKiB, "fresh default aggregate download");
         SimpleAssert.eq(10, config.view().maxUploads, "default UUID quota");
+        NBTTagCompound defaults = config.view()
+            .tag(true);
+        SimpleAssert.eq(1024, defaults.getInteger("uploadKiB"), "administrator UI receives new upload default");
+        SimpleAssert.eq(128, defaults.getInteger("downloadKiB"), "administrator UI retains download default");
+        HologramLibraryConfig freshReopened = new HologramLibraryConfig(file.toFile());
+        SimpleAssert.eq(1024, freshReopened.view().uploadKiB, "new upload default persists in actual Forge file");
+        SimpleAssert.eq(128, freshReopened.view().downloadKiB, "new file keeps existing download behavior");
+        Path previousDefaultFile = file.resolveSibling("existing-128.cfg");
+        Files.write(
+            previousDefaultFile,
+            ("serverblueprintlibrary {\n I:uploadKiBPerSecond=128\n I:downloadKiBPerSecond=128\n I:maxUploadsPerPlayer=7\n}\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        HologramLibraryConfig previousDefault = new HologramLibraryConfig(previousDefaultFile.toFile());
+        SimpleAssert
+            .eq(128, previousDefault.view().uploadKiB, "existing 128 is not assumed to be an untouched default");
+        HologramLibraryConfig previousReopened = new HologramLibraryConfig(previousDefaultFile.toFile());
+        SimpleAssert.eq(128, previousReopened.view().uploadKiB, "existing 128 remains unchanged after reopen");
+        SimpleAssert.eq(128, previousReopened.view().downloadKiB, "existing download remains unchanged after reopen");
+        SimpleAssert.eq(7, previousReopened.view().maxUploads, "existing quota remains unchanged after reopen");
+        previousDefault.update(true, previousDefault.view().revision, 1024, 128, 7);
+        HologramLibraryConfig administratorUpdated = new HologramLibraryConfig(previousDefaultFile.toFile());
+        SimpleAssert.eq(
+            1024,
+            administratorUpdated.view().uploadKiB,
+            "administrator can explicitly upgrade existing upload to 1 MiB/s");
+        SimpleAssert
+            .eq(128, administratorUpdated.view().downloadKiB, "explicit upload upgrade preserves chosen download");
+        Path missingUploadFile = file.resolveSibling("missing-upload.cfg");
+        Files.write(
+            missingUploadFile,
+            ("serverblueprintlibrary {\n I:downloadKiBPerSecond=16\n I:maxUploadsPerPlayer=7\n}\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        HologramLibraryConfig missingUpload = new HologramLibraryConfig(missingUploadFile.toFile());
+        SimpleAssert.eq(1024, missingUpload.view().uploadKiB, "missing upload key uses new upload default");
+        SimpleAssert.eq(16, missingUpload.view().downloadKiB, "missing upload key does not migrate existing download");
+        SimpleAssert.eq(7, missingUpload.view().maxUploads, "missing upload key does not migrate existing quota");
         Path legacyFile = file.resolveSibling("existing-16.cfg");
         Files.write(
             legacyFile,
@@ -257,7 +933,7 @@ public final class HologramLibraryRegression {
             byte[] chunk = Arrays.copyOfRange(bytes, offset, Math.min(bytes.length, offset + slice));
             io.netty.buffer.ByteBuf wire = Unpooled.buffer();
             new HologramNetwork.LibrarySnapshotFragment(1, bytes.length, index, hash, chunk).toBytes(wire);
-            SimpleAssert.eq(2, wire.getInt(0), "hydration carries explicit protocol version 2");
+            SimpleAssert.eq(3, wire.getInt(0), "hydration carries explicit protocol version 3");
             SimpleAssert
                 .that(wire.readableBytes() + 1 < 32767, "bounded hydration fragment fits the smaller C17 limit too");
             HologramNetwork.LibrarySnapshotFragment decoded = new HologramNetwork.LibrarySnapshotFragment();
@@ -303,14 +979,16 @@ public final class HologramLibraryRegression {
         SimpleAssert.eq(
             2 * slice,
             ((Integer) get(assembly, "offset")).intValue(),
-            "snapshot budget is independent of 8MiB file budget");
+            "snapshot budget is independent of the JSON artifact budget");
         assembly.accept(3, large, 2, new byte[slice], hash, HologramLibraryProtocol.TIMEOUT_NANOS + 3);
         SimpleAssert.eq(0, ((Integer) get(assembly, "offset")).intValue(), "inactive hydration releases its assembly");
         assembly.reset();
     }
 
     private static void ownershipAndPublishing() throws Exception {
-        Path directory = Files.createTempDirectory("gtmb-library-store-");
+        Path build = java.nio.file.Paths.get("build");
+        Files.createDirectories(build);
+        Path directory = Files.createTempDirectory(build, "gtmb-library-store-");
         HologramServerLibrary store = new HologramServerLibrary(
             directory.resolve("entries"),
             directory.resolve("library.cfg"));
@@ -349,6 +1027,7 @@ public final class HologramLibraryRegression {
             delete.setString("id", savedId);
             denied(() -> runWorker(store, () -> handle(store, otherPeer, delete)), "other player cannot delete");
             SimpleAssert.that(store.get(savedId) != null, "denied deletion preserves entry");
+            runtimeRestartPreservesCommittedLibrary(store, directory.resolve("entries/" + savedId + ".json"), savedId);
             runWorker(store, () -> handle(store, ownPeer, delete));
             SimpleAssert.that(store.get(savedId) == null, "owner can delete own upload");
             SimpleAssert.that(
@@ -364,6 +1043,39 @@ public final class HologramLibraryRegression {
             }
         } finally {
             store.stop();
+        }
+    }
+
+    private static void runtimeRestartPreservesCommittedLibrary(HologramServerLibrary store, Path artifact, String id)
+        throws Exception {
+        byte[] before = Files.readAllBytes(artifact);
+        Object published = get(store, "published"), worker = get(store, "worker");
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean obsolete = new java.util.concurrent.atomic.AtomicBoolean();
+        ((java.util.concurrent.Executor) worker).execute(() -> {
+            entered.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException failure) {
+                Thread.currentThread()
+                    .interrupt();
+            }
+        });
+        try {
+            SimpleAssert.that(entered.await(10, TimeUnit.SECONDS), "the real library worker is held before reset");
+            SimpleAssert.that(store.enqueue(() -> obsolete.set(true)), "old generation callback is admitted");
+            store.restartRuntime();
+            SimpleAssert.that(get(store, "worker") == worker, "runtime reset retains a single serialized writer");
+            SimpleAssert.that(get(store, "published") == published, "runtime reset retains the authoritative catalog");
+            release.countDown();
+            runWorker(store, () -> {});
+            SimpleAssert.that(!obsolete.get(), "retired queued work cannot run after runtime reset");
+            SimpleAssert.that(
+                store.get(id) != null && Arrays.equals(before, Files.readAllBytes(artifact)),
+                "new work is admitted while committed blueprint bytes remain unchanged");
+        } finally {
+            release.countDown();
         }
     }
 

@@ -21,7 +21,7 @@ import com.google.gson.JsonParser;
 /** Independent share files; client supplied names never become arbitrary filesystem paths. */
 final class HologramBlueprintSharing {
 
-    static final int MAX_BYTES = 8 * 1024 * 1024;
+    static final int MAX_BYTES = HologramBlueprintArtifact.MAX_JSON_BYTES;
     private static final Gson GSON = new GsonBuilder().create();
 
     private HologramBlueprintSharing() {}
@@ -72,7 +72,17 @@ final class HologramBlueprintSharing {
     }
 
     /** Stop serialization at the byte budget instead of allocating an unbounded JSON string first. */
+    interface EncodingCheckpoint {
+
+        void check() throws IOException;
+    }
+
     static byte[] encodeBounded(Gson gson, Object value, int limit) throws IOException {
+        return encodeBounded(gson, value, limit, () -> {});
+    }
+
+    static byte[] encodeBounded(Gson gson, Object value, int limit, EncodingCheckpoint checkpoint) throws IOException {
+        checkpoint.check();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (Writer output = new OutputStreamWriter(new FilterOutputStream(bytes) {
 
@@ -80,6 +90,7 @@ final class HologramBlueprintSharing {
 
             @Override
             public void write(int value) throws IOException {
+                checkpoint.check();
                 if (written >= limit) throw new IOException("蓝图JSON超过 " + limit / (1024 * 1024) + " MiB 上限");
                 out.write(value);
                 written++;
@@ -87,6 +98,7 @@ final class HologramBlueprintSharing {
 
             @Override
             public void write(byte[] buffer, int offset, int length) throws IOException {
+                checkpoint.check();
                 if (length > limit - written) throw new IOException("蓝图JSON超过 " + limit / (1024 * 1024) + " MiB 上限");
                 out.write(buffer, offset, length);
                 written += length;
@@ -100,7 +112,7 @@ final class HologramBlueprintSharing {
     }
 
     static void atomicWrite(Path file, byte[] bytes) throws IOException {
-        if (bytes.length > MAX_BYTES) throw new IOException("蓝图分享文件超过8MiB上限");
+        if (bytes.length > MAX_BYTES) throw new IOException("蓝图分享文件超过 " + MAX_BYTES / (1024 * 1024) + " MiB 上限");
         Path parent = file.toAbsolutePath()
             .getParent();
         Files.createDirectories(parent);

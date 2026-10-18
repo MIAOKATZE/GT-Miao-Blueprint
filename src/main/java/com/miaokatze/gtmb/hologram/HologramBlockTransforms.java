@@ -272,6 +272,7 @@ final class HologramBlockTransforms {
             : HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
         cell.itemNbt = encoded == null ? "" : encoded;
         cell.resourceFingerprint = "";
+        cell.resourcePlanKey = null;
         cell.resourceError = "";
         cell.resourcePlan = null;
         return sample;

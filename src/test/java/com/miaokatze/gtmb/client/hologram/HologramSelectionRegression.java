@@ -122,7 +122,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void snapshotShrinkRegression() {
-        NBTTagCompound largeTag = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound largeTag = (NBTTagCompound) volume().fullData();
         NBTTagList cells = largeTag.getTagList("cells", 10);
         for (int i = cells.tagCount(); i <= 153; i++) {
             NBTTagCompound cell = new NBTTagCompound();
@@ -173,7 +173,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void annotationRegression() {
-        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound data = (NBTTagCompound) volume().fullData();
         data.setString("blueprintPrompt", "Build foundation first");
         NBTTagList cells = data.getTagList("cells", 10);
         cells.getCompoundTagAt(0)
@@ -222,7 +222,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void replacementFamilyRegression() {
-        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound data = (NBTTagCompound) volume().fullData();
         NBTTagList cells = data.getTagList("cells", 10);
         cells.getCompoundTagAt(0)
             .setString("family", "coil");
@@ -246,7 +246,7 @@ public final class HologramSelectionRegression {
     }
 
     private static void metaTileIdentityRegression() {
-        NBTTagCompound data = (NBTTagCompound) volume().data.copy();
+        NBTTagCompound data = (NBTTagCompound) volume().fullData();
         NBTTagList cells = data.getTagList("cells", 10);
         for (int i = 0; i < 8; i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
@@ -276,22 +276,23 @@ public final class HologramSelectionRegression {
         state.setBoolean("virtualLocked", true);
         SimpleAssert.that(
             HologramPlacementConfirmation.canBuild(state, 42),
-            "locked missing-material blueprint can request first server confirmation");
+            "locked missing-material blueprint can request its displayed partial plan");
         SimpleAssert.that(
-            !HologramPlacementConfirmation.forceReview(state, 42),
-            "client cannot invent the second confirmation capability");
+            HologramPlacementConfirmation.forceReview(state, 42)
+                && "确认仅放已有".equals(HologramPlacementConfirmation.confirmationAction(state, 42, true)),
+            "initial material review explicitly presents partial consent without a preceding rejected request");
         state.setBoolean("forcePlacementReady", true);
         SimpleAssert.that(
             HologramPlacementConfirmation.canBuild(state, 42) && HologramPlacementConfirmation.forceReview(state, 42),
-            "second confirmation directly requests build without a scan that would clear server capability");
+            "legacy force flag does not change the already displayed partial plan");
         state.setLong("planRevision", 43);
         SimpleAssert.that(
             !HologramPlacementConfirmation.canBuild(state, 42) && !HologramPlacementConfirmation.forceReview(state, 42),
-            "editing/source revision change invalidates the reviewed first and second construction intents");
+            "editing/source revision change invalidates the reviewed construction intent");
         state.setBoolean("forcePlacementReady", false);
-        SimpleAssert.that(
-            !HologramPlacementConfirmation.forceReview(state, 43),
-            "server source/placement changes revoke force review");
+        state.setInteger("missing", 0);
+        SimpleAssert
+            .that(!HologramPlacementConfirmation.forceReview(state, 43), "fully stocked plan needs no partial consent");
         state.setBoolean("virtual", false);
         state.setInteger("missing", 0);
         SimpleAssert.that(

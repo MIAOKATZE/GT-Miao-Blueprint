@@ -1,0 +1,106 @@
+{
+    "provenance":  "User-provided promotional screenshots; original files retained unchanged.",
+    "capture_build":  null,
+    "notes":  [
+                  "Screenshots are UI examples, not native-test evidence or compatibility guarantees.",
+                  "The region import progress screenshot does not establish completed-save timing."
+              ],
+    "screenshots":  [
+                        {
+                            "source":  "plan/图片/双重模式（蓝图-剪切）与切换.png",
+                            "asset":  "mode-switcher.png",
+                            "sha256":  "afd7a744f5f985bbd067bf3569d9fa052694285727b449e8f691998b089e9fbf",
+                            "bytes":  53827,
+                            "caption_zh":  "蓝图与剪切模式切换",
+                            "caption_en":  "Blueprint and Cut mode switcher"
+                        },
+                        {
+                            "source":  "plan/图片/右击控制器开启投影仪模式-支持建造-替换-拆除.png",
+                            "asset":  "controller-projector.png",
+                            "sha256":  "3ed877d850b3742218f1cca64fdfa48cbecf86a1f69aec34054f80db276530d7",
+                            "bytes":  243304,
+                            "caption_zh":  "控制器结构工作台：建造、替换与拆除",
+                            "caption_en":  "Controller structure workspace: build, replace and dismantle"
+                        },
+                        {
+                            "source":  "plan/图片/导入蓝图后编辑.png",
+                            "asset":  "blueprint-editor.png",
+                            "sha256":  "28ed911b4ded520e314f6308db5be2b814cdb8da0337676dce829188c4f4b32b",
+                            "bytes":  956503,
+                            "caption_zh":  "导入后的结构调整与蓝图编辑",
+                            "caption_en":  "Structure adjustment and blueprint editing after import"
+                        },
+                        {
+                            "source":  "plan/图片/快速，队列剪切粘贴系统--完全忠实保留，搬家必备.png",
+                            "asset":  "cut-queue.png",
+                            "sha256":  "4813553fa0d03f6297385a5e3924c9624a94c36f6faf3007e3780726689c98b7",
+                            "bytes":  370773,
+                            "caption_zh":  "剪切暂存队列与独立三维预览（界面示例，包含诊断文字）",
+                            "caption_en":  "Stored Cut queue and independent 3D preview (UI example, includes diagnostic text)"
+                        },
+                        {
+                            "source":  "plan/图片/投影仪功能预览.png",
+                            "asset":  "projector-preview.png",
+                            "sha256":  "71615ee40d4de70eb5b55690f8ccec3d3e1000d9d8b90335f46d4a40f1c292d0",
+                            "bytes":  1036371,
+                            "caption_zh":  "世界中的半透明结构投影",
+                            "caption_en":  "Translucent structure projection in the world"
+                        },
+                        {
+                            "source":  "plan/图片/智能化蓝图标识处理流程.png",
+                            "asset":  "blueprint-processing.png",
+                            "sha256":  "1f6eb5754616fe0ccc4097dfb32718470132dd6fafdde9c6947b881bcc41645d",
+                            "bytes":  179774,
+                            "caption_zh":  "按私用或分享需求确认蓝图标识处理",
+                            "caption_en":  "Confirm blueprint identity processing for private use or sharing"
+                        },
+                        {
+                            "source":  "plan/图片/蓝图库与蓝图预览.png",
+                            "asset":  "blueprint-library.png",
+                            "sha256":  "ec62fa0d6e46b1a22f9d9bdfc56478b87aaa055da1d7e96d9766930204449b2d",
+                            "bytes":  400280,
+                            "caption_zh":  "蓝图库列表与三维结构预览",
+                            "caption_en":  "Blueprint library list and 3D structure preview"
+                        },
+                        {
+                            "source":  "plan/图片/蓝图放置预览.png",
+                            "asset":  "placement-preview.png",
+                            "sha256":  "f2d9acf605cf67fdfeb366f8832ba199b0fd4be233e66a0b80593a8822e66068",
+                            "bytes":  1619212,
+                            "caption_zh":  "在世界中预览与定位蓝图",
+                            "caption_en":  "Preview and position a blueprint in the world"
+                        },
+                        {
+                            "source":  "plan/图片/超大蓝图与结构自识别.png",
+                            "asset":  "large-region-recognition.png",
+                            "sha256":  "c9bdd61012c65020c8fdeb98d8e6cba551370396e73b9a112024394f2842dab8",
+                            "bytes":  679067,
+                            "caption_zh":  "区域大图导入与结构识别",
+                            "caption_en":  "Large region import and structure recognition"
+                        },
+                        {
+                            "source":  "plan/图片/超大蓝图保存进度展示--整个流程仅需数十秒.png",
+                            "asset":  "region-import-progress.png",
+                            "sha256":  "8116141336b480be2e6fc74bc0c81234d419ba7f3784e1ad45315da77fc9e198",
+                            "bytes":  124393,
+                            "caption_zh":  "区域导入与准备蓝图快照的任务进度（画面为79%，并非保存完成）",
+                            "caption_en":  "Region import and blueprint snapshot preparation progress (79% shown, not a completed save)"
+                        },
+                        {
+                            "source": "plan/图片/样板支持且自动配置.png",
+                            "asset": "pattern-configuration.png",
+                            "sha256": "d01378ba25023a077c1cc90f78380ac2227ad56d166217b0edcca3d01fdcd3a1",
+                            "bytes": 26925,
+                            "caption_zh": "样板输入总成与空白样板的材料明细",
+                            "caption_en": "Material details for the pattern input hatch and blank patterns"
+                        },
+                        {
+                            "source": "plan/图片/蓝图建造核酸.png",
+                            "asset": "blueprint-material-review.png",
+                            "sha256": "6621708987097cedd99a4ec884d6e2096be090431ae843caf7967c5498b87204",
+                            "bytes": 156637,
+                            "caption_zh": "蓝图放置材料预检：精确材料、缺料与 EU 需求",
+                            "caption_en": "Blueprint placement review: exact materials, shortages and EU demand"
+                        }
+                    ]
+}

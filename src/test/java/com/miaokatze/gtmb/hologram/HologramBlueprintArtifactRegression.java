@@ -126,6 +126,21 @@ public final class HologramBlueprintArtifactRegression {
                 exactLimit,
                 HologramBlueprintArtifact.decode(HologramBlueprintArtifact.encode(exactLimit, png)).json),
             "exact JSON budget is accepted and remains byte exact");
+        Path directory = Files.createTempDirectory("gtmb-artifact-capacity-");
+        Path file = directory.resolve("capacity.json");
+        try {
+            HologramBlueprintArtifact.writePair(file, exactLimit, png);
+            HologramBlueprintArtifact.Artifact restored = HologramBlueprintArtifact.readPair(file);
+            SimpleAssert.that(Arrays.equals(exactLimit, restored.json), "exact 32MiB JSON pair reloads byte exact");
+            SimpleAssert.eq(
+                HologramBlueprintArtifact.hash(exactLimit),
+                restored.jsonSha256,
+                "full-capacity disk pair retains the exact JSON digest");
+        } finally {
+            Files.deleteIfExists(file);
+            Files.deleteIfExists(HologramBlueprintArtifact.previewPath(file));
+            Files.deleteIfExists(directory);
+        }
         byte[] bound = HologramBlueprintArtifact.bindPreview(json, png);
         expectIo(() -> HologramBlueprintArtifact.decode(wire(json, png)), "valid unbound PNG cannot enter wire");
         byte[] duplicate = insert(bound, "tEXt", text(HologramBlueprintArtifact.hash(json)));

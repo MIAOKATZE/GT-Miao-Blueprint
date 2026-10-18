@@ -153,11 +153,14 @@ public final class HologramLibrarySocketServerProbe {
         Configuration config = new Configuration(file.toFile());
         config.load();
         int up = config
-            .get("serverBlueprintLibrary", "uploadKiBPerSecond", HologramLibraryConfig.DEFAULT_KIB_PER_SECOND)
-            .getInt(HologramLibraryConfig.DEFAULT_KIB_PER_SECOND);
+            .get("serverBlueprintLibrary", "uploadKiBPerSecond", HologramLibraryConfig.DEFAULT_UPLOAD_KIB_PER_SECOND)
+            .getInt(HologramLibraryConfig.DEFAULT_UPLOAD_KIB_PER_SECOND);
         int down = config
-            .get("serverBlueprintLibrary", "downloadKiBPerSecond", HologramLibraryConfig.DEFAULT_KIB_PER_SECOND)
-            .getInt(HologramLibraryConfig.DEFAULT_KIB_PER_SECOND);
+            .get(
+                "serverBlueprintLibrary",
+                "downloadKiBPerSecond",
+                HologramLibraryConfig.DEFAULT_DOWNLOAD_KIB_PER_SECOND)
+            .getInt(HologramLibraryConfig.DEFAULT_DOWNLOAD_KIB_PER_SECOND);
         int quota = config.get("serverBlueprintLibrary", "maxUploadsPerPlayer", 10)
             .getInt(10);
         if (up != reply.getInteger("uploadKiB") || down != reply.getInteger("downloadKiB")

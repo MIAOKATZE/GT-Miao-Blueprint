@@ -9,12 +9,22 @@ final class HologramGuidance {
     private HologramGuidance() {}
 
     static boolean authorWorkspace(NBTTagCompound state) {
+        return authorWorkspace(
+            state,
+            state.getTagList("cells", 10)
+                .tagCount() > 0);
+    }
+
+    static boolean authorWorkspace(HologramState state) {
+        return authorWorkspace(state.data, !state.cells.isEmpty());
+    }
+
+    private static boolean authorWorkspace(NBTTagCompound state, boolean hasCells) {
         if (state.getBoolean("virtualPlacement")) return false;
         if ("blueprintEdit".equals(state.getString("openPurpose")) || state.getBoolean("blueprintDirty")) return true;
         return !state.getBoolean("blueprintSaved") && !state.getBoolean("presetBrowseForPlacement")
             && !"blueprintBrowse".equals(state.getString("openPurpose"))
-            && state.getTagList("cells", 10)
-                .tagCount() > 0;
+            && hasCells;
     }
 
     static boolean selectedSavedBlueprint(NBTTagCompound state, boolean clientServer, String clientServerSelection) {
@@ -41,7 +51,7 @@ final class HologramGuidance {
                 : "放置预检 · 调整本次 NBT / 核对材料 · 确认放置直接施工";
         if (state.data.getInteger("job") == 1) return "正在施工；可暂停或取消";
         if (state.data.getInteger("job") == 2) return "施工已暂停；确认继续或取消";
-        if (blueprints) return authorWorkspace(state.data) && state.data.getBoolean("blueprintProcessingRequired")
+        if (blueprints) return authorWorkspace(state) && state.data.getBoolean("blueprintProcessingRequired")
             && !state.data.getBoolean("blueprintProcessingComplete") ? "先完成蓝图处理流程，再保存蓝图或编辑方块 NBT"
                 : "拖动预览旋转查看 · 列表选择蓝图 · 上方放置进入世界定位";
         if (state.cells.isEmpty()) return "右键控制器导入结构 · Shift+右键框选区域 · 或点击“框选区域”";
@@ -85,5 +95,10 @@ final class HologramGuidance {
 
     static int modalAccent(int id, int confirmation, int cancellation) {
         return id == confirmation ? 0x80efaa : id == cancellation ? 0xef7b7b : 0;
+    }
+
+    static int structureAccent(NBTTagCompound state, int id) {
+        if (state.getBoolean("virtual")) return 0;
+        return id == 50 || id == 94 && state.getBoolean("presetAvailable") ? 0x80efaa : 0;
     }
 }

@@ -286,7 +286,9 @@ public final class HologramDeidentificationRegression {
         area.undoRegion();
         SimpleAssert.that(
             area.contains(1, 64, 1) && area.contains(5, 64, 3),
-            "undo restores the entire previous composite mask");
+            "undo of the second corner restores the previous composite mask");
+        area.undoRegion();
+        area.beginNext("replace");
         area.point(1, 10, 64, 10, "replace");
         area.point(2, 11, 64, 11, "replace");
         SimpleAssert.that(
@@ -295,6 +297,8 @@ public final class HologramDeidentificationRegression {
         area.undoRegion();
         SimpleAssert
             .that(area.contains(0, 64, 0) && area.contains(5, 64, 3), "undo of replace restores all earlier shapes");
+        area.undoRegion();
+        area.undoRegion();
         area.point(1, 100000, 0, 100000, "subtract");
         area.point(2, 200000, 255, 200000, "subtract");
         int[] bounds = area.bounds();

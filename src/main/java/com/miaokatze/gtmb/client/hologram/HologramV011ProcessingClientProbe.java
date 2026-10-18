@@ -1,6 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -11,7 +10,6 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -94,46 +92,31 @@ public final class HologramV011ProcessingClientProbe {
                     && data.getBoolean("blueprintRetainCovers")
                     && data.getBoolean("blueprintNbtAll"),
                 "native author Save preserves the reviewed full NBT and cover choices");
-            Field nameField = HologramScreen.class.getDeclaredField("presetNameField");
-            nameField.setAccessible(true);
-            GuiTextField target = (GuiTextField) nameField.get(screen);
+
+            HologramMuiTextField target = (HologramMuiTextField) ((Object) HologramUiDiagnostics
+                .readDiagnosticField(screen, "presetNameField"));
             require(target != null, "real author name field exists");
-            Field scaleField = HologramScreen.class.getDeclaredField("scale");
-            Field originX = HologramScreen.class.getDeclaredField("originX");
-            Field originY = HologramScreen.class.getDeclaredField("originY");
-            scaleField.setAccessible(true);
-            originX.setAccessible(true);
-            originY.setAccessible(true);
-            float scale = scaleField.getFloat(screen);
-            int x = originX.getInt(screen) + Math.round((target.xPosition + 4) * scale);
-            int y = originY.getInt(screen) + Math.round((target.yPosition + 7) * scale);
-            screen.mouseClicked(x, y, 0);
-            screen.mouseMovedOrUp(x, y, 0);
+
+            float scale = ((Float) HologramUiDiagnostics.readDiagnosticField(screen, "scale"));
+            int x = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originX"))
+                + Math.round((target.xPosition + 4) * scale);
+            int y = ((Integer) HologramUiDiagnostics.readDiagnosticField(screen, "originY"))
+                + Math.round((target.yPosition + 7) * scale);
+            HologramMuiProbeInput.click(screen, x, y, 0);
             nativeMouseEvents++;
             require(target.isFocused(), "native mouse focuses actual author name field");
             ControlKey control = controlKey();
             keyboardWitness = control.witness;
             try {
                 control.set(true);
-                screen.keyTyped('\u0001', Keyboard.KEY_A);
+                HologramMuiProbeInput.key(screen, '\u0001', Keyboard.KEY_A);
                 require(
                     target.getText()
                         .equals(target.getSelectedText()),
                     "native Ctrl+A selects author name");
                 control.set(false);
-                Method injectText = null;
-                Constructor<?> textEvent = null;
-                try {
-                    Class<?> input = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents");
-                    Class<?> event = Class.forName("me.eigenraven.lwjgl3ify.api.InputEvents$TextEvent");
-                    injectText = input.getMethod("injectTextEvent", event);
-                    textEvent = event.getConstructor(String.class);
-                } catch (ClassNotFoundException vanillaInput) {
-                    // Vanilla consumes characters directly; the normal pack also queues native LWJGL3 text events.
-                }
                 for (char character : name.toCharArray()) {
-                    if (injectText != null) injectText.invoke(null, textEvent.newInstance(String.valueOf(character)));
-                    screen.keyTyped(character, 0);
+                    HologramMuiProbeInput.key(screen, character, 0);
                 }
                 nativeKeyEvents += name.length() + 1;
             } finally {
@@ -280,7 +263,7 @@ public final class HologramV011ProcessingClientProbe {
         receipt.setInteger("nativeFullReviewControl", 296);
         receipt.setTag("actualFullReviewBefore", fullReviewBefore.copy());
         receipt.setTag("actualFullReviewAfter", fullReviewAfter.copy());
-        receipt.setTag("actualSnapshot", HologramClient.state.data.copy());
+        receipt.setTag("actualSnapshot", HologramClient.state.fullData());
         receipt.setTag("actualUi", ui.copy());
         HologramV011Evidence.write("processing-client-final.nbt", receipt);
         complete = true;
@@ -348,7 +331,7 @@ public final class HologramV011ProcessingClientProbe {
                     MessageDigest.getInstance("SHA-256")
                         .digest(CompressedStreamTools.compress(HologramClient.state.data))));
             receipt.setTag("actualUi", ui.copy());
-            receipt.setTag("actualSnapshot", HologramClient.state.data.copy());
+            receipt.setTag("actualSnapshot", HologramClient.state.fullData());
             require(
                 HologramWorldGuide.lastRenderWitness() == null,
                 "world gesture guide is absent while author workbench is open");
@@ -461,12 +444,12 @@ public final class HologramV011ProcessingClientProbe {
 
     /** A decoded ACK can arrive between frames; only the native preview binds the current displayed snapshot. */
     private static boolean displayedSource(HologramScreen screen, NBTTagCompound ui) throws Exception {
-        Field screenState = HologramScreen.class.getDeclaredField("state");
+
         Field renderedState = HologramRenderer.class.getDeclaredField("previewState");
-        screenState.setAccessible(true);
+
         renderedState.setAccessible(true);
         HologramState source = HologramClient.state;
-        return source != null && screenState.get(screen) == source
+        return source != null && ((Object) HologramUiDiagnostics.readDiagnosticField(screen, "state")) == source
             && renderedState.get(null) == source
             && source.session.equals(ui.getString("session"))
             && source.data.getLong("planRevision") == ui.getLong("planRevision");
@@ -484,7 +467,7 @@ public final class HologramV011ProcessingClientProbe {
             diagnostic.setLong("lastRenderGeneration", lastGeneration);
             diagnostic.setBoolean("displayedSourceMatches", displayedSource(screen, ui));
             diagnostic.setTag("actualUi", ui.copy());
-            if (HologramClient.state != null) diagnostic.setTag("actualSnapshot", HologramClient.state.data.copy());
+            if (HologramClient.state != null) diagnostic.setTag("actualSnapshot", HologramClient.state.fullData());
             HologramV011Evidence.write("processing-client-control-failure.nbt", diagnostic);
             throw new IllegalStateException(
                 "Actual author control " + id
@@ -496,16 +479,15 @@ public final class HologramV011ProcessingClientProbe {
                     + ui.getLong("renderGeneration"));
         }
         int[] point = screen.smokeControlPoint(id);
-        screen.mouseClicked(point[0], point[1], 0);
-        screen.mouseMovedOrUp(point[0], point[1], 0);
+        HologramMuiProbeInput.click(screen, point[0], point[1], 0);
         nativeMouseEvents++;
         lastMouseControl = id;
     }
 
     private static int confirmations(HologramScreen screen) throws Exception {
-        java.lang.reflect.Field field = HologramScreen.class.getDeclaredField("processingFlow");
-        field.setAccessible(true);
-        HologramProcessingFlow flow = (HologramProcessingFlow) field.get(screen);
+
+        HologramProcessingFlow flow = (HologramProcessingFlow) ((Object) HologramUiDiagnostics
+            .readDiagnosticField(screen, "processingFlow"));
         return flow == null ? 6
             : flow.policy()
                 .getTagList("confirmedStages", 8)

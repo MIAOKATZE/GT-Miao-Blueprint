@@ -35,6 +35,10 @@ final class HologramLinkNodePreview {
         NODES.clear();
     }
 
+    static void advance(HologramState previous, HologramState next) {
+        for (int index : next.changedIndices) NODES.remove(previous.cells.get(index));
+    }
+
     static void clear() {
         NODES.clear();
         for (ResourceLocation[] pair : TEXTURES.values()) for (ResourceLocation texture : pair) Minecraft.getMinecraft()

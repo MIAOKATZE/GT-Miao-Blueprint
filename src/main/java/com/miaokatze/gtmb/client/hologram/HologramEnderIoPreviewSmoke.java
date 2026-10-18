@@ -20,7 +20,7 @@ final class HologramEnderIoPreviewSmoke {
     private HologramEnderIoPreviewSmoke() {}
 
     static HologramState rigidWitness(HologramState state) {
-        NBTTagCompound data = (NBTTagCompound) state.data.copy();
+        NBTTagCompound data = (NBTTagCompound) state.fullData();
         NBTTagList cells = data.getTagList("cells", 10);
         for (int i = 0; i < cells.tagCount(); i++) {
             if (!state.cells.get(i)

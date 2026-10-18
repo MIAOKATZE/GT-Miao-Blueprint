@@ -27,17 +27,8 @@ final class HologramNetworkSchemas {
                 payload.removeTag("proxy");
             }
         }
-        if (is(type, "com.miaokatze.gtsr.common.machine.base.MTEFilteredCacheNode")
-            || is(type, "com.miaokatze.gtsr.common.machine.base.MTERemoteWorkerNode")
-            || is(type, "com.miaokatze.gtsr.common.machine.MTESingularityCompartmentBase")) {
-            changed |= payload.hasKey("gtsr.hubPos");
-            payload.removeTag("gtsr.hubPos");
-        }
-        if (is(type, "com.miaokatze.gtsr.common.machine.base.MTEHubArrayBase")
-            || is(type, "com.miaokatze.gtsr.common.machine.MTESingularityDrillingHub")) {
-            changed |= payload.hasKey("mBoundNodes");
-            payload.removeTag("mBoundNodes");
-        }
+        // Native hub/node world links are reviewed typed coordinate relationships. Their personal/share decision
+        // belongs to HologramCoordinatePolicies, independently of AE proxy identities and deidentification levels.
         return changed;
     }
 

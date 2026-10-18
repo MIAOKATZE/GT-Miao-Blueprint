@@ -103,6 +103,7 @@ final class HologramProcessingPresets {
         detached.confirmedStages.clear();
         // Per-cell asset selections belong to their blueprint rather than reusable policy defaults.
         detached.cellNbtOverrides.clear();
+        detached.resourceDecisions.clear();
         Entry entry = new Entry();
         entry.id = id;
         entry.name = name.trim();
@@ -114,7 +115,7 @@ final class HologramProcessingPresets {
         List<Entry> entries = new ArrayList<>();
         if (!Files.exists(file)) return entries;
         if (Files.size(file) > HologramBlueprintNbt.MAX_COMPRESSED) throw new IOException("处理流程预设库超过1MiB上限");
-        NBTTagCompound root = HologramBlueprintNbt.decode(
+        NBTTagCompound root = HologramBlueprintNbt.decodeData(
             Base64.getEncoder()
                 .encodeToString(Files.readAllBytes(file)));
         if (root == null || !root.hasKey("version", 3) || root.getInteger("version") != 1 || !root.hasKey("presets", 9))

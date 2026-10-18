@@ -15,6 +15,8 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fluids.FluidStack;
 
+import com.miaokatze.gtmb.api.ResourceContainers;
+
 /** Costs of the selected, final payload. Inspection never edits the captured or placement NBT. */
 public final class HologramBlueprintResources {
 
@@ -52,6 +54,273 @@ public final class HologramBlueprintResources {
             this.fluid = fluid == null ? null : fluid.copy();
             this.essentia = essentia;
             this.amount = amount;
+        }
+    }
+
+    /**
+     * An isolated accumulator for staged imports. Its result is exclusively owned until publication;
+     * public Plan lists keep their existing mutable semantics and never share these indexes.
+     */
+    static final class Accumulator {
+
+        final Plan plan = new Plan();
+        private final java.util.Map<ExactKey, ItemStack> items = new java.util.HashMap<>();
+        private final java.util.Map<ExactKey, FluidCost> fluids = new java.util.HashMap<>();
+        private final java.util.Map<String, HologramEssentia.Cost> essentia = new java.util.HashMap<>();
+        private final java.util.Map<RowKey, Entry> entries = new java.util.HashMap<>();
+
+        Merge merge(Plan source) {
+            return new Merge(source);
+        }
+
+        void addItem(ItemStack stack) throws IOException {
+            if (stack == null || stack.getItem() == null || stack.stackSize <= 0) return;
+            ExactKey key = new ExactKey(stack, null);
+            ItemStack existing = items.get(key);
+            if (existing == null) {
+                existing = stack.copy();
+                plan.items.add(existing);
+                items.put(key, existing);
+            } else {
+                if (stack.stackSize > Integer.MAX_VALUE - existing.stackSize) throw new IOException("蓝图库存数量过大");
+                existing.stackSize += stack.stackSize;
+            }
+        }
+
+        private void addFluid(FluidCost cost) throws IOException {
+            if (cost.amount <= 0) return;
+            ExactKey key = new ExactKey(null, cost.stack);
+            FluidCost existing = fluids.get(key);
+            if (existing == null) {
+                existing = new FluidCost(cost.stack, cost.amount, cost.key);
+                plan.fluids.add(existing);
+                fluids.put(key, existing);
+            } else {
+                if (cost.amount > Long.MAX_VALUE - existing.amount) throw unsupported(cost.key, "流体数量超出上限");
+                existing.amount += cost.amount;
+            }
+        }
+
+        private void addEssentia(HologramEssentia.Cost cost) throws IOException {
+            if (cost.amount <= 0) return;
+            HologramEssentia.Cost existing = essentia.get(cost.aspect);
+            if (existing == null) {
+                existing = new HologramEssentia.Cost(cost.aspect, cost.amount);
+                plan.essentia.add(existing);
+                essentia.put(cost.aspect, existing);
+            } else {
+                if (cost.amount > Long.MAX_VALUE - existing.amount) throw unsupported("Amount", "源质数量超出上限");
+                existing.amount += cost.amount;
+            }
+        }
+
+        private void addEntry(Entry entry) {
+            RowKey key = new RowKey(entry);
+            Entry existing = entries.get(key);
+            if (existing == null) {
+                existing = new Entry(entry.key, entry.item, entry.fluid, entry.essentia, entry.amount);
+                plan.entries.add(existing);
+                entries.put(key, existing);
+            } else existing.amount = existing.amount.add(entry.amount);
+        }
+
+        final class Merge {
+
+            private final Plan source;
+            private int stage, index;
+            private long completed;
+
+            Merge(Plan source) {
+                this.source = source;
+            }
+
+            long completed() {
+                return completed;
+            }
+
+            long total() {
+                return (long) source.items.size() + source.fluids.size()
+                    + source.essentia.size()
+                    + source.entries.size()
+                    + 1;
+            }
+
+            boolean done() {
+                return stage == 5;
+            }
+
+            void advance() throws IOException {
+                if (stage == 0 && index == source.items.size()) {
+                    stage++;
+                    index = 0;
+                }
+                if (stage == 1 && index == source.fluids.size()) {
+                    stage++;
+                    index = 0;
+                }
+                if (stage == 2 && index == source.essentia.size()) {
+                    stage++;
+                    index = 0;
+                }
+                if (stage == 0) addItem(source.items.get(index++));
+                else if (stage == 1) addFluid(source.fluids.get(index++));
+                else if (stage == 2) addEssentia(source.essentia.get(index++));
+                else if (stage == 3) {
+                    plan.energy = plan.energy.add(source.energy);
+                    stage++;
+                    index = 0;
+                } else if (stage == 4 && index < source.entries.size()) addEntry(source.entries.get(index++));
+                else {
+                    stage = 5;
+                    return;
+                }
+                completed++;
+            }
+        }
+    }
+
+    /** Exact native identity; NBT compounds compare structurally, independent of serialized key order. */
+    static final class ExactKey {
+
+        final Object type;
+        final int meta;
+        final NBTTagCompound tag;
+        private final int hash;
+
+        ExactKey(ItemStack item, FluidStack fluid) {
+            this(item, fluid, true);
+        }
+
+        private ExactKey(ItemStack item, FluidStack fluid, boolean snapshot) {
+            type = item != null ? item.getItem() : fluid == null ? null : fluid.getFluid();
+            meta = item == null ? 0 : item.getItemDamage();
+            NBTTagCompound nbt = item == null ? fluid == null ? null : fluid.tag : item.getTagCompound();
+            tag = nbt == null || !snapshot ? nbt : (NBTTagCompound) nbt.copy();
+            hash = (System.identityHashCode(type) * 31 + meta) * 31 + java.util.Objects.hashCode(tag);
+        }
+
+        /** A read-only lookup probe. Never store this short-lived view in a collection. */
+        static ExactKey borrowed(ItemStack item) {
+            return new ExactKey(item, null, false);
+        }
+
+        boolean matches(ItemStack item) {
+            return type == (item == null ? null : item.getItem()) && meta == (item == null ? 0 : item.getItemDamage())
+                && java.util.Objects.equals(tag, item == null ? null : item.getTagCompound());
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof ExactKey)) return false;
+            ExactKey key = (ExactKey) other;
+            return type == key.type && meta == key.meta && java.util.Objects.equals(tag, key.tag);
+        }
+    }
+
+    private static final class RowKey {
+
+        final String key, aspect;
+        final ExactKey material;
+
+        RowKey(Entry entry) {
+            key = entry.key;
+            aspect = entry.essentia;
+            material = new ExactKey(entry.item, entry.fluid);
+        }
+
+        @Override
+        public int hashCode() {
+            return (key.hashCode() * 31 + java.util.Objects.hashCode(aspect)) * 31 + material.hashCode();
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof RowKey)) return false;
+            RowKey row = (RowKey) other;
+            return key.equals(row.key) && java.util.Objects.equals(aspect, row.aspect) && material.equals(row.material);
+        }
+    }
+
+    /** Ordered shortage checks, one source access per operation. */
+    static final class MissingTask {
+
+        private final Plan plan;
+        private final HologramMaterials.Context context;
+        private final boolean essentiaOnly;
+        private int stage, index;
+        private long completed;
+        private String missing;
+
+        MissingTask(Plan plan, HologramMaterials.Context context, boolean essentiaOnly) {
+            this.plan = plan;
+            this.context = context;
+            this.essentiaOnly = essentiaOnly;
+            stage = essentiaOnly ? 2 : 0;
+        }
+
+        long completed() {
+            return completed;
+        }
+
+        long total() {
+            return essentiaOnly ? plan.essentia.size()
+                : (long) plan.items.size() + plan.fluids.size() + plan.essentia.size() + 1;
+        }
+
+        boolean done() {
+            return stage == 4 || missing != null;
+        }
+
+        String result() {
+            if (!done()) throw new IllegalStateException("Resource check is incomplete");
+            return missing;
+        }
+
+        void advance() {
+            if (stage == 0 && index == plan.items.size()) {
+                stage++;
+                index = 0;
+            }
+            if (stage == 1 && index == plan.fluids.size()) {
+                stage++;
+                index = 0;
+            }
+            if (stage == 2 && index == plan.essentia.size()) {
+                stage++;
+                index = 0;
+            }
+            if (stage == 0) {
+                ItemStack item = plan.items.get(index++);
+                int available = context.count(item, item.stackSize);
+                if (available < item.stackSize)
+                    missing = "库存材料不足：" + item.getDisplayName() + " 缺 " + (item.stackSize - available);
+            } else if (stage == 1) {
+                FluidCost fluid = plan.fluids.get(index++);
+                long available = context.fluidCount(fluid.stack, fluid.amount);
+                if (available < fluid.amount)
+                    missing = "AE流体不足：" + fluid.stack.getLocalizedName() + " 缺 " + (fluid.amount - available) + " mB";
+            } else if (stage == 2) {
+                HologramEssentia.Cost cost = plan.essentia.get(index++);
+                long available = context.essentiaCount(cost.aspect, cost.amount);
+                if (available < cost.amount) missing = "源质不足：" + HologramEssentia.displayName(cost.aspect)
+                    + " 缺 "
+                    + (cost.amount - available)
+                    + " 点（背包源质罐或已认证 AE 源质网络）";
+            } else if (stage == 3) {
+                if (!essentiaOnly) {
+                    BigInteger available = context.energyAvailable();
+                    if (available.compareTo(plan.energy) < 0)
+                        missing = "无线电网不足：缺 " + plan.energy.subtract(available) + " EU";
+                }
+                stage = 4;
+                if (essentiaOnly) return;
+            }
+            completed++;
         }
     }
 
@@ -250,40 +519,80 @@ public final class HologramBlueprintResources {
         }
 
         public NBTTagList entries(HologramMaterials.Context context) {
-            NBTTagList result = new NBTTagList();
-            for (Entry entry : entries) {
-                NBTTagCompound row = new NBTTagCompound();
-                row.setString("key", entry.key);
-                BigInteger available;
-                if (entry.item != null) {
-                    row.setString("type", "item");
-                    row.setString("name", entry.item.getDisplayName());
-                    available = BigInteger.valueOf(context.count(entry.item, entry.amount.intValue()));
-                } else if (entry.fluid != null) {
-                    row.setString("type", "fluid");
-                    row.setString("name", entry.fluid.getLocalizedName());
-                    available = BigInteger.valueOf(context.fluidCount(entry.fluid, entry.amount.longValue()));
-                } else if (entry.essentia != null) {
-                    row.setString("type", "essentia");
-                    row.setString("aspect", entry.essentia);
-                    row.setString("name", HologramEssentia.displayName(entry.essentia) + " 源质点");
-                    available = BigInteger.valueOf(context.essentiaCount(entry.essentia, entry.amount.longValue()));
-                } else {
-                    row.setString("type", "energy");
-                    row.setString("name", "无线电网 EU");
-                    available = context.energyAvailable();
-                }
-                row.setString("required", entry.amount.toString());
-                row.setString("available", available.toString());
-                row.setString(
-                    "missing",
-                    entry.amount.subtract(available)
-                        .max(BigInteger.ZERO)
-                        .toString());
-                result.appendTag(row);
-            }
-            return result;
+            EntriesTask task = entriesTask(context);
+            while (!task.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+            return task.rows;
         }
+
+        EntriesTask entriesTask(HologramMaterials.Context context) {
+            return new EntriesTask(context);
+        }
+
+        final class EntriesTask {
+
+            private final HologramMaterials.Context context;
+            final NBTTagList rows = new NBTTagList();
+            private int cursor;
+
+            EntriesTask(HologramMaterials.Context context) {
+                this.context = context;
+            }
+
+            long done() {
+                return cursor;
+            }
+
+            long total() {
+                return entries.size();
+            }
+
+            boolean step(int maxWork, long deadline) {
+                for (int work = 0; cursor < entries.size() && work < maxWork; work++) {
+                    if (work > 0 && System.nanoTime() >= deadline) return false;
+                    Entry entry = entries.get(cursor++);
+                    NBTTagCompound row = new NBTTagCompound();
+                    row.setString("key", entry.key);
+                    BigInteger available;
+                    if (entry.item != null) {
+                        row.setString("type", "item");
+                        row.setString("name", entry.item.getDisplayName());
+                        ItemStack identity = entry.item.copy();
+                        identity.stackSize = 1;
+                        row.setTag("item", identity.writeToNBT(new NBTTagCompound()));
+                        row.setString(
+                            "itemRegistry",
+                            String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(identity.getItem())));
+                        available = BigInteger.valueOf(context.count(entry.item, entry.amount.intValue()));
+                    } else if (entry.fluid != null) {
+                        row.setString("type", "fluid");
+                        row.setString("name", entry.fluid.getLocalizedName());
+                        FluidStack identity = entry.fluid.copy();
+                        identity.amount = 1;
+                        row.setTag("fluid", identity.writeToNBT(new NBTTagCompound()));
+                        available = BigInteger.valueOf(context.fluidCount(entry.fluid, entry.amount.longValue()));
+                    } else if (entry.essentia != null) {
+                        row.setString("type", "essentia");
+                        row.setString("aspect", entry.essentia);
+                        row.setString("name", HologramEssentia.displayName(entry.essentia) + " 源质点");
+                        available = BigInteger.valueOf(context.essentiaCount(entry.essentia, entry.amount.longValue()));
+                    } else {
+                        row.setString("type", "energy");
+                        row.setString("name", "无线电网 EU");
+                        available = context.energyAvailable();
+                    }
+                    row.setString("required", entry.amount.toString());
+                    row.setString("available", available.toString());
+                    row.setString(
+                        "missing",
+                        entry.amount.subtract(available)
+                            .max(BigInteger.ZERO)
+                            .toString());
+                    rows.appendTag(row);
+                }
+                return cursor == entries.size();
+            }
+        }
+
     }
 
     interface Payment {
@@ -307,10 +616,28 @@ public final class HologramBlueprintResources {
     public static Plan plan(NBTTagCompound selectedPayload, List<ItemStack> nativeComponents) throws IOException {
         Plan result = new Plan();
         if (selectedPayload == null) return result;
+        NBTTagCompound original = selectedPayload;
+        HologramFullPreservation.roots(original);
         selectedPayload = HologramGtMeShadow.project(HologramEnergyPayload.withoutBuffers(selectedPayload));
+        if (selectedPayload.hasKey("GTSWN_NetworkSafetyEnabled")
+            && (!selectedPayload.hasKey("GTSWN_NetworkSafetyEnabled", 1)
+                || selectedPayload.getByte("GTSWN_NetworkSafetyEnabled") != 0
+                    && selectedPayload.getByte("GTSWN_NetworkSafetyEnabled") != 1))
+            throw unsupported("GTSWN_NetworkSafetyEnabled", "原生 TileEntity 配置必须为布尔 byte");
+        boolean craftingHatch = HologramGtCraftingResources.supports(selectedPayload);
+        selectedPayload = HologramGtCraftingResources.paymentPayload(selectedPayload);
+        HologramFullPreservation.assertUnchanged(original, selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         HologramEssentia.validateNonJarContents(selectedPayload);
+        HologramNativeHubData.Fluid splitFluid = HologramNativeHubData.fluid(selectedPayload);
+        HologramNativeHubData.bindings(selectedPayload);
         Inspection inspection = new Inspection(selectedPayload, nativeComponents);
+        if (splitFluid != null && splitFluid.value != null && splitFluid.value.amount > 0) {
+            FluidStack identity = splitFluid.value.identity();
+            if (!HologramMaterials.supportsFluidNbt(identity)) throw unsupported(splitFluid.key, "当前流体接口不能保留此流体NBT");
+            result.addFluid(identity, splitFluid.value.amount, splitFluid.key);
+            result.addEntry(new Entry(splitFluid.key, null, identity, BigInteger.valueOf(splitFluid.value.amount)));
+        }
         result.addNativeItems(HologramGtMeShadow.componentMaterials(selectedPayload));
         HologramEssentia.Cost jar = HologramEssentia.jarCost(selectedPayload);
         if (jar != null) {
@@ -319,7 +646,22 @@ public final class HologramBlueprintResources {
         }
         for (Object raw : selectedPayload.func_150296_c()) {
             String key = (String) raw;
+            if (HologramFullPreservation.TAG.equals(key)) continue;
+            if (HologramNativeHubData.fluidKey(key) || HologramNativeHubData.bindingKey(key)) continue;
             if (HologramEssentia.isJar(selectedPayload) && (key.equals("Aspect") || key.equals("Amount"))) continue;
+            if (craftingHatch && key.equals("gtmbCraftingResourceCosts")) {
+                inspect(
+                    selectedPayload.getTag(key),
+                    "Inventory",
+                    "internalInventory",
+                    "internalInventory",
+                    result,
+                    inspection,
+                    0,
+                    true,
+                    false);
+                continue;
+            }
             inspect(selectedPayload.getTag(key), key, key, key, result, inspection, 0, false, false);
         }
         return result;
@@ -330,6 +672,10 @@ public final class HologramBlueprintResources {
         if (depth > 64) throw unsupported(rootKey, "资源NBT嵌套过深");
         String lower = name.toLowerCase(Locale.ROOT);
         if (inspection.configuration.contains(path)) return;
+        if (inspection.fullyPreserved.contains(rootKey)) {
+            inspectFullyPreserved(value, rootKey, path, plan, inspection, depth);
+            return;
+        }
         boolean physicalItem = inspection.physical.contains(path);
         if (physicalItem && !(value instanceof NBTTagCompound)) throw unsupported(rootKey, "实物物品记录必须为NBT复合项");
         inventoryContext |= inventoryContainer(lower) || physicalItem;
@@ -362,6 +708,36 @@ public final class HologramBlueprintResources {
         if (value instanceof NBTTagCompound) {
             NBTTagCompound compound = (NBTTagCompound) value;
             HologramNativeResources.inspect(compound, name, rootKey);
+            if (!physicalItem && !itemRecord(compound)
+                && (ResourceContainers.hasCodecs() || fluidContext
+                    || lower.contains("fluid")
+                    || lower.contains("tank"))) {
+                List<ResourceContainers.FluidAmount> decoded;
+                try {
+                    decoded = ResourceContainers.decode(
+                        new ResourceContainers.Context(
+                            inspection.nativeTileId,
+                            inspection.machineId,
+                            rootKey,
+                            path,
+                            name,
+                            fluidContext,
+                            compound));
+                } catch (IOException invalid) {
+                    throw unsupported(rootKey, invalid.getMessage());
+                }
+                if (decoded != null) {
+                    for (ResourceContainers.FluidAmount fluid : decoded) {
+                        if (fluid.amount == 0) continue;
+                        FluidStack identity = fluid.identity();
+                        if (!HologramMaterials.supportsFluidNbt(identity))
+                            throw unsupported(rootKey, "当前AE流体接口不能保留此流体NBT");
+                        plan.addFluid(identity, fluid.amount, rootKey);
+                        plan.addEntry(new Entry(rootKey, null, identity, BigInteger.valueOf(fluid.amount)));
+                    }
+                    return;
+                }
+            }
             if (physicalItem || itemRecord(compound)) {
                 if (!compound.hasKey("id", 99) || !compound.hasKey("Count", 99)
                     || compound.getTag("id")
@@ -455,6 +831,86 @@ public final class HologramBlueprintResources {
         if (storage && nonempty(value)) throw unsupported(rootKey, "未知资源存储格式");
     }
 
+    /**
+     * An explicit author choice permits unknown container names, never unknown asset encodings. Every leaf must
+     * be a complete native item/fluid record; opaque scalars and arrays cannot silently become free resources.
+     */
+    private static void inspectFullyPreserved(NBTBase value, String root, String path, Plan plan, Inspection inspection,
+        int depth) throws IOException {
+        if (depth > 64) throw unsupported(root, "资源NBT嵌套过深 " + path);
+        if (inspection.configuration.contains(path)) return;
+        if (value instanceof NBTTagCompound) {
+            NBTTagCompound row = (NBTTagCompound) value;
+            HologramNativeResources.inspect(row, path.substring(path.lastIndexOf('/') + 1), root);
+            if (itemRecord(row)) {
+                for (Object raw : row.func_150296_c()) {
+                    String key = (String) raw;
+                    if (!key.equals("id") && !key.equals("Count")
+                        && !key.equals("Damage")
+                        && !key.equals("tag")
+                        && !key.equals("Slot")
+                        && !key.equals(HologramBlueprintNbt.ITEM_REGISTRY)
+                        && !key.equals(HologramBlueprintNbt.MISSING_ITEM))
+                        throw unsupported(root, "物品记录含无法解析的私有字段 " + path + "/" + key);
+                }
+                if (!integer(row, "id") || !integer(row, "Count")
+                    || row.hasKey("Damage") && !integer(row, "Damage")
+                    || row.hasKey("Slot") && !integer(row, "Slot")
+                    || row.hasKey("tag") && !row.hasKey("tag", 10)
+                    || row.getLong("id") < 0
+                    || row.getLong("id") > Short.MAX_VALUE
+                    || row.hasKey("Damage") && (row.getLong("Damage") < 0 || row.getLong("Damage") > Short.MAX_VALUE)
+                    || row.getLong("Count") < 1
+                    || row.getLong("Count") > Integer.MAX_VALUE) throw unsupported(root, "物品记录类型或数量无效 " + path);
+                NBTTagCompound nativeRow = HologramBlueprintNbt.nativePayload(row);
+                ItemStack item = ItemStack.loadItemStackFromNBT(nativeRow);
+                if (item == null || item.getItem() == null) throw unsupported(root, "库存物品未注册 " + path);
+                item.stackSize = (int) row.getLong("Count");
+                plan.addItem(item);
+                plan.addEntry(new Entry(root, item, null, BigInteger.valueOf(item.stackSize)));
+                return; // The entire exact tagged item pays its nested contents once.
+            }
+            if (row.hasKey("FluidName") || row.hasKey("Amount")) {
+                for (Object raw : row.func_150296_c()) {
+                    String key = (String) raw;
+                    if (!key.equals("FluidName") && !key.equals("Amount") && !key.equals("Tag"))
+                        throw unsupported(root, "流体记录含无法解析的私有字段 " + path + "/" + key);
+                }
+                if (!row.hasKey("FluidName", 8) || !integer(row, "Amount")
+                    || row.getLong("Amount") < 0
+                    || row.getLong("Amount") > Integer.MAX_VALUE
+                    || row.hasKey("Tag") && !row.hasKey("Tag", 10)) throw unsupported(root, "流体记录类型或数量无效 " + path);
+                FluidStack fluid = FluidStack.loadFluidStackFromNBT(row);
+                if (fluid == null || fluid.getFluid() == null) throw unsupported(root, "流体未注册 " + path);
+                if (!HologramMaterials.supportsFluidNbt(fluid)) throw unsupported(root, "当前AE流体接口不能保留此流体NBT " + path);
+                long amount = row.getLong("Amount");
+                if (amount > 0) {
+                    plan.addFluid(fluid, amount, root);
+                    plan.addEntry(new Entry(root, null, fluid, BigInteger.valueOf(amount)));
+                }
+                return;
+            }
+            for (Object raw : row.func_150296_c()) {
+                String key = (String) raw;
+                inspectFullyPreserved(row.getTag(key), root, path + "/" + key, plan, inspection, depth + 1);
+            }
+            return;
+        }
+        if (value instanceof NBTTagList) {
+            NBTTagList list = (NBTTagList) value;
+            if (list.tagCount() > 0 && list.func_150303_d() != 10) throw unsupported(root, "无法解析的资源列表 " + path);
+            for (int i = 0; i < list.tagCount(); i++)
+                inspectFullyPreserved(list.getCompoundTagAt(i), root, path + "/" + i, plan, inspection, depth + 1);
+            return;
+        }
+        throw unsupported(root, "无法解析私有资产 " + path + "；请移除此信息");
+    }
+
+    private static boolean integer(NBTTagCompound row, String key) {
+        return row.hasKey(key, 99) && row.getTag(key)
+            .getId() <= 4;
+    }
+
     /** Count is part of the native item record; an omitted Damage has the native default of zero. */
     private static boolean itemRecord(NBTTagCompound compound) {
         return compound.hasKey("Count") || compound.hasKey("id") && compound.hasKey("Damage");
@@ -482,11 +938,18 @@ public final class HologramBlueprintResources {
 
     private static final class Inspection {
 
+        final String nativeTileId;
+        final int machineId;
         final Set<String> configuration = new HashSet<>(), physical = new HashSet<>();
+        final Set<String> fullyPreserved;
         final List<ItemStack> nativeCredits = new ArrayList<>();
 
         Inspection(NBTTagCompound root, List<ItemStack> nativeComponents) throws IOException {
+            fullyPreserved = HologramFullPreservation.roots(root);
+            nativeTileId = root.getString("id");
+            machineId = root.hasKey("mID", 99) ? root.getInteger("mID") : -1;
             configuration.addAll(HologramGtMeShadow.configurationPaths(root));
+            configuration.addAll(HologramGtswnPanelConfiguration.paths(root));
             if (nativeComponents != null) for (ItemStack item : nativeComponents)
                 if (item != null && item.getItem() != null && item.stackSize > 0) nativeCredits.add(item.copy());
             for (java.util.Map.Entry<String, ItemStack> attribute : HologramDecorMaterials

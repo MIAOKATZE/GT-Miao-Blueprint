@@ -41,6 +41,20 @@ final class HologramLibraryQuickState {
         return true;
     }
 
+    boolean placement(String candidate, String previousSession, String placedSession) {
+        if (!matches(candidate) || !bootstrapped
+            || !session.equals(previousSession)
+            || placedSession == null
+            || placedSession.isEmpty()
+            || placedSession.equals(previousSession)) return false;
+        session = placedSession;
+        return true;
+    }
+
+    boolean snapshotMatches(String candidate, long expectedTask, long snapshotTask) {
+        return expectedTask > 0 && expectedTask == snapshotTask && matches(candidate);
+    }
+
     String cancel() {
         String revoked = token;
         token = "";

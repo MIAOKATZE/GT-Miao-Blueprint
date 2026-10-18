@@ -31,10 +31,16 @@ import com.gtnewhorizon.structurelib.util.ItemStackPredicate;
 
 import appeng.api.AEApi;
 import appeng.api.config.Actionable;
+import appeng.api.config.FuzzyMode;
 import appeng.api.config.PowerMultiplier;
+import appeng.api.config.SecurityPermissions;
 import appeng.api.features.IWirelessTermHandler;
+import appeng.api.networking.IGrid;
 import appeng.api.networking.energy.IEnergySource;
+import appeng.api.networking.security.BaseActionSource;
+import appeng.api.networking.security.ISecurityGrid;
 import appeng.api.networking.security.PlayerSource;
+import appeng.api.storage.IMEInventory;
 import appeng.api.storage.IMEMonitor;
 import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
@@ -64,6 +70,28 @@ public final class HologramMaterials {
     private static final Logger LOG = LogManager.getLogger("gtmb");
 
     private HologramMaterials() {}
+
+    /** AE's additive ceilDiv overflows at Long.MAX_VALUE even for a unit divisor of one. */
+    static long transferUnits(long amount, int unit) {
+        if (amount < 0 || unit <= 0) throw new IllegalArgumentException("Invalid native transfer quantity/unit");
+        return amount / unit + (amount % unit == 0 ? 0 : 1);
+    }
+
+    /** Native AE simulation semantics with overflow-safe long fee division; one storage simulation, no debit. */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    static <T extends IAEStack> T simulatePoweredExtraction(IEnergySource energy, IMEInventory<T> inventory, T request,
+        BaseActionSource source) {
+        long amount = request.getStackSize();
+        if (amount <= 0) return null;
+        int unit = request.getAmountPerUnit();
+        double available = energy
+            .extractAEPower(transferUnits(amount, unit), Actionable.SIMULATE, PowerMultiplier.CONFIG);
+        long powered = Math.min(amount, Math.max(0L, (long) (available * unit + 0.9)));
+        if (powered <= 0) return null;
+        T bounded = (T) request.copy();
+        bounded.setStackSize(powered);
+        return inventory.extractItems(bounded, Actionable.SIMULATE, source);
+    }
 
     private static boolean coordinatePayment(ItemStack expected) {
         return HologramCoordinatePolicies.reviewedCoordinateItem(expected);
@@ -116,6 +144,7 @@ public final class HologramMaterials {
 
         private final EntityPlayerMP player;
         private final Settings settings;
+        private final int protectedSlot;
         private final List<Container> containers = new ArrayList<>();
         private final Map<Integer, ItemStack> retainedContainers = new LinkedHashMap<>();
         private ItemStack terminalStack;
@@ -124,14 +153,25 @@ public final class HologramMaterials {
         private String terminalKey;
         private boolean terminalInfiniteRange, terminalInfinitePower;
         private int terminalSlot = -1;
+        private HologramMaterialReservations reservations;
 
         public Context(EntityPlayerMP player, Settings settings) {
-            this(player, settings, null);
+            this(player, settings, null, player.inventory.currentItem);
+        }
+
+        public Context(EntityPlayerMP player, Settings settings, int protectedSlot) {
+            this(player, settings, null, protectedSlot);
         }
 
         Context(EntityPlayerMP player, Settings settings, List<ItemStackExtractor> suppliedAdapters) {
+            this(player, settings, suppliedAdapters, player.inventory.currentItem);
+        }
+
+        private Context(EntityPlayerMP player, Settings settings, List<ItemStackExtractor> suppliedAdapters,
+            int protectedSlot) {
             this.player = player;
             this.settings = settings;
+            this.protectedSlot = protectedSlot;
             List<ItemStackExtractor> adapters = new ArrayList<>();
             if (settings.containers) {
                 if (suppliedAdapters != null) adapters.addAll(suppliedAdapters);
@@ -140,7 +180,7 @@ public final class HologramMaterials {
                     while (iterator.hasNext()) adapters.add(iterator.next());
                 }
                 for (int slot = 0; slot < player.inventory.mainInventory.length; slot++) {
-                    if (slot == player.inventory.currentItem) continue;
+                    if (slot == protectedSlot) continue;
                     ItemStack source = player.inventory.mainInventory[slot];
                     if (source == null || source.stackSize <= 0) continue;
                     if (suppliedAdapters == null && AEApi.instance()
@@ -179,6 +219,10 @@ public final class HologramMaterials {
             return new Transaction(this);
         }
 
+        void assetsCommitted(Map<HologramBlueprintResources.ExactKey, Long> costs) {
+            if (reservations != null) reservations.committed(costs);
+        }
+
         public int count(ItemStack stack, int limit) {
             if (stack == null || stack.getItem() == null || limit <= 0) return 0;
             int kind = HologramGtswnPlacementMaterials.supplyKind(stack);
@@ -190,7 +234,75 @@ public final class HologramMaterials {
         public int countFuzzy(ItemStack stack, int limit) {
             if (stack == null || stack.getItem() == null || limit <= 0) return 0;
             if (HologramRecovery.hasSeal(stack)) return count(stack, limit);
-            return amount(take(shellPredicate(stack), null, true, limit, null));
+            return amount(take(shellPredicate(stack), null, true, limit, null, stack, true));
+        }
+
+        /** Long ME quantities use one native long extraction simulation; simulations are never repeated and added. */
+        public long countLong(ItemStack stack, long limit) {
+            if (limit <= Integer.MAX_VALUE) return count(stack, (int) Math.max(0L, limit));
+            return countLong(stack, limit, false);
+        }
+
+        public long countFuzzyLong(ItemStack stack, long limit) {
+            if (limit <= Integer.MAX_VALUE) return countFuzzy(stack, (int) Math.max(0L, limit));
+            return HologramRecovery.hasSeal(stack) ? countLong(stack, limit) : countLong(stack, limit, true);
+        }
+
+        private long countLong(ItemStack stack, long limit, boolean fuzzy) {
+            return countLong(stack, limit, fuzzy, false);
+        }
+
+        private long countRawLong(ItemStack stack, long limit) {
+            if (limit <= Integer.MAX_VALUE) return amount(
+                take(
+                    ItemStackPredicate.from(stack, ItemStackPredicate.NBTMode.EXACT),
+                    stack,
+                    true,
+                    (int) Math.max(0L, limit),
+                    null));
+            return countLong(stack, limit, false, true);
+        }
+
+        private long countLong(ItemStack stack, long limit, boolean fuzzy, boolean raw) {
+            if (stack == null || stack.getItem() == null || limit <= 0) return 0;
+            Predicate<ItemStack> predicate = fuzzy ? shellPredicate(stack)
+                : raw ? ItemStackPredicate.from(stack, ItemStackPredicate.NBTMode.EXACT) : paymentPredicate(stack);
+            int kind = fuzzy || raw ? -1 : HologramGtswnPlacementMaterials.supplyKind(stack);
+            long total = kind < 0 ? 0 : Math.min(limit, HologramGtswnPlacementMaterials.supplyCount(player, kind));
+            Map<ItemStack, Integer> local = new LinkedHashMap<>();
+            // Native generic container adapters accept int. Report that proven bounded stock, rather than
+            // pretending that repeated SIMULATE calls traversed distinct items in the same container.
+            if (settings.main) fromMain(predicate, true, Integer.MAX_VALUE, local);
+            if (settings.containers) fromContainers(
+                predicate,
+                !raw && (fuzzy || coordinatePayment(stack) || kind >= 0) ? null : stack,
+                true,
+                Integer.MAX_VALUE - amount(local),
+                local,
+                null);
+            total += Math.min(limit - total, (long) amount(local));
+            if (total >= limit || !settings.me || !terminalAvailable()) return total;
+            IMEMonitor<IAEItemStack> monitor = terminal.getItemInventory();
+            if (monitor == null) return total;
+            List<IAEItemStack> requests = new ArrayList<>();
+            java.util.Set<HologramBlueprintResources.ExactKey> unique = new java.util.HashSet<>();
+            boolean exact = raw || !fuzzy && !coordinatePayment(stack) && kind < 0;
+            if (exact) requests.add(AEItemStack.create(stack));
+            else for (IAEItemStack entry : monitor.getStorageList()
+                .findFuzzy(AEItemStack.create(stack), FuzzyMode.IGNORE_ALL))
+                if (entry.getStackSize() > 0 && predicate.test(entry.getItemStack())
+                    && unique.add(HologramValues.stackKey(entry.getItemStack()))) requests.add(entry.copy());
+            for (IAEItemStack request : requests) {
+                if (request == null || total >= limit || !terminalAvailable()) break;
+                request.setStackSize(limit - total);
+                IAEItemStack simulated = simulatePoweredExtraction(
+                    energySource(null),
+                    monitor,
+                    request,
+                    new PlayerSource(player, terminal));
+                if (simulated != null) total += Math.max(0L, Math.min(limit - total, simulated.getStackSize()));
+            }
+            return total;
         }
 
         public BigInteger energyAvailable() {
@@ -217,7 +329,7 @@ public final class HologramMaterials {
             if (!settings.main || limit <= 0) return 0;
             long result = 0;
             for (int slot = 0; slot < player.inventory.mainInventory.length && result < limit; slot++) {
-                if (slot == player.inventory.currentItem) continue;
+                if (slot == protectedSlot) continue;
                 ItemStack source = player.inventory.mainInventory[slot];
                 int amount = (int) Math.min(limit - result, HologramEssentia.jarAmount(source, aspect));
                 if (amount <= 0) continue;
@@ -255,7 +367,7 @@ public final class HologramMaterials {
                 public long poweredCount(IAEStack<?> stack) {
                     if (!available()) return 0;
                     double power = networkPower(
-                        Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                        transferUnits(stack.getStackSize(), stack.getAmountPerUnit()),
                         Actionable.SIMULATE,
                         PowerMultiplier.CONFIG,
                         transaction);
@@ -352,7 +464,7 @@ public final class HologramMaterials {
                 public long poweredCount(IAEFluidStack stack) {
                     if (!available()) return 0;
                     double power = networkPower(
-                        Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                        transferUnits(stack.getStackSize(), stack.getAmountPerUnit()),
                         Actionable.SIMULATE,
                         PowerMultiplier.CONFIG,
                         transaction);
@@ -467,8 +579,7 @@ public final class HologramMaterials {
         /** Enabled main inventory stock. Disabled sources are not inspected; the held tool slot is excluded. */
         public int mainCount(ItemStack stack, int limit) {
             if (!settings.main) return 0;
-            return HologramMaterials
-                .mainCount(player.inventory.mainInventory, player.inventory.currentItem, stack, limit);
+            return HologramMaterials.mainCount(player.inventory.mainInventory, protectedSlot, stack, limit);
         }
 
         /** Bounded, read-only UI samples. Optimized-only container APIs cannot enumerate their inventory. */
@@ -483,8 +594,7 @@ public final class HologramMaterials {
                 if (type == 0 && settings.main) {
                     for (int slot = 0; slot < player.inventory.mainInventory.length
                         && result.size() < maximum; slot++) {
-                        if (slot != player.inventory.currentItem)
-                            addChoice(result, player.inventory.mainInventory[slot]);
+                        if (slot != protectedSlot) addChoice(result, player.inventory.mainInventory[slot]);
                     }
                 } else if (type == 1 && settings.containers) {
                     for (Container container : containers) {
@@ -548,7 +658,8 @@ public final class HologramMaterials {
             if (stack == null || stack.getItem() == null || stack.stackSize < 1) return false;
             Predicate<ItemStack> predicate = paymentPredicate(stack);
             if (count(stack, stack.stackSize) < stack.stackSize) return false;
-            if (simulate) return true;
+            if (simulate) return !coordinatePayment(stack) || transaction == null
+                || amount(take(predicate, stack, true, stack.stackSize, transaction)) == stack.stackSize;
             int kind = HologramGtswnPlacementMaterials.supplyKind(stack);
             int prepaid = kind < 0 ? 0
                 : Math.min(stack.stackSize, HologramGtswnPlacementMaterials.supplyCount(player, kind));
@@ -570,12 +681,17 @@ public final class HologramMaterials {
             Predicate<ItemStack> predicate = shellPredicate(stack);
             // A null exact sample is essential: AE must extract the actual matching tag, and the refund ledger
             // must record that actual identity. Exact-only container APIs cannot impersonate fuzzy support.
-            if (amount(take(predicate, null, true, 1, null)) < 1) return false;
-            return simulate || amount(take(predicate, null, false, 1, transaction)) == 1;
+            if (amount(take(predicate, null, true, 1, transaction, stack, true)) < 1) return false;
+            return simulate || amount(take(predicate, null, false, 1, transaction, stack, true)) == 1;
         }
 
         private Map<ItemStack, Integer> take(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate,
             int count, Transaction transaction) {
+            return take(predicate, exact, simulate, count, transaction, exact, false);
+        }
+
+        private Map<ItemStack, Integer> take(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate,
+            int count, Transaction transaction, ItemStack hint, boolean fuzzy) {
             Map<ItemStack, Integer> result = new LinkedHashMap<>();
             // Anonymous predicates retain the construction batch budget. Explicit exact identities can pay
             // large GT inventory slots through one bounded adapter call without millions of takeOne calls.
@@ -587,14 +703,24 @@ public final class HologramMaterials {
                 : exact;
             int[] order = settings.priority == 1 ? new int[] { 1, 0, 2 }
                 : settings.priority == 2 ? new int[] { 2, 0, 1 } : new int[] { 0, 1, 2 };
-            for (int type : order) {
-                int remaining = count - amount(result);
-                if (remaining <= 0) break;
-                if (type == 0 && settings.main) fromMain(predicate, simulate, remaining, result);
-                else if (type == 1 && settings.containers)
-                    fromContainers(predicate, nativeExact, simulate, remaining, result, transaction);
-                else if (type == 2 && settings.me)
-                    fromMe(predicate, nativeExact, simulate, remaining, result, transaction);
+            HologramMaterialReservations.Selection allocation = transaction == null
+                || transaction.protectedAssets == null
+                || reservations == null
+                || !fuzzy && !coordinatePayment(hint) ? null
+                    : reservations.selection(transaction.currentAssets, hint, fuzzy);
+            try {
+                for (int type : order) {
+                    int remaining = count - amount(result);
+                    if (remaining <= 0) break;
+                    if (type == 0 && settings.main) fromMain(predicate, simulate, remaining, result, allocation);
+                    else if (type == 1 && settings.containers)
+                        fromContainers(predicate, nativeExact, simulate, remaining, result, transaction, allocation);
+                    else if (type == 2 && settings.me)
+                        fromMe(predicate, nativeExact, simulate, remaining, result, transaction, hint, allocation);
+                }
+            } finally {
+                if (!simulate && reservations != null) for (Map.Entry<ItemStack, Integer> entry : result.entrySet())
+                    reservations.extracted(entry.getKey(), entry.getValue());
             }
             if (!simulate) player.inventory.markDirty();
             return result;
@@ -602,12 +728,20 @@ public final class HologramMaterials {
 
         private void fromMain(Predicate<ItemStack> predicate, boolean simulate, int count,
             Map<ItemStack, Integer> result) {
+            fromMain(predicate, simulate, count, result, null);
+        }
+
+        private void fromMain(Predicate<ItemStack> predicate, boolean simulate, int count,
+            Map<ItemStack, Integer> result, HologramMaterialReservations.Selection allocation) {
             for (int slot = 0; slot < player.inventory.mainInventory.length && count > 0; slot++) {
-                if (slot == player.inventory.currentItem) continue;
+                if (slot == protectedSlot) continue;
                 ItemStack stack = player.inventory.mainInventory[slot];
                 if (stack == null || stack.stackSize <= 0 || !predicate.test(stack)) continue;
                 int taken = Math.min(count, stack.stackSize);
+                if (allocation != null) taken = (int) allocation.allowance(stack, taken);
+                if (taken <= 0) continue;
                 add(result, stack, taken);
+                if (allocation != null) allocation.extracted(stack, taken);
                 count -= taken;
                 if (!simulate) {
                     stack.stackSize -= taken;
@@ -618,6 +752,12 @@ public final class HologramMaterials {
 
         private void fromContainers(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate, int count,
             Map<ItemStack, Integer> result, Transaction transaction) {
+            fromContainers(predicate, exact, simulate, count, result, transaction, null);
+        }
+
+        private void fromContainers(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate, int count,
+            Map<ItemStack, Integer> result, Transaction transaction,
+            HologramMaterialReservations.Selection allocation) {
             for (Container container : containers) {
                 if (count <= 0) return;
                 if (player.inventory.mainInventory[container.slot] != container.source
@@ -629,11 +769,42 @@ public final class HologramMaterials {
                 InventoryUtility.ItemStackCounter counter = (stack, number) -> {
                     if (number <= 0) return;
                     add(result, stack, number);
+                    if (allocation != null) allocation.extracted(stack, number);
                     if (!simulate && transaction != null) transaction.containerItems.add(copy(stack, number));
                 };
                 try {
                     ItemStack supplied = simulate ? container.source.copy() : container.source;
-                    if (container.adapter.isAPIImplemented(APIType.MAIN)) container.adapter.takeFromStack(
+                    if (allocation != null && allocation.guarded && container.adapter.isAPIImplemented(APIType.MAIN)) {
+                        java.util.Set<HologramBlueprintResources.ExactKey> attempted = new java.util.HashSet<>();
+                        while (amount(result) - before < count && attempted.size() < 96) {
+                            ItemStack[] choice = { null };
+                            container.adapter.takeFromStack(
+                                candidate -> predicate.test(candidate)
+                                    && !attempted.contains(HologramValues.lookupKey(candidate))
+                                    && allocation.allowance(candidate, 1) > 0,
+                                true,
+                                1,
+                                (candidate, number) -> {
+                                    if (number > 0 && choice[0] == null) choice[0] = candidate.copy();
+                                },
+                                supplied.copy(),
+                                null,
+                                player);
+                            if (choice[0] == null) break;
+                            HologramBlueprintResources.ExactKey identity = HologramValues.stackKey(choice[0]);
+                            attempted.add(identity);
+                            int permitted = (int) allocation.allowance(choice[0], count - (amount(result) - before));
+                            if (permitted <= 0) continue;
+                            container.adapter.takeFromStack(
+                                candidate -> identity.matches(candidate),
+                                simulate,
+                                permitted,
+                                counter,
+                                supplied,
+                                copy(choice[0], permitted),
+                                player);
+                        }
+                    } else if (container.adapter.isAPIImplemented(APIType.MAIN)) container.adapter.takeFromStack(
                         predicate,
                         simulate,
                         count,
@@ -668,19 +839,48 @@ public final class HologramMaterials {
             return carried && terminal.rangeCheck() && terminal.getActionableNode() != null;
         }
 
+        /** A crafting order must use the same carried, range-checked terminal and the player's AE permissions. */
+        IGrid craftingGrid() {
+            if (!settings.me || !terminalAvailable()
+                || !terminal.getActionableNode()
+                    .isActive()
+                || !terminalInfinitePower && !terminalHandler.hasPower(player, 0.5, terminalStack)) return null;
+            IGrid grid = terminal.getActionableNode()
+                .getGrid();
+            if (grid == null) return null;
+            ISecurityGrid security = grid.getCache(ISecurityGrid.class);
+            return security != null && security.hasPermission(player, SecurityPermissions.CRAFT)
+                && security.hasPermission(player, SecurityPermissions.EXTRACT) ? grid : null;
+        }
+
+        PlayerSource craftingSource() {
+            return craftingGrid() == null ? null : new PlayerSource(player, terminal);
+        }
+
+        appeng.api.networking.IGridNode craftingNode() {
+            return craftingGrid() == null ? null : terminal.getActionableNode();
+        }
+
         private void fromMe(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate, int count,
-            Map<ItemStack, Integer> result, Transaction transaction) {
+            Map<ItemStack, Integer> result, Transaction transaction, ItemStack hint,
+            HologramMaterialReservations.Selection allocation) {
             if (!terminalAvailable()) return;
             IMEMonitor<IAEItemStack> monitor = terminal.getItemInventory();
             if (monitor == null) return;
             List<IAEItemStack> requests = new ArrayList<>();
+            java.util.Set<HologramBlueprintResources.ExactKey> unique = new java.util.HashSet<>();
             if (exact != null) requests.add(AEItemStack.create(exact));
-            else for (IAEItemStack entry : monitor.getStorageList())
-                if (entry.getStackSize() > 0 && predicate.test(entry.getItemStack())) requests.add(entry.copy());
+            else for (IAEItemStack entry : hint == null ? monitor.getStorageList()
+                : monitor.getStorageList()
+                    .findFuzzy(AEItemStack.create(hint), FuzzyMode.IGNORE_ALL))
+                if (entry.getStackSize() > 0 && predicate.test(entry.getItemStack())
+                    && unique.add(HologramValues.stackKey(entry.getItemStack()))) requests.add(entry.copy());
             PlayerSource action = new PlayerSource(player, terminal);
             for (IAEItemStack request : requests) {
                 if (count <= 0 || !terminalAvailable()) break;
-                request.setStackSize(count);
+                int permitted = allocation == null ? count : (int) allocation.allowance(request.getItemStack(), count);
+                if (permitted <= 0) continue;
+                request.setStackSize(permitted);
                 IAEItemStack extracted;
                 try {
                     if (simulate) extracted = Platform
@@ -706,13 +906,14 @@ public final class HologramMaterials {
                 if (extracted == null || extracted.getStackSize() <= 0) continue;
                 int taken = (int) extracted.getStackSize();
                 add(result, extracted.getItemStack(), taken);
+                if (allocation != null) allocation.extracted(extracted.getItemStack(), taken);
                 count -= taken;
             }
         }
 
         private int poweredCount(IAEItemStack stack) {
             double available = networkPower(
-                Platform.ceilDiv(stack.getStackSize(), stack.getAmountPerUnit()),
+                transferUnits(stack.getStackSize(), stack.getAmountPerUnit()),
                 Actionable.SIMULATE,
                 PowerMultiplier.CONFIG,
                 null);
@@ -720,11 +921,7 @@ public final class HologramMaterials {
         }
 
         private void charge(long items, int amountPerUnit, Transaction transaction) {
-            networkPower(
-                Platform.ceilDiv(items, amountPerUnit),
-                Actionable.MODULATE,
-                PowerMultiplier.CONFIG,
-                transaction);
+            networkPower(transferUnits(items, amountPerUnit), Actionable.MODULATE, PowerMultiplier.CONFIG, transaction);
         }
 
         private IEnergySource energySource(Transaction transaction) {
@@ -782,6 +979,7 @@ public final class HologramMaterials {
 
         /** Must follow the service's main inventory snapshot restore, before returning fallback materials. */
         public void afterInventoryRestore() {
+            if (reservations != null) reservations.invalidateStock();
             for (Map.Entry<Integer, ItemStack> entry : retainedContainers.entrySet()) {
                 ItemStack restored = entry.getValue()
                     .copy();
@@ -831,7 +1029,7 @@ public final class HologramMaterials {
                 }
                 HologramMaterials.insertRecovery(
                     player.inventory.mainInventory,
-                    player.inventory.currentItem,
+                    protectedSlot,
                     player.inventory.getInventoryStackLimit(),
                     stack);
                 // Persist this receipt immediately, before attempting the next queue entry.
@@ -886,9 +1084,23 @@ public final class HologramMaterials {
         private int terminalSlot = -1;
         private ItemStack terminalState;
         private boolean closed;
+        private Map<HologramBlueprintResources.ExactKey, Long> protectedAssets, currentAssets;
 
         private Transaction(Context context) {
             this.context = context;
+        }
+
+        /** Remaining whole-plan budgets are shared; the already-paid current cell must not be protected twice. */
+        Transaction protectAssets(Map<HologramBlueprintResources.ExactKey, Long> pending,
+            Map<HologramBlueprintResources.ExactKey, Long> current) {
+            protectedAssets = pending;
+            currentAssets = current == null ? Collections.emptyMap() : current;
+            if (context.reservations == null || !context.reservations.owns(pending))
+                context.reservations = new HologramMaterialReservations(
+                    pending,
+                    (sample, strict) -> strict ? context.countRawLong(sample, Long.MAX_VALUE)
+                        : context.countLong(sample, Long.MAX_VALUE));
+            return this;
         }
 
         @Override
@@ -1134,14 +1346,20 @@ public final class HologramMaterials {
     static boolean supportsFluidNbt(FluidStack stack) {
         if (stack == null || stack.getFluid() == null) return false;
         if (stack.tag == null || stack.tag.hasNoTags()) return true;
-        IAEFluidStack converted = AEFluidStack.create(stack);
-        // The bound AE2 version discards fluid tags. Probe the actual adapter so a future implementation
-        // that preserves exact tags can be used, while today's tagged fluid is never replaced by plain fluid.
-        return converted != null && converted.hasTagCompound()
-            && converted.getTagCompound() != null
-            && stack.tag.equals(
-                converted.getTagCompound()
-                    .getNBTTagCompoundCopy());
+        try {
+            // Do not initialize AE's static API before FML has a usable loaded-mod registry. Offline review and
+            // incomplete native initialization cannot prove exact tagged-fluid support.
+            if (!cpw.mods.fml.common.Loader.isModLoaded("appliedenergistics2")) return false;
+            IAEFluidStack converted = AEFluidStack.create(stack);
+            // Probe the real adapter; tagged fluid must never be silently replaced by its plain variant.
+            return converted != null && converted.hasTagCompound()
+                && converted.getTagCompound() != null
+                && stack.tag.equals(
+                    converted.getTagCompound()
+                        .getNBTTagCompoundCopy());
+        } catch (RuntimeException | LinkageError unavailable) {
+            return false;
+        }
     }
 
     static NBTTagCompound itemReceipt(ItemStack stack) {

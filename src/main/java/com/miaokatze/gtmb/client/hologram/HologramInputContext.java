@@ -11,6 +11,12 @@ final class HologramInputContext {
         return boundUuid == null || boundUuid.isEmpty() || boundUuid.equals(heldUuid);
     }
 
+    /** Controller ghosts belong to the tool/UI context; virtual placement and active jobs keep their own lifetime. */
+    static boolean worldProjection(HologramState snapshot, boolean projectorHeld, boolean workspaceOpen) {
+        int job = snapshot.data.getInteger("job");
+        return snapshot.data.getBoolean("virtual") || projectorHeld || workspaceOpen || job == 1 || job == 2;
+    }
+
     boolean observe(Object nextWorld, Object nextScreen, Object nextItem, int nextDamage, int nextSlot, String nextUuid,
         Object nextStack, boolean screenEvent) {
         String identity = nextUuid == null ? "" : nextUuid;

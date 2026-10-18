@@ -62,7 +62,7 @@ final class HologramBlueprintServiceRegression {
             player.capabilities.isCreativeMode = true;
             player.capabilities.allowEdit = true;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
-            Class<?> type = Class.forName(HologramService.class.getName() + "$Session");
+            Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSession");
             Constructor<?> ctor = type.getDeclaredConstructor(
                 EntityPlayerMP.class,
                 int.class,
@@ -90,11 +90,14 @@ final class HologramBlueprintServiceRegression {
             HologramCapture capture = (HologramCapture) get(session, "capture");
             SimpleAssert
                 .that(!capture.incomplete, "schema2 item-only factory cells infer their block: " + capture.failure);
+            spatialWorkOrder((HologramSession) session);
+            HologramBlueprintSourceMaterialRegression.run((HologramSession) session);
             capture.cells.get(0).prompt = "keep configuration";
             NBTTagCompound data = new NBTTagCompound();
             data.setString("setting", "saved-value");
             capture.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(data);
-            Method move = HologramService.class.getDeclaredMethod("moveBlueprintCells", type, NBTTagCompound.class);
+            Method move = HologramBlueprintEditor.class
+                .getDeclaredMethod("moveBlueprintCells", type, NBTTagCompound.class);
             move.setAccessible(true);
             NBTTagCompound action = new NBTTagCompound();
             action.setIntArray("indices", new int[] { 0 });
@@ -119,7 +122,7 @@ final class HologramBlueprintServiceRegression {
                 SimpleAssert.that(expected.getCause() instanceof java.io.IOException, "collision is checked failure");
             }
             SimpleAssert.that(original == get(session, "capture"), "rejected geometry retains exact capture");
-            Method scope = HologramService.class
+            Method scope = HologramSessionPolicy.class
                 .getDeclaredMethod("inScope", type, HologramCapture.Cell.class, int.class);
             scope.setAccessible(true);
             HologramCapture.Cell cell = capture.cells.get(0);
@@ -133,6 +136,7 @@ final class HologramBlueprintServiceRegression {
             apply.invoke(undo, session);
             capture = (HologramCapture) get(session, "capture");
             SimpleAssert.that(capture.positions.containsKey("1,64,0"), "geometry undo restores source coordinate");
+            reprocessingUsesCurrentEdits((HologramSession) session);
             authorWorkflow(session);
             sourceSwitchLifecycle(session, player);
             gtPaymentIdentity(session, player, unsafe);
@@ -145,6 +149,47 @@ final class HologramBlueprintServiceRegression {
             while (cause.getCause() != null) cause = cause.getCause();
             cause.printStackTrace();
             throw new AssertionError(cause);
+        }
+    }
+
+    private static void spatialWorkOrder(HologramSession session) {
+        HologramCapture original = session.capture;
+        HologramPresets.Preset preset = session.virtualPreset;
+        java.util.List<Integer> work = new java.util.ArrayList<>(session.work);
+        try {
+            HologramCapture declared = new HologramCapture(null, new ItemStack(Blocks.stone));
+            HologramCapture.Cell casing = new HologramCapture.Cell(null, session.x + 4, session.y, session.z);
+            HologramCapture.Cell controller = new HologramCapture.Cell(null, session.x + 1, session.y, session.z);
+            controller.role = "templateController";
+            HologramCapture.Cell addition = new HologramCapture.Cell(null, session.x + 6, session.y, session.z);
+            declared.cells.add(casing);
+            declared.cells.add(controller);
+            declared.cells.add(addition);
+            for (HologramCapture.Cell cell : declared.cells)
+                declared.positions.put(HologramValues.position(cell), cell);
+            session.capture = declared;
+            session.work.clear();
+            session.work.add(0);
+            session.work.add(1);
+            session.work.add(2);
+            HologramPlacementJobs.spatialWorkOrder(session);
+            SimpleAssert.eq(
+                java.util.Arrays.asList(1, 0, 2),
+                session.work,
+                "construction uses spatial order across controller population passes and local additions");
+            SimpleAssert.that(
+                session.capture.cells.get(1) == controller,
+                "work order does not renumber stable editor cells or ACK indices");
+            HologramPlacementJobs.spatialWorkOrder(session);
+            SimpleAssert.eq(
+                java.util.Arrays.asList(1, 0, 2),
+                session.work,
+                "resuming a reviewed job preserves the same spatial order");
+        } finally {
+            session.capture = original;
+            session.virtualPreset = preset;
+            session.work.clear();
+            session.work.addAll(work);
         }
     }
 
@@ -179,19 +224,19 @@ final class HologramBlueprintServiceRegression {
             .that(!capture.incomplete, "ordinary source variants pass production import admission: " + capture.failure);
         HologramCapture.Cell wool = capture.cells.get(0);
         List<ItemStack> targets = (List<ItemStack>) get(session, "planTargets");
-        Method metadata = HologramService.class
+        Method metadata = HologramCellPolicy.class
             .getDeclaredMethod("targetPreviewMeta", type, HologramCapture.Cell.class, ItemStack.class);
-        Method quote = HologramService.class
+        Method quote = HologramCellPolicy.class
             .getDeclaredMethod("cachePlan", type, HologramCapture.Cell.class, int.class);
-        Method operate = HologramService.class
+        Method operate = HologramWorldTransactions.class
             .getDeclaredMethod("operateChecked", type, HologramCapture.Cell.class, int.class);
-        Method save = HologramService.class.getDeclaredMethod("blueprint", type, String.class);
-        Method installed = HologramService.class.getDeclaredMethod(
+        Method save = HologramBlueprintProjection.class.getDeclaredMethod("blueprint", type, String.class);
+        Method installed = HologramCellPolicy.class.getDeclaredMethod(
             "validateOrdinaryPlacedVariant",
             net.minecraft.world.World.class,
             HologramCapture.Cell.class,
             ItemStack.class);
-        Method matches = HologramService.class.getDeclaredMethod(
+        Method matches = HologramCellPolicy.class.getDeclaredMethod(
             "targetMatches",
             type,
             HologramCapture.Cell.class,
@@ -251,7 +296,7 @@ final class HologramBlueprintServiceRegression {
                 2,
                 metadata.invoke(null, session, axis, new ItemStack(Blocks.log, 1, 2)),
                 "a different log species receives the selected item's native metadata");
-            Method select = HologramService.class
+            Method select = HologramCellPolicy.class
                 .getDeclaredMethod("setBlueprintTarget", type, HologramCapture.Cell.class, ItemStack.class);
             select.setAccessible(true);
             select.invoke(null, session, axis, new ItemStack(Blocks.log, 1, 1));
@@ -320,15 +365,16 @@ final class HologramBlueprintServiceRegression {
         List<ItemStack> previousTargets = new java.util.ArrayList<>(targets);
         HologramPresets.Preset preset = (HologramPresets.Preset) get(session, "virtualPreset");
         boolean originalRetain = preset.retainNbt;
+        boolean originalPlacement = (Boolean) get(session, "virtualPlacement");
         Object originalCapture = get(session, "capture");
         net.minecraft.nbt.NBTTagList before = new net.minecraft.nbt.NBTTagList();
         for (ItemStack stack : actor.inventory.mainInventory)
             if (stack != null) before.appendTag(stack.writeToNBT(new NBTTagCompound()));
-        Method quote = HologramService.class
+        Method quote = HologramCellPolicy.class
             .getDeclaredMethod("cachePlan", session.getClass(), HologramCapture.Cell.class, int.class);
-        Method identity = HologramService.class
+        Method identity = HologramCellPolicy.class
             .getDeclaredMethod("validateGtPayloadIdentity", ItemStack.class, NBTTagCompound.class);
-        Method installed = HologramService.class.getDeclaredMethod(
+        Method installed = HologramCellPolicy.class.getDeclaredMethod(
             "validateGtPlacedIdentity",
             ItemStack.class,
             net.minecraft.block.Block.class,
@@ -337,6 +383,8 @@ final class HologramBlueprintServiceRegression {
         identity.setAccessible(true);
         installed.setAccessible(true);
         try {
+            // Payment quotes consume the reviewed placement target, independent of author-edit pins.
+            set(session, "virtualPlacement", true);
             gregtech.api.GregTechAPI.METATILEENTITIES[id] = (gregtech.api.interfaces.metatileentity.IMetaTileEntity) unsafe
                 .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchInput.class);
             ItemStack target = registeredGtMaterial(id);
@@ -402,6 +450,7 @@ final class HologramBlueprintServiceRegression {
             gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
             cell.tileNbt = originalNbt;
             preset.retainNbt = originalRetain;
+            set(session, "virtualPlacement", originalPlacement);
             targets.clear();
             targets.addAll(previousTargets);
         }
@@ -447,22 +496,25 @@ final class HologramBlueprintServiceRegression {
     private static void sourceSwitchLifecycle(Object session, EntityPlayerMP player)
         throws ReflectiveOperationException {
         Class<?> type = session.getClass();
-        Method propose = HologramService.class.getDeclaredMethod(
+        Method propose = HologramAuthoringWorkflow.class.getDeclaredMethod(
             "requestSourceSwitch",
             type,
             NBTTagCompound.class,
             net.minecraft.tileentity.TileEntity.class,
             Object.class,
             HologramArea.class);
-        Method confirmed = HologramService.class.getDeclaredMethod("sourceSwitchConfirmed", type, NBTTagCompound.class);
+        Method confirmed = HologramAuthoringWorkflow.class
+            .getDeclaredMethod("sourceSwitchConfirmed", type, NBTTagCompound.class);
         Method areaCurrent = method(type, "sourceSwitchAreaCurrent");
-        Method cancel = HologramService.class.getDeclaredMethod("cancelSourceSwitch", type, NBTTagCompound.class);
-        Method confirm = HologramService.class.getDeclaredMethod("confirmSourceSwitch", type, NBTTagCompound.class);
+        Method cancel = HologramAuthoringWorkflow.class
+            .getDeclaredMethod("cancelSourceSwitch", type, NBTTagCompound.class);
+        Method confirm = HologramAuthoringWorkflow.class
+            .getDeclaredMethod("confirmSourceSwitch", type, NBTTagCompound.class);
         propose.setAccessible(true);
         confirmed.setAccessible(true);
         cancel.setAccessible(true);
         confirm.setAccessible(true);
-        Field areaField = HologramService.class.getDeclaredField("AREAS");
+        Field areaField = HologramWorkspace.class.getDeclaredField("AREAS");
         areaField.setAccessible(true);
         Map<UUID, HologramArea> areas = (Map<UUID, HologramArea>) areaField.get(null);
         Field networkChannel = HologramNetwork.class.getDeclaredField("channel");
@@ -566,7 +618,7 @@ final class HologramBlueprintServiceRegression {
 
     private static void authorWorkflow(Object session) throws ReflectiveOperationException, java.io.IOException {
         Class<?> type = session.getClass();
-        Method gate = HologramService.class
+        Method gate = HologramAuthoringWorkflow.class
             .getDeclaredMethod("requireBlueprintProcessing", type, HologramPresets.Preset.class);
         gate.setAccessible(true);
         HologramPresets.Preset raw = (HologramPresets.Preset) get(session, "virtualPreset");
@@ -590,7 +642,7 @@ final class HologramBlueprintServiceRegression {
                 expected.getCause() instanceof java.io.IOException,
                 "save gate rejects an unreviewed server session");
         }
-        Method process = HologramService.class
+        Method process = HologramAuthoringWorkflow.class
             .getDeclaredMethod("processingAction", type, NBTTagCompound.class, String.class);
         process.setAccessible(true);
         NBTTagCompound request = new NBTTagCompound();
@@ -602,7 +654,7 @@ final class HologramBlueprintServiceRegression {
             "production server process authorizes save after all six stages: " + get(session, "status"));
         SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "processing output remains dirty until saved");
         gate.invoke(null, session, get(session, "virtualPreset"));
-        Method edited = HologramService.class.getDeclaredMethod("blueprintEdited", type, String.class);
+        Method edited = HologramAuthoringWorkflow.class.getDeclaredMethod("blueprintEdited", type, String.class);
         edited.setAccessible(true);
         edited.invoke(null, session, "prompt");
         HologramPresets.Preset retainedRaw = (HologramPresets.Preset) get(session, "processingSource");
@@ -635,7 +687,7 @@ final class HologramBlueprintServiceRegression {
             4,
             invalidated.confirmedStages.size(),
             "NBT dependency retains reviewed identity and coordinate stages");
-        Method discard = HologramService.class
+        Method discard = HologramAuthoringWorkflow.class
             .getDeclaredMethod("allowBlueprintDiscard", type, NBTTagCompound.class, String.class, String.class);
         discard.setAccessible(true);
         NBTTagCompound switchSource = new NBTTagCompound();
@@ -647,7 +699,7 @@ final class HologramBlueprintServiceRegression {
         SimpleAssert.that(
             (Boolean) discard.invoke(null, session, switchSource, "editPreset", "other"),
             "explicit discard permits only the requested source switch");
-        Method receipt = HologramService.class
+        Method receipt = HologramLibraryWorkflow.class
             .getDeclaredMethod("acknowledgeBlueprintSave", type, NBTTagCompound.class);
         receipt.setAccessible(true);
         long revision = (Long) get(session, "planRevision");
@@ -672,7 +724,7 @@ final class HologramBlueprintServiceRegression {
                 connectionField.set(connection, channel);
             }
         new net.minecraft.network.NetHandlerPlayServer(null, connection, actor);
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         @SuppressWarnings("unchecked")
         Map<UUID, Object> registered = (Map<UUID, Object>) sessionsField.get(null);
@@ -778,7 +830,8 @@ final class HologramBlueprintServiceRegression {
             area.memberships(1, 64, 0)
                 .size(),
             "region captures both owners without duplicate membership");
-        Method scope = HologramService.class.getDeclaredMethod("inScope", type, HologramCapture.Cell.class, int.class);
+        Method scope = HologramSessionPolicy.class
+            .getDeclaredMethod("inScope", type, HologramCapture.Cell.class, int.class);
         scope.setAccessible(true);
         set(session, "scope", 0);
         set(session, "blueprintActiveStructure", "");
@@ -788,7 +841,7 @@ final class HologramBlueprintServiceRegression {
         SimpleAssert
             .that(!(Boolean) scope.invoke(null, session, shared, 0), "shared wall is outside scope when both disabled");
         b.enabled = true;
-        Method select = HologramService.class.getDeclaredMethod("selectAreaStructure", type, String.class);
+        Method select = HologramAreaWorkflow.class.getDeclaredMethod("selectAreaStructure", type, String.class);
         select.setAccessible(true);
         select.invoke(null, session, "B");
         java.util.Set<Integer> selected = (java.util.Set<Integer>) get(session, "selectedIndices");
@@ -813,7 +866,7 @@ final class HologramBlueprintServiceRegression {
         set(session, "virtualLocked", true);
         player.posY = 64;
         method(type, "refreshPlan").invoke(null, session);
-        Method build = HologramService.class.getDeclaredMethod("directBuild", type, boolean.class);
+        Method build = HologramBuildPreparation.class.getDeclaredMethod("directBuild", type, boolean.class);
         build.setAccessible(true);
         build.invoke(null, session, false);
         List<Integer> work = (List<Integer>) get(session, "work");
@@ -837,7 +890,7 @@ final class HologramBlueprintServiceRegression {
             player.worldObj.isAirBlock(shared.x, shared.y, shared.z) && player.worldObj.isAirBlock(4, 64, 0),
             "scheduling two physical positions does not write the read-only world");
         set(session, "job", 0);
-        Method save = HologramService.class.getDeclaredMethod("blueprint", type, String.class);
+        Method save = HologramBlueprintProjection.class.getDeclaredMethod("blueprint", type, String.class);
         save.setAccessible(true);
         HologramPresets.Preset saved = (HologramPresets.Preset) save.invoke(null, session, "shared");
         int savedWalls = 0;
@@ -846,7 +899,7 @@ final class HologramBlueprintServiceRegression {
             SimpleAssert.that(cell.belongsTo("A") && cell.belongsTo("B"), "save retains both memberships");
         }
         SimpleAssert.eq(1, savedWalls, "saved blueprint has one physical wall item");
-        Method rebase = HologramService.class
+        Method rebase = HologramWorldPlacementWorkflow.class
             .getDeclaredMethod("moveVirtual", type, int.class, int.class, int.class, int.class);
         rebase.setAccessible(true);
         rebase.invoke(null, session, 3, 64, 0, 2);
@@ -855,7 +908,7 @@ final class HologramBlueprintServiceRegression {
         SimpleAssert.that(shared.belongsTo("A") && shared.belongsTo("B"), "rebase/clone preserves both owners");
         set(session, "blueprintActiveStructure", "");
         HologramCapture.Cell controllerA = addFixtureCell(session, 3, "A", true);
-        Method move = HologramService.class.getDeclaredMethod("moveBlueprintCells", type, NBTTagCompound.class);
+        Method move = HologramBlueprintEditor.class.getDeclaredMethod("moveBlueprintCells", type, NBTTagCompound.class);
         move.setAccessible(true);
         NBTTagCompound action = new NBTTagCompound();
         action.setBoolean("copy", true);
@@ -895,7 +948,7 @@ final class HologramBlueprintServiceRegression {
             "copy both structures retains a shared new wall");
         SimpleAssert
             .that(!copiedWall.belongsTo("A") && !copiedWall.belongsTo("B"), "both copied memberships are rekeyed");
-        Method cut = HologramService.class
+        Method cut = HologramBlueprintEditor.class
             .getDeclaredMethod("blueprintClipboard", type, NBTTagCompound.class, String.class);
         cut.setAccessible(true);
         action = new NBTTagCompound();
@@ -976,7 +1029,7 @@ final class HologramBlueprintServiceRegression {
         inventory.appendTag(new ItemStack(Blocks.dirt, 3).writeToNBT(new NBTTagCompound()));
         payload.setTag("inventory", inventory);
         capture.cells.get(1).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
-        Method move = HologramService.class.getDeclaredMethod("moveBlueprintCells", type, NBTTagCompound.class);
+        Method move = HologramBlueprintEditor.class.getDeclaredMethod("moveBlueprintCells", type, NBTTagCompound.class);
         move.setAccessible(true);
         NBTTagCompound action = new NBTTagCompound();
         action.setIntArray("indices", new int[] { 1 });
@@ -1038,7 +1091,7 @@ final class HologramBlueprintServiceRegression {
         } catch (java.lang.reflect.InvocationTargetException rejected) {
             SimpleAssert.that(rejected.getCause() instanceof java.io.IOException, "invalid indices fail closed");
         }
-        Method add = HologramService.class.getDeclaredMethod("addPosition", type, NBTTagCompound.class);
+        Method add = HologramBlueprintEditor.class.getDeclaredMethod("addPosition", type, NBTTagCompound.class);
         add.setAccessible(true);
         NBTTagCompound air = new NBTTagCompound();
         air.setInteger("dx", 19);
@@ -1057,7 +1110,7 @@ final class HologramBlueprintServiceRegression {
         remoteAir.setInteger("dx", 1000);
         add.invoke(null, session, remoteAir);
         SimpleAssert.eq(count, capture.cells.size(), "air pick outside blueprint bounds is rejected on server");
-        Method save = HologramService.class.getDeclaredMethod("blueprint", type, String.class);
+        Method save = HologramBlueprintProjection.class.getDeclaredMethod("blueprint", type, String.class);
         save.setAccessible(true);
         HologramPresets.Preset saved = (HologramPresets.Preset) save.invoke(null, session, "air-preserving");
         boolean savedAir = false;
@@ -1067,7 +1120,7 @@ final class HologramBlueprintServiceRegression {
             SimpleAssert.that(cell.stack() == null && !cell.missing(), "air has no item cost or missing-block marker");
         }
         SimpleAssert.that(savedAir, "air selection persists in the blueprint");
-        Method pin = HologramService.class
+        Method pin = HologramBlueprintEditor.class
             .getDeclaredMethod("pinSelection", type, NBTTagCompound.class, int.class, ItemStack.class);
         pin.setAccessible(true);
         int looseIndex = capture.cells.indexOf(capture.positions.get("4,64,0"));
@@ -1131,23 +1184,21 @@ final class HologramBlueprintServiceRegression {
     @SuppressWarnings("unchecked")
     private static void declarationCacheBoundaries(Object session) throws ReflectiveOperationException {
         Class<?> type = session.getClass();
-        ((Map<?, ?>) get(session, "declarationCandidates")).clear();
-        ((Map<?, ?>) get(session, "pureDeclarations")).clear();
-        set(session, "declarationCandidateCount", 0);
+        ((HologramDeclarationCollector) get(session, "declarations")).clear();
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> pure = com.gtnewhorizon.structurelib.structure.StructureUtility
             .withChannel(
                 "cache_test",
                 com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.stone, 0));
         HologramCapture.Cell first = new HologramCapture.Cell(pure, 31, 64, 0);
         HologramCapture.Cell second = new HologramCapture.Cell(pure, 32, 64, 0);
-        Method candidates = HologramService.class
+        Method candidates = HologramCellPolicy.class
             .getDeclaredMethod("declaredCandidates", type, HologramCapture.Cell.class);
         candidates.setAccessible(true);
         List<ItemStack> one = (List<ItemStack>) candidates.invoke(null, session, first);
         List<ItemStack> two = (List<ItemStack>) candidates.invoke(null, session, second);
         SimpleAssert.eq(
             1,
-            get(session, "declarationCandidateCount"),
+            get(get(session, "declarations"), "size"),
             "pure declaration and transparent channel reuse one raw candidate cache across coordinates");
         SimpleAssert.that(
             one != two && one.size() == 1 && two.size() == 1,
@@ -1163,10 +1214,64 @@ final class HologramBlueprintServiceRegression {
         candidates.invoke(null, session, new HologramCapture.Cell(chain, 33, 64, 0));
         candidates.invoke(null, session, new HologramCapture.Cell(chain, 34, 64, 0));
         SimpleAssert
-            .eq(3, get(session, "declarationCandidateCount"), "contextual branches retain separate coordinates");
-        set(session, "declarationCandidateCount", 1024);
+            .eq(3, get(get(session, "declarations"), "size"), "contextual branches retain separate coordinates");
+        set(get(session, "declarations"), "size", 1024);
         candidates.invoke(null, session, first);
-        SimpleAssert.eq(1, get(session, "declarationCandidateCount"), "raw candidate cache remains bounded");
+        SimpleAssert.eq(1, get(get(session, "declarations"), "size"), "raw candidate cache remains bounded");
+        serviceReaderLifecycle(session);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void serviceReaderLifecycle(Object session) throws ReflectiveOperationException {
+        Object previousVirtual = get(session, "virtual"), previousCapture = get(session, "capture");
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> wrapper = com.gtnewhorizon.structurelib.structure.StructureUtility
+            .defer(context -> { throw new AssertionError("service lifecycle evaluated deferred controller factory"); });
+        HologramCapture capture = new HologramCapture(null, new ItemStack(Blocks.stone));
+        HologramCapture.Cell cell = new HologramCapture.Cell(wrapper, 31, 64, 0);
+        cell.block = Blocks.stone;
+        capture.cells.add(cell);
+        capture.positions.put("31,64,0", cell);
+        set(session, "capture", capture);
+        set(session, "virtual", false);
+        Method candidates = HologramCellPolicy.class
+            .getDeclaredMethod("candidates", session.getClass(), HologramCapture.Cell.class);
+        candidates.setAccessible(true);
+        com.miaokatze.gtmb.api.GTMBExtensions.Registration registration = null;
+        try {
+            SimpleAssert.eq(
+                0,
+                ((List<?>) candidates.invoke(null, session, cell)).size(),
+                "service caches unknown wrapper as protected");
+            registration = com.miaokatze.gtmb.api.Declarations.registerReader(
+                "gtmb_test:service-reader-lifecycle",
+                (Class<com.gtnewhorizon.structurelib.structure.IStructureElement<?>>) (Class<?>) wrapper.getClass(),
+                element -> new com.miaokatze.gtmb.api.Declarations.Declaration(
+                    com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.dirt, 0)));
+            SimpleAssert.eq(
+                1,
+                ((List<?>) candidates.invoke(null, session, cell)).size(),
+                "service invalidates cached empty list after public registration");
+            capture.casingCache.put(wrapper, new java.util.HashMap<>());
+            capture.familyCache.put(wrapper, null);
+            capture.roleCache.put(wrapper, "stale");
+            capture.declarationTrace.put(wrapper, new java.util.HashSet<>());
+            registration.close();
+            SimpleAssert.eq(
+                0,
+                ((List<?>) candidates.invoke(null, session, cell)).size(),
+                "service rejects stale per-cell candidates after reader closes");
+            SimpleAssert.that(
+                capture.casingCache.isEmpty() && capture.familyCache.isEmpty()
+                    && capture.roleCache.isEmpty()
+                    && capture.declarationTrace.isEmpty(),
+                "reader generation invalidates capture interpretation caches");
+            SimpleAssert.eq(1, capture.cells.size(), "reader lifecycle retains frozen geometry");
+        } finally {
+            if (registration != null) registration.close();
+            set(session, "virtual", previousVirtual);
+            set(session, "capture", previousCapture);
+        }
+
     }
 
     @SuppressWarnings("unchecked")
@@ -1188,10 +1293,10 @@ final class HologramBlueprintServiceRegression {
 
     @SuppressWarnings("unchecked")
     private static void selectionLifecycle(EntityPlayerMP player, Object session) throws ReflectiveOperationException {
-        Field sessionsField = HologramService.class.getDeclaredField("SESSIONS");
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
         sessionsField.setAccessible(true);
         Map<UUID, Object> sessions = (Map<UUID, Object>) sessionsField.get(null);
-        Field areasField = HologramService.class.getDeclaredField("AREAS");
+        Field areasField = HologramWorkspace.class.getDeclaredField("AREAS");
         areasField.setAccessible(true);
         Map<UUID, HologramArea> areas = (Map<UUID, HologramArea>) areasField.get(null);
         ItemStack original = player.getHeldItem();
@@ -1221,7 +1326,7 @@ final class HologramBlueprintServiceRegression {
         player.inventory.currentItem = 0;
         player.dimension++;
         SimpleAssert.that(!HologramService.isAreaSelecting(player, original), "dimension change invalidates selection");
-        Method ui = HologramService.class.getDeclaredMethod("uiSession", EntityPlayerMP.class);
+        Method ui = HologramProjectorWorkflow.class.getDeclaredMethod("uiSession", EntityPlayerMP.class);
         ui.setAccessible(true);
         ui.invoke(null, player);
         SimpleAssert.that(!areas.containsKey(player.getUniqueID()), "new dimension cannot inherit old corners");
@@ -1327,8 +1432,67 @@ final class HologramBlueprintServiceRegression {
         }
     }
 
+    private static void reprocessingUsesCurrentEdits(HologramSession session) throws java.io.IOException {
+        HologramPresets.Preset previousSource = session.processingSource;
+        HologramBlueprintProcessing.Policy previousPolicy = session.processingPolicy;
+        boolean reviewed = session.processingReviewed, started = session.processingWorkflowStarted,
+            dirty = session.blueprintDirty;
+        String operation = session.processingPresetOperation, status = session.status;
+        boolean success = session.processingPresetOperationSuccess;
+        HologramCapture capture = session.capture;
+        HologramPresets.Preset preset = session.virtualPreset;
+        String prompt = capture.cells.get(0).prompt;
+        try {
+            session.processingSource = HologramPresets.copy(preset);
+            session.processingSource.cells.get(0).prompt = "stale imported prompt";
+            session.processingPolicy = HologramBlueprintProcessing.defaults("self", 0);
+            session.processingPolicy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+            session.processingPolicy.coordinateOverrides.put("old-location", "clear");
+            session.processingReviewed = true;
+            capture.cells.get(0).prompt = "latest unsaved editor prompt";
+            NBTTagCompound action = new NBTTagCompound();
+            action.setLong("planRevision", session.planRevision);
+            SimpleAssert.that(
+                HologramAuthoringWorkflow.processingAction(session, action, "beginBlueprintReprocessing"),
+                "explicit current-blueprint review is handled by the real processing workflow");
+            SimpleAssert.that(session.processingPresetOperationSuccess, "current-blueprint preparation succeeds");
+            SimpleAssert.that(
+                session.capture == capture && session.virtualPreset == preset,
+                "reopening review retains the exact edited blueprint and capture");
+            SimpleAssert.eq(
+                "latest unsaved editor prompt",
+                session.processingSource.cells.get(0).prompt,
+                "six-step review starts from current unsaved edits instead of the original processing source");
+            SimpleAssert.eq(
+                capture.cells.get(0).x - session.x,
+                session.processingSource.cells.get(0).x,
+                "current editor coordinates become the processing baseline");
+            SimpleAssert.that(
+                session.processingPolicy.confirmedStages.isEmpty()
+                    && session.processingPolicy.coordinateOverrides.isEmpty()
+                    && !session.processingReviewed,
+                "old confirmations and position-bound decisions cannot silently approve the current blueprint");
+            HologramPresets.Preset prepared = session.processingSource;
+            action.setLong("planRevision", session.planRevision - 1);
+            HologramAuthoringWorkflow.processingAction(session, action, "beginBlueprintReprocessing");
+            SimpleAssert.that(
+                !session.processingPresetOperationSuccess && session.processingSource == prepared,
+                "a stale reopen request cannot replace the newly reviewed source");
+        } finally {
+            capture.cells.get(0).prompt = prompt;
+            session.processingSource = previousSource;
+            session.processingPolicy = previousPolicy;
+            session.processingReviewed = reviewed;
+            session.processingWorkflowStarted = started;
+            session.blueprintDirty = dirty;
+            session.processingPresetOperation = operation;
+            session.processingPresetOperationSuccess = success;
+            session.status = status;
+        }
+    }
+
     private static Method method(Class<?> type, String name) throws ReflectiveOperationException {
-        Method method = HologramService.class.getDeclaredMethod(name, type);
+        Method method = HologramEngineInspection.declaredMethod(name, type);
         method.setAccessible(true);
         return method;
     }

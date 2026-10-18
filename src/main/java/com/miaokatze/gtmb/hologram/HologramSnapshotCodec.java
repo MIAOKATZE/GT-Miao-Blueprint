@@ -24,12 +24,20 @@ public final class HologramSnapshotCodec {
     private HologramSnapshotCodec() {}
 
     public static byte[] compress(NBTTagCompound tag) throws IOException {
+        return compress(tag, () -> true, written -> {});
+    }
+
+    /** Checkpoints share the serialization pass; large NBT arrays cannot monopolize an obsolete worker. */
+    static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,
+        java.util.function.LongConsumer progress) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(
                 new BufferedOutputStream(
                     new GZIPOutputStream(new LimitedOutput(bytes, HologramSnapshotAssembly.MAX_BYTES))),
-                RAW_BYTES))) {
+                RAW_BYTES,
+                current,
+                progress))) {
             CompressedStreamTools.write(tag, output);
         }
         return bytes.toByteArray();
@@ -56,10 +64,19 @@ public final class HologramSnapshotCodec {
 
         private final int limit;
         private int written;
+        private final java.util.function.BooleanSupplier current;
+        private final java.util.function.LongConsumer progress;
 
         LimitedOutput(OutputStream output, int limit) {
+            this(output, limit, () -> true, written -> {});
+        }
+
+        LimitedOutput(OutputStream output, int limit, java.util.function.BooleanSupplier current,
+            java.util.function.LongConsumer progress) {
             super(output);
             this.limit = limit;
+            this.current = current;
+            this.progress = progress;
         }
 
         public void write(int value) throws IOException {
@@ -68,13 +85,21 @@ public final class HologramSnapshotCodec {
         }
 
         public void write(byte[] bytes, int offset, int length) throws IOException {
-            reserve(length);
-            out.write(bytes, offset, length);
+            while (length > 0) {
+                int count = Math.min(length, 8192);
+                reserve(count);
+                out.write(bytes, offset, count);
+                offset += count;
+                length -= count;
+            }
         }
 
         private void reserve(int length) throws IOException {
+            if (!current.getAsBoolean())
+                throw new java.io.InterruptedIOException("snapshot encoding retired or timed out");
             if (length < 0 || length > limit - written) throw new IOException("snapshot byte budget");
             written += length;
+            progress.accept(written);
         }
     }
 
