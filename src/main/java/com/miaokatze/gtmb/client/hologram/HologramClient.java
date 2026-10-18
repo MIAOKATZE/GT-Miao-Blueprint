@@ -1465,6 +1465,11 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();
+        // The read-only library viewport owns the native render snapshot while it is visible.
+        // Rendering the workspace behind it would swap that snapshot twice per frame and
+        // restart its cooperative mesh preparation. Returning to the workspace restores it normally.
+        if (mc.currentScreen instanceof HologramScreen
+            && ((HologramScreen) mc.currentScreen).ui.library.browsePreviewActive()) return;
         if (HologramCutClient.INSTANCE.render(event.partialTicks)) return;
         HologramState localPreview = HologramLocalPlacement.INSTANCE.display();
         if (localPreview != null) {
