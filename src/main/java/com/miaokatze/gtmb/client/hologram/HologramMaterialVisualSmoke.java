@@ -40,9 +40,11 @@ public final class HologramMaterialVisualSmoke {
     private HologramScreen screen;
     private NBTTagCompound scene;
     private NBTTagCompound beforeVoucher;
+    private NBTTagCompound wheelInput;
     private int stage;
     private long stageAt, requestedGeneration, frame, requestedFrame, taskToken, command;
     private long lastStartupDiagnostic, terminalNotificationsBefore;
+    private long stageFrame, stageGeneration;
     private String capture;
     private boolean finished;
     private boolean orderRefusalCaptured;
@@ -84,17 +86,46 @@ public final class HologramMaterialVisualSmoke {
             // A requested capture also has a deadline when the window stops producing frames.
             if (capture != null) return;
             if (System.nanoTime() - stageAt < 900_000_000L) return;
+            // Wheel animation is queued on its first natural DrawScreenEvent.Pre and advanced on the next.
+            // Dialog quote/toggle updates also run inside real draws; elapsed wall time alone proves neither.
+            if (frame - stageFrame < 2 || screen.ui.canvas.renderGeneration() - stageGeneration < 2) return;
             if (stage == 1) {
                 verifyQuietControls(false);
                 request("01-normal-gt-machine-nbt-fluid-long-counts");
             } else if (stage == 2) {
-                HologramMaterialConfirmationClientProbe.scroll(screen, -120);
+                wheelInput = HologramMaterialConfirmationClientProbe.scroll(screen, -120);
+                JsonObject wheel = new JsonObject();
+                for (String key : new String[] { "mouseX", "mouseY", "before", "scrollSize", "viewportHeight",
+                    "listLocalX", "listLocalY", "nativeAnimatingTo", "immediateScroll" })
+                    wheel.addProperty(key, wheelInput.getInteger(key));
+                for (String key : new String[] { "samePanelContext", "listInActualHitTest", "consumed",
+                    "nativeAnimating" }) wheel.addProperty(key, wheelInput.getBoolean(key));
+                wheel.addProperty(
+                    "actualHovering",
+                    wheelInput.getTagList("actualHovering", 8)
+                        .toString());
+                receipt.add("wheelInput", wheel);
+                require(
+                    wheelInput.getBoolean("samePanelContext") && wheelInput.getBoolean("listInActualHitTest")
+                        && wheelInput.getBoolean("consumed"),
+                    "ordinary wheel must traverse the actual material-list MUI hit route");
+                require(
+                    wheelInput.getBoolean("nativeAnimating")
+                        && wheelInput.getInteger("nativeAnimatingTo") > wheelInput.getInteger("before"),
+                    "ordinary wheel must enqueue forward movement in the native MUI animator");
                 advance();
             } else if (stage == 3) {
+                receipt.addProperty("wheelNaturalFrameDelta", frame - stageFrame);
+                receipt
+                    .addProperty("wheelNaturalGenerationDelta", screen.ui.canvas.renderGeneration() - stageGeneration);
                 require(
                     HologramMaterialConfirmationClientProbe.observe(screen)
                         .getInteger("scroll") > 0,
                     "ordinary wheel must scroll the real MUI list");
+                require(
+                    HologramMaterialConfirmationClientProbe.observe(screen)
+                        .getInteger("scroll") > wheelInput.getInteger("before"),
+                    "natural MUI animation must move the scroll position beyond its pre-input value");
                 request("02-virtual-list-scrolled");
             } else if (stage == 4) {
                 beforeVoucher = HologramMaterialConfirmationClientProbe.observe(screen);
@@ -436,6 +467,8 @@ public final class HologramMaterialVisualSmoke {
     private void advance() {
         stage++;
         stageAt = System.nanoTime();
+        stageFrame = frame;
+        stageGeneration = screen == null ? 0 : screen.ui.canvas.renderGeneration();
     }
 
     private void request(String name) {
@@ -492,8 +525,11 @@ public final class HologramMaterialVisualSmoke {
             item.add("gl", glState());
             frames.add(item);
             capture = null;
-            if ("04a-order-rejected-ready-for-retry.png".equals(name)) stageAt = System.nanoTime();
-            else advance();
+            if ("04a-order-rejected-ready-for-retry.png".equals(name)) {
+                stageAt = System.nanoTime();
+                stageFrame = frame;
+                stageGeneration = screen.ui.canvas.renderGeneration();
+            } else advance();
             write(false, false, "in progress");
         } catch (Throwable failure) {
             failure.printStackTrace();
@@ -523,6 +559,8 @@ public final class HologramMaterialVisualSmoke {
         receipt.addProperty("actualNetty", false);
         receipt.addProperty("actualCraftingCPU", false);
         receipt.addProperty("desktopInput", false);
+        receipt.addProperty("minimumNaturalFramesBetweenStages", 2);
+        receipt.addProperty("minimumNaturalGenerationDeltaBetweenStages", 2);
         receipt.addProperty("sourceKind", "synthetic-menu-fixture-with-real-registered-items");
         receipt.addProperty("blueprintMaterialCompletenessVerified", false);
         receipt.addProperty("soundPlaybackVerified", false);
