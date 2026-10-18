@@ -424,6 +424,7 @@ final class HologramAuthoringWorkflow {
                 } else if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision) {
                     s.status = "材料计划已更新，请重新核对并确认";
                 } else {
+                    HologramMaterialWorkflow.validateConfirmation(s, action);
                     HologramBuildPreparation.reviewedBuild(s, action);
                     if (s.job == 1) s.blueprintAwaitingConfirmation = false;
                     s.open = true;
@@ -443,210 +444,183 @@ final class HologramAuthoringWorkflow {
                 }
                 HologramResourcePlanner.refreshPlan(s);
                 s.status = "NBT 条目已更新；取消资源条目会保留其余配置";
-            } else if ("orderMissingMaterials".equals(op)) {
-                if (!s.virtual || s.virtualPreset == null) throw new java.io.IOException("请先选择有效蓝图");
-                if (!HologramMaterialOrdering.available(s.player)) throw new java.io.IOException("AE 缺料下单接口尚未安装实现");
-                HologramResourcePlanner.refreshPlan(s);
-                NBTTagCompound request = new NBTTagCompound();
-                request.setString("session", s.id);
-                request.setString("presetId", s.virtualPreset.id == null ? "" : s.virtualPreset.id);
-                request.setLong("planRevision", s.planRevision);
-                NBTTagList missingMaterials = new NBTTagList(), missingResources = new NBTTagList();
-                if (s.blueprintTotalResources != null) for (ItemStack item : s.blueprintTotalResources.items) {
-                    int available = HologramMaterialAccess.materialSource(s)
-                        .count(item, item.stackSize);
-                    if (available >= item.stackSize) continue;
-                    ItemStack identity = item.copy();
-                    identity.stackSize = 1;
-                    NBTTagCompound row = identity.writeToNBT(new NBTTagCompound());
-                    row.setInteger("required", item.stackSize);
-                    row.setInteger("available", available);
-                    row.setInteger("missing", item.stackSize - available);
-                    missingMaterials.appendTag(row);
-                }
-                NBTTagList resourceRows = s.blueprintResources == null ? new NBTTagList()
-                    : s.blueprintResources.entries(HologramMaterialAccess.materialSource(s));
-                for (int index = 0; index < resourceRows.tagCount(); index++) {
-                    NBTTagCompound row = resourceRows.getCompoundTagAt(index);
-                    if (new java.math.BigInteger(row.getString("missing")).signum() > 0)
-                        missingResources.appendTag(row.copy());
-                }
-                if (missingMaterials.tagCount() == 0 && missingResources.tagCount() == 0)
-                    throw new java.io.IOException("当前所选范围没有可下单的缺料");
-                request.setTag("materials", missingMaterials);
-                request.setTag("blueprintResources", missingResources);
-                String reply = HologramMaterialOrdering.submit(s.player, request);
-                s.status = reply == null ? "缺料下单已提交给已注册接口" : HologramSessionPolicy.boundedPrompt(reply);
-            } else if ("exportDraft".equals(op)) {
-                HologramLibraryWorkflow.libraryExportDraft(s.player, action);
-            } else if ("saveBlueprint".equals(op) || "saveBlueprintAs".equals(op)
-                || "updatePreset".equals(op)
-                || "saveBlueprintReplace".equals(op)) {
-                    s.blueprintOperation = op;
-                    s.blueprintOperationSuccess = false;
-                    validateProcessedSaveOptions(s, action);
-                    String name = action.getString("name");
-                    if (name.trim()
-                        .isEmpty() && s.virtualPreset != null) name = s.virtualPreset.name;
-                    HologramPresets.Preset preset = HologramBlueprintProjection.blueprint(s, name);
-                    if (action.hasKey("retainNbt")) preset.retainNbt = action.getBoolean("retainNbt");
-                    if (action.hasKey("retainCovers")) preset.retainCovers = action.getBoolean("retainCovers");
-                    if (action.hasKey("retainAllNbt")) preset.retainedNbtKeys = action.getBoolean("retainAllNbt") ? null
-                        : HologramAuthoringQueries.selectedNbtKeys(action.getTagList("retainedNbtKeys", 8));
-                    if (action.hasKey("deidentificationLevel", 3)) {
-                        preset = HologramDeidentification.apply(preset, action.getInteger("deidentificationLevel"));
-                        preset.deidentificationChosen = true;
-                        s.deidentificationChosen = true;
-                    }
-                    boolean update = !"saveBlueprintAs".equals(op) && preset.id != null && !preset.id.isEmpty();
-                    if ("saveBlueprintReplace".equals(op)) {
-                        if (!action.getBoolean("confirmOverwrite")) throw new java.io.IOException("覆盖保存必须明确确认目标蓝图");
-                        String targetId = action.getString("presetId");
-                        if (HologramLibraryFacade.enabled()) {
-                            s.libraryReplaceLocalId = HologramLibraryService.localId(targetId, false);
-                        } else {
-                            if (HologramPresets.get(targetId) == null) throw new java.io.IOException("覆盖目标不存在");
-                            preset.id = targetId;
+            } else if ("orderMissingMaterials".equals(op) || "cancelMaterialOrder".equals(op)
+                || "setDecorativeVoucher".equals(op)
+                || "refreshMaterialQuote".equals(op)) {
+                    HologramMaterialWorkflow.action(s, action, op);
+                } else if ("exportDraft".equals(op)) {
+                    HologramLibraryWorkflow.libraryExportDraft(s.player, action);
+                } else if ("saveBlueprint".equals(op) || "saveBlueprintAs".equals(op)
+                    || "updatePreset".equals(op)
+                    || "saveBlueprintReplace".equals(op)) {
+                        s.blueprintOperation = op;
+                        s.blueprintOperationSuccess = false;
+                        validateProcessedSaveOptions(s, action);
+                        String name = action.getString("name");
+                        if (name.trim()
+                            .isEmpty() && s.virtualPreset != null) name = s.virtualPreset.name;
+                        HologramPresets.Preset preset = HologramBlueprintProjection.blueprint(s, name);
+                        if (action.hasKey("retainNbt")) preset.retainNbt = action.getBoolean("retainNbt");
+                        if (action.hasKey("retainCovers")) preset.retainCovers = action.getBoolean("retainCovers");
+                        if (action.hasKey("retainAllNbt"))
+                            preset.retainedNbtKeys = action.getBoolean("retainAllNbt") ? null
+                                : HologramAuthoringQueries.selectedNbtKeys(action.getTagList("retainedNbtKeys", 8));
+                        if (action.hasKey("deidentificationLevel", 3)) {
+                            preset = HologramDeidentification.apply(preset, action.getInteger("deidentificationLevel"));
+                            preset.deidentificationChosen = true;
+                            s.deidentificationChosen = true;
                         }
-                        update = true;
-                    }
-                    if ("updatePreset".equals(op) && !update) throw new java.io.IOException("请先保存蓝图，或使用另存为");
-                    if (preset.id == null || preset.id.isEmpty()) preset.id = java.util.UUID.randomUUID()
-                        .toString();
-                    beginAeSaveReview(s, preset, op, update);
-                } else if ("deletePreset".equals(op)) {
-                    s.blueprintOperation = op;
-                    s.blueprintOperationSuccess = false;
-                    String id = action.getString("presetId");
-                    if (HologramLibraryFacade.enabled()) throw new java.io.IOException("请在客户端私库或服务器公库界面删除蓝图");
-                    HologramPresets.delete(id);
-                    if (id.equals(HologramSessionPolicy.selectedPreset(s))) HologramSessionPolicy.currentTool(s)
-                        .getTagCompound()
-                        .removeTag(HologramSessionKeys.SELECTED_PRESET);
-                    if (s.virtualPreset != null && id.equals(s.virtualPreset.id)) s.virtualPreset.id = null;
-                    if (id.equals(s.blueprintSavedId)) s.blueprintSavedId = "";
-                    s.blueprintOperationSuccess = true;
-                    s.status = "蓝图已从库中删除；当前编辑内容保留，可另存为";
-                } else if ("editBlueprintPrompt".equals(op)) {
-                    s.blueprintPrompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
-                    if (s.virtualPreset != null) s.virtualPreset.prompt = s.blueprintPrompt;
-                    s.status = "蓝图整体提示已更新；请保存修改";
-                } else if ("editCellFlags".equals(op) || "editHintArea".equals(op)) {
-                    if (s.capture == null) throw new java.io.IOException("请先载入区域或结构");
-                    int[] indices = HologramSessionPolicy.editIndices(s, action);
-                    java.util.Set<Integer> dirty = new java.util.LinkedHashSet<>();
-                    boolean excludedChanged = false;
-                    String prompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
-                    for (int index : indices) if (index >= 0 && index < s.capture.cells.size()) {
-                        HologramCapture.Cell cell = s.capture.cells.get(index);
-                        if (action.hasKey("excluded")) {
-                            excludedChanged |= cell.excluded != action.getBoolean("excluded");
-                            cell.excluded = action.getBoolean("excluded");
+                        boolean update = !"saveBlueprintAs".equals(op) && preset.id != null && !preset.id.isEmpty();
+                        if ("saveBlueprintReplace".equals(op)) {
+                            if (!action.getBoolean("confirmOverwrite")) throw new java.io.IOException("覆盖保存必须明确确认目标蓝图");
+                            String targetId = action.getString("presetId");
+                            if (HologramLibraryFacade.enabled()) {
+                                s.libraryReplaceLocalId = HologramLibraryService.localId(targetId, false);
+                            } else {
+                                if (HologramPresets.get(targetId) == null) throw new java.io.IOException("覆盖目标不存在");
+                                preset.id = targetId;
+                            }
+                            update = true;
                         }
-                        if ("editCellFlags".equals(op) && action.hasKey("prompt")) cell.prompt = prompt;
-                        if ("editCellFlags".equals(op) || action.hasKey("excluded")) dirty.add(index);
-                    }
-                    indexedAnnotations = HologramLocalPlanRefresh.annotations(s, dirty);
-                    if (!indexedAnnotations && !dirty.isEmpty() && s.virtualPreset != null) {
-                        for (HologramPresets.Cell saved : s.virtualPreset.cells) {
-                            HologramCapture.Cell cell = s.capture.positions
-                                .get((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z));
-                            if (cell == null) continue;
-                            saved.prompt = cell.prompt;
-                            saved.excluded = cell.excluded;
-                        }
-                    }
-                    if ("editHintArea".equals(op)) {
-                        HologramPresets.HintArea hint = new HologramPresets.HintArea();
-                        hint.prompt = prompt;
-                        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-                        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+                        if ("updatePreset".equals(op) && !update) throw new java.io.IOException("请先保存蓝图，或使用另存为");
+                        if (preset.id == null || preset.id.isEmpty()) preset.id = java.util.UUID.randomUUID()
+                            .toString();
+                        beginAeSaveReview(s, preset, op, update);
+                    } else if ("deletePreset".equals(op)) {
+                        s.blueprintOperation = op;
+                        s.blueprintOperationSuccess = false;
+                        String id = action.getString("presetId");
+                        if (HologramLibraryFacade.enabled()) throw new java.io.IOException("请在客户端私库或服务器公库界面删除蓝图");
+                        HologramPresets.delete(id);
+                        if (id.equals(HologramSessionPolicy.selectedPreset(s))) HologramSessionPolicy.currentTool(s)
+                            .getTagCompound()
+                            .removeTag(HologramSessionKeys.SELECTED_PRESET);
+                        if (s.virtualPreset != null && id.equals(s.virtualPreset.id)) s.virtualPreset.id = null;
+                        if (id.equals(s.blueprintSavedId)) s.blueprintSavedId = "";
+                        s.blueprintOperationSuccess = true;
+                        s.status = "蓝图已从库中删除；当前编辑内容保留，可另存为";
+                    } else if ("editBlueprintPrompt".equals(op)) {
+                        s.blueprintPrompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
+                        if (s.virtualPreset != null) s.virtualPreset.prompt = s.blueprintPrompt;
+                        s.status = "蓝图整体提示已更新；请保存修改";
+                    } else if ("editCellFlags".equals(op) || "editHintArea".equals(op)) {
+                        if (s.capture == null) throw new java.io.IOException("请先载入区域或结构");
+                        int[] indices = HologramSessionPolicy.editIndices(s, action);
+                        java.util.Set<Integer> dirty = new java.util.LinkedHashSet<>();
+                        boolean excludedChanged = false;
+                        String prompt = HologramSessionPolicy.boundedPrompt(action.getString("prompt"));
                         for (int index : indices) if (index >= 0 && index < s.capture.cells.size()) {
                             HologramCapture.Cell cell = s.capture.cells.get(index);
-                            minX = Math.min(minX, cell.x - s.x);
-                            maxX = Math.max(maxX, cell.x - s.x);
-                            minY = Math.min(minY, cell.y - s.y);
-                            maxY = Math.max(maxY, cell.y - s.y);
-                            minZ = Math.min(minZ, cell.z - s.z);
-                            maxZ = Math.max(maxZ, cell.z - s.z);
+                            if (action.hasKey("excluded")) {
+                                excludedChanged |= cell.excluded != action.getBoolean("excluded");
+                                cell.excluded = action.getBoolean("excluded");
+                            }
+                            if ("editCellFlags".equals(op) && action.hasKey("prompt")) cell.prompt = prompt;
+                            if ("editCellFlags".equals(op) || action.hasKey("excluded")) dirty.add(index);
                         }
-                        if (minX != Integer.MAX_VALUE) {
-                            hint.x1 = minX;
-                            hint.y1 = minY;
-                            hint.z1 = minZ;
-                            hint.x2 = maxX;
-                            hint.y2 = maxY;
-                            hint.z2 = maxZ;
-                            List<HologramPresets.HintArea> hints = s.virtualPreset == null ? s.blueprintHintAreas
-                                : s.virtualPreset.hintAreas;
-                            HologramBlueprintData.updateHintArea(hints, hint);
+                        indexedAnnotations = HologramLocalPlanRefresh.annotations(s, dirty);
+                        if (!indexedAnnotations && !dirty.isEmpty() && s.virtualPreset != null) {
+                            for (HologramPresets.Cell saved : s.virtualPreset.cells) {
+                                HologramCapture.Cell cell = s.capture.positions
+                                    .get((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z));
+                                if (cell == null) continue;
+                                saved.prompt = cell.prompt;
+                                saved.excluded = cell.excluded;
+                            }
                         }
-                    }
-                    dependency = excludedChanged ? "geometry" : "prompt";
-                    if (excludedChanged) HologramBlueprintEditor.refreshEdited(s, dirty);
-                    s.status = "排除与提示已更新；保存蓝图后保留";
-                } else if ("importArea".equals(op)) {
-                    HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
-                    if (area == null) throw new java.io.IOException("请先选择区域");
-                    HologramAreaWorkflow.startAreaImport(s, area);
-                } else if ("structureState".equals(op)) {
-                    if (s.virtualPreset != null) {
-                        for (HologramPresets.Structure saved : s.virtualPreset.structures)
-                            if (saved.id.equals(action.getString("structureId")))
-                                saved.enabled = action.getBoolean("enabled");
-                    }
-                    HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
-                    if (s.virtual && area != null && s.areaOverviewOwner != area && s.virtualPreset != area.blueprint)
-                        area = null;
-                    HologramArea.Structure structure = area == null ? null
-                        : area.structures.get(action.getString("structureId"));
-                    if (structure == null && s.virtualPreset == null) throw new java.io.IOException("结构不存在");
-                    if (structure != null) structure.enabled = action.getBoolean("enabled");
-                    HologramResourcePlanner.refreshPlan(s);
-                    s.status = action.getBoolean("enabled") ? "结构施工已启用" : "结构施工已停用";
-                } else if ("exportBlueprint".equals(op)) {
-                    HologramPresets.Preset preset = HologramLibraryFacade.get(s.player, action.getString("presetId"));
-                    if (preset == null) throw new java.io.IOException("请先保存并选择蓝图");
-                    if (HologramLibraryFacade.enabled()) {
-                        if (!HologramLibraryWorkflow.librarySessionCurrent(s.player, action))
-                            throw new java.io.IOException("蓝图会话已更新，请重新导出");
-                        HologramLibraryFacade.downloadDraft(
-                            s.player,
-                            preset,
-                            s.id,
-                            s.planRevision,
-                            "local_" + UUID.randomUUID()
-                                .toString());
-                        s.status = "蓝图正在传输到客户端私库";
-                        return true;
-                    }
-                    HologramPresets.exportBlueprint(action.getString("fileId"), preset);
-                    s.status = "蓝图已导出到服务器分享目录";
-                } else if ("importBlueprint".equals(op)) {
-                    if (HologramLibraryFacade.enabled()) throw new java.io.IOException("请从客户端私库选择并上传蓝图");
-                    HologramPresets.Preset preset = HologramPresets.importBlueprint(action.getString("fileId"));
-                    s.virtual = true;
-                    s.virtualPlacement = false;
-                    s.target = null;
-                    s.machine = null;
-                    s.context = null;
-                    s.virtualPreset = preset;
-                    s.processingSource = HologramPresets.copy(preset);
-                    s.processingPolicy = HologramBlueprintProcessing.policy(preset);
-                    s.processingReviewed = false;
-                    s.processingWorkflowStarted = false;
-                    s.blueprintDirty = true;
-                    s.blueprintSource = "imported";
-                    s.openPurpose = "blueprintEdit";
-                    HologramBlueprintProjection.populateVirtual(s);
-                    s.status = "蓝图已导入为作者蓝图；请完成处理流程后保存";
-                } else if ("calibrateBlueprintVersions".equals(op)) {
-                    if (s.virtualPreset == null) throw new java.io.IOException("请先打开蓝图编辑");
-                    HologramBlueprintMetadata.captureVersions(s.virtualPreset);
-                    s.status = "蓝图模组版本已校准；请保存修改";
-                } else if ("editMove".equals(op)) {
-                    HologramBlueprintEditor.moveBlueprintCells(s, action);
-                } else return false;
+                        if ("editHintArea".equals(op)) {
+                            HologramPresets.HintArea hint = new HologramPresets.HintArea();
+                            hint.prompt = prompt;
+                            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+                            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+                            for (int index : indices) if (index >= 0 && index < s.capture.cells.size()) {
+                                HologramCapture.Cell cell = s.capture.cells.get(index);
+                                minX = Math.min(minX, cell.x - s.x);
+                                maxX = Math.max(maxX, cell.x - s.x);
+                                minY = Math.min(minY, cell.y - s.y);
+                                maxY = Math.max(maxY, cell.y - s.y);
+                                minZ = Math.min(minZ, cell.z - s.z);
+                                maxZ = Math.max(maxZ, cell.z - s.z);
+                            }
+                            if (minX != Integer.MAX_VALUE) {
+                                hint.x1 = minX;
+                                hint.y1 = minY;
+                                hint.z1 = minZ;
+                                hint.x2 = maxX;
+                                hint.y2 = maxY;
+                                hint.z2 = maxZ;
+                                List<HologramPresets.HintArea> hints = s.virtualPreset == null ? s.blueprintHintAreas
+                                    : s.virtualPreset.hintAreas;
+                                HologramBlueprintData.updateHintArea(hints, hint);
+                            }
+                        }
+                        dependency = excludedChanged ? "geometry" : "prompt";
+                        if (excludedChanged) HologramBlueprintEditor.refreshEdited(s, dirty);
+                        s.status = "排除与提示已更新；保存蓝图后保留";
+                    } else if ("importArea".equals(op)) {
+                        HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+                        if (area == null) throw new java.io.IOException("请先选择区域");
+                        HologramAreaWorkflow.startAreaImport(s, area);
+                    } else if ("structureState".equals(op)) {
+                        if (s.virtualPreset != null) {
+                            for (HologramPresets.Structure saved : s.virtualPreset.structures)
+                                if (saved.id.equals(action.getString("structureId")))
+                                    saved.enabled = action.getBoolean("enabled");
+                        }
+                        HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+                        if (s.virtual && area != null
+                            && s.areaOverviewOwner != area
+                            && s.virtualPreset != area.blueprint) area = null;
+                        HologramArea.Structure structure = area == null ? null
+                            : area.structures.get(action.getString("structureId"));
+                        if (structure == null && s.virtualPreset == null) throw new java.io.IOException("结构不存在");
+                        if (structure != null) structure.enabled = action.getBoolean("enabled");
+                        HologramResourcePlanner.refreshPlan(s);
+                        s.status = action.getBoolean("enabled") ? "结构施工已启用" : "结构施工已停用";
+                    } else if ("exportBlueprint".equals(op)) {
+                        HologramPresets.Preset preset = HologramLibraryFacade
+                            .get(s.player, action.getString("presetId"));
+                        if (preset == null) throw new java.io.IOException("请先保存并选择蓝图");
+                        if (HologramLibraryFacade.enabled()) {
+                            if (!HologramLibraryWorkflow.librarySessionCurrent(s.player, action))
+                                throw new java.io.IOException("蓝图会话已更新，请重新导出");
+                            HologramLibraryFacade.downloadDraft(
+                                s.player,
+                                preset,
+                                s.id,
+                                s.planRevision,
+                                "local_" + UUID.randomUUID()
+                                    .toString());
+                            s.status = "蓝图正在传输到客户端私库";
+                            return true;
+                        }
+                        HologramPresets.exportBlueprint(action.getString("fileId"), preset);
+                        s.status = "蓝图已导出到服务器分享目录";
+                    } else if ("importBlueprint".equals(op)) {
+                        if (HologramLibraryFacade.enabled()) throw new java.io.IOException("请从客户端私库选择并上传蓝图");
+                        HologramPresets.Preset preset = HologramPresets.importBlueprint(action.getString("fileId"));
+                        s.virtual = true;
+                        s.virtualPlacement = false;
+                        s.target = null;
+                        s.machine = null;
+                        s.context = null;
+                        s.virtualPreset = preset;
+                        s.processingSource = HologramPresets.copy(preset);
+                        s.processingPolicy = HologramBlueprintProcessing.policy(preset);
+                        s.processingReviewed = false;
+                        s.processingWorkflowStarted = false;
+                        s.blueprintDirty = true;
+                        s.blueprintSource = "imported";
+                        s.openPurpose = "blueprintEdit";
+                        HologramBlueprintProjection.populateVirtual(s);
+                        s.status = "蓝图已导入为作者蓝图；请完成处理流程后保存";
+                    } else if ("calibrateBlueprintVersions".equals(op)) {
+                        if (s.virtualPreset == null) throw new java.io.IOException("请先打开蓝图编辑");
+                        HologramBlueprintMetadata.captureVersions(s.virtualPreset);
+                        s.status = "蓝图模组版本已校准；请保存修改";
+                    } else if ("editMove".equals(op)) {
+                        HologramBlueprintEditor.moveBlueprintCells(s, action);
+                    } else return false;
             if (dependency != null) blueprintEdited(s, dependency, indexedAnnotations);
         } catch (java.io.IOException | RuntimeException failure) {
             s.status = "蓝图操作失败：" + failure.getMessage();

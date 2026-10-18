@@ -110,6 +110,44 @@ final class HologramWorkspace {
         AREA_STRUCTURES.clear();
     }
 
+    /** Main-thread runtime reset. Completed transactions and durable cut/material journals are not undone. */
+    static int restartRuntime(String reason) {
+        // Retire old full snapshots before publishing terminal receipts; otherwise a stale DTO could
+        // arrive after the cancellation and resurrect its editing/placement context.
+        HologramNetwork.clearServerQueues();
+        java.util.Set<HologramSession> all = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        all.addAll(SESSIONS.values());
+        all.addAll(AREA_EDITORS.values());
+        for (Map<String, HologramSession> structures : AREA_STRUCTURES.values()) all.addAll(structures.values());
+        for (HologramArea area : AREAS.values()) {
+            if (area.staging != null) all.add(area.staging);
+            all.addAll(area.declarationSessions.values());
+            area.cancelImportWork();
+        }
+        for (HologramSession s : all) {
+            HologramDeferredPlanRefresh.cancel(s);
+            HologramSession.cancelCaptureRetry(s);
+            s.job = 4;
+            s.phase = "STOPPED";
+            s.defer = s.stopTick = false;
+            s.status = reason;
+            s.cancelled = true;
+            HologramProjectorWorkflow.libraryCloseUi(s);
+            if (SESSIONS.get(s.player.getUniqueID()) == s) {
+                HologramSnapshots.sendStoppedJob(s);
+                HologramNetwork.sendSessionCancelled(s.player, s.id, reason);
+                s.player.addChatMessage(new net.minecraft.util.ChatComponentText(reason));
+            }
+            clearAreaSelection(s);
+        }
+        int count = SESSIONS.size();
+        SESSIONS.clear();
+        AREAS.clear();
+        AREA_EDITORS.clear();
+        AREA_STRUCTURES.clear();
+        return count;
+    }
+
     /** A suspended area belongs to the same live player and physical tool, even while another slot is held. */
     static boolean areaSessionOwned(HologramSession s) {
         if (s == null || s.player.isDead || s.player.worldObj != s.libraryWorld || s.player.dimension != s.dimension)

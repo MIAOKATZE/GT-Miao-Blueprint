@@ -710,13 +710,16 @@ final class HologramLocalPlanRefresh {
             NBTTagList materials = new NBTTagList();
             if (cache.simple) {
                 for (Map.Entry<ExactKey, Integer> entry : cache.counts.entrySet())
-                    materials.appendTag(materialRow(s, cache.identities.get(entry.getKey()), entry.getValue()));
+                    materials.appendTag(materialRow(s, cache.identities.get(entry.getKey()), entry.getValue(), true));
             } else if (s.blueprintTotalResources != null) {
                 for (ItemStack item : s.blueprintTotalResources.items)
-                    materials.appendTag(materialRow(s, item, item.stackSize));
+                    materials.appendTag(materialRow(s, item, item.stackSize, false));
             }
             state.setTag("materials", materials);
             state.setTag("blueprintResources", HologramResourcePlanner.blueprintResourceRows(s));
+            state.setTag(
+                "materialQuote",
+                HologramMaterialQuote.snapshot(s, materials, state.getTagList("blueprintResources", 10)));
             state.setString("blueprintEnergyNotice", s.blueprintEnergyNotice);
             state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
         }
@@ -728,14 +731,22 @@ final class HologramLocalPlanRefresh {
         return state;
     }
 
-    private static NBTTagCompound materialRow(HologramSession s, ItemStack stack, int required) {
-        NBTTagCompound row = stack.writeToNBT(new NBTTagCompound());
-        row.setInteger("required", required);
-        row.setInteger("available", HologramMaterialAccess.shellCount(s, stack, Math.max(4096, s.localEdits.size)));
+    private static NBTTagCompound materialRow(HologramSession s, ItemStack stack, int required, boolean shell) {
+        ItemStack identity = stack.copy();
+        identity.stackSize = 1;
+        NBTTagCompound row = identity.writeToNBT(new NBTTagCompound());
+        row.setLong("required", required);
+        row.setLong("shellRequired", shell ? required : 0);
+        int limit = Math.max(4096, required);
+        row.setInteger(
+            "available",
+            shell ? HologramMaterialAccess.shellCount(s, stack, limit)
+                : HologramMaterialAccess.materialSource(s)
+                    .count(stack, limit));
         row.setInteger(
             "mainAvailable",
             HologramMaterialAccess.materialSource(s)
-                .mainCount(stack, Math.max(4096, s.localEdits.size)));
+                .mainCount(stack, limit));
         row.setInteger("controllerAvailable", -1);
         return row;
     }

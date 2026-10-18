@@ -154,7 +154,7 @@ final class HologramPlacementReviewClientSmoke {
         }
         boolean ready = screen.smokeRenderGeneration() > readyFrame && screen.smokeHasControl(55)
             && screen.smokeHasControl(168)
-            && screen.smokeHasControl(169);
+            && screen.ui.review.materialDialogOpen();
         if (!ready && System.nanoTime() - readyStarted > 10000000000L)
             throw new IllegalStateException("10 second actual material review draw wait: " + label);
         return ready;

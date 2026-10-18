@@ -120,6 +120,7 @@ final class HologramUiRouter {
     }
 
     void updateScreen() {
+        ui.review.tickMaterialDialog();
         ui.library.maybeShowSaveGuidance();
         ui.library.tickStatus();
         ui.config.tickMainField();
@@ -489,7 +490,7 @@ final class HologramUiRouter {
             }
             if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) drawTaskStatus(mx, my);
             ui.shortcuts.drawIdleHints();
-            if (ui.canvas.tooltip() != null && !ui.library.saveGuidanceOpen())
+            if (ui.canvas.tooltip() != null && !ui.library.saveGuidanceOpen() && !ui.review.materialDialogOpen())
                 ui.host.renderTooltip(ui.canvas.tooltip(), mx, my, ui.host.font());
         } finally {
             GL11.glPopMatrix();
@@ -499,22 +500,23 @@ final class HologramUiRouter {
     }
 
     private void drawTaskStatus(int mx, int my) {
-        drawRect(9, 317, HologramUiCanvas.DESIGN_W - 9, 337, 0xff142a32);
+        int top = HologramUiCanvas.DESIGN_H - 25;
+        drawRect(9, top, HologramUiCanvas.DESIGN_W - 9, top + 24, 0xff142a32);
         HologramProgress progress = HologramBackgroundTasks.progress();
-        if (progress != null) HologramProgressView.draw(ui.host.font(), progress, 14, 322, 430, 0);
-        else ui.canvas.text(HologramBackgroundTasks.status(), 14, 323, 430, 0xe5c488);
-        ui.canvas.button(990, 451, 318, 70, 17, "后台继续", true, mx, my);
+        if (progress != null) HologramProgressView.draw(ui.host.font(), progress, 14, top + 3, 430, 5);
+        else ui.canvas.text(HologramBackgroundTasks.status(), 14, top + 7, 430, 0xe5c488);
+        ui.canvas.button(990, 451, top + 3, 70, 18, "后台继续", true, mx, my);
         ui.canvas.button(
             992,
             525,
-            318,
+            top + 3,
             70,
-            17,
+            18,
             HologramBackgroundTasks.pauseLabel(),
             HologramBackgroundTasks.pauseAvailable(),
             mx,
             my);
-        ui.canvas.button(991, 599, 318, 70, 17, "取消任务", HologramBackgroundTasks.canCancel(), mx, my);
+        ui.canvas.button(991, 599, top + 3, 70, 18, "取消任务", HologramBackgroundTasks.canCancel(), mx, my);
     }
 
     void drawTabs(int mx, int my) {
@@ -606,6 +608,7 @@ final class HologramUiRouter {
     }
 
     void handleMouseInput() {
+        if (ui.review.materialDialogOpen()) return;
         ui.shortcuts.activity();
         if (HologramBackgroundTasks.busy()) return;
 
@@ -680,6 +683,7 @@ final class HologramUiRouter {
 
     void keyTyped(char c, int key) {
         ui.shortcuts.activity();
+        if (ui.review.consumeMaterialDialogKey(key)) return;
         if (ui.library.consumeSaveGuidanceKey(key)) return;
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) closeRoot();

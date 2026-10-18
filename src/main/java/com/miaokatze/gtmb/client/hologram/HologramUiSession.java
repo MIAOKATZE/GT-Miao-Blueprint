@@ -111,6 +111,17 @@ final class HologramUiSession {
             && ItemStack.areItemStackTagsEqual(before.targetStack, after.targetStack);
     }
 
+    /** An order heartbeat carries no geometry, source selection, material quote or unrelated command ACK. */
+    void materialOrderMetadata(HologramState next, long orderCommand) {
+        if (!state.session.equals(next.session) || state.cells != next.cells
+            || state.data.getLong("planRevision") != next.data.getLong("planRevision")) return;
+        state = next;
+        if ("orderMissingMaterials".equals(pendingOperation) && pendingTicket.sequence() == orderCommand) {
+            if (pendingTicket.acknowledge(next.session, orderCommand)) commandProgress.clear();
+        }
+        ui.review.acknowledgeReview(next);
+    }
+
     boolean areaImporting() {
         return this.state.data.getBoolean("areaImporting");
     }
@@ -193,7 +204,9 @@ final class HologramUiSession {
                 : "configure".equals(op) || "settings".equals(op) ? "settings"
                     : op.startsWith("saveBlueprint") ? "library.prepare" : "ack";
             commandProgress.update(state.session + ":" + sequence, phase, 0, 0, "", false, System.nanoTime());
-            ui.review.commandPending();
+            if (!"orderMissingMaterials".equals(op) && !"cancelMaterialOrder".equals(op)
+                && !"refreshMaterialQuote".equals(op)
+                && !"setDecorativeVoucher".equals(op)) ui.review.commandPending();
         }
         if (ui.diagnostics.captureRenderSmokeAction())
             ui.diagnostics.capturedRenderSmokeAction((NBTTagCompound) n.copy());

@@ -26,6 +26,7 @@ final class HologramMuiProbeInput {
                 "MUI2 render fixture requires a screen initialized by the normal open lifecycle");
         screen.getContext()
             .updateState(x, y, ticks);
+        if (owner instanceof HologramScreen) ((HologramScreen) owner).ui.review.tickMaterialDialog();
         screen.onFrameUpdate();
         screen.drawScreen();
         screen.drawForeground();

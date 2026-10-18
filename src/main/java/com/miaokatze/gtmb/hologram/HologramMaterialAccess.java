@@ -35,9 +35,17 @@ final class HologramMaterialAccess {
     }
 
     static void restoreInventory(EntityPlayerMP p, ItemStack[] saved) {
+        restoreInventory(p, saved, p.inventory.currentItem, null);
+    }
+
+    static void restoreInventory(HologramSession s, ItemStack[] saved) {
+        restoreInventory(s.player, saved, s.slot, s.boundTool);
+    }
+
+    private static void restoreInventory(EntityPlayerMP p, ItemStack[] saved, int protectedSlot, ItemStack boundTool) {
         for (int i = 0; i < saved.length; i++) {
             ItemStack current = p.inventory.mainInventory[i];
-            if (i == p.inventory.currentItem && current != null
+            if (i == protectedSlot && current != null
                 && saved[i] != null
                 && current.getItem() == saved[i].getItem()
                 && current.hasTagCompound()
@@ -47,13 +55,14 @@ final class HologramMaterialAccess {
                     .equals(
                         saved[i].getTagCompound()
                             .getString(HologramSessionKeys.TOOL_ID))) {
-                current.stackSize = saved[i].stackSize;
-                current.setItemDamage(saved[i].getItemDamage());
-                current.setTagCompound(
+                ItemStack tool = boundTool == null ? current : boundTool;
+                tool.stackSize = saved[i].stackSize;
+                tool.setItemDamage(saved[i].getItemDamage());
+                tool.setTagCompound(
                     saved[i].hasTagCompound() ? (NBTTagCompound) saved[i].getTagCompound()
                         .copy() : null);
-            } else if (i != p.inventory.currentItem)
-                p.inventory.mainInventory[i] = saved[i] == null ? null : saved[i].copy();
+                p.inventory.mainInventory[i] = tool;
+            } else if (i != protectedSlot) p.inventory.mainInventory[i] = saved[i] == null ? null : saved[i].copy();
         }
         p.inventory.markDirty();
     }
@@ -83,9 +92,25 @@ final class HologramMaterialAccess {
     }
 
     static boolean freeShell(HologramSession s, HologramCapture.Cell cell, ItemStack sample) {
-        return s.virtual && s.virtualPreset != null
+        return voucherSelected(s) && !HologramRecovery.hasSeal(sample)
+            && HologramDecorationVoucher.covered(cell.block, sample)
+            || s.virtual && s.virtualPreset != null
+                && s.virtualPreset.schema >= 2
+                && HologramGtswnPlacementMaterials.freeShell(cell.block, sample);
+    }
+
+    /** Selection changes the quotation only; the real transaction still reserves one clean voucher before commit. */
+    static boolean voucherSelected(HologramSession s) {
+        return s.mode != 2 && s.virtual
+            && s.virtualPreset != null
             && s.virtualPreset.schema >= 2
-            && HologramGtswnPlacementMaterials.freeShell(cell.block, sample);
+            && s.jobVoucherRequested
+            && HologramDecorationVoucher.enabled();
+    }
+
+    static HologramDecorMaterials.Descriptor payableDecoration(HologramSession s, HologramCapture.Cell cell,
+        HologramDecorMaterials.Descriptor descriptor) {
+        return voucherSelected(s) ? HologramDecorationVoucher.payable(cell.block, descriptor) : descriptor;
     }
 
     static boolean fuzzyBlueprintShells(HologramSession s, ItemStack target) {
@@ -116,6 +141,7 @@ final class HologramMaterialAccess {
             if (remaining <= 0) s.pendingAssetBudget.remove(cost.getKey());
             else s.pendingAssetBudget.put(cost.getKey(), remaining);
         }
+        if (s.materialContext != null) s.materialContext.assetsCommitted(costs);
     }
 
     static void refreshMaterialChoices(HologramSession s) {
@@ -125,7 +151,7 @@ final class HologramMaterialAccess {
 
     static HologramMaterials.Context materialSource(HologramSession s) {
         if (s.materialContext == null) {
-            s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);
+            s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings, s.slot);
             // A real material access may deliver pending recovery; UI-only actions never construct this context.
             s.materialContext.flushRecovery();
         }

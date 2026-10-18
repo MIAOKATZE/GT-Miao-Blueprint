@@ -75,6 +75,16 @@ public final class HologramNetwork {
         HologramBusyReplies.clear();
     }
 
+    /** A reset must retire the client even when the snapshot encoder or its outbox is stalled. */
+    static void sendSessionCancelled(EntityPlayerMP player, String session, String reason) {
+        if (channel == null || !progressConnected(player)) return;
+        NBTTagCompound state = new NBTTagCompound();
+        state.setString("session", session);
+        state.setBoolean("cancelled", true);
+        state.setString("status", reason);
+        channel.sendTo(new State(state), player);
+    }
+
     public static void init() {
         if (channel != null) return;
         channel = NetworkRegistry.INSTANCE.newSimpleChannel("gtmb_hologram");
@@ -1117,7 +1127,8 @@ public final class HologramNetwork {
             // Preserve an independent lane for disk receipts; different capabilities are never coalesced.
             boolean receipt = "ackBlueprintSaved".equals(msg.tag.getString("op"));
             HologramRequestGate gate = receipt ? receiptGate : actionGate;
-            if (!gate.enter(player)) {
+            HologramRequestGate.Lease lease = gate.acquire(player);
+            if (lease == null) {
                 HologramBusyReplies.reject(player, msg.tag, HologramBusyReplies.Kind.ACTION);
                 return null;
             }
@@ -1127,25 +1138,38 @@ public final class HologramNetwork {
             // because their textual representation exceeds an unrelated string budget.
             net.minecraft.world.World world = player.worldObj;
             ServerTaskScheduler
-                .scheduleServerTask(() -> runQueuedAction(player, world, gate, () -> dispatch(player, msg.tag)));
+                .scheduleServerTask(() -> runQueuedAction(player, world, lease, () -> dispatch(player, msg.tag)));
             return null;
         }
     }
 
     /** Admission belongs to the original live world; queued input cannot act after a connection/world transition. */
-    static void runQueuedAction(EntityPlayerMP player, net.minecraft.world.World world, HologramRequestGate gate,
+    static void runQueuedAction(EntityPlayerMP player, net.minecraft.world.World world, HologramRequestGate.Lease lease,
         Runnable action) {
         try {
-            if (world == null || player.worldObj != world || !progressConnected(player)) return;
+            if (lease == null || !lease.active()
+                || world == null
+                || player.worldObj != world
+                || !progressConnected(player)) return;
             action.run();
         } finally {
-            gate.leave(player);
+            if (lease != null) lease.close();
             HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.ACTION_DEPTH, actionGate.size());
         }
     }
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         String action = tag.getString("action");
+        if (HologramAeCraftingOrders.active(player) && !(action.isEmpty() || "useAir".equals(action)
+            || "useBlock".equals(action)
+            || "openSettings".equals(action))) {
+            HologramSession current = HologramWorkspace.find(player.getUniqueID());
+            if (current != null) {
+                current.status = "AE 缺料订单正在后台处理；请先等待完成或取消订单";
+                HologramSnapshots.sendUi(current);
+            }
+            return;
+        }
         if ("confirmVirtualPosition".equals(action)) {
             HologramService.confirmWorldPosition(player, tag);
             return;

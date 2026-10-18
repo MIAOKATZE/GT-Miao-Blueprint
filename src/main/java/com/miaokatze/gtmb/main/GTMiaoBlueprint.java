@@ -4,6 +4,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.miaokatze.gtmb.Tags;
+import com.miaokatze.gtmb.hologram.HologramAeCraftingOrders;
+import com.miaokatze.gtmb.hologram.HologramCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 import com.miaokatze.gtmb.hologram.HologramLibrarySocketServerProbe;
@@ -55,12 +57,14 @@ public final class GTMiaoBlueprint {
 
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
+        event.registerServerCommand(new HologramCommand());
         event.registerServerCommand(new HologramLibraryCommand());
         TestLab.serverStarting(event);
     }
 
     @Mod.EventHandler
     public void serverStopping(FMLServerStoppingEvent event) {
+        HologramAeCraftingOrders.clearAll("服务器正在关闭，AE 缺料订单已停止");
         TestLab.serverStopping();
         HologramLibrarySocketServerProbe.stop();
         HologramLibraryFacade.stop();

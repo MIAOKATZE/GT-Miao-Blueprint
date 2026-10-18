@@ -53,7 +53,8 @@ public final class HologramCutService {
 
     public static void receive(EntityPlayerMP player, NBTTagCompound request) {
         if (player == null || request == null) return;
-        if (!queued.enter(player)) {
+        HologramRequestGate.Lease lease = queued.acquire(player);
+        if (lease == null) {
             HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.CUT);
             return;
         }
@@ -61,6 +62,17 @@ public final class HologramCutService {
         NBTTagCompound copy = (NBTTagCompound) request.copy();
         ServerTaskScheduler.scheduleServerTask(() -> {
             try {
+                if (!lease.active()) return;
+                if (HologramAeCraftingOrders.active(player) && !"list".equals(copy.getString("action"))) {
+                    NBTTagCompound busy = new NBTTagCompound();
+                    busy.setString("action", "state");
+                    busy.setString("requestId", copy.getString("requestId"));
+                    busy.setBoolean("success", false);
+                    busy.setString("code", "material_order_busy");
+                    busy.setString("message", "AE 缺料订单正在后台处理；请先等待完成或取消订单");
+                    HologramNetwork.sendCutState(player, busy);
+                    return;
+                }
                 if (player.playerNetServerHandler == null || player.playerNetServerHandler.netManager == null
                     || !player.playerNetServerHandler.netManager.isChannelOpen()) return;
                 if (!acceptsContext(
@@ -78,7 +90,7 @@ public final class HologramCutService {
                 }
                 HologramNetwork.sendCutState(player, execute(player, copy));
             } finally {
-                queued.leave(player);
+                lease.close();
             }
         });
     }

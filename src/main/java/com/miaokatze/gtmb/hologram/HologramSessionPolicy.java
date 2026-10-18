@@ -59,26 +59,38 @@ final class HologramSessionPolicy {
     }
 
     static boolean valid(HologramSession s) {
-        return currentTool(s) != null && validWorldContext(s);
+        return currentTool(s) != null && validWorldContext(s, false);
     }
 
     /** Admission remains held-tool-only. An admitted job may run while another hotbar slot is selected. */
     static boolean jobValid(HologramSession s) {
-        return jobTool(s) != null && validWorldContext(s);
+        return jobInvalidReason(s).isEmpty();
     }
 
-    /** Only active construction uses the broader runtime rule; editors and other tasks retain admission checks. */
+    static String jobInvalidReason(HologramSession s) {
+        if (jobTool(s) == null) return "原工具槽中的投影仪已移走或被替换";
+        if (s.player.isDead) return "玩家已死亡";
+        if (s.player.dimension != s.dimension || s.player.worldObj != s.libraryWorld) return "玩家世界或维度已变化";
+        if (!validWorldContext(s, true)) return "原目标已卸载、被替换或超出有效范围";
+        if (!s.virtual && (s.machine == null || s.machine.getExtendedFacing()
+            .ordinal() != s.facing)) return "原控制器朝向已变化";
+        return "";
+    }
+
+    /** Running/paused construction keeps its admitted context; editors and other tasks retain admission checks. */
     static boolean tickValid(HologramSession s) {
-        return s.job == 1 ? jobValid(s) : valid(s);
+        return s.job == 1 || s.job == 2 ? jobValid(s) : valid(s);
     }
 
-    private static boolean validWorldContext(HologramSession s) {
+    private static boolean validWorldContext(HologramSession s, boolean admittedJob) {
         return !s.player.isDead && s.player.dimension == s.dimension
             && s.player.worldObj == s.libraryWorld
             && (!s.virtual || !s.virtualPlacement
                 || !s.virtualLocked
                 || (HologramWorldFlow.worldPosition(s.x, s.y, s.z, s.player.worldObj.getHeight())
-                    && previewReach(s.player, s.x, s.y, s.z)))
+                    // Preview reach admits a locked position. Once construction starts the player may
+                    // inspect a large blueprint; per-cell loaded-world/edit/event checks still apply.
+                    && (admittedJob || previewReach(s.player, s.x, s.y, s.z))))
             && (s.target == null || (s.player.getDistanceSq(s.x + .5, s.y + .5, s.z + .5) <= 4096
                 && s.player.worldObj.blockExists(s.x, s.y, s.z)
                 && s.player.worldObj.getTileEntity(s.x, s.y, s.z) == s.target
@@ -153,7 +165,7 @@ final class HologramSessionPolicy {
     }
 
     static ItemStack trigger(HologramSession s) {
-        ItemStack current = s.job == 1 ? jobTool(s) : currentTool(s);
+        ItemStack current = s.job == 1 || s.job == 2 ? jobTool(s) : currentTool(s);
         ItemStack result = current == null ? new ItemStack(s.tool, 1) : current.copy();
         // Large editor drafts are tool storage, not native structure signals copied into every captured cell.
         if (result.hasTagCompound()) result.getTagCompound()
@@ -179,7 +191,7 @@ final class HologramSessionPolicy {
                     .getString(HologramSessionKeys.TOOL_ID)) ? held : null;
     }
 
-    private static ItemStack jobTool(HologramSession s) {
+    static ItemStack jobTool(HologramSession s) {
         ItemStack tool = s.slot < 0 || s.slot >= s.player.inventory.mainInventory.length ? null
             : s.player.inventory.mainInventory[s.slot];
         return tool != null && tool.getItem() == s.tool

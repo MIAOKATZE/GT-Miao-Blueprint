@@ -524,6 +524,7 @@ final class HologramWorldPlacementWorkflow {
                     try {
                         HologramBlockTransforms.turn(saved, vertical, littleReferences);
                         saved.tileNbt = HologramCoordinatePolicies.rotatePayload(saved.tileNbt, vertical);
+                        saved.itemNbt = HologramCoordinatePolicies.rotatePayload(saved.itemNbt, vertical);
                         HologramBlockTransforms.nativeSample(saved);
                     } catch (java.io.IOException invalid) {
                         s.status = invalid.getMessage();
@@ -596,6 +597,7 @@ final class HologramWorldPlacementWorkflow {
                 try {
                     HologramBlockTransforms.turn(cell, vertical, littleReferences, old.x, old.y, old.z);
                     cell.tileNbt = HologramCoordinatePolicies.rotatePayload(cell.tileNbt, vertical);
+                    cell.itemNbt = HologramCoordinatePolicies.rotatePayload(cell.itemNbt, vertical);
                     ItemStack sample = HologramBlockTransforms
                         .nativeSample(cell, HologramCellPolicy.targetFor(s, old, i));
                     if (sample != null) nativeTargets.put(i, sample);

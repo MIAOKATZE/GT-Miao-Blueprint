@@ -348,7 +348,7 @@ final class HologramResourceTask {
                     addShell(HologramEssentia.shellMaterial(target));
                 else if (descriptor != null) {
                     HologramDecorMaterials.Quote quote = decorReport.quote(
-                        descriptor,
+                        HologramMaterialAccess.payableDecoration(s, c, descriptor),
                         (stack, limit) -> (int) Math.max(
                             0L,
                             (long) HologramMaterialAccess.materialSource(s)

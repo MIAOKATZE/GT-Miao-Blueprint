@@ -29,18 +29,18 @@ final class HologramPlacementJobs {
 
     static void tickJob(HologramSession s) {
         if (s.job != 1) return;
-        if (!HologramSessionPolicy.jobValid(s) || (!s.virtual && (s.machine == null || s.machine.getExtendedFacing()
-            .ordinal() != s.facing))) {
+        String invalid = HologramSessionPolicy.jobInvalidReason(s);
+        if (!invalid.isEmpty()) {
             // Keep attempted/total counters and unpublished outcomes for the stopped-job receipt.
             // job=4 itself prevents any remaining work from executing.
             s.defer = s.stopTick = false;
             s.phase = "STOPPED";
             s.job = 4;
-            s.status = "工具、目标或控制器朝向已变化，请重新采集";
+            s.status = "施工已停止：" + invalid + "；已施工方块保留，请重新采集";
             HologramSnapshots.sendStoppedJob(s);
             return;
         }
-        s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings);
+        s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings, s.slot);
         s.materialContext.flushRecovery();
         s.ackIndices.clear();
         s.ackSuccesses.clear();

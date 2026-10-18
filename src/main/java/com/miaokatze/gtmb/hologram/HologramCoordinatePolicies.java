@@ -50,9 +50,10 @@ final class HologramCoordinatePolicies {
             row.setInteger("dy", relative ? dy : 0);
             row.setInteger("dz", relative ? dz : 0);
             // NC coordinates implicitly refer to the host's dimension. Never invent a native dimension key.
-            row.setBoolean("implicitDimension", true);
+            row.setBoolean("implicitDimension", !HologramNativeHubData.adapter(adapter));
             row.setBoolean("physicalAsset", "nc.sensor".equals(adapter));
             if ("nc.sensor".equals(adapter)) row.setString("clearDetail", "清除会重置传感卡绑定、已审阅的监控缓存和标题；卡片及其它付款数据仍严格核验");
+            if (HologramNativeHubData.adapter(adapter)) row.setString("clearDetail", "分享会清除枢纽和节点绑定；放置后使用设备原生交互重新绑定");
             return row;
         }
     }
@@ -68,120 +69,158 @@ final class HologramCoordinatePolicies {
         for (HologramPresets.Cell cell : preset.cells)
             if (!cell.excluded && activeCell(enabledStructures, cell)) selected.add(position(cell.x, cell.y, cell.z));
         for (HologramPresets.Cell cell : preset.cells) {
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (tag == null) continue;
-            if (tag.hasKey(RELATIONS)) {
-                NBTTagList existing = checkedRelations(tag);
-                for (int i = 0; i < existing.tagCount(); i++) {
-                    NBTTagCompound descriptor = existing.getCompoundTagAt(i);
-                    Relation relation = read(descriptor);
-                    relation.x = cell.x;
-                    relation.y = cell.y;
-                    relation.z = cell.z;
-                    relation.id = id(cell, relation.adapter, relation.slot);
-                    try {
-                        if ("relative".equals(relation.previousMode)) {
-                            relation.targetX = Math.addExact(Math.addExact(originX, cell.x), relation.dx);
-                            relation.targetY = Math.addExact(Math.addExact(originY, cell.y), relation.dy);
-                            relation.targetZ = Math.addExact(Math.addExact(originZ, cell.z), relation.dz);
-                            relation.targetDimension = dimension;
-                        } else if ("absolute".equals(relation.previousMode)) {
-                            relation.dx = Math.subtractExact(Math.subtractExact(relation.targetX, originX), cell.x);
-                            relation.dy = Math.subtractExact(Math.subtractExact(relation.targetY, originY), cell.y);
-                            relation.dz = Math.subtractExact(Math.subtractExact(relation.targetZ, originZ), cell.z);
+            for (String payload : new String[] { "tile", "item" }) {
+                NBTTagCompound tag = HologramBlueprintNbt.decode("item".equals(payload) ? cell.itemNbt : cell.tileNbt);
+                if (tag == null) continue;
+                if (tag.hasKey(RELATIONS)) {
+                    NBTTagList existing = checkedRelations(tag);
+                    for (int i = 0; i < existing.tagCount(); i++) {
+                        NBTTagCompound descriptor = existing.getCompoundTagAt(i);
+                        Relation relation = read(descriptor);
+                        relation.x = cell.x;
+                        relation.y = cell.y;
+                        relation.z = cell.z;
+                        if (!payload.equals(relation.payload)) throw new IOException("坐标关系记录与所在NBT范围不一致");
+                        relation.id = id(cell, payload, relation.adapter, relation.slot);
+                        try {
+                            if ("relative".equals(relation.previousMode)) {
+                                relation.targetX = Math.addExact(Math.addExact(originX, cell.x), relation.dx);
+                                relation.targetY = Math.addExact(Math.addExact(originY, cell.y), relation.dy);
+                                relation.targetZ = Math.addExact(Math.addExact(originZ, cell.z), relation.dz);
+                                relation.targetDimension = dimension;
+                            } else if ("absolute".equals(relation.previousMode)) {
+                                relation.dx = Math.subtractExact(Math.subtractExact(relation.targetX, originX), cell.x);
+                                relation.dy = Math.subtractExact(Math.subtractExact(relation.targetY, originY), cell.y);
+                                relation.dz = Math.subtractExact(Math.subtractExact(relation.targetZ, originZ), cell.z);
+                            }
+                            relation.internal = !"clear".equals(relation.previousMode)
+                                && (!HologramNativeHubData.adapter(relation.adapter)
+                                    || relation.targetDimension == dimension)
+                                && selected.contains(
+                                    position(
+                                        Math.subtractExact(relation.targetX, originX),
+                                        Math.subtractExact(relation.targetY, originY),
+                                        Math.subtractExact(relation.targetZ, originZ)));
+                        } catch (ArithmeticException overflow) {
+                            throw new IOException("坐标关系超出整数范围", overflow);
                         }
-                        relation.internal = !"clear".equals(relation.previousMode) && selected.contains(
-                            position(
-                                Math.subtractExact(relation.targetX, originX),
-                                Math.subtractExact(relation.targetY, originY),
-                                Math.subtractExact(relation.targetZ, originZ)));
-                    } catch (ArithmeticException overflow) {
-                        throw new IOException("坐标关系超出整数范围", overflow);
+                        relations.add(relation);
                     }
-                    relations.add(relation);
+                    continue;
                 }
-                continue;
-            }
-            String tileId = tag.getString("id");
-            if (panel(tileId) && tag.hasKey("Items", 9)) {
-                NBTTagList inventory = tag.getTagList("Items", 10);
-                for (int i = 0; i < inventory.tagCount(); i++) {
-                    NBTTagCompound stack = inventory.getCompoundTagAt(i);
-                    boolean sensor = HologramSnapshotMetadataSource.detached() ? cell.frozenSensorSlots.contains(i)
-                        : sensorCard(stack);
-                    if (!sensor || !stack.hasKey("Slot", 1) || !stack.hasKey("tag", 10)) continue;
-                    int slot = stack.getByte("Slot") & 255;
-                    if (slot > ("IC2NCAdvancedInfoPanel".equals(tileId) ? 2 : 0)) continue;
-                    NBTTagCompound card = stack.getCompoundTag("tag");
-                    // This complete-key check is a GTMB boundary; native NC itself reads absent keys as zero.
-                    if (!xyz(card, "x", "y", "z")) continue;
+                String tileId = tag.getString("id");
+                for (HologramNativeHubData.Binding binding : inspectBindings(tag)) {
+                    NBTTagCompound target = binding.target;
                     Relation relation = relation(
                         cell,
-                        "nc.sensor",
-                        "传感卡 " + (slot + 1),
-                        slot,
-                        card.getInteger("x"),
-                        card.getInteger("y"),
-                        card.getInteger("z"),
-                        dimension,
+                        binding.adapter,
+                        HologramNativeHubData.HUB.equals(binding.adapter) ? "节点枢纽绑定" : "枢纽节点绑定 " + (binding.slot + 1),
+                        binding.slot,
+                        target.getInteger("x"),
+                        target.getInteger("y"),
+                        target.getInteger("z"),
+                        target.getInteger("dim"),
                         originX,
                         originY,
                         originZ,
                         selected);
+                    relation.internal &= target.getInteger("dim") == dimension;
+                    relation.payload = payload;
+                    if ("item".equals(payload)) relation.label += "（物品）";
+                    relation.id = id(cell, payload, binding.adapter, binding.slot);
                     relations.add(relation);
                 }
-            }
-            if (extender(tileId) && tag.getBoolean("partOfScreen") && xyz(tag, "coreX", "coreY", "coreZ"))
-                relations.add(
-                    relation(
-                        cell,
-                        "nc.extender",
-                        "信息面板扩展核心",
-                        -1,
-                        tag.getInteger("coreX"),
-                        tag.getInteger("coreY"),
-                        tag.getInteger("coreZ"),
-                        dimension,
-                        originX,
-                        originY,
-                        originZ,
-                        selected));
-            if (panel(tileId) && tag.hasKey("screenData", 10)) {
-                NBTTagCompound screen = tag.getCompoundTag("screenData");
-                if (xyz(screen, "minX", "minY", "minZ") && xyz(screen, "maxX", "maxY", "maxZ")) {
+                if ("item".equals(payload)) continue;
+                if (panel(tileId) && tag.hasKey("Items", 9)) {
+                    NBTTagList inventory = tag.getTagList("Items", 10);
+                    for (int i = 0; i < inventory.tagCount(); i++) {
+                        NBTTagCompound stack = inventory.getCompoundTagAt(i);
+                        boolean sensor = HologramSnapshotMetadataSource.detached() ? cell.frozenSensorSlots.contains(i)
+                            : sensorCard(stack);
+                        if (!sensor || !stack.hasKey("Slot", 1) || !stack.hasKey("tag", 10)) continue;
+                        int slot = stack.getByte("Slot") & 255;
+                        if (slot > ("IC2NCAdvancedInfoPanel".equals(tileId) ? 2 : 0)) continue;
+                        NBTTagCompound card = stack.getCompoundTag("tag");
+                        // This complete-key check is a GTMB boundary; native NC itself reads absent keys as zero.
+                        if (!xyz(card, "x", "y", "z")) continue;
+                        Relation relation = relation(
+                            cell,
+                            "nc.sensor",
+                            "传感卡 " + (slot + 1),
+                            slot,
+                            card.getInteger("x"),
+                            card.getInteger("y"),
+                            card.getInteger("z"),
+                            dimension,
+                            originX,
+                            originY,
+                            originZ,
+                            selected);
+                        relations.add(relation);
+                    }
+                }
+                if (extender(tileId) && tag.getBoolean("partOfScreen") && xyz(tag, "coreX", "coreY", "coreZ"))
                     relations.add(
                         relation(
                             cell,
-                            "nc.screen.min",
-                            "屏幕范围首角",
+                            "nc.extender",
+                            "信息面板扩展核心",
                             -1,
-                            screen.getInteger("minX"),
-                            screen.getInteger("minY"),
-                            screen.getInteger("minZ"),
+                            tag.getInteger("coreX"),
+                            tag.getInteger("coreY"),
+                            tag.getInteger("coreZ"),
                             dimension,
                             originX,
                             originY,
                             originZ,
                             selected));
-                    relations.add(
-                        relation(
-                            cell,
-                            "nc.screen.max",
-                            "屏幕范围末角",
-                            -1,
-                            screen.getInteger("maxX"),
-                            screen.getInteger("maxY"),
-                            screen.getInteger("maxZ"),
-                            dimension,
-                            originX,
-                            originY,
-                            originZ,
-                            selected));
+                if (panel(tileId) && tag.hasKey("screenData", 10)) {
+                    NBTTagCompound screen = tag.getCompoundTag("screenData");
+                    if (xyz(screen, "minX", "minY", "minZ") && xyz(screen, "maxX", "maxY", "maxZ")) {
+                        relations.add(
+                            relation(
+                                cell,
+                                "nc.screen.min",
+                                "屏幕范围首角",
+                                -1,
+                                screen.getInteger("minX"),
+                                screen.getInteger("minY"),
+                                screen.getInteger("minZ"),
+                                dimension,
+                                originX,
+                                originY,
+                                originZ,
+                                selected));
+                        relations.add(
+                            relation(
+                                cell,
+                                "nc.screen.max",
+                                "屏幕范围末角",
+                                -1,
+                                screen.getInteger("maxX"),
+                                screen.getInteger("maxY"),
+                                screen.getInteger("maxZ"),
+                                dimension,
+                                originX,
+                                originY,
+                                originZ,
+                                selected));
+                    }
                 }
             }
         }
         if (relations.size() > 8192) throw new IOException("已适配坐标关系数量超出上限");
         return relations;
+    }
+
+    private static List<HologramNativeHubData.Binding> inspectBindings(NBTTagCompound tag) {
+        try {
+            return HologramNativeHubData.bindings(tag);
+        } catch (IOException unparsed) {
+            // The resource-review page must remain available so the author can remove an opaque/malformed root.
+            // The final resource inspector still rejects it; an unparsed record never grants a coordinate policy.
+            return java.util.Collections.emptyList();
+        }
     }
 
     private static Relation relation(HologramPresets.Cell cell, String adapter, String label, int slot, int tx, int ty,
@@ -212,6 +251,13 @@ final class HologramCoordinatePolicies {
     }
 
     static String mode(Relation relation, HologramBlueprintProcessing.Policy policy) {
+        if (HologramNativeHubData.adapter(relation.adapter)) {
+            if ("share".equals(policy.tendency) || "clear".equals(relation.previousMode)) return "clear";
+            String selected = policy.coordinateOverrides.get(relation.id);
+            if (selected != null) return selected;
+            // Native node bindings keep their exact original dimension and coordinates for personal reuse.
+            return relation.previousMode == null ? "absolute" : relation.previousMode;
+        }
         String override = policy.coordinateOverrides.get(relation.id);
         if (override != null) return override;
         if (!"auto".equals(policy.coordinateDefault)) return policy.coordinateDefault;
@@ -224,24 +270,39 @@ final class HologramCoordinatePolicies {
     static void apply(HologramPresets.Preset preset, List<Relation> relations,
         HologramBlueprintProcessing.Policy policy) throws IOException {
         for (HologramPresets.Cell cell : preset.cells) {
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (tag == null) continue;
-            tag.removeTag(RELATIONS);
-            NBTTagList descriptors = new NBTTagList();
-            for (Relation relation : relations)
-                if (relation.x == cell.x && relation.y == cell.y && relation.z == cell.z) {
-                    if (target(tag, relation) == null) continue; // User explicitly omitted the containing NBT field.
-                    String mode = mode(relation, policy);
-                    if ("clear".equals(relation.previousMode) && !"clear".equals(mode))
-                        throw new IOException("已经保存为清除的坐标关系没有原目标，不能伪造恢复；请重新捕获原设备");
-                    if ("absolute".equals(mode)) {
-                        writeCoordinates(tag, relation, relation.targetX, relation.targetY, relation.targetZ);
-                        if ("nc.sensor".equals(relation.adapter)) target(tag, relation).setString(PAYMENT, "absolute");
-                    } else scrubReviewedCoordinates(tag, relation, "clear".equals(mode));
-                    descriptors.appendTag(relation.write(mode));
-                }
-            if (descriptors.tagCount() > 0) tag.setTag(RELATIONS, descriptors);
-            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
+            for (String payload : new String[] { "tile", "item" }) {
+                NBTTagCompound tag = HologramBlueprintNbt.decode("item".equals(payload) ? cell.itemNbt : cell.tileNbt);
+                if (tag == null) continue;
+                tag.removeTag(RELATIONS);
+                NBTTagList descriptors = new NBTTagList();
+                java.util.Map<String, Boolean> bindingClears = new java.util.HashMap<>();
+                for (Relation relation : relations) if (relation.x == cell.x && relation.y == cell.y
+                    && relation.z == cell.z
+                    && payload.equals(relation.payload)) {
+                        if (target(tag, relation) == null && !"clear".equals(relation.previousMode)) continue;
+                        String mode = mode(relation, policy);
+                        if (HologramNativeHubData.adapter(relation.adapter)) {
+                            if ("relative".equals(mode) && !relation.internal)
+                                throw new IOException("枢纽/节点只能校准到蓝图内同维度实际选中的设备");
+                            Boolean previous = bindingClears.put(relation.adapter, "clear".equals(mode));
+                            if (previous != null && previous.booleanValue() != "clear".equals(mode))
+                                throw new IOException("同一枢纽绑定列表必须整体清除，或保留/校准其中各节点");
+                        }
+                        if ("clear".equals(relation.previousMode) && !"clear".equals(mode))
+                            throw new IOException("已经保存为清除的坐标关系没有原目标，不能伪造恢复；请重新捕获原设备");
+                        if ("absolute".equals(mode)) {
+                            writeCoordinates(tag, relation, relation.targetX, relation.targetY, relation.targetZ);
+                            if ("nc.sensor".equals(relation.adapter))
+                                target(tag, relation).setString(PAYMENT, "absolute");
+                        } else scrubReviewedCoordinates(tag, relation, "clear".equals(mode));
+                        descriptors.appendTag(relation.write(mode));
+                    }
+                for (java.util.Map.Entry<String, Boolean> clear : bindingClears.entrySet())
+                    if (clear.getValue()) HologramNativeHubData.clear(tag, clear.getKey());
+                if (descriptors.tagCount() > 0) tag.setTag(RELATIONS, descriptors);
+                if ("item".equals(payload)) cell.itemNbt = HologramBlueprintNbt.encodeCanonical(tag);
+                else cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
+            }
         }
         // Reusable policies may contain relation choices from another source. Only currently inspected IDs apply.
     }
@@ -357,6 +418,11 @@ final class HologramCoordinatePolicies {
         throws IOException {
         NBTTagCompound root = target(tag, relation);
         if (root == null) return;
+        if (HologramNativeHubData.adapter(relation.adapter)) {
+            // Keep a complete, inert native tuple while the reviewed relative descriptor owns the real target.
+            for (String key : new String[] { "x", "y", "z", "dim" }) root.setInteger(key, 0);
+            return;
+        }
         String prefix = relation.adapter.equals("nc.extender") ? "core"
             : relation.adapter.equals("nc.screen.min") ? "min" : relation.adapter.equals("nc.screen.max") ? "max" : "";
         root.removeTag(prefix.isEmpty() ? "x" : prefix + "X");
@@ -403,6 +469,10 @@ final class HologramCoordinatePolicies {
                         Math.addExact(x, relation.dx),
                         Math.addExact(y, relation.dy),
                         Math.addExact(z, relation.dz));
+                    if (HologramNativeHubData.adapter(relation.adapter)) {
+                        NBTTagCompound target = target(tag, relation);
+                        if (target != null) target.setInteger("dim", targetDimension);
+                    }
                 } catch (ArithmeticException overflow) {
                     throw new IOException("放置坐标关系超出整数范围", overflow);
                 }
@@ -448,6 +518,10 @@ final class HologramCoordinatePolicies {
     }
 
     private static void clear(NBTTagCompound tag, Relation relation) throws IOException {
+        if (HologramNativeHubData.adapter(relation.adapter)) {
+            HologramNativeHubData.clear(tag, relation.adapter);
+            return;
+        }
         if ("nc.sensor".equals(relation.adapter)) {
             NBTTagCompound stack = sensorStack(tag, relation.slot);
             if (stack != null) {
@@ -476,9 +550,12 @@ final class HologramCoordinatePolicies {
         target.setInteger(prefix.isEmpty() ? "x" : prefix + "X", x);
         target.setInteger(prefix.isEmpty() ? "y" : prefix + "Y", y);
         target.setInteger(prefix.isEmpty() ? "z" : prefix + "Z", z);
+        if (HologramNativeHubData.adapter(relation.adapter)) target.setInteger("dim", relation.targetDimension);
     }
 
     private static NBTTagCompound target(NBTTagCompound tag, Relation relation) throws IOException {
+        if (HologramNativeHubData.adapter(relation.adapter))
+            return HologramNativeHubData.target(tag, relation.adapter, relation.slot);
         if ("nc.sensor".equals(relation.adapter)) {
             if (!panel(tag.getString("id"))) throw new IOException("传感卡关系宿主格式不匹配");
             NBTTagCompound stack = sensorStack(tag, relation.slot);
@@ -638,7 +715,11 @@ final class HologramCoordinatePolicies {
     }
 
     private static String id(HologramPresets.Cell cell, String adapter, int slot) {
-        return position(cell.x, cell.y, cell.z) + ":tile:" + adapter + ":" + slot;
+        return id(cell, "tile", adapter, slot);
+    }
+
+    private static String id(HologramPresets.Cell cell, String payload, String adapter, int slot) {
+        return position(cell.x, cell.y, cell.z) + ":" + payload + ":" + adapter + ":" + slot;
     }
 
     private static boolean activeCell(Set<String> enabledStructures, HologramPresets.Cell cell) {
@@ -662,6 +743,7 @@ final class HologramCoordinatePolicies {
         relation.id = row.getString("id");
         relation.label = row.getString("label");
         relation.adapter = row.getString("adapter");
+        relation.payload = row.hasKey("payload", 8) ? row.getString("payload") : "tile";
         relation.previousMode = row.getString("mode");
         relation.slot = row.getInteger("slot");
         for (String key : new String[] { "x", "y", "z", "slot", "targetX", "targetY", "targetZ", "targetDimension",
@@ -669,12 +751,20 @@ final class HologramCoordinatePolicies {
         if (!java.util.Arrays.asList("clear", "absolute", "relative")
             .contains(relation.previousMode)
             || !java.util.Arrays.asList("nc.sensor", "nc.extender", "nc.screen.min", "nc.screen.max")
-                .contains(relation.adapter)
+                .contains(relation.adapter) && !HologramNativeHubData.adapter(relation.adapter)
             || relation.id.isEmpty()
             || relation.id.length() > 256
             || relation.label.length() > 256
+            || !java.util.Arrays.asList("tile", "item")
+                .contains(relation.payload)
+            || "item".equals(relation.payload) && !HologramNativeHubData.adapter(relation.adapter)
             || "nc.sensor".equals(relation.adapter) && (relation.slot < 0 || relation.slot > 2)
-            || !"nc.sensor".equals(relation.adapter) && relation.slot != -1) throw new IOException("坐标关系策略无效");
+            || !"nc.sensor".equals(relation.adapter) && !HologramNativeHubData.LIST.equals(relation.adapter)
+                && !HologramNativeHubData.MAP.equals(relation.adapter)
+                && relation.slot != -1
+            || (HologramNativeHubData.LIST.equals(relation.adapter)
+                || HologramNativeHubData.MAP.equals(relation.adapter)) && (relation.slot < 0 || relation.slot >= 8192))
+            throw new IOException("坐标关系策略无效");
         relation.x = row.getInteger("x");
         relation.y = row.getInteger("y");
         relation.z = row.getInteger("z");

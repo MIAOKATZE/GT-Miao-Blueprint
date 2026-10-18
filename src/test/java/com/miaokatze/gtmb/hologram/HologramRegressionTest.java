@@ -235,6 +235,10 @@ public final class HologramRegressionTest {
             "large_client_snapshots_keep_remote_structure_cells",
             com.miaokatze.gtmb.client.hologram.HologramLargeStateRegression::run);
         cases.put("independent_registry_has_own_item_tab_and_namespace", ProjectorRegistrationRegression::registry);
+        cases.put("decoration_voucher_recipe_and_industrial_resource_veto", DecorationVoucherRegression::run);
+        cases.put(
+            "material_quote_stable_identity_long_counts_and_shared_fuzzy_stock",
+            HologramMaterialQuoteRegression::run);
         cases.put(
             "official_projector_upgrades_one_to_one_with_no_extra_inputs",
             ProjectorRegistrationRegression::recipe);

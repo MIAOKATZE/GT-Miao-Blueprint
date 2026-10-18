@@ -24,6 +24,7 @@ public final class HologramBackgroundTasks {
             succeeded = result == HologramTaskOwner.Result.SUCCESS;
             completion = label + (succeeded ? "已完成" : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
                 + (detail == null || detail.isEmpty() ? "" : "：" + detail);
+            if ("orderMissingMaterials".equals(operation)) completion += "；右键投影仪返回材料确认，点击“刷新材料”核对后继续放置。";
             chat(completion);
             Minecraft mc = Minecraft.getMinecraft();
             if (result == HologramTaskOwner.Result.SUCCESS && mc.thePlayer != null) {
@@ -47,6 +48,8 @@ public final class HologramBackgroundTasks {
     private static boolean reviewSubmitted;
     private static final java.util.List<String> pendingMessages = new java.util.ArrayList<>();
     private static final HologramProgress.Tracker displayProgress = new HologramProgress.Tracker();
+    private static final HologramProgress.Tracker materialProgress = new HologramProgress.Tracker();
+    private static final HologramMaterialOrderLifecycle materialOrders = new HologramMaterialOrderLifecycle();
     private static long boundToken, completedToken, backgroundNotifications, terminalNotifications, levelupSounds;
     private static final java.util.Map<Long, Long> controlPredecessors = new java.util.LinkedHashMap<>();
     private static final java.util.Set<Long> acceptedControls = new java.util.HashSet<>();
@@ -75,6 +78,7 @@ public final class HologramBackgroundTasks {
     }
 
     static HologramProgress progress() {
+        if (materialTask()) return materialProgress.view(System.nanoTime());
         if ("server".equals(OWNER.kind()) && !HologramClientProgress.commandMatches("server", session, command)) {
             Long previous = controlPredecessors.get(command);
             if (previous == null || !HologramClientProgress.commandMatches("server", session, previous)) return null;
@@ -104,6 +108,10 @@ public final class HologramBackgroundTasks {
 
     static boolean libraryTask() {
         return "library".equals(OWNER.kind());
+    }
+
+    static boolean materialTask() {
+        return "material".equals(OWNER.kind());
     }
 
     static boolean succeeded() {
@@ -137,6 +145,7 @@ public final class HologramBackgroundTasks {
     static void tick() {
         Minecraft mc = Minecraft.getMinecraft();
         if ((busy() || presentation != null) && (world != mc.theWorld || connection != mc.getNetHandler())) {
+            if (materialTask()) materialOrders.reject();
             if (busy()) OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, "世界或连接已关闭，任务未继续");
             context = null;
             presentation = null;
@@ -171,7 +180,10 @@ public final class HologramBackgroundTasks {
     static long beginLibrary(String label) {
         String key = "library".equals(OWNER.kind()) ? OWNER.key() : Long.toString(++librarySequence);
         long token = OWNER.begin("library", key, label);
-        if (token != 0) bind();
+        if (token != 0) {
+            operation = "library";
+            bind();
+        }
         return token;
     }
 
@@ -185,6 +197,22 @@ public final class HologramBackgroundTasks {
     }
 
     static void command(String sessionId, long sequence, String op) {
+        if ("orderMissingMaterials".equals(op)) {
+            if (OWNER.begin("material", sessionId + ":" + sequence, "AE 本次缺料订单") == 0) return;
+            session = sessionId;
+            command = sequence;
+            operation = op;
+            bind();
+            if (context != null) materialOrders.begin(world, connection, context, sequence);
+            materialProgress
+                .update(session + ":" + sequence, "material.order", 0, 0, "materials", false, System.nanoTime());
+            return;
+        }
+        if (materialTask() && session.equals(sessionId) && "cancelMaterialOrder".equals(op)) {
+            issuedSequence = Math.max(issuedSequence, sequence);
+            cancelling = true;
+            return;
+        }
         if ("server".equals(OWNER.kind()) && session.equals(sessionId)
             && ("pause".equals(op) || "resume".equals(op)
                 || "cancel".equals(op)
@@ -227,6 +255,7 @@ public final class HologramBackgroundTasks {
     }
 
     static boolean commandAllowed(String op) {
+        if (materialTask()) return "cancelMaterialOrder".equals(op) && !cancelling;
         if ("server".equals(OWNER.kind()) && controlPending()
             && ("cancel".equals(op) || "pause".equals(op) || "resume".equals(op))) return false;
         return !busy() || "cancel".equals(op)
@@ -270,6 +299,19 @@ public final class HologramBackgroundTasks {
     }
 
     static void progress(NBTTagCompound event) {
+        if (materialTask()) {
+            if ("rejected".equals(event.getString("outcome")) && session.equals(event.getString("session"))) {
+                long rejected = event.getLong("uiSequence");
+                if (rejected == issuedSequence && cancelling && rejected != command) {
+                    cancelling = false;
+                    chat("本次 AE 订单取消请求被拒绝，订单继续。");
+                } else if (rejected == command && !materialOrders.active()) {
+                    materialOrders.reject();
+                    OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, event.getString("status"));
+                }
+            }
+            return;
+        }
         if (!"server".equals(event.getString("scope"))) return;
         String phase = event.getString("phase");
         if (!busy() && !event.getBoolean("complete")
@@ -315,10 +357,71 @@ public final class HologramBackgroundTasks {
         return OWNER.matches("server", value.getString("session") + ":" + value.getLong("uiSequence"));
     }
 
+    static HologramState materialOrderProgress(HologramState previous, NBTTagCompound event, Object currentWorld,
+        Object currentConnection) {
+        if (!materialOrders.receive(currentWorld, currentConnection, previous, event)) return null;
+        HologramState next = materialOrders.apply(previous);
+        context = next;
+        updateMaterialOrderOwner(materialOrders.order());
+        return next;
+    }
+
+    static HologramState retainMaterialOrder(HologramState next) {
+        Minecraft mc = Minecraft.getMinecraft();
+        return materialOrders.snapshot(mc.theWorld, mc.getNetHandler(), next);
+    }
+
+    private static void updateMaterialOrderOwner(NBTTagCompound order) {
+        if (!materialTask() || materialOrders.id()
+            .isEmpty()
+            || !materialOrders.id()
+                .equals(order.getString("orderId")))
+            return;
+        boolean active = order.getBoolean("active");
+        materialProgress.update(
+            session + ":" + materialOrders.command(),
+            "material.order",
+            order.getLong("done"),
+            order.getLong("total"),
+            "materials",
+            !active,
+            System.nanoTime());
+        if (active) return;
+        materialOrders.finishOwner(OWNER);
+    }
+
     static void snapshot(HologramState next) {
         if (context != null && context.session.equals(next.session)) context = next;
         if (libraryTask() && HologramLibraryClient.INSTANCE.snapshot(next)) reviewSubmitted = false;
         NBTTagCompound data = next.data;
+        NBTTagCompound materialOrder = data.getCompoundTag("materialOrder");
+        if (!busy() && materialOrder.getBoolean("active")
+            && !materialOrders.id()
+                .isEmpty()
+            && materialOrders.id()
+                .equals(materialOrder.getString("orderId"))
+            && materialOrders.active()) {
+            if (materialOrders.restoreOwner(OWNER) != 0) {
+                session = next.session;
+                command = materialOrders.command();
+                operation = "orderMissingMaterials";
+                bind();
+            }
+        }
+        if (materialTask()) {
+            if (!materialOrders.owns(next)) {
+                materialOrders.reject();
+                OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, "材料确认会话已变化，请重新核对材料");
+                return;
+            }
+            context = next;
+            if (materialOrders.rejectSubmission(next)) {
+                materialOrders.finishOwner(OWNER);
+                return;
+            }
+            updateMaterialOrderOwner(materialOrder);
+            return;
+        }
         if (!busy() && (data.getInteger("job") == 1 || data.getInteger("job") == 2)) {
             if (OWNER.begin("server", next.session + ":" + data.getLong("uiSequence"), "施工任务") != 0) {
                 session = next.session;
@@ -416,6 +519,10 @@ public final class HologramBackgroundTasks {
     static void cancel() {
         if (!canCancel()) return;
         cancelling = true;
+        if (materialTask()) {
+            sendJobControl("cancelMaterialOrder");
+            return;
+        }
         if ("library".equals(OWNER.kind())) {
             if (awaitingReview()) {
                 NBTTagCompound request = new HologramAeReviewModel(context.data.getCompoundTag("aeSaveReview"), true)
@@ -470,12 +577,17 @@ public final class HologramBackgroundTasks {
         request.setString("session", session);
         request.setString("op", op);
         request.setLong("uiSequence", sequence);
+        if ("cancelMaterialOrder".equals(op) && context != null) {
+            request.setLong("planRevision", context.data.getLong("planRevision"));
+            request.setLong("placementReviewNonce", context.data.getLong("placementReviewNonce"));
+        }
         command(session, sequence, op);
         HologramNetwork.sendAction(request);
     }
 
     static void cancelled(String sessionId) {
-        if (busy() && "server".equals(OWNER.kind()) && session.equals(sessionId)) OWNER.finish(
+        if (materialTask() && session.equals(sessionId)) materialOrders.reject();
+        if (busy() && ("server".equals(OWNER.kind()) || materialTask()) && session.equals(sessionId)) OWNER.finish(
             OWNER.token(),
             cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
             "服务端任务已结束");

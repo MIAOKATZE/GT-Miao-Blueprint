@@ -48,6 +48,7 @@ final class HologramLibraryClient {
     private String incomingSaveReceipt = "", incomingSaveSession = "";
     private long incomingSaveRevision;
     private final SaveProgress saveProgress = new SaveProgress();
+    private final HologramSavePreparationProgress preparationProgress = new HologramSavePreparationProgress();
     private final HologramProgress.Tracker transferProgress = new HologramProgress.Tracker();
     private final HologramProgress.Tracker localCatalogProgress = new HologramProgress.Tracker();
     private final HologramProgress.Tracker serverCatalogProgress = new HologramProgress.Tracker();
@@ -147,6 +148,11 @@ final class HologramLibraryClient {
         }
 
         void progress(long now) {
+            progressedAt = now;
+        }
+
+        void preparation(long now) {
+            if (waitingSince != 0 && !waitingExpired(now)) waitingSince = now;
             progressedAt = now;
         }
 
@@ -443,8 +449,9 @@ final class HologramLibraryClient {
             || pendingPreviewStart != null
             || quickInProgress()) && pendingDiskSave == null
             && System.nanoTime() - lastActivity > TimeUnit.SECONDS.toNanos(120)) {
+            boolean stalledPreparation = draftPending && preparationProgress.stalled(System.nanoTime());
             cancel();
-            status = "传输超时，请重试";
+            status = stalledPreparation ? "蓝图准备长时间没有进展，已停止等待；未保存修改保留，请重试" : "传输超时，请重试；未保存修改保留";
         }
         while (outgoing != null && ready && uploadWindow != null && uploadWindow.canSend()) {
             int index = uploadWindow.nextSent();
@@ -768,8 +775,11 @@ final class HologramLibraryClient {
             false,
             now);
         else if (previewCapture != null) transferProgress.update(identity, "library.preview", 0, 0, "", false, now);
-        else if (pendingPreviewStart != null) transferProgress.update(identity, "library.source", 0, 0, "", false, now);
-        else if (incoming != null)
+        else if (pendingPreviewStart != null) {
+            HologramProgress observed = preparationProgress.view(now);
+            if (observed != null) return observed;
+            transferProgress.update(identity, "library.source", 0, 0, "", false, now);
+        } else if (incoming != null)
             transferProgress.update(identity, "library.download", incoming.size(), incomingTotal, "bytes", false, now);
         else if (outgoing != null) transferProgress.update(
             identity,
@@ -779,9 +789,11 @@ final class HologramLibraryClient {
             "bytes",
             false,
             now);
-        else if (downloadExpected || draftPending)
+        else if (downloadExpected || draftPending) {
+            HologramProgress observed = preparationProgress.view(now);
+            if (observed != null) return observed;
             transferProgress.update(identity, "library.prepare", 0, 0, "", false, now);
-        else if (preparing) transferProgress.update(identity, localProgressPhase, 0, 0, "", false, now);
+        } else if (preparing) transferProgress.update(identity, localProgressPhase, 0, 0, "", false, now);
         else if (quick.active()) transferProgress.update(identity, "library.session", 0, 0, "", false, now);
         else if (deletingServer) transferProgress.update(identity, "library.delete", 0, 0, "", false, now);
         HologramProgress transfer = transferProgress.view(now);
@@ -826,6 +838,7 @@ final class HologramLibraryClient {
 
     private void finishBackgroundTask(long token, boolean success, String detail) {
         if (token == 0 || token != backgroundTaskToken) return;
+        preparationProgress.clear();
         backgroundTaskToken = 0;
         draftSave = null;
         HologramBackgroundTasks.finishLibrary(token, success, detail);
@@ -833,6 +846,8 @@ final class HologramLibraryClient {
 
     void saveCommand(String session, long sequence, String operation) {
         if (!draftPending || backgroundTaskToken == 0) return;
+        preparationProgress.clear();
+        lastActivity = System.nanoTime();
         if ("confirmAeSave".equals(operation)) {
             if (draftSave != null && draftSave.task == backgroundTaskToken
                 && draftSave.session.equals(session)
@@ -847,6 +862,28 @@ final class HologramLibraryClient {
             || "savePreset".equals(operation)
             || "updatePreset".equals(operation)
             || "exportDraft".equals(operation);
+    }
+
+    /** Called on the client thread; progress cannot acknowledge or complete a save. */
+    void preparationProgress(NBTTagCompound event) {
+        HologramState state = HologramClient.state;
+        boolean awaitingSource = incomingCapturePreview && !incomingSaveReceipt.isEmpty()
+            && pendingDiskSave == null
+            && (incoming != null || pendingPreviewStart != null);
+        if (!(draftPending && downloadExpected || awaitingSource) || draftSave == null
+            || state == null
+            || !draftSave.session.equals(state.session)) return;
+        long now = System.nanoTime();
+        if (preparationProgress.receive(
+            event,
+            backgroundTaskToken,
+            draftSave.session,
+            draftSave.sequence,
+            awaitingSource ? incomingSaveRevision : state.data.getLong("planRevision"),
+            now)) {
+            lastActivity = now;
+            saveProgress.preparation(now);
+        }
     }
 
     /** Installed snapshots reach the task owner even when its business screen is closed. */
@@ -1078,6 +1115,10 @@ final class HologramLibraryClient {
 
     private void receive(NBTTagCompound reply) {
         String op = reply.getString("op");
+        if ("preparationProgress".equals(op)) {
+            preparationProgress(reply);
+            return;
+        }
         if (("error".equals(op) || "downloadBegin".equals(op)
             || "downloadChunk".equals(op)
             || "downloadDone".equals(op)) && !matchesTransferTask(reply)) return;
@@ -1086,7 +1127,8 @@ final class HologramLibraryClient {
             || "previewReady".equals(op)
             || "uploaded".equals(op)
             || "privateImported".equals(op)
-            || "previewVerified".equals(op))) lastActivity = System.nanoTime();
+            || "previewVerified".equals(op)) && !(draftPending && ("list".equals(op) || "config".equals(op))))
+            lastActivity = System.nanoTime();
         if ("saveCommitted".equals(op) || "saveRejected".equals(op)) {
             finishDiskSave(reply, "saveCommitted".equals(op));
         } else if ("quickBootstrap".equals(op)) {

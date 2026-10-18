@@ -68,6 +68,7 @@ gtmb.hologram.save_guidance.suppress=不再顯示
 gtmb.hologram.progress.unit.entries=項
 gtmb.hologram.progress.unit.regions=分區
 gtmb.hologram.progress.unit.materials=材料
+gtmb.hologram.progress.material.order=AE 本次缺料合成
 gtmb.hologram.progress.unit.rows=條目
 gtmb.hologram.progress.unit.tasks=任務
 gtmb.hologram.progress.snapshot.prepare=準備藍圖快照
@@ -123,3 +124,11 @@ gtmb.hologram.progress.snapshot.detail.metadata.ae.3=生成 AE 審查清單
 gtmb.hologram.progress.snapshot.detail.metadata.ae.4=AE 資訊已就緒
 gtmb.hologram.progress.area.detail.failed=材料規劃失敗
 gtmb.hologram.progress.area.detail.paused=材料規劃已暫停
+
+# Decoration voucher
+item.decoration_voucher.name=裝飾抵用券
+item.decoration_voucher.description.0=一張抵扣本次放置任務中允許的裝飾材料。
+item.decoration_voucher.description.1=在材料確認頁啟用；首次成功放置抵扣裝飾時消耗。
+item.decoration_voucher.description.2=機器、工業材料、內部物品與流體仍需正常支付。
+
+gtmb.hologram.progress.snapshot.detail.export_json=編碼藍圖 JSON

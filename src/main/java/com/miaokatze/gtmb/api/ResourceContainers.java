@@ -174,6 +174,37 @@ public final class ResourceContainers {
         return checked(result);
     }
 
+    /**
+     * Native split storage: the scalar owns the physical long quantity; the sibling is only the type lock.
+     * An omitted scalar means native zero. The complete Forge identity record is checked, including unknown fields,
+     * but its display Amount is never charged a second time. No field outside this declared pair is claimed.
+     */
+    public static FluidAmount splitFluidAmount(NBTTagCompound container, String quantityKey, String identityKey,
+        boolean stringIdentity) throws IOException {
+        if (container.hasKey(quantityKey) && !container.hasKey(quantityKey, 4))
+            throw invalid(quantityKey + " must be a long");
+        long amount = container.getLong(quantityKey);
+        if (amount < 0) throw invalid(quantityKey + " is negative");
+        if (!container.hasKey(identityKey)) {
+            if (amount != 0) throw invalid(quantityKey + " has no fluid identity");
+            return null;
+        }
+        FluidStack identity;
+        if (stringIdentity) {
+            if (!container.hasKey(identityKey, 8)) throw invalid(identityKey + " must be a registry string");
+            Fluid fluid = FluidRegistry.getFluid(container.getString(identityKey));
+            if (fluid == null) throw invalid(identityKey + " is not registered");
+            identity = new FluidStack(fluid, 1);
+        } else {
+            if (!container.hasKey(identityKey, 10)) throw invalid(identityKey + " must be a Forge fluid record");
+            NBTTagCompound record = container.getCompoundTag(identityKey);
+            if (!record.hasKey("Amount", 3) || record.hasKey("Cnt"))
+                throw invalid(identityKey + " must contain the native Forge display Amount");
+            identity = fluidRecord(record).identity();
+        }
+        return new FluidAmount(identity, amount);
+    }
+
     private static FluidAmount fluidRecord(NBTTagCompound row) throws IOException {
         if (!row.hasKey("FluidName", 8)) throw invalid("fluid name must be a registered string");
         Fluid fluid = FluidRegistry.getFluid(row.getString("FluidName"));

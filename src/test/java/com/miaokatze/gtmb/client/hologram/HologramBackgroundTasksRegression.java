@@ -13,6 +13,7 @@ public final class HologramBackgroundTasksRegression {
     private HologramBackgroundTasksRegression() {}
 
     public static void run() {
+        HologramMaterialOrderLifecycleRegression.run();
         presentationValues();
         freshScreenBoundary();
         transportFailures();

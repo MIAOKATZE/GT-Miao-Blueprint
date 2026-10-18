@@ -15,6 +15,7 @@ public final class HologramPlacementReviewContextRegression {
     }
 
     public static void run() {
+        HologramMaterialReviewRegression.run();
         HologramPendingPositionLockRegression.run();
         terminalWorkspaceReopening();
         HologramPlacementReviewContext context = new HologramPlacementReviewContext();

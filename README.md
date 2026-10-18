@@ -62,6 +62,9 @@ From one multiblock to a factory: preview structures, import regions, identify s
 
 Shapeless recipe: **1 StructureLib Hologram Projector → 1 Neko Blueprint Hologram Projector**. With compatible GTIT, the Neko Vending Machine also exchanges **1 ordinary Neko Coin** for one projector.
 
+**装饰抵用券 / Decoration voucher：**无序合成 **2 个原生 StructureLib 全息投影仪 → 1 张券**。材料确认中主动选用后，主背包中的一张券可抵扣**本次施工**允许的建筑 Mod 材料；GT、AE、工业部件、库存、流体和能量仍按实际需求支付。未成功放置抵扣材料不会消耗券。服务器可在 `config/gtmb-decoration-voucher.cfg` 的 `decorationVoucher.enabled` 与 `allowedModIds` 中调整启用状态和建筑 Mod，修改后重启生效。
+Shapeless recipe: **2 native StructureLib Hologram Projectors → 1 Decoration Voucher**. Explicitly select it in material review to waive eligible decoration costs for **one construction job**, using one voucher from the main inventory. Industrial parts, inventories, fluids and energy remain payable. The voucher is consumed only when covered material is successfully placed. Server configuration controls availability and allowed decoration mod IDs.
+
 ## Quick Start / 快速使用
 
 | 步骤 / Step | 操作 / Controls |
@@ -79,6 +82,9 @@ In Structure Adjustment, **G toggles the movement axes**; the button shows its o
 资源复核中，可解析的库存数据可选择「完全保留」，施工时匹配完整物品数据并扣除对应材料。确实无法解析的信息会指出具体路径，需要移除后才能保存。倾向自用时可尽量保留原配置；与坐标或去标识选项冲突时，界面会要求先解决冲突。
 
 In resource review, choose **Keep unchanged** for inventory data whose complete material cost can be decoded. Construction matches the full item data and consumes those materials. Unreadable data identifies the path to remove before saving. Private-use processing can retain the original configuration; resolve any conflicting coordinate or identity-processing choices first.
+
+施工前使用独立的 **MUI2 材料确认窗口**：按图标、精确物品 / NBT 与单位逐项查看**需求 / 已有 / 缺失**，同名材料不会合并成一项。普通刷新复用已核定需求并重查库存；改变抵用券选择才明确重算对应需求。ME 缺料可明确提交独立的真实 AE 合成订单；关闭窗口后继续，重新打开可看总进度与结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料再确认施工**；取消只取消本次订单，已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏不表示订单继续。
+The separate **MUI2 material confirmation window** shows icons and exact **required / available / missing** quantities, preserving distinct item and NBT identities. Refresh rechecks stock against the reviewed demand; changing voucher selection recalculates the corresponding costs. Explicitly submit missing materials through an independent AE crafting request; closing the window keeps it running with progress and terminal notifications. Actual outputs are delivered to ME storage; **refresh the quote and confirm construction** afterward. Undelivered outputs already received are preserved in player recovery storage when leaving or resetting runtime. Leaving the game ends the active order.
 
 <details>
 <summary><strong>剪切、选区与旋转 / Cut, selection and rotation controls</strong></summary>
@@ -149,6 +155,12 @@ New servers default to shared upload/download limits of **1024 KiB/s (1 MiB/s)**
 等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置与结构调整的区别，并支持不再显示。
 
 Waiting views show measured progress and percentages when totals are known, or activity and elapsed time otherwise. Long tasks continue after closing the workspace; reopening restores the business page, selection and view. Save guidance explains Blueprint Settings and Structure Adjustment and can be dismissed persistently.
+
+已确认的蓝图施工可在大图范围内继续，走离预览锚点不会单独终止任务；仍须保持原工具槽中的同一把投影仪、当前世界与维度，实际区块、现场权限和放置事件继续检查。停止、部分完成与全部成功分别显示，进度走完不代表机器成型。保存准备按实际快照与序列化工作显示进度，匹配本次任务的有效活动会延长等待；传输结束后仍须等待原生预览、配对文件与最终保存确认。
+An admitted blueprint construction job can continue while you inspect a large build, including beyond the preview anchor's admission range. Keep the same projector in its original slot and remain in the same world and dimension; chunk, permission and placement checks still apply. Stopped, partial and successful outcomes remain distinct. Save preparation reports actual snapshot and serialization work, and correlated activity extends the wait; transfer completion still requires preview validation, paired files and final save confirmation.
+
+管理员可用 **`/gtmb restart`（权限等级 4）**重置 GTMB 运行任务与会话、清除旧回调与传输，并独立取消 AE 订单；已施工方块、回收暂存与剪切记录保留，随后重新打开投影仪。命令须由服务器线程正常执行；已进入不可中断的原生原子写盘可能完成原提交，不能借此强制解除卡死磁盘或被阻塞的 tick 线程。
+Administrators can use **`/gtmb restart` (permission level 4)** to reset GTMB runtime tasks, sessions, stale callbacks and transfers, and cancel its independent AE orders. Placed blocks, recovery storage and persistent cuts remain available. The server thread must be able to execute the command; an atomic disk operation already in progress may still finish. This runtime reset cannot forcibly unblock a stuck disk or server tick thread.
 
 稳定几何上的蓝图编辑按脏格更新，保留未改动的 16³ 预览分区。共享材料规划与大图首次快照分阶段执行；世界修改与材料结果由服务端决定。几何增删和专门审核在需要时使用完整刷新。
 

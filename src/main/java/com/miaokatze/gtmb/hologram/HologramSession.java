@@ -45,6 +45,9 @@ final class HologramSession {
     int main = 1, facing, mode, scope, layer, selected = -1, job, cursor, completed;
     int jobMissingCells, jobProtectedCells, jobUnsupportedCells, jobSkippedCells;
     boolean jobPartialPlacement;
+    /** Explicit material-review choice; the voucher is charged only by a successful covered transaction. */
+    boolean jobVoucherRequested, jobVoucherConsumed;
+    NBTTagCompound materialQuote = new NBTTagCompound();
     boolean noHatches, hints, defer, stopTick, mainExplicit;
     HologramBlueprintResources.Plan blueprintResources, blueprintTotalResources;
     HologramEnergy.Demand blueprintEnergy = new HologramEnergy.Demand();
@@ -251,6 +254,7 @@ final class HologramSession {
     static void resetJobCounts(HologramSession s, boolean partial) {
         s.jobPublication.clear();
         s.placementDiagnostics.clear();
+        s.jobVoucherConsumed = false;
         s.jobPartialPlacement = partial;
         s.jobMissingCells = s.jobProtectedCells = s.jobUnsupportedCells = s.jobSkippedCells = 0;
     }

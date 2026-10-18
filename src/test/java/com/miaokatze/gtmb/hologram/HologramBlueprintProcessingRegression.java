@@ -39,6 +39,7 @@ public final class HologramBlueprintProcessingRegression {
         explicitStagesAndSessionBacktracking();
         sharingKeepsAnonymousNetworkSlots();
         actualCellsAndRelativeProjection();
+        nativeHubBindingPolicies();
         globalAndCellSelections();
         resourceDecisionsAreLocalAndPayable();
         fullPreservationSurvivesProjectionAndTransport();
@@ -1271,6 +1272,116 @@ public final class HologramBlueprintProcessingRegression {
         HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults(tendency, 0);
         policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
         return policy;
+    }
+
+    private static void nativeHubBindingPolicies() throws Exception {
+        HologramPresets.Preset raw = source(104);
+        NBTTagCompound nativeTag = new NBTTagCompound();
+        nativeTag.setString("id", "fixture:device");
+        NBTTagCompound hub = nativeHubTuple(104, 64, 200, 7);
+        hub.setString("type", "water");
+        hub.setBoolean("output", true);
+        nativeTag.setTag("gtsr.hubPos", hub);
+        nativeTag.setBoolean("gtsr.modeLocked", true);
+        nativeTag.setBoolean("gtsr.singularity_consumed", true);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(nativeTag);
+        raw.cells.get(0).itemNbt = HologramBlueprintNbt.encodeCaptured(nativeTag);
+        HologramPresets.Preset personal = HologramBlueprintProcessing.process(raw, completed("self"), 7, 100, 64, 200);
+        for (String encoded : new String[] { personal.cells.get(0).tileNbt, personal.cells.get(0).itemNbt }) {
+            NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+            SimpleAssert.that(
+                hub.equals(tag.getCompoundTag("gtsr.hubPos")),
+                "personal node reuse retains its native binding tuple exactly in each scope");
+            NBTTagCompound placed = HologramCoordinatePolicies.placementProjection(tag, 9, 1000, 70, 2000);
+            SimpleAssert.that(
+                hub.equals(placed.getCompoundTag("gtsr.hubPos")),
+                "moving a personal node never silently changes its original binding dimension");
+        }
+        HologramPresets.Preset shared = HologramBlueprintProcessing.process(raw, completed("share"), 7, 100, 64, 200);
+        for (String encoded : new String[] { shared.cells.get(0).tileNbt, shared.cells.get(0).itemNbt }) {
+            NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+            SimpleAssert.that(!tag.hasKey("gtsr.hubPos"), "sharing clears even an internal native node binding");
+            SimpleAssert.that(
+                tag.getBoolean("gtsr.modeLocked") && tag.getBoolean("gtsr.singularity_consumed"),
+                "clearing a link preserves its native mode and consumed-resource semantics");
+            SimpleAssert.that(
+                !tag.getTagList(HologramCoordinatePolicies.RELATIONS, 10)
+                    .getCompoundTagAt(0)
+                    .hasKey("terminal"),
+                "native bindings never acquire a quantum terminal setting");
+        }
+        SimpleAssert.that(
+            shared.cells.get(0).prompt.contains("连接已清除"),
+            "sharing emits the existing coordinate disconnection explanation");
+        HologramBlueprintProcessing.Policy calibrate = completed("self");
+        for (HologramCoordinatePolicies.Relation relation : HologramCoordinatePolicies.inspect(raw, 7, 100, 64, 200))
+            calibrate.coordinateOverrides.put(relation.id, "relative");
+        HologramPresets.Preset relative = HologramBlueprintProcessing.process(raw, calibrate, 7, 100, 64, 200);
+        NBTTagCompound installed = HologramCoordinatePolicies
+            .placementProjection(HologramBlueprintNbt.decode(relative.cells.get(0).tileNbt), 9, 1000, 70, 2000);
+        SimpleAssert.eq(
+            1004,
+            installed.getCompoundTag("gtsr.hubPos")
+                .getInteger("x"),
+            "explicit internal calibration follows the selected structure offset");
+        SimpleAssert.eq(
+            9,
+            installed.getCompoundTag("gtsr.hubPos")
+                .getInteger("dim"),
+            "calibration uses the actual installation dimension");
+        NBTTagCompound crossed = (NBTTagCompound) nativeTag.copy();
+        crossed.getCompoundTag("gtsr.hubPos")
+            .setInteger("dim", 8);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(crossed);
+        expectIo(() -> HologramBlueprintProcessing.process(raw, calibrate, 7, 100, 64, 200));
+        raw.cells.get(0).itemNbt = null;
+        for (boolean map : new boolean[] { false, true }) {
+            NBTTagCompound array = new NBTTagCompound();
+            NBTTagCompound node = nativeHubTuple(104, 64, 200, 7);
+            if (map) {
+                node.setBoolean("out", true);
+                NBTTagCompound rows = new NBTTagCompound();
+                rows.setInteger("count", 1);
+                rows.setTag("node0", node);
+                array.setTag("mBoundNodes", rows);
+            } else {
+                node.setBoolean("reinforced", true);
+                node.setBoolean("outputMode", false);
+                net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList();
+                rows.appendTag(node);
+                array.setTag("mBoundNodes", rows);
+            }
+            raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(array);
+            personal = HologramBlueprintProcessing.process(raw, completed("self"), 7, 100, 64, 200);
+            SimpleAssert.that(
+                array.getTag("mBoundNodes")
+                    .equals(
+                        HologramBlueprintNbt.decode(personal.cells.get(0).tileNbt)
+                            .getTag("mBoundNodes")),
+                "native list/map bindings preserve exact mode bytes on personal reuse");
+            shared = HologramBlueprintProcessing.process(raw, completed("share"), 7, 100, 64, 200);
+            SimpleAssert.that(
+                !HologramBlueprintNbt.decode(shared.cells.get(0).tileNbt)
+                    .hasKey("mBoundNodes"),
+                "sharing removes the complete native list/map rather than leaving zero-coordinate phantom nodes");
+            node.setByteArray("privateAsset", new byte[] { 1 });
+            raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(array);
+            expectIo(() -> HologramBlueprintResources.plan(HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt)));
+            SimpleAssert.that(
+                HologramBlueprintProcessing.state(raw, completed("self"), 7, 100, 64, 200)
+                    .getTagList("resourceBlockers", 10)
+                    .tagCount() > 0,
+                "an unparsed native binding remains removable through resource review instead of preventing the page from opening");
+        }
+    }
+
+    private static NBTTagCompound nativeHubTuple(int x, int y, int z, int dimension) {
+        NBTTagCompound tuple = new NBTTagCompound();
+        tuple.setInteger("x", x);
+        tuple.setInteger("y", y);
+        tuple.setInteger("z", z);
+        tuple.setInteger("dim", dimension);
+        return tuple;
     }
 
     private static HologramPresets.Preset source(int targetX) throws IOException {

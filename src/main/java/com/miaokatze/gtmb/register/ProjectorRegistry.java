@@ -22,10 +22,12 @@ public final class ProjectorRegistry {
     public static void registerItem() {
         projector = new ItemNekoHologramProjector();
         GameRegistry.registerItem(projector, ITEM_ID);
+        DecorationVoucherRegistry.registerItem();
     }
 
     public static void registerRecipe() {
         GameRegistry.addRecipe(createRecipe(projector, StructureLibAPI.getDefaultHologramItem()));
+        DecorationVoucherRegistry.registerRecipe();
     }
 
     public static ShapelessRecipes createRecipe(Item output, Item officialProjector) {

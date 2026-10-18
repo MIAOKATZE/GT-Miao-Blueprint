@@ -91,6 +91,20 @@ public final class HologramClient {
             minecraft.func_152344_a(() -> {
                 if (world != minecraft.theWorld || connection != minecraft.getNetHandler()
                     || retiredSessions.contains(nbt.getString("session"))) return;
+                HologramLibraryClient.INSTANCE.preparationProgress(nbt);
+                if (nbt.getBoolean("materialOrderOnly")) {
+                    HologramState ordered = HologramBackgroundTasks
+                        .materialOrderProgress(state, nbt, world, connection);
+                    if (ordered != null) {
+                        state = ordered;
+                        receivedAt = System.nanoTime();
+                        if (minecraft.currentScreen instanceof HologramScreen) {
+                            HologramScreen screen = (HologramScreen) minecraft.currentScreen;
+                            screen.ui.session.materialOrderMetadata(ordered, nbt.getLong("uiSequence"));
+                        }
+                    }
+                    return;
+                }
                 if (nbt.getBoolean("areaSelectionOnly")) {
                     syncSnapshotWorld();
                     if (validSnapshotIdentity(nbt)) {
@@ -1135,6 +1149,7 @@ public final class HologramClient {
             return;
         }
         if (!nbt.getBoolean("partial") && !nbt.getBoolean("areaSelectionOnly")) fullSnapshotRequested = false;
+        next = HologramBackgroundTasks.retainMaterialOrder(next);
         if (!same) {
             fullSnapshotRequested = false;
             rootCloseFence.clear();

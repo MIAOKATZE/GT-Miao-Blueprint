@@ -386,6 +386,16 @@ final class HologramBlueprintNbt {
         }
     }
 
+    /** Root-isolated reviews still need the complete declared native quantity/type pair. */
+    static void includeResourceCompanions(NBTTagCompound source, NBTTagCompound selected, String root) {
+        if (!HologramNativeHubData.fluidKey(root)) return;
+        for (String key : new String[] { "mSteamStored", "mWaterStored", HologramNativeHubData.TYPE })
+            if (source.hasKey(key)) selected.setTag(
+                key,
+                source.getTag(key)
+                    .copy());
+    }
+
     private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers) {
         return filter(source, keys, retainCovers, null);
     }
@@ -566,6 +576,10 @@ final class HologramBlueprintNbt {
             if (compound.hasKey(COVER_REGISTRY, 8)) result.add(compound.getString(COVER_REGISTRY));
             if (compound.hasKey("FluidName", 8)) {
                 Fluid fluid = FluidRegistry.getFluid(compound.getString("FluidName"));
+                if (fluid != null) result.add(FluidRegistry.getDefaultFluidName(fluid));
+            }
+            if (compound.hasKey("mWaterStored", 4) && compound.hasKey(HologramNativeHubData.TYPE, 8)) {
+                Fluid fluid = FluidRegistry.getFluid(compound.getString(HologramNativeHubData.TYPE));
                 if (fluid != null) result.add(FluidRegistry.getDefaultFluidName(fluid));
             }
             for (Object raw : compound.func_150296_c()) collectRegistries(compound.getTag((String) raw), result);

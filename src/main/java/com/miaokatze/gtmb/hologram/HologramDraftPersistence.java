@@ -17,7 +17,7 @@ final class HologramDraftPersistence {
     private HologramDraftPersistence() {}
 
     static void persist(HologramSession s) {
-        ItemStack held = HologramSessionPolicy.currentTool(s);
+        ItemStack held = HologramSessionPolicy.jobTool(s);
         if (held == null) return;
         HologramMaterials.write(held, s.materialSettings);
         held.getTagCompound()

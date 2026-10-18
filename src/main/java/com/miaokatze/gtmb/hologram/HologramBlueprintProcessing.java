@@ -544,6 +544,7 @@ final class HologramBlueprintProcessing {
                         root,
                         tag.getTag(root)
                             .copy());
+                    HologramBlueprintNbt.includeResourceCompanions(tag, ordinary, root);
                     try {
                         HologramBlueprintResources.plan(ordinary);
                         row.setBoolean("canCancel", true);
@@ -564,6 +565,7 @@ final class HologramBlueprintProcessing {
                         root,
                         tag.getTag(root)
                             .copy());
+                    HologramBlueprintNbt.includeResourceCompanions(tag, selected, root);
                     try {
                         HologramBlueprintResources.plan(selected);
                         if (preserved.contains(root)) {
@@ -1212,12 +1214,15 @@ final class HologramBlueprintProcessing {
             if (!full && "relative".equals(mode) && relation.internal) continue;
             List<String> hints = cellHints.get(position(relation.x, relation.y, relation.z));
             if (hints == null) continue;
-            hints.add(
-                relation.label + ("clear".equals(mode)
-                    ? "：连接已清除，放置后重新设置" + ("nc.sensor".equals(relation.adapter) ? "；传感卡的绑定、监测缓存和标题也会重置" : "")
-                    : "relative".equals(mode)
-                        ? "：随蓝图平移和旋转校准，使用放置所在维度" + (relation.internal ? "，指向本蓝图实际选中的方块" : "；目标在蓝图外，放置后确认对应位置仍有有效设备")
-                        : "：仍锚定原绝对坐标；移动和旋转蓝图不会改变此关系，请检查原目标在放置所在维度是否可用"));
+            hints
+                .add(
+                    relation.label + ("clear".equals(mode)
+                        ? "：连接已清除，放置后重新设置" + ("nc.sensor".equals(relation.adapter) ? "；传感卡的绑定、监测缓存和标题也会重置" : "")
+                        : "relative".equals(mode)
+                            ? "：随蓝图平移和旋转校准，使用放置所在维度" + (relation.internal ? "，指向本蓝图实际选中的方块" : "；目标在蓝图外，放置后确认对应位置仍有有效设备")
+                            : HologramNativeHubData.adapter(relation.adapter)
+                                ? "：仍保留原维度和绝对坐标；移动和旋转蓝图不会改变此绑定，放置后检查原设备是否可用"
+                                : "：仍锚定原绝对坐标；移动和旋转蓝图不会改变此关系，请检查原目标在放置所在维度是否可用"));
         }
         for (HologramPresets.Cell cell : preset.cells)
             cell.prompt = appendGenerated(cell.prompt, cellHints.get(position(cell.x, cell.y, cell.z)), blocks);

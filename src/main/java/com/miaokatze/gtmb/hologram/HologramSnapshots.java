@@ -334,9 +334,7 @@ final class HologramSnapshots {
             entries.appendTag(row);
         }
         state.setTag("nbtEntries", entries);
-        state.setBoolean(
-            "materialOrderingAvailable",
-            s.virtual && s.virtualPreset != null && HologramMaterialOrdering.available(s.player));
+        HologramMaterialWorkflow.writeState(s, state);
         state.setTag("blueprintResources", HologramResourcePlanner.blueprintResourceRows(s));
         state.setString("blueprintEnergyNotice", s.blueprintEnergyNotice);
         state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
@@ -453,9 +451,7 @@ final class HologramSnapshots {
         state.setBoolean("placementRetainCovers", HologramSessionPolicy.placementRetainCovers(s));
         state.setBoolean("placementNbtAll", HologramSessionPolicy.placementKeys(s) == null);
         state.setTag("placementNbtKeys", HologramSessionPolicy.nbtKeys(HologramSessionPolicy.placementKeys(s)));
-        state.setBoolean(
-            "materialOrderingAvailable",
-            !authoring && s.virtual && s.virtualPreset != null && HologramMaterialOrdering.available(s.player));
+        HologramMaterialWorkflow.writeState(s, state);
         state.setString("blueprintEnergyNotice", s.blueprintEnergyNotice);
         state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
         state.setBoolean("blueprintPreview", s.blueprintPreview);
@@ -683,6 +679,9 @@ final class HologramSnapshots {
         state.setInteger("recoveryDestination", s.materialSettings.recoveryDestination);
         state.setLong("configurationAcceptedSequence", s.configurationAcceptedSequence);
         state.setBoolean("creativeMaterials", s.player.capabilities.isCreativeMode);
+        HologramMaterialWorkflow.writeState(s, state);
+        state.setInteger("missing", s.planMissing);
+        state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
         if (s.open && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s)) s.libraryUiActive = true;
         NBTTagCompound envelope = new NBTTagCompound();
         envelope.setBoolean("progressOnly", true);

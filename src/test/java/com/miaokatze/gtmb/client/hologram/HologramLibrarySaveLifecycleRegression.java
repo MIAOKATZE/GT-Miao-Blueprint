@@ -28,9 +28,68 @@ public final class HologramLibrarySaveLifecycleRegression {
             detachedFailureAndRetry();
             confirmationAdvancesUiAcknowledgement();
             cancelledCatalogCanRefreshAgain();
+            preparationActivityIsCorrelatedAndBounded();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Blueprint save lifecycle", failure);
         }
+    }
+
+    private static void preparationActivityIsCorrelatedAndBounded() {
+        HologramSavePreparationProgress progress = new HologramSavePreparationProgress();
+        long second = java.util.concurrent.TimeUnit.SECONDS.toNanos(1);
+        NBTTagCompound event = new NBTTagCompound();
+        event.setLong("clientTaskToken", 17);
+        event.setString("session", "source");
+        event.setLong("uiSequence", 23);
+        event.setLong("planRevision", 31);
+        event.setString("phase", "snapshot.prepare");
+        event.setString("detail", "cells");
+        event.setLong("done", 250);
+        event.setLong("total", 1000);
+        event.setString("unit", "rows");
+        SimpleAssert.that(progress.receive(event, 17, "source", 23, 31, second), "current preparation is admitted");
+        SimpleAssert.eq(
+            25,
+            progress.view(second)
+                .percent(),
+            "the actual completed rows drive the preparation bar");
+        SimpleAssert.that(!progress.receive(event, 18, "source", 23, 31, 5 * second), "late task cannot extend retry");
+        SimpleAssert
+            .that(!progress.receive(event, 17, "other", 23, 31, 5 * second), "foreign session cannot keep save alive");
+        SimpleAssert.that(
+            !progress.receive(event, 17, "source", 24, 31, 5 * second),
+            "old confirmation cannot extend current save");
+        SimpleAssert.that(
+            !progress.receive(event, 17, "source", 23, 32, 5 * second),
+            "another revision cannot extend current save");
+        event.setLong("done", 500);
+        SimpleAssert.that(
+            progress.receive(event, 17, "source", 23, 31, 150 * second),
+            "real preparation may exceed 120 seconds");
+        SimpleAssert.eq(
+            50,
+            progress.view(150 * second)
+                .percent(),
+            "later completed rows remain visible");
+        SimpleAssert.that(
+            progress.receive(event, 17, "source", 23, 31, 200 * second),
+            "matching worker heartbeat covers a bounded atomic step");
+        HologramLibraryClient.SaveProgress deadline = new HologramLibraryClient.SaveProgress();
+        deadline.begin(second, true);
+        deadline.preparation(100 * second);
+        deadline.preparation(200 * second);
+        SimpleAssert.that(
+            !deadline.waitingExpired(250 * second) && !deadline.idleExpired(250 * second),
+            "matching preparation activity keeps the exact source wait alive beyond 120 seconds");
+        SimpleAssert.that(
+            deadline.waitingExpired(321 * second) && deadline.idleExpired(321 * second),
+            "real source and transport loss expire after 120 seconds without correlated activity");
+        SimpleAssert.that(
+            !progress.receive(event, 17, "source", 23, 31, 751 * second),
+            "unchanged heartbeat cannot hide a stalled worker forever");
+        progress.clear();
+        SimpleAssert
+            .that(progress.view(800 * second) == null, "retired preparation leaves no progress in a later task");
     }
 
     private static void confirmationAdvancesUiAcknowledgement() throws ReflectiveOperationException {

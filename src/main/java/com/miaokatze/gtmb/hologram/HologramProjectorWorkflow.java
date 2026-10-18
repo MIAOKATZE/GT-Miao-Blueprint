@@ -16,6 +16,13 @@ final class HologramProjectorWorkflow {
             return;
         }
         if (previous != null && previous.player == player
+            && !previous.cancelled
+            && (previous.job == 1 || previous.job == 2 || HologramAeCraftingOrders.active(player))
+            && HologramSessionPolicy.jobValid(previous)) {
+            openAir(player);
+            return;
+        }
+        if (previous != null && previous.player == player
             && !previous.virtual
             && !previous.cancelled
             && previous.x == x
@@ -53,7 +60,9 @@ final class HologramProjectorWorkflow {
         }
         if (previous != null && (previous.job == 1 || previous.job == 2)) {
             previous.job = 4;
-            HologramSession.clearPending(previous);
+            previous.phase = "STOPPED";
+            previous.status = "施工已停止：" + HologramSessionPolicy.jobInvalidReason(previous) + "；已施工方块保留";
+            HologramSnapshots.sendStoppedJob(previous);
         }
         HologramSession session = HologramWorkspace.create(player, x, y, z, true, side);
         HologramWorkspace.activate(player.getUniqueID(), session);
@@ -67,12 +76,22 @@ final class HologramProjectorWorkflow {
 
     static void openAir(EntityPlayerMP player) {
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
+        if (previous != null && previous.player == player
+            && !previous.cancelled
+            && HologramAeCraftingOrders.active(player)
+            && HologramSessionPolicy.jobValid(previous)) {
+            previous.open = true;
+            previous.settingsOnly = false;
+            previous.openPurpose = "placementReview";
+            HologramSnapshots.sendUi(previous);
+            return;
+        }
         if (openPlacementReview(previous, player)) return;
         if (previous != null && previous.player == player
             && !previous.cancelled
             && previous.job != 4
             && (previous.target != null || previous.virtual)
-            && HologramSessionPolicy.valid(previous)) {
+            && HologramSessionPolicy.tickValid(previous)) {
             previous.open = true;
             previous.settingsOnly = false;
             dismissPresetBrowse(previous);
@@ -95,7 +114,7 @@ final class HologramProjectorWorkflow {
         if (openPlacementReview(previous, player)) return;
         if (previous != null && previous.player == player
             && !previous.cancelled
-            && HologramSessionPolicy.valid(previous)
+            && HologramSessionPolicy.tickValid(previous)
             && (previous.job == 1 || previous.job == 2)) {
             openAir(player);
             return;
@@ -144,7 +163,10 @@ final class HologramProjectorWorkflow {
             s.cancelled = false;
             return s;
         }
-        if (s == null || s.player != player || s.cancelled || !HologramSessionPolicy.valid(s)) {
+        if (s == null || s.player != player
+            || s.cancelled
+            || !(HologramAeCraftingOrders.active(player) ? HologramSessionPolicy.jobValid(s)
+                : HologramSessionPolicy.tickValid(s))) {
             if (s != null) HologramWorkspace.clearAreaSelection(s);
             s = HologramWorkspace.create(
                 player,
@@ -160,6 +182,13 @@ final class HologramProjectorWorkflow {
 
     static void openSettings(EntityPlayerMP player) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
+        if (s != null && s.player == player
+            && !s.cancelled
+            && (s.job == 1 || s.job == 2 || HologramAeCraftingOrders.active(player))
+            && HologramSessionPolicy.jobValid(s)) {
+            openAir(player);
+            return;
+        }
         if (s == null || s.player != player
             || (s.cancelled || !HologramSessionPolicy.valid(s)) && !(HologramWorkspace.areaSessionOwned(s)
                 && HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s))) {
@@ -175,7 +204,7 @@ final class HologramProjectorWorkflow {
 
     static void cancel(EntityPlayerMP player) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
-        if (s == null || s.player != player || !HologramSessionPolicy.valid(s)) return;
+        if (s == null || s.player != player || !HologramSessionPolicy.tickValid(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) {
             HologramAreaWorkflow.cancelAreaImport(s);
             HologramSnapshots.send(s);

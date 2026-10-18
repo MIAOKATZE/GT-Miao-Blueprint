@@ -42,6 +42,7 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if (HologramMaterialWorkflow.action(s, action, op)) return;
         HologramLibraryWorkflow.captureClientTaskToken(s, action);
         if ("refreshPresetLibrary".equals(op)) {
             if (HologramSessionPolicy.valid(s)) HologramLibraryWorkflow.refreshPresetLibrary(s);
@@ -61,7 +62,9 @@ final class HologramActionDispatcher {
             return;
         }
         if ("close".equals(op)) HologramAuthoringWorkflow.clearSourceSwitch(s);
-        if (!HologramSessionPolicy.valid(s)) {
+        boolean runningControl = (s.job == 1 || s.job == 2 || HologramAeCraftingOrders.active(player))
+            && ("close".equals(op) || "pause".equals(op) || "resume".equals(op) || "cancel".equals(op));
+        if (!(runningControl ? HologramSessionPolicy.jobValid(s) : HologramSessionPolicy.valid(s))) {
             if (!HologramWorkspace.areaSessionOwned(s)) HologramWorkspace.clearAreaSelection(s);
             s.job = 4;
             HologramSession.cancelCaptureRetry(s);
@@ -101,7 +104,7 @@ final class HologramActionDispatcher {
             HologramProjectorWorkflow.libraryCloseUi(s);
             s.settingsOnly = false;
             s.forcePlacementReady = false;
-            HologramDraftPersistence.persist(s);
+            if (!runningControl) HologramDraftPersistence.persist(s);
             HologramSnapshots.sendUi(s);
             return;
         }

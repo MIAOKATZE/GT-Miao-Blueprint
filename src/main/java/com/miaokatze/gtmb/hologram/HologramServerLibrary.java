@@ -25,7 +25,6 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 
@@ -46,6 +45,7 @@ final class HologramServerLibrary {
     private volatile HologramLibraryConfig config;
     private volatile boolean closed;
     private volatile boolean ready;
+    private volatile long runtimeEpoch;
     private volatile String loadFailure;
     private long storedBytes, reservedBytes, downloadBytes, catalogRevision = 1;
     private int activeDownloads;
@@ -622,11 +622,7 @@ final class HologramServerLibrary {
     }
 
     static byte[] encodeShare(HologramPresets.Preset blueprint) throws IOException {
-        JsonObject share = new JsonObject();
-        share.addProperty("schema", 2);
-        share.add("blueprint", GSON.toJsonTree(blueprint));
-        HologramBlueprintVersions.validate(blueprint);
-        return HologramBlueprintSharing.encodeBounded(GSON, share, HologramBlueprintSharing.MAX_BYTES);
+        return HologramDraftEncoding.encode(blueprint, (done, total) -> {});
     }
 
     synchronized void draft(EntityPlayerMP player, NBTTagCompound request, byte[] bytes, String name)
@@ -653,17 +649,64 @@ final class HologramServerLibrary {
             }
         }
         HologramPresets.Preset detached = HologramPresets.copy(preset);
+        long epoch = runtimeEpoch;
+        NBTTagCompound identity = (NBTTagCompound) request.copy();
+        HologramSession session = HologramWorkspace.find(player.getUniqueID());
+        if (session == null || !session.id.equals(identity.getString("session"))
+            || session.planRevision != identity.getLong("planRevision"))
+            throw new IOException("Blueprint preparation source changed");
+        identity.setLong("uiSequence", session.uiSequence);
         if (!enqueue(() -> {
+            long[] lastProgress = { Long.MIN_VALUE };
             try {
-                HologramLibraryFacade.draftPrepared(player, request, encodeShare(detached), detached.name);
+                byte[] encoded = HologramDraftEncoding.encode(detached, (done, total) -> {
+                    if (epoch != runtimeEpoch || closed) throw new IOException("Blueprint preparation retired");
+                    long now = System.nanoTime();
+                    if (done != 0 && done != total
+                        && lastProgress[0] != Long.MIN_VALUE
+                        && now - lastProgress[0] < TimeUnit.MILLISECONDS.toNanos(250)) return;
+                    lastProgress[0] = now;
+                    NBTTagCompound progress = (NBTTagCompound) identity.copy();
+                    progress.setString("op", "preparationProgress");
+                    progress.setString("phase", "snapshot.prepare");
+                    progress.setString("detail", "export_json");
+                    progress.setLong("done", done);
+                    progress.setLong("total", total);
+                    progress.setString("unit", "rows");
+                    HologramNetwork.sendLibraryReply(player, progress);
+                });
+                if (epoch == runtimeEpoch && !closed)
+                    HologramLibraryFacade.draftPrepared(player, identity, encoded, detached.name);
             } catch (IOException | RuntimeException failure) {
-                HologramLibraryFacade.draftPreparationFailed(player, request, failure.getMessage());
+                if (epoch == runtimeEpoch && !closed)
+                    HologramLibraryFacade.draftPreparationFailed(player, identity, failure.getMessage());
             }
         })) throw new IOException("Server library worker is busy; retry");
     }
 
     boolean enqueue(Runnable task) {
-        return !closed && tasks.offer(task);
+        long epoch = runtimeEpoch;
+        return !closed && tasks.offer(() -> { if (epoch == runtimeEpoch && !closed) task.run(); });
+    }
+
+    /** Retire capabilities immediately; serialize temporary-file cleanup with the existing writer. */
+    synchronized void restartRuntime() {
+        runtimeEpoch++;
+        List<Peer> retired = new ArrayList<>(peers.values());
+        for (Peer peer : retired) {
+            peer.online = false;
+            peer.pendingDraft = null;
+            if (peer.upload != null) peer.upload.valid = false;
+            if (peer.download != null) peer.download.valid = false;
+        }
+        peers.clear();
+        tasks.clear();
+        worker.execute(() -> {
+            for (Peer peer : retired) {
+                abort(peer);
+                clearDownload(peer);
+            }
+        });
     }
 
     void changeConfig(boolean admin, long revision, int up, int down, int max) throws IOException {

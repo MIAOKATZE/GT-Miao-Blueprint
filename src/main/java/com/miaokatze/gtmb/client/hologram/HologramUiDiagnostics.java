@@ -340,6 +340,7 @@ final class HologramUiDiagnostics {
         result.setBoolean("hatchDrawer", ui.config.hatchDrawer());
         result.setBoolean("drawer", ui.config.drawer());
         result.setBoolean("confirmation", ui.review.confirmation());
+        result.setTag("materialDialog", ui.review.materialDialogProbeState());
         result.setIntArray(
             "confirmationBounds",
             ui.review.confirmation() ? ui.review.lastConfirmationBounds() : new int[0]);
@@ -423,6 +424,8 @@ final class HologramUiDiagnostics {
     }
 
     int[] smokeControlPoint(int id) {
+        int[] material = ui.review.materialControlPoint(id);
+        if (material != null) return material;
         for (Control c : ui.canvas.controls())
             if (c.id == id) return new int[] { ui.canvas.originX() + Math.round((c.x + c.w / 2F) * ui.canvas.scale()),
                 ui.canvas.originY() + Math.round((c.y + c.h / 2F) * ui.canvas.scale()) };
@@ -527,6 +530,7 @@ final class HologramUiDiagnostics {
     }
 
     boolean drawnControlEnabled(int id) {
+        if (ui.review.materialDialogOpen()) return ui.review.materialControlEnabled(id);
         for (Control control : ui.canvas.controls()) if (control.id == id && control.enabled) return true;
         return false;
     }
@@ -1023,7 +1027,7 @@ final class HologramUiDiagnostics {
         HologramMuiProbeInput.renderFixture(ui.host.parent(), 0, 0, 0);
         ui.diagnostics.smokeControlPoint(55);
         ui.diagnostics.smokeControlPoint(168);
-        ui.diagnostics.smokeControlPoint(169);
+        if (!ui.review.materialDialogOpen()) throw new IllegalStateException("Independent material dialog is not open");
         boolean force = HologramPlacementConfirmation
             .forceReview(ui.session.state().data, ui.review.confirmedRevision());
         if (!force && (!ui.review.lastConfirmationTitle()

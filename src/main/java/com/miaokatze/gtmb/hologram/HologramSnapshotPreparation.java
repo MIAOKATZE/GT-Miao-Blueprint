@@ -153,9 +153,11 @@ final class HologramSnapshotPreparation {
         boolean structureValid = true, structureFound;
         final Map<HologramBlueprintResources.ExactKey, NBTTagCompound> requirements = new LinkedHashMap<>();
         Iterator<NBTTagCompound> materialIterator;
+        HologramMaterialQuote.QuoteCounter materialStock;
         int stage, index, protectedCount, missing, total, workTotal, recoveryRows, recoveryItems;
         boolean encoding;
         long lastTick = Long.MIN_VALUE;
+        long lastDone = -1, lastTotal = -1;
         String lastDetail = "";
 
         Task(HologramSession s, HologramNetwork.SnapshotTicket ticket) {
@@ -277,8 +279,11 @@ final class HologramSnapshotPreparation {
             while (stage >= 2 && stage <= 8 && index >= stageTotal()) {
                 stage++;
                 index = 0;
-                if (stage == 7) materialIterator = requirements.values()
-                    .iterator();
+                if (stage == 7) {
+                    materialIterator = requirements.values()
+                        .iterator();
+                    materialStock = new HologramMaterialQuote.QuoteCounter(s, requirements.values());
+                }
             }
             if (stage == 2) HologramLocalPlanRefresh.snapshotSeedDefaults(s, index++);
             else if (stage == 3) HologramLocalPlanRefresh.snapshotSeedSource(s, index++);
@@ -289,8 +294,11 @@ final class HologramSnapshotPreparation {
                 if (!s.player.capabilities.isCreativeMode) addResource(content);
             } else if (stage == 7) {
                 NBTTagCompound req = materialIterator.next();
+                quoteMaterial(req);
                 materials.appendTag(req);
-                missing += Math.max(0, req.getInteger("required") - req.getInteger("available"));
+                missing = (int) Math.min(
+                    Integer.MAX_VALUE,
+                    (long) missing + Math.max(0L, req.getLong("required") - req.getLong("available")));
                 index++;
             } else if (stage == 8) {
                 ItemStack drop = s.recovered.get(index++);
@@ -349,25 +357,10 @@ final class HologramSnapshotPreparation {
                 if (req == null) {
                     req = new NBTTagCompound();
                     stack.writeToNBT(req);
-                    req.setInteger(
-                        "available",
-                        HologramMaterialAccess.shellCount(s, stack, Math.max(4096, s.capture.cells.size())));
-                    req.setInteger(
-                        "mainAvailable",
-                        HologramMaterialAccess.materialSource(s)
-                            .mainCount(stack, Math.max(4096, s.capture.cells.size())));
-                    req.setInteger(
-                        "controllerAvailable",
-                        s.target instanceof net.minecraft.inventory.IInventory
-                            && ((net.minecraft.inventory.IInventory) s.target).isUseableByPlayer(s.player)
-                                ? HologramMaterials.controllerCount(
-                                    (net.minecraft.inventory.IInventory) s.target,
-                                    stack,
-                                    Math.max(4096, s.capture.cells.size()))
-                                : -1);
                     requirements.put(HologramValues.stackKey(stack), req);
                 }
-                req.setInteger("required", req.getInteger("required") + 1);
+                req.setLong("required", Math.addExact(req.getLong("required"), 1L));
+                req.setLong("shellRequired", Math.addExact(req.getLong("shellRequired"), 1L));
             }
             if (observed.inScope && "pending".equals(c.status) && s.mode != 2 && !s.player.capabilities.isCreativeMode)
                 for (ItemStack cover : HologramCellPolicy.coverCosts(s, c)) {
@@ -375,18 +368,10 @@ final class HologramSnapshotPreparation {
                     NBTTagCompound requirement = requirements.get(key);
                     if (requirement == null) {
                         requirement = cover.writeToNBT(new NBTTagCompound());
-                        requirement.setInteger(
-                            "available",
-                            HologramMaterialAccess.materialSource(s)
-                                .count(cover, Math.max(4096, s.capture.cells.size() * 6)));
-                        requirement.setInteger(
-                            "mainAvailable",
-                            HologramMaterialAccess.materialSource(s)
-                                .mainCount(cover, Math.max(4096, s.capture.cells.size() * 6)));
-                        requirement.setInteger("controllerAvailable", -1);
                         requirements.put(HologramValues.stackKey(cover), requirement);
                     }
-                    requirement.setInteger("required", requirement.getInteger("required") + 1);
+                    requirement.setLong("required", Math.addExact(requirement.getLong("required"), 1L));
+                    requirement.setLong("exactRequired", Math.addExact(requirement.getLong("exactRequired"), 1L));
                 }
             if (observed.inScope && "pending".equals(c.status)
                 && !HologramCellPolicy.orientationOnly(s, c, index)
@@ -410,18 +395,29 @@ final class HologramSnapshotPreparation {
                 ItemStack identity = content.copy();
                 identity.stackSize = 1;
                 requirement = identity.writeToNBT(new NBTTagCompound());
-                requirement.setInteger(
-                    "available",
-                    HologramMaterialAccess.materialSource(s)
-                        .count(identity, Math.max(4096, content.stackSize)));
-                requirement.setInteger(
-                    "mainAvailable",
-                    HologramMaterialAccess.materialSource(s)
-                        .mainCount(identity, Math.max(4096, content.stackSize)));
-                requirement.setInteger("controllerAvailable", -1);
                 requirements.put(HologramValues.stackKey(content), requirement);
             }
-            requirement.setInteger("required", requirement.getInteger("required") + content.stackSize);
+            requirement.setLong("required", Math.addExact(requirement.getLong("required"), (long) content.stackSize));
+            requirement.setLong(
+                "exactRequired",
+                Math.addExact(requirement.getLong("exactRequired"), (long) content.stackSize));
+        }
+
+        void quoteMaterial(NBTTagCompound row) {
+            ItemStack identity = ItemStack.loadItemStackFromNBT(row);
+            int required = (int) Math.min(Integer.MAX_VALUE, Math.max(4096L, row.getLong("required")));
+            row.setLong("available", materialStock.count(row));
+            row.setInteger(
+                "mainAvailable",
+                HologramMaterialAccess.materialSource(s)
+                    .mainCount(identity, required));
+            row.setInteger(
+                "controllerAvailable",
+                row.getLong("shellRequired") > 0 && s.target instanceof net.minecraft.inventory.IInventory
+                    && ((net.minecraft.inventory.IInventory) s.target).isUseableByPlayer(s.player)
+                        ? HologramMaterials
+                            .controllerCount((net.minecraft.inventory.IInventory) s.target, identity, required)
+                        : -1);
         }
 
         void finish() {
@@ -441,7 +437,12 @@ final class HologramSnapshotPreparation {
                         && structureFound));
             state.setInteger("cellCount", cells.tagCount());
             state.setTag("cells", cells);
-            if (!draftOnly) state.setTag("materials", materials);
+            if (!draftOnly) {
+                state.setTag("materials", materials);
+                state.setTag(
+                    "materialQuote",
+                    HologramMaterialQuote.snapshot(s, materials, state.getTagList("blueprintResources", 10)));
+            }
             state.setBoolean("planIncomplete", s.localPlanPending);
             state.setBoolean("quotesIncomplete", draftOnly);
             if (draftOnly) {
@@ -477,14 +478,17 @@ final class HologramSnapshotPreparation {
             if (!force && detail.equals(lastDetail)
                 && lastTick != Long.MIN_VALUE
                 && tick >= lastTick
-                && tick - lastTick < 5) return;
+                && tick - lastTick < (done == lastDone && total == lastTotal ? 20 : 5)) return;
             lastTick = tick;
             lastDetail = detail;
+            lastDone = done;
+            lastTotal = total;
             NBTTagCompound progress = new NBTTagCompound();
             progress.setString("scope", "server");
             progress.setString("session", session);
             progress.setLong("planRevision", revision);
             progress.setLong("uiSequence", ui);
+            progress.setLong("clientTaskToken", s.blueprintClientTaskToken);
             progress.setString("phase", phase);
             progress.setString("detail", detail);
             progress.setLong("done", done);

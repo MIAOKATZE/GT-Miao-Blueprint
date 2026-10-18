@@ -67,6 +67,7 @@ public final class HologramNativePlacementSmoke {
                 + player.inventoryContainer.inventorySlots.size());
         detachedReportingParts();
         basicMachineFacingRestore(world, player);
+        if (Boolean.getBoolean("gtmb.v0115.largeGtJob")) largeBackgroundGtJob(world, player);
         idleAeHosts();
         stateAndControllerPlacement(world, player);
         rfSchema();
@@ -664,7 +665,10 @@ public final class HologramNativePlacementSmoke {
                             + " selectedSlot="
                             + player.inventory.currentItem
                             + " result=PASS"
-                            + " originalCandidateOmitted=true job="
+                            + " originalCandidateOmitted="
+                            + target.structureTargets.stream()
+                                .noneMatch(option -> HologramValues.sameMaterial(option, primary))
+                            + " job="
                             + s.job
                             + " placed="
                             + s.completed);
@@ -673,6 +677,180 @@ public final class HologramNativePlacementSmoke {
         } finally {
             player.inventory.currentItem = originalSlot;
             player.capabilities.isCreativeMode = originalCreative;
+        }
+    }
+
+    /** Opt-in 64k real transaction contract; stays inside the disposable smoke world. */
+    private static void largeBackgroundGtJob(WorldServer world, EntityPlayerMP player) throws Exception {
+        final int count = 64000, controllers = 100, x = 800, y = 96, z = 800;
+        int originalSlot = player.inventory.currentItem;
+        boolean originalCreative = player.capabilities.isCreativeMode;
+        double oldX = player.posX, oldY = player.posY, oldZ = player.posZ;
+        net.minecraft.inventory.Container originalContainer = player.openContainer;
+        HologramSession previousWorkspace = HologramWorkspace.find(player.getUniqueID());
+        Block machines = gregtech.api.GregTechAPI.sBlockMachines;
+        List<Integer> ids = new ArrayList<>(java.util.Arrays.asList(1000, 51));
+        for (int id = 1; id < gregtech.api.GregTechAPI.METATILEENTITIES.length; id++) {
+            gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+            if (prototype instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase
+                && id != 1000) {
+                ids.add(id);
+                break;
+            }
+        }
+        require(ids.size() == 3, "large_gt_second_native_controller_registered");
+        try {
+            player.inventory.currentItem = 0;
+            player.capabilities.isCreativeMode = true;
+            for (int cx = (x - 32) >> 4; cx <= (x + 40) >> 4; cx++)
+                for (int cz = z >> 4; cz <= (z + 40) >> 4; cz++) world.theChunkProviderServer.loadChunk(cx, cz);
+            ItemStack stone = new ItemStack(net.minecraft.init.Blocks.stone);
+            HologramCapture.Cell seed = cell(net.minecraft.init.Blocks.stone, 0, new NBTTagCompound(), stone, x, y, z);
+            HologramSession s = (HologramSession) session(player, seed, stone);
+            s.capture.cells.clear();
+            s.capture.positions.clear();
+            s.pins.clear();
+            s.planTargets.clear();
+            s.virtualPreset.cells.clear();
+            s.virtualPreset.id = "large_gt_background_fixture";
+            s.virtualPreset.name = "64k mixed GT background";
+            s.virtualPreset.controllerId = -1; // Composite area: each controller restores its own captured state.
+            s.virtualPreset.retainNbt = true;
+            s.virtualPlacement = s.virtualLocked = true;
+            List<NBTTagCompound> states = new ArrayList<>();
+            for (int i = 0; i < ids.size(); i++) {
+                ItemStack material = new ItemStack(machines, 1, ids.get(i));
+                int sourceX = x - 24 + i * 4;
+                require(world.isAirBlock(sourceX, y, z), "large_gt_fresh_source_" + i);
+                require(
+                    ((gregtech.common.blocks.ItemMachines) material.getItem())
+                        .placeBlockAt(material, player, world, sourceX, y, z, 1, .5F, .5F, .5F, 0),
+                    "large_gt_native_source_" + i);
+                ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) world.getTileEntity(sourceX, y, z))
+                    .setFrontFacing(net.minecraftforge.common.util.ForgeDirection.NORTH);
+                states.add(snapshot(world.getTileEntity(sourceX, y, z)));
+            }
+            for (int i = 0; i < count; i++) {
+                int px = x + i % 40, py = y + i / 1600, pz = z + i / 40 % 40;
+                if (!world.isAirBlock(px, py, pz)) throw new AssertionError("large_gt_fresh_destination_" + i);
+                int sourceKind = i < controllers ? (i % 2 == 0 ? 0 : 2) : i == controllers ? 1 : -1;
+                ItemStack material = sourceKind >= 0 ? new ItemStack(machines, 1, ids.get(sourceKind)) : stone;
+                HologramCapture.Cell c;
+                if (sourceKind >= 0) c = cell(
+                    machines,
+                    world.getBlockMetadata(x - 24 + sourceKind * 4, y, z),
+                    states.get(sourceKind),
+                    material,
+                    px,
+                    py,
+                    pz);
+                else {
+                    c = new HologramCapture.Cell(null, px, py, pz);
+                    c.block = net.minecraft.init.Blocks.stone;
+                    c.blueprintBlock = "minecraft:stone";
+                    c.blueprintItem = "minecraft:stone";
+                    c.role = "prefab";
+                    c.userPosition = true;
+                }
+                if (i < controllers) c.role = "templateController";
+                s.capture.cells.add(c);
+                s.capture.positions.put(HologramValues.position(c), c);
+                s.pins.put(i, material.copy());
+                s.planTargets.add(material.copy());
+                s.work.add(i);
+                s.expectedBlocks.add(net.minecraft.init.Blocks.air);
+                s.expectedMeta.add(0);
+                s.expectedTiles.add(null);
+                s.expectedFacings.add(-1);
+                if (sourceKind >= 0) s.planFacings.put(i, 2);
+            }
+            HologramPlacementJobs.controllerWorkLast(s);
+            require(
+                s.work.get(count - controllers) == 0 && s.work.get(count - 1) == controllers - 1,
+                "large_gt_mixed_controllers_are_last");
+            player.setPosition(x + .5, y, z + .5);
+            require(HologramSessionPolicy.valid(s), "large_gt_position_admitted_near_anchor");
+            s.job = 1;
+            HologramWorkspace.activate(player.getUniqueID(), s);
+            int ticks = 0;
+            boolean walked = false;
+            while (s.job == 1 && ticks++ < count + 100) {
+                if (!walked && s.cursor > 0) {
+                    player.setPosition(x + 160, y, z + .5);
+                    player.inventory.currentItem = 8;
+                    walked = true;
+                    require(
+                        !HologramSessionPolicy.valid(s) && HologramSessionPolicy.jobValid(s),
+                        "large_gt_walk_and_hotbar_change_keep_only_runtime_authority");
+                    player.openContainer = player.inventoryContainer;
+                    NBTTagCompound lifecycle = new NBTTagCompound();
+                    lifecycle.setString("session", s.id);
+                    lifecycle.setString("op", "close");
+                    HologramService.handle(player, lifecycle);
+                    require(
+                        s.job == 1 && HologramWorkspace.find(player.getUniqueID()) == s,
+                        "large_gt_actual_close_keeps_admitted_job");
+                    long openingSequence = s.areaSelectionSequence;
+                    HologramProjectorWorkflow.openAir(player);
+                    require(
+                        s.areaSelectionSequence > openingSequence && s.job == 1
+                            && HologramWorkspace.find(player.getUniqueID()) == s,
+                        "large_gt_reopen_keeps_same_session_beyond_reach");
+                    lifecycle.setString("op", "pause");
+                    HologramService.handle(player, lifecycle);
+                    require(s.job == 2, "large_gt_actual_pause_beyond_reach");
+                    int pausedCursor = s.cursor;
+                    HologramPlacementJobs.tickJob(s);
+                    require(s.cursor == pausedCursor, "large_gt_paused_job_does_not_mutate_world");
+                    lifecycle.setString("op", "resume");
+                    HologramService.handle(player, lifecycle);
+                    require(s.job == 1, "large_gt_actual_resume_beyond_reach");
+                    lifecycle.setString("op", "close");
+                    HologramService.handle(player, lifecycle);
+                    HologramSnapshotPreparation.cancel(s);
+                    s.open = false;
+                }
+                if (s.cursor < count - controllers) {
+                    if (!world.isAirBlock(x, y, z) || !world.isAirBlock(x + 2, y, z))
+                        throw new AssertionError("large_gt_controllers_not_placed_before_body");
+                    if (ticks <= 2) s.stopTick = true; // Walk between genuine slices before either controller.
+                }
+                HologramPlacementJobs.tickJob(s);
+            }
+            require(walked && s.job == 3 && s.completed == count, "large_gt_64000_actual_transactions_complete");
+            for (int i = 0; i < count; i++) {
+                HologramCapture.Cell c = s.capture.cells.get(i);
+                if (!"placed".equals(c.status) || world.getBlock(c.x, c.y, c.z) != c.block)
+                    throw new AssertionError("large_gt_actual_world_cell_" + i);
+                if (i <= controllers) {
+                    int sourceKind = i < controllers ? (i % 2 == 0 ? 0 : 2) : 1;
+                    gregtech.api.interfaces.tileentity.IGregTechTileEntity gt = (gregtech.api.interfaces.tileentity.IGregTechTileEntity) world
+                        .getTileEntity(c.x, c.y, c.z);
+                    require(
+                        gt.getMetaTileID() == ids.get(sourceKind) && gt.getFrontFacing()
+                            .ordinal() == 2,
+                        "large_gt_final_identity_and_facing_" + i);
+                }
+            }
+            System.out.println(
+                PREFIX + "LARGE BACKGROUND GT CONTRACT cells="
+                    + count
+                    + " controllers="
+                    + controllers
+                    + " ticks="
+                    + ticks
+                    + " walkedBeyondPreviewReach=true selectedSlot=8 closeReopenPauseResume=true result=PASS");
+        } finally {
+            if (previousWorkspace != null) HologramWorkspace.activate(player.getUniqueID(), previousWorkspace);
+            else {
+                Field sessions = HologramWorkspace.class.getDeclaredField("SESSIONS");
+                sessions.setAccessible(true);
+                ((Map<?, ?>) sessions.get(null)).remove(player.getUniqueID());
+            }
+            player.inventory.currentItem = originalSlot;
+            player.capabilities.isCreativeMode = originalCreative;
+            player.openContainer = originalContainer;
+            player.setPosition(oldX, oldY, oldZ);
         }
     }
 

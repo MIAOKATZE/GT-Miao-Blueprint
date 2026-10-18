@@ -56,6 +56,50 @@ public final class HologramLibraryRegression {
         directoryLayout();
         brokenStorageFailsClosed();
         permissions();
+        streamingDraftProgress();
+    }
+
+    private static void streamingDraftProgress() throws Exception {
+        HologramPresets.Preset source = blueprint();
+        HologramBlueprintVersions.stampSaved(source);
+        for (int index = 0; index < 1024; index++) {
+            HologramPresets.Cell cell = new HologramPresets.Cell();
+            cell.x = index;
+            cell.block = "minecraft:stone";
+            source.cells.add(cell);
+        }
+        long total = (long) source.cells.size() + source.palette.size();
+        long[] observed = { -1, 0 };
+        byte[] encoded = HologramDraftEncoding.encode(source, (done, count) -> {
+            SimpleAssert.eq(total, count, "stream total includes both cell collections without another traversal");
+            SimpleAssert.that(done >= observed[0] && done <= count, "actual streamed rows progress monotonically");
+            observed[0] = done;
+            observed[1]++;
+        });
+        SimpleAssert.eq(total, observed[0], "all actual streamed rows reach completion");
+        SimpleAssert.that(observed[1] >= total, "long exports checkpoint as cells serialize");
+        com.google.gson.JsonObject envelope = new com.google.gson.JsonParser()
+            .parse(new String(encoded, java.nio.charset.StandardCharsets.UTF_8))
+            .getAsJsonObject();
+        SimpleAssert.eq(
+            2,
+            envelope.get("schema")
+                .getAsInt(),
+            "stream retains native share envelope");
+        SimpleAssert.eq(
+            source.cells.size(),
+            envelope.getAsJsonObject("blueprint")
+                .getAsJsonArray("cells")
+                .size(),
+            "stream does not truncate blueprint content");
+        SimpleAssert.eq(
+            new com.google.gson.Gson().toJsonTree(source),
+            envelope.get("blueprint"),
+            "stream retains every field and NBT string of the reviewed blueprint");
+        denied(
+            () -> HologramDraftEncoding
+                .encode(source, (done, count) -> { if (done > 128) throw new IOException("retired preparation"); }),
+            "retired export stops at the next serialized cell checkpoint");
     }
 
     private static void protocolAndThrottle() throws Exception {
@@ -863,7 +907,9 @@ public final class HologramLibraryRegression {
     }
 
     private static void ownershipAndPublishing() throws Exception {
-        Path directory = Files.createTempDirectory("gtmb-library-store-");
+        Path build = java.nio.file.Paths.get("build");
+        Files.createDirectories(build);
+        Path directory = Files.createTempDirectory(build, "gtmb-library-store-");
         HologramServerLibrary store = new HologramServerLibrary(
             directory.resolve("entries"),
             directory.resolve("library.cfg"));
@@ -902,6 +948,7 @@ public final class HologramLibraryRegression {
             delete.setString("id", savedId);
             denied(() -> runWorker(store, () -> handle(store, otherPeer, delete)), "other player cannot delete");
             SimpleAssert.that(store.get(savedId) != null, "denied deletion preserves entry");
+            runtimeRestartPreservesCommittedLibrary(store, directory.resolve("entries/" + savedId + ".json"), savedId);
             runWorker(store, () -> handle(store, ownPeer, delete));
             SimpleAssert.that(store.get(savedId) == null, "owner can delete own upload");
             SimpleAssert.that(
@@ -917,6 +964,39 @@ public final class HologramLibraryRegression {
             }
         } finally {
             store.stop();
+        }
+    }
+
+    private static void runtimeRestartPreservesCommittedLibrary(HologramServerLibrary store, Path artifact, String id)
+        throws Exception {
+        byte[] before = Files.readAllBytes(artifact);
+        Object published = get(store, "published"), worker = get(store, "worker");
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean obsolete = new java.util.concurrent.atomic.AtomicBoolean();
+        ((java.util.concurrent.Executor) worker).execute(() -> {
+            entered.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException failure) {
+                Thread.currentThread()
+                    .interrupt();
+            }
+        });
+        try {
+            SimpleAssert.that(entered.await(10, TimeUnit.SECONDS), "the real library worker is held before reset");
+            SimpleAssert.that(store.enqueue(() -> obsolete.set(true)), "old generation callback is admitted");
+            store.restartRuntime();
+            SimpleAssert.that(get(store, "worker") == worker, "runtime reset retains a single serialized writer");
+            SimpleAssert.that(get(store, "published") == published, "runtime reset retains the authoritative catalog");
+            release.countDown();
+            runWorker(store, () -> {});
+            SimpleAssert.that(!obsolete.get(), "retired queued work cannot run after runtime reset");
+            SimpleAssert.that(
+                store.get(id) != null && Arrays.equals(before, Files.readAllBytes(artifact)),
+                "new work is admitted while committed blueprint bytes remain unchanged");
+        } finally {
+            release.countDown();
         }
     }
 

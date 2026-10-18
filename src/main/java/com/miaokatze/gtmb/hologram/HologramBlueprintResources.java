@@ -556,10 +556,19 @@ public final class HologramBlueprintResources {
                     if (entry.item != null) {
                         row.setString("type", "item");
                         row.setString("name", entry.item.getDisplayName());
+                        ItemStack identity = entry.item.copy();
+                        identity.stackSize = 1;
+                        row.setTag("item", identity.writeToNBT(new NBTTagCompound()));
+                        row.setString(
+                            "itemRegistry",
+                            String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(identity.getItem())));
                         available = BigInteger.valueOf(context.count(entry.item, entry.amount.intValue()));
                     } else if (entry.fluid != null) {
                         row.setString("type", "fluid");
                         row.setString("name", entry.fluid.getLocalizedName());
+                        FluidStack identity = entry.fluid.copy();
+                        identity.amount = 1;
+                        row.setTag("fluid", identity.writeToNBT(new NBTTagCompound()));
                         available = BigInteger.valueOf(context.fluidCount(entry.fluid, entry.amount.longValue()));
                     } else if (entry.essentia != null) {
                         row.setString("type", "essentia");
@@ -620,7 +629,15 @@ public final class HologramBlueprintResources {
         HologramFullPreservation.assertUnchanged(original, selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         HologramEssentia.validateNonJarContents(selectedPayload);
+        HologramNativeHubData.Fluid splitFluid = HologramNativeHubData.fluid(selectedPayload);
+        HologramNativeHubData.bindings(selectedPayload);
         Inspection inspection = new Inspection(selectedPayload, nativeComponents);
+        if (splitFluid != null && splitFluid.value != null && splitFluid.value.amount > 0) {
+            FluidStack identity = splitFluid.value.identity();
+            if (!HologramMaterials.supportsFluidNbt(identity)) throw unsupported(splitFluid.key, "当前流体接口不能保留此流体NBT");
+            result.addFluid(identity, splitFluid.value.amount, splitFluid.key);
+            result.addEntry(new Entry(splitFluid.key, null, identity, BigInteger.valueOf(splitFluid.value.amount)));
+        }
         result.addNativeItems(HologramGtMeShadow.componentMaterials(selectedPayload));
         HologramEssentia.Cost jar = HologramEssentia.jarCost(selectedPayload);
         if (jar != null) {
@@ -630,6 +647,7 @@ public final class HologramBlueprintResources {
         for (Object raw : selectedPayload.func_150296_c()) {
             String key = (String) raw;
             if (HologramFullPreservation.TAG.equals(key)) continue;
+            if (HologramNativeHubData.fluidKey(key) || HologramNativeHubData.bindingKey(key)) continue;
             if (HologramEssentia.isJar(selectedPayload) && (key.equals("Aspect") || key.equals("Amount"))) continue;
             if (craftingHatch && key.equals("gtmbCraftingResourceCosts")) {
                 inspect(

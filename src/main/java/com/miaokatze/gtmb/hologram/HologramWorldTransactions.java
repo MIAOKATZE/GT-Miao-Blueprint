@@ -197,7 +197,8 @@ final class HologramWorldTransactions {
                 .copy();
         BlockSnapshot snapshot = readOnlyBlockSnapshot(w, c.x, c.y, c.z);
         HologramMaterials.Transaction transaction = HologramMaterialAccess.materialSource(s)
-            .begin();
+            .begin()
+            .protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()));
         HologramDecorMaterials.Descriptor decorDescriptor = null;
         HologramDecorMaterials.Quote decorQuote = null;
         ItemStack reserved = null;
@@ -205,6 +206,8 @@ final class HologramWorldTransactions {
         energyTarget = energyTarget == null ? null : energyTarget.copy();
         HologramEnergyPayload.Prepared cachedPayload = null;
         boolean cachePaid = false;
+        boolean voucherReserved = false;
+        boolean voucherShell = false;
         String cacheNotice = "";
         boolean changedWorld = false;
         NBTTagCompound quantumPlacementPayload = null;
@@ -212,7 +215,28 @@ final class HologramWorldTransactions {
         String placementStage = "reserve";
         try {
             decorDescriptor = HologramCellPolicy.decoration(s, c);
+            boolean voucher = s.mode != 2 && s.virtual
+                && s.virtualPreset != null
+                && s.virtualPreset.schema >= 2
+                && s.jobVoucherRequested
+                && HologramDecorationVoucher.enabled();
+            voucherShell = voucher && decorDescriptor == null
+                && !HologramRecovery.hasSeal(energyTarget)
+                && HologramDecorationVoucher.covered(c.block, energyTarget);
+            boolean voucherDecoration = voucher && HologramDecorationVoucher.hasCovered(c.block, decorDescriptor);
+            if (!s.player.capabilities.isCreativeMode && (voucherShell || voucherDecoration) && !s.jobVoucherConsumed) {
+                // The existing inventory snapshot is the rollback receipt. A voucher is deliberately
+                // paid from the main inventory, independently of ME/container material priority.
+                if (!HologramDecorationVoucher.reserveMain(s.player)) {
+                    rollbackMaterials(s, transaction, inventory);
+                    c.status = "missing";
+                    s.status = "装饰代用券已不足，该格未施工，未扣材料";
+                    return false;
+                }
+                voucherReserved = true;
+            }
             if (s.mode != 2 && decorDescriptor == null
+                && !voucherShell
                 && !HologramMaterialAccess.freeShell(s, c, HologramCellPolicy.targetFor(s, c, index))
                 && (!empty || (s.virtual && s.virtualPreset.schema >= 2))
                 && (!s.player.capabilities.isCreativeMode
@@ -250,7 +274,7 @@ final class HologramWorldTransactions {
             }
             if (s.mode != 2 && decorDescriptor != null && !s.player.capabilities.isCreativeMode) {
                 decorQuote = s.decorLedger.quote(
-                    decorDescriptor,
+                    voucherDecoration ? HologramDecorationVoucher.payable(c.block, decorDescriptor) : decorDescriptor,
                     (stack, limit) -> HologramMaterialAccess.decorativeAvailability(s, index, stack, limit));
                 for (ItemStack payment : decorQuote.items) if (!transaction.takeAll(payment, false)) {
                     rollbackMaterials(s, transaction, inventory);
@@ -260,6 +284,7 @@ final class HologramWorldTransactions {
                 }
             }
             if (s.mode != 2 && decorDescriptor == null
+                && !voucherShell
                 && !HologramMaterialAccess.freeShell(s, c, HologramCellPolicy.targetFor(s, c, index))
                 && HologramMaterialAccess.fuzzyBlueprintShells(s, HologramCellPolicy.targetFor(s, c, index))
                 && (!s.player.capabilities.isCreativeMode
@@ -362,7 +387,7 @@ final class HologramWorldTransactions {
                     pin.setTagCompound(
                         cachedPayload == null ? null : cachePaid ? cachedPayload.itemPaid : cachedPayload.itemEmpty);
                 }
-                if (s.player.capabilities.isCreativeMode && !HologramRecovery.hasSeal(pin))
+                if ((s.player.capabilities.isCreativeMode || voucherShell) && !HologramRecovery.hasSeal(pin))
                     source = new HologramMaterialSources.CreativeSource(Collections.singletonList(pin));
                 if (pin != null && material == null) source = new HologramMaterialSources.FilteredSource(source, pin);
                 if (s.noHatches && !HologramCellPolicy.explicitTarget(s, c, index))
@@ -706,6 +731,7 @@ final class HologramWorldTransactions {
                     s.blueprintEnergyNotice += "；" + cacheNotice;
                 s.status = cacheNotice;
             }
+            if (voucherReserved) s.jobVoucherConsumed = true;
         } catch (java.io.IOException | RuntimeException | LinkageError e) {
             if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) e.printStackTrace(System.err);
             HologramPlacementDiagnostics.failure(s, c, index, placementStage, e);
@@ -855,7 +881,7 @@ final class HologramWorldTransactions {
         try {
             transaction.rollbackExternal();
         } finally {
-            HologramMaterialAccess.restoreInventory(s.player, inventory);
+            HologramMaterialAccess.restoreInventory(s, inventory);
             HologramMaterialAccess.materialSource(s)
                 .afterInventoryRestore();
         }

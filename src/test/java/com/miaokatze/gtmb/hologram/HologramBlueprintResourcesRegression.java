@@ -50,6 +50,7 @@ public final class HologramBlueprintResourcesRegression {
             nativeItemDefaultsRemainPayable();
             fullyPreservedNativeContainers();
             fluidCostsAndSelectedKeys();
+            splitNativeHubFluids();
             numberedFluidContainers();
             registeredFluidContainerCodec();
             rejectionBeforePayment();
@@ -369,6 +370,95 @@ public final class HologramBlueprintResourcesRegression {
             HologramBlueprintNbt.decode(encoded)
                 .hasKey("mFluid"),
             "temporary downgrade preserves captured blueprint");
+    }
+
+    private static void splitNativeHubFluids() throws Exception {
+        Fluid fluid = fixtureFluid("gtmb_split_hub_fluid");
+        FluidStack typeLock = new FluidStack(fluid, 0);
+        NBTTagCompound steam = new NBTTagCompound();
+        steam.setString("id", "any:typed_native_device");
+        steam.setLong("mSteamStored", 5_000_000_123L);
+        steam.setTag("mStoredFluidType", typeLock.writeToNBT(new NBTTagCompound()));
+        NBTTagCompound before = (NBTTagCompound) steam.copy();
+        HologramBlueprintResources.Plan bill = HologramBlueprintResources.plan(steam);
+        SimpleAssert.eq(1, bill.fluids.size(), "split type lock is not a second tank");
+        SimpleAssert.eq(
+            5_000_000_123L,
+            bill.fluids.get(0).amount,
+            "native hub long quantity is already mB, without GT steam conversion");
+        SimpleAssert.that(
+            typeLock.isFluidEqual(bill.fluids.get(0).stack),
+            "split storage retains the complete exact fluid NBT identity");
+        SimpleAssert.that(before.equals(steam), "split storage inspection never rewrites the native payload");
+        NBTTagCompound tagged = (NBTTagCompound) steam.copy();
+        NBTTagCompound exactTag = new NBTTagCompound();
+        exactTag.setString("variant", "exact-native-type");
+        tagged.getCompoundTag("mStoredFluidType")
+            .setTag("Tag", exactTag);
+        FluidStack taggedIdentity = ResourceContainers
+            .splitFluidAmount(tagged, "mSteamStored", "mStoredFluidType", false)
+            .identity();
+        SimpleAssert.that(exactTag.equals(taggedIdentity.tag), "split-fluid codec keeps every native identity tag");
+        // The ordinary bootstrap cannot prove a native AE capability. The production gate must fail closed there;
+        // runWithAe/taggedFluidRejection separately checks the actual initialized adapter's tag behavior.
+        if (HologramMaterials.supportsFluidNbt(taggedIdentity)) SimpleAssert.that(
+            taggedIdentity.isFluidEqual(HologramBlueprintResources.plan(tagged).fluids.get(0).stack),
+            "a capable source preserves exact tagged fluid payment");
+        else {
+            reject(tagged, "mSteamStored");
+            SimpleAssert.that(
+                exactTag.equals(
+                    tagged.getCompoundTag("mStoredFluidType")
+                        .getCompoundTag("Tag")),
+                "an unavailable or incapable native adapter rejects without erasing the exact fluid identity");
+        }
+        steam.setLong("mSteamStored", Long.MAX_VALUE);
+        SimpleAssert.eq(
+            Long.MAX_VALUE,
+            HologramBlueprintResources.plan(steam).fluids.get(0).amount,
+            "long hub quantities are never clamped to FluidStack int");
+        NBTTagCompound missingType = (NBTTagCompound) steam.copy();
+        missingType.removeTag("mStoredFluidType");
+        reject(missingType, "mSteamStored");
+        NBTTagCompound opaque = (NBTTagCompound) steam.copy();
+        opaque.getCompoundTag("mStoredFluidType")
+            .setByteArray("privateResource", new byte[] { 1 });
+        reject(opaque, "privateResource");
+        NBTTagCompound negative = (NBTTagCompound) steam.copy();
+        negative.setLong("mSteamStored", -1);
+        reject(negative, "mSteamStored");
+        NBTTagCompound wrongType = (NBTTagCompound) steam.copy();
+        wrongType.setInteger("mSteamStored", 12);
+        reject(wrongType, "mSteamStored");
+        NBTTagCompound water = new NBTTagCompound();
+        water.setLong("mWaterStored", 7_000_000_321L);
+        water.setString("mStoredFluidType", fluid.getName());
+        bill = HologramBlueprintResources.plan(water);
+        SimpleAssert
+            .eq(7_000_000_321L, bill.fluids.get(0).amount, "registry-string type lock pairs with its true long amount");
+        SimpleAssert.that(bill.fluids.get(0).stack.tag == null, "string type lock cannot invent tagged identity");
+        water.setString("mStoredFluidType", "gtmb_missing_split_hub_fluid");
+        reject(water, "mStoredFluidType");
+        water.setString("mStoredFluidType", fluid.getName());
+        water.setLong("mWaterStored", 0);
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(water).fluids.size(),
+            "empty type lock is configuration with no physical fluid cost");
+        water.removeTag("mWaterStored");
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintResources.plan(water).fluids.size(),
+            "omitted native quantity defaults to zero without charging the identity display amount");
+        water.setLong("mSteamStored", 1);
+        water.setLong("mWaterStored", 1);
+        reject(water, "conflicting");
+        NBTTagCompound isolated = new NBTTagCompound();
+        HologramBlueprintNbt.includeResourceCompanions(before, isolated, "mSteamStored");
+        SimpleAssert.eq(
+            5_000_000_123L,
+            HologramBlueprintResources.plan(isolated).fluids.get(0).amount,
+            "root-isolated review keeps the complete declared split pair");
     }
 
     private static void numberedFluidContainers() throws Exception {

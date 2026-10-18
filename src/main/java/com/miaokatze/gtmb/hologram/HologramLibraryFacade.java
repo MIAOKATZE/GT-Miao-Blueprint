@@ -512,6 +512,19 @@ public final class HologramLibraryFacade {
         if (previous != null) previous.stop();
     }
 
+    /** Keep committed save receipts and library ownership; reset only transient admission/transport work. */
+    static synchronized void restartRuntime() {
+        synchronized (pending) {
+            inbound.clear();
+            pending.clear();
+            inboundQuota.clear();
+        }
+        callbacks.clear();
+        callbackDepth();
+        HologramServerLibrary current = library;
+        if (current != null) current.restartRuntime();
+    }
+
     public static final class Events {
 
         @SubscribeEvent

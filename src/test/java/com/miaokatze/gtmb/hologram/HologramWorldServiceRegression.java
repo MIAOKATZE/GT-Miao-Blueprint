@@ -103,6 +103,20 @@ public final class HologramWorldServiceRegression {
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             request.setBoolean("forceExplicit", true);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            SimpleAssert
+                .eq(false, get(session, "forcePlacementReady"), "missing review nonce cannot issue force authority");
+            SimpleAssert.that(
+                ((String) get(session, "status")).contains("材料确认已更新"),
+                "the outer confirmation packet must obtain the policy ACK's current review nonce");
+            long reviewedNonce = (Long) get(session, "placementReviewNonce");
+            request.setLong("placementReviewNonce", reviewedNonce - 1);
+            action.invoke(null, session, request, "confirmBlueprintPlacement");
+            SimpleAssert.eq(0, get(session, "job"), "an old nonce cannot start partial construction");
+            SimpleAssert.eq(false, get(session, "forcePlacementReady"), "an old nonce cannot issue force authority");
+            // The policy helper used its own ACK packet. Refresh this independent packet exactly as
+            // the client does after receiving the updated review, rather than bypassing nonce admission.
+            request.setLong("placementReviewNonce", reviewedNonce);
+            action.invoke(null, session, request, "confirmBlueprintPlacement");
             SimpleAssert.eq(0, get(session, "job"), "first explicit force has no server authority");
             SimpleAssert
                 .eq(true, get(session, "forcePlacementReady"), "missing material issues second-review capability");
@@ -191,6 +205,10 @@ public final class HologramWorldServiceRegression {
         set(session, "completed", oldCompleted);
         set(session, "status", appliedStatus);
         configure.setBoolean("forceExplicit", false);
+        action.invoke(null, session, configure, "confirmBlueprintPlacement");
+        SimpleAssert
+            .eq(false, get(session, "forcePlacementReady"), "an old review nonce cannot authorize construction");
+        configure.setLong("placementReviewNonce", appliedNonce);
         action.invoke(null, session, configure, "confirmBlueprintPlacement");
         SimpleAssert.eq(0, get(session, "job"), "a policy ACK does not invent successful world placement");
         SimpleAssert.eq(

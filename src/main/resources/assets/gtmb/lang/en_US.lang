@@ -194,6 +194,7 @@ gtmb.hologram.progress.transport.busy=Waiting for transfer processing
 gtmb.hologram.progress.capture=Capturing structure
 gtmb.hologram.progress.analysis=Analyzing structure and materials
 gtmb.hologram.progress.job=Construction progress
+gtmb.hologram.progress.material.order=AE material order
 gtmb.hologram.progress.job.visualLag=Visual updates await a complete snapshot; server material accounting is unaffected.
 gtmb.hologram.progress.area.blocks=Reading area blocks
 gtmb.hologram.progress.area.declarations=Resolving declared structures
@@ -369,3 +370,11 @@ gtmb.hologram.progress.snapshot.detail.metadata.ae.3=Preparing AE review list
 gtmb.hologram.progress.snapshot.detail.metadata.ae.4=AE information ready
 gtmb.hologram.progress.area.detail.failed=Material planning failed
 gtmb.hologram.progress.area.detail.paused=Material planning paused
+
+# Decoration voucher
+item.decoration_voucher.name=Decoration Voucher
+item.decoration_voucher.description.0=One voucher covers allowed decoration materials for one placement task.
+item.decoration_voucher.description.1=Select it when reviewing materials; consumed on the first successful covered placement.
+item.decoration_voucher.description.2=Machines, industrial materials, stored contents and fluids are still paid normally.
+
+gtmb.hologram.progress.snapshot.detail.export_json=Encode blueprint JSON
