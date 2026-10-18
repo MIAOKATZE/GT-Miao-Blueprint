@@ -15,7 +15,14 @@ import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
-/** Wire identity, long quantity and shared exact/fuzzy stock allocation, without a fake AE network. */
+import appeng.api.config.Actionable;
+import appeng.api.networking.crafting.ICraftingLink;
+import appeng.api.networking.security.PlayerSource;
+import appeng.api.storage.IMEMonitor;
+import appeng.api.storage.data.IAEItemStack;
+import appeng.api.storage.data.IAEStack;
+
+/** Wire identity, stock allocation and requester delivery boundaries; native network acceptance is separate. */
 final class HologramMaterialQuoteRegression {
 
     private HologramMaterialQuoteRegression() {}
@@ -31,6 +38,9 @@ final class HologramMaterialQuoteRegression {
             headlessAeLongArithmetic();
             boundedObservationGrowth();
             preparedQuotesUseObservedBudgetsAndFenceTheNextBlueprint();
+            craftingDeliveryCannotFeedItsOwnUnfinishedCpu();
+            craftingDeliveryFailurePreservesRealReceipts();
+            creativeVoucherSelectionAndCommittedPlacement();
         } catch (Exception failure) {
             throw new AssertionError("Material quote regression", failure);
         }
@@ -136,10 +146,251 @@ final class HologramMaterialQuoteRegression {
                         return aeStackFixture(sample, size[0]);
                     case "getItemStack":
                         return sample.copy();
+                    case "isSameType":
+                        if (!(args[0] instanceof IAEItemStack)) return false;
+                        ItemStack other = ((IAEItemStack) args[0]).getItemStack();
+                        return sample.getItem() == other.getItem() && sample.getItemDamage() == other.getItemDamage()
+                            && ItemStack.areItemStackTagsEqual(sample, other);
                     default:
                         throw new AssertionError("Unexpected AE interface fixture operation: " + method.getName());
                 }
             });
+    }
+
+    private static void craftingDeliveryCannotFeedItsOwnUnfinishedCpu() throws Exception {
+        CraftingDeliveryFixture oldSequence = new CraftingDeliveryFixture(64);
+        oldSequence.produce(32);
+        // Reproduce the removed flush-before-native-done sequence against the same production receipt code.
+        oldSequence.flush();
+        require(
+            oldSequence.reentries == 1 && oldSequence.order.received == 64
+                && oldSequence.order.pendingDelivery() == 0
+                && oldSequence.stored == 0
+                && oldSequence.poll()
+                && oldSequence.order.done == 64,
+            "the native-like boundary reproduces the old false completion by recycling the same physical 32 outputs");
+        CraftingDeliveryFixture fixture = new CraftingDeliveryFixture(64);
+        require(
+            fixture.order.injectCraftedItems(fixture.link, fixture.output(32), Actionable.SIMULATE) == null
+                && fixture.order.received == 0
+                && fixture.order.pendingDelivery() == 0,
+            "native simulation advertises capacity without acknowledging or persisting any real output");
+        fixture.produce(32);
+        for (int poll = 0; poll < 4; poll++) require(!fixture.poll(), "partial native production cannot finish a row");
+        require(
+            fixture.insertions == 0 && fixture.reentries == 0
+                && fixture.stored == 0
+                && fixture.order.received == 32
+                && fixture.order.pendingDelivery() == 32
+                && fixture.order.index == 0,
+            "unfinished native output stays in the real persistent ledger instead of feeding the same CPU again");
+        fixture.produce(32);
+        fixture.completeNative();
+        require(fixture.poll(), "native done plus the full real output permits normal storage delivery");
+        require(
+            fixture.insertions == 1 && fixture.reentries == 0
+                && fixture.stored == 64
+                && fixture.order.done == 64
+                && fixture.order.index == 1
+                && fixture.order.pendingDelivery() == 0,
+            "one physical set of 64 outputs reaches storage exactly once before the row is credited");
+
+        CraftingDeliveryFixture partial = new CraftingDeliveryFixture(64);
+        partial.produce(64);
+        partial.completeNative();
+        partial.storageLimit = 48;
+        require(
+            !partial.poll() && partial.stored == 48
+                && partial.order.pendingDelivery() == 16
+                && "delivering".equals(partial.order.state)
+                && partial.order.done == 0,
+            "native storage remainders retain only the unpaid 16 and cannot prematurely complete a row");
+        partial.storageLimit = Long.MAX_VALUE;
+        require(
+            partial.poll() && partial.stored == 64 && partial.insertions == 2 && partial.order.done == 64,
+            "the next delivery offers only the real remainder, without duplicating the accepted 48");
+
+        CraftingDeliveryFixture large = new CraftingDeliveryFixture(5_000_000_256L);
+        large.produce(5_000_000_256L);
+        require(
+            !large.poll() && large.insertions == 0 && large.order.pendingDelivery() == 5_000_000_256L,
+            "buffering native completion retains a multi-receipt long quantity without int or byte truncation");
+        large.completeNative();
+        boolean delivered = false;
+        for (int poll = 0; poll < 4 && !delivered; poll++) delivered = large.poll();
+        require(
+            delivered && large.stored == 5_000_000_256L && large.order.done == 5_000_000_256L && large.insertions == 3,
+            "three bounded native item receipts deliver the exact five-billion quantity once");
+    }
+
+    private static void craftingDeliveryFailurePreservesRealReceipts() throws Exception {
+        CraftingDeliveryFixture cancelled = new CraftingDeliveryFixture(64);
+        cancelled.produce(32);
+        cancelled.nativeCancelled = true;
+        cancelled.order.jobStateChange(cancelled.link);
+        require(
+            !cancelled.poll() && "cancelled".equals(cancelled.order.state)
+                && cancelled.insertions == 0
+                && cancelled.recoveryAmount("gtmbHologramMaterialRecovery") == 32,
+            "cancelled native jobs never flush into an unfinished CPU and preserve their real partial output");
+        CraftingDeliveryFixture shortOutput = new CraftingDeliveryFixture(64);
+        shortOutput.produce(32);
+        shortOutput.completeNative();
+        require(
+            !shortOutput.poll() && "failed".equals(shortOutput.order.state)
+                && shortOutput.insertions == 0
+                && shortOutput.recoveryAmount("gtmbHologramMaterialRecovery") == 32,
+            "native completion without all real outputs fails and preserves the actual 32 instead of minting 64");
+        CraftingDeliveryFixture preparationFailure = new CraftingDeliveryFixture(64);
+        preparationFailure.produce(64);
+        preparationFailure.completeNative();
+        preparationFailure.throwDuringPreparation = true;
+        boolean preparationEscaped = false;
+        try {
+            preparationFailure.poll();
+        } catch (IllegalStateException expected) {
+            require(
+                "Native monitor preparation failed".equals(expected.getMessage()),
+                "the preparation failure is real");
+            preparationEscaped = true;
+            // Match the server tick's existing poll-exception -> finish -> ordinary receipt release path.
+            preparationFailure.order.finish("failed", "Native delivery preparation failed", true);
+        }
+        require(
+            preparationEscaped && "failed".equals(preparationFailure.order.state)
+                && preparationFailure.insertions == 0
+                && preparationFailure.stored == 0
+                && preparationFailure.order.done == 0
+                && preparationFailure.recoveryAmount("gtmbHologramMaterialRecovery") == 64
+                && preparationFailure.recoveryAmount("gtmbHologramCraftingUncertainDelivery") == 0,
+            "failure before any native insertion keeps the actual 64 in ordinary recovery instead of quarantining them");
+        CraftingDeliveryFixture uncertain = new CraftingDeliveryFixture(64);
+        uncertain.produce(64);
+        uncertain.completeNative();
+        uncertain.throwAfterInsertion = true;
+        require(
+            !uncertain.poll() && "failed".equals(uncertain.order.state)
+                && uncertain.order.done == 0
+                && uncertain.order.index == 0
+                && uncertain.stored == 64
+                && uncertain.recoveryAmount("gtmbHologramCraftingUncertainDelivery") == 64
+                && uncertain.recoveryAmount("gtmbHologramMaterialRecovery") == 0,
+            "a native insertion that throws after accepting is quarantined, never mistaken for pending-zero success");
+        uncertain.flush();
+        require(
+            uncertain.insertions == 1 && uncertain.stored == 64,
+            "an unacknowledged insertion is never automatically reoffered and cannot duplicate physical output");
+    }
+
+    /** Models AE1080's synchronous CPU -> requester callback before link completion, not a native-network claim. */
+    private static final class CraftingDeliveryFixture {
+
+        final ItemStack identity = machine(14950, 73);
+        final EntityPlayerMP player;
+        final PlayerSource source;
+        final ICraftingLink link;
+        final HologramAeCraftingOrders.Order order;
+        final IMEMonitor<IAEItemStack> monitor;
+        boolean nativeDone, nativeCancelled, throwAfterInsertion, throwDuringPreparation;
+        int insertions, reentries;
+        long stored, storageLimit = Long.MAX_VALUE;
+
+        @SuppressWarnings("unchecked")
+        CraftingDeliveryFixture(long requested) throws Exception {
+            player = materialPlayer();
+            source = new PlayerSource(player, null);
+            link = (ICraftingLink) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] { ICraftingLink.class },
+                (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        case "isDone":
+                            return nativeDone;
+                        case "isCanceled":
+                            return nativeCancelled;
+                        case "cancel":
+                            nativeCancelled = true;
+                            return null;
+                        default:
+                            throw new AssertionError("Unexpected native link boundary: " + method.getName());
+                    }
+                });
+            order = new HologramAeCraftingOrders.Order(
+                player,
+                null,
+                null,
+                new NBTTagCompound(),
+                Collections.singletonList(new HologramAeCraftingOrders.Request(output(requested), "exact output")));
+            order.link = link;
+            order.state = "crafting";
+            monitor = (IMEMonitor<IAEItemStack>) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] { IMEMonitor.class },
+                (proxy, method, args) -> {
+                    if (!"injectItems".equals(method.getName())) throw new AssertionError(method.getName());
+                    require(
+                        args[1] == Actionable.MODULATE && args[2] == source && source.player == player,
+                        "delivery retains the actual player action source");
+                    IAEItemStack offered = (IAEItemStack) args[0];
+                    require(output(1).isSameType((Object) offered), "delivery retains the complete native item NBT");
+                    insertions++;
+                    if (!nativeDone) {
+                        // AE's crafting inventory has first priority and can feed this old output to its own CPU.
+                        reentries++;
+                        IAEStack<?> remainder = order.injectCraftedItems(link, offered, Actionable.MODULATE);
+                        completeNative();
+                        return remainder;
+                    }
+                    long accepted = Math.min(storageLimit, offered.getStackSize());
+                    stored = Math.addExact(stored, accepted);
+                    if (throwAfterInsertion)
+                        throw new IllegalStateException("Native acknowledgement lost after insert");
+                    return accepted == offered.getStackSize() ? null
+                        : offered.copy()
+                            .setStackSize(offered.getStackSize() - accepted);
+                });
+        }
+
+        IAEItemStack output(long count) {
+            return aeStackFixture(identity, count);
+        }
+
+        void produce(long count) {
+            require(
+                order.injectCraftedItems(link, output(count), Actionable.MODULATE) == null,
+                "the production requester accepts only the real native batch into its durable ledger");
+        }
+
+        void completeNative() {
+            nativeDone = true;
+            order.jobStateChange(link);
+        }
+
+        void flush() {
+            order.flushDeliveries((receipt, offered) -> {
+                ItemStack sample = HologramMaterials.recoveryItem(receipt);
+                if (throwDuringPreparation) throw new IllegalStateException("Native monitor preparation failed");
+                return () -> {
+                    IAEItemStack remainder = monitor
+                        .injectItems(aeStackFixture(sample, offered), Actionable.MODULATE, source);
+                    return remainder == null ? 0 : remainder.getStackSize();
+                };
+            });
+        }
+
+        boolean poll() {
+            return order.pollDelivery(this::flush);
+        }
+
+        long recoveryAmount(String key) {
+            NBTTagList ledger = player.getEntityData()
+                .getCompoundTag(net.minecraft.entity.player.EntityPlayer.PERSISTED_NBT_TAG)
+                .getTagList(key, 10);
+            long amount = 0;
+            for (int i = 0; i < ledger.tagCount(); i++) amount += ledger.getCompoundTagAt(i)
+                .getInteger("gtmbRecoveryCount");
+            return amount;
+        }
     }
 
     private static void boundedObservationGrowth() {
@@ -348,6 +599,233 @@ final class HologramMaterialQuoteRegression {
                 "repeated voucher projection uses the same physical stock observation");
         }
         require(reads[0] == 2, "ten projections perform no new native inventory reads");
+    }
+
+    /** Real server review/projection and the successful placement transaction share the creative no-debit rule. */
+    private static void creativeVoucherSelectionAndCommittedPlacement() throws Exception {
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        CreativeVoucherWorld world = (CreativeVoucherWorld) unsafe.allocateInstance(CreativeVoucherWorld.class);
+        java.lang.reflect.Field provider = net.minecraft.world.World.class.getDeclaredField("provider");
+        provider.setAccessible(true);
+        provider.set(world, new net.minecraft.world.WorldProviderSurface());
+        EntityPlayerMP player = materialPlayer();
+        java.lang.reflect.Field watcherField = net.minecraft.entity.Entity.class.getDeclaredField("dataWatcher");
+        watcherField.setAccessible(true);
+        net.minecraft.entity.DataWatcher watcher = new net.minecraft.entity.DataWatcher(player);
+        watcher.addObject(0, (byte) 0);
+        watcherField.set(player, watcher);
+        java.util.UUID identity = new java.util.UUID(9116, 43);
+        for (java.lang.reflect.Field field : net.minecraft.entity.player.EntityPlayer.class.getDeclaredFields())
+            if (field.getType() == com.mojang.authlib.GameProfile.class) {
+                field.setAccessible(true);
+                field.set(player, new com.mojang.authlib.GameProfile(identity, "CreativeVoucher"));
+            }
+        java.lang.reflect.Field entityIdentity = net.minecraft.entity.Entity.class.getDeclaredField("entityUniqueID");
+        entityIdentity.setAccessible(true);
+        entityIdentity.set(player, identity);
+        player.worldObj = world;
+        player.posY = 64;
+        player.capabilities = new net.minecraft.entity.player.PlayerCapabilities();
+        player.capabilities.isCreativeMode = player.capabilities.allowEdit = true;
+        player.inventory.mainInventory[0] = new ItemStack(Items.feather);
+        java.lang.reflect.Field config = DecorationVoucherConfig.class.getDeclaredField("current");
+        config.setAccessible(true);
+        Object previousConfig = config.get(null);
+        com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher previousVoucher = com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher;
+        try {
+            config.set(null, new DecorationVoucherConfig.View(true, Collections.singletonList("minecraft")));
+            if (previousVoucher == null)
+                com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = new com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher();
+            ItemStack voucher = HologramDecorationVoucher.stack();
+            voucher.stackSize = 2;
+            player.inventory.mainInventory[1] = voucher;
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 1);
+            session.virtual = session.virtualPlacement = session.virtualLocked = true;
+            session.blueprintAwaitingConfirmation = session.placementReviewIssued = true;
+            session.virtualPreset = new HologramPresets.Preset();
+            session.virtualPreset.schema = 2;
+            session.virtualPreset.deidentificationLevel = 1;
+            session.materialSettings.containers = session.materialSettings.me = false;
+            session.materialContext = mainSource(player);
+            session.capture = new HologramCapture(null, new ItemStack(Items.feather));
+            ItemStack stone = new ItemStack(net.minecraft.init.Blocks.stone);
+            int[] nativePlacements = { 0 };
+            com.gtnewhorizon.structurelib.structure.IStructureElement<Object> element = new com.gtnewhorizon.structurelib.structure.IStructureElement<Object>() {
+
+                public boolean check(Object ignored, net.minecraft.world.World target, int x, int y, int z) {
+                    return target.getBlock(x, y, z) == net.minecraft.init.Blocks.stone;
+                }
+
+                public boolean spawnHint(Object ignored, net.minecraft.world.World target, int x, int y, int z,
+                    ItemStack trigger) {
+                    return true;
+                }
+
+                public boolean placeBlock(Object ignored, net.minecraft.world.World target, int x, int y, int z,
+                    ItemStack trigger) {
+                    throw new AssertionError("placement must use the survival source callback");
+                }
+
+                public PlaceResult survivalPlaceBlock(Object ignored, net.minecraft.world.World target, int x, int y,
+                    int z, ItemStack trigger,
+                    com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment environment) {
+                    require(
+                        environment.getSource()
+                            .takeOne(stone, false),
+                        "creative transaction supplies the native shell");
+                    nativePlacements[0]++;
+                    return target.setBlock(x, y, z, net.minecraft.init.Blocks.stone, 0, 3) ? PlaceResult.ACCEPT
+                        : PlaceResult.REJECT;
+                }
+            };
+            HologramCapture.Cell cell = new HologramCapture.Cell(element, 0, 64, 0);
+            cell.block = net.minecraft.init.Blocks.stone;
+            cell.blueprintBlock = cell.blueprintItem = "minecraft:stone";
+            session.capture.cells.add(cell);
+            session.planTargets.add(stone);
+            require(
+                HologramDecorationVoucher.covered(cell.block, stone),
+                "placement fixture exercises a genuinely covered shell");
+            NBTTagList rows = new NBTTagList();
+            NBTTagCompound row = legacy(stone, 7, 0, 5);
+            row.setLong("voucherShellRequired", 5);
+            rows.appendTag(row);
+            int[] inventoryReads = { 0 };
+            HologramMaterialQuote.StockSnapshot stock = new HologramMaterialQuote.StockSnapshot(
+                new HologramMaterialQuote.ItemStock() {
+
+                    public long exact(ItemStack item, long limit) {
+                        inventoryReads[0]++;
+                        return 0;
+                    }
+
+                    public long fuzzy(ItemStack item, long limit) {
+                        inventoryReads[0]++;
+                        return 0;
+                    }
+                });
+            HologramMaterialQuote
+                .snapshot(session, rows, HologramMaterialQuote.voucherRows(rows), new NBTTagList(), stock);
+            HologramMaterialQuote.Cache cache = session.materialQuoteCache;
+            int observations = inventoryReads[0];
+            int worldReads = world.reads;
+            long revision = session.planRevision;
+            for (int i = 0; i < 11; i++) {
+                boolean selected = i % 2 == 0;
+                NBTTagCompound action = new NBTTagCompound();
+                action.setString("session", session.id);
+                action.setLong("planRevision", session.planRevision);
+                action.setLong("placementReviewNonce", session.placementReviewNonce);
+                action.setLong("uiSequence", 100 + i);
+                action.setBoolean("enabled", selected);
+                require(
+                    HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher"),
+                    "real material action is handled");
+                NBTTagCompound metadata = new NBTTagCompound();
+                HologramMaterialWorkflow.writeState(session, metadata);
+                NBTTagCompound choice = metadata.getCompoundTag("decorativeVoucher");
+                NBTTagCompound quote = metadata.getCompoundTag("materialQuote");
+                require(
+                    choice.getBoolean("usable") && choice.getBoolean("selected") == selected
+                        && choice.getLong("available") == 2
+                        && choice.getLong("eligibleDemand") == 5,
+                    "creative players holding vouchers receive usable, selected server UI metadata");
+                require(
+                    quote.getBoolean("creativePaymentsFree") && quote.getBoolean("useDecorationVoucher") == selected
+                        && quote.getLong("placementReviewNonce") == session.placementReviewNonce
+                        && quote.getTagList("rows", 10)
+                            .getCompoundTagAt(0)
+                            .getLong("required") == (selected ? 2 : 7),
+                    "creative selection projects the cached shell waiver while retaining exact embedded requirements");
+                if (i == 1) {
+                    player.inventory.mainInventory[1] = null;
+                    long nonce = session.placementReviewNonce;
+                    action.setLong("placementReviewNonce", nonce);
+                    action.setBoolean("enabled", true);
+                    HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher");
+                    require(
+                        !session.jobVoucherRequested && session.placementReviewNonce == nonce,
+                        "creative selection still requires a real clean voucher in the main inventory");
+                    player.inventory.mainInventory[1] = voucher;
+                }
+            }
+            require(
+                session.materialQuoteCache == cache && session.planRevision == revision
+                    && inventoryReads[0] == observations
+                    && world.reads == worldReads
+                    && !HologramSnapshotPreparation.pending(session),
+                "creative voucher actions do not rescan inventory, replan geometry or enqueue a full snapshot");
+            require(
+                HologramWorldTransactions.operateChecked(session, cell, 0),
+                "creative voucher placement commits successfully");
+            require(
+                "placed".equals(cell.status) && world.placed == net.minecraft.init.Blocks.stone
+                    && nativePlacements[0] == 1
+                    && !session.jobVoucherConsumed
+                    && player.inventory.mainInventory[1] == voucher
+                    && voucher.stackSize == 2
+                    && HologramDecorationVoucher.available(player) == 2,
+                "an actual successful creative placement consumes neither a shell item nor its selected voucher");
+        } finally {
+            config.set(null, previousConfig);
+            com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = previousVoucher;
+        }
+    }
+
+    private static final class CreativeVoucherWorld extends net.minecraft.world.WorldServer {
+
+        net.minecraft.block.Block placed;
+        int reads;
+
+        private CreativeVoucherWorld() {
+            super(null, null, "creative-voucher", 0, null, null);
+        }
+
+        public boolean blockExists(int x, int y, int z) {
+            return true;
+        }
+
+        public int getHeight() {
+            return 256;
+        }
+
+        public long getTotalWorldTime() {
+            return 0;
+        }
+
+        public net.minecraft.block.Block getBlock(int x, int y, int z) {
+            reads++;
+            return placed == null ? net.minecraft.init.Blocks.air : placed;
+        }
+
+        public int getBlockMetadata(int x, int y, int z) {
+            reads++;
+            return 0;
+        }
+
+        public net.minecraft.tileentity.TileEntity getTileEntity(int x, int y, int z) {
+            reads++;
+            return null;
+        }
+
+        public boolean canMineBlock(net.minecraft.entity.player.EntityPlayer player, int x, int y, int z) {
+            return true;
+        }
+
+        public boolean isAirBlock(int x, int y, int z) {
+            return placed == null;
+        }
+
+        public boolean setBlock(int x, int y, int z, net.minecraft.block.Block block, int meta, int flags) {
+            placed = block;
+            return true;
+        }
+
+        public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {
+            return true;
+        }
     }
 
     private static EntityPlayerMP materialPlayer() throws Exception {

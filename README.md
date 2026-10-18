@@ -94,6 +94,12 @@ In resource review, choose **Keep unchanged** for inventory data whose complete 
 施工前使用独立的 **MUI2 材料确认窗口**：按图标、精确物品 / NBT 与单位逐项查看**需求 / 已有 / 缺失**，同名材料不会合并成一项，创造模式也显示完整需求。打开清单、切换抵用券复用已核定的材料数据；主动「刷新材料」只核对清单中的库存，确认施工前再核对现场和材料。没有可处理内容的按钮禁用，悬停可查看原因；普通按钮使用默认猫猫材质，仅强调需要处理的操作和确认。ME 缺料可明确提交独立的真实 AE 合成订单；关闭窗口后继续，重新打开可看总进度与结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料再确认施工**；取消只取消本次订单，已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏不表示订单继续。
 The separate **MUI2 material confirmation window** shows icons and exact **required / available / missing** quantities, preserving distinct item and NBT identities and showing full demand in creative mode. Opening the list and toggling a voucher reuse reviewed material data. Explicit refresh checks stock for those rows; construction checks the site and materials before starting. Controls without applicable content are disabled with a tooltip. Ordinary controls use the default cat theme, with emphasis reserved for relevant actions and confirmation. Explicitly submit missing materials through an independent AE crafting request; closing the window keeps it running with progress and terminal notifications. Actual outputs are delivered to ME storage; **refresh the quote and confirm construction** afterward. Undelivered outputs already received are preserved in player recovery storage when leaving or resetting runtime. Leaving the game ends the active order.
 
+EU 不足时才标红。创造模式持有抵用券时，也可切换抵扣方案核对范围；创造施工不消耗抵用券。
+EU requirements turn red only when available energy is insufficient. Carry a voucher in creative mode to inspect its coverage; creative construction does not consume it.
+
+到 [**蓝图站 · 浏览、下载与分享**](https://miaokatze.com/blueprints) 寻找机器与建筑设计，或分享自己保存的蓝图。游戏内蓝图库和保存／分享引导也提供入口。
+Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.com/blueprints) to find machine and building designs or share your saved blueprints. Links are also available in the in-game library and save/share guidance.
+
 <details>
 <summary><strong>剪切、选区与旋转 / Cut, selection and rotation controls</strong></summary>
 

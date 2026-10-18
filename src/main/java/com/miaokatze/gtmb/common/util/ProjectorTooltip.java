@@ -22,14 +22,26 @@ public final class ProjectorTooltip {
         section(lines, "controls", keys);
     }
 
-    private static void section(List<String> lines, String section, String... keys) {
+    public static void section(List<String> lines, String section, String... keys) {
         lines.add("");
         lines.add(StatCollector.translateToLocal("gtmb.tooltip.section." + section));
+        add(lines, keys);
+    }
+
+    public static void add(List<String> lines, String... keys) {
         for (String key : keys) lines.add(StatCollector.translateToLocal(key));
+    }
+
+    public static void value(List<String> lines, String label, Object value) {
+        lines.add(EnumChatFormatting.GRAY + label + ": " + EnumChatFormatting.WHITE + value + EnumChatFormatting.RESET);
     }
 
     public static void finish(List<String> lines) {
         lines.add("");
+        lines.add(
+            EnumChatFormatting.GRAY + StatCollector.translateToLocalFormatted(
+                "gtmb.tooltip.blueprint_website",
+                EnumChatFormatting.AQUA + BlueprintWebsite.URL + EnumChatFormatting.RESET));
         lines.add(addedByLine());
     }
 

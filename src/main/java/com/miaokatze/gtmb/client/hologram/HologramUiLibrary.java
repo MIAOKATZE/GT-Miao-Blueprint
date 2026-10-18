@@ -56,7 +56,8 @@ final class HologramUiLibrary {
             saveGuidanceDialog = new HologramSaveGuidanceDialog(
                 ui.host.parent()
                     .panel(),
-                preferences);
+                preferences,
+                () -> HologramBlueprintWebsite.open(ui.host.parent()));
         }
         saveGuidanceDialog.open();
     }
@@ -270,7 +271,8 @@ final class HologramUiLibrary {
         int x = HologramScreenLayout.COMPACT_PANEL_X, w = HologramScreenLayout.COMPACT_PANEL_WIDTH;
         NBTTagList presets = ui.session.state().data.getTagList("presets", 10);
         drawRect(x, 57, x + w, 314, 0xef172f36);
-        ui.canvas.text("蓝图库 · " + presets.tagCount() + " 项", x + 5, 62, w - 70, 0xf5e4b9);
+        ui.canvas.text("蓝图库 · " + presets.tagCount() + " 项", x + 5, 62, 83, 0xf5e4b9);
+        drawWebsiteButton(309, x + 91, 60, 62, 15, false, mx, my);
         ui.canvas.button(303, x + w - 62, 60, 57, 15, "刷新", ui.session.editable(), mx, my);
         this.presetNameField.drawTextBox();
         if (this.presetNameField.getText()
@@ -331,6 +333,7 @@ final class HologramUiLibrary {
         if (presets.tagCount() == 0) {
             ui.canvas.text("尚无保存蓝图", x + 12, 139, w - 24, 0xb9d5d4);
             ui.canvas.text("框选区域后保存为蓝图", x + 12, 157, w - 24, 0x8ba7ad);
+            drawWebsiteButton(310, x + 12, 181, w - 24, 20, true, mx, my);
         }
         if (presets.tagCount() > 4) {
             drawRect(x + w - 3, 123, x + w - 1, 235, 0xff243a40);
@@ -431,7 +434,8 @@ final class HologramUiLibrary {
         boolean chosen = !selectedRow.getString("id")
             .isEmpty(), idle = ui.session.editable() && !library.busy() && !HologramBackgroundTasks.busy();
         drawRect(x, 57, x + w, 314, 0xef172f36);
-        ui.canvas.text("蓝图库 · " + rows.tagCount() + " 项", x + 5, 62, w - 70, 0xf5e4b9);
+        ui.canvas.text("蓝图库 · " + rows.tagCount() + " 项", x + 5, 62, 83, 0xf5e4b9);
+        drawWebsiteButton(309, x + 91, 60, 62, 15, false, mx, my);
         ui.canvas.button(201, x + w - 62, 60, 57, 15, this.publicLibrary ? "服务器 ▾" : "客户端 ▾", true, mx, my);
         if (library.config()
             .getBoolean("admin")) ui.canvas.button(207, 272, 9, 76, 17, "管理员设置", true, mx, my);
@@ -488,6 +492,7 @@ final class HologramUiLibrary {
         if (rows.tagCount() == 0) {
             ui.canvas.text(this.publicLibrary ? "服务器暂未发布蓝图" : "客户端暂无蓝图", x + 12, 140, w - 24, 0xb9d5d4);
             ui.canvas.text(this.publicLibrary ? "切换客户端页，上传自己的蓝图" : "保存蓝图后可携带到其他服务器", x + 12, 158, w - 24, 0x8ba7ad);
+            drawWebsiteButton(310, x + 12, 181, w - 24, 20, true, mx, my);
         }
         ui.canvas.button(139, x + 5, 241, 103, 17, "编辑所选", idle && chosen, mx, my);
         ui.canvas.button(299, x + 112, 241, 103, 17, "放弃蓝图预设", idle && !ui.session.state().cells.isEmpty(), mx, my);
@@ -534,6 +539,22 @@ final class HologramUiLibrary {
             ui.canvas.tooltip()
                 .add("客户端目录：MiaoBlueprints/");
         }
+    }
+
+    private void drawWebsiteButton(int id, int x, int y, int width, int height, boolean empty, int mx, int my) {
+        ui.canvas.button(
+            id,
+            x,
+            y,
+            width,
+            height,
+            HologramUiText.localized(
+                empty ? "gtmb.hologram.website.discover" : "gtmb.hologram.website.button",
+                empty ? "前往蓝图站发现更多蓝图 ↗" : "蓝图站 ↗"),
+            ui.session.pendingSequence() < 0 && !HologramBackgroundTasks.busy()
+                && !HologramLibraryClient.INSTANCE.busy(),
+            mx,
+            my);
     }
 
     void openLibraryAdmin() {
@@ -1075,6 +1096,10 @@ final class HologramUiLibrary {
     }
 
     boolean activateControl(int id) {
+        if (id == 309 || id == 310) {
+            HologramBlueprintWebsite.open(ui.host.parent());
+            return true;
+        }
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
             case 303:

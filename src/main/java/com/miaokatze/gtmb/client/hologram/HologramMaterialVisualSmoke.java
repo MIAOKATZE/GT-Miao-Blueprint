@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiConfirmOpenLink;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
@@ -51,6 +52,12 @@ public final class HologramMaterialVisualSmoke {
     private String capture;
     private boolean finished;
     private boolean orderRefusalCaptured;
+    private boolean creativeVoucherApplied;
+    private HologramState websiteState;
+    private HologramMuiTextField websiteDraftField;
+    private Object websiteMainPanel;
+    private String websiteDraft;
+    private long websiteSequence, websitePending;
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.materialVisualSmoke")) FMLCommonHandler.instance()
@@ -94,7 +101,7 @@ public final class HologramMaterialVisualSmoke {
             if (frame - stageFrame < 2 || screen.ui.canvas.renderGeneration() - stageGeneration < 2) return;
             // A root canvas draw does not establish that updateScreen has opened and drawn the child dialog.
             // Await the normal child lifecycle, without manufacturing a tick/open/draw in the fixture.
-            if (stage != 9 && stage != 10) {
+            if (stage != 9 && stage != 10 && stage < 21) {
                 NBTTagCompound dialog = screen.ui.review.materialDialogProbeState();
                 if (!dialog.getBoolean("open") || dialog.getLong("drawnFrames") == 0) {
                     recordLifecycle("waiting-for-dialog-stage-" + stage);
@@ -103,6 +110,10 @@ public final class HologramMaterialVisualSmoke {
             }
             if (stage == 1) {
                 verifyQuietControls(false);
+                require(
+                    screen.ui.review.materialDialogProbeState()
+                        .getInteger("cacheSummaryColor") == HologramMuiTheme.TEXT,
+                    "an affordable exact EU cache must render neutral text");
                 request("01-normal-gt-machine-nbt-fluid-long-counts");
             } else if (stage == 2) {
                 wheelInput = HologramMaterialConfirmationClientProbe.scroll(screen, -120);
@@ -278,14 +289,25 @@ public final class HologramMaterialVisualSmoke {
                     .fullData();
                 disabled.getCompoundTag("decorativeVoucher")
                     .setBoolean("enabled", false);
+                disabled.getTagList("blueprintResources", 10)
+                    .getCompoundTagAt(0)
+                    .setString("available", "123456789012345678901234567889");
+                disabled.getTagList("blueprintResources", 10)
+                    .getCompoundTagAt(0)
+                    .setBoolean("emptyFallback", true);
                 update(new HologramState(disabled));
                 require(
                     !HologramMaterialConfirmationClientProbe.observe(screen)
                         .getBoolean("voucherEnabledAction"),
                     "disabled server configuration must disable the visible voucher action");
                 advance();
-            } else if (stage == 15) request("08-voucher-config-disabled");
-            else if (stage == 16) {
+            } else if (stage == 15) {
+                require(
+                    screen.ui.review.materialDialogProbeState()
+                        .getInteger("cacheSummaryColor") == HologramUiAccent.WARNING,
+                    "a one-EU shortage beyond long must render red text");
+                request("08-voucher-config-disabled");
+            } else if (stage == 16) {
                 NBTTagCompound blocked = screen.ui.session.state()
                     .fullData();
                 blocked.getTagList("cells", 10)
@@ -305,19 +327,61 @@ public final class HologramMaterialVisualSmoke {
             } else if (stage == 18) {
                 NBTTagCompound creative = screen.ui.session.state()
                     .fullData();
-                creative.getCompoundTag("materialQuote")
-                    .setBoolean("creativePaymentsFree", true);
+                NBTTagCompound ordinary = (NBTTagCompound) scene.getCompoundTag("materialQuote")
+                    .copy();
+                ordinary.setBoolean("creativePaymentsFree", true);
+                ordinary.setLong("placementReviewNonce", creative.getLong("placementReviewNonce"));
+                creative.setTag("materialQuote", ordinary);
                 creative.getCompoundTag("decorativeVoucher")
                     .setBoolean("enabled", true);
                 creative.getCompoundTag("decorativeVoucher")
                     .setBoolean("selected", false);
+                creative.getTagList("blueprintResources", 10)
+                    .getCompoundTagAt(0)
+                    .setString("available", "123456789012345678901234567890");
+                creative.getTagList("blueprintResources", 10)
+                    .getCompoundTagAt(0)
+                    .setBoolean("emptyFallback", false);
                 update(new HologramState(creative));
+                HologramUiDiagnostics.writeDiagnosticField(screen, "captureRenderSmokeAction", true);
                 advance();
             } else if (stage == 19) {
                 require(
-                    !screen.ui.review.materialControlEnabled(245) && !screen.ui.review.materialControlEnabled(162),
-                    "creative ordinary payment exemption offers no ineffective voucher or AE request");
-                request("10-creative-voucher-unneeded");
+                    screen.ui.review.materialControlEnabled(245) && !screen.ui.review.materialControlEnabled(162),
+                    "creative carrying a voucher can inspect its discount without an ineffective AE request");
+                if (!creativeVoucherApplied) {
+                    HologramMaterialConfirmationClientProbe.click(screen, 245);
+                    NBTTagCompound selected = (NBTTagCompound) HologramUiDiagnostics
+                        .readDiagnosticField(screen, "capturedRenderSmokeAction");
+                    require(
+                        "setDecorativeVoucher".equals(selected.getString("op")) && selected.getBoolean("enabled"),
+                        "creative voucher selection emits the real metadata action");
+                    quote(selected, true);
+                    creativeVoucherApplied = true;
+                    stageAt = System.nanoTime();
+                    stageFrame = frame;
+                    stageGeneration = screen.ui.canvas.renderGeneration();
+                    return;
+                }
+                NBTTagCompound selectedQuote = screen.ui.session.state().data.getCompoundTag("materialQuote");
+                NBTTagCompound originalRow = scene.getCompoundTag("materialQuote")
+                    .getTagList("rows", 10)
+                    .getCompoundTagAt(5);
+                NBTTagCompound discountedRow = selectedQuote.getTagList("rows", 10)
+                    .getCompoundTagAt(5);
+                require(
+                    selectedQuote.getBoolean("creativePaymentsFree") && selectedQuote.getBoolean("useDecorationVoucher")
+                        && screen.ui.session.state().data.getCompoundTag("decorativeVoucher")
+                            .getBoolean("selected")
+                        && discountedRow.getLong("required") < originalRow.getLong("required")
+                        && discountedRow.getLong("available") == originalRow.getLong("available"),
+                    "creative selection displays changed demand from the quote rather than an invented balance");
+                require(
+                    screen.ui.review.materialDialogProbeState()
+                        .getInteger("cacheSummaryColor") == HologramMuiTheme.TEXT,
+                    "an exactly affordable EU balance remains neutral after creative voucher selection");
+                receipt.addProperty("creativeVoucherQuoteSelectionVerified", true);
+                request("10-creative-voucher-discount-review");
             } else if (stage == 20) {
                 int beforeError = GL11.glGetError();
                 receipt.addProperty("explicitFixtureGlInitialError", beforeError);
@@ -336,6 +400,42 @@ public final class HologramMaterialVisualSmoke {
                 try (FileOutputStream stream = new FileOutputStream(new File(output, "task-witness.nbt"))) {
                     CompressedStreamTools.writeCompressed(HologramBackgroundTasks.actualTaskWitness(), stream);
                 }
+                screen.ui.review.confirmation(false);
+                screen.ui.library.blueprintTab(true);
+                screen.ui.library.libraryDrawer(true);
+                advance();
+            } else if (stage == 21) {
+                require(!screen.ui.review.materialDialogOpen(), "website entry uses the naturally rendered library");
+                require(
+                    screen.ui.session.pendingSequence() < 0 && !HologramBackgroundTasks.busy()
+                        && !HologramLibraryClient.INSTANCE.busy(),
+                    "website confirmation starts without a task owner");
+                websiteState = screen.ui.session.state();
+                websiteSequence = screen.ui.session.sequence();
+                websitePending = screen.ui.session.pendingSequence();
+                websiteDraftField = screen.ui.library.presetNameField();
+                websiteDraft = websiteDraftField.getText();
+                websiteMainPanel = screen.getScreen()
+                    .getMainPanel();
+                HologramUiDiagnostics.writeDiagnosticField(screen, "capturedRenderSmokeAction", null);
+                boolean originalPrompt = mc.gameSettings.chatLinksPrompt;
+                try {
+                    mc.gameSettings.chatLinksPrompt = true;
+                    HologramMuiProbeInput.control(screen, 309);
+                    require(
+                        mc.currentScreen instanceof GuiConfirmOpenLink,
+                        "the real website control opens the vanilla link confirmation");
+                    require(
+                        HologramBlueprintWebsite.cancelConfirmationForSmoke(),
+                        "the real vanilla No-button callback cancels without browsing");
+                } finally {
+                    mc.gameSettings.chatLinksPrompt = originalPrompt;
+                }
+                verifyWebsiteReturn(mc);
+                advance();
+            } else if (stage == 22) {
+                verifyWebsiteReturn(mc);
+                receipt.addProperty("websiteNativeCancelRetainsDraftWithoutRefresh", true);
                 finish(
                     mc,
                     true,
@@ -346,6 +446,22 @@ public final class HologramMaterialVisualSmoke {
             if (screen != null) recordLifecycle("failure");
             finish(mc, false, failure.toString());
         }
+    }
+
+    private void verifyWebsiteReturn(Minecraft mc) throws ReflectiveOperationException {
+        require(
+            mc.currentScreen == screen && screen.ui.session.state() == websiteState
+                && screen.ui.session.sequence() == websiteSequence
+                && screen.ui.session.pendingSequence() == websitePending,
+            "website cancellation retains the same screen, snapshot and exact request state");
+        require(
+            screen.ui.library.presetNameField() == websiteDraftField && websiteDraft.equals(websiteDraftField.getText())
+                && screen.getScreen()
+                    .getMainPanel() == websiteMainPanel,
+            "website cancellation preserves the draft field and native MUI panel rather than rebuilding them");
+        require(
+            HologramUiDiagnostics.readDiagnosticField(screen, "capturedRenderSmokeAction") == null,
+            "returning from the website confirmation must not issue a library refresh or other action");
     }
 
     private void initializeOutput(Minecraft mc) throws Exception {
@@ -419,12 +535,19 @@ public final class HologramMaterialVisualSmoke {
         NBTTagCompound projected = (NBTTagCompound) scene.getCompoundTag("materialQuote")
             .copy();
         projected.setLong("placementReviewNonce", event.getLong("placementReviewNonce"));
+        projected.setBoolean(
+            "creativePaymentsFree",
+            screen.ui.session.state().data.getCompoundTag("materialQuote")
+                .getBoolean("creativePaymentsFree"));
+        projected.setBoolean("useDecorationVoucher", selected);
         NBTTagList rows = projected.getTagList("rows", 10);
         if (selected) for (int i = 0; i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             if (row.getBoolean("voucherEligible")) {
-                row.setLong("available", row.getLong("required"));
-                row.setLong("missing", 0);
+                long required = Math.max(0, row.getLong("required") - row.getLong("shellRequired"));
+                row.setLong("required", required);
+                row.setLong("shellRequired", 0);
+                row.setLong("missing", Math.max(0, required - row.getLong("available")));
             }
         }
         event.setTag("materialQuote", projected);
@@ -659,6 +782,15 @@ public final class HologramMaterialVisualSmoke {
         cell.setBoolean("inScope", true);
         cells.appendTag(cell);
         state.setTag("cells", cells);
+        NBTTagCompound eu = new NBTTagCompound();
+        eu.setString("key", "cache.EU");
+        eu.setString("name", "EU 缓存");
+        eu.setString("required", "123456789012345678901234567890");
+        eu.setString("available", "123456789012345678901234567891");
+        eu.setBoolean("optionalCache", true);
+        NBTTagList resources = new NBTTagList();
+        resources.appendTag(eu);
+        state.setTag("blueprintResources", resources);
         NBTTagList rows = new NBTTagList();
         for (int id : new int[] { 51, 1000 }) {
             require(gregtech.api.GregTechAPI.METATILEENTITIES[id] != null, "registered GT machine required: " + id);
@@ -691,6 +823,7 @@ public final class HologramMaterialVisualSmoke {
             block.setTagCompound(nbt);
             NBTTagCompound row = HologramMaterialQuote.itemRow(block, 5_000_000_000L + i, i * 31L);
             row.setBoolean("voucherEligible", true);
+            row.setLong("shellRequired", 2_500_000_000L);
             rows.appendTag(row);
         }
         NBTTagCompound quote = new NBTTagCompound();

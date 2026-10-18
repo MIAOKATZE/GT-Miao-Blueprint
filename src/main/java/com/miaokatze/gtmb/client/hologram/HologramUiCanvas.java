@@ -13,6 +13,8 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.opengl.GL11;
 
+import com.miaokatze.gtmb.common.util.BlueprintWebsite;
+
 /** Internal canvas workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiCanvas {
 
@@ -247,6 +249,10 @@ final class HologramUiCanvas {
 
     String controlHelp(int id) {
         switch (id) {
+            case 309:
+            case 310:
+                return HologramUiText.localized("gtmb.hologram.website.help", "前往蓝图站浏览、下载与分享蓝图；在浏览器中打开。") + "\n"
+                    + BlueprintWebsite.URL;
             case 147:
                 return ui.preview.canMoveSelection() && ui.preview.previewInteractive() ? ui.preview.moveHandleReason()
                     : "显示或隐藏移动轴（G）；仅移动蓝图规划，不立即施工。";

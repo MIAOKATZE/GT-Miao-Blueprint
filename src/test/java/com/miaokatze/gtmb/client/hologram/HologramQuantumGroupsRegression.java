@@ -170,6 +170,64 @@ public final class HologramQuantumGroupsRegression {
                     .contains("123456789012345678901234567890")
                 && HologramPlacementConfirmation.cacheReviewMatches(state, null),
             "An affordable cache shows exact server String amounts without truncating the energy quantity");
+        SimpleAssert.eq(
+            HologramMuiTheme.TEXT,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "an exactly affordable EU cache uses neutral text");
+        row.setString("available", "123456789012345678901234567891");
+        SimpleAssert.eq(
+            HologramMuiTheme.TEXT,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "a surplus larger than long remains neutral without clipping the balance");
+        row.setString("available", "123456789012345678901234567889");
+        SimpleAssert.eq(
+            HologramUiAccent.WARNING,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "a one-EU shortage beyond long is red rather than rounded to the requirement");
+        row.setString("available", "unavailable");
+        SimpleAssert.eq(
+            HologramUiAccent.WARNING,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "an unavailable balance retains the prior warning");
+        row.removeTag("available");
+        SimpleAssert.eq(
+            HologramUiAccent.WARNING,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "a missing balance cannot claim sufficient stock");
+        row.setString("key", "cache.AE");
+        row.setString("required", "4096.0");
+        row.setString("available", "4.096E3");
+        SimpleAssert.eq(
+            HologramMuiTheme.TEXT,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "AE decimal and scientific server quantities compare exactly without a format warning");
+        row.setString("available", "4095.999");
+        SimpleAssert.eq(
+            HologramUiAccent.WARNING,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "an AE fractional shortage remains a warning");
+        row.setString("available", "NaN");
+        SimpleAssert.eq(
+            HologramUiAccent.WARNING,
+            HologramPlacementConfirmation.cacheSummaryColor(state),
+            "nonfinite AE balances cannot claim sufficient stock");
+        row.setString("key", "cache.EU");
+        row.setString("required", "123456789012345678901234567890");
+        NBTTagCompound voucher = new NBTTagCompound();
+        voucher.setBoolean("enabled", true);
+        voucher.setLong("available", 1);
+        state.setTag("decorativeVoucher", voucher);
+        NBTTagCompound creativeQuote = new NBTTagCompound();
+        creativeQuote.setBoolean("creativePaymentsFree", true);
+        state.setTag("materialQuote", creativeQuote);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.voucherChoiceAvailable(state, true, false),
+            "creative players carrying a voucher can select the real discount quote");
+        voucher.setLong("available", 0);
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.voucherChoiceAvailable(state, true, false)
+                && HologramPlacementConfirmation.voucherChoiceAvailable(state, true, true),
+            "creative selection still needs a carried voucher while deselection remains available");
         row.setString("available", "7");
         row.setBoolean("emptyFallback", true);
         SimpleAssert.that(

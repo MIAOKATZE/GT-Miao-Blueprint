@@ -1,5 +1,8 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -69,8 +72,62 @@ final class HologramPlacementConfirmation {
     }
 
     static String cacheSummary(NBTTagCompound state) {
+        NBTTagCompound selected = cacheSummaryResource(state);
+        if (selected == null) return "";
+        String key = selected.getString("key");
+        if (!"cache.EU".equals(key) && !"cache.AE".equals(key)) return "设备缓存无法付取，将以空缓存放置";
+        return ("cache.EU".equals(key) ? "EU" : "AE") + " 缓存需 "
+            + selected.getString("required")
+            + " / 可用 "
+            + selected.getString("available");
+    }
+
+    static int cacheSummaryColor(NBTTagCompound state) {
+        NBTTagCompound selected = cacheSummaryResource(state);
+        if (selected == null) return HologramMuiTheme.TEXT;
+        String key = selected.getString("key");
+        if (!"cache.EU".equals(key) && !"cache.AE".equals(key)) return HologramUiAccent.WARNING;
+        try {
+            if ("cache.AE".equals(key)) {
+                BigDecimal required = cacheDecimalAmount(selected, "required"),
+                    available = cacheDecimalAmount(selected, "available");
+                if (required.signum() < 0 || available.signum() < 0) return HologramUiAccent.WARNING;
+                return available.compareTo(required) >= 0 ? HologramMuiTheme.TEXT : HologramUiAccent.WARNING;
+            }
+            BigInteger required = cacheAmount(selected, "required"), available = cacheAmount(selected, "available");
+            if (required.signum() < 0 || available.signum() < 0) return HologramUiAccent.WARNING;
+            return available.compareTo(required) >= 0 ? HologramMuiTheme.TEXT : HologramUiAccent.WARNING;
+        } catch (NumberFormatException unavailable) {
+            // Missing/unavailable balances keep the existing warning rather than claiming sufficient stock.
+            return HologramUiAccent.WARNING;
+        }
+    }
+
+    private static BigInteger cacheAmount(NBTTagCompound row, String key) {
+        if (row.hasKey(key + "Exact", 8)) return new BigInteger(row.getString(key + "Exact"));
+        if (row.hasKey(key, 8)) return new BigInteger(row.getString(key));
+        if (row.hasKey(key) && row.getTag(key)
+            .getId() >= 1
+            && row.getTag(key)
+                .getId() <= 4)
+            return BigInteger.valueOf(row.getLong(key));
+        throw new NumberFormatException("Cache amount unavailable");
+    }
+
+    private static BigDecimal cacheDecimalAmount(NBTTagCompound row, String key) {
+        if (row.hasKey(key + "Exact", 8)) return new BigDecimal(row.getString(key + "Exact"));
+        if (row.hasKey(key, 8)) return new BigDecimal(row.getString(key));
+        return new BigDecimal(cacheAmount(row, key));
+    }
+
+    static boolean voucherChoiceAvailable(NBTTagCompound state, boolean demand, boolean selected) {
+        NBTTagCompound voucher = state.getCompoundTag("decorativeVoucher");
+        return voucher.getBoolean("enabled") && (selected || demand && voucher.getLong("available") > 0);
+    }
+
+    private static NBTTagCompound cacheSummaryResource(NBTTagCompound state) {
         NBTTagList rows = cacheResources(state);
-        if (rows.tagCount() == 0) return "";
+        if (rows.tagCount() == 0) return null;
         NBTTagCompound selected = rows.getCompoundTagAt(0);
         for (int i = 0; i < rows.tagCount(); i++) if ("cache.EU".equals(
             rows.getCompoundTagAt(i)
@@ -78,12 +135,7 @@ final class HologramPlacementConfirmation {
                     selected = rows.getCompoundTagAt(i);
                     break;
                 }
-        String key = selected.getString("key");
-        if (!"cache.EU".equals(key) && !"cache.AE".equals(key)) return "设备缓存无法付取，将以空缓存放置";
-        return ("cache.EU".equals(key) ? "EU" : "AE") + " 缓存需 "
-            + selected.getString("required")
-            + " / 可用 "
-            + selected.getString("available");
+        return selected;
     }
 
     static NBTTagCompound cacheReviewSnapshot(NBTTagCompound state) {

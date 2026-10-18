@@ -32,8 +32,8 @@ final class HologramMaterialWorkflow {
                 throw new IOException("投影仪或蓝图会话已失效");
             requireReview(s, action);
             if ("cancelMaterialOrder".equals(op)) {
-                HologramAeCraftingOrders.cancel(s.player, "AE 缺料订单已取消；已合成材料保留在 ME 网络");
-                s.status = "AE 缺料订单已取消；已合成材料保留在 ME 网络";
+                HologramAeCraftingOrders.cancel(s.player, "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存");
+                s.status = "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存";
             } else if ("setDecorativeVoucher".equals(op)) {
                 boolean selected = action.getBoolean("enabled");
                 if (selected
@@ -49,7 +49,10 @@ final class HologramMaterialWorkflow {
                     HologramMaterialQuote.project(s);
                     s.blueprintAwaitingConfirmation = true;
                     s.placementReviewIssued = true;
-                    s.status = selected ? "已按抵扣券重新核算建筑材料；确认施工并成功提交首格时消耗一张" : "已取消抵扣券，材料恢复原生精确需求";
+                    s.status = selected
+                        ? s.player.capabilities.isCreativeMode ? "已按抵扣券显示建筑材料减免方案；创造施工不消耗抵扣券"
+                            : "已按抵扣券重新核算建筑材料；确认施工并成功提交首格时消耗一张"
+                        : "已取消抵扣券，材料恢复原生精确需求";
                 }
             } else if ("refreshMaterialQuote".equals(op)) {
                 HologramMaterialQuote.recheck(s);
@@ -131,10 +134,11 @@ final class HologramMaterialWorkflow {
         voucher.setLong("eligibleDemand", eligibleDemand);
         voucher.setBoolean(
             "usable",
-            HologramDecorationVoucher.enabled() && eligibleDemand > 0
-                && !s.player.capabilities.isCreativeMode
-                && voucher.getLong("available") > 0);
-        voucher.setString("status", s.jobVoucherRequested ? "已选择；首次成功支付建筑材料时消耗一张" : "仅抵扣配置允许的建筑模组材料");
+            HologramDecorationVoucher.enabled() && eligibleDemand > 0 && voucher.getLong("available") > 0);
+        voucher.setString(
+            "status",
+            s.jobVoucherRequested ? s.player.capabilities.isCreativeMode ? "已选择减免方案；创造施工不消耗抵扣券" : "已选择；首次成功支付建筑材料时消耗一张"
+                : "仅抵扣配置允许的建筑模组材料");
         state.setTag("decorativeVoucher", voucher);
     }
 

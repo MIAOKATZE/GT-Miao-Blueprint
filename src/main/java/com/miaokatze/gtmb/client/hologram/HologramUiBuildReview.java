@@ -40,6 +40,7 @@ final class HologramUiBuildReview {
     private int[] lastConfirmationBounds = new int[0];
 
     private String lastCacheReviewSummary = "";
+    private int lastCacheReviewColor = HologramMuiTheme.TEXT;
 
     private boolean lastEmptyCacheReview;
 
@@ -113,6 +114,7 @@ final class HologramUiBuildReview {
         presentedMaterialRevision = confirmedRevision;
         lastConfirmationBounds = HologramPlacementConfirmation.modalBounds(state);
         lastCacheReviewSummary = HologramPlacementConfirmation.cacheSummary(state);
+        lastCacheReviewColor = HologramPlacementConfirmation.cacheSummaryColor(state);
         lastEmptyCacheReview = HologramPlacementConfirmation.emptyCacheFallback(state);
         reviewedCacheQuote = HologramPlacementConfirmation.cacheReviewSnapshot(state);
         lastReviewedScope = constructionScopeLabel(true);
@@ -391,6 +393,10 @@ final class HologramUiBuildReview {
 
     String lastCacheReviewSummary() {
         return this.lastCacheReviewSummary;
+    }
+
+    int lastCacheReviewColor() {
+        return lastCacheReviewColor;
     }
 
     String lastConfirmationAction() {

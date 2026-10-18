@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.function.LongSupplier;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -237,7 +238,7 @@ public final class HologramAeCraftingOrders {
         return new ArrayList<>(result.values());
     }
 
-    private static final class Request {
+    static final class Request {
 
         final IAEStack<?> stack;
         final String label;
@@ -248,7 +249,7 @@ public final class HologramAeCraftingOrders {
         }
     }
 
-    private static final class Order implements ICraftingRequester {
+    static final class Order implements ICraftingRequester {
 
         final EntityPlayerMP player;
         final HologramMaterials.Context context;
@@ -296,36 +297,48 @@ public final class HologramAeCraftingOrders {
                 finish("cancelled", "无线终端、维度或 AE 权限已失效，后台订单已安全取消", true);
                 return;
             }
-            if (link != null) {
-                flushDeliveries();
-                if (nativeCancelled || link.isCanceled()) {
-                    finish("cancelled", "AE 合成任务已取消；已产出材料保留在 ME 网络", false);
-                    return;
-                }
-                if (!nativeCompleted && !link.isDone()) return;
-                if (uncertainDelivery || received < requests.get(index).stack.getStackSize()) {
-                    finish("failed", "AE 产物未完整交付；已接管产物保存在玩家材料恢复账本，请检查后刷新材料", true);
-                    return;
-                }
-                if (pendingDelivery() > 0) {
-                    state = "delivering";
-                    status = "AE 已合成，正在将暂存产物存入 ME；请为网络留出空间";
-                    return;
-                }
-                done = Math.addExact(done, requests.get(index).stack.getStackSize());
-                index++;
-                link = null;
-                cpu = null;
-                job = null;
-                future = null;
-                waiting = 0;
-                nativeCompleted = nativeCancelled = false;
-                received = 0;
-            }
+            if (link != null && !pollDelivery(this::flushDeliveries)) return;
             if (index == requests.size()) {
                 finish("complete", "AE 缺料合成已完成，材料已进入 ME 网络；请刷新材料后继续施工", false);
                 return;
             }
+            plan();
+        }
+
+        /** Native completion is a phase barrier: reinserting earlier outputs can feed this same CPU again. */
+        boolean pollDelivery(Runnable delivery) {
+            if (nativeCancelled || link.isCanceled()) {
+                finish("cancelled", "AE 合成任务已取消；暂存产物保留在玩家材料恢复账本", false);
+                return false;
+            }
+            if (!nativeCompleted && !link.isDone()) return false;
+            if (uncertainDelivery || received < requests.get(index).stack.getStackSize()) {
+                finish("failed", "AE 产物未完整交付；已接管产物保存在玩家材料恢复账本，请检查后刷新材料", true);
+                return false;
+            }
+            delivery.run();
+            if (uncertainDelivery) {
+                finish("failed", "AE 入网结果无法确认；未确认记录已隔离保存，其余暂存产物保留在材料恢复账本，请检查网络", true);
+                return false;
+            }
+            if (pendingDelivery() > 0) {
+                state = "delivering";
+                status = "AE 已合成，正在将暂存产物存入 ME；请为网络留出空间";
+                return false;
+            }
+            done = Math.addExact(done, requests.get(index).stack.getStackSize());
+            index++;
+            link = null;
+            cpu = null;
+            job = null;
+            future = null;
+            waiting = 0;
+            nativeCompleted = nativeCancelled = false;
+            received = 0;
+            return true;
+        }
+
+        private void plan() throws InterruptedException, ExecutionException {
             ICraftingGrid crafting = grid.getCache(ICraftingGrid.class);
             if (crafting == null) {
                 finish("failed", "AE 网络没有可用的合成服务", true);
@@ -412,7 +425,7 @@ public final class HologramAeCraftingOrders {
 
         /**
          * Acknowledge only real native outputs after putting them in the player's persistent delivery ledger.
-         * Delivery into ME occurs on a later poll, outside AE's injection recursion guard. No outputs are minted.
+         * Delivery into ME waits for this native link to finish, so an active CPU cannot consume its own output again.
          */
         @Override
         public IAEStack<?> injectCraftedItems(ICraftingLink requestedLink, IAEStack<?> output, Actionable mode) {
@@ -486,11 +499,33 @@ public final class HologramAeCraftingOrders {
 
         @SuppressWarnings({ "rawtypes", "unchecked" })
         void flushDeliveries() {
-            NBTTagCompound owner = recoveryOwner(player);
-            NBTTagList queued = owner.getTagList(DELIVERY, 10);
             IStorageGrid storage = grid.getCache(IStorageGrid.class);
             PlayerSource source = context.craftingSource();
             if (storage == null || source == null) return;
+            flushDeliveries((receipt, offered) -> {
+                IAEStack output = receipt.getBoolean("fluidDelivery")
+                    ? AEFluidStack.create(FluidStack.loadFluidStackFromNBT(receipt))
+                    : AEItemStack.create(HologramMaterials.recoveryItem(receipt));
+                if (output == null || !output.isSameType((Object) requests.get(index).stack)) {
+                    uncertainDelivery = true;
+                    return () -> offered;
+                }
+                IMEMonitor monitor = storage.getMEMonitor(output.getStackType());
+                if (monitor == null) return () -> offered;
+                output.setStackSize(offered);
+                return () -> {
+                    IAEStack remainder = monitor.injectItems(output, Actionable.MODULATE, source);
+                    long left = remainder == null ? 0 : remainder.getStackSize();
+                    if (left < 0 || left > offered || remainder != null && !output.isSameType((Object) remainder))
+                        throw new IllegalStateException("Invalid native crafting delivery acknowledgement");
+                    return left;
+                };
+            });
+        }
+
+        void flushDeliveries(Delivery delivery) {
+            NBTTagCompound owner = recoveryOwner(player);
+            NBTTagList queued = owner.getTagList(DELIVERY, 10);
             int processed = 0;
             long deadline = System.nanoTime() + 5_000_000L;
             for (int i = 0; i < queued.tagCount() && processed < 96; i++) {
@@ -499,21 +534,12 @@ public final class HologramAeCraftingOrders {
                 if (!id.equals(receipt.getString(DELIVERY_ORDER)) || receipt.getInteger(DELIVERY_INDEX) != index
                     || receiptAmount(receipt) <= 0) continue;
                 processed++;
-                IAEStack output = receipt.getBoolean("fluidDelivery")
-                    ? AEFluidStack.create(FluidStack.loadFluidStackFromNBT(receipt))
-                    : AEItemStack.create(HologramMaterials.recoveryItem(receipt));
-                if (output == null || !output.isSameType((Object) requests.get(index).stack)) {
-                    uncertainDelivery = true;
-                    continue;
-                }
-                IMEMonitor monitor = storage.getMEMonitor(output.getStackType());
-                if (monitor == null) continue;
                 long offered = receiptAmount(receipt);
-                output.setStackSize(offered);
+                // Preparation cannot have inserted anything. Only an actual insertion can have an uncertain result.
+                LongSupplier insertion = delivery.prepare(receipt, offered);
                 try {
-                    IAEStack remainder = monitor.injectItems(output, Actionable.MODULATE, source);
-                    long left = remainder == null ? 0 : remainder.getStackSize();
-                    if (left < 0 || left > offered || remainder != null && !output.isSameType((Object) remainder))
+                    long left = insertion.getAsLong();
+                    if (left < 0 || left > offered)
                         throw new IllegalStateException("Invalid native crafting delivery acknowledgement");
                     receiptAmount(receipt, left);
                 } catch (RuntimeException | LinkageError unacknowledged) {
@@ -606,6 +632,12 @@ public final class HologramAeCraftingOrders {
             HologramWorkspace.snapshotSink()
                 .send(player, patch);
         }
+    }
+
+    @FunctionalInterface
+    interface Delivery {
+
+        LongSupplier prepare(NBTTagCompound receipt, long offered);
     }
 
 }

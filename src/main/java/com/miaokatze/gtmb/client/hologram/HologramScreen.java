@@ -10,6 +10,7 @@ import net.minecraft.nbt.NBTTagList;
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
 
     final HologramUiModules ui = new HologramUiModules(this);
+    private boolean websiteConfirmationResumePending;
 
     HologramScreen(HologramState state) {
         super("workstation");
@@ -26,9 +27,17 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     public void initGui() {
         super.initGui();
+        if (websiteConfirmationResumePending) {
+            websiteConfirmationResumePending = false;
+            return;
+        }
         resetNativeFields();
         ui.router.initGui();
         HologramBackgroundTasks.restoreUi(ui);
+    }
+
+    void resumeAfterWebsiteConfirmation() {
+        websiteConfirmationResumePending = true;
     }
 
     public boolean doesGuiPauseGame() {

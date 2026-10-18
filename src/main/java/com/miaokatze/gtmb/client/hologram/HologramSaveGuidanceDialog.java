@@ -13,9 +13,11 @@ final class HologramSaveGuidanceDialog {
 
     private final HologramUiTabMemory preferences;
     private final IPanelHandler handler;
+    private final Runnable openWebsite;
 
-    HologramSaveGuidanceDialog(ModularPanel parent, HologramUiTabMemory preferences) {
+    HologramSaveGuidanceDialog(ModularPanel parent, HologramUiTabMemory preferences, Runnable openWebsite) {
         this.preferences = preferences;
+        this.openWebsite = openWebsite;
         handler = IPanelHandler.simple(parent, (panel, player) -> build(), true);
     }
 
@@ -43,7 +45,7 @@ final class HologramSaveGuidanceDialog {
 
     private ModularPanel build() {
         Dialog<?> panel = new ExplanationPanel();
-        panel.size(428, 224)
+        panel.size(428, 255)
             .background(HologramMuiTheme.CLOTH);
         HologramMuiTheme.header(panel, () -> text("title", "蓝图已保存 · 接下来设置结构"), 428);
         panel.child(
@@ -70,14 +72,25 @@ final class HologramSaveGuidanceDialog {
             HologramMuiTheme
                 .label(() -> text("next", "点击左上青色“结构调整”继续设置。"), 18, 157, 392, 18, HologramUiAccent.SUGGESTION));
         panel.child(
-            HologramMuiTheme.button(() -> text("acknowledge", "知道了"), 18, 187, 190, 23, () -> dismiss(false))
+            HologramMuiTheme.button(
+                () -> HologramUiText.localized("gtmb.hologram.website.share", "前往蓝图站浏览与分享 ↗"),
+                18,
+                184,
+                392,
+                23,
+                () -> {
+                    dismiss(false);
+                    openWebsite.run();
+                }));
+        panel.child(
+            HologramMuiTheme.button(() -> text("acknowledge", "知道了"), 18, 218, 190, 23, () -> dismiss(false))
                 .background(HologramMuiTheme.guidanceBackground(false, () -> HologramUiAccent.NEXT, () -> true))
                 .hoverBackground(HologramMuiTheme.guidanceBackground(true, () -> HologramUiAccent.NEXT, () -> true))
                 .overlay(
                     IKey.dynamic(() -> text("acknowledge", "知道了"))
                         .color(HologramUiAccent.NEXT)
                         .shadow(false)));
-        panel.child(HologramMuiTheme.button(() -> text("suppress", "不再显示"), 220, 187, 190, 23, () -> dismiss(true)));
+        panel.child(HologramMuiTheme.button(() -> text("suppress", "不再显示"), 220, 218, 190, 23, () -> dismiss(true)));
         return panel;
     }
 
@@ -98,7 +111,7 @@ final class HologramSaveGuidanceDialog {
         public void transform(IViewportStack stack) {
             int screenWidth = getScreen().getScreenArea().width;
             int screenHeight = getScreen().getScreenArea().height;
-            float scale = Math.min(1f, Math.min(screenWidth / 440f, screenHeight / 236f));
+            float scale = Math.min(1f, Math.min(screenWidth / 440f, screenHeight / 267f));
             stack.translate(
                 (screenWidth - getArea().width * scale) / 2f,
                 (screenHeight - getArea().height * scale) / 2f);

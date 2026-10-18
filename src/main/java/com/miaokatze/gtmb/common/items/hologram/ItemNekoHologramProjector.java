@@ -2,10 +2,10 @@ package com.miaokatze.gtmb.common.items.hologram;
 
 import java.util.List;
 
+import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
-import net.minecraft.util.EnumChatFormatting;
 import net.minecraft.util.StatCollector;
 import net.minecraft.world.World;
 
@@ -16,6 +16,9 @@ import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 import com.miaokatze.gtmb.register.CreativeTabManager;
+
+import cpw.mods.fml.relauncher.Side;
+import cpw.mods.fml.relauncher.SideOnly;
 
 /** 猫猫蓝图全息投影仪；扫描与会话状态统一由服务端管理。 */
 public class ItemNekoHologramProjector extends ItemConstructableTrigger {
@@ -74,6 +77,7 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
     }
 
     @Override
+    @SideOnly(Side.CLIENT)
     public void addInformation(ItemStack stack, EntityPlayer player, List<String> tooltip, boolean showAdvanced) {
         ProjectorTooltip.state(tooltip);
         int main = stack.hasTagCompound() ? Math.max(
@@ -81,22 +85,25 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
             stack.getTagCompound()
                 .getInteger("gtitHologramMain"))
             : 1;
-        tooltip.add(EnumChatFormatting.GRAY + StatCollector.translateToLocal("gtmb.hologram.main") + ": " + main);
+        ProjectorTooltip.value(tooltip, StatCollector.translateToLocal("gtmb.hologram.main"), main);
         ChannelDataAccessor.iterateChannelData(stack)
             .limit(8)
-            .forEach(entry -> tooltip.add(EnumChatFormatting.GRAY + entry.getKey() + ": " + entry.getValue()));
+            .forEach(entry -> ProjectorTooltip.value(tooltip, entry.getKey(), entry.getValue()));
         ProjectorTooltip.description(
             tooltip,
             "item." + ID + ".description.0",
             "item." + ID + ".description.1",
             "item." + ID + ".description.2");
         ProjectorTooltip.controls(tooltip);
+        boolean details = GuiScreen.isShiftKeyDown();
         for (int i = 0;; i++) {
             String key = "item." + ID + ".tooltip." + i;
             String line = StatCollector.translateToLocal(key);
             if (line.equals(key)) break;
+            if (!details && i >= 3) break;
             tooltip.add(line);
         }
+        if (!details) ProjectorTooltip.add(tooltip, "gtmb.tooltip.hold_shift.projector");
         ProjectorTooltip.finish(tooltip);
     }
 }

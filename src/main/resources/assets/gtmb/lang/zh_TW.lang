@@ -1,4 +1,9 @@
 gtmb.hologram.cut.name.title=命名並確認剪下
+gtmb.tooltip.blueprint_website=瀏覽、下載與分享藍圖：%s
+gtmb.hologram.website.button=藍圖站 ↗
+gtmb.hologram.website.discover=前往藍圖站發現更多藍圖 ↗
+gtmb.hologram.website.share=前往藍圖站瀏覽與分享 ↗
+gtmb.hologram.website.help=前往藍圖站瀏覽、下載與分享藍圖；在瀏覽器中開啟。
 gtmb.hologram.cut.name.label=剪下暫存名稱
 gtmb.hologram.cut.name.default=暫時剪下
 gtmb.hologram.cut.name.hint=儲存後才會移走選區。後續自動命名仍會確認範圍。
@@ -136,8 +141,45 @@ gtmb.hologram.progress.area.detail.paused=材料規劃已暫停
 
 # Decoration voucher
 item.decoration_voucher.name=裝飾抵用券
-item.decoration_voucher.description.0=一張抵扣本次放置任務中允許的裝飾材料。
-item.decoration_voucher.description.1=在材料確認頁啟用；首次成功放置抵扣裝飾時消耗。
-item.decoration_voucher.description.2=機器、工業材料、內部物品與流體仍需正常支付。
+item.decoration_voucher.description.0=§7為§f一次藍圖施工§7抵扣允許的建築裝飾材料。§r
+item.decoration_voucher.description.1=§e主背包至少持有一張§7，在§f材料確認頁§7主動勾選。§r
+item.decoration_voucher.description.2=§7僅抵扣允許的建築材料；§6工業資源仍按實際需求核算§7。§r
 
 gtmb.hologram.progress.snapshot.detail.export_json=編碼藍圖 JSON
+
+# Projector and decoration voucher tooltip details
+item.neko_hologram_projector.name=貓貓藍圖全息投影儀
+item.neko_hologram_projector.description.0=§7匯入控制器結構或§b藍圖§7，在世界中預覽§b全息投影§7。§r
+item.neko_hologram_projector.description.1=§7框選世界區域編輯§b藍圖§7，或完整§d剪下搬移§7世界結構。§r
+item.neko_hologram_projector.description.2=§7核對§f材料§7與改動，確認後執行§a建造§7、§6替換§7或§c拆除§7。§r
+item.neko_hologram_projector.tooltip.0=§7§e右鍵§7開啟投影儀；§e右鍵§7真實控制器直接匯入結構。§r
+item.neko_hologram_projector.tooltip.1=§7無剪下暫存時，在藍圖庫選擇藍圖並點放置；§eAlt+右鍵§7快速預覽上次藍圖。§r
+item.neko_hologram_projector.tooltip.2=§7§e右鍵§7鎖定§a綠色§7預覽，邊框變§b青色§7；再次§e右鍵§7核對材料，在介面確認後施工。§r
+item.neko_hologram_projector.tooltip.3=§7無剪下暫存時，§eShift+右鍵§7開啟藍圖 / 剪下切換器；按住§eShift§7繼續§e右鍵§7切換，放開進入。§r
+item.neko_hologram_projector.tooltip.4=§7框選：再次§eShift+右鍵§7完成，§eEsc§7取消；鎖定預覽：§eShift+右鍵§7解鎖。§r
+item.neko_hologram_projector.tooltip.5=§7介面：§eCtrl§7點擊多選，§eShift§7拖曳框選，§eCtrl+X/C/V§7編輯，§eRGB§7軸移動。§r
+item.neko_hologram_projector.tooltip.6=§7指向方塊時貼面定位，未命中時懸空；§eAlt§7強制懸空。§r
+item.neko_hologram_projector.tooltip.7=§7藍圖§b青色§7鎖定時：§e方向鍵§7依視角微調一格，§eAlt+上下§7調整高度；長按緩慢連續微調，之後§e右鍵§7重新核對材料。§r
+item.neko_hologram_projector.tooltip.8=§7藍圖移動預覽：§eR§7水平旋轉，§eCtrl+R§7垂直旋轉。§r
+item.neko_hologram_projector.tooltip.9=§7§eAlt+滾輪§7調整懸空距離（§f0–64§7格，0為腳下）；一般§e滾輪§7切換物品。§r
+item.neko_hologram_projector.tooltip.10=§7預覽介面：§eWASD§7移動攝影機。§r
+item.neko_hologram_projector.tooltip.11=§7藍圖/剪下框選：§e左右鍵§7調整兩角，§dShift+Alt+右鍵§7開啟更多選區，§eCtrl§7加選、§dCtrl+Shift§7減選；§eShift+右鍵§7確認，§eCtrl+Z§7復原。§r
+item.neko_hologram_projector.tooltip.12=§7有剪下暫存時：§e右鍵§7開啟專屬儲存，§eShift+右鍵§7放置，§eAlt+右鍵§7復原，§dShift+Alt+右鍵§7再次剪下，§eAlt+A/D§7切換項目。§r
+gtmb.tooltip.section.state=§b§l目前狀態§r
+gtmb.tooltip.section.description=§b§l描述§r
+gtmb.tooltip.section.controls=§e§l按鍵與操作§r
+gtmb.tooltip.added_by=新增模組：
+gtmb.hologram.main=主信道
+gtmb.tooltip.hold_shift.projector=§8按住 §eShift §8查看全部藍圖、剪下與選區操作。§r
+gtmb.tooltip.hold_shift.voucher=§8按住 §eShift §8查看抵扣範圍、消耗規則與設定。§r
+gtmb.tooltip.section.coverage=§b§l抵扣範圍§r
+gtmb.tooltip.section.payment=§6§l消耗與保留§r
+gtmb.tooltip.section.configuration=§d§l伺服器設定§r
+item.decoration_voucher.detail.scope=§7範圍由伺服器§f建築模組白名單§7決定，含允許的裝飾外殼。§r
+item.decoration_voucher.detail.industrial=§6GT / AE 與工業材料§7不在抵扣範圍內，嵌入裝飾內部也不例外。§r
+item.decoration_voucher.detail.assets=§7內部庫存物品、流體與 §eEU§7 均保留實際需求。§r
+item.decoration_voucher.detail.consume=§7首次成功提交抵扣材料的方塊後§f消耗一張§7，本次任務後續沿用。§r
+item.decoration_voucher.detail.rollback=§a未成功抵扣不消耗§7；僅勾選、核對或失敗放置不會扣券。§r
+item.decoration_voucher.detail.creative=§d創造模式§7也須持有券才能勾選核查減免方案；施工§a不扣券§7。§r
+item.decoration_voucher.detail.config=§7管理員可設定§f啟用開關與模組白名單§7：§r
+item.decoration_voucher.detail.reload=§fgtmb-decoration-voucher.cfg §8（修改後重啟伺服器）§r
