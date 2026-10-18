@@ -177,7 +177,10 @@ public final class HologramLibraryFacade {
     static void importPrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) {
         scheduleLibraryCallback(player, request, () -> {
             PrivateReceiver receiver = privateReceiver;
-            if (enabled() && receiver != null && HologramLibraryService.sessionCurrent(player, request)) {
+            if (enabled() && receiver != null
+                && library != null
+                && library.draftTaskCurrent(player, request)
+                && HologramLibraryService.sessionCurrent(player, request)) {
                 try {
                     String id = receiver.accept(player, request, preset);
                     NBTTagCompound result = HologramLibraryProtocol.reply("privateImported");
@@ -205,14 +208,15 @@ public final class HologramLibraryFacade {
     static void draftPrepared(EntityPlayerMP player, NBTTagCompound request, byte[] json, String name) {
         scheduleLibraryCallback(player, request, () -> {
             try {
+                HologramServerLibrary current = library;
+                if (current == null || !current.draftTaskCurrent(player, request)) return;
                 if (!HologramLibraryService.draftCurrent(player, request))
                     throw new IOException("Blueprint save source changed; retry");
                 String jsonHash = HologramBlueprintArtifact.hash(json);
                 if (!request.getString("saveReceipt")
                     .isEmpty() && !HologramService.libraryDraftPrepared(player, request, jsonHash))
                     throw new IOException("Blueprint save receipt changed; retry");
-                HologramServerLibrary current = library;
-                if (current == null) throw new IOException("Blueprint library stopped");
+                if (current != library) throw new IOException("Blueprint library stopped");
                 if (!request.getString("saveReceipt")
                     .isEmpty()) {
                     NBTTagCompound proof = (NBTTagCompound) request.copy();
@@ -235,6 +239,7 @@ public final class HologramLibraryFacade {
     static void draftPreparationFailed(EntityPlayerMP player, NBTTagCompound request, String message) {
         NBTTagCompound proof = (NBTTagCompound) request.copy();
         scheduleLibraryCallback(player, proof, () -> {
+            // Admission can fail before a library peer exists. The exact issued server receipt is authoritative.
             if (!HologramLibraryService.draftCurrent(player, proof)) return;
             if (!proof.getString("saveReceipt")
                 .isEmpty()) HologramService.librarySaveCancelled(player, proof);
@@ -550,6 +555,7 @@ public final class HologramLibraryFacade {
                     if (next.quota.empty()) pending.remove(actorId(next.player), next.quota);
                 }
                 String op = next.request.getString("op");
+                if ("cancel".equals(op)) HologramSnapshotPreparation.cancelSaveSource(next.player, next.request);
                 if ("saveResultConsumed".equals(op)) {
                     consumeSavedResult(next.player, next.request);
                     continue;

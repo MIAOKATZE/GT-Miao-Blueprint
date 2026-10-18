@@ -185,6 +185,45 @@ final class HologramMaterialOrderLifecycle {
         return true;
     }
 
+    /** Material ACKs have an independent sequence; they cannot borrow a full snapshot's global ACK. */
+    boolean quoteReceipt(Object world, Object connection, HologramState state, NBTTagCompound receipt) {
+        if (!receipt.getBoolean("materialQuoteOnly") || !matches(world, connection, state)
+            || !session.equals(receipt.getString("session"))
+            || revision != receipt.getLong("planRevision")
+            || nonce != receipt.getLong("placementReviewNonce")
+            || receipt.getLong("uiSequence") != command) return false;
+        NBTTagCompound order = receipt.getCompoundTag("materialOrder");
+        if (!order.getString("orderId")
+            .isEmpty() && order.hasKey("orderUiSequence", 4)
+            && order.getLong("orderUiSequence") == command
+            && validSnapshotContext(order)) return accept(order);
+        if (!pending || !id.isEmpty()
+            || !order.getString("orderId")
+                .isEmpty() && (!order.hasKey("orderUiSequence", 4) || order.getLong("orderUiSequence") >= command))
+            return false;
+        reject();
+        latest.setString("status", receipt.getString("status"));
+        return true;
+    }
+
+    boolean rejectChangedReview(Object world, Object connection, HologramState state, NBTTagCompound receipt) {
+        if (!pending || !id.isEmpty()
+            || !receipt.getBoolean("materialQuoteOnly")
+            || this.world != world
+            || this.connection != connection
+            || state == null
+            || !session.equals(state.session)
+            || !session.equals(receipt.getString("session"))
+            || revision != state.data.getLong("planRevision")
+            || revision != receipt.getLong("planRevision")
+            || receipt.getLong("uiSequence") != command
+            || receipt.getLong("placementReviewNonce") <= nonce
+            || receipt.getLong("placementReviewNonce") != state.data.getLong("placementReviewNonce")) return false;
+        reject();
+        latest.setString("status", receipt.getString("status"));
+        return true;
+    }
+
     private String key(String orderId) {
         return session + ":" + revision + ":" + nonce + ":" + orderId;
     }

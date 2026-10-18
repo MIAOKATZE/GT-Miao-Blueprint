@@ -189,11 +189,13 @@ final class HologramBlueprintData {
             : HologramBlueprintData.blueprintSource(s.virtualPreset, id);
         if (selected != null) {
             applyStructureConfiguration(s, selected);
-            Object source = selected.controllerId >= 0 && selected.controllerId < GregTechAPI.METATILEENTITIES.length
-                ? GregTechAPI.METATILEENTITIES[selected.controllerId]
-                : null;
-            s.capabilities = HologramCapabilities.describe(source, HologramSessionPolicy.trigger(s), null)
-                .withSavedChannels(s.channels);
+            try {
+                s.capabilities = HologramVirtualStructureEditing.capabilities(s, selected);
+            } catch (java.io.IOException | RuntimeException | LinkageError unavailable) {
+                s.capabilities = HologramCapabilities.describe(null, HologramSessionPolicy.trigger(s), null)
+                    .withSavedChannels(s.channels);
+                s.status = "来源结构声明不可用，保留保存的信道：" + unavailable.getMessage();
+            }
         }
     }
 

@@ -142,7 +142,8 @@ final class HologramProjectorWorkflow {
             HologramSnapshots.sendUi(s);
             return true;
         }
-        HologramResourcePlanner.refreshPlan(s);
+        // Opening a review retains its complete plan and observed stock. The final submit checks the world.
+        boolean cachedMaterials = HologramMaterialQuote.cached(s);
         s.blueprintAwaitingConfirmation = true;
         s.placementReviewIssued = true;
         s.forcePlacementReady = false;
@@ -151,7 +152,14 @@ final class HologramProjectorWorkflow {
         s.openPurpose = "placementReview";
         s.placementReviewNonce++;
         s.status = "位置已锁定，请核对材料与 NBT 条目后确认施工";
-        HologramSnapshots.send(s);
+        if (cachedMaterials) {
+            try {
+                HologramMaterialQuote.project(s);
+            } catch (java.io.IOException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            HologramSnapshots.sendUi(s);
+        } else HologramSnapshots.send(s);
         return true;
     }
 

@@ -107,6 +107,11 @@ final class HologramBuildPreparation {
 
     static void tickPending(HologramSession s) {
 
+        if (HologramVirtualStructureEditing.pending(s)) {
+            HologramVirtualStructureEditing.advance(s);
+            return;
+        }
+
         if (!HologramSessionPolicy.valid(s) || s.machine == null
             || s.machine.getExtendedFacing()
                 .ordinal() != s.retryFacing

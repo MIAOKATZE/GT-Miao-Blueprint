@@ -11,13 +11,18 @@ final class HologramMaterialWorkflow {
 
     private HologramMaterialWorkflow() {}
 
-    static boolean action(HologramSession s, NBTTagCompound action, String op) {
-        boolean material = "orderMissingMaterials".equals(op) || "cancelMaterialOrder".equals(op)
+    static boolean lightweight(String op) {
+        return "orderMissingMaterials".equals(op) || "cancelMaterialOrder".equals(op)
             || "setDecorativeVoucher".equals(op)
             || "refreshMaterialQuote".equals(op);
+    }
+
+    static boolean action(HologramSession s, NBTTagCompound action, String op) {
+        boolean material = lightweight(op);
         if (blockDuringOrder(s, op)) {
             s.status = "AE 缺料订单正在后台处理；请等待完成或取消订单后再修改蓝图与施工计划";
-            HologramSnapshots.sendUi(s);
+            if (material) HologramSnapshots.sendMaterialQuote(s, action.getLong("uiSequence"));
+            else HologramSnapshots.sendUi(s);
             return true;
         }
         if (!material) return false;
@@ -35,19 +40,20 @@ final class HologramMaterialWorkflow {
                     && (!HologramDecorationVoucher.enabled() || HologramDecorationVoucher.available(s.player) < 1))
                     throw new IOException("建筑材料抵扣券未启用或主背包中没有可用抵扣券");
                 if (selected != s.jobVoucherRequested) {
+                    if (!HologramMaterialQuote.cached(s)) throw new IOException("请等待完整材料计划后选择抵扣券");
+                    if (selected && s.materialQuoteCache.eligibleDemand == 0)
+                        throw new IOException("当前计划没有可由抵扣券减免的建筑材料");
                     s.jobVoucherRequested = selected;
-                    HologramResourcePlanner.refreshPlan(s);
                     s.placementReviewNonce++;
+                    s.forcePlacementReady = false;
+                    HologramMaterialQuote.project(s);
                     s.blueprintAwaitingConfirmation = true;
                     s.placementReviewIssued = true;
-                    s.open = true;
                     s.status = selected ? "已按抵扣券重新核算建筑材料；确认施工并成功提交首格时消耗一张" : "已取消抵扣券，材料恢复原生精确需求";
-                    HologramSnapshots.send(s);
-                    return true;
                 }
             } else if ("refreshMaterialQuote".equals(op)) {
                 HologramMaterialQuote.recheck(s);
-                s.status = "材料已重新核算，请查看最新已有与缺失数量后继续确认";
+                s.status = "已按当前材料需求更新已有与缺失数量；库存以确认施工时为准";
             } else {
                 NBTTagCompound quote = s.materialQuote;
                 if (quote == null || !quote.getBoolean("complete")
@@ -55,7 +61,7 @@ final class HologramMaterialWorkflow {
                     || !s.id.equals(quote.getString("session"))) throw new IOException("材料报价尚未完成，请先刷新材料");
                 HologramMaterialQuote.recheck(s);
                 NBTTagCompound request = (NBTTagCompound) s.materialQuote.copy();
-                request.setLong("uiSequence", s.uiSequence);
+                request.setLong("uiSequence", action.getLong("uiSequence"));
                 request.setLong("placementReviewNonce", s.placementReviewNonce);
                 request.setString("presetId", s.virtualPreset.id == null ? "" : s.virtualPreset.id);
                 s.status = HologramMaterialOrdering.available(s.player)
@@ -65,7 +71,7 @@ final class HologramMaterialWorkflow {
         } catch (IOException | RuntimeException invalid) {
             s.status = invalid.getMessage() == null ? "材料操作未完成，请刷新后重试" : invalid.getMessage();
         }
-        HologramSnapshots.sendUi(s);
+        HologramSnapshots.sendMaterialQuote(s, action.getLong("uiSequence"));
         return true;
     }
 
@@ -121,6 +127,13 @@ final class HologramMaterialWorkflow {
         voucher.setBoolean("enabled", HologramDecorationVoucher.enabled());
         voucher.setBoolean("selected", s.jobVoucherRequested);
         voucher.setLong("available", HologramDecorationVoucher.available(s.player));
+        long eligibleDemand = HologramMaterialQuote.cached(s) ? s.materialQuoteCache.eligibleDemand : 0;
+        voucher.setLong("eligibleDemand", eligibleDemand);
+        voucher.setBoolean(
+            "usable",
+            HologramDecorationVoucher.enabled() && eligibleDemand > 0
+                && !s.player.capabilities.isCreativeMode
+                && voucher.getLong("available") > 0);
         voucher.setString("status", s.jobVoucherRequested ? "已选择；首次成功支付建筑材料时消耗一张" : "仅抵扣配置允许的建筑模组材料");
         state.setTag("decorativeVoucher", voucher);
     }

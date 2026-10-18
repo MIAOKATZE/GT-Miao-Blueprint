@@ -92,6 +92,19 @@ public final class HologramClient {
                 if (world != minecraft.theWorld || connection != minecraft.getNetHandler()
                     || retiredSessions.contains(nbt.getString("session"))) return;
                 HologramLibraryClient.INSTANCE.preparationProgress(nbt);
+                if (nbt.getBoolean("materialQuoteOnly")) {
+                    HologramState quoted = HologramMaterialQuoteUpdates.apply(state, nbt);
+                    if (quoted != null) {
+                        quoted = HologramBackgroundTasks.materialQuoteReceipt(quoted, nbt, world, connection);
+                        state = quoted;
+                        receivedAt = System.nanoTime();
+                        if (minecraft.currentScreen instanceof HologramScreen) {
+                            HologramScreen screen = (HologramScreen) minecraft.currentScreen;
+                            screen.ui.session.materialQuoteMetadata(quoted, nbt.getLong("uiSequence"));
+                        }
+                    }
+                    return;
+                }
                 if (nbt.getBoolean("materialOrderOnly")) {
                     HologramState ordered = HologramBackgroundTasks
                         .materialOrderProgress(state, nbt, world, connection);
@@ -910,7 +923,8 @@ public final class HologramClient {
         if (nbt.getBoolean("transportError")) {
             pendingPositionLock.rejected(nbt);
             Minecraft mc = Minecraft.getMinecraft();
-            boolean taskFailed = HologramBackgroundTasks.transportFailed(nbt);
+            boolean taskFailed = HologramLibraryClient.INSTANCE.transportFailed(nbt)
+                || HologramBackgroundTasks.transportFailed(nbt);
             if (taskFailed) {
                 HologramClientProgress.transportFailed(nbt);
                 if (mc.currentScreen instanceof HologramScreen screen)
@@ -1096,14 +1110,59 @@ public final class HologramClient {
         deferredCellRows = 0;
     }
 
-    private static void requestFullSnapshot(String session) {
-        if (fullSnapshotRequested) return;
+    /** Preserve an installed baseline at the exact source revision; a terminal receipt supplies no geometry. */
+    static HologramState retainCancelledSaveSource(HologramState previous, NBTTagCompound event) {
+        if (previous == null || !event.hasKey("planRevision", 4)
+            || !event.hasKey("cellCount", 3)
+            || !previous.session.equals(event.getString("session"))
+            || previous.data.getLong("planRevision") != event.getLong("planRevision")
+            || previous.data.getBoolean("areaSelectionShell")
+            || !previous.data.hasKey("cellCount", 3)
+            || previous.cells.size() != previous.data.getInteger("cellCount")
+            || previous.cells.size() != event.getInteger("cellCount")) return null;
+        NBTTagCompound metadata = new NBTTagCompound();
+        metadata.setBoolean("snapshotPending", false);
+        metadata.setBoolean("blueprintSavePending", false);
+        return previous.withMetadata(metadata);
+    }
+
+    private static String cancelledSourceRecovery = "";
+
+    static boolean saveSourceCancelled(NBTTagCompound event) {
+        if (!event.hasKey("planRevision", 4) || !event.hasKey("cellCount", 3)) return false;
+        if (state != null && (!state.session.equals(event.getString("session"))
+            || state.data.getLong("planRevision") > event.getLong("planRevision"))) return false;
+        HologramState retained = retainCancelledSaveSource(state, event);
+        if (retained == null) {
+            String recovery = event.getString("session") + ":"
+                + event.getLong("clientTaskToken")
+                + ":"
+                + event.getLong("uiSequence")
+                + ":"
+                + event.getLong("planRevision");
+            if (!recovery.equals(cancelledSourceRecovery)) {
+                cancelledSourceRecovery = recovery;
+                // The cancelled server source may have been the response to our previous recovery request.
+                fullSnapshotRequested = false;
+            }
+            return requestFullSnapshot(event.getString("session"));
+        }
+        state = retained;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc != null && mc.currentScreen instanceof HologramScreen screen)
+            screen.ui.session.saveSourceMetadata(retained);
+        return false;
+    }
+
+    private static boolean requestFullSnapshot(String session) {
+        if (fullSnapshotRequested) return false;
         fullSnapshotRequested = true;
         NBTTagCompound recovery = new NBTTagCompound();
         recovery.setString("op", "requestFullSnapshot");
         recovery.setString("session", session);
         recovery.setLong("planRevision", state == null ? -1 : state.data.getLong("planRevision"));
         HologramNetwork.sendAction(recovery);
+        return true;
     }
 
     /** Registry lookups, world access, GUI and rendering resources remain on the client thread. */
@@ -1149,6 +1208,7 @@ public final class HologramClient {
             return;
         }
         if (!nbt.getBoolean("partial") && !nbt.getBoolean("areaSelectionOnly")) fullSnapshotRequested = false;
+        next = HologramMaterialQuoteUpdates.retain(next, state);
         next = HologramBackgroundTasks.retainMaterialOrder(next);
         if (!same) {
             fullSnapshotRequested = false;

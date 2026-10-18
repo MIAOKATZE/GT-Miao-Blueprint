@@ -15,6 +15,7 @@ final class HologramMaterialReview {
 
     private NBTTagCompound quote;
     private boolean current;
+    private boolean itemShortage, voucherDemand;
     private NBTTagList rows = new NBTTagList();
     private final Map<Integer, Row> visible = new LinkedHashMap<Integer, Row>(32, 0.75f, true) {
 
@@ -28,12 +29,28 @@ final class HologramMaterialReview {
         NBTTagCompound next = state.getCompoundTag("materialQuote");
         current = next.getBoolean("complete") && (!next.hasKey("session", 8) || next.getString("session")
             .equals(state.getString("session")))
-            && (!next.hasKey("planRevision", 4) || next.getLong("planRevision") == state.getLong("planRevision"));
+            && (!next.hasKey("planRevision", 4) || next.getLong("planRevision") == state.getLong("planRevision"))
+            && (!next.hasKey("placementReviewNonce", 4)
+                || next.getLong("placementReviewNonce") == state.getLong("placementReviewNonce"));
         if (quote == next) return false;
         quote = next;
-        rows = next.getTagList("rows", 10);
-        visible.clear();
-        return true;
+        NBTTagList nextRows = next.getTagList("rows", 10);
+        boolean resized = rows.tagCount() != nextRows.tagCount();
+        rows = nextRows;
+        itemShortage = false;
+        voucherDemand = false;
+        for (int i = 0; i < rows.tagCount() && !(itemShortage && voucherDemand); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            voucherDemand |= row.getBoolean("voucherEligible");
+            itemShortage |= "item".equals(row.getString("kind")) && !row.getString("itemRegistry")
+                .isEmpty() && row.getLong("missing") > 0 && !row.getBoolean("unlimited");
+        }
+        // A voucher projection changes amounts, not list geometry. Keep unchanged decoded icons and tooltip rows.
+        visible.entrySet()
+            .removeIf(
+                entry -> entry.getKey() >= rows.tagCount()
+                    || !entry.getValue().data.equals(rows.getCompoundTagAt(entry.getKey())));
+        return resized;
     }
 
     int size() {
@@ -42,6 +59,14 @@ final class HologramMaterialReview {
 
     boolean ready() {
         return current && quote != null && quote.hasKey("rows", 9);
+    }
+
+    boolean hasItemShortage() {
+        return ready() && itemShortage && !quote.getBoolean("creativePaymentsFree");
+    }
+
+    boolean hasVoucherDemand() {
+        return ready() && voucherDemand;
     }
 
     Row row(int index) {

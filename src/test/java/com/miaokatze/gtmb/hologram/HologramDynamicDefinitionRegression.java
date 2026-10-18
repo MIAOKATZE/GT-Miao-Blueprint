@@ -122,6 +122,7 @@ final class HologramDynamicDefinitionRegression {
             SimpleAssert
                 .that(!StructureSources.hasSource(DynamicController.class), "closing source removes exact provider");
             customIterator(controller);
+            virtualMemberRebuild(unsafe);
         } catch (Exception failure) {
             throw new AssertionError("dynamic native definition capture", failure);
         } finally {
@@ -134,6 +135,154 @@ final class HologramDynamicDefinitionRegression {
         ItemStack trigger = new ItemStack(Blocks.stone, main);
         ChannelDataAccessor.setChannelData(trigger, "shape", tier);
         return trigger;
+    }
+
+    private static void virtualMemberRebuild(sun.misc.Unsafe unsafe) throws Exception {
+        int id = 32760;
+        IMetaTileEntity previous = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+        DynamicController prototype = new DynamicController();
+        gregtech.api.GregTechAPI.METATILEENTITIES[id] = prototype;
+        try {
+            HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+                .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+            net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) unsafe
+                .allocateInstance(net.minecraft.entity.player.EntityPlayerMP.class);
+            player.worldObj = world;
+            player.inventory = new net.minecraft.entity.player.InventoryPlayer(player);
+            player.capabilities = new net.minecraft.entity.player.PlayerCapabilities();
+            player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+            session.virtual = true;
+            session.virtualPreset = new HologramPresets.Preset();
+            session.virtualPreset.schema = 2;
+            HologramPresets.Structure selected = new HologramPresets.Structure();
+            selected.id = "selected";
+            selected.controllerId = id;
+            selected.sourceClass = DynamicController.class.getName();
+            session.virtualPreset.structures.add(selected);
+            session.blueprintActiveStructure = selected.id;
+            HologramCapture original = new HologramCapture(null, signal(1, 1));
+            HologramCapture.Cell controller = new HologramCapture.Cell(null, 0, 64, 0);
+            controller.block = Blocks.stone;
+            controller.role = "templateController";
+            controller.userPosition = true;
+            HologramBlueprintData.setMemberships(controller, java.util.Collections.singletonList("selected"));
+            HologramCapture.Cell unrelated = new HologramCapture.Cell(null, 200000, 64, 0);
+            unrelated.block = Blocks.stone;
+            unrelated.userPosition = true;
+            unrelated.itemNbt = "preserved opaque edit";
+            HologramBlueprintData.setMemberships(unrelated, java.util.Collections.singletonList("other"));
+            original.cells.add(controller);
+            original.cells.add(unrelated);
+            original.positions.put("0,64,0", controller);
+            original.positions.put("200000,64,0", unrelated);
+            session.capture = original;
+            session.pins.put(0, new ItemStack(Blocks.stone));
+            session.pins.put(1, new ItemStack(Blocks.dirt));
+            session.virtualEdited.add("200000,64,0");
+            HologramPresets.Cell saved = HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, 2, true);
+            saved.structureId = "selected";
+            net.minecraft.nbt.NBTTagCompound persistent = new net.minecraft.nbt.NBTTagCompound();
+            persistent.setInteger("fixtureTail", 7);
+            saved.tileNbt = HologramBlueprintNbt.encodeCaptured(persistent);
+            controller.tileNbt = saved.tileNbt;
+            session.virtualPreset.cells.add(saved);
+            HologramPresets.Cell other = HologramPresets.cell(new ItemStack(Blocks.stone), 200000, 0, 0, -1, false);
+            other.structureId = "other";
+            session.virtualPreset.cells.add(other);
+            net.minecraft.nbt.NBTTagList options = HologramVirtualStructureEditing.capabilities(session, selected)
+                .toNBT();
+            boolean observed = false;
+            for (int i = 0; i < options.tagCount(); i++) observed |= "shape".equals(
+                options.getCompoundTagAt(i)
+                    .getString("id"));
+            SimpleAssert.that(observed, "old saved member with empty channels discovers native construct channel");
+            net.minecraft.nbt.NBTTagCompound channels = new net.minecraft.nbt.NBTTagCompound();
+            channels.setInteger("shape", 3);
+            HologramVirtualStructureEditing.Task cancelledTask = new HologramVirtualStructureEditing.Task(
+                session,
+                selected,
+                2,
+                channels);
+            session.virtualStructureTask = cancelledTask;
+            session.main = 2;
+            session.mainExplicit = true;
+            session.channels = (net.minecraft.nbt.NBTTagCompound) channels.copy();
+            HologramBlueprintData.storeStructureConfiguration(session, selected);
+            HologramVirtualStructureEditing.cancel(session, cancelledTask);
+            SimpleAssert.that(
+                session.capture == original && session.main == 1
+                    && session.channels.hasNoTags()
+                    && selected.main == 1
+                    && selected.channels.isEmpty(),
+                "retiring an unfinished member edit restores configuration without traversing its original geometry");
+            net.minecraft.nbt.NBTTagCompound successorChannels = new net.minecraft.nbt.NBTTagCompound();
+            successorChannels.setInteger("shape", 4);
+            HologramVirtualStructureEditing.Task successor = new HologramVirtualStructureEditing.Task(
+                session,
+                selected,
+                3,
+                successorChannels);
+            session.virtualStructureTask = successor;
+            session.main = 3;
+            session.channels = successorChannels;
+            HologramBlueprintData.storeStructureConfiguration(session, selected);
+            HologramVirtualStructureEditing.cancel(session, cancelledTask);
+            SimpleAssert.that(
+                session.virtualStructureTask == successor && session.main == 3
+                    && session.channels.getInteger("shape") == 4
+                    && selected.main == 3,
+                "a delayed cancellation cannot retire or roll back a newer member task");
+            HologramVirtualStructureEditing.cancel(session, successor);
+            HologramVirtualStructureEditing.Task task = new HologramVirtualStructureEditing.Task(
+                session,
+                selected,
+                2,
+                channels);
+            session.main = 2;
+            session.channels = channels;
+            HologramBlueprintData.storeStructureConfiguration(session, selected);
+            int batches = 0;
+            while (!task.step() && ++batches < 512) {}
+            SimpleAssert.that(batches < 512, "selected member declaration finishes in bounded continuations");
+            task.publish();
+            SimpleAssert.eq(
+                6309,
+                session.capture.cells.size(),
+                "changed native size replaces selected member and retains other member");
+            SimpleAssert.that(
+                session.capture.positions.get("200000,64,0") == unrelated,
+                "other member retains the exact cell and opaque NBT edit");
+            int otherIndex = session.capture.cells.indexOf(unrelated);
+            SimpleAssert.that(
+                session.pins.get(otherIndex)
+                    .getItem() == net.minecraft.item.Item.getItemFromBlock(Blocks.dirt),
+                "unrelated edited target survives index remapping");
+            SimpleAssert.eq(1, prototype.tier, "native construct cannot overwrite registration prototype tier");
+            SimpleAssert.eq(0, prototype.constructions, "registration prototype never receives construct");
+            SimpleAssert.that(task.machine != prototype, "native geometry uses independent controller instance");
+            SimpleAssert.eq(
+                7,
+                ((DynamicController) task.machine).persistentTail,
+                "native loader preserves a saved construction field independently of the new channel");
+            SimpleAssert.eq(3, prototype.persistentTail, "saved construction NBT cannot overwrite prototype state");
+            HologramPresets.Cell rebuiltController = session.virtualPreset.cells.stream()
+                .filter(cell -> cell.controller && cell.belongsTo("selected"))
+                .findFirst()
+                .get();
+            SimpleAssert.eq(
+                7,
+                HologramBlueprintNbt.decode(rebuiltController.tileNbt)
+                    .getInteger("fixtureTail"),
+                "a later member resize can recover the same saved native construction state");
+            SimpleAssert.that(
+                gregtech.api.GregTechAPI.isDummyWorld(
+                    task.machine.getBaseMetaTileEntity()
+                        .getWorld()),
+                "detached alignment stays inside GT's native no-network dummy-world boundary");
+        } finally {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
+        }
     }
 
     private static void customIterator(DynamicController controller) {
@@ -213,7 +362,7 @@ final class HologramDynamicDefinitionRegression {
 
     static final class DynamicController extends MTEEnhancedMultiBlockBase<DynamicController> {
 
-        int tier = 1, definitionBuilds, constructions;
+        int tier = 1, persistentTail = 3, definitionBuilds, constructions;
 
         DynamicController() {
             super("dynamic_definition_fixture");
@@ -226,7 +375,7 @@ final class HologramDynamicDefinitionRegression {
             Arrays.fill(rows, new String(new char[100]).replace('\0', 'A'));
             return StructureDefinition.<DynamicController>builder()
                 .addShape("tier" + tier, new String[][] { rows })
-                .addShape("tail", new String[][] { { "AAA" } })
+                .addShape("tail", new String[][] { { new String(new char[persistentTail]).replace('\0', 'A') } })
                 .addElement('A', StructureUtility.ofBlock(Blocks.stone, tier))
                 .build();
         }
@@ -235,6 +384,7 @@ final class HologramDynamicDefinitionRegression {
         public void construct(ItemStack trigger, boolean hints) {
             constructions++;
             tier = ChannelDataAccessor.getChannelData(trigger, "shape");
+            HologramChannelTrace.record(trigger, "shape", tier, 1);
             // Raw harness invokes the same hook installed at native buildPiece HEAD by Mixin.
             HologramCapture.piece(this, "tier" + tier, trigger, hints, tier, 0, 1);
             HologramCapture.piece(this, "tail", trigger, hints, -150, 0, 1);
@@ -246,13 +396,19 @@ final class HologramDynamicDefinitionRegression {
         }
 
         @Override
+        public void loadNBTData(net.minecraft.nbt.NBTTagCompound tag) {
+            super.loadNBTData(tag);
+            persistentTail = Math.max(3, tag.getInteger("fixtureTail"));
+        }
+
+        @Override
         protected MultiblockTooltipBuilder createTooltip() {
             return null;
         }
 
         @Override
         public IMetaTileEntity newMetaEntity(IGregTechTileEntity tile) {
-            return null;
+            return new DynamicController();
         }
 
         @Override

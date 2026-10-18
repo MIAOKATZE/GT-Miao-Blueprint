@@ -27,9 +27,66 @@ final class HologramMaterialQuoteRegression {
             actualFuzzyPaymentProtectsLaterExactMachine();
             coordinateQuotesAndActualPaymentSharePhysicalCards();
             boundToolSlotSurvivesHotbarSelection();
+            voucherProjectionAndExactStockSnapshot();
         } catch (Exception failure) {
             throw new AssertionError("Material quote regression", failure);
         }
+    }
+
+    private static void voucherProjectionAndExactStockSnapshot() {
+        ItemStack a = machine(9, 1), b = machine(9, 2);
+        NBTTagCompound row = legacy(a, 7, 0, 5);
+        row.setLong("voucherShellRequired", 5);
+        NBTTagList normal = new NBTTagList();
+        normal.appendTag(row);
+        normal.appendTag(legacy(b, 3, 0, 0));
+        NBTTagList voucher = HologramMaterialQuote.voucherRows(normal);
+        require(
+            voucher.getCompoundTagAt(0)
+                .getLong("required") == 2
+                && voucher.getCompoundTagAt(0)
+                    .getLong("shellRequired") == 0,
+            "voucher waives only proven host shell costs, keeping exact contents of the same NBT identity");
+        require(
+            normal.getCompoundTagAt(0)
+                .getLong("required") == 7
+                && voucher.getCompoundTagAt(1)
+                    .getLong("required") == 3,
+            "voucher projection preserves the reusable normal ledger and other full-NBT variants");
+        int[] reads = { 0 };
+        HologramMaterialQuote.StockSnapshot observed = new HologramMaterialQuote.StockSnapshot(
+            new HologramMaterialQuote.ItemStock() {
+
+                public long exact(ItemStack item, long limit) {
+                    reads[0]++;
+                    return item.getTagCompound()
+                        .getInteger("mID") == 1 ? 6 : 1;
+                }
+
+                public long fuzzy(ItemStack item, long limit) {
+                    throw new AssertionError("strict stock fixture cannot request fuzzy materials");
+                }
+            });
+        java.util.List<NBTTagCompound> ordinary = Arrays.asList(normal.getCompoundTagAt(0), normal.getCompoundTagAt(1));
+        HologramMaterialQuote.QuoteCounter first = new HologramMaterialQuote.QuoteCounter(
+            ordinary,
+            observed,
+            ignored -> false);
+        require(
+            first.count(ordinary.get(0)) == 6 && first.count(ordinary.get(1)) == 1,
+            "inventory snapshot keeps same item/damage with different complete NBT separate");
+        for (int repeat = 0; repeat < 10; repeat++) {
+            java.util.List<NBTTagCompound> reduced = Arrays
+                .asList(voucher.getCompoundTagAt(0), voucher.getCompoundTagAt(1));
+            HologramMaterialQuote.QuoteCounter next = new HologramMaterialQuote.QuoteCounter(
+                reduced,
+                observed,
+                ignored -> false);
+            require(
+                next.count(reduced.get(0)) == 2 && next.count(reduced.get(1)) == 1,
+                "repeated voucher projection uses the same physical stock observation");
+        }
+        require(reads[0] == 2, "ten projections perform no new native inventory reads");
     }
 
     private static EntityPlayerMP materialPlayer() throws Exception {

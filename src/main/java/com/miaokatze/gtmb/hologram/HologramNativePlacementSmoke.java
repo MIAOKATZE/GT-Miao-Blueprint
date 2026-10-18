@@ -764,10 +764,11 @@ public final class HologramNativePlacementSmoke {
                 s.expectedFacings.add(-1);
                 if (sourceKind >= 0) s.planFacings.put(i, 2);
             }
-            HologramPlacementJobs.controllerWorkLast(s);
+            long spatialSortNanos = HologramPlacementJobs.spatialWorkOrder(s);
             require(
-                s.work.get(count - controllers) == 0 && s.work.get(count - 1) == controllers - 1,
-                "large_gt_mixed_controllers_are_last");
+                s.work.get(0) == 0 && s.work.get(controllers - 1) == controllers - 1
+                    && s.work.get(count - 1) == count - 1,
+                "large_gt_controllers_follow_the_same_spatial_order_as_the_body");
             player.setPosition(x + .5, y, z + .5);
             require(HologramSessionPolicy.valid(s), "large_gt_position_admitted_near_anchor");
             s.job = 1;
@@ -776,6 +777,10 @@ public final class HologramNativePlacementSmoke {
             boolean walked = false;
             while (s.job == 1 && ticks++ < count + 100) {
                 if (!walked && s.cursor > 0) {
+                    require(
+                        "placed".equals(s.capture.cells.get(0).status) && world
+                            .getTileEntity(x, y, z) instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity,
+                        "large_gt_first_spatial_controller_is_already_placed");
                     player.setPosition(x + 160, y, z + .5);
                     player.inventory.currentItem = 8;
                     walked = true;
@@ -810,11 +815,7 @@ public final class HologramNativePlacementSmoke {
                     HologramSnapshotPreparation.cancel(s);
                     s.open = false;
                 }
-                if (s.cursor < count - controllers) {
-                    if (!world.isAirBlock(x, y, z) || !world.isAirBlock(x + 2, y, z))
-                        throw new AssertionError("large_gt_controllers_not_placed_before_body");
-                    if (ticks <= 2) s.stopTick = true; // Walk between genuine slices before either controller.
-                }
+                if (ticks <= 2) s.stopTick = true; // Walk between genuine slices in spatial construction order.
                 HologramPlacementJobs.tickJob(s);
             }
             require(walked && s.job == 3 && s.completed == count, "large_gt_64000_actual_transactions_complete");
@@ -839,6 +840,8 @@ public final class HologramNativePlacementSmoke {
                     + controllers
                     + " ticks="
                     + ticks
+                    + " spatialSortNanos="
+                    + spatialSortNanos
                     + " walkedBeyondPreviewReach=true selectedSlot=8 closeReopenPauseResume=true result=PASS");
         } finally {
             if (previousWorkspace != null) HologramWorkspace.activate(player.getUniqueID(), previousWorkspace);

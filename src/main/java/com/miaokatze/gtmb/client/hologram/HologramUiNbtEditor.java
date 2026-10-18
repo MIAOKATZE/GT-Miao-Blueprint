@@ -38,6 +38,29 @@ final class HologramUiNbtEditor {
     private HologramMuiTextField nbtValueField;
 
     private int nbtValueIndex = -1;
+    private boolean openedPlacementAll, openedPlacementCovers;
+    private final LinkedHashSet<String> openedPlacementKeys = new LinkedHashSet<>();
+
+    boolean hasPlacementNbtChoices() {
+        NBTTagCompound state = ui.session.state().data;
+        if (state.hasKey("processingNbtKeys", 9)) return state.getTagList("processingNbtKeys", 8)
+            .tagCount() > 0;
+        if (state.getCompoundTag("processing")
+            .hasKey("nbtKeys", 9))
+            return state.getCompoundTag("processing")
+                .getTagList("nbtKeys", 8)
+                .tagCount() > 0;
+        NBTTagList entries = state.getTagList("nbtEntries", 10);
+        for (int i = 0; i < entries.tagCount(); i++) {
+            NBTTagCompound entry = entries.getCompoundTagAt(i);
+            String key = entry.getString("key");
+            if (!entry.getBoolean("protected") && !key.isEmpty()
+                && !java.util.Arrays.asList("id", "x", "y", "z")
+                    .contains(key))
+                return true;
+        }
+        return false;
+    }
 
     List<String> availableNbtKeys() {
         List<String> keys = new ArrayList<>();
@@ -80,6 +103,11 @@ final class HologramUiNbtEditor {
             NBTTagList paths = row.getTagList("ignoredPaths", 8);
             for (int i = 0; i < paths.tagCount(); i++) this.nbtIgnoredPaths.add(paths.getStringTagAt(i));
         }
+        openedPlacementAll = nbtSelection.all();
+        openedPlacementCovers = nbtSelection.retainCovers();
+        openedPlacementKeys.clear();
+        NBTTagList openedKeys = nbtSelection.keys();
+        for (int i = 0; i < openedKeys.tagCount(); i++) openedPlacementKeys.add(openedKeys.getStringTagAt(i));
     }
 
     NBTTagCompound cellNbtRow() {
@@ -326,6 +354,10 @@ final class HologramUiNbtEditor {
                 return true;
             case 173:
                 if (ui.session.editable()) {
+                    if (nbtPlacement && placementSelectionUnchanged()) {
+                        this.nbtDrawer = false;
+                        return true;
+                    }
                     NBTTagCompound nbt = new NBTTagCompound();
                     nbt.setBoolean("all", this.nbtSelection.all());
                     nbt.setTag("keys", this.nbtSelection.keys());
@@ -359,6 +391,16 @@ final class HologramUiNbtEditor {
             default:
                 return false;
         }
+    }
+
+    private boolean placementSelectionUnchanged() {
+        if (openedPlacementAll != nbtSelection.all() || openedPlacementCovers != nbtSelection.retainCovers())
+            return false;
+        if (nbtSelection.all()) return true;
+        LinkedHashSet<String> current = new LinkedHashSet<>();
+        NBTTagList keys = nbtSelection.keys();
+        for (int i = 0; i < keys.tagCount(); i++) current.add(keys.getStringTagAt(i));
+        return openedPlacementKeys.equals(current);
     }
 
     boolean consumeEditorMouse(int mx, int my, int button) {

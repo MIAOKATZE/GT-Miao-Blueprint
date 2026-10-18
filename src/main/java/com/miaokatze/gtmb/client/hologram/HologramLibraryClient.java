@@ -86,7 +86,13 @@ final class HologramLibraryClient {
     private NBTTagCompound lastSaveTransition = new NBTTagCompound();
     private int saveTraceEvents, downloadProgressMarker, uploadProgressMarker;
     private long backgroundTaskToken;
-    private SaveCommand draftSave;
+    private SaveCommand draftSave, cancelledSourceSave;
+    private long diagnosticTask;
+    private int diagnosticPhases;
+    private String diagnosticPhase = "", diagnosticTransfer = "";
+    private long downloadHeaderRevision = -1;
+    private boolean diagnosticTerminal, downloadBeginObserved, downloadBeginAccepted, downloadDoneObserved,
+        downloadDoneAccepted;
 
     /** The save request remains owned while the server is asking for its AE review. */
     static final class SaveCommand {
@@ -360,11 +366,11 @@ final class HologramLibraryClient {
             settingsProgress.clear();
             configWritePending = false;
             pendingConfigRevision = -1;
-            cancel();
+            cancel("蓝图连接已变化", false);
             PendingDiskSave abandoned = pendingDiskSave;
             pendingDiskSave = null;
             if (abandoned != null) finishBackgroundTask(abandoned.backgroundToken, false, "蓝图连接已变化");
-            if (abandoned != null) work(() -> {
+            if (abandoned != null) durableWork(() -> {
                 boolean committed = abandoned.integrated && store.logicalSaveCommitted(
                     abandoned.acknowledgement.getString("localId"),
                     abandoned.acknowledgement.getString("jsonSha256"));
@@ -388,8 +394,9 @@ final class HologramLibraryClient {
             || incoming != null && incomingCapturePreview)
             && !saveSourceAwaiting(generation, incomingSaveSession, incomingSaveRevision)) {
             boolean timedOut = saveProgress.waitingExpired(System.nanoTime());
-            cancel();
-            status = timedOut ? "等待对应蓝图状态超时，未保存修改保留" : "蓝图来源已变化，结构预览保存已取消";
+            failTask(
+                timedOut ? "source.wait.timeout" : "source.changed",
+                timedOut ? "等待对应蓝图状态超时，未保存修改保留" : "蓝图来源已变化，未保存修改保留");
         }
         if (saveSourceCurrent(generation, incomingSaveSession, incomingSaveRevision))
             saveProgress.sourceReady(System.nanoTime());
@@ -400,8 +407,7 @@ final class HologramLibraryClient {
                 || previewCapture != null
                 || pendingSaveAck != null)
             && saveProgress.idleExpired(System.nanoTime())) {
-            cancel();
-            status = "蓝图保存无进展超时，未保存修改保留";
+            failTask("save.idle.timeout", "蓝图保存无进展超时，未保存修改保留");
         }
         if (pendingPreviewStart != null && saveSourceCurrent(generation, incomingSaveSession, incomingSaveRevision)) {
             Runnable start = pendingPreviewStart;
@@ -450,9 +456,11 @@ final class HologramLibraryClient {
             || quickInProgress()) && pendingDiskSave == null
             && System.nanoTime() - lastActivity > TimeUnit.SECONDS.toNanos(120)) {
             boolean stalledPreparation = draftPending && preparationProgress.stalled(System.nanoTime());
-            cancel();
-            status = stalledPreparation ? "蓝图准备长时间没有进展，已停止等待；未保存修改保留，请重试" : "传输超时，请重试；未保存修改保留";
+            failTask(
+                stalledPreparation ? "prepare.stalled" : "transfer.idle.timeout",
+                stalledPreparation ? "蓝图准备长时间没有进展，请重试；未保存修改保留" : "传输超时，请重试；未保存修改保留");
         }
+        if (backgroundTaskToken > 0) lifecycle("phase", false);
         while (outgoing != null && ready && uploadWindow != null && uploadWindow.canSend()) {
             int index = uploadWindow.nextSent();
             int offset = index * HologramLibraryProtocol.CHUNK_BYTES;
@@ -658,6 +666,8 @@ final class HologramLibraryClient {
 
     private void advanceGeneration() {
         generation++;
+        worker.getQueue()
+            .removeIf(task -> task instanceof QueuedWork && !((QueuedWork) task).durable);
         loading = false;
         localCatalogProgress.clear();
     }
@@ -829,6 +839,10 @@ final class HologramLibraryClient {
     private boolean beginBackgroundTask(String label) {
         if (backgroundTaskToken != 0) return true;
         backgroundTaskToken = HologramBackgroundTasks.beginLibrary(label);
+        if (backgroundTaskToken != 0) {
+            cancelledSourceSave = null;
+            resetLifecycle();
+        }
         return backgroundTaskToken != 0;
     }
 
@@ -836,16 +850,111 @@ final class HologramLibraryClient {
         return backgroundTaskToken;
     }
 
+    private void resetLifecycle() {
+        diagnosticTask = backgroundTaskToken;
+        diagnosticPhases = 0;
+        diagnosticPhase = diagnosticTransfer = "";
+        downloadHeaderRevision = -1;
+        diagnosticTerminal = false;
+        downloadBeginObserved = downloadBeginAccepted = downloadDoneObserved = downloadDoneAccepted = false;
+    }
+
+    /** One task emits at most 24 phase transitions and one terminal observation, without blueprint payloads. */
+    private void lifecycle(String outcome, boolean terminal) {
+        if (backgroundTaskToken == 0) return;
+        if (diagnosticTask != backgroundTaskToken) resetLifecycle();
+        HologramProgress observed = progress();
+        String phase = observed == null ? localProgressPhase : observed.phase;
+        String detail = observed == null ? "" : observed.detail;
+        String key = phase + ":" + detail;
+        if (terminal) {
+            if (diagnosticTerminal) return;
+            diagnosticTerminal = true;
+        } else {
+            if (diagnosticTerminal || key.equals(diagnosticPhase) || diagnosticPhases >= 24) return;
+            diagnosticPhase = key;
+            diagnosticPhases++;
+        }
+        long now = System.nanoTime();
+        HologramState source = HologramClient.state;
+        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
+            "Blueprint lifecycle task=" + backgroundTaskToken
+                + " outcome="
+                + outcome
+                + " phase="
+                + phase
+                + " detail="
+                + detail
+                + " done="
+                + (observed == null ? 0 : observed.done)
+                + "/"
+                + (observed == null ? 0 : observed.total)
+                + " received="
+                + (incoming == null ? downloadDoneAccepted ? incomingTotal : 0 : incoming.size())
+                + "/"
+                + (downloadBeginAccepted ? incomingTotal : 0)
+                + " sent="
+                + sentBytes
+                + "/"
+                + (outgoing == null ? 0 : outgoing.length)
+                + " idleMs="
+                + (lastActivity == 0 ? 0 : TimeUnit.NANOSECONDS.toMillis(now - lastActivity))
+                + " saveIdleMs="
+                + (saveProgress.progressedAt == 0 ? 0 : TimeUnit.NANOSECONDS.toMillis(now - saveProgress.progressedAt))
+                + " transfer="
+                + (!outgoingId.isEmpty() ? outgoingId : incomingId.isEmpty() ? diagnosticTransfer : incomingId)
+                + " begin="
+                + downloadBeginObserved
+                + "/"
+                + downloadBeginAccepted
+                + " donePacket="
+                + downloadDoneObserved
+                + "/"
+                + downloadDoneAccepted
+                + " sourceRevision="
+                + (source == null ? -1 : source.data.getLong("planRevision"))
+                + "/"
+                + (downloadBeginObserved ? downloadHeaderRevision : -1)
+                + " sourceUi="
+                + (source == null ? -1 : source.data.getLong("uiSequence"))
+                + " saveUi="
+                + (draftSave == null ? -1 : draftSave.sequence)
+                + " waitingSource="
+                + (pendingPreviewStart != null)
+                + " commitPending="
+                + (pendingDiskSave != null)
+                + " finalizing="
+                + (pendingDiskSave != null && pendingDiskSave.finalizing));
+    }
+
+    /** Preserve the reason and observed phase before retiring the transport and owner. */
+    void failTask(String outcome, String reason) {
+        HologramProgress observed = progress();
+        String phase = observed == null ? localProgressPhase : observed.phase;
+        lifecycle(outcome, true);
+        cancel(HologramUiText.reason(reason) + " [" + HologramProgressView.phase(phase) + "]", false);
+    }
+
     private void finishBackgroundTask(long token, boolean success, String detail) {
+        finishBackgroundTask(token, success, detail, false);
+    }
+
+    private void finishBackgroundTask(long token, boolean success, String detail, boolean cancelled) {
         if (token == 0 || token != backgroundTaskToken) return;
+        SaveCommand completed = draftSave;
+        lifecycle(success ? "success" : cancelled ? "cancelled" : "failure", true);
         preparationProgress.clear();
         backgroundTaskToken = 0;
         draftSave = null;
-        HologramBackgroundTasks.finishLibrary(token, success, detail);
+        HologramBackgroundTasks.finishLibrary(token, success, detail, cancelled);
+        Minecraft mc = Minecraft.getMinecraft();
+        if (completed != null && mc != null && mc.currentScreen instanceof HologramScreen screen)
+            screen.ui.session.libraryTaskFinished(completed.session, completed.sequence, token, detail);
     }
 
     void saveCommand(String session, long sequence, String operation) {
         if (!draftPending || backgroundTaskToken == 0) return;
+        if (diagnosticTask != backgroundTaskToken) resetLifecycle();
         preparationProgress.clear();
         lastActivity = System.nanoTime();
         if ("confirmAeSave".equals(operation)) {
@@ -886,12 +995,25 @@ final class HologramLibraryClient {
         }
     }
 
+    /** Snapshot failures are terminal only for their exact save capability, including detached screens. */
+    boolean transportFailed(NBTTagCompound event) {
+        if (pendingDiskSave != null || draftSave == null
+            || backgroundTaskToken == 0
+            || event.getLong("clientTaskToken") != backgroundTaskToken
+            || !draftSave.session.equals(event.getString("session"))
+            || !event.hasKey("uiSequence", 4)
+            || draftSave.sequence != event.getLong("uiSequence")) return false;
+        String message = HologramBackgroundTasks.transportFailureMessage(event);
+        cancel(message, false);
+        return true;
+    }
+
     /** Installed snapshots reach the task owner even when its business screen is closed. */
     boolean snapshot(HologramState next) {
         if (!draftPending || draftSave == null) return false;
         if (draftSave.failed(next.data, backgroundTaskToken)) {
             String message = next.data.getString("status");
-            finishDraftReview(message.isEmpty() ? "蓝图保存失败，请保持当前蓝图并重试" : message);
+            failDraftReview(message.isEmpty() ? "蓝图保存失败，请保持当前蓝图并重试" : message);
             return false;
         }
         return draftSave.matches(next.data, backgroundTaskToken)
@@ -940,15 +1062,13 @@ final class HologramLibraryClient {
     }
 
     void cancelDraftReview() {
-        finishDraftReview("蓝图保存已取消");
+        if (!draftPending || incoming != null) return;
+        cancel();
     }
 
-    private void finishDraftReview(String message) {
+    void failDraftReview(String message) {
         if (!draftPending || incoming != null) return;
-        finishBackgroundTask(backgroundTaskToken, false, message);
-        draftPending = downloadExpected = preparing = false;
-        transferProgress.clear();
-        status = message;
+        cancel(message, false);
     }
 
     void expectDraftDownload() {
@@ -1064,8 +1184,18 @@ final class HologramLibraryClient {
     }
 
     void cancel() {
+        cancel("蓝图任务已取消", true);
+    }
+
+    private void cancel(String reason, boolean cancelled) {
         long cancelledTask = backgroundTaskToken;
-        if (pendingDiskSave == null) finishBackgroundTask(backgroundTaskToken, false, "蓝图任务已取消");
+        SaveCommand cancelledCommand = draftSave;
+        if (cancelledCommand != null) cancelledSourceSave = new SaveCommand(
+            cancelledCommand.task,
+            cancelledCommand.session,
+            cancelledCommand.sequence,
+            cancelledCommand.operation);
+        if (pendingDiskSave == null) finishBackgroundTask(backgroundTaskToken, false, reason, cancelled);
         transferProgress.clear();
         localProgressPhase = "library.prepare";
         deletingServer = false;
@@ -1082,7 +1212,8 @@ final class HologramLibraryClient {
         previewCapture = null;
         pendingPreviewStart = null;
         pendingSaveAck = null;
-        if (!outgoingId.isEmpty() || !incomingId.isEmpty()
+        if (activeTransfer && cancelledTask > 0 || !outgoingId.isEmpty()
+            || !incomingId.isEmpty()
             || activeTransfer && !incomingSaveReceipt.isEmpty()
             || pendingDiskSave != null) {
             NBTTagCompound request = pendingDiskSave == null ? request("cancel")
@@ -1090,6 +1221,10 @@ final class HologramLibraryClient {
             request.setString("op", "cancel");
             request.setLong("clientTaskToken", cancelledTask);
             request.setString("transfer", outgoing != null ? outgoingId : incomingId);
+            if (cancelledCommand != null) {
+                request.setString("session", cancelledCommand.session);
+                request.setLong("uiSequence", cancelledCommand.sequence);
+            }
             if (pendingDiskSave == null && activeTransfer && !incomingSaveReceipt.isEmpty()) {
                 request.setString("session", incomingSaveSession);
                 request.setLong("planRevision", incomingSaveRevision);
@@ -1110,11 +1245,22 @@ final class HologramLibraryClient {
         outgoingId = incomingId = "";
         ready = inFlight = preparing = false;
         if (pendingDiskSave != null) preparing = true;
-        status = activeTransfer ? "传输已取消" : "";
+        status = activeTransfer ? reason : "";
     }
 
     private void receive(NBTTagCompound reply) {
         String op = reply.getString("op");
+        if ("sourceCancelled".equals(op)) {
+            SaveCommand cancelled = cancelledSourceSave;
+            if (cancelled == null || backgroundTaskToken != 0
+                || cancelled.task != reply.getLong("clientTaskToken")
+                || !cancelled.session.equals(reply.getString("session"))
+                || !reply.hasKey("uiSequence", 4)
+                || cancelled.sequence != reply.getLong("uiSequence")) return;
+            cancelledSourceSave = null;
+            HologramClient.saveSourceCancelled(reply);
+            return;
+        }
         if ("preparationProgress".equals(op)) {
             preparationProgress(reply);
             return;
@@ -1127,7 +1273,10 @@ final class HologramLibraryClient {
             || "previewReady".equals(op)
             || "uploaded".equals(op)
             || "privateImported".equals(op)
-            || "previewVerified".equals(op)) && !(draftPending && ("list".equals(op) || "config".equals(op))))
+            || "previewVerified".equals(op)
+            || "downloadBegin".equals(op)
+            || "downloadChunk".equals(op)
+            || "downloadDone".equals(op)) && !(draftPending && ("list".equals(op) || "config".equals(op))))
             lastActivity = System.nanoTime();
         if ("saveCommitted".equals(op) || "saveRejected".equals(op)) {
             finishDiskSave(reply, "saveCommitted".equals(op));
@@ -1324,12 +1473,17 @@ final class HologramLibraryClient {
             selectedServer = "";
             refreshServer(page);
         } else if ("downloadBegin".equals(op)) {
+            downloadBeginObserved = true;
+            downloadHeaderRevision = reply.getLong("planRevision");
             boolean nativeDraft = HologramLibraryDownload.taskMatches(backgroundTaskToken, reply)
                 && reply.getBoolean("capturePreview")
                 && !reply.getString("saveReceipt")
                     .isEmpty()
                 && saveSourceAwaiting(generation, reply.getString("session"), reply.getLong("planRevision"));
-            if (reply.getBoolean("capturePreview") && !nativeDraft) return;
+            if (reply.getBoolean("capturePreview") && !nativeDraft) {
+                failTask("download.source.rejected", "保存内容来源已变化，未保存修改保留，请重试");
+                return;
+            }
             if (!downloadExpected && !nativeDraft) return;
             ensureStore();
             if (nativeDraft) captureActor();
@@ -1345,8 +1499,7 @@ final class HologramLibraryClient {
                 || !reply.getString("transfer")
                     .matches("[a-f0-9-]{36}")
                 || reply.getInteger("artifactVersion") != HologramBlueprintArtifact.VERSION) {
-                cancel();
-                status = "下载长度无效";
+                failTask("download.header.invalid", "下载长度无效");
                 return;
             }
             String encoding = reply.getString("encoding");
@@ -1358,16 +1511,19 @@ final class HologramLibraryClient {
                     "Decoded blueprint exceeds " + HologramClientLibrary.MAX_BYTES / (1024 * 1024) + " MiB");
                 incoming = new HologramLibraryDownload.Assembly(total);
             } catch (java.io.IOException invalid) {
-                cancel();
-                status = HologramUiText.reason(invalid.getMessage());
+                failTask("download.invalid", HologramUiText.reason(invalid.getMessage()));
                 return;
             }
+            downloadBeginAccepted = true;
+            lastActivity = System.nanoTime();
+            downloadDoneObserved = downloadDoneAccepted = false;
             incomingEncoding = encoding;
             incomingDecodedTotal = decodedTotal;
             incomingTotal = total;
             incomingIndex = 0;
             preparing = false;
             incomingId = reply.getString("transfer");
+            diagnosticTransfer = incomingId;
             incomingHash = reply.getString("hash");
             incomingPurpose = reply.getString("purpose");
             incomingLocal = reply.getString("localId");
@@ -1393,11 +1549,11 @@ final class HologramLibraryClient {
             try {
                 incoming.append(reply.getInteger("index"), bytes);
             } catch (java.io.IOException invalid) {
-                cancel();
-                status = "下载分片无效，请重试";
+                failTask("download.chunk.invalid", "下载分片无效，请重试");
                 return;
             }
             incomingIndex++;
+            lastActivity = System.nanoTime();
             if (incomingCapturePreview) {
                 saveProgress.progress(System.nanoTime());
                 int marker = (int) ((long) incoming.size() * 4 / incomingTotal);
@@ -1408,15 +1564,17 @@ final class HologramLibraryClient {
                 }
             }
         } else if ("downloadDone".equals(op)) {
+            downloadDoneObserved = true;
             if (incoming == null || !incomingId.equals(reply.getString("transfer"))) return;
             byte[] encoded;
             try {
                 encoded = incoming.finish();
             } catch (java.io.IOException invalid) {
-                cancel();
-                status = HologramUiText.reason(invalid.getMessage());
+                failTask("download.invalid", HologramUiText.reason(invalid.getMessage()));
                 return;
             }
+            downloadDoneAccepted = true;
+            lastActivity = System.nanoTime();
             String encoding = incomingEncoding;
             int decodedTotal = incomingDecodedTotal;
             String expected = incomingHash;
@@ -1492,7 +1650,7 @@ final class HologramLibraryClient {
                 }
             });
         } else if ("error".equals(op)) {
-            cancel();
+            cancel("服务器：" + HologramUiText.reason(reply.getString("message")), false);
             refreshingServer = false;
             serverCatalogReplies = 0;
             localCatalogProgress.clear();
@@ -1531,7 +1689,7 @@ final class HologramLibraryClient {
         if (!pending.resolution.begin(pending.acknowledgement, event)) return;
         // A denied duplicate ACK does not decide whether an earlier ACK already committed.
         // Existing cancel keeps the pair staged until the server resolves committed versus rejected.
-        cancel();
+        cancel(HologramProgressView.phase("library.resolve"), false);
         status = HologramProgressView.phase("library.resolve");
     }
 
@@ -1551,7 +1709,7 @@ final class HologramLibraryClient {
         pending.finalizing = true;
         preparing = true;
         localProgressPhase = committed ? "library.commit" : "library.rollback";
-        work(() -> {
+        durableWork(() -> {
             if (committed) {
                 pending.write.commit();
                 store.rememberLocal(pending.serverKey, acknowledgement.getString("localId"));
@@ -1599,9 +1757,11 @@ final class HologramLibraryClient {
 
     private void failSave(String message, Throwable failure) {
         if (pendingDiskSave != null) pendingDiskSave.finalizing = false;
-        cancel();
-        status = message;
-        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(message, failure);
+        failTask(
+            failure == null ? "save.failure"
+                : "save." + failure.getClass()
+                    .getSimpleName(),
+            message);
     }
 
     /** The network-published state is volatile; an IO commit never waits for the next client tick to see edits. */
@@ -1654,7 +1814,7 @@ final class HologramLibraryClient {
         long revision = acknowledgement.getLong("planRevision");
         main(() -> {
             if (!saveSourceCurrent(token, session, revision)) {
-                work(() -> {
+                durableWork(() -> {
                     try {
                         local.write.rollback();
                     } catch (Exception failure) {
@@ -1662,7 +1822,7 @@ final class HologramLibraryClient {
                             .warn("Cancelled blueprint pair rollback failed", failure);
                     }
                 });
-                if (token == generation) cancel();
+                if (token == generation) failTask("source.changed", "蓝图来源已变化，未保存修改保留");
                 return;
             }
             pendingDiskSave = new PendingDiskSave(
@@ -1779,23 +1939,45 @@ final class HologramLibraryClient {
         void run() throws Exception;
     }
 
+    private final class QueuedWork implements Runnable {
+
+        final Job job;
+        final long token = generation;
+        final boolean durable;
+
+        QueuedWork(Job job, boolean durable) {
+            this.job = job;
+            this.durable = durable;
+        }
+
+        public void run() {
+            if (!durable && token != generation) return;
+            try {
+                job.run();
+            } catch (Exception error) {
+                main(() -> {
+                    if (token != generation) return;
+                    loading = false;
+                    failSave("保存蓝图失败：" + HologramUiText.reason(error.getMessage()), error);
+                });
+            }
+        }
+    }
+
     private void work(Job job) {
-        long token = generation;
+        enqueueWork(job, false);
+    }
+
+    private void durableWork(Job job) {
+        enqueueWork(job, true);
+    }
+
+    private void enqueueWork(Job job, boolean durable) {
         try {
-            worker.execute(() -> {
-                try {
-                    job.run();
-                } catch (Exception error) {
-                    main(() -> {
-                        if (token != generation) return;
-                        loading = false;
-                        failSave("客户端蓝图库：" + HologramUiText.reason(error.getMessage()), error);
-                    });
-                }
-            });
+            worker.execute(new QueuedWork(job, durable));
         } catch (java.util.concurrent.RejectedExecutionException busy) {
             loading = false;
-            failSave("客户端蓝图库忙，请稍后重试", busy);
+            failSave("蓝图保存队列繁忙，请稍后重试", busy);
         }
     }
 

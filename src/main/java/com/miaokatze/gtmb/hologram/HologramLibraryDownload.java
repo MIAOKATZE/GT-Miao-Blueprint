@@ -38,11 +38,18 @@ public final class HologramLibraryDownload {
     }
 
     static Encoded encode(byte[] source) throws IOException {
+        return encode(source, () -> true);
+    }
+
+    static Encoded encode(byte[] source, java.util.function.BooleanSupplier current) throws IOException {
         if (source == null || source.length == 0 || source.length > HologramLibraryProtocol.MAX_BYTES)
             throw new IOException("Invalid download source size");
         ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(source.length, 65536));
         try (GZIPOutputStream gzip = new GZIPOutputStream(output)) {
-            gzip.write(source);
+            for (int offset = 0; offset < source.length; offset += 8192) {
+                if (!current.getAsBoolean()) throw new java.io.InterruptedIOException("Blueprint download retired");
+                gzip.write(source, offset, Math.min(8192, source.length - offset));
+            }
         }
         return output.size() < source.length ? new Encoded(output.toByteArray(), "gzip", source)
             : new Encoded(source, "identity", source);

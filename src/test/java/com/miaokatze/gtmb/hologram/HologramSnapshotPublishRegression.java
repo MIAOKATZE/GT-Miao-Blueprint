@@ -35,8 +35,9 @@ public final class HologramSnapshotPublishRegression {
         try {
             budgets();
             encoder();
+            runningAndQueuedCancellation();
             fifoAndCancellation();
-        } catch (ReflectiveOperationException | java.io.IOException failure) {
+        } catch (ReflectiveOperationException | java.io.IOException | InterruptedException failure) {
             throw new AssertionError("Snapshot publication", failure);
         }
     }
@@ -97,6 +98,73 @@ public final class HologramSnapshotPublishRegression {
         SimpleAssert.that(
             limited.done && limited.failure != null && limited.bytes == null,
             "production codec enforces expanded byte budget inside worker");
+    }
+
+    private static void runningAndQueuedCancellation() throws java.io.IOException, InterruptedException {
+        java.util.concurrent.ThreadPoolExecutor worker = new java.util.concurrent.ThreadPoolExecutor(
+            1,
+            1,
+            0,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.ArrayBlockingQueue<>(2));
+        java.util.concurrent.CountDownLatch insideCodec = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseCodec = new java.util.concurrent.CountDownLatch(1);
+        NBTTagCompound large = state("cancel-running");
+        large.setByteArray("payload", new byte[2 * 1024 * 1024]);
+        try {
+            HologramSnapshotEncoding.Job first = HologramSnapshotEncoding.submit(large, worker, written -> {
+                if (written < 8192 || insideCodec.getCount() == 0) return;
+                insideCodec.countDown();
+                try {
+                    if (!releaseCodec.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                        throw new IllegalStateException("fixture checkpoint timed out");
+                } catch (InterruptedException stopped) {
+                    Thread.currentThread()
+                        .interrupt();
+                    throw new IllegalStateException(stopped);
+                }
+            });
+            SimpleAssert.that(
+                insideCodec.await(5, java.util.concurrent.TimeUnit.SECONDS),
+                "A is inside the actual production gzip serialization before cancellation");
+            HologramSnapshotEncoding.Job queued = HologramSnapshotEncoding.submit(large, worker);
+            SimpleAssert.eq(
+                1,
+                worker.getQueue()
+                    .size(),
+                "queued A owns one bounded worker slot");
+            queued.cancel();
+            SimpleAssert.eq(
+                0,
+                worker.getQueue()
+                    .size(),
+                "cancelling queued work immediately releases its slot");
+            first.cancel();
+            HologramSnapshotEncoding.Job retry = HologramSnapshotEncoding.submit(state("retry-B"), worker);
+            SimpleAssert.that(retry != null, "B is admitted while cancelled A is still inside its current write");
+            releaseCodec.countDown();
+            java.util.concurrent.Future<?> drained = worker.submit(() -> {});
+            drained.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            SimpleAssert.that(
+                first.done && first.bytes == null && first.cancelled,
+                "A exits without publishing after its delayed real compression checkpoint resumes");
+            SimpleAssert.that(
+                first.rawBytes < 32768,
+                "active cancellation stops at a bounded write instead of serializing the 2 MiB array");
+            SimpleAssert.that(
+                retry.done && retry.failure == null,
+                "the same single worker runs B to completion after retiring active A");
+            SimpleAssert.eq(
+                "retry-B",
+                HologramSnapshotCodec.decode(retry.bytes)
+                    .getString("marker"),
+                "late A cannot replace the completed bytes belonging to B");
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException failure) {
+            throw new AssertionError("single worker cancellation/retry failed", failure);
+        } finally {
+            releaseCodec.countDown();
+            worker.shutdownNow();
+        }
     }
 
     private static void fifoAndCancellation() throws ReflectiveOperationException, java.io.IOException {
@@ -223,6 +291,7 @@ public final class HologramSnapshotPublishRegression {
             SimpleAssert.that(!stopped.current() && WIRE.isEmpty(), "server stop discards an in-flight worker result");
             SimpleAssert.eq(1, accepted.get(), "server stop cannot publish a late ready callback");
 
+            cancelledSaveSourceDoesNotRebuild(player, work);
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
             areaStagingHandoff(player, work);
@@ -240,6 +309,61 @@ public final class HologramSnapshotPublishRegression {
             HologramNetwork.clearServerQueues();
             channel.set(null, previousChannel);
             executor.set(null, previousExecutor);
+            WIRE.clear();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void cancelledSaveSourceDoesNotRebuild(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        boolean metrics = HologramRuntimeMetrics.isEnabled();
+        HologramRuntimeMetrics.setEnabled(true);
+        try {
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+            session.blueprintClientTaskToken = 707;
+            HologramWorkspace.activate(player.getUniqueID(), session);
+            HologramSnapshotPreparation.start(session);
+            NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+            cancel.setString("session", session.id);
+            cancel.setLong("uiSequence", session.uiSequence);
+            cancel.setLong("clientTaskToken", 707);
+            WIRE.clear();
+            long builds = HologramRuntimeMetrics.snapshot()
+                .getCompoundTag("queues")
+                .getLong("fullCellsSnapshotBuilds");
+            HologramSnapshotPreparation.cancelSaveSource(player, cancel);
+            SimpleAssert.that(
+                !HologramSnapshotPreparation.pending(session),
+                "source cancellation retires preparation without replacing it with another full task");
+            SimpleAssert.that(
+                !HologramSnapshotPreparation.tick(session),
+                "a cancelled save cannot trigger a second full preparation on the next scheduler visit");
+            tick();
+            SimpleAssert.eq(
+                builds,
+                HologramRuntimeMetrics.snapshot()
+                    .getCompoundTag("queues")
+                    .getLong("fullCellsSnapshotBuilds"),
+                "source cancellation adds no full-cell snapshot builds");
+            SimpleAssert.eq(0, work.size(), "source cancellation schedules no replacement gzip");
+            SimpleAssert.eq(1, WIRE.size(), "only one small cancellation receipt is emitted");
+            HologramNetwork.LibraryReply reply = (HologramNetwork.LibraryReply) WIRE.get(0);
+            SimpleAssert.eq("sourceCancelled", reply.tag.getString("op"), "receipt carries no geometry baseline");
+            SimpleAssert
+                .eq(707L, reply.tag.getLong("clientTaskToken"), "receipt retains the exact cancelled source token");
+            SimpleAssert
+                .eq(session.planRevision, reply.tag.getLong("planRevision"), "receipt binds the source revision");
+            HologramSnapshotPreparation.cancelSaveSource(player, cancel);
+            SimpleAssert.eq(1, WIRE.size(), "duplicate cancellation neither rebuilds nor emits a replacement source");
+        } finally {
+            HologramRuntimeMetrics.setEnabled(metrics);
+            HologramSnapshotPreparation.clear();
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
             WIRE.clear();
         }
     }

@@ -142,6 +142,83 @@ public final class HologramMaterialOrderLifecycleRegression {
             !refusedLate.data.getCompoundTag("materialOrder")
                 .getBoolean("active"),
             "a late active full snapshot cannot revive a rejected submission");
+        lightweightAdmission(world, connection, base);
+    }
+
+    private static void lightweightAdmission(Object world, Object connection, HologramState base) {
+        HologramMaterialOrderLifecycle orders = new HologramMaterialOrderLifecycle();
+        HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {}
+        });
+        orders.begin(world, connection, base, 14);
+        long refusedToken = owner.begin("material", "materials:14", "AE order");
+        NBTTagCompound receipt = event("", 0, false);
+        receipt.setBoolean("materialQuoteOnly", true);
+        receipt.setLong("uiSequence", 13);
+        receipt.setString("status", "AE requester unavailable");
+        receipt.setTag("materialOrder", new NBTTagCompound());
+        SimpleAssert.that(
+            !orders.quoteReceipt(world, connection, base, receipt) && owner.busy(),
+            "an old empty material receipt cannot terminate the current order admission");
+        receipt.setLong("uiSequence", 14);
+        receipt.setLong("placementReviewNonce", 4);
+        SimpleAssert.that(
+            !orders.quoteReceipt(world, connection, base, receipt) && owner.busy(),
+            "an old review nonce cannot release the current material owner");
+        receipt.setLong("placementReviewNonce", 5);
+        SimpleAssert.that(
+            !orders.quoteReceipt(new Object(), connection, base, receipt)
+                && !orders.quoteReceipt(world, new Object(), base, receipt),
+            "quote admission retains exact world and connection fencing");
+        HologramState quoted = HologramMaterialQuoteUpdates.apply(base, receipt);
+        SimpleAssert.that(
+            quoted != null && quoted.data.getLong("uiSequence") == 11
+                && orders.quoteReceipt(world, connection, quoted, receipt)
+                && orders.finishOwner(owner)
+                && !owner.busy(),
+            "a real material-only refusal releases its owner without forging a global snapshot ACK");
+        SimpleAssert.that(
+            !orders.quoteReceipt(world, connection, quoted, receipt),
+            "duplicate refusal does not emit another terminal notification");
+        orders.begin(world, connection, quoted, 15);
+        long retryToken = owner.begin("material", "materials:15", "AE retry");
+        NBTTagCompound accepted = event("retry-after-refusal", 1, true);
+        accepted.setBoolean("materialQuoteOnly", true);
+        accepted.setLong("uiSequence", 15);
+        accepted.getCompoundTag("materialOrder")
+            .setLong("orderUiSequence", 15);
+        SimpleAssert.that(
+            retryToken > refusedToken && orders.quoteReceipt(world, connection, quoted, accepted)
+                && orders.active()
+                && owner.busy()
+                && orders.restoreOwner(owner) == retryToken,
+            "the immediately retried real order receipt acquires a new owner and admits its matching ID");
+        accepted.getCompoundTag("materialOrder")
+            .setLong("orderSequence", 2);
+        accepted.getCompoundTag("materialOrder")
+            .setBoolean("active", false);
+        accepted.getCompoundTag("materialOrder")
+            .setString("state", "complete");
+        SimpleAssert.that(
+            orders.quoteReceipt(world, connection, quoted, accepted) && orders.finishOwner(owner),
+            "the retry can finish through its own exact quote receipt");
+        orders.begin(world, connection, quoted, 16);
+        owner.begin("material", "materials:16", "stale review admission");
+        receipt.setLong("uiSequence", 16);
+        receipt.setLong("placementReviewNonce", 6);
+        receipt.setString("status", "材料确认已变化，请核对后重试");
+        HologramState changedReview = HologramMaterialQuoteUpdates.apply(quoted, receipt);
+        SimpleAssert.that(
+            changedReview != null && !orders.quoteReceipt(world, connection, changedReview, receipt)
+                && orders.rejectChangedReview(world, connection, changedReview, receipt)
+                && orders.finishOwner(owner)
+                && !owner.busy(),
+            "an exact refused submission with a newer authoritative review nonce releases only its old pending admission");
     }
 
     private static HologramState state() {
@@ -180,9 +257,58 @@ public final class HologramMaterialOrderLifecycleRegression {
             SimpleAssert.that(
                 ui.session.state().cells == before.cells,
                 "the live UI metadata path retains the exact geometry object");
+            operation.set(ui.session, "cancelMaterialOrder");
+            ui.session.pendingSequence(14);
+            ui.session.materialQuoteMetadata(next, 13);
+            SimpleAssert.eq(14L, ui.session.pendingSequence(), "an old quote does not ACK a newer cancellation");
+            ui.session.materialQuoteMetadata(next, 14);
+            SimpleAssert.eq(-1L, ui.session.pendingSequence(), "an exact cancellation quote clears its own ticket");
+            operation.set(ui.session, "configure");
+            ui.session.pendingSequence(15);
+            ui.session.materialQuoteMetadata(next, 15);
+            SimpleAssert.eq(15L, ui.session.pendingSequence(), "a quote cannot ACK an unrelated configuration");
+            libraryCompletionTicket(ui, operation);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot install the real client ticket fixture", failure);
         }
+    }
+
+    private static void libraryCompletionTicket(HologramUiModules ui, java.lang.reflect.Field operation)
+        throws ReflectiveOperationException {
+        java.lang.reflect.Field token = HologramUiSession.class.getDeclaredField("libraryTaskToken");
+        java.lang.reflect.Field sequence = HologramUiSession.class.getDeclaredField("libraryTaskSequence");
+        java.lang.reflect.Field preset = HologramUiSession.class.getDeclaredField("libraryTaskPresetSequence");
+        java.lang.reflect.Field session = HologramUiSession.class.getDeclaredField("libraryTaskSession");
+        for (java.lang.reflect.Field field : new java.lang.reflect.Field[] { token, sequence, preset, session })
+            field.setAccessible(true);
+        token.setLong(ui.session, 77);
+        sequence.setLong(ui.session, 17);
+        preset.setLong(ui.session, 16);
+        session.set(ui.session, "materials");
+        operation.set(ui.session, "confirmAeSave");
+        ui.session.pendingSequence(17);
+        ui.library.presetSaveSequence(16);
+        ui.session.libraryTaskFinished("materials", 16, 77, "wrong sequence");
+        ui.session.libraryTaskFinished("materials", 17, 76, "wrong owner");
+        ui.session.libraryTaskFinished("other-session", 17, 77, "wrong session");
+        SimpleAssert.that(
+            ui.session.pendingSequence() == 17 && ui.library.presetSaveSequence() == 16,
+            "save completion must match both the exact task owner and final command sequence");
+        ui.session.libraryTaskFinished("materials", 17, 77, "cancelled");
+        SimpleAssert.that(
+            ui.session.pendingSequence() < 0 && ui.library.presetSaveSequence() < 0,
+            "a terminal save releases its final ACK ticket and same-owner original preset ticket without cancelling again");
+        token.setLong(ui.session, 88);
+        sequence.setLong(ui.session, 18);
+        preset.setLong(ui.session, 16);
+        session.set(ui.session, "materials");
+        operation.set(ui.session, "configure");
+        ui.session.pendingSequence(18);
+        ui.library.presetSaveSequence(20);
+        ui.session.libraryTaskFinished("materials", 18, 88, "old save finished");
+        SimpleAssert.that(
+            ui.session.pendingSequence() == 18 && ui.library.presetSaveSequence() == 20,
+            "a terminal save cannot clear a different operation or a newer preset ticket");
     }
 
     private static NBTTagCompound event(String id, long sequence, boolean active) {

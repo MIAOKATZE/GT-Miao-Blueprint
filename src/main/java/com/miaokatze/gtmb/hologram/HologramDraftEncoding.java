@@ -16,6 +16,8 @@ final class HologramDraftEncoding {
     interface Progress {
 
         void update(long done, long total) throws IOException;
+
+        default void checkpoint() throws IOException {}
     }
 
     private static final class Share {
@@ -31,6 +33,7 @@ final class HologramDraftEncoding {
     private HologramDraftEncoding() {}
 
     static byte[] encode(HologramPresets.Preset blueprint, Progress progress) throws IOException {
+        progress.checkpoint();
         HologramBlueprintVersions.validate(blueprint);
         long total = (long) blueprint.cells.size() + blueprint.palette.size();
         progress.update(0, total);
@@ -59,7 +62,7 @@ final class HologramDraftEncoding {
         })
             .create();
         byte[] encoded = HologramBlueprintSharing
-            .encodeBounded(gson, new Share(blueprint), HologramBlueprintSharing.MAX_BYTES);
+            .encodeBounded(gson, new Share(blueprint), HologramBlueprintSharing.MAX_BYTES, progress::checkpoint);
         progress.update(total, total);
         return encoded;
     }

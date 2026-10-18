@@ -58,6 +58,7 @@ final class HologramArea extends HologramAreaSelection {
         final MTEEnhancedMultiBlockBase<?> machine;
         boolean enabled = true;
         HologramCapture capture;
+        HologramAreaSignalInference signalInference;
 
         Structure(int x, int y, int z, MTEEnhancedMultiBlockBase<?> machine) {
             this.x = x;
@@ -197,25 +198,11 @@ final class HologramArea extends HologramAreaSelection {
             importPhase = "declarations";
             if (world.getTileEntity(structure.x, structure.y, structure.z) != structure.machine.getBaseMetaTileEntity())
                 throw new IOException("控制器在导入期间变化，请重新选择区域");
-            // Tool configuration belongs to the previously selected machine, never every controller in a region.
-            ItemStack structureTrigger = trigger.copy();
-            structureTrigger.stackSize = 1;
-            if (structure.machine instanceof tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods)
-                structureTrigger.stackSize = Math.max(
-                    1,
-                    Math.min(
-                        3,
-                        ((tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods) structure.machine).getData()
-                            .getRingAmount()));
-            List<String> channels = new ArrayList<>();
-            com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
-                .iterateChannelData(structureTrigger)
-                .forEach(entry -> channels.add(entry.getKey()));
-            for (String channel : channels) com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
-                .unsetChannelData(structureTrigger, channel);
-            structure.capture = HologramCapture
-                .collect(structure.machine, structureTrigger, structure.machine.getExtendedFacing(), structure.capture);
-            if (!structure.capture.pending) {
+            if (structure.signalInference == null)
+                structure.signalInference = new HologramAreaSignalInference(structure.machine, trigger);
+            boolean inferred = structure.signalInference.step(deadline);
+            structure.capture = structure.signalInference.capture();
+            if (inferred) {
                 if (!structure.capture.incomplete) {
                     declarationMembers = structure.capture.positions.entrySet()
                         .iterator();
@@ -250,7 +237,9 @@ final class HologramArea extends HologramAreaSelection {
         if (importing) imported = false;
         importing = false;
         if (discoveryIndex < discovery.size()) {
-            HologramCapture capture = discovery.get(discoveryIndex).capture;
+            Structure current = discovery.get(discoveryIndex);
+            if (current.signalInference != null) current.signalInference.cancel();
+            HologramCapture capture = current.capture;
             if (capture != null) capture.cancelPending();
         }
         if (preparation != null) preparation.cancel();

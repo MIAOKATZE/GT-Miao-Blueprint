@@ -8,6 +8,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -521,6 +522,7 @@ public final class HologramNetwork {
                 session,
                 uiSequence,
                 "snapshot.queue",
+                owner == null ? 0 : owner.blueprintClientTaskToken,
                 new IllegalStateException("snapshot preparation queue full"));
             return null;
         }
@@ -594,6 +596,10 @@ public final class HologramNetwork {
             return snapshot.failed;
         }
 
+        long encodingBytes() {
+            return snapshot.encoding == null ? 0 : snapshot.encoding.rawBytes;
+        }
+
         boolean current() {
             return outgoing.get(box.player.getUniqueID()) == box && box.snapshots.contains(snapshot);
         }
@@ -615,6 +621,11 @@ public final class HologramNetwork {
 
     static void transportFailure(EntityPlayerMP player, String session, long uiSequence, String code,
         Exception failure) {
+        transportFailure(player, session, uiSequence, code, 0, failure);
+    }
+
+    static void transportFailure(EntityPlayerMP player, String session, long uiSequence, String code, long clientTask,
+        Exception failure) {
         HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SNAPSHOT_DROPPED, 1);
         com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
             .warn("Hologram " + code + " failed for " + session + " uiSequence=" + uiSequence, failure);
@@ -622,6 +633,7 @@ public final class HologramNetwork {
             NBTTagCompound state = new NBTTagCompound();
             state.setBoolean("transportError", true);
             state.setString("session", session);
+            if (clientTask > 0) state.setLong("clientTaskToken", clientTask);
             if (uiSequence != Long.MIN_VALUE) state.setLong("uiSequence", uiSequence);
             state.setString("errorCode", code);
             state.setString("errorMessage", transportErrorMessage(code));
@@ -655,6 +667,27 @@ public final class HologramNetwork {
                 boxes.remove();
                 continue;
             }
+            long rawBytes = snapshot.encoding == null ? 0 : snapshot.encoding.rawBytes;
+            if (rawBytes > snapshot.observedRawBytes) {
+                snapshot.observedRawBytes = rawBytes;
+                snapshot.advancedAt = System.nanoTime();
+            }
+            if (System.nanoTime() - snapshot.advancedAt > TimeUnit.SECONDS.toNanos(120)) {
+                long failedTask = snapshot.owned.getLong("blueprintClientTaskToken");
+                long failedUi = snapshot.owned.hasKey("uiSequence", 4) ? snapshot.owned.getLong("uiSequence")
+                    : Long.MIN_VALUE;
+                snapshot.failed = true;
+                retire(box);
+                boxes.remove();
+                transportFailure(
+                    box.player,
+                    box.session,
+                    failedUi,
+                    "snapshot.encode",
+                    failedTask,
+                    new IOException("snapshot preparation or encoding timed out"));
+                continue;
+            }
             if (snapshot.encoding == null) {
                 snapshot.encoding = HologramSnapshotEncoding.submit(snapshot.owned);
                 continue;
@@ -670,10 +703,11 @@ public final class HologramNetwork {
                     : Long.MIN_VALUE;
                 String failureCode = failure.getMessage() != null && failure.getMessage()
                     .contains("budget") ? "snapshot.budget" : "snapshot.encode";
+                long failedTask = snapshot.owned.getLong("blueprintClientTaskToken");
                 snapshot.failed = true;
                 retire(box);
                 boxes.remove();
-                transportFailure(box.player, box.session, failedUi, failureCode, failure);
+                transportFailure(box.player, box.session, failedUi, failureCode, failedTask, failure);
                 continue;
             }
             snapshot.bytes = encoding.bytes;
@@ -729,6 +763,7 @@ public final class HologramNetwork {
         final long sequence;
         byte[] bytes, libraryHash;
         boolean libraryInitial, failed;
+        long advancedAt = System.nanoTime(), observedRawBytes;
         NBTTagCompound owned;
         java.util.function.BooleanSupplier valid;
         Runnable ready;
@@ -742,6 +777,7 @@ public final class HologramNetwork {
 
         void initialize(NBTTagCompound owned, java.util.function.BooleanSupplier valid, Runnable ready) {
             this.owned = owned;
+            advancedAt = System.nanoTime();
             this.valid = valid;
             this.ready = ready;
             libraryInitial = owned.getBoolean("libraryInitialSnapshot");

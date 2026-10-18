@@ -32,7 +32,12 @@ final class HologramSnapshotEncoding {
     }
 
     static Job submit(NBTTagCompound owned, Executor executor) {
-        Job job = new Job(owned);
+        return submit(owned, executor, written -> {});
+    }
+
+    /** A deterministic checkpoint observer keeps the regression on the real codec and executor. */
+    static Job submit(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint) {
+        Job job = new Job(owned, executor, checkpoint);
         try {
             executor.execute(job);
             return job;
@@ -53,13 +58,19 @@ final class HologramSnapshotEncoding {
         volatile boolean cancelled, done;
         byte[] bytes, hash;
         Exception failure;
+        volatile long rawBytes;
+        private final Executor executor;
+        private final java.util.function.LongConsumer checkpoint;
 
-        Job(NBTTagCompound owned) {
+        Job(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint) {
             this.owned = owned;
+            this.executor = executor;
+            this.checkpoint = checkpoint;
         }
 
         synchronized void cancel() {
             cancelled = true;
+            if (executor instanceof ThreadPoolExecutor) ((ThreadPoolExecutor) executor).remove(this);
             owned = null;
             bytes = null;
             hash = null;
@@ -74,7 +85,15 @@ final class HologramSnapshotEncoding {
             long started = HologramRuntimeMetrics.start();
             try {
                 if (!cancelled && frozen != null) {
-                    byte[] encoded = HologramSnapshotCodec.compress(frozen);
+                    long[] advancedAt = { System.nanoTime() };
+                    byte[] encoded = HologramSnapshotCodec.compress(
+                        frozen,
+                        () -> !cancelled && System.nanoTime() - advancedAt[0] < TimeUnit.SECONDS.toNanos(120),
+                        written -> {
+                            rawBytes = written;
+                            advancedAt[0] = System.nanoTime();
+                            checkpoint.accept(written);
+                        });
                     byte[] digest = HologramLibraryProtocol.digest()
                         .digest(encoded);
                     synchronized (this) {

@@ -27,7 +27,7 @@ public final class HologramBackgroundTasks {
             if ("orderMissingMaterials".equals(operation)) completion += "；右键投影仪返回材料确认，点击“刷新材料”核对后继续放置。";
             chat(completion);
             Minecraft mc = Minecraft.getMinecraft();
-            if (result == HologramTaskOwner.Result.SUCCESS && mc.thePlayer != null) {
+            if (result == HologramTaskOwner.Result.SUCCESS && mc != null && mc.thePlayer != null) {
                 mc.thePlayer.playSound("random.levelup", 0.7f, 1f);
                 levelupSounds++;
             }
@@ -188,11 +188,15 @@ public final class HologramBackgroundTasks {
     }
 
     static void finishLibrary(long token, boolean success, String detail) {
+        finishLibrary(token, success, detail, false);
+    }
+
+    static void finishLibrary(long token, boolean success, String detail, boolean cancelled) {
         if (!"library".equals(OWNER.kind())) return;
         OWNER.finish(
             token,
             success ? HologramTaskOwner.Result.SUCCESS
-                : cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
+                : cancelled ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
             detail);
     }
 
@@ -363,6 +367,42 @@ public final class HologramBackgroundTasks {
         HologramState next = materialOrders.apply(previous);
         context = next;
         updateMaterialOrderOwner(materialOrders.order());
+        return next;
+    }
+
+    static HologramState materialQuoteReceipt(HologramState next, NBTTagCompound receipt, Object currentWorld,
+        Object currentConnection) {
+        if (!receipt.getBoolean("materialQuoteOnly") || !materialTask()
+            || world != currentWorld
+            || connection != currentConnection
+            || !session.equals(receipt.getString("session"))
+            || startRevision != receipt.getLong("planRevision")
+            || receipt.getLong("placementReviewNonce") != next.data.getLong("placementReviewNonce")) return next;
+        if (!materialOrders.owns(next)) {
+            if (!materialOrders.rejectChangedReview(currentWorld, currentConnection, next, receipt)) return next;
+            next = materialOrders.apply(next);
+            context = next;
+            materialOrders.finishOwner(OWNER);
+            return next;
+        }
+        if (receipt.getLong("uiSequence") == command) {
+            if (!materialOrders.quoteReceipt(currentWorld, currentConnection, next, receipt)) return next;
+            next = materialOrders.apply(next);
+            context = next;
+            if (materialOrders.id()
+                .isEmpty()) materialOrders.finishOwner(OWNER);
+            else updateMaterialOrderOwner(materialOrders.order());
+        } else if (cancelling && receipt.getLong("uiSequence") == issuedSequence) {
+            NBTTagCompound order = receipt.getCompoundTag("materialOrder");
+            if (!order.hasKey("orderUiSequence", 4) || order.getLong("orderUiSequence") != command
+                || order.getLong("planRevision") != startRevision
+                || order.getLong("placementReviewNonce") != next.data.getLong("placementReviewNonce")) return next;
+            next = materialOrders.snapshot(currentWorld, currentConnection, next);
+            context = next;
+            updateMaterialOrderOwner(materialOrders.order());
+            // A refused cancellation keeps its original order usable for a later explicit retry.
+            if (materialOrders.active()) cancelling = false;
+        }
         return next;
     }
 
@@ -618,7 +658,7 @@ public final class HologramBackgroundTasks {
 
     private static void chat(String message) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.thePlayer != null) mc.thePlayer.addChatMessage(new ChatComponentText(message));
+        if (mc != null && mc.thePlayer != null) mc.thePlayer.addChatMessage(new ChatComponentText(message));
         else {
             if (pendingMessages.size() == 8) pendingMessages.remove(0);
             pendingMessages.add(message);

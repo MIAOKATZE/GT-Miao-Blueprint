@@ -156,7 +156,8 @@ final class HologramControllerCapture {
 
     static void collect(HologramSession s, boolean resetAttempts) {
         if (s.virtual) {
-            HologramResourcePlanner.refreshPlan(s);
+            if (HologramVirtualStructureEditing.pending(s)) HologramVirtualStructureEditing.advance(s);
+            else HologramResourcePlanner.refreshPlan(s);
             return;
         }
         HologramCapture resumed = !resetAttempts && s.capture != null && s.capture.pending ? s.capture : null;

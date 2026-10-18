@@ -11,6 +11,7 @@ final class HologramSavePreparationProgress {
     private final HologramProgress.Tracker tracker = new HologramProgress.Tracker();
     private String phase = "", detail = "";
     private long done = -1, total = -1, advancedAt;
+    private final java.util.Map<String, Long> completed = new java.util.HashMap<>();
 
     boolean receive(NBTTagCompound event, long task, String session, long sequence, long revision, long now) {
         String nextPhase = event.getString("phase");
@@ -23,11 +24,13 @@ final class HologramSavePreparationProgress {
         String nextDetail = event.getString("detail");
         if (nextDone < 0 || nextTotal < 0 || nextTotal > 0 && nextDone > nextTotal) return false;
         if (phase.equals(nextPhase) && detail.equals(nextDetail) && nextTotal == total && nextDone < done) return false;
-        if (advancedAt == 0 || !phase.equals(nextPhase)
-            || !detail.equals(nextDetail)
-            || nextTotal != total
-            || nextDone > done) advancedAt = now;
-        if (now - advancedAt > STALL_NANOS) return false;
+        String stage = nextPhase + ":" + nextDetail;
+        Long previous = completed.get(stage);
+        if (previous != null && nextDone < previous) return false;
+        if (previous == null && completed.size() >= 32) return false;
+        if (advancedAt != 0 && now - advancedAt > STALL_NANOS) return false;
+        if (previous == null || nextDone > previous) advancedAt = now;
+        completed.put(stage, nextDone);
         phase = nextPhase;
         detail = nextDetail;
         done = nextDone;
@@ -49,5 +52,6 @@ final class HologramSavePreparationProgress {
         phase = detail = "";
         done = total = -1;
         advancedAt = 0;
+        completed.clear();
     }
 }

@@ -106,6 +106,8 @@ final class HologramSnapshotMetadataRegression {
             SimpleAssert.that(
                 session.nbtKeysCapture == session.capture && session.availableNbtKeys.contains("configuration"),
                 "completed metadata publishes the existing available-key cache generation");
+            creativeSnapshotMaterialDemand(session);
+            unchangedReviewControls(session);
             nativeMetadata(unsafe, player, world);
             pendingErrorMetadata(session);
             HologramSnapshotMetadataTask stale = new HologramSnapshotMetadataTask(session, new NBTTagCompound());
@@ -119,6 +121,84 @@ final class HologramSnapshotMetadataRegression {
         } catch (Exception failed) {
             throw new AssertionError("snapshot metadata", failed);
         }
+    }
+
+    /** Exercise the actual DTO collector which formerly omitted all ordinary items in creative. */
+    private static void creativeSnapshotMaterialDemand(HologramSession session) throws Exception {
+        session.capture.cells.get(1).status = "pending";
+        HologramLocalPlanRefresh.snapshotBegin(session);
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSnapshotPreparation$Task");
+        java.lang.reflect.Constructor<?> constructor = type
+            .getDeclaredConstructor(HologramSession.class, HologramNetwork.SnapshotTicket.class);
+        constructor.setAccessible(true);
+        Object collector = constructor.newInstance(session, null);
+        java.lang.reflect.Method cell = type.getDeclaredMethod("addCell", int.class);
+        cell.setAccessible(true);
+        cell.invoke(collector, 1);
+        java.lang.reflect.Method resource = type.getDeclaredMethod("addResource", ItemStack.class);
+        resource.setAccessible(true);
+        resource.invoke(collector, new ItemStack(net.minecraft.init.Items.stick, 256));
+        Field field = type.getDeclaredField("requirements");
+        field.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Map<HologramBlueprintResources.ExactKey, NBTTagCompound> rows = (java.util.Map<HologramBlueprintResources.ExactKey, NBTTagCompound>) field
+            .get(collector);
+        NBTTagCompound stone = rows.get(HologramValues.lookupKey(new ItemStack(Blocks.stone)));
+        NBTTagCompound contents = rows.get(HologramValues.lookupKey(new ItemStack(net.minecraft.init.Items.stick)));
+        SimpleAssert.that(
+            stone != null && stone.getLong("required") == 1,
+            "creative DTO keeps ordinary block shell demand despite free construction payments");
+        SimpleAssert.that(
+            contents != null && contents.getLong("required") == 256 && contents.getByte("Count") == 1,
+            "creative DTO keeps exact internal item demand independent of native byte Count");
+    }
+
+    private static void unchangedReviewControls(HologramSession session) {
+        session.virtualLocked = session.blueprintAwaitingConfirmation = session.placementReviewIssued = true;
+        session.virtualPreset.deidentificationLevel = 1;
+        session.virtualPreset.deidentificationChosen = session.deidentificationChosen = true;
+        session.placementDeidentificationChosen = true;
+        session.placementDeidentificationLevel = 1;
+        NBTTagCompound published = new NBTTagCompound();
+        published.setInteger("protected", 0);
+        HologramLocalPlanRefresh.snapshotComplete(session, published);
+        long revision = session.planRevision, nonce = session.placementReviewNonce;
+        NBTTagCompound repeated = new NBTTagCompound();
+        repeated.setString("session", session.id);
+        repeated.setLong("planRevision", revision);
+        repeated.setLong("placementReviewNonce", nonce);
+        repeated.setInteger("level", 1);
+        repeated.setBoolean("all", true);
+        repeated.setBoolean("retainCovers", HologramSessionPolicy.placementRetainCovers(session));
+        for (int i = 0; i < 10; i++) {
+            SimpleAssert.that(
+                HologramAuthoringWorkflow.blueprintAction(session, repeated, "configurePlacementNbt"),
+                "unchanged NBT retention uses the existing review");
+            SimpleAssert.that(
+                HologramAuthoringWorkflow.blueprintAction(session, repeated, "configurePlacementDeidentification"),
+                "repeated identity selection uses the existing review");
+            SimpleAssert.that(
+                HologramAuthoringWorkflow.blueprintAction(session, repeated, "removeBlueprintObstructions"),
+                "published zero blockers require no world traversal");
+        }
+        SimpleAssert.that(
+            session.planRevision == revision && session.placementReviewNonce == nonce,
+            "thirty no-op review actions never rebuild the plan or invalidate review authority");
+        repeated.setBoolean("all", false);
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.unchangedBlueprintAction(session, repeated, "configurePlacementNbt"),
+            "an actual NBT retention change still reaches the planner");
+        repeated.setInteger("level", 2);
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow
+                .unchangedBlueprintAction(session, repeated, "configurePlacementDeidentification"),
+            "a stronger identity selection is not swallowed as a retry");
+        net.minecraft.nbt.NBTTagList invalidKeys = new net.minecraft.nbt.NBTTagList();
+        invalidKeys.appendTag(new net.minecraft.nbt.NBTTagString(""));
+        repeated.setTag("keys", invalidKeys);
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.unchangedBlueprintAction(session, repeated, "configurePlacementNbt"),
+            "invalid NBT keys reach the standard error handler instead of becoming a no-op");
     }
 
     /** Every declared scalar participates, so adding a DTO field without updating its typed copy fails here. */

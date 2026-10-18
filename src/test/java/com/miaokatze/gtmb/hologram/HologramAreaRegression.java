@@ -10,6 +10,7 @@ public final class HologramAreaRegression {
     private HologramAreaRegression() {}
 
     public static void run() {
+        HologramAreaSignalInferenceRegression.run();
         HologramAreaPreparationRegression.run();
         HologramSnapshotMetadataRegression.run();
         try {

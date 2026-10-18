@@ -48,6 +48,7 @@ final class HologramSession {
     /** Explicit material-review choice; the voucher is charged only by a successful covered transaction. */
     boolean jobVoucherRequested, jobVoucherConsumed;
     NBTTagCompound materialQuote = new NBTTagCompound();
+    HologramMaterialQuote.Cache materialQuoteCache;
     boolean noHatches, hints, defer, stopTick, mainExplicit;
     HologramBlueprintResources.Plan blueprintResources, blueprintTotalResources;
     HologramEnergy.Demand blueprintEnergy = new HologramEnergy.Demand();
@@ -175,6 +176,7 @@ final class HologramSession {
     String phase = "IDLE";
     boolean planRecoveryFits = true, ackSuccess;
     boolean capturePending, retryNoHatches;
+    HologramVirtualStructureEditing.Task virtualStructureTask;
     int captureAttempts, retryFacing, retryMain, retryMode, retryScope, retryLayer, retrySelected;
     long captureRetryDue;
     NBTTagCompound retryChannels;
@@ -270,6 +272,7 @@ final class HologramSession {
 
     static void cancelCaptureRetry(HologramSession s) {
 
+        HologramVirtualStructureEditing.cancel(s);
         if (s.capturePending && s.capture != null) s.capture.cancelPending();
         s.capturePending = false;
         s.captureRetryDue = 0;

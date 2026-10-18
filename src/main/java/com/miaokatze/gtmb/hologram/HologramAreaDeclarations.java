@@ -55,6 +55,9 @@ final class HologramAreaDeclarations {
         ChannelDataAccessor.iterateChannelData(structure.capture.trigger)
             .forEach(entry -> source.channels.setInteger(entry.getKey(), entry.getValue()));
         source.capture = structure.capture;
+        source.capabilities = HologramCapabilities
+            .describe(structure.capture.context, structure.capture.trigger, structure.capture.channelReport)
+            .withSavedChannels(source.channels);
         sessions.put(id, source);
         return source;
     }

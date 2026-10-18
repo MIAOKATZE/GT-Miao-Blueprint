@@ -24,6 +24,13 @@ final class HologramUiDeidentification {
 
     private long offeredDeidentificationNonce = -1;
 
+    boolean hasPlacementIdentityChoices() {
+        NBTTagCompound state = ui.session.state().data;
+        return state.getBoolean("virtual") && HologramDeidentificationMemory.minimum(state) < 10
+            && (state.getCompoundTag("processing")
+                .getInteger("requiredStages") & (1 << 1)) != 0;
+    }
+
     int deidentificationChoice(boolean placement) {
         if (!placement && (ui.session.state().data.getBoolean("blueprintProcessingComplete")
             || ui.session.state().data.getBoolean("blueprintDirectSave")))
@@ -135,7 +142,7 @@ final class HologramUiDeidentification {
             290,
             20,
             "一键移除放置阻塞物",
-            ui.session.editable() && ui.review.placementReviewActive(),
+            ui.session.editable() && ui.review.placementReviewActive() && ui.review.materialBlockers() > 0,
             mx,
             my);
         ui.canvas.button(212, 54, 274, 278, 20, "取消", true, mx, my);
@@ -182,12 +189,17 @@ final class HologramUiDeidentification {
             return true;
         }
         if (id == 215) {
-            if (!ui.review.placementReviewActive()) return true;
+            if (!ui.review.placementReviewActive() || ui.review.materialBlockers() == 0) return true;
             ui.session.send("removeBlueprintObstructions", request, true);
             this.deidentificationDrawer = false;
             return true;
         }
         int level = id == 214 ? Math.max(1, this.deidentificationLevel) : this.deidentificationLevel;
+        if (this.deidentificationPlacement && ui.session.state().data.getBoolean("placementDeidentificationChosen")
+            && level == ui.session.state().data.getInteger("placementDeidentificationLevel")) {
+            this.deidentificationDrawer = false;
+            return true;
+        }
         HologramDeidentificationMemory.client()
             .remember(HologramDeidentificationMemory.source(ui.session.state().data), level);
         request.setInteger("deidentificationLevel", level);

@@ -1,5 +1,8 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.util.Collections;
+import java.util.List;
+
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
@@ -24,6 +27,12 @@ public final class HologramCommand extends CommandBase {
     @Override
     public int getRequiredPermissionLevel() {
         return 4;
+    }
+
+    @Override
+    public List<String> addTabCompletionOptions(ICommandSender sender, String[] args) {
+        if (!canCommandSenderUseCommand(sender) || args.length != 1) return Collections.emptyList();
+        return getListOfStringsMatchingLastWord(args, "restart");
     }
 
     @Override

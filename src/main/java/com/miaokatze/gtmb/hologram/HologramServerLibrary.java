@@ -86,6 +86,11 @@ final class HologramServerLibrary {
         if (peer == null || peer.player != player) {
             if (peer != null) {
                 peer.online = false;
+                if (peer.preparation != null) {
+                    peer.preparation.valid = false;
+                    tasks.remove(peer.preparation);
+                    peer.preparation = null;
+                }
                 HologramLibraryFacade
                     .error(player, "Server library connection changed; retry", request.getLong("clientTaskToken"));
                 return;
@@ -97,6 +102,7 @@ final class HologramServerLibrary {
                     Peer candidate = idle.next();
                     if (candidate.upload == null && candidate.download == null
                         && candidate.pendingDraft == null
+                        && candidate.preparation == null
                         && candidate.requests.isEmpty()) {
                         candidate.online = false;
                         idle.remove();
@@ -115,6 +121,18 @@ final class HologramServerLibrary {
             peers.put(peer.owner, peer);
         }
         peer.admin = admin;
+        if ("cancel".equals(request.getString("op")) || "cancelTransfer".equals(request.getString("op"))) {
+            // This runs on the server thread even while the sole IO pump is inside serialization.
+            peer.retiredThrough = Math.max(peer.retiredThrough, request.getLong("clientTaskToken"));
+            if (peer.preparation != null && (request.getLong("clientTaskToken") == 0
+                || peer.preparation.token == request.getLong("clientTaskToken"))) {
+                peer.preparation.valid = false;
+                tasks.remove(peer.preparation);
+                peer.preparation = null;
+            }
+            if (peer.download != null && (request.getLong("clientTaskToken") == 0
+                || peer.download.clientTaskToken == request.getLong("clientTaskToken"))) peer.download.valid = false;
+        }
         if (!peer.requests.offer(request, admitted(peer, request))) {
             error(peer, "Server library request queue is busy; retry later", request.getLong("clientTaskToken"));
         }
@@ -150,6 +168,12 @@ final class HologramServerLibrary {
                 && !HologramLibraryService.sessionCurrent(peer.player, upload.request)) upload.valid = false;
             if (upload != null && upload.previewUpload
                 && !HologramLibraryService.saveCurrent(peer.player, upload.request)) upload.valid = false;
+            if (peer.preparation != null
+                && (!peer.online || !HologramLibraryService.draftCurrent(peer.player, peer.preparationRequest))) {
+                peer.preparation.valid = false;
+                tasks.remove(peer.preparation);
+                peer.preparation = null;
+            }
             Download download = peer.download;
             if (download != null && download.boundRequest != null
                 && !HologramLibraryService.draftCurrent(peer.player, download.boundRequest)) download.valid = false;
@@ -625,16 +649,27 @@ final class HologramServerLibrary {
         return HologramDraftEncoding.encode(blueprint, (done, total) -> {});
     }
 
+    synchronized boolean draftTaskCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+        long token = request.getLong("clientTaskToken");
+        return !closed && peer != null
+            && peer.player == player
+            && peer.online
+            && (token == 0 || token > peer.retiredThrough);
+    }
+
     synchronized void draft(EntityPlayerMP player, NBTTagCompound request, byte[] bytes, String name)
         throws IOException {
         checkAvailable();
         Peer peer = peers.get(HologramLibraryFacade.actorId(player));
-        if (peer == null || peer.player != player || !peer.online)
-            throw new IOException("Server library connection changed; retry");
+        if (!draftTaskCurrent(player, request))
+            throw new IOException("Server library connection or preparation changed; retry");
         if (bytes == null || bytes.length == 0 || bytes.length > HologramLibraryProtocol.MAX_BYTES)
             throw new IOException("Blueprint download byte budget exceeded");
         if (peer.pendingDraft != null || peer.download != null) throw new IOException("A download is already active");
         peer.pendingDraft = new Draft(bytes, name, (NBTTagCompound) request.copy());
+        peer.preparation = null;
+        peer.preparationRequest = null;
     }
 
     void prepareDraft(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) throws IOException {
@@ -656,32 +691,66 @@ final class HologramServerLibrary {
             || session.planRevision != identity.getLong("planRevision"))
             throw new IOException("Blueprint preparation source changed");
         identity.setLong("uiSequence", session.uiSequence);
-        if (!enqueue(() -> {
+        final Preparation preparation = new Preparation(identity.getLong("clientTaskToken"));
+        synchronized (this) {
+            Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+            if (!draftTaskCurrent(player, identity)) throw new IOException("Blueprint preparation was cancelled");
+            if (peer.preparation != null) {
+                peer.preparation.valid = false;
+                tasks.remove(peer.preparation);
+            }
+            peer.preparation = preparation;
+            peer.preparationRequest = identity;
+        }
+        preparation.action = () -> {
             long[] lastProgress = { Long.MIN_VALUE };
+            long[] advancedAt = { System.nanoTime() };
             try {
-                byte[] encoded = HologramDraftEncoding.encode(detached, (done, total) -> {
-                    if (epoch != runtimeEpoch || closed) throw new IOException("Blueprint preparation retired");
-                    long now = System.nanoTime();
-                    if (done != 0 && done != total
-                        && lastProgress[0] != Long.MIN_VALUE
-                        && now - lastProgress[0] < TimeUnit.MILLISECONDS.toNanos(250)) return;
-                    lastProgress[0] = now;
-                    NBTTagCompound progress = (NBTTagCompound) identity.copy();
-                    progress.setString("op", "preparationProgress");
-                    progress.setString("phase", "snapshot.prepare");
-                    progress.setString("detail", "export_json");
-                    progress.setLong("done", done);
-                    progress.setLong("total", total);
-                    progress.setString("unit", "rows");
-                    HologramNetwork.sendLibraryReply(player, progress);
+                byte[] encoded = HologramDraftEncoding.encode(detached, new HologramDraftEncoding.Progress() {
+
+                    @Override
+                    public void checkpoint() throws IOException {
+                        if (!preparation.valid || epoch != runtimeEpoch || closed)
+                            throw new java.io.InterruptedIOException("Blueprint preparation retired");
+                        long now = System.nanoTime();
+                        if (now - advancedAt[0] > TimeUnit.SECONDS.toNanos(120))
+                            throw new IOException("Blueprint preparation stalled");
+                        advancedAt[0] = now;
+                    }
+
+                    @Override
+                    public void update(long done, long total) throws IOException {
+                        checkpoint();
+                        long now = System.nanoTime();
+                        if (done != 0 && done != total
+                            && lastProgress[0] != Long.MIN_VALUE
+                            && now - lastProgress[0] < TimeUnit.MILLISECONDS.toNanos(250)) return;
+                        lastProgress[0] = now;
+                        NBTTagCompound progress = (NBTTagCompound) identity.copy();
+                        progress.setString("op", "preparationProgress");
+                        progress.setString("phase", "snapshot.prepare");
+                        progress.setString("detail", "export_json");
+                        progress.setLong("done", done);
+                        progress.setLong("total", total);
+                        progress.setString("unit", "rows");
+                        HologramNetwork.sendLibraryReply(player, progress);
+                    }
                 });
-                if (epoch == runtimeEpoch && !closed)
+                if (preparation.valid && epoch == runtimeEpoch && !closed)
                     HologramLibraryFacade.draftPrepared(player, identity, encoded, detached.name);
             } catch (IOException | RuntimeException failure) {
-                if (epoch == runtimeEpoch && !closed)
+                if (preparation.valid && epoch == runtimeEpoch && !closed)
                     HologramLibraryFacade.draftPreparationFailed(player, identity, failure.getMessage());
             }
-        })) throw new IOException("Server library worker is busy; retry");
+        };
+        if (!tasks.offer(preparation)) {
+            synchronized (this) {
+                Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+                if (peer != null && peer.preparation == preparation) peer.preparation = null;
+            }
+            preparation.valid = false;
+            throw new IOException("Server library worker is busy; retry");
+        }
     }
 
     boolean enqueue(Runnable task) {
@@ -696,6 +765,7 @@ final class HologramServerLibrary {
         for (Peer peer : retired) {
             peer.online = false;
             peer.pendingDraft = null;
+            if (peer.preparation != null) peer.preparation.valid = false;
             if (peer.upload != null) peer.upload.valid = false;
             if (peer.download != null) peer.download.valid = false;
         }
@@ -720,7 +790,13 @@ final class HologramServerLibrary {
         if (peer.download != null) throw new IOException("A download is already active");
         if (activeDownloads >= 4 || bytes.length > MAX_RESERVED_BYTES - downloadBytes)
             throw new IOException("Server download queue is busy; retry later");
-        peer.download = new Download(HologramLibraryDownload.encode(bytes), request.getLong("clientTaskToken"));
+        peer.download = new Download(
+            HologramLibraryDownload.encode(
+                bytes,
+                () -> peer.online && !closed
+                    && (request.getLong("clientTaskToken") == 0
+                        || request.getLong("clientTaskToken") > peer.retiredThrough)),
+            request.getLong("clientTaskToken"));
         if ("exportDraft".equals(request.getString("op"))) peer.download.boundRequest = (NBTTagCompound) request.copy();
         downloadBytes += bytes.length;
         activeDownloads++;
@@ -755,7 +831,7 @@ final class HologramServerLibrary {
             draft = peer.pendingDraft;
             peer.pendingDraft = null;
         }
-        if (draft != null) {
+        if (draft != null && draftTaskCurrent(peer.player, draft.request)) {
             try {
                 queueDownload(peer, draft.bytes, draft.name, draft.request, "");
             } catch (IOException | RuntimeException failure) {
@@ -907,11 +983,31 @@ final class HologramServerLibrary {
         volatile Upload upload;
         volatile Download download;
         Draft pendingDraft;
+        volatile long retiredThrough;
+        Preparation preparation;
+        NBTTagCompound preparationRequest;
 
         Peer(EntityPlayerMP player) {
             this.player = player;
             owner = HologramLibraryFacade.actorId(player);
             name = player.getCommandSenderName();
+        }
+    }
+
+    /** Queue entry and running capability are the same object, so retirement removes queued work too. */
+    static final class Preparation implements Runnable {
+
+        final long token;
+        volatile boolean valid = true;
+        Runnable action;
+
+        Preparation(long token) {
+            this.token = token;
+        }
+
+        public void run() {
+            if (valid && action != null) action.run();
+            action = null;
         }
     }
 

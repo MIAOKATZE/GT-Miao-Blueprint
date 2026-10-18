@@ -33,7 +33,8 @@ final class HologramActionDispatcher {
             return;
         }
         // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
-        if (action.hasKey("uiSequence") && !"close".equals(action.getString("op")))
+        if (action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
+            && !HologramMaterialWorkflow.lightweight(action.getString("op")))
             s.uiSequence = action.getLong("uiSequence");
         long now = player.worldObj.getTotalWorldTime();
         if (s.actionTick != now) {
@@ -171,6 +172,10 @@ final class HologramActionDispatcher {
                 for (int index : action.getIntArray("selectedIndices"))
                     if (s.capture != null && index >= 0 && index < s.capture.cells.size()) s.selectedIndices.add(index);
             }
+        }
+        if (s.job != 1 && s.job != 2 && HologramAuthoringWorkflow.unchangedBlueprintAction(s, action, op)) {
+            HologramSnapshots.sendUi(s);
+            return;
         }
         if (!"build".equals(op) && !"start".equals(op) && !"confirmBlueprintPlacement".equals(op))
             s.forcePlacementReady = false;
@@ -349,7 +354,7 @@ final class HologramActionDispatcher {
                     if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i)
                         && "pending".equals(s.planStatus.get(i))) s.work.add(i);
                 }
-                HologramPlacementJobs.controllerWorkLast(s);
+                HologramPlacementJobs.spatialWorkOrder(s);
                 s.phase = "RUNNING";
                 HologramSession.resetJobCounts(s, false);
                 s.status = "正在直接施工";
@@ -558,6 +563,13 @@ final class HologramActionDispatcher {
             || s.noHatches != action.getBoolean("noHatches")
             || (s.machine != null && s.facing != s.machine.getExtendedFacing()
                 .ordinal());
+        if (geometryChanged && s.virtual
+            && !HologramVirtualStructureEditing.prepare(
+                s,
+                action.getInteger("main"),
+                action.getCompoundTag("channels"),
+                action.getBoolean("noHatches")))
+            return false;
         if (geometryChanged) {
             s.allocationsFrozen = false;
             s.frozenAutoTargets.clear();

@@ -127,6 +127,25 @@ public final class HologramJobLifecycleRegression {
                 permissionRejected = true;
             }
             SimpleAssert.that(permissionRejected, "restart enforces administrator permission at the command boundary");
+            SimpleAssert.that(
+                new HologramCommand().addTabCompletionOptions(denied, new String[] { "r" })
+                    .isEmpty(),
+                "unauthorized senders cannot discover administrative completion");
+            net.minecraft.command.ICommandSender allowed = (net.minecraft.command.ICommandSender) java.lang.reflect.Proxy
+                .newProxyInstance(
+                    HologramJobLifecycleRegression.class.getClassLoader(),
+                    new Class<?>[] { net.minecraft.command.ICommandSender.class },
+                    (proxy, method, args) -> method.getName()
+                        .equals("canCommandSenderUseCommand") ? true : null);
+            HologramCommand command = new HologramCommand();
+            SimpleAssert.eq(
+                java.util.Collections.singletonList("restart"),
+                command.addTabCompletionOptions(allowed, new String[] { "re" }),
+                "partial subcommand completes restart without executing it");
+            SimpleAssert.that(
+                command.addTabCompletionOptions(allowed, new String[] { "restart", "" })
+                    .isEmpty(),
+                "restart has no positional arguments to complete");
             SimpleAssert.eq(s, HologramWorkspace.find(player.getUniqueID()), "denied restart cannot retire sessions");
             int wireBeforeRestart = WIRE.size();
             SimpleAssert

@@ -78,12 +78,14 @@ public final class HologramCapture {
     static HologramCapture declarationPieces(IConstructable machine, ItemStack trigger) {
         HologramCapture capture = new HologramCapture(machine, trigger.copy());
         HologramCapture previous = ACTIVE.get();
+        HologramChannelTrace.Scope channels = HologramChannelTrace.begin(machine);
         ACTIVE.set(capture);
         try {
             machine.construct(capture.trigger.copy(), true);
         } finally {
             if (previous == null) ACTIVE.remove();
             else ACTIVE.set(previous);
+            capture.channelReport = HologramChannelTrace.end(channels);
         }
         return capture;
     }

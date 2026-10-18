@@ -60,6 +60,17 @@ final class HologramLocalPlanRefresh {
         return ready && capture == s.capture && s.capture != null && size == s.capture.cells.size();
     }
 
+    /** A completed published differential already proved this scope has no protected/blocked cells. */
+    boolean knownNoBlockers(HologramSession s) {
+        return current(s) && revision == s.planRevision
+            && !s.localPlanPending
+            && !incomplete
+            && scope == s.scope
+            && layer == s.layer
+            && java.util.Objects.equals(active, s.blueprintActiveStructure)
+            && protectedCells == 0;
+    }
+
     static Set<Integer> selected(HologramSession s, NBTTagCompound action) {
         Set<Integer> result = new LinkedHashSet<>();
         int[] indices = action.getIntArray("indices");
@@ -620,6 +631,11 @@ final class HologramLocalPlanRefresh {
 
     static NBTTagCompound delta(HologramSession s) {
         HologramLocalPlanRefresh cache = s.localEdits;
+        // Complex/native costs and creative display demand need the complete dual ledger, not the
+        // survival-only blueprintTotalResources projection (which may legitimately be null).
+        if (!s.localPlanPending && !HologramSessionPolicy.authoring(s)
+            && cache.revision != s.planRevision
+            && (!cache.simple || s.player.capabilities.isCreativeMode || s.jobVoucherRequested)) return null;
         if (!s.cellDeltaProtocol || !cache.ready
             || cache.pending.isEmpty() && !cache.metadataPending
             || cache.capture != s.capture
@@ -737,6 +753,9 @@ final class HologramLocalPlanRefresh {
         NBTTagCompound row = identity.writeToNBT(new NBTTagCompound());
         row.setLong("required", required);
         row.setLong("shellRequired", shell ? required : 0);
+        if (shell && !HologramRecovery.hasSeal(stack)
+            && HologramDecorationVoucher.covered(net.minecraft.block.Block.getBlockFromItem(stack.getItem()), stack))
+            row.setLong("voucherShellRequired", required);
         int limit = Math.max(4096, required);
         row.setInteger(
             "available",

@@ -26,6 +26,10 @@ public final class HologramLibrarySaveLifecycleRegression {
         try {
             reviewIsNotCompletion();
             detachedFailureAndRetry();
+            encodingFailureAndImmediateRetry();
+            timeoutAndHeaderRefusalKeepTheirFailureReason();
+            exactUiTerminalReleasesSaveButtons();
+            cancelledSourceRetainsBaselineOrRecoversOnce();
             confirmationAdvancesUiAcknowledgement();
             cancelledCatalogCanRefreshAgain();
             preparationActivityIsCorrelatedAndBounded();
@@ -88,6 +92,18 @@ public final class HologramLibrarySaveLifecycleRegression {
             !progress.receive(event, 17, "source", 23, 31, 751 * second),
             "unchanged heartbeat cannot hide a stalled worker forever");
         progress.clear();
+        event.setString("detail", "cells");
+        event.setLong("done", 500);
+        progress.receive(event, 17, "source", 23, 31, second);
+        event.setString("detail", "resources");
+        progress.receive(event, 17, "source", 23, 31, 100 * second);
+        event.setString("detail", "cells");
+        progress.receive(event, 17, "source", 23, 31, 400 * second);
+        event.setString("detail", "resources");
+        SimpleAssert.that(
+            !progress.receive(event, 17, "source", 23, 31, 701 * second),
+            "alternating unchanged stage labels cannot conceal a stalled preparation");
+        progress.clear();
         SimpleAssert
             .that(progress.view(800 * second) == null, "retired preparation leaves no progress in a later task");
     }
@@ -140,7 +156,14 @@ public final class HologramLibrarySaveLifecycleRegression {
                     .size(),
                 "the original refresh enters the actual bounded IO queue");
             SimpleAssert.that(client.busy(), "an admitted catalog refresh owns its loading flag");
+            Runnable cancelledWork = worker.getQueue()
+                .peek();
             client.cancel();
+            SimpleAssert.eq(
+                0,
+                worker.getQueue()
+                    .size(),
+                "cancel discards obsolete queued IO before admitting retry");
             SimpleAssert.that(!client.busy(), "real cancellation releases loading when its generation is retired");
             SimpleAssert.that(
                 client.rows(false) == existing && get(client, "store") == store,
@@ -149,10 +172,24 @@ public final class HologramLibrarySaveLifecycleRegression {
             SimpleAssert.that(currentGeneration > oldGeneration, "cancellation retires the old callback generation");
             client.refreshLocal();
             SimpleAssert.eq(
-                2,
+                1,
                 worker.getQueue()
                     .size(),
-                "retry is actually admitted instead of remaining loading forever");
+                "cancel removes obsolete work so retry immediately owns the bounded queue");
+            cancelledWork.run();
+            SimpleAssert.that(
+                client.busy() && client.rows(false) == existing,
+                "a cancelled queue entry held by an external executor cannot perform IO or unlock retry");
+            for (int retry = 0; retry < 10; retry++) {
+                client.cancel();
+                client.refreshLocal();
+                SimpleAssert.eq(
+                    1,
+                    worker.getQueue()
+                        .size(),
+                    "repeated cancellation/retry cannot exhaust the IO queue");
+            }
+            currentGeneration = (Long) get(client, "generation");
             Method finish = HologramLibraryClient.class
                 .getDeclaredMethod("finishLocalRefresh", long.class, String.class, NBTTagList.class);
             finish.setAccessible(true);
@@ -255,6 +292,199 @@ public final class HologramLibrarySaveLifecycleRegression {
         SimpleAssert.that(!client.busy(), "the retry still ends on its own precise terminal refusal");
         client.snapshot(currentFailure);
         SimpleAssert.eq(0L, client.backgroundTaskToken(), "duplicate failure cannot revive or finish another owner");
+    }
+
+    private static void encodingFailureAndImmediateRetry() throws ReflectiveOperationException {
+        HologramLibraryClient client = client();
+        begin(client, 101, 50, "saveBlueprintAs");
+        NBTTagCompound failure = new NBTTagCompound();
+        failure.setBoolean("transportError", true);
+        failure.setString("errorCode", "snapshot.encode");
+        failure.setString("session", "save-session");
+        failure.setLong("uiSequence", 50);
+        failure.setLong("clientTaskToken", 100);
+        SimpleAssert.that(!client.transportFailed(failure), "an obsolete gzip failure cannot finish current owner");
+        failure.setLong("clientTaskToken", 101);
+        SimpleAssert.that(client.transportFailed(failure), "actual snapshot failure retires its save owner off screen");
+        SimpleAssert.that(
+            !client.busy() && client.backgroundTaskToken() == 0,
+            "encoding failure clears preparation and download admission immediately");
+        begin(client, 102, 50, "saveBlueprintAs");
+        SimpleAssert.that(!client.transportFailed(failure), "late exact-sequence failure cannot terminate retry B");
+        SimpleAssert.eq(102L, client.backgroundTaskToken(), "B retains its own token after A's late failure");
+        client.cancel();
+        SimpleAssert.that(!client.busy(), "pre-transfer cancellation reaches an immediate retryable terminal state");
+        begin(client, 103, 50, "saveBlueprintAs");
+        SimpleAssert.that(client.busy(), "a new save is admitted immediately after cancelling B");
+        client.cancel();
+    }
+
+    private static void exactUiTerminalReleasesSaveButtons() throws ReflectiveOperationException {
+        HologramUiModules ui = new HologramUiModules(null);
+        set(ui.session, "state", state(111, 61, "saveBlueprintAs", false, true));
+        set(ui.session, "libraryTaskSession", "save-session");
+        set(ui.session, "libraryTaskToken", 111L);
+        set(ui.session, "libraryTaskSequence", 61L);
+        set(ui.session, "libraryTaskPresetSequence", 60L);
+        set(ui.session, "pendingOperation", "confirmAeSave");
+        ui.session.pendingSequence(61);
+        ui.library.presetSaveSequence(60);
+        ui.session.libraryTaskFinished("save-session", 61, 110, "old failure");
+        ui.session.libraryTaskFinished("save-session", 60, 111, "old confirmation");
+        SimpleAssert
+            .eq(61L, ui.session.pendingSequence(), "wrong token/sequence cannot release another command ticket");
+        ui.session.libraryTaskFinished("save-session", 61, 111, "cancelled");
+        SimpleAssert.eq(-1L, ui.session.pendingSequence(), "exact cancellation releases save controls immediately");
+        SimpleAssert.eq(
+            -1L,
+            ui.library.presetSaveSequence(),
+            "confirmed save terminal also clears its original preset save acknowledgement marker");
+        ui.session.pendingSequence(62);
+        set(ui.session, "pendingOperation", "processBlueprint");
+        ui.session.libraryTaskFinished("save-session", 61, 111, "late duplicate");
+        SimpleAssert.eq(62L, ui.session.pendingSequence(), "late save terminal cannot clear a successor's pending UI");
+    }
+
+    private static void cancelledSourceRetainsBaselineOrRecoversOnce() throws ReflectiveOperationException {
+        NBTTagCompound data = (NBTTagCompound) state(121, 70, "saveBlueprintAs", false, true).data.copy();
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setInteger("x", 1);
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(cell);
+        data.setTag("cells", rows);
+        data.setInteger("cellCount", 1);
+        data.setBoolean("snapshotPending", true);
+        HologramState baseline = new HologramState(data);
+        NBTTagCompound reply = new NBTTagCompound();
+        reply.setString("session", "save-session");
+        reply.setLong("planRevision", 42);
+        reply.setInteger("cellCount", 1);
+        reply.setLong("clientTaskToken", 121);
+        reply.setLong("uiSequence", 70);
+        HologramState retained = HologramClient.retainCancelledSaveSource(baseline, reply);
+        SimpleAssert.that(
+            retained != null && retained.cells == baseline.cells,
+            "exact source cancellation retains the installed geometry without copying or rebuilding cells");
+        SimpleAssert.that(
+            !retained.data.getBoolean("snapshotPending") && !retained.data.getBoolean("blueprintSavePending"),
+            "small source receipt retires preparation flags on an existing full baseline");
+        data.setBoolean("areaSelectionShell", true);
+        HologramState shell = new HologramState(data);
+        SimpleAssert.eq(
+            null,
+            HologramClient.retainCancelledSaveSource(shell, reply),
+            "a terminal receipt cannot manufacture geometry for an uninstalled shell");
+        Field requested = HologramClient.class.getDeclaredField("fullSnapshotRequested");
+        requested.setAccessible(true);
+        boolean previousRequest = requested.getBoolean(null);
+        Field recoveryKey = HologramClient.class.getDeclaredField("cancelledSourceRecovery");
+        recoveryKey.setAccessible(true);
+        String previousRecoveryKey = (String) recoveryKey.get(null);
+        HologramState previousState = HologramClient.state;
+        try {
+            requested.setBoolean(null, false);
+            HologramClient.state = baseline;
+            SimpleAssert.that(
+                !HologramClient.saveSourceCancelled(reply) && !requested.getBoolean(null),
+                "an existing exact baseline requests no new full snapshot after cancellation");
+            SimpleAssert.that(
+                HologramClient.state.cells == baseline.cells,
+                "production source cancellation preserves the original installed geometry");
+            HologramClient.state = shell;
+            requested.setBoolean(null, true);
+            recoveryKey.set(null, "");
+            SimpleAssert.that(
+                HologramClient.saveSourceCancelled(reply),
+                "missing geometry replaces its cancelled outstanding recovery request once");
+            SimpleAssert.that(
+                !HologramClient.saveSourceCancelled(reply),
+                "duplicate cancellation cannot enqueue another full recovery");
+            SimpleAssert.that(
+                HologramClient.state == shell && shell.data.getBoolean("snapshotPending"),
+                "recovery request keeps the shell pending until an actual baseline arrives");
+        } finally {
+            HologramClient.state = previousState;
+            requested.setBoolean(null, previousRequest);
+            recoveryKey.set(null, previousRecoveryKey);
+        }
+    }
+
+    private static void timeoutAndHeaderRefusalKeepTheirFailureReason() throws ReflectiveOperationException {
+        Field ownerField = HologramBackgroundTasks.class.getDeclaredField("OWNER");
+        ownerField.setAccessible(true);
+        HologramTaskOwner owner = (HologramTaskOwner) ownerField.get(null);
+        SimpleAssert.that(!owner.busy(), "the terminal regression starts without stealing an existing owner");
+        Field completionField = HologramBackgroundTasks.class.getDeclaredField("completion");
+        completionField.setAccessible(true);
+        String key = "watchdog-reason-" + System.nanoTime();
+        HologramLibraryClient client = client();
+        long first = owner.begin("library", key, "save");
+        begin(client, first, 80, "saveBlueprintAs");
+        client.failTask("transfer.idle.timeout", "传输超时：timeout-with-unsaved-edits");
+        String failure = (String) completionField.get(null);
+        SimpleAssert.that(
+            !owner.busy() && failure.contains("timeout-with-unsaved-edits") && failure.contains("失败"),
+            "the watchdog completes FAILURE using its actual reason before transport teardown");
+        SimpleAssert.that(
+            client.status()
+                .contains("timeout-with-unsaved-edits")
+                && client.status()
+                    .contains("["),
+            "timeout UI retains the actual failing phase");
+        long second = owner.begin("library", key + "-retry", "save");
+        begin(client, second, 81, "saveBlueprintAs");
+        client.cancel();
+        SimpleAssert.that(
+            ((String) completionField.get(null)).contains("已取消"),
+            "the same public cancel path reports explicit user CANCELLED");
+        long third = owner.begin("library", key + "-header", "save");
+        begin(client, third, 82, "saveBlueprintAs");
+        Method receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
+        receive.setAccessible(true);
+        NBTTagCompound header = new NBTTagCompound();
+        header.setString("op", "downloadBegin");
+        header.setBoolean("capturePreview", true);
+        header.setLong("clientTaskToken", second);
+        receive.invoke(client, header);
+        SimpleAssert.eq(third, client.backgroundTaskToken(), "stale header cannot cancel the successor owner");
+        header.setLong("clientTaskToken", third);
+        // Empty receipt makes this same-owner native source inadmissible before any world or registry access.
+        receive.invoke(client, header);
+        SimpleAssert.that(
+            !client.busy() && !owner.busy(),
+            "same-owner rejected source header reaches an immediate terminal failure instead of waiting 120 seconds");
+        SimpleAssert.that(
+            ((String) completionField.get(null)).contains("失败") && client.status()
+                .contains("来源"),
+            "source refusal retains a precise failure reason");
+        SimpleAssert.that(
+            (Boolean) get(client, "downloadBeginObserved") && !(Boolean) get(client, "downloadBeginAccepted")
+                && !(Boolean) get(client, "downloadDoneAccepted"),
+            "bounded diagnostic facts distinguish rejected headers from received stream completion");
+        long fourth = owner.begin("library", key + "-ignored-stream", "save");
+        begin(client, fourth, 83, "saveBlueprintAs");
+        set(client, "lastActivity", 123L);
+        NBTTagCompound orphan = new NBTTagCompound();
+        orphan.setString("op", "downloadChunk");
+        orphan.setLong("clientTaskToken", fourth);
+        orphan.setString("transfer", "00000000-0000-0000-0000-000000000001");
+        receive.invoke(client, orphan);
+        orphan.setString("op", "downloadDone");
+        receive.invoke(client, orphan);
+        SimpleAssert.eq(
+            123L,
+            get(client, "lastActivity"),
+            "unaccepted stream packets cannot extend the real inactivity watchdog");
+        client.cancel();
+        long fifth = owner.begin("library", key + "-technical-error", "save");
+        begin(client, fifth, 84, "saveBlueprintAs");
+        client.failTask("download.invalid", "invalid encoded download");
+        SimpleAssert.that(
+            client.status()
+                .contains("[")
+                && client.status()
+                    .contains(HologramProgressView.phase("library.prepare")),
+            "translation of a technical failure preserves its actual UI phase suffix");
     }
 
     private static HologramLibraryClient client() throws ReflectiveOperationException {

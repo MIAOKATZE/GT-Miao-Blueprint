@@ -20,11 +20,38 @@ final class HologramPlacementJobs {
 
     /** A reviewed request must keep the same world differential; resource availability is checked again. */
 
-    static void controllerWorkLast(HologramSession s) {
-        if (s.virtual) s.work.sort(
-            (left, right) -> Boolean.compare(
-                "templateController".equals(s.capture.cells.get(left).role),
-                "templateController".equals(s.capture.cells.get(right).role)));
+    static long spatialWorkOrder(HologramSession s) {
+        if (!s.virtual || s.work.size() < 2) return 0;
+        // Old saved blueprints also inherited Population's controller-last editor order. Order physical
+        // work by integer coordinates, treating controllers exactly like their surrounding blocks.
+        long started = System.nanoTime();
+        s.work.sort((left, right) -> {
+            HologramCapture.Cell a = s.capture.cells.get(left), b = s.capture.cells.get(right);
+            int order = Integer.compare(a.y, b.y);
+            if (order == 0) order = Integer.compare(a.z, b.z);
+            return order == 0 ? Integer.compare(a.x, b.x) : order;
+        });
+        return System.nanoTime() - started;
+    }
+
+    static void notifyCompletedControllers(HologramSession s) {
+        if (!s.virtual || s.player.worldObj.provider.dimensionId != s.dimension) return;
+        for (int index : s.work) {
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            if (!"templateController".equals(cell.role)
+                || !("placed".equals(cell.status) || "replaced".equals(cell.status))) continue;
+            try {
+                net.minecraft.tileentity.TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
+                if (tile instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity) {
+                    gregtech.api.interfaces.metatileentity.IMetaTileEntity machine = ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) tile)
+                        .getMetaTileEntity();
+                    if (machine instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase)
+                        machine.onMachineBlockUpdate();
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                HologramPlacementDiagnostics.failure(s, cell, index, "completed-controller-update", failure);
+            }
+        }
     }
 
     static void tickJob(HologramSession s) {
@@ -93,6 +120,7 @@ final class HologramPlacementJobs {
         s.batchSeq++;
         s.jobSkippedCells = Math.max(0, s.cursor - s.completed);
         if (s.cursor >= s.work.size()) {
+            notifyCompletedControllers(s);
             int unresolved = 0;
             for (int i = 0; i < s.capture.cells.size(); i++)
                 if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i) && !s.capture.cells.get(i).anchor) {
@@ -166,7 +194,7 @@ final class HologramPlacementJobs {
             if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i) && "pending".equals(s.planStatus.get(i)))
                 s.work.add(i);
         }
-        controllerWorkLast(s);
+        spatialWorkOrder(s);
         if (s.work.isEmpty()) {
             int satisfied = 0, protectedCells = 0, unsupported = 0;
             String reason = "";

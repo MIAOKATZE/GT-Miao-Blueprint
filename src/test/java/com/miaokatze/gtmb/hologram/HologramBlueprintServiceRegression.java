@@ -90,6 +90,7 @@ final class HologramBlueprintServiceRegression {
             HologramCapture capture = (HologramCapture) get(session, "capture");
             SimpleAssert
                 .that(!capture.incomplete, "schema2 item-only factory cells infer their block: " + capture.failure);
+            spatialWorkOrder((HologramSession) session);
             capture.cells.get(0).prompt = "keep configuration";
             NBTTagCompound data = new NBTTagCompound();
             data.setString("setting", "saved-value");
@@ -147,6 +148,47 @@ final class HologramBlueprintServiceRegression {
             while (cause.getCause() != null) cause = cause.getCause();
             cause.printStackTrace();
             throw new AssertionError(cause);
+        }
+    }
+
+    private static void spatialWorkOrder(HologramSession session) {
+        HologramCapture original = session.capture;
+        HologramPresets.Preset preset = session.virtualPreset;
+        java.util.List<Integer> work = new java.util.ArrayList<>(session.work);
+        try {
+            HologramCapture declared = new HologramCapture(null, new ItemStack(Blocks.stone));
+            HologramCapture.Cell casing = new HologramCapture.Cell(null, session.x + 4, session.y, session.z);
+            HologramCapture.Cell controller = new HologramCapture.Cell(null, session.x + 1, session.y, session.z);
+            controller.role = "templateController";
+            HologramCapture.Cell addition = new HologramCapture.Cell(null, session.x + 6, session.y, session.z);
+            declared.cells.add(casing);
+            declared.cells.add(controller);
+            declared.cells.add(addition);
+            for (HologramCapture.Cell cell : declared.cells)
+                declared.positions.put(HologramValues.position(cell), cell);
+            session.capture = declared;
+            session.work.clear();
+            session.work.add(0);
+            session.work.add(1);
+            session.work.add(2);
+            HologramPlacementJobs.spatialWorkOrder(session);
+            SimpleAssert.eq(
+                java.util.Arrays.asList(1, 0, 2),
+                session.work,
+                "construction uses spatial order across controller population passes and local additions");
+            SimpleAssert.that(
+                session.capture.cells.get(1) == controller,
+                "work order does not renumber stable editor cells or ACK indices");
+            HologramPlacementJobs.spatialWorkOrder(session);
+            SimpleAssert.eq(
+                java.util.Arrays.asList(1, 0, 2),
+                session.work,
+                "resuming a reviewed job preserves the same spatial order");
+        } finally {
+            session.capture = original;
+            session.virtualPreset = preset;
+            session.work.clear();
+            session.work.addAll(work);
         }
     }
 

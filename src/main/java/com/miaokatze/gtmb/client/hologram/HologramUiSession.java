@@ -32,6 +32,13 @@ final class HologramUiSession {
 
     private String openedPurpose = "";
 
+    private long materialReviewSequence = -1, materialReviewRevision = -1;
+    private Boolean desiredVoucher;
+    private Boolean submittedVoucher;
+    private boolean materialRefreshQueued;
+    private long libraryTaskToken, libraryTaskSequence = -1, libraryTaskPresetSequence = -1;
+    private String libraryTaskSession = "";
+
     void initialize(HologramState snapshot) {
         state = snapshot;
         ui.bindings.initializeSnapshot(snapshot);
@@ -47,7 +54,7 @@ final class HologramUiSession {
             ui.preview.restoreInitialUi(memory);
         }
         ui.preview.initializeLayer(snapshot);
-        sequence = snapshot.data.getLong("uiSequence");
+        sequence = Math.max(snapshot.data.getLong("uiSequence"), snapshot.data.getLong("materialQuoteSequence"));
         ui.preview.resetCamera();
         ui.config.syncTargetSelectors();
         ui.library.applyOpeningPurpose();
@@ -71,8 +78,14 @@ final class HologramUiSession {
             ui.preview.resetSession(next);
             pendingTicket.clear();
             commandProgress.clear();
+            clearMaterialReviewAction();
+            libraryTaskToken = 0;
+            libraryTaskSequence = -1;
+            libraryTaskPresetSequence = -1;
+            libraryTaskSession = "";
         }
         state = next;
+        if (materialReviewSequence >= 0 && revision() != materialReviewRevision) clearMaterialReviewAction();
         ui.library.acceptSourceSwitchProposal();
         ui.config.acknowledgeConfiguration(next);
         ui.processing.acknowledgePreset(next);
@@ -100,6 +113,7 @@ final class HologramUiSession {
         ui.ae.completeAeReviewNavigation();
         ui.preview.drainQueuedEdits();
         ui.ae.acknowledgePreview(next);
+        acknowledgeMaterialReview(next.data.getLong("uiSequence"));
     }
 
     static boolean sameTarget(HologramState.Cell before, HologramState.Cell after) {
@@ -120,6 +134,89 @@ final class HologramUiSession {
             if (pendingTicket.acknowledge(next.session, orderCommand)) commandProgress.clear();
         }
         ui.review.acknowledgeReview(next);
+    }
+
+    /** Voucher intent is coalesced separately; unrelated controls and the open MUI dialog remain usable. */
+    void selectMaterialVoucher(boolean selected) {
+        if (!editable()) return;
+        desiredVoucher = selected;
+        drainMaterialReviewAction();
+    }
+
+    boolean materialVoucherSelected() {
+        return desiredVoucher != null ? desiredVoucher
+            : state.data.getCompoundTag("decorativeVoucher")
+                .getBoolean("selected");
+    }
+
+    boolean materialReviewPending() {
+        return materialReviewSequence >= 0;
+    }
+
+    void refreshMaterialReview() {
+        if (!editable()) return;
+        materialRefreshQueued = true;
+        drainMaterialReviewAction();
+    }
+
+    void materialQuoteMetadata(HologramState next, long receiptSequence) {
+        if (!state.session.equals(next.session) || state.cells != next.cells
+            || revision() != next.data.getLong("planRevision")) return;
+        state = next;
+        if (("orderMissingMaterials".equals(pendingOperation) || "cancelMaterialOrder".equals(pendingOperation))
+            && pendingTicket.sequence() == receiptSequence) {
+            if (pendingTicket.acknowledge(next.session, receiptSequence)) commandProgress.clear();
+        }
+        ui.review.acknowledgeMaterialQuote(next);
+        acknowledgeMaterialReview(receiptSequence);
+    }
+
+    void saveSourceMetadata(HologramState next) {
+        if (state.session.equals(next.session) && state.cells == next.cells
+            && revision() == next.data.getLong("planRevision")) state = next;
+    }
+
+    private void acknowledgeMaterialReview(long receiptSequence) {
+        if (materialReviewSequence < 0 || receiptSequence < materialReviewSequence) return;
+        materialReviewSequence = -1;
+        // A refused intent is reported by the server, not retried forever. Only a newer click is queued.
+        if (desiredVoucher != null && desiredVoucher.equals(submittedVoucher)) desiredVoucher = null;
+        submittedVoucher = null;
+        drainMaterialReviewAction();
+    }
+
+    private void drainMaterialReviewAction() {
+        if (materialReviewSequence >= 0 || !editable()) return;
+        boolean serverSelected = state.data.getCompoundTag("decorativeVoucher")
+            .getBoolean("selected");
+        String op;
+        NBTTagCompound request = new NBTTagCompound();
+        if (desiredVoucher != null && desiredVoucher != serverSelected) {
+            op = "setDecorativeVoucher";
+            request.setBoolean("enabled", desiredVoucher);
+        } else {
+            desiredVoucher = null;
+            if (!materialRefreshQueued) return;
+            op = "refreshMaterialQuote";
+        }
+        materialRefreshQueued = false;
+        request.setLong("planRevision", revision());
+        request.setLong("placementReviewNonce", state.data.getLong("placementReviewNonce"));
+        long before = sequence;
+        send(op, request, false);
+        if (sequence > before) {
+            materialReviewSequence = sequence;
+            materialReviewRevision = revision();
+            submittedVoucher = "setDecorativeVoucher".equals(op) ? request.getBoolean("enabled") : null;
+            notice = "";
+        }
+    }
+
+    private void clearMaterialReviewAction() {
+        materialReviewSequence = -1;
+        desiredVoucher = null;
+        submittedVoucher = null;
+        materialRefreshQueued = false;
     }
 
     boolean areaImporting() {
@@ -172,6 +269,8 @@ final class HologramUiSession {
     void send(String op, NBTTagCompound request, boolean pending) {
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
         sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));
+        sequence = Math
+            .max(sequence, Math.max(state.data.getLong("uiSequence"), state.data.getLong("materialQuoteSequence")));
         if (areaImporting() && !"close".equals(op) && !"cancelAeSave".equals(op) && !"aePreviewClose".equals(op))
             return;
         if (!ui.ae.commandAllowed(op)) return;
@@ -200,6 +299,12 @@ final class HologramUiSession {
             notice = "";
             pendingSequence(sequence);
             pendingOperation = op;
+            if (HologramLibraryClient.saveOperation(op) || "confirmAeSave".equals(op)) {
+                libraryTaskToken = HologramLibraryClient.INSTANCE.backgroundTaskToken();
+                libraryTaskSequence = sequence;
+                libraryTaskSession = state.session;
+                if (HologramLibraryClient.saveOperation(op)) libraryTaskPresetSequence = sequence;
+            }
             String phase = "scan".equals(op) || "processBlueprint".equals(op) ? "analysis"
                 : "configure".equals(op) || "settings".equals(op) ? "settings"
                     : op.startsWith("saveBlueprint") ? "library.prepare" : "ack";
@@ -255,9 +360,42 @@ final class HologramUiSession {
         rejectTransport(event, message);
     }
 
+    /** Exact terminal owner notification; never sends another cancellation or touches a newer command. */
+    void libraryTaskFinished(String taskSession, long taskSequence, long taskToken, String detail) {
+        if (taskToken == 0 || taskToken != libraryTaskToken
+            || taskSequence != libraryTaskSequence
+            || !libraryTaskSession.equals(taskSession)
+            || !state.session.equals(taskSession)) return;
+        boolean cleared = false;
+        if (pendingTicket.sequence() == taskSequence
+            && (HologramLibraryClient.saveOperation(pendingOperation) || "confirmAeSave".equals(pendingOperation))) {
+            pendingTicket.clear();
+            commandProgress.clear();
+            pendingOperation = "";
+            cleared = true;
+        }
+        if (libraryTaskPresetSequence >= 0 && ui.library.presetSaveSequence() == libraryTaskPresetSequence) {
+            ui.library.rejectCommand(libraryTaskPresetSequence);
+            cleared = true;
+        }
+        libraryTaskToken = 0;
+        libraryTaskSequence = -1;
+        libraryTaskPresetSequence = -1;
+        libraryTaskSession = "";
+        if (cleared) {
+            notice = detail;
+            ui.library.libraryResult(detail);
+        }
+    }
+
     private void rejectTransport(NBTTagCompound event, String message) {
         if (!event.hasKey("uiSequence", 4)) return;
         long rejected = event.getLong("uiSequence");
+        if (state.session.equals(event.getString("session")) && rejected == materialReviewSequence) {
+            clearMaterialReviewAction();
+            notice = message;
+            return;
+        }
         if (!pendingTicket.rejectExact(event.getString("session"), rejected)) return;
         commandProgress.clear();
         ui.preview.rejectCommand(rejected, message);
@@ -266,7 +404,7 @@ final class HologramUiSession {
         ui.library.rejectCommand(rejected);
         ui.review.pendingBuildReview(false);
         awaitingScan = false;
-        if (pendingOperation.startsWith("saveBlueprint")) HologramLibraryClient.INSTANCE.cancelDraftReview();
+        if (pendingOperation.startsWith("saveBlueprint")) HologramLibraryClient.INSTANCE.failDraftReview(message);
         notice = message;
     }
 

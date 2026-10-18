@@ -21,6 +21,192 @@ public final class HologramMaterialQuote {
 
     private HologramMaterialQuote() {}
 
+    /** Two payable projections of the same complete, exact-NBT demand and inventory observation. */
+    static final class Cache {
+
+        final String session;
+        final long revision;
+        final HologramCapture capture;
+        final NBTTagCompound ordinary, voucher;
+        final long eligibleDemand;
+
+        Cache(HologramSession s, NBTTagCompound ordinary, NBTTagCompound voucher) {
+            session = s.id;
+            revision = s.planRevision;
+            capture = s.capture;
+            this.ordinary = ordinary;
+            this.voucher = voucher;
+            Map<HologramBlueprintResources.ExactKey, Long> reduced = new LinkedHashMap<>();
+            NBTTagList waivedRows = voucher.getTagList("rows", 10);
+            for (int i = 0; i < waivedRows.tagCount(); i++) {
+                NBTTagCompound row = waivedRows.getCompoundTagAt(i);
+                ItemStack item = readItem(row);
+                if ("item".equals(row.getString("kind")) && item != null)
+                    reduced.put(new HologramBlueprintResources.ExactKey(item, null), quantity(row, "required"));
+            }
+            long demand = 0;
+            NBTTagList normalRows = ordinary.getTagList("rows", 10);
+            for (int i = 0; i < normalRows.tagCount(); i++) {
+                NBTTagCompound row = normalRows.getCompoundTagAt(i);
+                if (!"item".equals(row.getString("kind"))) continue;
+                ItemStack item = readItem(row);
+                if (item == null) continue;
+                long waived = Math.max(
+                    0L,
+                    quantity(row, "required")
+                        - reduced.getOrDefault(new HologramBlueprintResources.ExactKey(item, null), 0L));
+                demand = Math.addExact(demand, waived);
+            }
+            eligibleDemand = demand;
+        }
+
+        boolean current(HologramSession s) {
+            return session.equals(s.id) && revision == s.planRevision
+                && capture == s.capture
+                && !s.localPlanPending
+                && !HologramSessionPolicy.authoring(s);
+        }
+    }
+
+    /** Memoizes physical stock by complete identity, never by block or item/damage alone. */
+    static final class StockSnapshot implements ItemStock {
+
+        final ItemStock source;
+        final Map<HologramBlueprintResources.ExactKey, Long> exact = new LinkedHashMap<>(),
+            fuzzy = new LinkedHashMap<>();
+        final Map<HologramBlueprintResources.ExactKey, Long> fluids = new LinkedHashMap<>();
+        final Map<String, Long> essentia = new LinkedHashMap<>();
+        BigInteger energy;
+
+        StockSnapshot(ItemStock source) {
+            this.source = source;
+        }
+
+        public long exact(ItemStack item, long limit) {
+            return Math.min(
+                limit,
+                exact.computeIfAbsent(
+                    new HologramBlueprintResources.ExactKey(item, null),
+                    ignored -> Math.max(0L, source.exact(item, Long.MAX_VALUE))));
+        }
+
+        public long fuzzy(ItemStack item, long limit) {
+            return Math.min(
+                limit,
+                fuzzy.computeIfAbsent(
+                    new HologramBlueprintResources.ExactKey(item, null),
+                    ignored -> Math.max(0L, source.fuzzy(item, Long.MAX_VALUE))));
+        }
+
+        long fluid(HologramSession s, FluidStack sample, long limit) {
+            if (sample == null) return 0;
+            return Math.min(
+                limit,
+                fluids.computeIfAbsent(
+                    new HologramBlueprintResources.ExactKey(null, sample),
+                    ignored -> HologramMaterialAccess.materialSource(s)
+                        .fluidCount(sample, Long.MAX_VALUE)));
+        }
+
+        long essentia(HologramSession s, String aspect, long limit) {
+            return Math.min(
+                limit,
+                essentia.computeIfAbsent(
+                    aspect,
+                    ignored -> HologramMaterialAccess.materialSource(s)
+                        .essentiaCount(aspect, Long.MAX_VALUE)));
+        }
+
+        BigInteger energy(HologramSession s) {
+            if (energy == null) energy = HologramMaterialAccess.materialSource(s)
+                .energyAvailable()
+                .max(BigInteger.ZERO);
+            return energy;
+        }
+    }
+
+    static ItemStock stock(HologramSession s) {
+        return new ItemStock() {
+
+            public long exact(ItemStack item, long limit) {
+                return HologramMaterialAccess.materialSource(s)
+                    .countLong(item, limit);
+            }
+
+            public long fuzzy(ItemStack item, long limit) {
+                return HologramMaterialAccess.materialSource(s)
+                    .countFuzzyLong(item, limit);
+            }
+        };
+    }
+
+    static boolean cached(HologramSession s) {
+        return s.materialQuoteCache != null && s.materialQuoteCache.current(s);
+    }
+
+    static NBTTagList voucherRows(NBTTagList ordinary) {
+        NBTTagList result = new NBTTagList();
+        for (int i = 0; i < ordinary.tagCount(); i++) {
+            NBTTagCompound row = (NBTTagCompound) ordinary.getCompoundTagAt(i)
+                .copy();
+            long waived = Math.min(quantity(row, "required"), quantity(row, "voucherShellRequired"));
+            row.setLong("required", quantity(row, "required") - waived);
+            row.setLong("shellRequired", Math.max(0L, quantity(row, "shellRequired") - waived));
+            if (row.getLong("required") > 0) result.appendTag(row);
+        }
+        return result;
+    }
+
+    static void mergeRows(NBTTagList rows, Collection<NBTTagCompound> additions) {
+        Map<HologramBlueprintResources.ExactKey, NBTTagCompound> index = new LinkedHashMap<>();
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            ItemStack item = ItemStack.loadItemStackFromNBT(row);
+            if (item != null) index.put(new HologramBlueprintResources.ExactKey(item, null), row);
+        }
+        for (NBTTagCompound addition : additions) {
+            ItemStack item = ItemStack.loadItemStackFromNBT(addition);
+            if (item == null) continue;
+            HologramBlueprintResources.ExactKey key = new HologramBlueprintResources.ExactKey(item, null);
+            NBTTagCompound row = index.get(key);
+            if (row == null) {
+                row = (NBTTagCompound) addition.copy();
+                rows.appendTag(row);
+                index.put(key, row);
+            } else row.setLong("required", Math.addExact(quantity(row, "required"), quantity(addition, "required")));
+        }
+    }
+
+    static void project(HologramSession s) throws IOException {
+        if (!cached(s)) throw new IOException("材料需求缓存已失效，请等待完整计划");
+        s.materialQuote = (NBTTagCompound) (s.jobVoucherRequested ? s.materialQuoteCache.voucher
+            : s.materialQuoteCache.ordinary).copy();
+        stamp(s, s.materialQuote);
+        long missing = 0;
+        NBTTagList rows = s.materialQuote.getTagList("rows", 10);
+        for (int i = 0; i < rows.tagCount(); i++) missing = Math.min(
+            Integer.MAX_VALUE,
+            missing + Math.min(
+                Integer.MAX_VALUE,
+                Math.max(
+                    0L,
+                    rows.getCompoundTagAt(i)
+                        .getLong("missing"))));
+        s.planMissing = s.player.capabilities.isCreativeMode ? 0 : (int) missing;
+        if (s.planRecoveryFits && s.materialQuote.hasKey("firstMissing", 8))
+            s.blueprintResourceMissing = s.materialQuote.getString("firstMissing");
+    }
+
+    private static void stamp(HologramSession s, NBTTagCompound quote) {
+        quote.setString("session", s.id);
+        quote.setLong("planRevision", s.planRevision);
+        quote.setLong("placementReviewNonce", s.placementReviewNonce);
+        quote.setBoolean("useDecorationVoucher", s.jobVoucherRequested);
+        quote.setBoolean("creativePaymentsFree", s.player.capabilities.isCreativeMode);
+        if (!quote.hasKey("inventoryCheck", 8)) quote.setString("inventoryCheck", "cached");
+        quote.setString("validation", "库存以确认施工时为准");
+    }
+
     interface ItemStock {
 
         long exact(ItemStack item, long limit);
@@ -180,32 +366,53 @@ public final class HologramMaterialQuote {
      * existing aggregated material rows; no world/cell traversal or item inventory enumeration is performed here.
      */
     static NBTTagCompound snapshot(HologramSession s, NBTTagList materialRows, NBTTagList resourceRows) {
+        return snapshot(s, materialRows, voucherRows(materialRows), resourceRows, new StockSnapshot(stock(s)));
+    }
+
+    static NBTTagCompound snapshot(HologramSession s, NBTTagList materials, NBTTagList voucherMaterials,
+        NBTTagList resources, StockSnapshot inventory) {
+        countItems(s, materials, inventory);
+        countItems(s, voucherMaterials, inventory);
+        NBTTagCompound ordinary = observedQuote(s, materials, resources, inventory);
+        NBTTagCompound voucher = observedQuote(s, voucherMaterials, resources, inventory);
+        s.materialQuoteCache = new Cache(s, ordinary, voucher);
+        try {
+            project(s);
+        } catch (IOException incomplete) {
+            s.materialQuote = s.jobVoucherRequested ? voucher : ordinary;
+        }
+        return (NBTTagCompound) s.materialQuote.copy();
+    }
+
+    private static void countItems(HologramSession s, NBTTagList rows, ItemStock inventory) {
+        List<NBTTagCompound> demands = new ArrayList<>();
+        for (int i = 0; i < rows.tagCount(); i++) demands.add(rows.getCompoundTagAt(i));
+        QuoteCounter counter = new QuoteCounter(
+            demands,
+            inventory,
+            item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item));
+        for (NBTTagCompound row : demands) row.setLong("available", counter.count(row));
+    }
+
+    private static NBTTagCompound observedQuote(HologramSession s, NBTTagList materialRows, NBTTagList resourceRows,
+        StockSnapshot inventory) {
         NBTTagCompound quote = fromRows(materialRows, resourceRows);
         NBTTagList rows = quote.getTagList("rows", 10);
         for (int index = 0; index < rows.tagCount(); index++) {
             NBTTagCompound row = rows.getCompoundTagAt(index);
             if ("fluid".equals(row.getString("kind"))) {
                 FluidStack fluid = readFluid(row);
-                counts(
-                    row,
-                    row.getLong("required"),
-                    fluid == null ? 0
-                        : HologramMaterialAccess.materialSource(s)
-                            .fluidCount(fluid, row.getLong("required")));
+                counts(row, row.getLong("required"), inventory.fluid(s, fluid, row.getLong("required")));
             } else if ("essentia".equals(row.getString("kind"))) {
                 counts(
                     row,
                     row.getLong("required"),
-                    HologramMaterialAccess.materialSource(s)
-                        .essentiaCount(row.getString("aspect"), row.getLong("required")));
+                    inventory.essentia(s, row.getString("aspect"), row.getLong("required")));
             }
         }
-        quote.setString("session", s.id);
-        quote.setLong("planRevision", s.planRevision);
-        quote.setLong("placementReviewNonce", s.placementReviewNonce);
-        quote.setBoolean("useDecorationVoucher", s.jobVoucherRequested);
+        stamp(s, quote);
         quote.setBoolean("complete", !HologramSessionPolicy.authoring(s) && !s.localPlanPending);
-        s.materialQuote = (NBTTagCompound) quote.copy();
+        quote.setLong("inventorySnapshotTick", s.player.worldObj.getTotalWorldTime());
         return quote;
     }
 
@@ -214,7 +421,16 @@ public final class HologramMaterialQuote {
         if (s.materialQuote == null || !s.materialQuote.getBoolean("complete")
             || s.materialQuote.getLong("planRevision") != s.planRevision
             || !s.id.equals(s.materialQuote.getString("session"))) throw new IOException("材料需求缓存已失效，请重新打开材料确认");
-        NBTTagCompound quote = (NBTTagCompound) s.materialQuote.copy();
+        StockSnapshot inventory = new StockSnapshot(stock(s));
+        NBTTagCompound ordinary = (NBTTagCompound) (cached(s) ? s.materialQuoteCache.ordinary : s.materialQuote).copy();
+        NBTTagCompound voucher = (NBTTagCompound) (cached(s) ? s.materialQuoteCache.voucher : s.materialQuote).copy();
+        recount(s, ordinary, inventory);
+        recount(s, voucher, inventory);
+        s.materialQuoteCache = new Cache(s, ordinary, voucher);
+        project(s);
+    }
+
+    private static void recount(HologramSession s, NBTTagCompound quote, StockSnapshot inventory) throws IOException {
         NBTTagList rows = quote.getTagList("rows", 10);
         List<NBTTagCompound> legacy = new ArrayList<>();
         Map<NBTTagCompound, NBTTagCompound> linked = new IdentityHashMap<>();
@@ -229,8 +445,10 @@ public final class HologramMaterialQuote {
             legacy.add(nativeRow);
             linked.put(row, nativeRow);
         }
-        QuoteCounter counter = new QuoteCounter(s, legacy);
-        long missing = 0;
+        QuoteCounter counter = new QuoteCounter(
+            legacy,
+            inventory,
+            item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item));
         String firstMissing = "";
         for (int index = 0; index < rows.tagCount(); index++) {
             NBTTagCompound row = rows.getCompoundTagAt(index);
@@ -239,22 +457,12 @@ public final class HologramMaterialQuote {
             if ("item".equals(kind)) counts(row, required, counter.count(linked.get(row)));
             else if ("fluid".equals(kind)) {
                 FluidStack fluid = readFluid(row);
-                counts(
-                    row,
-                    required,
-                    fluid == null ? 0
-                        : HologramMaterialAccess.materialSource(s)
-                            .fluidCount(fluid, required));
-            } else if ("essentia".equals(kind)) counts(
-                row,
-                required,
-                HologramMaterialAccess.materialSource(s)
-                    .essentiaCount(row.getString("aspect"), required));
+                counts(row, required, inventory.fluid(s, fluid, required));
+            } else if ("essentia".equals(kind))
+                counts(row, required, inventory.essentia(s, row.getString("aspect"), required));
             else if ("energy".equals(kind)) {
                 BigInteger exactRequired = new BigInteger(row.getString("requiredExact"));
-                BigInteger available = HologramMaterialAccess.materialSource(s)
-                    .energyAvailable()
-                    .max(BigInteger.ZERO);
+                BigInteger available = inventory.energy(s);
                 BigInteger shortage = exactRequired.subtract(available)
                     .max(BigInteger.ZERO);
                 row.setString("availableExact", available.toString());
@@ -270,15 +478,14 @@ public final class HologramMaterialQuote {
                         .longValue());
             }
             long shortage = row.getLong("missing");
-            missing = Math.min(Integer.MAX_VALUE, missing + Math.min(Integer.MAX_VALUE, shortage));
             if (shortage > 0 && firstMissing.isEmpty()) firstMissing = row.getString("label") + " 缺 "
                 + (row.hasKey("missingExact", 8) ? row.getString("missingExact") : Long.toString(shortage))
                 + " "
                 + row.getString("unit");
         }
-        s.materialQuote = quote;
-        s.planMissing = (int) missing;
-        if (s.planRecoveryFits) s.blueprintResourceMissing = firstMissing;
+        quote.setString("inventoryCheck", "authoritative");
+        quote.setLong("inventorySnapshotTick", s.player.worldObj.getTotalWorldTime());
+        quote.setString("firstMissing", firstMissing);
     }
 
     /** Pure wire conversion, also used by regression fixtures. Does not inspect player inventories or ME. */
@@ -298,6 +505,7 @@ public final class HologramMaterialQuote {
             if (existing == null) {
                 existing = itemRow(stack, required, quantity(source, "available"));
                 existing.setLong("shellRequired", quantity(source, "shellRequired"));
+                existing.setBoolean("voucherEligible", quantity(source, "voucherShellRequired") > 0);
                 existing.setLong("mainAvailable", quantity(source, "mainAvailable"));
                 existing.setLong("controllerAvailable", source.getInteger("controllerAvailable"));
                 items.put(key, existing);

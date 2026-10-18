@@ -34,7 +34,17 @@ final class HologramResourceWorld extends World {
 
     private final Block block;
     private final int metadata;
+    private boolean declarations;
     TileEntity tile;
+
+    /** A detached controller may inspect any declaration coordinate; every other cell is read-only air. */
+    static HologramResourceWorld declarations(Block block, int metadata) {
+        // GT's alignment setter must keep its native dummy-world branch and never publish a real-world packet.
+        gregtech.api.GregTechAPI.addDummyWorld(HologramResourceWorld.class);
+        HologramResourceWorld world = create(block, metadata);
+        world.declarations = true;
+        return world;
+    }
 
     /** Main-thread callers retain their own in-memory storage without disturbing Forge's live shared cache. */
     static synchronized HologramResourceWorld create(Block block, int metadata) {
@@ -163,11 +173,13 @@ final class HologramResourceWorld extends World {
 
     @Override
     public Block getBlock(int x, int y, int z) {
+        if (declarations) return atTile(x, y, z) ? block : Blocks.air;
         return blockExists(x, y, z) ? block : Blocks.air;
     }
 
     @Override
     public int getBlockMetadata(int x, int y, int z) {
+        if (declarations) return atTile(x, y, z) ? metadata : 0;
         return blockExists(x, y, z) ? metadata : 0;
     }
 
@@ -180,12 +192,18 @@ final class HologramResourceWorld extends World {
 
     @Override
     public TileEntity getTileEntity(int x, int y, int z) {
+        if (declarations) return atTile(x, y, z) ? tile : null;
         return blockExists(x, y, z) ? tile : null;
     }
 
     @Override
     public boolean blockExists(int x, int y, int z) {
+        if (declarations) return true;
         return tile == null ? x == 0 && y == 64 && z == 0 : x == tile.xCoord && y == tile.yCoord && z == tile.zCoord;
+    }
+
+    private boolean atTile(int x, int y, int z) {
+        return tile != null && x == tile.xCoord && y == tile.yCoord && z == tile.zCoord;
     }
 
     @Override

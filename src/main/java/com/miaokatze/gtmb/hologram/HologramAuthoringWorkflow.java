@@ -318,7 +318,54 @@ final class HologramAuthoringWorkflow {
         if (s.virtualPlacement && s.virtualLocked && s.placementReviewIssued) s.placementReviewNonce++;
     }
 
+    /** Repeated review controls reuse the published result; they do not authorize another planning pass. */
+    static boolean unchangedBlueprintAction(HologramSession s, NBTTagCompound action, String op) {
+        if (!s.virtual || s.virtualPreset == null || s.capture == null || s.localPlanPending) return false;
+        if ("removeBlueprintObstructions".equals(op)) {
+            if (!s.virtualPlacement || !s.virtualLocked
+                || !s.blueprintAwaitingConfirmation
+                || !s.placementReviewIssued
+                || !s.id.equals(action.getString("session"))
+                || action.getLong("planRevision") != s.planRevision
+                || action.getLong("placementReviewNonce") != s.placementReviewNonce
+                || !s.localEdits.knownNoBlockers(s)) return false;
+            s.status = "当前已审核范围没有需要移除的占位方块";
+            return true;
+        }
+        if ("configurePlacementDeidentification".equals(op) || "deidentifyBlueprint".equals(op)) {
+            int requested = action.getInteger("level");
+            if (requested < 0 || requested > 10
+                || !action.hasKey("planRevision", 4)
+                || action.getLong("planRevision") < 0
+                || action.getLong("planRevision") > s.planRevision) return false;
+            boolean chosen = "configurePlacementDeidentification".equals(op)
+                ? s.placementDeidentificationChosen
+                    && s.placementDeidentificationLevel == HologramDeidentification.level(s.virtualPreset)
+                : s.deidentificationChosen && s.virtualPreset.deidentificationChosen;
+            if (!chosen || requested > HologramDeidentification.level(s.virtualPreset)) return false;
+            return true;
+        }
+        if (!("configurePlacementNbt".equals(op) || "configureBlueprintNbt".equals(op))
+            || action.hasKey("planRevision", 4) && action.getLong("planRevision") != s.planRevision) return false;
+        boolean placement = "configurePlacementNbt".equals(op);
+        List<String> current = placement ? HologramSessionPolicy.placementKeys(s) : s.retainedNbtKeys;
+        List<String> requested;
+        try {
+            requested = action.hasKey("all") ? action.getBoolean("all") ? null
+                : HologramAuthoringQueries.selectedNbtKeys(action.getTagList("keys", 8)) : current;
+        } catch (java.io.IOException invalid) {
+            return false;
+        }
+        boolean sameKeys = current == null || requested == null ? current == requested
+            : new java.util.HashSet<>(current).equals(new java.util.HashSet<>(requested));
+        if (!sameKeys || placement && action.hasKey("retainCovers")
+            && action.getBoolean("retainCovers") != HologramSessionPolicy.placementRetainCovers(s)) return false;
+        s.status = "NBT 保留设置未变化，已沿用当前材料审核";
+        return true;
+    }
+
     static boolean blueprintAction(HologramSession s, NBTTagCompound action, String op) {
+        if (unchangedBlueprintAction(s, action, op)) return true;
         String dependency = blueprintEditDependency(op);
         boolean indexedAnnotations = false;
         try {

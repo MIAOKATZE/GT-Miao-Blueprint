@@ -39,11 +39,13 @@ public final class HologramMaterialVisualSmoke {
     private File output;
     private HologramScreen screen;
     private NBTTagCompound scene;
+    private NBTTagCompound beforeVoucher;
     private int stage;
     private long stageAt, requestedGeneration, frame, requestedFrame, taskToken, command;
     private long lastStartupDiagnostic, terminalNotificationsBefore;
     private String capture;
     private boolean finished;
+    private boolean orderRefusalCaptured;
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.materialVisualSmoke")) FMLCommonHandler.instance()
@@ -82,8 +84,10 @@ public final class HologramMaterialVisualSmoke {
             // A requested capture also has a deadline when the window stops producing frames.
             if (capture != null) return;
             if (System.nanoTime() - stageAt < 900_000_000L) return;
-            if (stage == 1) request("01-gt-machine-nbt-fluid-long-counts");
-            else if (stage == 2) {
+            if (stage == 1) {
+                verifyQuietControls(false);
+                request("01-normal-gt-machine-nbt-fluid-long-counts");
+            } else if (stage == 2) {
                 HologramMaterialConfirmationClientProbe.scroll(screen, -120);
                 advance();
             } else if (stage == 3) {
@@ -93,6 +97,7 @@ public final class HologramMaterialVisualSmoke {
                     "ordinary wheel must scroll the real MUI list");
                 request("02-virtual-list-scrolled");
             } else if (stage == 4) {
+                beforeVoucher = HologramMaterialConfirmationClientProbe.observe(screen);
                 HologramMaterialConfirmationClientProbe.click(screen, 245);
                 NBTTagCompound sent = (NBTTagCompound) HologramUiDiagnostics
                     .readDiagnosticField(screen, "capturedRenderSmokeAction");
@@ -101,28 +106,81 @@ public final class HologramMaterialVisualSmoke {
                     "voucher click must emit the actual selected action");
                 receipt.addProperty("voucherAction", sent.getString("op"));
                 receipt.addProperty("voucherNonce", sent.getLong("placementReviewNonce"));
-                scene.setLong("uiSequence", sent.getLong("uiSequence"));
-                scene.setLong("planRevision", scene.getLong("planRevision") + 1);
-                scene.setLong("placementReviewNonce", scene.getLong("placementReviewNonce") + 1);
-                scene.getCompoundTag("materialQuote")
-                    .setLong("planRevision", scene.getLong("planRevision"));
-                scene.getCompoundTag("decorativeVoucher")
-                    .setBoolean("selected", true);
-                scene.setString("status", "视觉 fixture：已选择 1 张装饰抵用券；没有执行服务端扣票。");
-                update(new HologramState(scene));
+                require(
+                    screen.ui.session.pendingSequence() < 0 && screen.ui.session.editable(),
+                    "voucher update must not take the global command ticket");
+                require(!screen.ui.review.materialControlEnabled(55), "final confirmation waits only for its quote");
+                // Four immediate clicks retain only the final intent while the first request is in flight.
+                for (int i = 0; i < 3; i++) HologramMaterialConfirmationClientProbe.click(screen, 245);
+                require(!screen.ui.session.materialVoucherSelected(), "rapid toggles retain the last off intent");
+                require(
+                    screen.ui.session.sequence() == sent.getLong("uiSequence"),
+                    "rapid toggles coalesce without flooding the server");
+                quote(sent, true);
+                NBTTagCompound deselect = (NBTTagCompound) HologramUiDiagnostics
+                    .readDiagnosticField(screen, "capturedRenderSmokeAction");
+                require(
+                    !deselect.getBoolean("enabled") && deselect.getLong("uiSequence") > sent.getLong("uiSequence"),
+                    "the selected receipt sends the retained off intent using its new nonce");
+                quote(deselect, false);
+                require(!screen.ui.session.materialReviewPending(), "the final off receipt releases its local ticket");
+                HologramMaterialConfirmationClientProbe.click(screen, 245);
+                NBTTagCompound select = (NBTTagCompound) HologramUiDiagnostics
+                    .readDiagnosticField(screen, "capturedRenderSmokeAction");
+                quote(select, true);
+                receipt.addProperty("rapidVoucherLastIntentCoalesced", true);
                 advance();
-            } else if (stage == 5) request("03-voucher-selected-action-receipt");
-            else if (stage == 6) {
+            } else if (stage == 5) {
+                NBTTagCompound after = HologramMaterialConfirmationClientProbe.observe(screen);
+                for (String key : new String[] { "panelBuilds", "listResizes", "listIdentity", "canvasIdentity",
+                    "cellsIdentity", "firstRowIdentity", "rows", "scroll" })
+                    require(
+                        beforeVoucher.getInteger(key) == after.getInteger(key),
+                        "voucher metadata retains the existing row geometry and samples: " + key);
+                verifyQuietControls(true);
+                receipt.addProperty("voucherRetainedPanelListCellsAndUnaffectedRow", true);
+                request("03-voucher-selected-action-receipt");
+            } else if (stage == 6) {
+                if (!orderRefusalCaptured) {
+                    HologramUiDiagnostics.writeDiagnosticField(screen, "capturedRenderSmokeAction", null);
+                    HologramMaterialConfirmationClientProbe.click(screen, 162);
+                    NBTTagCompound sent = (NBTTagCompound) HologramUiDiagnostics
+                        .readDiagnosticField(screen, "capturedRenderSmokeAction");
+                    require(
+                        sent != null && "orderMissingMaterials".equals(sent.getString("op"))
+                            && sent.getLong("planRevision") == scene.getLong("planRevision")
+                            && sent.getLong("placementReviewNonce") == scene.getLong("placementReviewNonce"),
+                        "the actual order button must submit the reviewed plan and nonce");
+                    command = sent.getLong("uiSequence");
+                    HologramClient.state = screen.ui.session.state();
+                    HologramBackgroundTasks.command(HologramClient.state.session, command, "orderMissingMaterials");
+                    require(HologramBackgroundTasks.busy(), "the actual order request acquires the material owner");
+                    NBTTagCompound refusal = new NBTTagCompound();
+                    refusal.setBoolean("materialQuoteOnly", true);
+                    refusal.setString("session", scene.getString("session"));
+                    refusal.setLong("planRevision", scene.getLong("planRevision"));
+                    refusal.setLong("placementReviewNonce", scene.getLong("placementReviewNonce"));
+                    refusal.setLong("uiSequence", command);
+                    refusal.setTag("materialOrder", new NBTTagCompound());
+                    refusal.setString("status", "视觉 fixture：模拟服务端拒绝本次 AE 下单，可立即重试。");
+                    receiveQuote(refusal);
+                    require(
+                        !HologramBackgroundTasks.busy() && screen.ui.session.pendingSequence() < 0
+                            && screen.ui.review.materialControlEnabled(162),
+                        "the exact rejected quote releases both real owner and UI ticket for an immediate retry");
+                    orderRefusalCaptured = true;
+                    request("04a-order-rejected-ready-for-retry");
+                    return;
+                }
                 HologramUiDiagnostics.writeDiagnosticField(screen, "capturedRenderSmokeAction", null);
                 HologramMaterialConfirmationClientProbe.click(screen, 162);
                 NBTTagCompound sent = (NBTTagCompound) HologramUiDiagnostics
                     .readDiagnosticField(screen, "capturedRenderSmokeAction");
                 require(
-                    sent != null && "orderMissingMaterials".equals(sent.getString("op"))
-                        && sent.getLong("planRevision") == scene.getLong("planRevision")
-                        && sent.getLong("placementReviewNonce") == scene.getLong("placementReviewNonce"),
-                    "the actual order button must submit the reviewed plan and nonce");
+                    sent != null && sent.getLong("uiSequence") > command,
+                    "the same visible order button immediately emits a new request after refusal");
                 command = sent.getLong("uiSequence");
+                receipt.addProperty("orderRefusalReleasedAndImmediateRetry", true);
                 receipt.addProperty("orderAction", sent.getString("op"));
                 receipt.addProperty("orderActionSequence", command);
                 terminalNotificationsBefore = HologramBackgroundTasks.actualTaskWitness()
@@ -185,6 +243,39 @@ public final class HologramMaterialVisualSmoke {
                 advance();
             } else if (stage == 15) request("08-voucher-config-disabled");
             else if (stage == 16) {
+                NBTTagCompound blocked = screen.ui.session.state()
+                    .fullData();
+                blocked.getTagList("cells", 10)
+                    .getCompoundTagAt(0)
+                    .setString("status", "blocked");
+                blocked.getTagList("cells", 10)
+                    .getCompoundTagAt(0)
+                    .setString("operation", "PROTECT");
+                update(new HologramState(blocked));
+                advance();
+            } else if (stage == 17) {
+                require(
+                    screen.ui.review.materialDialogProbeState()
+                        .getInteger("accent215") == HologramUiAccent.WARNING,
+                    "an actual blocked cell emphasizes only the obstruction action");
+                request("09-blocked-obstruction-action");
+            } else if (stage == 18) {
+                NBTTagCompound creative = screen.ui.session.state()
+                    .fullData();
+                creative.getCompoundTag("materialQuote")
+                    .setBoolean("creativePaymentsFree", true);
+                creative.getCompoundTag("decorativeVoucher")
+                    .setBoolean("enabled", true);
+                creative.getCompoundTag("decorativeVoucher")
+                    .setBoolean("selected", false);
+                update(new HologramState(creative));
+                advance();
+            } else if (stage == 19) {
+                require(
+                    !screen.ui.review.materialControlEnabled(245) && !screen.ui.review.materialControlEnabled(162),
+                    "creative ordinary payment exemption offers no ineffective voucher or AE request");
+                request("10-creative-voucher-unneeded");
+            } else if (stage == 20) {
                 int beforeError = GL11.glGetError();
                 receipt.addProperty("explicitFixtureGlInitialError", beforeError);
                 require(beforeError == GL11.GL_NO_ERROR, "explicit GL fixture requires an error-free baseline");
@@ -257,6 +348,58 @@ public final class HologramMaterialVisualSmoke {
     private void update(HologramState state) {
         HologramClient.state = state;
         screen.updateState(state);
+    }
+
+    private void verifyQuietControls(boolean selected) {
+        NBTTagCompound observed = HologramMaterialConfirmationClientProbe.observe(screen);
+        for (int id : new int[] { 168, 196, 211, 215, 184, 247 })
+            require(observed.getInteger("accent" + id) == 0, "routine entry uses the normal projector texture: " + id);
+        for (int id : new int[] { 168, 196, 211, 215 }) require(
+            !screen.ui.review.materialControlEnabled(id),
+            "an empty context leaves its action visible but disabled: " + id);
+        require(
+            observed.getInteger("accent245") == (selected ? HologramUiAccent.SUGGESTION : 0),
+            "only a selected voucher has a state accent");
+        require(observed.getInteger("accent55") == HologramUiAccent.NEXT, "the explicit confirmation is the next step");
+    }
+
+    /** Synthetic receipt through the same metadata fence as production; no fabricated cell replacement. */
+    private void quote(NBTTagCompound action, boolean selected) {
+        NBTTagCompound event = new NBTTagCompound();
+        event.setBoolean("materialQuoteOnly", true);
+        event.setString("session", scene.getString("session"));
+        event.setLong("planRevision", scene.getLong("planRevision"));
+        event.setLong("uiSequence", action.getLong("uiSequence"));
+        event.setLong("placementReviewNonce", screen.ui.session.state().data.getLong("placementReviewNonce") + 1);
+        NBTTagCompound projected = (NBTTagCompound) scene.getCompoundTag("materialQuote")
+            .copy();
+        projected.setLong("placementReviewNonce", event.getLong("placementReviewNonce"));
+        NBTTagList rows = projected.getTagList("rows", 10);
+        if (selected) for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            if (row.getBoolean("voucherEligible")) {
+                row.setLong("available", row.getLong("required"));
+                row.setLong("missing", 0);
+            }
+        }
+        event.setTag("materialQuote", projected);
+        NBTTagCompound voucher = (NBTTagCompound) scene.getCompoundTag("decorativeVoucher")
+            .copy();
+        voucher.setBoolean("selected", selected);
+        event.setTag("decorativeVoucher", voucher);
+        receiveQuote(event);
+        HologramState next = screen.ui.session.state();
+        scene.setLong("placementReviewNonce", next.data.getLong("placementReviewNonce"));
+        scene.setLong("uiSequence", next.data.getLong("uiSequence"));
+    }
+
+    private void receiveQuote(NBTTagCompound event) {
+        HologramState next = HologramMaterialQuoteUpdates.apply(screen.ui.session.state(), event);
+        require(next != null, "quote must pass the production session/revision/nonce fence");
+        Minecraft mc = Minecraft.getMinecraft();
+        next = HologramBackgroundTasks.materialQuoteReceipt(next, event, mc.theWorld, mc.getNetHandler());
+        HologramClient.state = next;
+        screen.ui.session.materialQuoteMetadata(next, event.getLong("uiSequence"));
     }
 
     private void order(boolean active, long sequence) {
@@ -349,7 +492,8 @@ public final class HologramMaterialVisualSmoke {
             item.add("gl", glState());
             frames.add(item);
             capture = null;
-            advance();
+            if ("04a-order-rejected-ready-for-retry.png".equals(name)) stageAt = System.nanoTime();
+            else advance();
             write(false, false, "in progress");
         } catch (Throwable failure) {
             failure.printStackTrace();
@@ -380,6 +524,7 @@ public final class HologramMaterialVisualSmoke {
         receipt.addProperty("actualCraftingCPU", false);
         receipt.addProperty("desktopInput", false);
         receipt.addProperty("sourceKind", "synthetic-menu-fixture-with-real-registered-items");
+        receipt.addProperty("blueprintMaterialCompletenessVerified", false);
         receipt.addProperty("soundPlaybackVerified", false);
         receipt.add("frames", frames);
         Files.write(

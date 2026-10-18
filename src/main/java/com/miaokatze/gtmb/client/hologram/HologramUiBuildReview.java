@@ -53,6 +53,8 @@ final class HologramUiBuildReview {
 
     private int countedOperations;
 
+    private int countedBlockers;
+
     boolean retainsPlacementReview(HologramState next) {
         return this.placementReviewContext.retain(
             next.session,
@@ -132,16 +134,19 @@ final class HologramUiBuildReview {
         // Parsed cell pages are immutable; metadata-only updates and rendered frames reuse this count.
         if (countedCells == cells) return countedOperations;
         int operations = 0;
+        countedBlockers = 0;
         // Geometry lives in the parsed cell pages, not in the metadata-only NBT view.
-        for (HologramState.Cell cell : cells) if (cell.inScope
-            && ("PLACE".equals(cell.operation) || "REPLACE".equals(cell.operation) || "REMOVE".equals(cell.operation))
-            && ("pending".equals(cell.status) || "missing".equals(cell.status))) operations++;
+        for (HologramState.Cell cell : cells) if (cell.inScope) {
+            if ("blocked".equals(cell.status)) countedBlockers++;
+            if (("PLACE".equals(cell.operation) || "REPLACE".equals(cell.operation) || "REMOVE".equals(cell.operation))
+                && ("pending".equals(cell.status) || "missing".equals(cell.status))) operations++;
+        }
         countedCells = cells;
         return countedOperations = operations;
     }
 
     boolean confirmationAllowed(int operations) {
-        return ui.session.editable()
+        return ui.session.editable() && !ui.session.materialReviewPending()
             && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
             && this.confirmedRevision == ui.session.revision()
             && HologramPlacementConfirmation.cacheReviewMatches(ui.session.state().data, this.reviewedCacheQuote)
@@ -152,6 +157,11 @@ final class HologramUiBuildReview {
                 || !ui.session.state().data.getBoolean("virtual")
                 || ui.session.state().data.getBoolean("virtualPlacement")
                     && ui.session.state().data.getBoolean("virtualLocked"));
+    }
+
+    int materialBlockers() {
+        operationCount();
+        return countedBlockers;
     }
 
     boolean placementReviewActive() {
@@ -208,7 +218,8 @@ final class HologramUiBuildReview {
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
             case 162:
-                if (ui.session.editable() && ui.session.state().data.getBoolean("materialOrderingAvailable")
+                if (ui.session.editable() && !ui.session.materialReviewPending()
+                    && ui.session.state().data.getBoolean("materialOrderingAvailable")
                     && this.confirmedRevision == ui.session.revision()) {
                     NBTTagCompound ordering = new NBTTagCompound();
                     ordering.setLong("planRevision", this.confirmedRevision);
@@ -260,7 +271,8 @@ final class HologramUiBuildReview {
                     ui.session.notice("缓存报价已变化，请重新核对当前确认信息后再放置");
                     return true;
                 }
-                if (ui.session.editable() && this.confirmation
+                if (ui.session.editable() && !ui.session.materialReviewPending()
+                    && this.confirmation
                     && this.confirmedRevision == ui.session.revision()
                     && HologramPlacementConfirmation.networksReady(ui.session.state().data)
                     && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")
@@ -340,6 +352,12 @@ final class HologramUiBuildReview {
             materialOffset = 0;
             confirmation = true;
         }
+    }
+
+    void acknowledgeMaterialQuote(HologramState next) {
+        // A quote receipt changes the reviewed nonce and amounts while retaining the current presentation.
+        // It never opens a review that the player has already dismissed.
+        if (confirmation && confirmedRevision == next.data.getLong("planRevision")) updateMaterialReviewPresentation();
     }
 
     void acknowledgeScan(HologramState next) {

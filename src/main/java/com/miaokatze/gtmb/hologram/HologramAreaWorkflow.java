@@ -535,7 +535,12 @@ final class HologramAreaWorkflow {
             .getName();
         saved.sourceMod = HologramSessionPolicy.sourceMod(structure.machine.getClass());
         saved.enabled = structure.enabled;
-        if (structure.capture != null) saved.main = Math.max(1, structure.capture.trigger.stackSize);
+        if (structure.capture != null) {
+            saved.main = Math.max(1, structure.capture.trigger.stackSize);
+            com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                .iterateChannelData(structure.capture.trigger)
+                .forEach(entry -> saved.channels.put(entry.getKey(), entry.getValue()));
+        }
         area.blueprint.structures.add(saved);
     }
 

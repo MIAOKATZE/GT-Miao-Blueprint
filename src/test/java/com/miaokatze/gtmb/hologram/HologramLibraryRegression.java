@@ -57,6 +57,7 @@ public final class HologramLibraryRegression {
         brokenStorageFailsClosed();
         permissions();
         streamingDraftProgress();
+        cancelledServerPreparationReleasesQueue();
     }
 
     private static void streamingDraftProgress() throws Exception {
@@ -100,6 +101,84 @@ public final class HologramLibraryRegression {
             () -> HologramDraftEncoding
                 .encode(source, (done, count) -> { if (done > 128) throw new IOException("retired preparation"); }),
             "retired export stops at the next serialized cell checkpoint");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void cancelledServerPreparationReleasesQueue() throws Exception {
+        Path directory = Files.createTempDirectory("gtmb-cancel-preparation-");
+        HologramServerLibrary store = new HologramServerLibrary(
+            directory.resolve("entries"),
+            directory.resolve("library.cfg"));
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        EntityPlayerMP player = player(UUID.randomUUID(), "CancelPreparation");
+        Object peer = peer(player);
+        ((java.util.Map<UUID, Object>) get(store, "peers")).put(HologramLibraryFacade.actorId(player), peer);
+        java.util.concurrent.ArrayBlockingQueue<Runnable> queue = (java.util.concurrent.ArrayBlockingQueue<Runnable>) get(
+            store,
+            "tasks");
+        HologramServerLibrary.Preparation active = new HologramServerLibrary.Preparation(81);
+        HologramServerLibrary.Preparation queued = new HologramServerLibrary.Preparation(81);
+        java.util.concurrent.atomic.AtomicBoolean published = new java.util.concurrent.atomic.AtomicBoolean();
+        HologramPresets.Preset source = blueprint();
+        HologramBlueprintVersions.stampSaved(source);
+        source.prompt = repeat('x', 65536);
+        active.action = () -> {
+            try {
+                HologramDraftEncoding.encode(source, new HologramDraftEncoding.Progress() {
+
+                    int checkpoints;
+
+                    public void update(long done, long total) throws IOException {}
+
+                    public void checkpoint() throws IOException {
+                        if (++checkpoints == 3) {
+                            entered.countDown();
+                            try {
+                                if (!release.await(5, TimeUnit.SECONDS)) throw new IOException("fixture timeout");
+                            } catch (InterruptedException failure) {
+                                Thread.currentThread()
+                                    .interrupt();
+                                throw new IOException(failure);
+                            }
+                        }
+                        if (!active.valid) throw new java.io.InterruptedIOException("retired");
+                    }
+                });
+                published.set(true);
+            } catch (IOException expectedCancellation) {}
+        };
+        try {
+            runWorker(store, () -> {});
+            set(peer, "preparation", active);
+            queue.add(active);
+            SimpleAssert.that(entered.await(5, TimeUnit.SECONDS), "real sole library pump enters draft serialization");
+            NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+            cancel.setLong("clientTaskToken", 81);
+            store.submit(player, cancel, false);
+            SimpleAssert.that(
+                !active.valid && get(peer, "preparation") == null,
+                "main-thread cancel revokes active encoding without waiting for its blocked IO pump");
+            set(peer, "preparation", queued);
+            queue.add(queued);
+            store.submit(player, cancel, false);
+            SimpleAssert.that(
+                !queue.contains(queued) && !queued.valid,
+                "same cancellation removes queued draft preparation immediately");
+            SimpleAssert.that(
+                !store.draftTaskCurrent(player, cancel),
+                "late post-encoding callback cannot restore cancelled draft capability");
+            NBTTagCompound retry = HologramLibraryProtocol.request("exportDraft");
+            retry.setLong("clientTaskToken", 82);
+            SimpleAssert
+                .that(store.draftTaskCurrent(player, retry), "successor task remains admitted on same connection");
+            release.countDown();
+            runWorker(store, () -> {});
+            SimpleAssert.that(!published.get(), "cancelled active draft never publishes after its checkpoint resumes");
+        } finally {
+            release.countDown();
+            store.stop();
+        }
     }
 
     private static void protocolAndThrottle() throws Exception {

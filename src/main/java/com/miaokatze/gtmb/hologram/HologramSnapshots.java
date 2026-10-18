@@ -617,6 +617,32 @@ final class HologramSnapshots {
         sendUi(s, null);
     }
 
+    /** Material choices acknowledge independently of geometry, full encoding and UI opening intents. */
+    static void sendMaterialQuote(HologramSession s) {
+        sendMaterialQuote(s, s.uiSequence);
+    }
+
+    static void sendMaterialQuote(HologramSession s, long requestSequence) {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("materialQuoteOnly", true);
+        state.setString("session", s.id);
+        state.setLong("uiSequence", requestSequence);
+        state.setLong("planRevision", s.planRevision);
+        state.setLong("placementReviewNonce", s.placementReviewNonce);
+        state.setBoolean("blueprintAwaitingConfirmation", s.blueprintAwaitingConfirmation);
+        state.setBoolean("forcePlacementReady", s.forcePlacementReady);
+        state.setString("status", s.status);
+        state.setInteger("missing", s.planMissing);
+        state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
+        HologramMaterialWorkflow.writeState(s, state);
+        NBTTagCompound envelope = new NBTTagCompound();
+        envelope.setBoolean("progressOnly", true);
+        envelope.setTag("progress", state);
+        HologramV0116MaterialAcceptanceProbe.observeMaterialEnvelope(s.player, envelope);
+        HologramWorkspace.snapshotSink()
+            .send(s.player, envelope);
+    }
+
     /** An explicit library refresh can attach its already-read labels without rebuilding the structure snapshot. */
     static void sendUi(HologramSession s, NBTTagList presets) {
         if (s.cancelled) {
