@@ -81,7 +81,13 @@ final class HologramSaveGuidanceDialog {
                 () -> {
                     dismiss(false);
                     openWebsite.run();
-                }));
+                })
+                .background(HologramMuiTheme.guidanceBackground(false, () -> HologramUiAccent.WEBSITE, () -> true))
+                .hoverBackground(HologramMuiTheme.guidanceBackground(true, () -> HologramUiAccent.WEBSITE, () -> true))
+                .overlay(
+                    IKey.dynamic(() -> HologramUiText.localized("gtmb.hologram.website.share", "前往蓝图站浏览与分享 ↗"))
+                        .color(HologramUiAccent.WEBSITE)
+                        .shadow(false)));
         panel.child(
             HologramMuiTheme.button(() -> text("acknowledge", "知道了"), 18, 218, 190, 23, () -> dismiss(false))
                 .background(HologramMuiTheme.guidanceBackground(false, () -> HologramUiAccent.NEXT, () -> true))

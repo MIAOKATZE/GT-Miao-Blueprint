@@ -430,12 +430,10 @@ public final class HologramBlueprintSmoke {
         require(capture.state.getBoolean("blueprintAwaitingConfirmation"), "stale_material_confirmation_is_rejected");
         submitConstruction();
         require(
-            capture.state.getBoolean("forcePlacementReady") && capture.state.getInteger("job") != 1
+            capture.state.getBoolean("jobPartialPlacement") && capture.state.getInteger("job") == 1
                 && stock(Item.getItemFromBlock(Blocks.chest)) == 1
                 && world.isAirBlock(178, 80, 208),
-            "first_missing_material_build_requires_second_confirmation_and_changes_nothing");
-        submitConstruction();
-        require(capture.state.getInteger("job") == 1, "second_missing_material_build_starts_existing_stock_job");
+            "one_explicit_missing_material_review_admits_job_without_immediate_world_changes");
         settle();
         require(
             world.getBlock(178, 80, 208) == Blocks.chest && stock(Item.getItemFromBlock(Blocks.chest)) == 0,
@@ -504,8 +502,9 @@ public final class HologramBlueprintSmoke {
         HologramService.openAir(player);
         HologramSmokeTest.flushTransport();
         submitConstruction();
-        require(capture.state.getBoolean("forcePlacementReady"), "cover_shortage_requires_second_build_confirmation");
-        submitConstruction();
+        require(
+            capture.state.getBoolean("jobPartialPlacement"),
+            "cover_shortage_is_accepted_in_initial_explicit_review");
         settle();
         require(
             world.isAirBlock(176, 80, 336) && stock(
@@ -609,9 +608,8 @@ public final class HologramBlueprintSmoke {
         HologramSmokeTest.flushTransport();
         submitConstruction();
         require(
-            capture.state.getBoolean("forcePlacementReady") && world.isAirBlock(178, 80, 368),
-            "unpaid_inventory_first_build_requests_second_confirmation_without_world_change");
-        submitConstruction();
+            capture.state.getBoolean("jobPartialPlacement") && world.isAirBlock(178, 80, 368),
+            "unpaid_inventory_initial_explicit_review_admits_partial_job_without_world_change");
         settle();
         require(
             world.isAirBlock(178, 80, 368) && stock(Item.getItemFromBlock(Blocks.chest)) == 1
@@ -945,7 +943,10 @@ public final class HologramBlueprintSmoke {
                 "actual_review_explicitly_chooses_level_one_before_current_actor_placement");
         }
         NBTTagCompound review = new NBTTagCompound();
-        review.setBoolean("forceExplicit", capture.state.getBoolean("forcePlacementReady"));
+        review.setBoolean("forceExplicit", capture.state.getInteger("missing") > 0);
+        NBTTagList caches = capture.state.getTagList("blueprintResources", 10);
+        for (int i = 0; i < caches.tagCount(); i++) if (caches.getCompoundTagAt(i)
+            .getBoolean("emptyFallback")) review.setBoolean("allowEmptyCache", true);
         review.setLong("placementReviewNonce", capture.state.getLong("placementReviewNonce"));
         action(
             capture.state.getBoolean("blueprintAwaitingConfirmation") ? "confirmBlueprintPlacement" : "build",

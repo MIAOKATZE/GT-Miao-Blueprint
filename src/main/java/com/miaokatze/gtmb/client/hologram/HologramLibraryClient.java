@@ -13,9 +13,14 @@ import java.util.concurrent.TimeUnit;
 import javax.imageio.ImageIO;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.event.ClickEvent;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.util.ChatComponentText;
+import net.minecraft.util.EnumChatFormatting;
+import net.minecraft.util.StatCollector;
 
+import com.miaokatze.gtmb.common.util.BlueprintWebsite;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramLibraryDownload;
 import com.miaokatze.gtmb.hologram.HologramLibraryProtocol;
@@ -41,6 +46,8 @@ final class HologramLibraryClient {
     private NBTTagList local = new NBTTagList(), server = new NBTTagList();
     private NBTTagCompound config = new NBTTagCompound();
     private String selectedLocal = "", selectedServer = "", status = "", connection = "";
+    // -1: unobserved, 0: no remembered client source, 1: remembered source observed by existing disk work.
+    private int knownQuickSource = -1;
     private String outgoingId = "", outgoingOp = "", outgoingLocal = "", incomingId = "", incomingHash = "";
     private String incomingEncoding = "";
     private int incomingDecodedTotal;
@@ -388,6 +395,7 @@ final class HologramLibraryClient {
             config = new NBTTagCompound();
             page = 0;
             observedPublic = "";
+            knownQuickSource = -1;
         }
         if ((previewCapture != null || pendingPreviewStart != null
             || pendingSaveAck != null
@@ -497,7 +505,20 @@ final class HologramLibraryClient {
     void rememberPublic(String id) {
         ensureStore();
         String serverKey = connection;
-        work(() -> store.rememberPublic(serverKey, id));
+        long token = generation;
+        work(() -> {
+            store.rememberPublic(serverKey, id);
+            main(() -> { if (token == generation) knownQuickSource = 1; });
+        });
+    }
+
+    /** Rendering only reads this small mirror; it must never initialize or read the disk store. */
+    int knownQuickSource() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return dedicated() && libraryWorld == mc.theWorld
+            && mc.thePlayer != null
+            && mc.thePlayer.getUniqueID()
+                .equals(libraryActor) ? knownQuickSource : -1;
     }
 
     /** Alt is fenced before any IO; missing local files retain the original server shortcut fallback. */
@@ -556,6 +577,7 @@ final class HologramLibraryClient {
                 } else {
                     quickFallback = null;
                 }
+                knownQuickSource = bytes != null || !source.publicId.isEmpty() ? 1 : 0;
                 quickBytes = bytes;
                 quickHash = hash;
                 quickLocal = source.localId;
@@ -632,6 +654,7 @@ final class HologramLibraryClient {
         if (store == null || loading) return;
         loading = true;
         long token = generation;
+        String serverKey = connection;
         String operation = "local:" + token;
         localCatalogProgress.update(operation, "library.index", 0, 0, "", false, System.nanoTime());
         work(() -> {
@@ -651,7 +674,21 @@ final class HologramLibraryClient {
                 row.setBoolean("mine", true);
                 labels.appendTag(row);
             }
-            main(() -> finishLocalRefresh(token, operation, labels));
+            int source = -1;
+            try {
+                HologramClientLibrary.LastSource last = store.lastSource(serverKey);
+                source = last.publicId.isEmpty() ? 0 : 1;
+                if (!last.publicLibrary && !last.localId.isEmpty())
+                    for (int i = 0; i < labels.tagCount(); i++) if (last.localId.equals(
+                        labels.getCompoundTagAt(i)
+                            .getString("id")))
+                        source = 1;
+            } catch (java.io.IOException unavailable) { /* Unknown memory does not invalidate the catalog. */ }
+            int observedSource = source;
+            main(() -> {
+                if (token == generation) knownQuickSource = observedSource;
+                finishLocalRefresh(token, operation, labels);
+            });
         });
     }
 
@@ -1156,6 +1193,7 @@ final class HologramLibraryClient {
             store.delete(id);
             main(() -> {
                 selectedLocal = "";
+                knownQuickSource = -1;
                 status = "客户端蓝图已删除";
                 refreshLocal();
             });
@@ -1456,9 +1494,13 @@ final class HologramLibraryClient {
                 refreshServer(page);
             } else {
                 String serverKey = connection, localId = outgoingLocal;
+                long sourceGeneration = generation;
                 work(() -> {
                     store.rememberLocal(serverKey, localId);
-                    if (!quickUpload) main(() -> finishBackgroundTask(completedTask, true, "蓝图已载入"));
+                    main(() -> {
+                        if (sourceGeneration == generation) knownQuickSource = 1;
+                        if (!quickUpload) finishBackgroundTask(completedTask, true, "蓝图已载入");
+                    });
                 });
                 status = outgoingQuick ? "上一张客户端蓝图已进入世界定位" : "蓝图已传输，服务器正在打开预览";
                 outgoingQuick = false;
@@ -1466,6 +1508,7 @@ final class HologramLibraryClient {
             }
         } else if ("deleted".equals(op)) {
             deletingServer = false;
+            knownQuickSource = -1;
             progressCompleted();
             String serverKey = connection, publicId = reply.getString("id");
             if (store != null) work(() -> store.forgetUpload(serverKey, publicId));
@@ -1725,6 +1768,7 @@ final class HologramLibraryClient {
                 if (committed) {
                     progressCompleted();
                     selectedLocal = acknowledgement.getString("localId");
+                    knownQuickSource = 1;
                     announceSaved(pending.name, pending.path);
                     HologramUiLibrary.committedSave(acknowledgement.getString("session"));
                     status = "JSON 与结构预览 PNG 已校验保存";
@@ -1873,6 +1917,7 @@ final class HologramLibraryClient {
             if (!reviewedSave) {
                 progressCompleted();
                 selectedLocal = saved;
+                knownQuickSource = 1;
                 announceSaved(savedName, savedPath);
                 finishBackgroundTask(originalBackgroundToken, true, "蓝图已下载并保存");
                 preparing = false;
@@ -1920,10 +1965,16 @@ final class HologramLibraryClient {
 
     private static void announceSaved(String name, String path) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.thePlayer != null) mc.thePlayer.addChatMessage(
-            new net.minecraft.util.ChatComponentText(
-                net.minecraft.util.StatCollector
-                    .translateToLocalFormatted("gtmb.hologram.library.saved_path", name, path)));
+        if (mc.thePlayer == null) return;
+        mc.thePlayer.addChatMessage(
+            new ChatComponentText(
+                StatCollector.translateToLocalFormatted("gtmb.hologram.library.saved_path", name, path)));
+        ChatComponentText website = new ChatComponentText(
+            StatCollector.translateToLocalFormatted("gtmb.hologram.library.saved_website", BlueprintWebsite.URL));
+        website.getChatStyle()
+            .setColor(EnumChatFormatting.AQUA)
+            .setChatClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, BlueprintWebsite.URL));
+        mc.thePlayer.addChatMessage(website);
     }
 
     private void captureActor() {

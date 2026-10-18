@@ -30,6 +30,10 @@ final class HologramBuildPreparation {
     }
 
     static void directBuild(HologramSession s, boolean rescan) {
+        directBuild(s, rescan, null);
+    }
+
+    private static void directBuild(HologramSession s, boolean rescan, NBTTagCompound reviewedAction) {
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (!HologramBuildPreparation.aeReady(s)) return;
@@ -49,14 +53,21 @@ final class HologramBuildPreparation {
             else s.status = "替换和拆除需要完整结构采集";
             return;
         }
-        HologramPlacementJobs.start(s);
+        HologramPlacementJobs.start(s, reviewedAction);
     }
 
     static void reviewedBuild(HologramSession s, NBTTagCompound action) {
         if (HologramDeferredPlanRefresh.blocked(s)) return;
+        if (s.job == 1 || s.job == 2) return;
         if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision) {
             s.forcePlacementReady = false;
             s.status = "确认计划已更新，请重新核对材料与位置";
+            return;
+        }
+        if (s.virtual && (!s.id.equals(action.getString("session")) || !action.hasKey("placementReviewNonce", 4)
+            || action.getLong("placementReviewNonce") != s.placementReviewNonce)) {
+            s.forcePlacementReady = false;
+            s.status = "材料确认已更新，请重新核对当前计划后确认";
             return;
         }
         if (s.capture == null || s.capture.incomplete || s.capture.pending || s.capturePending) {
@@ -70,9 +81,9 @@ final class HologramBuildPreparation {
             s.status = "现场已变化，请重新核对更新后的材料与位置";
             return;
         }
-        // A repeated packet alone cannot exercise the partial-material capability.
-        if (!action.getBoolean("forceExplicit")) s.forcePlacementReady = false;
-        directBuild(s, false);
+        // Consent belongs to this reviewed plan, never to a previous failed packet.
+        s.forcePlacementReady = false;
+        directBuild(s, false, action);
     }
 
     static void calibrateCurrent(HologramSession s) {

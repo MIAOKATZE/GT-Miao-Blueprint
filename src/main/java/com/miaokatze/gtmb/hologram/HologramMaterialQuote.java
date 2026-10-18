@@ -227,15 +227,14 @@ public final class HologramMaterialQuote {
         stamp(s, s.materialQuote);
         long missing = 0;
         NBTTagList rows = s.materialQuote.getTagList("rows", 10);
-        for (int i = 0; i < rows.tagCount(); i++) missing = Math.min(
-            Integer.MAX_VALUE,
-            missing + Math.min(
-                Integer.MAX_VALUE,
-                Math.max(
-                    0L,
-                    rows.getCompoundTagAt(i)
-                        .getLong("missing"))));
-        s.planMissing = s.player.capabilities.isCreativeMode ? 0 : (int) missing;
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            if (row.getBoolean("optionalCache")
+                || s.player.capabilities.isCreativeMode && !"essentia".equals(row.getString("kind"))) continue;
+            missing = Math
+                .min(Integer.MAX_VALUE, missing + Math.min(Integer.MAX_VALUE, Math.max(0L, row.getLong("missing"))));
+        }
+        s.planMissing = (int) missing;
         if (s.planRecoveryFits && s.materialQuote.hasKey("firstMissing", 8))
             s.blueprintResourceMissing = s.materialQuote.getString("firstMissing");
     }
@@ -656,6 +655,7 @@ public final class HologramMaterialQuote {
         String firstMissing = "";
         for (int index = 0; index < rows.tagCount(); index++) {
             NBTTagCompound row = rows.getCompoundTagAt(index);
+            if (row.getBoolean("optionalCache")) continue;
             String kind = row.getString("kind");
             long required = row.getLong("required");
             if ("item".equals(kind)) counts(row, required, counter.count(linked.get(row)));
@@ -682,10 +682,12 @@ public final class HologramMaterialQuote {
                         .longValue());
             }
             long shortage = row.getLong("missing");
-            if (shortage > 0 && firstMissing.isEmpty()) firstMissing = row.getString("label") + " 缺 "
-                + (row.hasKey("missingExact", 8) ? row.getString("missingExact") : Long.toString(shortage))
-                + " "
-                + row.getString("unit");
+            if (shortage > 0 && firstMissing.isEmpty()
+                && (!s.player.capabilities.isCreativeMode || "essentia".equals(kind)))
+                firstMissing = row.getString("label") + " 缺 "
+                    + (row.hasKey("missingExact", 8) ? row.getString("missingExact") : Long.toString(shortage))
+                    + " "
+                    + row.getString("unit");
         }
         quote.setString("inventoryCheck", "authoritative");
         quote.setLong("inventorySnapshotTick", s.player.worldObj.getTotalWorldTime());

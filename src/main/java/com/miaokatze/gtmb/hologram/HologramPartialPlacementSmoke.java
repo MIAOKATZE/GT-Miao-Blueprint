@@ -235,7 +235,7 @@ public final class HologramPartialPlacementSmoke {
             HologramAuthoringWorkflow.blueprintAction(denied, request(denied), "confirmBlueprintPlacement");
             check(
                 denied.job == 0 && denied.planMissing > 0
-                    && denied.forcePlacementReady
+                    && !denied.forcePlacementReady
                     && denied.blueprintResourceMissing
                         .contains(new net.minecraftforge.fluids.FluidStack(air, 1000).getLocalizedName())
                     && denied.status.contains(denied.blueprintResourceMissing),
@@ -254,9 +254,12 @@ public final class HologramPartialPlacementSmoke {
             HologramAuthoringWorkflow.blueprintAction(paid, request(paid), "confirmBlueprintPlacement");
             check(
                 paid.job == 1 && paid.completed == 0
+                    && paid.planMissing == 0
+                    && !paid.forcePlacementReady
                     && fixtureWorld.isAirBlock(FX, FY, FZ + 12)
                     && fixtureWorld.isAirBlock(FX + 1, FY, FZ + 12),
                 "confirmation admits a job; ACK is not completed world placement: " + paid.status);
+            evidence.setBoolean("creativeFreeShellAndRetainedFluidAdmittedWithOneOrdinaryRequest", true);
             admittedTick = fixtureWorld.getTotalWorldTime();
             evidence.setLong("admittedWorldTick", admittedTick);
         }
@@ -503,25 +506,60 @@ public final class HologramPartialPlacementSmoke {
                 "inspecting_one_stocked_cell_cannot_hide_whole_blueprint_material_shortage");
             action("confirmBlueprintPlacement", new NBTTagCompound());
             require(
-                capture.state.getInteger("job") != 1 && capture.state.getBoolean("forcePlacementReady"),
-                "first_material_review_issues_second_confirmation_without_job");
+                capture.state.getInteger("job") != 1 && !capture.state.getBoolean("forcePlacementReady"),
+                "request_without_partial_consent_cannot_authorize_partial_job");
             require(
                 allAir() && stock(Blocks.chest) == 1
                     && stock(Blocks.stone) == 1
                     && stock(Blocks.cobblestone) == 2
                     && stock(Blocks.furnace) == 1,
-                "first_confirmation_changes_neither_world_nor_any_stock");
+                "unconsented_request_changes_neither_world_nor_any_stock");
             action("confirmBlueprintPlacement", new NBTTagCompound());
             require(
                 capture.state.getInteger("job") != 1 && allAir(),
                 "ordinary_duplicate_confirmation_cannot_force_construction");
             NBTTagCompound force = new NBTTagCompound();
             force.setBoolean("forceExplicit", true);
+            NBTTagCompound staleNonce = (NBTTagCompound) force.copy();
+            staleNonce.setLong("placementReviewNonce", capture.state.getLong("placementReviewNonce") - 1);
+            action("confirmBlueprintPlacement", staleNonce);
+            require(capture.state.getInteger("job") != 1 && allAir(), "expired_review_nonce_rejects_partial_consent");
+            NBTTagCompound stalePlan = (NBTTagCompound) force.copy();
+            stalePlan.setLong("planRevision", capture.state.getLong("planRevision") - 1);
+            action("confirmBlueprintPlacement", stalePlan);
+            require(capture.state.getInteger("job") != 1 && allAir(), "changed_plan_revision_rejects_partial_consent");
+            world.setBlock(X + 4, Y, TARGET_Z, Blocks.dirt, 0, 3);
+            long changedRevision = capture.state.getLong("planRevision");
+            action("confirmBlueprintPlacement", force);
+            require(
+                capture.state.getInteger("job") != 1 && capture.state.getLong("planRevision") > changedRevision
+                    && stock(Blocks.stone) == 1
+                    && world.isAirBlock(X + 1, Y, TARGET_Z),
+                "changed_world_requires_updated_review_without_construction_or_debit");
+            world.setBlockToAir(X + 4, Y, TARGET_Z);
+            action("scan", new NBTTagCompound());
+            stock(2, null);
+            long stockNonce = capture.state.getLong("placementReviewNonce");
+            action("confirmBlueprintPlacement", force);
+            require(
+                capture.state.getInteger("job") != 1 && allAir()
+                    && capture.state.getLong("placementReviewNonce") > stockNonce
+                    && capture.state.getString("status")
+                        .contains("可用材料减少"),
+                "new_inventory_shortage_requires_fresh_review_with_an_explicit_reason");
+            stock(2, new ItemStack(Blocks.stone));
+            action("refreshMaterialQuote", new NBTTagCompound());
+            NBTTagCompound replay = (NBTTagCompound) force.copy();
+            replay.setLong("placementReviewNonce", capture.state.getLong("placementReviewNonce"));
             action("confirmBlueprintPlacement", force);
             require(
                 capture.state.getInteger("job") == 1 && capture.state.getBoolean("jobPartialPlacement")
                     && !capture.state.getBoolean("blueprintAwaitingConfirmation"),
-                "second_explicit_review_schedules_actual_partial_job");
+                "one_explicit_review_request_schedules_actual_partial_job");
+            action("confirmBlueprintPlacement", replay);
+            require(
+                capture.state.getInteger("job") == 1 && allAir() && stock(Blocks.stone) == 1,
+                "replayed_review_cannot_restart_or_execute_an_admitted_job");
             settle();
             require(
                 world.isAirBlock(X, Y, TARGET_Z) && world.getTileEntity(X, Y, TARGET_Z) == null,
@@ -764,7 +802,9 @@ public final class HologramPartialPlacementSmoke {
         NBTTagCompound action = (NBTTagCompound) fields.copy();
         action.setString("session", capture.state.getString("session"));
         action.setString("op", op);
-        action.setLong("planRevision", capture.state.getLong("planRevision"));
+        if (!action.hasKey("planRevision")) action.setLong("planRevision", capture.state.getLong("planRevision"));
+        if (!action.hasKey("placementReviewNonce"))
+            action.setLong("placementReviewNonce", capture.state.getLong("placementReviewNonce"));
         advance();
         HologramService.handle(player, action);
         HologramSmokeTest.flushTransport();

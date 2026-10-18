@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiConfirmOpenLink;
 import net.minecraft.client.gui.GuiMainMenu;
+import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
@@ -58,6 +59,9 @@ public final class HologramMaterialVisualSmoke {
     private Object websiteMainPanel;
     private String websiteDraft;
     private long websiteSequence, websitePending;
+    private boolean spectrumSamplePending;
+    private int[] spectrumFirstPixels;
+    private long spectrumFirstFrame, spectrumFirstGeneration, spectrumFirstNanos;
 
     public static void install() {
         if (Boolean.getBoolean("gtmb.hologram.materialVisualSmoke")) FMLCommonHandler.instance()
@@ -94,7 +98,7 @@ public final class HologramMaterialVisualSmoke {
             }
             require(System.nanoTime() - stageAt < 30_000_000_000L, "stage timeout " + stage);
             // A requested capture also has a deadline when the window stops producing frames.
-            if (capture != null) return;
+            if (capture != null || spectrumSamplePending) return;
             if (System.nanoTime() - stageAt < 900_000_000L) return;
             // Wheel animation is queued on its first natural DrawScreenEvent.Pre and advanced on the next.
             // Dialog quote/toggle updates also run inside real draws; elapsed wall time alone proves neither.
@@ -436,6 +440,35 @@ public final class HologramMaterialVisualSmoke {
             } else if (stage == 22) {
                 verifyWebsiteReturn(mc);
                 receipt.addProperty("websiteNativeCancelRetainsDraftWithoutRefresh", true);
+                libraryFixture("unselected");
+                advance();
+            } else if (stage == 23) {
+                websiteControl(HologramUiAccent.WEBSITE);
+                request("11-library-website-orange");
+            } else if (stage == 24) {
+                libraryFixture("selected");
+                advance();
+            } else if (stage == 25) {
+                websiteControl(HologramUiAccent.SPECTRUM);
+                request("12-library-website-spectrum");
+            } else if (stage == 26) {
+                spectrumSamplePending = true;
+                requestedFrame = frame;
+                requestedGeneration = screen.ui.canvas.renderGeneration();
+            } else if (stage == 27) {
+                libraryFixture("controller-old-id");
+                advance();
+            } else if (stage == 28) {
+                websiteControl(HologramUiAccent.WEBSITE);
+                require(
+                    screen.ui.library.selectedPresetExists(),
+                    "controller fixture must retain a valid old library ID");
+                request("13-controller-old-selection-orange");
+            } else if (stage == 29) {
+                require(
+                    screen.getScreen()
+                        .getMainPanel() == websiteMainPanel,
+                    "all synthetic highlight views retain the original real MUI root panel");
                 finish(
                     mc,
                     true,
@@ -446,6 +479,159 @@ public final class HologramMaterialVisualSmoke {
             if (screen != null) recordLifecycle("failure");
             finish(mc, false, failure.toString());
         }
+    }
+
+    /** In-memory synthetic catalog only: no library refresh, blueprint file import or server request. */
+    private void libraryFixture(String variant) throws ReflectiveOperationException {
+        require(!HologramLibraryClient.dedicated(), "synthetic local catalog requires the menu-only legacy route");
+        NBTTagCompound state = screen.ui.session.state()
+            .fullData();
+        state.setBoolean("syntheticVisualFixture", true);
+        state.setString("status", "SYNTHETIC 视觉样例：不是真实玩家蓝图或服务端回执");
+        state.setString("virtualPresetName", "合成视觉样例 · 高亮状态");
+        state.setString("openPurpose", "blueprintBrowse");
+        state.setString("blueprintSource", "");
+        for (String key : new String[] { "virtual", "virtualPlacement", "virtualLocked", "blueprintDirty",
+            "blueprintSaved", "blueprintAwaitingConfirmation", "presetBrowseForPlacement" })
+            state.setBoolean(key, false);
+        state.removeTag("materialQuote");
+        state.removeTag("materialOrder");
+        state.removeTag("blueprintResources");
+        NBTTagList rows = new NBTTagList();
+        NBTTagCompound row = new NBTTagCompound();
+        row.setString("id", "synthetic-visual-local-row");
+        row.setString("name", "SYNTHETIC · 合成视觉样例（非玩家蓝图）");
+        row.setString("source", "synthetic-menu-fixture");
+        row.setInteger("cells", 1);
+        row.setInteger("structures", 1);
+        rows.appendTag(row);
+        state.setTag("presets", rows);
+        state.setString("selectedPresetId", "unselected".equals(variant) ? "" : row.getString("id"));
+        if ("selected".equals(variant)) {
+            state.setBoolean("virtual", true);
+            state.setBoolean("blueprintSaved", true);
+            state.setString("blueprintSource", "saved");
+        } else if ("controller-old-id".equals(variant)) {
+            state.setString("openPurpose", "controllerStructure");
+        }
+        HologramUiDiagnostics.writeDiagnosticField(screen, "capturedRenderSmokeAction", null);
+        update(new HologramState(state));
+        screen.ui.review.confirmation(false);
+        screen.ui.library.blueprintTab(true);
+        screen.ui.library.libraryDrawer(true);
+        require(
+            HologramUiDiagnostics.readDiagnosticField(screen, "capturedRenderSmokeAction") == null,
+            "injecting synthetic presentation state must not emit a command");
+        receipt.addProperty(
+            "highlightFixtureSourceKind",
+            "synthetic-in-memory-local-catalog-no-blueprint-disk-or-network");
+    }
+
+    private HologramUiCanvas.Control websiteControl(int expectedAccent) throws ReflectiveOperationException {
+        HologramUiCanvas.Control found = null;
+        for (HologramUiCanvas.Control control : screen.ui.canvas.controls()) if (control.id == 309) found = control;
+        require(
+            found != null && found.enabled && found.accent == expectedAccent,
+            "expected enabled real website control");
+        java.lang.reflect.Field buttonsField = HologramMuiCanvasScreen.class.getDeclaredField("buttons");
+        buttonsField.setAccessible(true);
+        Object nativeButton = ((java.util.Map<?, ?>) buttonsField.get(screen)).get(309);
+        require(nativeButton != null, "the real native MUI button must exist");
+        java.lang.reflect.Field frameField = HologramMuiCanvasScreen.class.getDeclaredField("nativeFrame");
+        frameField.setAccessible(true);
+        require(
+            ((Long) HologramUiDiagnostics.readDiagnosticField(nativeButton, "frame")).longValue()
+                == frameField.getLong(screen)
+                && (Boolean) HologramUiDiagnostics.readDiagnosticField(nativeButton, "enabled")
+                && ((Integer) HologramUiDiagnostics.readDiagnosticField(nativeButton, "accent")).intValue()
+                    == expectedAccent,
+            "the current root draw must submit the enabled website accent to its retained native widget");
+        return found;
+    }
+
+    /** Exercise SPECTRUM through the actual retained NativeButton, using a stable MUI output as baseline. */
+    private void spectrumGlWitness() throws ReflectiveOperationException {
+        websiteControl(HologramUiAccent.SPECTRUM);
+        require(GL11.glGetError() == GL11.GL_NO_ERROR, "spectrum GL witness begins without an error");
+        HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
+        JsonObject before = glState();
+        HologramMuiProbeInput.renderFixture(screen, 0, 0, 0);
+        JsonObject after = glState();
+        receipt.add("spectrumNativeGlBefore", before);
+        receipt.add("spectrumNativeGlAfter", after);
+        for (String key : new String[] { "matrixMode", "modelviewStack", "projectionStack", "textureStack", "color",
+            "depthWrite", Integer.toHexString(GL11.GL_DEPTH_TEST) })
+            require(
+                before.get(key)
+                    .equals(after.get(key)),
+                "spectrum native draw balances stable GUI state: " + key);
+        int error = GL11.glGetError();
+        receipt.addProperty("spectrumNativeGlError", error);
+        require(error == GL11.GL_NO_ERROR, "the actual native spectrum branch leaves no GL error");
+        receipt.addProperty("spectrumActualNativeBranchExercised", true);
+    }
+
+    /** Read the rendered border from the real main framebuffer, preserving texture and pixel-pack state. */
+    private int[] websitePixels(int expectedAccent) throws ReflectiveOperationException {
+        HologramUiCanvas.Control control = websiteControl(expectedAccent);
+        Minecraft mc = Minecraft.getMinecraft();
+        int[] colors = new int[2];
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glPushClientAttrib(GL11.GL_CLIENT_PIXEL_STORE_BIT);
+        try {
+            GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
+            GL11.glPixelStorei(GL11.GL_PACK_ROW_LENGTH, 0);
+            GL11.glPixelStorei(GL11.GL_PACK_SKIP_ROWS, 0);
+            GL11.glPixelStorei(GL11.GL_PACK_SKIP_PIXELS, 0);
+            java.nio.ByteBuffer texture = null;
+            int textureWidth = 0;
+            if (OpenGlHelper.isFramebufferEnabled()) {
+                net.minecraft.client.shader.Framebuffer framebuffer = mc.getFramebuffer();
+                textureWidth = framebuffer.framebufferTextureWidth;
+                texture = BufferUtils.createByteBuffer(textureWidth * framebuffer.framebufferTextureHeight * 4);
+                GL11.glBindTexture(GL11.GL_TEXTURE_2D, framebuffer.framebufferTexture);
+                GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, texture);
+            }
+            for (int i = 0; i < 2; i++) {
+                double guiX = screen.ui.canvas.originX()
+                    + (control.x + control.w * (i == 0 ? .2 : .8)) * screen.ui.canvas.scale();
+                double guiY = screen.ui.canvas.originY()
+                    + (control.y + HologramUiAccent.BORDER_WIDTH * .5) * screen.ui.canvas.scale();
+                int x = (int) Math.floor(guiX * mc.displayWidth / screen.width);
+                int y = mc.displayHeight - 1 - (int) Math.floor(guiY * mc.displayHeight / screen.height);
+                require(
+                    x >= 0 && x < mc.displayWidth && y >= 0 && y < mc.displayHeight,
+                    "website border pixels lie in the actual framebuffer");
+                java.nio.ByteBuffer pixels = texture;
+                int offset;
+                if (pixels == null) {
+                    pixels = BufferUtils.createByteBuffer(4);
+                    GL11.glReadPixels(x, y, 1, 1, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
+                    offset = 0;
+                } else offset = (y * textureWidth + x) * 4;
+                colors[i] = 0xff000000 | (pixels.get(offset) & 255) << 16
+                    | (pixels.get(offset + 1) & 255) << 8
+                    | pixels.get(offset + 2) & 255;
+            }
+        } finally {
+            GL11.glPopClientAttrib();
+            GL11.glPopAttrib();
+        }
+        require(GL11.glGetError() == GL11.GL_NO_ERROR, "framebuffer color witness leaves no GL error");
+        return colors;
+    }
+
+    private static JsonArray pixelArray(int[] colors) {
+        JsonArray values = new JsonArray();
+        for (int color : colors) values.add(new com.google.gson.JsonPrimitive(Integer.toHexString(color)));
+        return values;
+    }
+
+    private static int colorDistance(int first, int second) {
+        int distance = 0;
+        for (int shift = 0; shift <= 16; shift += 8)
+            distance = Math.max(distance, Math.abs((first >>> shift & 255) - (second >>> shift & 255)));
+        return distance;
     }
 
     private void verifyWebsiteReturn(Minecraft mc) throws ReflectiveOperationException {
@@ -611,7 +797,7 @@ public final class HologramMaterialVisualSmoke {
     private void request(String name) {
         recordLifecycle("before-capture-" + name);
         require(Minecraft.getMinecraft().currentScreen == screen, "capture must observe the retained screen");
-        if (!"05-background-overall-progress-strip".equals(name)) {
+        if (stage < 23 && !"05-background-overall-progress-strip".equals(name)) {
             NBTTagCompound dialog = screen.ui.review.materialDialogProbeState();
             require(
                 dialog.getBoolean("open") && dialog.getLong("drawnFrames") > 0,
@@ -626,11 +812,34 @@ public final class HologramMaterialVisualSmoke {
     public void rendered(TickEvent.RenderTickEvent event) {
         if (event.phase != TickEvent.Phase.END || finished) return;
         frame++;
-        if (capture == null || frame <= requestedFrame || screen.ui.canvas.renderGeneration() <= requestedGeneration)
-            return;
+        if (capture == null && !spectrumSamplePending || frame <= requestedFrame
+            || screen.ui.canvas.renderGeneration() <= requestedGeneration) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
             require(mc.currentScreen == screen, "the requested screen must own the naturally rendered frame");
+            if (spectrumSamplePending) {
+                long elapsed = System.nanoTime() - spectrumFirstNanos;
+                if (elapsed < 300_000_000L) return;
+                int[] next = websitePixels(HologramUiAccent.SPECTRUM);
+                require(
+                    colorDistance(next[0], spectrumFirstPixels[0]) > 2
+                        || colorDistance(next[1], spectrumFirstPixels[1]) > 2,
+                    "the actual native spectrum border changes color across naturally rendered frames");
+                receipt.add("spectrumNaturalFirstPixels", pixelArray(spectrumFirstPixels));
+                receipt.add("spectrumNaturalLaterPixels", pixelArray(next));
+                receipt.addProperty("spectrumNaturalFrameDelta", frame - spectrumFirstFrame);
+                receipt.addProperty(
+                    "spectrumNaturalGenerationDelta",
+                    screen.ui.canvas.renderGeneration() - spectrumFirstGeneration);
+                receipt.addProperty("spectrumNaturalElapsedNanos", elapsed);
+                receipt.addProperty("spectrumNaturalPixelsChanged", true);
+                // Keep explicit diagnostic draws outside the recorded natural sampling interval.
+                spectrumGlWitness();
+                spectrumSamplePending = false;
+                advance();
+                write(false, false, "in progress");
+                return;
+            }
             // An actual vanilla 3D block-item sentinel is added after the UI, with its own restored GL scope.
             GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
             GL11.glPushMatrix();
@@ -661,6 +870,25 @@ public final class HologramMaterialVisualSmoke {
                 screen.ui.review.materialDialogProbeState()
                     .getInteger("scroll"));
             item.add("gl", glState());
+            if (stage >= 23) {
+                boolean spectrum = stage == 25;
+                int[] colors = websitePixels(spectrum ? HologramUiAccent.SPECTRUM : HologramUiAccent.WEBSITE);
+                item.addProperty("sourceKind", "synthetic-in-memory-local-catalog");
+                item.addProperty("realNativeWebsiteControl", 309);
+                item.addProperty("nativeAccentToken", spectrum ? HologramUiAccent.SPECTRUM : HologramUiAccent.WEBSITE);
+                item.add("actualWebsiteBorderPixels", pixelArray(colors));
+                if (spectrum) {
+                    require(
+                        colorDistance(colors[0], colors[1]) > 8,
+                        "the real spectrum border has a visible spatial gradient");
+                    spectrumFirstPixels = colors;
+                    spectrumFirstFrame = frame;
+                    spectrumFirstGeneration = screen.ui.canvas.renderGeneration();
+                    spectrumFirstNanos = System.nanoTime();
+                } else for (int color : colors) require(
+                    colorDistance(color, HologramUiAccent.WEBSITE) <= 6,
+                    "the real unselected/controller border is orange");
+            }
             frames.add(item);
             capture = null;
             if ("04a-order-rejected-ready-for-retry.png".equals(name)) {
@@ -745,6 +973,8 @@ public final class HologramMaterialVisualSmoke {
         result.addProperty("depthWrite", GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK));
         result.addProperty("matrixMode", GL11.glGetInteger(GL11.GL_MATRIX_MODE));
         result.addProperty("modelviewStack", GL11.glGetInteger(GL11.GL_MODELVIEW_STACK_DEPTH));
+        result.addProperty("projectionStack", GL11.glGetInteger(GL11.GL_PROJECTION_STACK_DEPTH));
+        result.addProperty("textureStack", GL11.glGetInteger(GL11.GL_TEXTURE_STACK_DEPTH));
         // The pinned LWJGL2-compatible glGetFloat wrapper accepts a matrix-sized output buffer.
         java.nio.FloatBuffer color = BufferUtils.createFloatBuffer(16);
         GL11.glGetFloat(GL11.GL_CURRENT_COLOR, color);

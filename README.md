@@ -75,6 +75,10 @@ Shapeless recipe: **2 native StructureLib Hologram Projectors → 1 Decoration V
 | **4 · 调整位置 / Adjust position** | 框选取命中方块，放置预览贴合命中表面；无命中时悬空，Alt 强制悬空，**Alt+滚轮调距 0–64 格**（0 为脚下）。**普通滚轮保持原版快捷栏切换**。 / Selection uses the hit block and placement attaches to its face; without a hit it floats. Alt forces floating; **Alt+wheel adjusts 0–64 blocks** (0 = your feet). **The plain wheel keeps vanilla hotbar switching.** |
 | **5 · 切换剪切 / Switch to Cut** | 蓝图模式下 Shift+右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；空闲时 Ctrl+Shift+右键可重开。选择「剪切」即开始框选。 / In Blueprint mode, Shift+right-click opens the mode selector; keep Shift held and right-click to cycle, then release Shift to enter. Ctrl+Shift+right-click reopens it while idle. Choosing Cut starts selection. |
 
+手持投影仪空闲时，屏幕顶部 HUD 也会显示当前可用操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
+
+While holding an idle projector, the top HUD shows available actions: open the workspace, select a region, and, when available, quickly place the last blueprint or open stored cuts.
+
 结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后显示操作帮助，任何动作都会收起帮助并继续响应输入。
 
 In Structure Adjustment, **G toggles the movement axes**; the button shows its on/off state. Help appears after 2 idle seconds and dismisses on any action while letting that input take effect.
@@ -91,14 +95,14 @@ Ordinary blueprint placement skips empty air positions during site checks, mater
 
 In resource review, choose **Keep unchanged** for inventory data whose complete material cost can be decoded. Construction matches the full item data and consumes those materials. Unreadable data identifies the path to remove before saving. Private-use processing can retain the original configuration; resolve any conflicting coordinate or identity-processing choices first.
 
-施工前使用独立的 **MUI2 材料确认窗口**：按图标、精确物品 / NBT 与单位逐项查看**需求 / 已有 / 缺失**，同名材料不会合并成一项，创造模式也显示完整需求。打开清单、切换抵用券复用已核定的材料数据；主动「刷新材料」只核对清单中的库存，确认施工前再核对现场和材料。没有可处理内容的按钮禁用，悬停可查看原因；普通按钮使用默认猫猫材质，仅强调需要处理的操作和确认。ME 缺料可明确提交独立的真实 AE 合成订单；关闭窗口后继续，重新打开可看总进度与结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料再确认施工**；取消只取消本次订单，已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏不表示订单继续。
-The separate **MUI2 material confirmation window** shows icons and exact **required / available / missing** quantities, preserving distinct item and NBT identities and showing full demand in creative mode. Opening the list and toggling a voucher reuse reviewed material data. Explicit refresh checks stock for those rows; construction checks the site and materials before starting. Controls without applicable content are disabled with a tooltip. Ordinary controls use the default cat theme, with emphasis reserved for relevant actions and confirmation. Explicitly submit missing materials through an independent AE crafting request; closing the window keeps it running with progress and terminal notifications. Actual outputs are delivered to ME storage; **refresh the quote and confirm construction** afterward. Undelivered outputs already received are preserved in player recovery storage when leaving or resetting runtime. Leaving the game ends the active order.
+施工前使用独立的 **MUI2 材料确认窗口**：按图标、精确物品 / NBT 与单位逐项查看**需求 / 已有 / 缺失**，同名材料不会合并成一项，创造模式也显示完整需求。材料整行在外框内左右留白一致，表头与各列对齐。打开清单、切换抵用券复用已核定的材料数据；主动「刷新材料」只核对清单中的库存，确认施工前再核对现场和材料。**同一材料方案只需确认一次**，报价或施工条件变化时仍需重新核对。没有可处理内容的按钮禁用，悬停可查看原因；普通按钮使用默认猫猫材质，仅强调需要处理的操作和确认。ME 缺料可明确提交独立的真实 AE 合成订单；关闭窗口后继续，重新打开可看总进度与结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料再确认施工**；取消只取消本次订单，已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏不表示订单继续。
+The separate **MUI2 material confirmation window** shows icons and exact **required / available / missing** quantities, preserving distinct item and NBT identities and showing full demand in creative mode. Material rows have equal left and right margins, with headers aligned to their columns. Opening the list and toggling a voucher reuse reviewed material data. Explicit refresh checks stock for those rows; construction checks the site and materials before starting. **Confirm the same material plan once**; changes to the quote or construction conditions still require another review. Controls without applicable content are disabled with a tooltip. Ordinary controls use the default cat theme, with emphasis reserved for relevant actions and confirmation. Explicitly submit missing materials through an independent AE crafting request; closing the window keeps it running with progress and terminal notifications. Actual outputs are delivered to ME storage; **refresh the quote and confirm construction** afterward. Undelivered outputs already received are preserved in player recovery storage when leaving or resetting runtime. Leaving the game ends the active order.
 
 EU 不足时才标红。创造模式持有抵用券时，也可切换抵扣方案核对范围；创造施工不消耗抵用券。
 EU requirements turn red only when available energy is insufficient. Carry a voucher in creative mode to inspect its coverage; creative construction does not consume it.
 
-到 [**蓝图站 · 浏览、下载与分享**](https://miaokatze.com/blueprints) 寻找机器与建筑设计，或分享自己保存的蓝图。游戏内蓝图库和保存／分享引导也提供入口。
-Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.com/blueprints) to find machine and building designs or share your saved blueprints. Links are also available in the in-game library and save/share guidance.
+到 [**蓝图站 · 浏览、下载与分享**](https://miaokatze.com/blueprints) 寻找机器与建筑设计，或分享自己保存的蓝图。游戏内蓝图库入口常态为橙色，选中有效的已保存蓝图时显示渐变流彩；保存成功后，引导会强调浏览与分享入口，聊天中也会提供青色可点击链接。
+Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.com/blueprints) to find machine and building designs or share your saved blueprints. The in-game library link is orange by default and shows an animated color gradient when a valid saved blueprint is selected. After a successful save, guidance highlights browsing and sharing, and chat provides a clickable cyan link.
 
 <details>
 <summary><strong>剪切、选区与旋转 / Cut, selection and rotation controls</strong></summary>
@@ -117,7 +121,7 @@ Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.c
 ## Gallery / 更多界面
 
 <details>
-<summary><strong>展开 7 张操作界面 / Show 7 more workflow screenshots</strong></summary>
+<summary><strong>展开 9 张操作界面 / Show 9 more workflow screenshots</strong></summary>
 
 **控制器结构工作台：建造、替换与拆除 / Controller structure workspace: build, replace and dismantle**
 
@@ -134,6 +138,14 @@ Visit the [**Blueprint site · Browse, download and share**](https://miaokatze.c
 **在世界中预览与定位蓝图 / Preview and position a blueprint in the world**
 
 ![蓝图放置预览 / Blueprint placement preview](README/screenshots/placement-preview.png)
+
+**施工前核对精确材料、缺料与 EU 需求 / Review exact materials, shortages and EU before construction**
+
+![蓝图放置材料预检 / Blueprint placement material review](README/screenshots/blueprint-material-review.png)
+
+**样板输入总成与空白样板的材料明细 / Material details for the pattern input hatch and blank patterns**
+
+![样板支持与配置材料 / Pattern support and configuration materials](README/screenshots/pattern-configuration.png)
 
 **蓝图与剪切模式切换 / Blueprint and Cut mode switcher**
 

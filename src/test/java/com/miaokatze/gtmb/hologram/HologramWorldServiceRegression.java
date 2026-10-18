@@ -116,10 +116,13 @@ public final class HologramWorldServiceRegression {
             // The policy helper used its own ACK packet. Refresh this independent packet exactly as
             // the client does after receiving the updated review, rather than bypassing nonce admission.
             request.setLong("placementReviewNonce", reviewedNonce);
+            request.setBoolean("forceExplicit", false);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
-            SimpleAssert.eq(0, get(session, "job"), "first explicit force has no server authority");
-            SimpleAssert
-                .eq(true, get(session, "forcePlacementReady"), "missing material issues second-review capability");
+            SimpleAssert.eq(0, get(session, "job"), "a request without partial consent has no partial authority");
+            SimpleAssert.eq(
+                false,
+                get(session, "forcePlacementReady"),
+                "a rejected request never creates reusable partial authority");
             SimpleAssert
                 .eq(true, get(session, "blueprintAwaitingConfirmation"), "shortage keeps material review active");
             request.setBoolean("forceExplicit", false);
@@ -127,7 +130,7 @@ public final class HologramWorldServiceRegression {
             SimpleAssert.eq(0, get(session, "job"), "repeated ordinary packet cannot exercise force capability");
             request.setBoolean("forceExplicit", true);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
-            SimpleAssert.eq(1, get(session, "job"), "second explicit review schedules protected partial construction");
+            SimpleAssert.eq(1, get(session, "job"), "one explicit partial review schedules protected construction");
             SimpleAssert
                 .eq(true, get(session, "virtualLocked"), "material confirmation keeps selected position locked");
             SimpleAssert.eq(
@@ -212,11 +215,11 @@ public final class HologramWorldServiceRegression {
         action.invoke(null, session, configure, "confirmBlueprintPlacement");
         SimpleAssert.eq(0, get(session, "job"), "a policy ACK does not invent successful world placement");
         SimpleAssert.eq(
-            true,
+            false,
             get(session, "forcePlacementReady"),
-            "the genuine confirmation returns the actual missing-material gate");
+            "a genuine review without partial consent returns the actual missing-material gate");
         SimpleAssert.that(
-            ((String) get(session, "status")).contains("再次点击施工"),
+            ((String) get(session, "status")).contains("明确确认"),
             "confirmation returns an explicit shortage result the user can act on");
         set(session, "forcePlacementReady", false);
     }

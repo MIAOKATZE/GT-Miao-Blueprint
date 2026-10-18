@@ -6,7 +6,7 @@ import java.math.BigInteger;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
-/** Client review policy; the server owns the second-confirmation capability and material transaction. */
+/** Client review policy; the server verifies the displayed plan and owns the material transaction. */
 final class HologramPlacementConfirmation {
 
     private HologramPlacementConfirmation() {}
@@ -48,7 +48,7 @@ final class HologramPlacementConfirmation {
     }
 
     static boolean forceReview(NBTTagCompound state, long reviewedRevision) {
-        return lockedBlueprint(state) && state.getBoolean("forcePlacementReady")
+        return lockedBlueprint(state) && state.getInteger("missing") > 0
             && reviewedRevision == state.getLong("planRevision");
     }
 
@@ -153,7 +153,7 @@ final class HologramPlacementConfirmation {
 
     static String confirmationAction(NBTTagCompound state, long reviewedRevision, boolean placement) {
         if (emptyCacheFallback(state))
-            return forceReview(state, reviewedRevision) ? "仅放已有 · 空缓存" : placement ? "确认空缓存放置" : "确认空缓存施工";
-        return forceReview(state, reviewedRevision) ? "再次确认仅放已有" : placement ? "确认放置" : "确认执行施工";
+            return forceReview(state, reviewedRevision) ? "确认仅放已有 · 空缓存" : placement ? "确认空缓存放置" : "确认空缓存施工";
+        return forceReview(state, reviewedRevision) ? "确认仅放已有" : placement ? "确认放置" : "确认执行施工";
     }
 }

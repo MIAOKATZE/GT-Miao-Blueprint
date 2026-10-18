@@ -391,6 +391,13 @@ final class HologramResourcePlanner {
         return task.rows;
     }
 
+    static NBTTagList cacheResourceRows(HologramSession s) {
+        ResourceRowsTask task = new ResourceRowsTask(s);
+        task.stage = 1; // Reuse the cache quote without recounting item/fluid/essentia stock.
+        while (!task.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        return task.rows;
+    }
+
     static final class ResourceRowsTask {
 
         private final HologramSession s;

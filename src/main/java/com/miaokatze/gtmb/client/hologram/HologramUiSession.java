@@ -274,7 +274,6 @@ final class HologramUiSession {
         if (areaImporting() && !"close".equals(op) && !"cancelAeSave".equals(op) && !"aePreviewClose".equals(op))
             return;
         if (!ui.ae.commandAllowed(op)) return;
-        ui.review.prepareCommand(op);
         ui.preview.prepareCommand(op);
         NBTTagCompound n = request == null ? new NBTTagCompound() : request;
         ui.processing.prepareCommand(op, n);
@@ -428,7 +427,6 @@ final class HologramUiSession {
         ui.config.rejectCommand(rejected);
         ui.processing.rejectCommand(rejected);
         ui.library.rejectCommand(rejected);
-        ui.review.pendingBuildReview(false);
         awaitingScan = false;
         if (pendingOperation.startsWith("saveBlueprint")) HologramLibraryClient.INSTANCE.failDraftReview(message);
         notice = message;

@@ -892,6 +892,21 @@ final class HologramUiLibrary {
                 .getString("id") : "");
     }
 
+    int websiteAccent() {
+        NBTTagCompound state = ui.session.state().data;
+        String source = state.getString("blueprintSource");
+        // New controller sessions and imported drafts can retain the tool's previous saved ID.
+        // A source-less library browser still accepts a real row selection before its preview arrives.
+        boolean unsavedSource = !state.getBoolean("blueprintSaved")
+            && ("imported".equals(source) || "area".equals(source)
+                || "processedDraft".equals(source)
+                || "discarded".equals(source)
+                || source.isEmpty() && !state.getBoolean("virtual")
+                    && ("controllerStructure".equals(state.getString("openPurpose"))
+                        || HologramGuidance.authorWorkspace(ui.session.state())));
+        return !unsavedSource && selectedPresetExists() ? HologramUiAccent.SPECTRUM : HologramUiAccent.WEBSITE;
+    }
+
     void revealSelectedPreset() {
         boolean dedicated = HologramLibraryClient.dedicated();
         NBTTagList presets = dedicated ? HologramLibraryClient.INSTANCE.rows(this.publicLibrary)

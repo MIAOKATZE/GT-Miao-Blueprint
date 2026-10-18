@@ -97,6 +97,58 @@ final class HologramMaterialWorkflow {
             throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
     }
 
+    /** Replaces the startup inventory check with a recount of the already reviewed exact identities. */
+    static boolean recheckBuild(HologramSession s, NBTTagCompound action) {
+        int reviewedMissing = s.planMissing;
+        NBTTagCompound reviewed = s.materialQuote;
+        try {
+            if (reviewed != null && reviewed.getBoolean("complete")
+                && reviewed.getLong("planRevision") == s.planRevision
+                && s.id.equals(reviewed.getString("session"))) {
+                HologramMaterialQuote.recheck(s);
+                NBTTagList before = reviewed.getTagList("rows", 10), after = s.materialQuote.getTagList("rows", 10);
+                for (int i = 0; i < after.tagCount(); i++) {
+                    NBTTagCompound row = after.getCompoundTagAt(i);
+                    if (row.getBoolean("optionalCache")
+                        || s.player.capabilities.isCreativeMode && !"essentia".equals(row.getString("kind"))) continue;
+                    if (i >= before.tagCount() || missingIncreased(row, before.getCompoundTagAt(i)))
+                        return updatedReview(s, "可用材料减少，缺料方案已更新；请重新核对材料后确认");
+                }
+            } else {
+                HologramResourcePlanner.refreshResources(s);
+                if (s.planMissing > reviewedMissing) return updatedReview(s, "可用材料减少，缺料方案已更新；请重新核对材料后确认");
+            }
+            if (s.virtual && action != null) {
+                NBTTagList caches = HologramResourcePlanner.cacheResourceRows(s);
+                for (int i = 0; i < caches.tagCount(); i++) if (caches.getCompoundTagAt(i)
+                    .getBoolean("emptyFallback") && !action.getBoolean("allowEmptyCache"))
+                    return updatedReview(s, "设备缓存报价已变化，本次将空缓存放置；请核对后确认");
+            }
+            s.forcePlacementReady = s.virtual && action != null
+                && reviewedMissing > 0
+                && action.getBoolean("forceExplicit");
+            return true;
+        } catch (IOException | RuntimeException invalid) {
+            return updatedReview(s, "材料检查未完成，请重新核对：" + HologramAePolicy.fallback(invalid.getMessage()));
+        }
+    }
+
+    private static boolean missingIncreased(NBTTagCompound current, NBTTagCompound reviewed) {
+        if (current.hasKey("missingExact", 8) && reviewed.hasKey("missingExact", 8))
+            return new java.math.BigInteger(current.getString("missingExact"))
+                .compareTo(new java.math.BigInteger(reviewed.getString("missingExact"))) > 0;
+        return current.getLong("missing") > reviewed.getLong("missing");
+    }
+
+    private static boolean updatedReview(HologramSession s, String reason) {
+        s.forcePlacementReady = false;
+        s.placementReviewNonce++;
+        if (s.materialQuote != null) s.materialQuote.setLong("placementReviewNonce", s.placementReviewNonce);
+        if (s.virtualPlacement && s.virtualLocked) s.blueprintAwaitingConfirmation = true;
+        s.status = reason;
+        return false;
+    }
+
     private static void requireReview(HologramSession s, NBTTagCompound action) throws IOException {
         if (!s.virtual || s.virtualPreset == null
             || !s.virtualPlacement

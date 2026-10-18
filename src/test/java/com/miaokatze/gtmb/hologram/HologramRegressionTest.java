@@ -286,6 +286,9 @@ public final class HologramRegressionTest {
         cases.put(
             "ae_save_guidance_preserves_complete_bounded_issue_reports",
             com.miaokatze.gtmb.client.hologram.HologramAeGuidanceRegression::run);
+        cases.put(
+            "website_accent_cycles_smoothly_and_preserves_disabled_and_warning_colors",
+            com.miaokatze.gtmb.client.hologram.HologramUiSpectrumRegression::run);
         TestRunner.run(HologramRegressionTest.class, cases);
     }
 

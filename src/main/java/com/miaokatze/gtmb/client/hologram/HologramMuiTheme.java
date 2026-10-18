@@ -5,6 +5,8 @@ import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+import org.lwjgl.opengl.GL11;
+
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.drawable.GuiDraw;
@@ -97,18 +99,41 @@ final class HologramMuiTheme {
             .hoverBackground(PRIMARY_HOVER);
     }
 
-    /** Keep the projector trim, then cover its orange edge with a semantic solid frame. */
+    /** Keep the projector trim, then cover its orange edge with a semantic frame. */
     static IDrawable guidanceBackground(boolean hover, IntSupplier accent, BooleanSupplier enabled) {
         return (context, x, y, width, height, theme) -> {
-            (hover ? PRESSED : BUTTON).draw(context, x, y, width, height, theme);
-            int color = HologramUiAccent.borderColor(accent.getAsInt(), enabled.getAsBoolean());
-            if (color == 0) return;
-            int edge = HologramUiAccent.BORDER_WIDTH;
-            GuiDraw.drawRect(x, y, width, edge, color);
-            GuiDraw.drawRect(x, y + height - edge, width, edge, color);
-            GuiDraw.drawRect(x, y + edge, edge, height - edge * 2, color);
-            GuiDraw.drawRect(x + width - edge, y + edge, edge, height - edge * 2, color);
+            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+            try {
+                (hover ? PRESSED : BUTTON).draw(context, x, y, width, height, theme);
+                int sampledAccent = accent.getAsInt();
+                boolean active = enabled.getAsBoolean();
+                if (active && sampledAccent == HologramUiAccent.SPECTRUM) {
+                    spectrumFrame(x, y, width, height);
+                    return;
+                }
+                int color = HologramUiAccent.borderColor(sampledAccent, active);
+                if (color == 0) return;
+                int edge = HologramUiAccent.BORDER_WIDTH;
+                GuiDraw.drawRect(x, y, width, edge, color);
+                GuiDraw.drawRect(x, y + height - edge, width, edge, color);
+                GuiDraw.drawRect(x, y + edge, edge, height - edge * 2, color);
+                GuiDraw.drawRect(x + width - edge, y + edge, edge, height - edge * 2, color);
+            } finally {
+                GL11.glPopAttrib();
+            }
         };
+    }
+
+    /** Four gradients preserve the cloth interior while their shared corner colors slowly circulate. */
+    private static void spectrumFrame(int x, int y, int width, int height) {
+        long now = System.nanoTime();
+        int tl = HologramUiSpectrum.color(now, 0), tr = HologramUiSpectrum.color(now, .25);
+        int br = HologramUiSpectrum.color(now, .5), bl = HologramUiSpectrum.color(now, .75);
+        int edge = HologramUiAccent.BORDER_WIDTH;
+        GuiDraw.drawHorizontalGradientRect(x, y, width, edge, tl, tr);
+        GuiDraw.drawHorizontalGradientRect(x, y + height - edge, width, edge, bl, br);
+        GuiDraw.drawVerticalGradientRect(x, y + edge, edge, height - edge * 2, tl, bl);
+        GuiDraw.drawVerticalGradientRect(x + width - edge, y + edge, edge, height - edge * 2, tr, br);
     }
 
     static void header(ModularPanel panel, Supplier<String> title, int width) {

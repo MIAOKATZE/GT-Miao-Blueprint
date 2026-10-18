@@ -708,6 +708,27 @@ final class HologramMaterialQuoteRegression {
                 });
             HologramMaterialQuote
                 .snapshot(session, rows, HologramMaterialQuote.voucherRows(rows), new NBTTagList(), stock);
+            require(session.planMissing == 0, "creative free shell demand cannot create a partial-confirmation gate");
+            HologramSession retained = new HologramSession(player, 0, 64, 0, false, 1);
+            retained.capture = session.capture;
+            NBTTagCompound retainedQuote = (NBTTagCompound) session.materialQuote.copy();
+            NBTTagCompound essence = new NBTTagCompound();
+            essence.setString("kind", "essentia");
+            essence.setLong("required", 2);
+            essence.setLong("missing", 2);
+            retainedQuote.getTagList("rows", 10)
+                .appendTag(essence);
+            NBTTagCompound optional = new NBTTagCompound();
+            optional.setString("kind", "energy");
+            optional.setBoolean("optionalCache", true);
+            optional.setLong("missing", 100);
+            retainedQuote.getTagList("rows", 10)
+                .appendTag(optional);
+            retained.materialQuoteCache = new HologramMaterialQuote.Cache(retained, retainedQuote, retainedQuote);
+            HologramMaterialQuote.project(retained);
+            require(
+                retained.planMissing == 2,
+                "creative review retains the actual essentia payment gate while free shells and optional empty caches add none");
             HologramMaterialQuote.Cache cache = session.materialQuoteCache;
             int observations = inventoryReads[0];
             int worldReads = world.reads;

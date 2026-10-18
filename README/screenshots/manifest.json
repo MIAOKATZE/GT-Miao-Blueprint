@@ -85,6 +85,22 @@
                             "bytes":  124393,
                             "caption_zh":  "区域导入与准备蓝图快照的任务进度（画面为79%，并非保存完成）",
                             "caption_en":  "Region import and blueprint snapshot preparation progress (79% shown, not a completed save)"
+                        },
+                        {
+                            "source": "plan/图片/样板支持且自动配置.png",
+                            "asset": "pattern-configuration.png",
+                            "sha256": "d01378ba25023a077c1cc90f78380ac2227ad56d166217b0edcca3d01fdcd3a1",
+                            "bytes": 26925,
+                            "caption_zh": "样板输入总成与空白样板的材料明细",
+                            "caption_en": "Material details for the pattern input hatch and blank patterns"
+                        },
+                        {
+                            "source": "plan/图片/蓝图建造核酸.png",
+                            "asset": "blueprint-material-review.png",
+                            "sha256": "6621708987097cedd99a4ec884d6e2096be090431ae843caf7967c5498b87204",
+                            "bytes": 156637,
+                            "caption_zh": "蓝图放置材料预检：精确材料、缺料与 EU 需求",
+                            "caption_en": "Blueprint placement review: exact materials, shortages and EU demand"
                         }
                     ]
 }

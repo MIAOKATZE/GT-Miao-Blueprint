@@ -219,6 +219,7 @@ public final class HologramTestLabBlueprintProbe {
         NBTTagCompound request = new NBTTagCompound();
         request.setString("session", session.id);
         request.setLong("planRevision", session.planRevision);
+        request.setLong("placementReviewNonce", session.placementReviewNonce);
         request.setBoolean("forceExplicit", false);
         return request;
     }

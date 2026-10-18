@@ -189,6 +189,7 @@ final class HologramUiCanvas {
         if (id == 150 && ui.session.state().data.getBoolean("sourceMissing")
             || id == 163 && ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing)
             accent = 0xff7272;
+        if (id == 309 || id == 310) accent = ui.library.websiteAccent();
         drawn.label = label;
         drawn.accent = enabled ? accent : 0;
         if (c.contains(mx, my)) {

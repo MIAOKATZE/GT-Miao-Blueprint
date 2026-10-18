@@ -36,9 +36,10 @@ final class HologramWorldGuide {
     private static RenderWitness lastRenderWitness;
 
     private static final Pattern KEYS = Pattern.compile(
-        "Ctrl\\s*\\+\\s*Shift|Ctrl\\s*\\+\\s*[ZR]|Alt\\s*\\+\\s*(?:Up/Down|上下|滚轮|scroll)"
-            + "|Shift(?:\\s*\\+\\s*(?:右击|右键)|-right-click)|Alt-right-click"
-            + "|Left/right|[Rr]ight-click|左键|右键|右击|方向键|Arrows|\\b(?:Ctrl|Alt|Esc|R)\\b");
+        "(?:Ctrl\\s*\\+\\s*Shift|Shift\\s*\\+\\s*Alt|Shift|Alt)\\s*\\+\\s*(?:right-click|right|右击|右键|右鍵)"
+            + "|Ctrl\\s*\\+\\s*Shift|Ctrl\\s*\\+\\s*[ZR]|Alt\\s*\\+\\s*(?:Up/Down|上下|滚轮|scroll)"
+            + "|Shift(?:\\s*\\+\\s*(?:右击|右键|右鍵)|-right-click)|Alt-right-click"
+            + "|Left/right|[Rr]ight-click|左键|右键|右鍵|右击|方向键|Arrows|\\b(?:Ctrl|Alt|Esc|R)\\b");
 
     private HologramWorldGuide() {}
 

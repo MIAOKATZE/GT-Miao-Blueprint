@@ -781,11 +781,11 @@ public final class HologramInteractionClientSmoke {
                     break;
                 case 57:
                     require(
-                        state.getBoolean("forcePlacementReady") && receipt().getInteger("blueprintPlaced") == 1,
-                        "first_missing_material_confirmation_only_arms_second_review");
-                    logConstructionScope(screen, "whole-blueprint-explicit-second-confirmation");
-                    screenshot(mc, "placement-missing-explicit-second-review");
-                    click(screen, 55);
+                        state.getBoolean("jobPartialPlacement") && !state.getBoolean("blueprintAwaitingConfirmation"),
+                        "one_missing_material_confirmation_admits_reviewed_partial_job");
+                    require(
+                        !(Boolean) observedField(screen, "confirmation"),
+                        "accepted_partial_review_does_not_reopen");
                     stage = 58;
                     break;
                 case 58:
@@ -2199,8 +2199,8 @@ public final class HologramInteractionClientSmoke {
         StringBuilder details = new StringBuilder("stage=" + stage + " phase=" + phase);
         for (String field : new String[] { "confirmation", "libraryDrawer", "roleDropdown", "resetReview", "nbtDrawer",
             "promptDrawer", "versionsDrawer", "shortcutsDrawer", "hatchDrawer", "presetDrawer", "deletePresetId",
-            "sequence", "pendingSequence", "queuedDispatchSequence", "confirmedRevision", "pendingBuildReview",
-            "captureRenderSmokeAction", "notice" })
+            "sequence", "pendingSequence", "queuedDispatchSequence", "confirmedRevision", "captureRenderSmokeAction",
+            "notice" })
             details.append(' ')
                 .append(field)
                 .append('=')

@@ -262,6 +262,7 @@ public final class HologramQuantumGroupsRegression {
         state.setBoolean("virtualPlacement", true);
         state.setBoolean("virtualLocked", true);
         state.setBoolean("forcePlacementReady", true);
+        state.setInteger("missing", 1);
         String action = HologramPlacementConfirmation.confirmationAction(state, 9, true);
         SimpleAssert.that(
             action.contains("仅放已有") && action.contains("空缓存"),

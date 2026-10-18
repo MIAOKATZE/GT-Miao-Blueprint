@@ -395,11 +395,11 @@ public final class HologramClient {
     public void areaGuide(RenderGameOverlayEvent.Text event) {
         HologramWorldGuide.clearRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null) return;
+        if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null || mc.gameSettings.hideGUI) return;
         java.util.List<String> lines = new java.util.ArrayList<>();
         if (projectorWorld() && HologramBackgroundTasks.busy()) {
             lines.add(HologramBackgroundTasks.status());
-            lines.add("右键：返回进行中的任务");
+            lines.add(text("worldGuideBackground", "Right-click: return to the current task"));
             HologramWorldGuide.draw(lines, event.resolution);
             return;
         }
@@ -430,6 +430,9 @@ public final class HologramClient {
         if (state != null && pendingPositionLock.cancelling(state.data) && projectorWorld())
             lines.add(text("worldGuideLockCancelling", "Cancelling placement…"));
         if (stage == HologramWorldFlow.Stage.WORKSPACE) {
+            if (projectorWorld() && !HologramLibraryClient.INSTANCE.quickInProgress()
+                && !localAreaCancelling
+                && (state == null || !pendingPositionLock.cancelling(state.data))) idleGuide(lines);
             HologramWorldGuide.draw(lines, event.resolution);
             return;
         }
@@ -503,6 +506,36 @@ public final class HologramClient {
             if (!positionLockPending(state) && !status.isEmpty()) lines.add(status);
         }
         HologramWorldGuide.draw(lines, event.resolution);
+    }
+
+    /** Only observed local metadata: no catalog requests, file access, or snapshot/preview preparation. */
+    private static void idleGuide(java.util.List<String> lines) {
+        Minecraft mc = Minecraft.getMinecraft();
+        ItemStack held = mc.thePlayer.getHeldItem();
+        NBTTagCompound tag = held.hasTagCompound() ? held.getTagCompound() : null;
+        String toolId = tag == null ? "" : tag.getString("gtitHologramToolId");
+        boolean sameTool = state != null && mc.theWorld == snapshotWorld
+            && mc.thePlayer.dimension == state.data.getInteger("dimension")
+            && !toolId.isEmpty()
+            && toolId.equals(state.data.getString("toolId"));
+        lines.add(text("worldGuideHeld", "Neko Blueprint Hologram Projector · Blueprint mode"));
+        lines.add(text("worldGuideOpen", "Right-click: workspace / import a constructable controller"));
+        // Capture owns ordinary gestures until its authoritative result arrives.
+        if (state != null && state.data.getBoolean("capturePending")) return;
+        lines.add(text("worldGuideChoose", "Shift+right-click: choose Blueprint / Cut selection"));
+        boolean lastBlueprint = HologramLibraryClient.INSTANCE.knownQuickSource() == 1
+            || tag != null && !tag.getString("gtitHologramPreset")
+                .isEmpty();
+        if (!lastBlueprint && sameTool) lastBlueprint = !state.data.getString("selectedPresetId")
+            .isEmpty();
+        lines.add(
+            lastBlueprint ? text("worldGuideLast", "Alt+right-click: preview the last blueprint")
+                : text("worldGuideChooseFirst", "Choose a blueprint in the workspace to prepare quick placement"));
+        HologramCutClient.INSTANCE.idleGuide(lines);
+        if (sameTool && state.data.getBoolean("editCanUndo"))
+            lines.add(text("worldGuideUndo", "Right-click: return to the editor to undo planning changes"));
+        else if (sameTool && state.data.getBoolean("draftAvailable"))
+            lines.add(text("worldGuideDraft", "Saved controller draft · Right-click: return to the workspace"));
     }
 
     @SubscribeEvent

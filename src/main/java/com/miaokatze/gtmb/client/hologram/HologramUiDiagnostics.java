@@ -1787,8 +1787,6 @@ final class HologramUiDiagnostics {
             case "lastFooterScope":
             case "lastReviewedScope":
             case "materialOffset":
-            case "pendingBuildReview":
-            case "pendingBuildReviewRevision":
             case "placementReviewContext":
             case "resourceReview":
             case "reviewedCacheQuote":

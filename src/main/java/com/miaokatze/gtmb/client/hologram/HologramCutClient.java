@@ -744,6 +744,19 @@ final class HologramCutClient {
         return (NBTTagCompound) source.copy();
     }
 
+    /** A blueprint-mode hint may inspect the last accepted player directory, never trigger its refresh. */
+    void idleGuide(List<String> lines) {
+        if (!held() || world != mc().theWorld || dimension != mc().thePlayer.dimension || cutMode || active()) return;
+        if (!busy()) lines.add(HologramClient.text("worldGuideCut", "Shift+Alt+right-click: begin cut selection"));
+        if (!busy() && !entries.isEmpty()) lines.add(
+            String.format(
+                java.util.Locale.ROOT,
+                HologramClient.text(
+                    "worldGuideStoredCuts",
+                    "Your stored cuts: %d · Choose Cut mode, then open storage to place / undo"),
+                entries.size()));
+    }
+
     boolean guide(List<String> lines) {
         if (!held() || !cutMode && !active() || blueprintBusy() && !active()) return false;
         if (cutMode) lines.add(text("cutModeHint"));

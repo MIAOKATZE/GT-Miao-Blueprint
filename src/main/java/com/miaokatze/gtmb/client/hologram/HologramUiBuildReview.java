@@ -29,10 +29,6 @@ final class HologramUiBuildReview {
 
     private final HologramPlacementReviewContext placementReviewContext = new HologramPlacementReviewContext();
 
-    private boolean pendingBuildReview;
-
-    private long pendingBuildReviewRevision = -1;
-
     private String lastConfirmationTitle = "";
 
     private String lastConfirmationAction = "";
@@ -118,7 +114,7 @@ final class HologramUiBuildReview {
         lastEmptyCacheReview = HologramPlacementConfirmation.emptyCacheFallback(state);
         reviewedCacheQuote = HologramPlacementConfirmation.cacheReviewSnapshot(state);
         lastReviewedScope = constructionScopeLabel(true);
-        lastConfirmationTitle = HologramPlacementConfirmation.forceReview(state, confirmedRevision) ? "缺料 · 再次确认仅放已有"
+        lastConfirmationTitle = HologramPlacementConfirmation.forceReview(state, confirmedRevision) ? "缺料 · 确认仅放已有"
             : placementReviewActive() ? "蓝图放置预检 · " + state.getString("virtualPresetName") : "材料与改动";
         lastConfirmationAction = HologramPlacementConfirmation
             .confirmationAction(state, confirmedRevision, placementReviewActive());
@@ -285,10 +281,9 @@ final class HologramUiBuildReview {
                     n.setBoolean(
                         "forceExplicit",
                         HologramPlacementConfirmation.forceReview(ui.session.state().data, this.confirmedRevision));
-                    if (!ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")) {
-                        this.pendingBuildReview = true;
-                        this.pendingBuildReviewRevision = this.confirmedRevision;
-                    }
+                    n.setBoolean(
+                        "allowEmptyCache",
+                        HologramPlacementConfirmation.emptyCacheFallback(ui.session.state().data));
                     this.confirmation = false;
                     this.reviewedCacheQuote = null;
                     ui.session.send(
@@ -329,25 +324,15 @@ final class HologramUiBuildReview {
 
     void resetSession(long nonce) {
         seenPlacementReviewNonce = nonce;
-        pendingBuildReview = false;
         confirmedRevision = -1;
     }
 
     void pauseForImport() {
-        pendingBuildReview = false;
         confirmation = false;
     }
 
     void acknowledgeReview(HologramState next) {
         if (confirmation && confirmedRevision != ui.session.revision()) confirmation = false;
-        if (pendingBuildReview && ui.session.pendingSequence() < 0) {
-            pendingBuildReview = false;
-            if (HologramPlacementConfirmation.forceReview(next.data, pendingBuildReviewRevision)) {
-                confirmedRevision = pendingBuildReviewRevision;
-                materialOffset = 0;
-                confirmation = true;
-            }
-        }
         if (next.data.getBoolean("blueprintAwaitingConfirmation")
             && !next.data.getBoolean("presetBrowseForPlacement")) {
             confirmedRevision = ui.session.revision();
@@ -437,11 +422,6 @@ final class HologramUiBuildReview {
         return value;
     }
 
-    boolean pendingBuildReview(boolean value) {
-        this.pendingBuildReview = value;
-        return value;
-    }
-
     HologramPlacementReviewContext placementReviewContext() {
         return this.placementReviewContext;
     }
@@ -474,10 +454,6 @@ final class HologramUiBuildReview {
             ui.review.confirmation(true);
             ui.review.confirmedRevision(ui.session.revision());
         }
-    }
-
-    void prepareCommand(String op) {
-        if (!"build".equals(op)) pendingBuildReview = false;
     }
 
     void commandPending() {

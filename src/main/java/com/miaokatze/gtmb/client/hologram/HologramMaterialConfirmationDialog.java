@@ -35,6 +35,7 @@ import com.cleanroommc.modularui.widgets.Dialog;
 final class HologramMaterialConfirmationDialog {
 
     private static final int WIDTH = 632, HEIGHT = 446, ROW_HEIGHT = 44, LIST_HEIGHT = 198;
+    private static final int LIST_WIDTH = 604, ROW_INSET = 5, ROW_WIDTH = LIST_WIDTH - ROW_INSET * 2;
     private final HologramUiModules ui;
     private final HologramMaterialReview materials = new HologramMaterialReview();
     private final IPanelHandler handler;
@@ -196,15 +197,17 @@ final class HologramMaterialConfirmationDialog {
                             .getString("validation"));
                 })
                 .tooltipAutoUpdate(true));
-        panel.child(HologramMuiTheme.label(() -> "材料 / 精确 NBT 条目", 42, 77, 220, 15, HologramMuiTheme.TITLE));
-        panel.child(HologramMuiTheme.label(() -> "需求", 270, 77, 110, 15, HologramMuiTheme.TITLE));
-        panel.child(HologramMuiTheme.label(() -> "已有", 384, 77, 110, 15, HologramMuiTheme.TITLE));
-        panel.child(HologramMuiTheme.label(() -> "缺失", 498, 77, 110, 15, HologramUiAccent.WARNING));
+        panel
+            .child(HologramMuiTheme.label(() -> "材料 / 精确 NBT 条目", 42 + ROW_INSET, 77, 220, 15, HologramMuiTheme.TITLE));
+        panel.child(HologramMuiTheme.label(() -> "需求", 270 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
+        panel.child(HologramMuiTheme.label(() -> "已有", 384 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
+        panel.child(HologramMuiTheme.label(() -> "缺失", 498 + ROW_INSET, 77, 110, 15, HologramUiAccent.WARNING));
         list = new MaterialList().pos(14, 96)
-            .size(604, LIST_HEIGHT)
+            .size(LIST_WIDTH, LIST_HEIGHT)
             .background(HologramMuiTheme.PANEL);
-        canvas = new RowsCanvas().pos(0, 0)
-            .size(594, Math.max(LIST_HEIGHT, materials.size() * ROW_HEIGHT));
+        // Center the rows inside the frame; the right gutter also accommodates MUI's scrollbar.
+        canvas = new RowsCanvas().pos(ROW_INSET, 0)
+            .size(ROW_WIDTH, Math.max(LIST_HEIGHT, materials.size() * ROW_HEIGHT));
         canvas.tooltipBuilder(t -> {
             HologramMaterialReview.Row row = materials.row(getHoveredRow());
             if (row == null) return;
@@ -360,7 +363,8 @@ final class HologramMaterialConfirmationDialog {
         if (!order.getString("status")
             .isEmpty()) return order.getString("status");
         if (HologramPlacementConfirmation.forceReview(state(), ui.review.confirmedRevision()))
-            return state().getString("status");
+            return state().getString("status")
+                .contains("请重新核对") ? state().getString("status") : "确认后仅放置材料足够的格；缺料格跳过，权限与占位保护仍有效。";
         return materials.size() + " 项精确材料 · 图标悬停查看完整数值与身份 · 普通滚轮 / 拖动右侧滚动条";
     }
 
@@ -498,7 +502,7 @@ final class HologramMaterialConfirmationDialog {
                 for (int i = first; i < last; i++) {
                     HologramMaterialReview.Row row = materials.row(i);
                     int y = i * ROW_HEIGHT;
-                    GuiDraw.drawRect(0, y, 594, ROW_HEIGHT - 1, (i & 1) == 0 ? 0xff24323a : 0xff293941);
+                    GuiDraw.drawRect(0, y, ROW_WIDTH, ROW_HEIGHT - 1, (i & 1) == 0 ? 0xff24323a : 0xff293941);
                     if (row.item != null) drawItem(row.item, 5, y + 8, context.getCurrentDrawingZ());
                     else if (row.fluid != null)
                         GuiDraw.drawFluidTexture(row.fluid, 7, y + 9, 18, 22, context.getCurrentDrawingZ());
