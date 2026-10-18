@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -181,15 +182,23 @@ public final class HologramV0116MaterialAcceptanceProbe implements AutoCloseable
         require(
             HologramMaterialQuote.cached(session) && session.materialQuote.getBoolean("complete"),
             "creative quote cache incomplete");
-        verifyNativeDemands();
         NBTTagCompound ordinary = summarize(session.materialQuote);
-        require(
-            ordinary.getLong("chiselRequired") == 31000 && ordinary.getLong("gregtechRequired") == 16999,
-            "creative native quote omitted Chisel or GT shells/machines");
-        require(
-            ordinary.getInteger("fluidRows") > 0 && ordinary.getLong("fluidRequired") > 0,
-            "native fluid resource rows missing");
         receipt.setTag("ordinary", ordinary);
+        NativeDemands expected;
+        try {
+            expected = verifyNativeDemands();
+            verifyItemDemands(session.materialQuote, expected.shells, expected.embedded);
+            receipt.setBoolean("allNativeEmbeddedDemandsQuoted", true);
+            verifyModShellCounts(ordinary, expected.shells);
+            require(
+                ordinary.getInteger("fluidRows") > 0 && ordinary.getLong("fluidRequired") > 0,
+                "native fluid resource rows missing");
+            require(
+                total(expected.shells) > total(expected.voucherShells),
+                "native fixture must contain a real voucher shell reduction");
+        } catch (Exception failure) {
+            throw new IllegalStateException(failure.getMessage() + "; safe material counts=" + ordinary, failure);
+        }
         receipt.setString("fullPreparedNbtSha256", digest(state));
         NBTTagCompound before = HologramRuntimeMetrics.snapshot();
         long revision = session.planRevision, inventoryTick = session.materialQuote.getLong("inventorySnapshotTick");
@@ -237,10 +246,23 @@ public final class HologramV0116MaterialAcceptanceProbe implements AutoCloseable
             require(encoded.length < 65536, "voucher acknowledgement is not small metadata");
             if (enabled) {
                 NBTTagCompound voucher = summarize(session.materialQuote);
-                require(
-                    voucher.getLong("chiselRequired") == 0 && voucher.getLong("gregtechRequired") == 16999,
-                    "voucher must waive Chisel while retaining all GT payment");
                 receipt.setTag("voucher", voucher);
+                try {
+                    verifyItemDemands(session.materialQuote, expected.voucherShells, expected.embedded);
+                    verifyModShellCounts(voucher, expected.voucherShells);
+                    require(
+                        voucher.getLong("gregtechTotalRequired") == ordinary.getLong("gregtechTotalRequired")
+                            && voucher.getLong("gregtechEmbeddedRequired")
+                                == ordinary.getLong("gregtechEmbeddedRequired"),
+                        "voucher changed complete GT shell or embedded payment");
+                } catch (Exception failure) {
+                    throw new IllegalStateException(
+                        failure.getMessage() + "; safe voucher counts="
+                            + voucher
+                            + "; safe ordinary counts="
+                            + ordinary,
+                        failure);
+                }
             } else require(
                 ordinary.equals(summarize(session.materialQuote)),
                 "ordinary demand changed after voucher round trip");
@@ -277,6 +299,8 @@ public final class HologramV0116MaterialAcceptanceProbe implements AutoCloseable
         receipt.setBoolean("planRevisionUnchanged", true);
         receipt.setBoolean("inventoryObservationTickUnchanged", true);
         receipt.setBoolean("voucherInventoryUnchanged", true);
+        receipt.setBoolean("voucherEmbeddedDemandsUnchanged", true);
+        receipt.setBoolean("voucherCompleteGtDemandUnchanged", true);
         receipt.setBoolean("privateInputSha256Unchanged", INPUT_SHA256.equals(hashFile(input)));
         receipt.setInteger("privateFinalHashReads", 1);
         require(receipt.getBoolean("privateInputSha256Unchanged"), "read-only source changed during acceptance");
@@ -290,20 +314,38 @@ public final class HologramV0116MaterialAcceptanceProbe implements AutoCloseable
             for (int cz = Z >> 4; cz <= (Z + 47) >> 4; cz++) world.theChunkProviderServer.loadChunk(cx, cz);
     }
 
+    private static final class NativeDemands {
+
+        final Map<HologramBlueprintResources.ExactKey, Long> shells = new LinkedHashMap<>(),
+            voucherShells = new LinkedHashMap<>(), embedded = new LinkedHashMap<>();
+    }
+
     /** Compare every native shell/fluid identity, not just totals that could hide one omitted variant. */
-    private void verifyNativeDemands() {
+    private NativeDemands verifyNativeDemands() throws Exception {
+        NativeDemands expected = new NativeDemands();
         Map<HologramBlueprintResources.ExactKey, Long> shells = new LinkedHashMap<>(),
             quotedShells = new LinkedHashMap<>();
         Map<HologramBlueprintResources.ExactKey, Long> fluids = new LinkedHashMap<>(),
             quotedFluids = new LinkedHashMap<>();
         for (int i = 0; i < session.capture.cells.size(); i++) {
             HologramCapture.Cell cell = session.capture.cells.get(i);
+            require(
+                !HologramDecorMaterials.supports(cell.block),
+                "this embedded-demand oracle admits no native composite decoration hosts");
             ItemStack target = HologramCellPolicy.targetFor(session, cell, i);
             require(target != null, "native projected shell identity missing");
             if (!HologramGtswnPlacementMaterials.freeShell(cell.block, target)) {
                 ItemStack shell = HologramEssentia.shellMaterial(target);
                 shells.merge(new HologramBlueprintResources.ExactKey(shell, null), 1L, Math::addExact);
+                if (HologramRecovery.hasSeal(target) || !HologramDecorationVoucher.covered(cell.block, target))
+                    expected.voucherShells
+                        .merge(new HologramBlueprintResources.ExactKey(shell, null), 1L, Math::addExact);
             }
+            // Independent per-cell native bills detect an omission in the aggregate used by the DTO collector.
+            for (ItemStack item : HologramCellPolicy.resourcePlan(session, cell).items) expected.embedded
+                .merge(new HologramBlueprintResources.ExactKey(item, null), (long) item.stackSize, Math::addExact);
+            for (ItemStack cover : HologramCellPolicy.coverCosts(session, cell))
+                expected.embedded.merge(new HologramBlueprintResources.ExactKey(cover, null), 1L, Math::addExact);
         }
         if (session.blueprintResources != null)
             for (HologramBlueprintResources.FluidCost fluid : session.blueprintResources.fluids)
@@ -322,9 +364,55 @@ public final class HologramV0116MaterialAcceptanceProbe implements AutoCloseable
         }
         require(shells.equals(quotedShells), "complete native shell identity/count comparison failed");
         require(fluids.equals(quotedFluids), "complete native fluid identity/count comparison failed");
+        expected.shells.putAll(shells);
         receipt.setInteger("nativeShellIdentities", shells.size());
         receipt.setInteger("nativeFluidIdentities", fluids.size());
         receipt.setBoolean("allNativeShellAndFluidDemandsQuoted", true);
+        receipt.setInteger("nativeEmbeddedIdentities", expected.embedded.size());
+        receipt.setLong("nativeEmbeddedRequired", total(expected.embedded));
+        receipt.setLong("nativeShellRequired", total(shells));
+        receipt.setLong("nativeVoucherShellRequired", total(expected.voucherShells));
+        return expected;
+    }
+
+    private static void verifyItemDemands(NBTTagCompound quote,
+        Map<HologramBlueprintResources.ExactKey, Long> expectedShells,
+        Map<HologramBlueprintResources.ExactKey, Long> expectedEmbedded) {
+        Map<HologramBlueprintResources.ExactKey, Long> shells = new LinkedHashMap<>(), embedded = new LinkedHashMap<>();
+        NBTTagList rows = quote.getTagList("rows", 10);
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            if (!"item".equals(row.getString("kind"))) continue;
+            ItemStack item = HologramMaterialQuote.readItem(row);
+            require(item != null, "quoted native item identity cannot be read");
+            long required = row.getLong("required"), shell = row.getLong("shellRequired");
+            require(shell >= 0 && required >= shell, "native item total must include its complete shell demand");
+            HologramBlueprintResources.ExactKey key = new HologramBlueprintResources.ExactKey(item, null);
+            if (shell > 0) shells.merge(key, shell, Math::addExact);
+            if (required > shell) embedded.merge(key, required - shell, Math::addExact);
+        }
+        require(expectedShells.equals(shells), "complete payable native shell identity/count comparison failed");
+        require(expectedEmbedded.equals(embedded), "complete native embedded item/NBT/count comparison failed");
+    }
+
+    private static void verifyModShellCounts(NBTTagCompound summary,
+        Map<HologramBlueprintResources.ExactKey, Long> nativeShells) {
+        for (String mod : new String[] { "chisel", "gregtech", "gtswn" }) {
+            long expected = 0;
+            for (Map.Entry<HologramBlueprintResources.ExactKey, Long> entry : nativeShells.entrySet()) {
+                String registry = String.valueOf(Item.itemRegistry.getNameForObject(entry.getKey().type));
+                if (registry.startsWith(mod + ":")) expected = Math.addExact(expected, entry.getValue());
+            }
+            require(
+                summary.getLong(mod + "ShellRequired") == expected,
+                "native physical shell bucket differs from complete source-to-payment identity mapping: " + mod);
+        }
+    }
+
+    private static long total(Map<HologramBlueprintResources.ExactKey, Long> counts) {
+        long total = 0;
+        for (long count : counts.values()) total = Math.addExact(total, count);
+        return total;
     }
 
     private static NBTTagCompound summarize(NBTTagCompound quote) throws Exception {
@@ -336,12 +424,25 @@ public final class HologramV0116MaterialAcceptanceProbe implements AutoCloseable
             result.setInteger(kind + "Rows", result.getInteger(kind + "Rows") + 1);
             result
                 .setLong(kind + "Required", Math.addExact(result.getLong(kind + "Required"), row.getLong("required")));
-            if ("item".equals(kind))
+            if ("item".equals(kind)) {
+                long required = row.getLong("required"), shell = row.getLong("shellRequired");
+                result.setLong("itemShellRequired", Math.addExact(result.getLong("itemShellRequired"), shell));
+                result.setLong(
+                    "itemEmbeddedRequired",
+                    Math.addExact(result.getLong("itemEmbeddedRequired"), required - shell));
                 for (String mod : new String[] { "chisel", "gregtech", "gtswn" }) if (row.getString("itemRegistry")
-                    .startsWith(mod + ":"))
-                    result.setLong(
-                        mod + "Required",
-                        Math.addExact(result.getLong(mod + "Required"), row.getLong("required")));
+                    .startsWith(mod + ":")) {
+                        result.setLong(
+                            mod + "TotalRequired",
+                            Math.addExact(result.getLong(mod + "TotalRequired"), required));
+                        result.setLong(
+                            mod + "ShellRequired",
+                            Math.addExact(result.getLong(mod + "ShellRequired"), shell));
+                        result.setLong(
+                            mod + "EmbeddedRequired",
+                            Math.addExact(result.getLong(mod + "EmbeddedRequired"), required - shell));
+                    }
+            }
         }
         // Hash only the detached rows: never write identities, coordinates or original machine payloads.
         NBTTagCompound demand = new NBTTagCompound();
