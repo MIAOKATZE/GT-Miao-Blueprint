@@ -198,6 +198,10 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                 .tooltipBuilder(tooltip -> {
                     String help = nativeTooltip(id, enabled);
                     tooltip.addLine(help == null || help.isEmpty() ? text : help);
+                    if (voucherRibbon) {
+                        tooltip.addLine(HologramVoucherRibbon.TITLE);
+                        tooltip.addLine(HologramVoucherRibbon.HELP);
+                    }
                 })
                 .tooltipAutoUpdate(true)
                 .onMousePressed(button -> {

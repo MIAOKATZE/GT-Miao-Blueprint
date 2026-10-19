@@ -24,7 +24,7 @@
 
 *Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
-v0.1.28 开发版本将新建文字与图片的默认材质调整为 Chisel 羊毛粘土；图片优先使用羊毛粘土，并以陶瓦、羊毛补色。羊毛、陶瓦、混凝土、羊毛粘土及 Ender IO 的六种石英/纯净玻璃变种均纳入抵用券默认规则，管理员保存后自动更新材料核算。已有蓝图与预设的材质保留。有可抵扣方块即高亮，材料或券未备齐也能勾选预览；选券后优先抵扣并保留已有装饰库存；保存或升级时生成「完全抵用」标记，游戏与蓝图站显示金色角标。
+v0.1.28 开发版本将新建文字与图片的默认材质调整为 Chisel 羊毛粘土；图片优先使用羊毛粘土，并以陶瓦、羊毛补色。羊毛、陶瓦、混凝土、羊毛粘土及 Ender IO 的六种石英/纯净玻璃变种均纳入抵用券默认规则，管理员保存后自动更新材料核算。已有蓝图与预设的材质保留。有可抵扣方块即高亮，材料或券未备齐也能勾选预览；选券后优先抵扣并保留已有装饰库存；保存或升级时生成「完全抵用」标记，游戏与蓝图站显示加宽的金色猫猫头角标，悬浮可查看抵用说明。
 
 v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.md)：从 `.minecraft/MiaoBlueprintPicture` 读取图片，默认短边 64 像素，支持比例锁定、固定羊毛/黏土/混凝土组合、滤镜与边缘同色抠图。图片沿用 [文字附加](README/text-blueprints.md) 的整体编辑、旋转、轴面位移和冲突校验，随蓝图保存后可脱离原文件再次编辑。图片分辨率上限为 1024×1024，支持像素大小与厚度；文字和图片均支持处理预设、后台生成与分块上传。下载请见 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
 
@@ -298,7 +298,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | --- | --- |
 | **蓝图站 / Blueprint site** | 在 [miaokatze.com/blueprints](https://miaokatze.com/blueprints) 浏览、下载或分享设计。 / Browse, download or share designs on the site. |
 | **游戏内公库 / In-game server library** | 蓝图库「客户端／服务器」切换，完成上传与下载。 / Switch Client/Server for library transfers. |
-| **直接转交文件 / Manual transfer** | 将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`。 / Copy the same-basename JSON + PNG pair into the recipient's game-directory `MiaoBlueprints/`. |
+| **直接转交文件 / Manual transfer** | 将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`。单人档打开或刷新蓝图库也会发现联机保存的独立双文件，无须转交集合清单；保留原文件、作者和版本。 / Copy the same-basename JSON + PNG pair into the recipient's game-directory `MiaoBlueprints/`. |
 
 独立蓝图现在以 **蓝图名＋完整内容哈希** 命名，JSON 与 PNG 使用同一个文件名主体。蓝图库中的「升级旧蓝图」会一键重新无损压缩、校准配对文件名，并保留最近蓝图与上传关联；旧文件仍可读取。缺图、配对不明确或写入失败的条目会保留原件并报告原因。服务器公库升级由管理员执行。
 

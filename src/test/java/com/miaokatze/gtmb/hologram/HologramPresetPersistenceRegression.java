@@ -149,6 +149,96 @@ final class HologramPresetPersistenceRegression {
             }
         }
         directoryLayout();
+        portableDiscovery();
+    }
+
+    private static void portableDiscovery() {
+        Path game = null;
+        try {
+            Path previousRoot = (Path) field(HologramLibraryFacade.class, "clientGameDirectory");
+            game = Files.createTempDirectory("gtmb-integrated-portable-");
+            try {
+                HologramLibraryFacade.configureClientGameDirectory(game);
+                Path directory = Files.createDirectories(game.resolve("MiaoBlueprints"));
+                byte[] preview = com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng();
+                HologramPresets.Preset portable = preset("local_" + UUID.randomUUID(), "联机保存的蓝图 #A");
+                HologramBlueprintVersions.stamp(portable);
+                portable.nativeBlueprint.gtmbVersion = "0.1.27";
+                portable.authorName = "Original author";
+                Path file = directory.resolve("联机保存的蓝图_完整哈希.json");
+                HologramBlueprintSharing.write(file, portable, preview);
+                byte[] jsonBefore = Files.readAllBytes(file);
+                byte[] pngBefore = Files.readAllBytes(HologramBlueprintArtifact.previewPath(file));
+                SimpleAssert.eq(
+                    1,
+                    HologramPresets.labels()
+                        .tagCount(),
+                    "cold integrated catalog discovers standalone pairs");
+                String id = portable.id.substring("local_".length());
+                SimpleAssert.eq(
+                    "0.1.27",
+                    HologramPresets.get(id).nativeBlueprint.gtmbVersion,
+                    "discovery preserves the saved version");
+                SimpleAssert.eq(
+                    portable.authorName,
+                    HologramPresets.get(id).authorName,
+                    "discovery preserves the original author");
+                SimpleAssert.that(
+                    HologramPresets.get(id).fullyVoucherCovered == null,
+                    "discovery does not generate a coverage marker");
+                String raw = HologramBlueprintContentHash.of(jsonBefore);
+                SimpleAssert.that(
+                    HologramPresets.matchesContent(id, raw),
+                    "standalone preview identity admits the same integrated source");
+                Object source = contentSource(id);
+                HologramPresets.refreshLocalArtifacts();
+                SimpleAssert.that(source == contentSource(id), "unchanged refresh reuses admitted standalone content");
+                HologramPresets.clearCache();
+                SimpleAssert.eq(
+                    1,
+                    HologramPresets.labels()
+                        .tagCount(),
+                    "discovered identity survives restart without duplication");
+                HologramPresets.Preset late = preset("local_" + UUID.randomUUID(), "Later copy");
+                HologramBlueprintVersions.stamp(late);
+                HologramBlueprintSharing.write(directory.resolve("later.json"), late, preview);
+                Files.write(directory.resolve("broken.json"), new byte[] { 1 });
+                Files.write(directory.resolve("broken.png"), new byte[] { 2 });
+                HologramPresets.refreshLocalArtifacts();
+                SimpleAssert.eq(
+                    2,
+                    HologramPresets.labels()
+                        .tagCount(),
+                    "explicit refresh discovers later copies despite a damaged neighbor");
+                SimpleAssert.that(
+                    java.util.Arrays.equals(jsonBefore, Files.readAllBytes(file)) && java.util.Arrays
+                        .equals(pngBefore, Files.readAllBytes(HologramBlueprintArtifact.previewPath(file))),
+                    "discovery leaves the original pair bytes unchanged");
+                HologramPresets.delete(id);
+                SimpleAssert.that(
+                    !Files.exists(file) && !Files.exists(HologramBlueprintArtifact.previewPath(file)),
+                    "integrated deletion accepts the original client local identity and removes its exact pair");
+                SimpleAssert.eq(
+                    1,
+                    HologramPresets.labels()
+                        .tagCount(),
+                    "deleting an adopted pair preserves other entries");
+            } finally {
+                HologramPresets.clearCache();
+                Field root = HologramLibraryFacade.class.getDeclaredField("clientGameDirectory");
+                root.setAccessible(true);
+                root.set(null, previousRoot);
+            }
+        } catch (Exception failure) {
+            throw new AssertionError("integrated portable blueprint discovery", failure);
+        } finally {
+            if (game != null) try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            } catch (IOException failure) {
+                throw new AssertionError("portable discovery fixture cleanup", failure);
+            }
+        }
     }
 
     private static void directoryLayout() {
