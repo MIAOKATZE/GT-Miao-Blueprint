@@ -143,9 +143,9 @@ final class HologramProjectorWorkflow {
             return true;
         }
         // Opening a review retains its complete plan and observed stock. The final submit checks the world.
-        boolean cachedMaterials = HologramMaterialQuote.cached(s);
+        boolean cachedMaterials = !s.localPlanPending && HologramMaterialQuote.cached(s);
         s.blueprintAwaitingConfirmation = true;
-        s.placementReviewIssued = true;
+        s.placementReviewIssued = cachedMaterials && !s.localPlanPending;
         s.forcePlacementReady = false;
         s.open = true;
         s.settingsOnly = false;
@@ -159,7 +159,17 @@ final class HologramProjectorWorkflow {
                 throw new IllegalStateException(impossible);
             }
             HologramSnapshots.sendUi(s);
-        } else HologramSnapshots.send(s);
+        } else {
+            if (s.virtualPreset.schema < 2) {
+                s.placementReviewIssued = true;
+                HologramSnapshots.send(s);
+                return true;
+            }
+            s.placementValidating = true;
+            if (!s.localPlanPending) HologramDeferredPlanRefresh.request(s, java.util.Collections.emptySet());
+            s.status = "正在核对放置位置与材料，完成后打开材料核算";
+            HologramSnapshots.sendUi(s);
+        }
         return true;
     }
 

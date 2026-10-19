@@ -217,7 +217,7 @@ final class HologramEditState {
             for (HologramPresets.Structure original : structures)
                 s.virtualPreset.structures.add(HologramBlueprintData.copyStructure(original));
         }
-        if (!geometry.isEmpty()) {
+        if (s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2) {
             HologramCapture capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
             for (HologramCapture.Cell saved : geometry) {
                 HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(saved, saved.x, saved.y, saved.z);

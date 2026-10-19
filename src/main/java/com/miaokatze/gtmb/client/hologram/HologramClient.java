@@ -53,6 +53,7 @@ public final class HologramClient {
     private static net.minecraft.world.World snapshotWorld;
     static boolean worldPreview = true;
     private static long receivedAt;
+    private static final HologramProjectionLifetime projectionLifetime = new HologramProjectionLifetime();
     private static long acceptedBatch = -1;
     private static final Set<String> retiredSessions = new LinkedHashSet<>();
     private static final long SNAPSHOT_TTL_NS = 300000000000L;
@@ -98,6 +99,7 @@ public final class HologramClient {
                         quoted = HologramBackgroundTasks.materialQuoteReceipt(quoted, nbt, world, connection);
                         state = quoted;
                         receivedAt = System.nanoTime();
+                        projectionLifetime.observe(state);
                         if (minecraft.currentScreen instanceof HologramScreen) {
                             HologramScreen screen = (HologramScreen) minecraft.currentScreen;
                             screen.ui.session.materialQuoteMetadata(quoted, nbt.getLong("uiSequence"));
@@ -111,6 +113,7 @@ public final class HologramClient {
                     if (ordered != null) {
                         state = ordered;
                         receivedAt = System.nanoTime();
+                        projectionLifetime.observe(state);
                         if (minecraft.currentScreen instanceof HologramScreen) {
                             HologramScreen screen = (HologramScreen) minecraft.currentScreen;
                             screen.ui.session.materialOrderMetadata(ordered, nbt.getLong("uiSequence"));
@@ -150,6 +153,7 @@ public final class HologramClient {
                 if (state != null && state.session.equals(nbt.getString("session"))
                     && HologramClientProgress.matches(nbt)
                     && !"rejected".equals(nbt.getString("outcome"))) receivedAt = System.nanoTime();
+                projectionLifetime.observe(state);
                 if ("rejected".equals(nbt.getString("outcome")) || HologramClientProgress.matches(nbt))
                     HologramBackgroundTasks.progress(nbt);
                 if (nbt.getBoolean("jobDelta") && HologramClientProgress.matches(nbt)) {
@@ -994,6 +998,10 @@ public final class HologramClient {
     private static void receive(NBTTagCompound nbt) {
         syncSnapshotWorld();
         if (Minecraft.getMinecraft().theWorld == null) return;
+        if (nbt.getBoolean("voucherEditor")) {
+            HologramVoucherScreen.show(nbt);
+            return;
+        }
         if (nbt.getBoolean("transportError")) {
             pendingPositionLock.rejected(nbt);
             Minecraft mc = Minecraft.getMinecraft();
@@ -1476,6 +1484,8 @@ public final class HologramClient {
             HologramRenderer.world(localPreview, event.partialTicks);
             return;
         }
+        if (state != null
+            && !projectionLifetime.visible(state.session, state.data.getInteger("job"), System.nanoTime())) return;
         NBTTagCompound localSelection = localAreaRenderSelection();
         if (localSelection != null) HologramAreaOverlay.renderSelection(
             state,
@@ -1493,7 +1503,8 @@ public final class HologramClient {
         if (pendingPositionLock.cancelling(state.data)) return;
         if (localSelection == null && !localAreaCancelling && state.data.getBoolean("areaSelecting"))
             HologramAreaOverlay.render(state, event.partialTicks);
-        if (!worldPreview || state.data.getInteger("job") == 4) return;
+        if (!worldPreview
+            || !projectionLifetime.visible(state.session, state.data.getInteger("job"), System.nanoTime())) return;
         if (state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement")) return;
         if (!HologramInputContext.worldProjection(
             state,

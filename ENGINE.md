@@ -1,5 +1,7 @@
 # GTMB 服务器引擎模块
 
+v0.1.21 新增 `HologramTextBox`（无世界访问的有限文字栅格/形变/LittleTiles 打包）、`HologramTextWorkflow`（服务端位置与冲突校验后原子加入草稿）、`HologramVoucherEditor`（等级 4 的配置入口、版本冲突检查与权威回显）。文字定义保存在结构描述的 `textBoxNbt`，普通原生 tile NBT 不携带文本身份；原有结构归属、复制及撤销链维护整体选择。放置锁定的 schema-2 材料规划使用 `DeferredPlanRefresh`；`placementValidating` 阻止提前打开材料确认，完成后回到原核算流程。
+
 本文描述 0.1.4 的内部职责和依赖。社区集成契约见 [API.md](API.md)。这里的包内类、字段和方法不是第三方兼容接口；客户端请求也不能携带这些对象。
 
 ## 入口、状态与生命周期

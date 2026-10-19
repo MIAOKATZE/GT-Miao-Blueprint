@@ -509,6 +509,9 @@ final class HologramBlueprintEditor {
             long x = (long) source.x + action.getInteger("dx"), y = (long) source.y + action.getInteger("dy"),
                 z = (long) source.z + action.getInteger("dz");
             validateBlueprintCoordinate(s, x, y, z);
+            if (!s.player.worldObj.blockExists((int) x, (int) y, (int) z)
+                || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z))
+                throw new java.io.IOException("移动目标必须是已加载的空气方块；原选区保留");
             HologramCapture.Cell copy = HologramBlueprintData.blueprintCell(source, (int) x, (int) y, (int) z);
             HologramBlueprintData.setMemberships(
                 copy,
@@ -584,6 +587,19 @@ final class HologramBlueprintEditor {
                 }
         }
         java.util.Set<String> added = new java.util.HashSet<>();
+        if (copyGroups) for (HologramPresets.Structure original : s.virtualPreset.structures) {
+            if (original.textBoxNbt == null || original.textBoxNbt.isEmpty() || groupIds.containsKey(original.id))
+                continue;
+            int[] before = textMinimum(s.capture.cells, original.id), after = textMinimum(copies, original.id);
+            if (after == null || before == null) continue;
+            HologramPresets.Structure duplicate = HologramBlueprintData.copyStructure(original);
+            duplicate.id = HologramTextBox.PREFIX + UUID.randomUUID();
+            duplicate.x += after[0] - before[0];
+            duplicate.y += after[1] - before[1];
+            duplicate.z += after[2] - before[2];
+            copiedStructures.add(duplicate);
+            groupIds.put(original.id, duplicate.id);
+        }
         for (HologramCapture.Cell copy : copies) {
             String key = HologramValues.position(copy);
             if (!added.add(key) || (!overlay && staged.containsKey(key)))
@@ -628,6 +644,14 @@ final class HologramBlueprintEditor {
         }
         remember(s.undoEdits, new HologramEditState(s));
         s.redoEdits.clear();
+        if (!copyGroups && !remove.isEmpty()) for (HologramPresets.Structure structure : s.virtualPreset.structures) {
+            if (structure.textBoxNbt == null || structure.textBoxNbt.isEmpty()) continue;
+            int[] before = textMinimum(s.capture.cells, structure.id), after = textMinimum(copies, structure.id);
+            if (before == null || after == null) continue;
+            structure.x += after[0] - before[0];
+            structure.y += after[1] - before[1];
+            structure.z += after[2] - before[2];
+        }
         s.virtualPreset.structures.addAll(copiedStructures);
         if (!copyGroups) for (HologramCapture.Cell copy : copies) if ("templateController".equals(copy.role))
             for (HologramPresets.Structure structure : s.virtualPreset.structures)
@@ -665,6 +689,19 @@ final class HologramBlueprintEditor {
             : s.selectedIndices.iterator()
                 .next();
         HologramResourcePlanner.refreshPlan(s);
+    }
+
+    private static int[] textMinimum(List<HologramCapture.Cell> cells, String group) {
+        int[] result = null;
+        for (HologramCapture.Cell cell : cells) if (cell.belongsTo(group)) {
+            if (result == null) result = new int[] { cell.x, cell.y, cell.z };
+            else {
+                result[0] = Math.min(result[0], cell.x);
+                result[1] = Math.min(result[1], cell.y);
+                result[2] = Math.min(result[2], cell.z);
+            }
+        }
+        return result;
     }
 
     /** An explicit preview confirmation excludes only server-reported blocker cells; it never removes world blocks. */

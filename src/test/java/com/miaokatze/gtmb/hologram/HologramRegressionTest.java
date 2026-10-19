@@ -22,6 +22,12 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "text_microblock_volume_editable_metadata_version_provenance_and_blacklist",
+            HologramTextBoxRegression::run);
+        cases.put(
+            "completed_projection_deadline_is_not_extended_by_heartbeats",
+            com.miaokatze.gtmb.client.hologram.HologramProjectionLifetimeRegression::run);
+        cases.put(
             "coordinate_free_hatch_profiles_match_complete_role_combinations",
             HologramHatchProfilesRegression::run);
         cases.put(

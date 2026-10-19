@@ -43,6 +43,38 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if ("placeTextBox".equals(op)) {
+            HologramTextWorkflow.apply(s, action);
+            return;
+        }
+        if ("clearWorkspace".equals(op) && HologramSessionPolicy.valid(s)
+            && s.job != 1
+            && s.job != 2
+            && !HologramAeCraftingOrders.active(player)) {
+            HologramDeferredPlanRefresh.cancel(s);
+            HologramSession.cancelCaptureRetry(s);
+            HologramWorkspace.clearAreaSelection(s);
+            if (player.getHeldItem() != null && player.getHeldItem()
+                .hasTagCompound()) {
+                player.getHeldItem()
+                    .getTagCompound()
+                    .removeTag(HologramSessionKeys.DRAFT);
+                player.getHeldItem()
+                    .getTagCompound()
+                    .removeTag(HologramSessionKeys.SELECTED_PRESET);
+            }
+            s.cancelled = true;
+            HologramSession empty = HologramWorkspace
+                .create(player, (int) player.posX, (int) player.posY, (int) player.posZ, false, 1);
+            empty.virtual = true;
+            empty.open = true;
+            empty.openPurpose = "workspaceClear";
+            empty.workspaceTab = s.workspaceTab;
+            empty.status = "工作区已清空，可框选区域、载入蓝图或新建文字";
+            HologramWorkspace.activate(player.getUniqueID(), empty);
+            HologramSnapshots.send(empty);
+            return;
+        }
         if (HologramMaterialWorkflow.action(s, action, op)) return;
         HologramLibraryWorkflow.captureClientTaskToken(s, action);
         if ("refreshPresetLibrary".equals(op)) {

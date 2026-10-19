@@ -57,7 +57,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
         int bodyTop = 54, bodyHeight = panelHeight - 112;
         HologramMuiTheme.header(panel(), () -> text("title") + " · " + directory.size(), panelWidth);
         panel().child(HologramMuiTheme.label(() -> text("hint"), 12, 35, panelWidth - 24, 15, HologramMuiTheme.MUTED));
-        list = new ListWidget<>().pos(12, bodyTop)
+        list = new HologramRecessedList().pos(12, bodyTop)
             .size(leftWidth, bodyHeight)
             .background(HologramMuiTheme.PANEL)
             .padding(4);

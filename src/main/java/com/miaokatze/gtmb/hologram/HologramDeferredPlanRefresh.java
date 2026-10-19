@@ -107,6 +107,12 @@ final class HologramDeferredPlanRefresh {
             if (s.localPlanTask != work || !work.current(s)) return;
             s.localPlanTask = null;
             s.localPlanPending = false;
+            if (s.placementValidating) {
+                s.placementValidating = false;
+                s.open = true;
+                s.openPurpose = "placementReview";
+                s.placementReviewIssued = true;
+            }
             s.status = "材料与差分已更新，可继续编辑、保存或施工";
             complete.accept(s);
         } catch (RuntimeException | LinkageError failure) {

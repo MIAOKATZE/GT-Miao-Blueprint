@@ -47,6 +47,8 @@ final class HologramSession {
     boolean jobPartialPlacement;
     /** Explicit material-review choice; the voucher is charged only by a successful covered transaction. */
     boolean jobVoucherRequested, jobVoucherConsumed;
+    boolean placementValidating;
+    NBTTagCompound textPlacementAck = new NBTTagCompound();
     NBTTagCompound materialQuote = new NBTTagCompound();
     HologramMaterialQuote.Cache materialQuoteCache;
     boolean noHatches, hints, defer, stopTick, mainExplicit;

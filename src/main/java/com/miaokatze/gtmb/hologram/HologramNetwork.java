@@ -455,6 +455,11 @@ public final class HologramNetwork {
 
     public static void sendState(EntityPlayerMP player, NBTTagCompound tag) {
         if (channel == null) return;
+        // Configuration replies have no workspace nonce and must not replace its snapshot outbox.
+        if (tag.getBoolean("voucherEditor")) {
+            if (progressConnected(player)) channel.sendTo(new State(tag), player);
+            return;
+        }
         if (tag.getBoolean("progressOnly")) {
             if (!progressConnected(player)) return;
             NBTTagCompound event = (NBTTagCompound) tag.copy();
@@ -1212,6 +1217,10 @@ public final class HologramNetwork {
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         String action = tag.getString("action");
+        if ("voucherEditor".equals(action)) {
+            HologramVoucherEditor.handle(player, tag);
+            return;
+        }
         if (HologramAeCraftingOrders.active(player) && !(action.isEmpty() || "useAir".equals(action)
             || "useBlock".equals(action)
             || "openSettings".equals(action))) {

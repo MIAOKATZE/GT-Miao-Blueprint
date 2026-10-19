@@ -260,6 +260,7 @@ final class HologramPresets {
     static final class Structure {
 
         String id, name, sourceMod, sourceClass;
+        String textBoxNbt;
         int x, y, z, controllerId = -1;
         boolean enabled = true;
         int main = 1;
@@ -823,6 +824,7 @@ final class HologramPresets {
             row.setLong("createdAt", preset.createdAt);
             row.setString("sourceMod", preset.sourceMod == null ? "" : preset.sourceMod);
             row.setString("sourceClass", preset.sourceClass == null ? "" : preset.sourceClass);
+            row.setString("gtmbVersion", preset.nativeBlueprint == null ? "" : preset.nativeBlueprint.gtmbVersion);
             row.setInteger("structures", preset.structures.size());
             row.setInteger("cells", preset.cells.size());
             row.setInteger("schema", preset.schema);
@@ -991,6 +993,11 @@ final class HologramPresets {
             text(structure.name, 256);
             text(structure.sourceMod, 256);
             text(structure.sourceClass, 512);
+            if (structure.textBoxNbt != null && !structure.textBoxNbt.isEmpty()) {
+                if (!structure.id.startsWith(HologramTextBox.PREFIX) || structure.textBoxNbt.length() > 131072)
+                    throw new IOException("文字对象标识或数据长度无效");
+                HologramTextBox.read(HologramTextWorkflow.definition(structure));
+            }
             if (structure.main < 1 || structure.channels == null || structure.channels.size() > 64)
                 throw new IOException("蓝图结构通道或规模设置无效");
             for (Map.Entry<String, Integer> channel : structure.channels.entrySet()) {
@@ -1036,6 +1043,11 @@ final class HologramPresets {
     private static void payloadBudget(Preset preset) throws IOException {
         Map<String, Integer> expanded = new java.util.HashMap<>();
         long total = 0;
+        for (Structure structure : preset.structures)
+            if (structure.textBoxNbt != null && !structure.textBoxNbt.isEmpty()) {
+                total += HologramBlueprintNbt.expandedBytes(structure.textBoxNbt);
+                if (total > 64L * 1024 * 1024) throw new IOException("蓝图文字定义超出展开预算");
+            }
         for (List<Cell> cells : java.util.Arrays.asList(preset.cells, preset.palette)) for (Cell cell : cells) {
             if (cell == null) throw new IOException("蓝图方块无效");
             for (String value : new String[] { cell.tileNbt, cell.itemNbt }) {

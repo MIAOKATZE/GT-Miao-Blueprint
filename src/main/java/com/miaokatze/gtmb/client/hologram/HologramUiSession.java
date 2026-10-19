@@ -71,6 +71,7 @@ final class HologramUiSession {
         Integer previousChoice = ui.identity.prepareSnapshot(library.sourceChanged);
         boolean newSession = !state.session.equals(next.session);
         if (newSession) {
+            ui.textBoxes.reset();
             ui.identity.resetSession();
             ui.memory.rememberUi();
             ui.library.restoreSession(next, library);
@@ -85,6 +86,7 @@ final class HologramUiSession {
             libraryTaskSession = "";
         }
         state = next;
+        ui.textBoxes.acknowledge(next);
         if (materialReviewSequence >= 0 && revision() != materialReviewRevision) clearMaterialReviewAction();
         ui.library.acceptSourceSwitchProposal();
         ui.config.acknowledgeConfiguration(next);

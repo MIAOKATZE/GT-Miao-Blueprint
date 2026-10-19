@@ -35,7 +35,7 @@ import com.cleanroommc.modularui.widgets.Dialog;
 final class HologramMaterialConfirmationDialog {
 
     private static final int WIDTH = 632, HEIGHT = 446, ROW_HEIGHT = 44, LIST_HEIGHT = 198;
-    private static final int LIST_WIDTH = 604, ROW_INSET = 5, ROW_WIDTH = LIST_WIDTH - ROW_INSET * 2;
+    private static final int LIST_WIDTH = 604, ROW_INSET = 7, ROW_WIDTH = LIST_WIDTH - ROW_INSET * 2 - 6;
     private final HologramUiModules ui;
     private final HologramMaterialReview materials = new HologramMaterialReview();
     private final IPanelHandler handler;
@@ -217,7 +217,7 @@ final class HologramMaterialConfirmationDialog {
             if (row.item != null) for (Object line : row.item.getTooltip(Minecraft.getMinecraft().thePlayer, false))
                 t.addLine(String.valueOf(line));
             t.addLine("清单条目 #" + (row.index + 1) + (row.tagged ? " · 精确 NBT，独立计费" : ""));
-            if (row.data.getBoolean("voucherEligible")) t.addLine("本次可使用装饰抵用券抵扣");
+            if (row.data.getBoolean("voucherEligible")) t.addLine("本次可使用猫猫装饰抵用券抵扣");
             if (!row.data.getString("nbtKey")
                 .isEmpty()) t.addLine("设备资源：" + row.data.getString("nbtKey"));
         })
@@ -377,10 +377,10 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String voucherLabel() {
-        if (!voucherEnabled()) return "装饰抵用券：配置已禁用";
+        if (!voucherEnabled()) return "猫猫装饰抵用券：配置已禁用";
         boolean creative = state().getCompoundTag("materialQuote")
             .getBoolean("creativePaymentsFree");
-        return (voucherSelected() ? creative ? "✓ 查看抵扣方案 · 创造不扣券" : "✓ 本次使用 1 张" : "本次使用装饰抵用券") + " · 持有 "
+        return (voucherSelected() ? creative ? "✓ 查看抵扣方案 · 创造不扣券" : "✓ 本次使用 1 张" : "本次使用猫猫装饰抵用券") + " · 持有 "
             + state().getCompoundTag("decorativeVoucher")
                 .getLong("available");
     }
@@ -403,10 +403,10 @@ final class HologramMaterialConfirmationDialog {
         if (id == 215 && ui.review.materialBlockers() == 0) return "本次范围没有需要移除的阻塞物。";
         if (id == 162 && !orderActive() && !materials.hasItemShortage()) return "本次没有可由 AE 补齐的缺失物品。";
         if (id == 245 && !voucherSelected()) {
-            if (!voucherEnabled()) return "服务器配置已禁用装饰抵用券。";
+            if (!voucherEnabled()) return "服务器配置已禁用猫猫装饰抵用券。";
             if (!hasVoucherDemand()) return "本次没有可抵扣的建筑材料需求。";
             if (state().getCompoundTag("decorativeVoucher")
-                .getLong("available") < 1) return "主背包没有装饰抵用券。";
+                .getLong("available") < 1) return "主背包没有猫猫装饰抵用券。";
         }
         return "";
     }
@@ -458,6 +458,13 @@ final class HologramMaterialConfirmationDialog {
 
         MaterialList() {
             super(null, scroll);
+            showScrollShadows(false);
+        }
+
+        @Override
+        public void postDraw(ModularGuiContext context, boolean transformed) {
+            super.postDraw(context, transformed);
+            if (!transformed) HologramScrollEdges.draw(0, 0, getArea().width, getArea().height);
         }
 
         @Override
@@ -513,11 +520,14 @@ final class HologramMaterialConfirmationDialog {
                         y + 15,
                         HologramUiAccent.INFORMATION);
                     font.drawString(font.trimStringToWidth(row.name, 220), 31, y + 8, HologramMuiTheme.TEXT);
-                    String note = "#" + (i + 1)
-                        + " · "
-                        + (row.tagged ? "精确 NBT" : row.unit)
-                        + (row.data.getBoolean("voucherEligible") ? " · 可抵用券" : "");
+                    String note = "#" + (i + 1) + " · " + (row.tagged ? "精确 NBT" : row.unit);
                     font.drawString(font.trimStringToWidth(note, 220), 31, y + 24, HologramMuiTheme.MUTED);
+                    if (row.data.getBoolean("voucherEligible")) {
+                        String badge = "可用抵用券";
+                        int badgeX = 151;
+                        GuiDraw.drawRect(badgeX - 3, y + 21, font.getStringWidth(badge) + 6, 15, 0xff51432a);
+                        font.drawString(badge, badgeX, y + 24, 0xffffd36b);
+                    }
                     number(font, row.required, 256, y + 16, HologramMuiTheme.TEXT);
                     number(font, row.available, 370, y + 16, HologramMuiTheme.TEXT);
                     number(

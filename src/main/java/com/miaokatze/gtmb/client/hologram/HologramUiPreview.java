@@ -113,6 +113,8 @@ final class HologramUiPreview {
         }
         int height = previewHeight();
         HologramRenderer.selection = this.selection;
+        HologramRenderer.moveAxis = this.gizmo.axis();
+        HologramRenderer.moveDelta = this.gizmo.delta();
         HologramRenderer.showEmptyCells = this.inventory || ui.position.positionDrawer()
             || ui.preview.airSelectionHeld();
         HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
@@ -153,6 +155,7 @@ final class HologramUiPreview {
                 mx,
                 my,
                 -1);
+            ui.textBoxes.draw();
         } finally {
             GL11.glPopAttrib();
         }
@@ -160,7 +163,8 @@ final class HologramUiPreview {
         ui.canvas.button(11, 84, 55, 50, 17, this.allLayers ? "全部层" : "层 " + this.layer, true, mx, my);
         ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().minY, mx, my);
         ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().maxY, mx, my);
-        if (this.selection.size() > 0) ui.canvas.text("选中 " + this.selection.size() + " 格", 186, 61, 76, 0xffe59b);
+        if (this.selection.size() > 0)
+            ui.canvas.text("选中 " + this.selection.size() + " 格 · G 移动轴", 186, 61, 122, 0xffe59b);
         if (this.selection.canSelectRelated(ui.session.state())) ui.canvas.text("全选 T", 264, 61, 42, 0xc99bff);
         if (!ui.library.libraryDrawer()) ui.preview.drawMoveHandleControl(mx, my);
         if (!ui.library.libraryDrawer()) {
@@ -1065,6 +1069,7 @@ final class HologramUiPreview {
             return true;
         }
         if (button == 0) {
+            if (ui.textBoxes.mouse(mx, my, button)) return true;
             if (ui.preview.previewInteractive() && ui.canvas.inViewport(mx, my)
                 && !ui.preview.previewBlockedAt(mx, my)
                 && ui.session.editable()) {
@@ -1194,6 +1199,7 @@ final class HologramUiPreview {
     }
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), false)) return;
         if (ui.library.browsePreviewActive()) {
             if (browseDragging && browseMeshInteractive()) {
                 int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
@@ -1228,6 +1234,7 @@ final class HologramUiPreview {
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
+        if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
         if (ui.library.browsePreviewActive()) {
             if (button == 0) browseDragging = false;
             return;

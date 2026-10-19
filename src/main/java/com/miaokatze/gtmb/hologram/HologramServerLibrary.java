@@ -859,6 +859,9 @@ final class HologramServerLibrary {
             NBTTagCompound label = new NBTTagCompound();
             label.setString("id", entry.blueprint.id);
             label.setString("name", entry.blueprint.name);
+            label.setString(
+                "gtmbVersion",
+                entry.blueprint.nativeBlueprint == null ? "" : entry.blueprint.nativeBlueprint.gtmbVersion);
             label.setString("sourceHash", entry.hash);
             label.setLong("sourceRevision", entry.revision);
             label.setString("authorName", entry.blueprint.authorName == null ? "" : entry.blueprint.authorName);
@@ -993,11 +996,10 @@ final class HologramServerLibrary {
                 if (!peer.online || closed || epoch != runtimeEpoch)
                     throw new IOException("Library connection or runtime changed");
                 HologramBlueprintArtifact.Artifact original = storedArtifact(previous);
-                byte[] compact = HologramBlueprintCompactCodec
-                    .recompress(original.json, HologramBlueprintArtifact.MAX_JSON_BYTES);
-                if (!HologramBlueprintContentHash.of(original.json)
-                    .equals(HologramBlueprintContentHash.of(compact)))
-                    throw new IOException("Lossless upgrade changed blueprint content identity");
+                byte[] compact = HologramBlueprintUpgrade.migrate(
+                    original.json,
+                    HologramBlueprintArtifact.MAX_JSON_BYTES,
+                    () -> peer.online && !closed && epoch == runtimeEpoch);
                 Path oldPath = HologramBlueprintFiles.resolve(directory, previous.blueprint.id);
                 Path target = HologramBlueprintFiles.target(directory, previous.blueprint.id, compact);
                 byte[] bound = HologramBlueprintArtifact.bindPreview(compact, original.png);
@@ -1009,12 +1011,22 @@ final class HologramServerLibrary {
                     Envelope envelope = new Envelope();
                     envelope.owner = previous.owner.toString();
                     envelope.uploadedBy = previous.uploadedBy;
-                    envelope.blueprint = previous.blueprint;
+                    // Reuse already admitted immutable cells; the IO worker must not re-resolve registries.
+                    HologramPresets.Preset migrated = HologramSnapshotMetadataSource.copyMetadata(previous.blueprint);
+                    migrated.cells.addAll(previous.blueprint.cells);
+                    migrated.palette.addAll(previous.blueprint.palette);
+                    migrated.nativeBlueprint = new com.google.gson.Gson().fromJson(
+                        HologramBlueprintCompactCodec.parse(compact)
+                            .getAsJsonObject("blueprint")
+                            .get("nativeBlueprint"),
+                        HologramBlueprintVersions.Metadata.class);
+                    migrated.modVersions.put("gtmb", com.miaokatze.gtmb.Tags.RELEASE_VERSION);
+                    envelope.blueprint = migrated;
                     Entry replacement = new Entry(
                         envelope,
                         compact.length + bound.length,
-                        previous.hash,
-                        previous.revision,
+                        HologramBlueprintContentHash.of(compact),
+                        previous.revision + 1,
                         compact);
                     long nextBytes = storedBytes - previous.bytes + replacement.bytes;
                     long nextDtoBytes = publicDtoBytes - previous.dtoBytes + replacement.dtoBytes;

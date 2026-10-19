@@ -145,6 +145,8 @@ final class HologramLocalPlacement {
     void submit(NBTTagCompound options) {
         if (!active() || submitting) return;
         submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(this, options);
+        if (submitting) Minecraft.getMinecraft()
+            .displayGuiScreen(new HologramPlacementLoadingScreen());
     }
 
     void retry() {

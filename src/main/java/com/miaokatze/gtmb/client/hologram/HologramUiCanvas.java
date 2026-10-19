@@ -190,6 +190,10 @@ final class HologramUiCanvas {
             || id == 163 && ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing)
             accent = 0xff7272;
         if (id == 309 || id == 310) accent = ui.library.websiteAccent();
+        if (id == 226) accent = ui.library.upgradeStatus() == 2 ? HologramUiAccent.NEXT : 0;
+        if (id == 331 && ui.textBoxes.active()) accent = HologramUiAccent.NEXT;
+        if (ui.identity.deidentificationDrawer() && id == 212) accent = HologramUiAccent.SUGGESTION;
+        if (ui.identity.deidentificationDrawer() && id == 214) accent = HologramUiAccent.INFORMATION;
         drawn.label = label;
         drawn.accent = enabled ? accent : 0;
         if (c.contains(mx, my)) {

@@ -400,7 +400,7 @@ gtmb.hologram.progress.area.detail.failed=材料规划失败
 gtmb.hologram.progress.area.detail.paused=材料规划已暂停
 
 # Decoration voucher
-item.decoration_voucher.name=装饰抵用券
+item.decoration_voucher.name=猫猫装饰抵用券
 item.decoration_voucher.description.0=§7为§f一次蓝图施工§7抵扣允许的建筑装饰材料。§r
 item.decoration_voucher.description.1=§e主背包至少持有一张§7，在§f材料确认页§7主动勾选。§r
 item.decoration_voucher.description.2=§7仅抵扣允许的建筑材料；§6工业资源仍按实际需求核算§7。§r
@@ -413,11 +413,11 @@ gtmb.tooltip.hold_shift.voucher=§8按住 §eShift §8查看抵扣范围、消�
 gtmb.tooltip.section.coverage=§b§l抵扣范围§r
 gtmb.tooltip.section.payment=§6§l消耗与保留§r
 gtmb.tooltip.section.configuration=§d§l服务器配置§r
-item.decoration_voucher.detail.scope=§7范围由服务器§f建筑模组白名单§7决定，含允许的装饰外壳。§r
+item.decoration_voucher.detail.scope=§7按服务器建筑模组、方块或矿词白名单抵扣放置方块；§e黑名单优先§7。§r
 item.decoration_voucher.detail.industrial=§6GT / AE 与工业材料§7不在抵扣范围内，嵌入装饰内部也不例外。§r
 item.decoration_voucher.detail.assets=§7内部库存物品、流体与 §eEU§7 均保留实际需求。§r
 item.decoration_voucher.detail.consume=§7首次成功提交抵扣材料的方块后§f消耗一张§7，本次任务后续沿用。§r
 item.decoration_voucher.detail.rollback=§a未成功抵扣不消耗§7；仅勾选、核对或失败放置不会扣券。§r
-item.decoration_voucher.detail.creative=§d创造模式§7也需持有券才能勾选核查减免方案；施工§a不扣券§7。§r
-item.decoration_voucher.detail.config=§7管理员可配置§f启用开关与模组白名单§7：§r
-item.decoration_voucher.detail.reload=§fgtmb-decoration-voucher.cfg §8（修改后重启服务器）§r
+item.decoration_voucher.detail.creative=§d创造模式§7可查看抵扣方案；施工§a不消耗抵用券§7。§r
+item.decoration_voucher.detail.config=§7管理员使用 §f/gtmb voucher §7可视化编辑、保存或恢复默认。§r
+item.decoration_voucher.detail.reload=§7界面保存立即生效；直接修改 §fgtmb-decoration-voucher.cfg §7后重启服务器。§r

@@ -92,7 +92,7 @@ final class HologramClientLibrary {
 
     static final class Entry {
 
-        final String id, name, authorName, authorUuid, sourceMod;
+        final String id, name, authorName, authorUuid, sourceMod, gtmbVersion;
         final int cells, structures;
         final long bytes, createdAt;
 
@@ -102,6 +102,8 @@ final class HologramClientLibrary {
             authorName = string(blueprint, "authorName");
             authorUuid = string(blueprint, "authorUuid");
             sourceMod = string(blueprint, "sourceMod");
+            gtmbVersion = blueprint.has("nativeBlueprint") && blueprint.get("nativeBlueprint")
+                .isJsonObject() ? string(blueprint.getAsJsonObject("nativeBlueprint"), "gtmbVersion") : "";
             createdAt = blueprint.has("createdAt") ? blueprint.get("createdAt")
                 .getAsLong() : 0;
             cells = blueprint.has("displayCells") ? blueprint.get("displayCells")
@@ -117,6 +119,7 @@ final class HologramClientLibrary {
             authorName = source.authorName;
             authorUuid = source.authorUuid;
             sourceMod = source.sourceMod;
+            gtmbVersion = source.gtmbVersion;
             cells = source.cells;
             structures = source.structures;
             bytes = source.bytes;
@@ -206,7 +209,9 @@ final class HologramClientLibrary {
                         }
                         reader.endArray();
                         metadata.addProperty(key.equals("cells") ? "displayCells" : "displayStructures", count);
-                    } else if (key.equals("createdAt")) metadata.addProperty(key, reader.nextLong());
+                    } else if (key.equals("nativeBlueprint"))
+                        metadata.add(key, new com.google.gson.JsonParser().parse(reader));
+                    else if (key.equals("createdAt")) metadata.addProperty(key, reader.nextLong());
                     else if (key.equals("id") || key.equals("name")
                         || key.equals("authorName")
                         || key.equals("authorUuid")

@@ -308,8 +308,8 @@ public final class HologramBlueprintFiles {
             try {
                 if (name.equals("hologram-presets.json")) {
                     byte[] old = read(source, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
-                    byte[] compact = HologramBlueprintCompactCodec
-                        .recompress(old, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES, currentOperation);
+                    byte[] compact = HologramBlueprintUpgrade
+                        .migrate(old, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES, currentOperation);
                     progress.accept(done, jsonFiles.size());
                     if (java.util.Arrays.equals(old, compact)) current++;
                     else {
@@ -353,8 +353,8 @@ public final class HologramBlueprintFiles {
                     pngPath = match;
                 }
                 String id = adopt(root, source, document);
-                byte[] compact = HologramBlueprintCompactCodec
-                    .recompress(old, HologramBlueprintArtifact.MAX_JSON_BYTES, currentOperation);
+                byte[] compact = HologramBlueprintUpgrade
+                    .migrate(old, HologramBlueprintArtifact.MAX_JSON_BYTES, currentOperation);
                 progress.accept(done, jsonFiles.size());
                 Path target = target(root, id, compact);
                 byte[] bound = HologramBlueprintArtifact.bindPreview(compact, png);

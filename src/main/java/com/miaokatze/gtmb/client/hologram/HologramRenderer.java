@@ -72,6 +72,19 @@ final class HologramRenderer {
     private static HologramState boundsState;
     private static double boundsX, boundsY, boundsZ, boundsExtent;
     static int projectionLayer = Integer.MAX_VALUE;
+    static int moveAxis = -1, moveDelta;
+
+    private static boolean moving(HologramState.Cell cell) {
+        return moveAxis >= 0 && moveDelta != 0 && selection != null && selection.contains(cell.index);
+    }
+
+    private static double[] moveScreen(HologramState.Cell cell) {
+        if (!moving(cell)) return new double[] { 0, 0 };
+        double[] from = project(0, 0, 0),
+            to = project(moveAxis == 0 ? moveDelta : 0, moveAxis == 1 ? moveDelta : 0, moveAxis == 2 ? moveDelta : 0);
+        return new double[] { to[0] - from[0], to[1] - from[1] };
+    }
+
     static boolean showEmptyCells;
     static HologramSelection selection;
     static String selectedStructureId = "";
@@ -456,16 +469,17 @@ final class HologramRenderer {
                 if (inside) hovered = face.cell.index;
                 if (face.empty || face.nativeModel) continue;
                 float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
+                double[] shifted = moveScreen(face.cell);
                 int sampleIndex = 0;
                 for (HologramTextures.Sample sample : face.samples()) {
-                    setSampleColor(t, sample, shade, .96f);
+                    setSampleColor(t, sample, shade, moving(face.cell) ? .38f : .96f);
                     if (face.cell.sourceMissing && !face.cell.missingBlock) t.setColorRGBA_F(.55f, .55f, .55f, .78f);
                     for (int i = 0; i < 4; i++) {
                         int vertex = FACES[face.side][i];
                         double[] point = face.points[vertex];
                         t.addVertexWithUV(
-                            point[0],
-                            point[1],
+                            point[0] + shifted[0],
+                            point[1] + shifted[1],
                             point[2] * depthScale + sampleIndex * .015,
                             textureU(sample.icon, face.side, face.local(vertex)),
                             textureV(sample.icon, face.side, face.local(vertex)));
@@ -488,7 +502,18 @@ final class HologramRenderer {
                 GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
                 GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
                 GL11.glTranslated(cell.dx - boundsX - panX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - panZ - .5);
+                if (moving(cell)) GL11.glTranslated(
+                    moveAxis == 0 ? moveDelta : 0,
+                    moveAxis == 1 ? moveDelta : 0,
+                    moveAxis == 2 ? moveDelta : 0);
+                GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
+                if (moving(cell)) {
+                    GL11.glEnable(GL11.GL_BLEND);
+                    GL14.glBlendColor(1, 1, 1, .38f);
+                    GL11.glBlendFunc(0x8003, 0x8004);
+                }
                 HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
+                GL11.glPopAttrib();
                 GL11.glPopMatrix();
                 if (pixels != null) raster.after(cell, pixels);
             }
@@ -540,6 +565,9 @@ final class HologramRenderer {
                     else if (entry.getKey()
                         .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
                     else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
+                    else if (entry.getKey()
+                        .startsWith(com.miaokatze.gtmb.hologram.HologramTextBox.PREFIX))
+                        t.setColorRGBA_F(.78f, .52f, 1, .85f);
                     else t.setColorRGBA_F(.45f, .85f, 1, .72f);
                     for (int[] edge : EDGES) {
                         double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
@@ -640,8 +668,7 @@ final class HologramRenderer {
 
     /** Intersect the orthographic view ray with a horizontal plane at an absolute world Y. */
     static int[] pickEmptyVoxel(HologramState state, int mx, int my, int planeY) {
-        if (state == null || state.cells.isEmpty()
-            || projectedScale <= 0
+        if (state == null || projectedScale <= 0
             || mx < projectedX
             || mx >= projectedX + projectedWidth
             || my < projectedY

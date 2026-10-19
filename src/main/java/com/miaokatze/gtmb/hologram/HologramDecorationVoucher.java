@@ -63,12 +63,18 @@ public final class HologramDecorationVoucher {
 
     /** Ordinary decorative items must themselves belong to an allowed decoration namespace. */
     public static boolean eligible(ItemStack stack) {
-        return safe(stack) && DecorationVoucherConfig.view()
-            .allows(modId(stack.getItem()));
+        return stack != null && Block.getBlockFromItem(stack.getItem()) != null
+            && Block.getBlockFromItem(stack.getItem()) != net.minecraft.init.Blocks.air
+            && safe(stack)
+            && DecorationVoucherConfig.view()
+                .allows(stack);
     }
 
     public static boolean covered(Block host, ItemStack payment) {
-        return hostAllowed(host) && eligible(payment);
+        // Only the placed shell is waived. Container contents are quoted on independent paths.
+        return host != null && payment != null
+            && Block.getBlockFromItem(payment.getItem()) == host
+            && eligible(payment);
     }
 
     /**
@@ -81,7 +87,13 @@ public final class HologramDecorationVoucher {
             || cost.numerator <= 0
             || !safe(cost.prebuilt)
             || !safe(cost.raw)) return false;
-        for (ItemStack alternative : cost.alternatives) if (!safe(alternative)) return false;
+        if (DecorationVoucherConfig.view()
+            .denied(cost.prebuilt)
+            || DecorationVoucherConfig.view()
+                .denied(cost.raw))
+            return false;
+        for (ItemStack alternative : cost.alternatives) if (!safe(alternative) || DecorationVoucherConfig.view()
+            .denied(alternative)) return false;
         return true;
     }
 
@@ -153,10 +165,15 @@ public final class HologramDecorationVoucher {
         if (stack == null || stack.getItem() == null || stack.stackSize <= 0) return false;
         Item item = stack.getItem();
         String namespace = modId(item);
-        return !namespace.isEmpty() && !industrial(
+        boolean selectedMixedDecoration = "extrautilities".equals(namespace) && Block.getBlockFromItem(item) != null
+            && Block.getBlockFromItem(item) != net.minecraft.init.Blocks.air
+            && DecorationVoucherConfig.view()
+                .allows(stack);
+        return !namespace.isEmpty() && (!industrial(
             namespace,
             item.getClass()
                 .getName())
+            || selectedMixedDecoration)
             && !(item instanceof IFluidContainerItem)
             && !FluidContainerRegistry.isFilledContainer(stack);
     }

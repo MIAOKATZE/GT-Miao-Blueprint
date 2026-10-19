@@ -158,7 +158,7 @@ final class HologramWorldPlacementWorkflow {
             || s.capture.incomplete
             || s.capture.pending
             || s.capturePending) return;
-        if (!moveVirtual(s, x, y, z, side)) {
+        if (!moveVirtual(s, x, y, z, side, true)) {
             s.status = "该位置或结构范围不合法，预览与蓝图保留；请调整位置后重试";
             HologramProjectorWorkflow.libraryCloseUi(s);
             HologramSnapshots.send(s);
@@ -170,7 +170,6 @@ final class HologramWorldPlacementWorkflow {
         s.blueprintAwaitingConfirmation = true;
         s.placementReviewIssued = false;
         s.forcePlacementReady = false;
-        HologramResourcePlanner.refreshPlan(s);
         s.openPurpose = "";
         s.placementReviewNonce++;
         s.status = "位置已锁定；Shift + 右键取消锁定，普通右键打开材料与 NBT 放置确认";
@@ -446,6 +445,10 @@ final class HologramWorldPlacementWorkflow {
 
     /** Rebase the in-memory draft without publishing a temporary lock or discarding edits. */
     static boolean moveVirtual(HologramSession s, int x, int y, int z, int side) {
+        return moveVirtual(s, x, y, z, side, false);
+    }
+
+    private static boolean moveVirtual(HologramSession s, int x, int y, int z, int side, boolean deferred) {
         if (HologramSessionPolicy.blockedByAreaImport(s)) return false;
         EntityPlayerMP player = s.player;
         if (s.capture == null || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
@@ -458,7 +461,9 @@ final class HologramWorldPlacementWorkflow {
             s.z = z;
         }
         s.side = side;
-        HologramResourcePlanner.refreshPlan(s);
+        if (deferred && s.virtualPreset != null && s.virtualPreset.schema >= 2)
+            HologramDeferredPlanRefresh.request(s, java.util.Collections.emptySet());
+        else HologramResourcePlanner.refreshPlan(s);
         return true;
     }
 
@@ -565,6 +570,19 @@ final class HologramWorldPlacementWorkflow {
             saved.x = coordinate[0];
             saved.y = coordinate[1];
             saved.z = coordinate[2];
+            if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
+                try {
+                    NBTTagCompound definition = HologramBlueprintNbt.decode(saved.textBoxNbt);
+                    int[] previous = definition.getIntArray("turns");
+                    if (previous.length >= 96) return false;
+                    int[] turns = java.util.Arrays.copyOf(previous, previous.length + 1);
+                    turns[previous.length] = vertical ? 2 : 1;
+                    definition.setIntArray("turns", turns);
+                    saved.textBoxNbt = HologramBlueprintNbt.encodeCaptured(definition);
+                } catch (java.io.IOException invalid) {
+                    return false;
+                }
+            }
         }
         if (rotate) for (HologramPresets.HintArea hint : preset.hintAreas) {
             int[] a = HologramVirtualTransform.turn(hint.x1, hint.y1, hint.z1, vertical);

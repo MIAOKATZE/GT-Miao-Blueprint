@@ -749,6 +749,7 @@ final class HologramLibraryClient {
                 row.setString("authorName", entry.authorName);
                 row.setString("authorUuid", entry.authorUuid);
                 row.setString("sourceMod", entry.sourceMod);
+                row.setString("gtmbVersion", entry.gtmbVersion);
                 row.setLong("createdAt", entry.createdAt);
                 row.setInteger("cells", entry.cells);
                 row.setInteger("structures", entry.structures);

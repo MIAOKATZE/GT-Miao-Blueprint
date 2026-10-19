@@ -72,11 +72,15 @@ public final class HologramBlueprintUpgradeRegression {
                 HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact
                     .readPair(HologramBlueprintFiles.resolve(library, entry.getKey()));
                 SimpleAssert.eq(
-                    HologramBlueprintCompactCodec.parse(entry.getValue()),
+                    HologramBlueprintCompactCodec.parse(
+                        HologramBlueprintUpgrade
+                            .migrate(entry.getValue(), HologramBlueprintArtifact.MAX_JSON_BYTES, () -> true)),
                     HologramBlueprintCompactCodec.parse(actual.json),
                     "compression preserves unknown JSON fields and exact NBT strings");
                 SimpleAssert.eq(
-                    HologramBlueprintContentHash.of(entry.getValue()),
+                    HologramBlueprintContentHash.of(
+                        HologramBlueprintUpgrade
+                            .migrate(entry.getValue(), HologramBlueprintArtifact.MAX_JSON_BYTES, () -> true)),
                     HologramBlueprintContentHash.of(actual.json),
                     "compression and naming preserve semantic identity");
                 SimpleAssert.that(
@@ -90,7 +94,10 @@ public final class HologramBlueprintUpgradeRegression {
                     "preview pixels survive rebinding");
             }
             SimpleAssert.eq(
-                collection,
+                HologramBlueprintCompactCodec.parse(
+                    HologramBlueprintUpgrade
+                        .migrate(originalCatalog, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES, () -> true),
+                    HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES),
                 HologramBlueprintCompactCodec
                     .parse(Files.readAllBytes(catalog), HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES),
                 "catalog migration preserves unknown root metadata");

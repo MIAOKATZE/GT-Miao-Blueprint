@@ -362,6 +362,7 @@ final class HologramUiLibrary {
             int thumbY = 123 + (112 - thumbHeight) * this.libraryOffset / (presets.tagCount() - 4);
             drawRect(x + w - 3, thumbY, x + w - 1, thumbY + thumbHeight, 0xff6aabb8);
         }
+        HologramScrollEdges.draw(x + 2, 122, w - 4, 114);
         ui.canvas.button(
             139,
             x + 5,
@@ -640,6 +641,7 @@ final class HologramUiLibrary {
         if (server && !HologramLibraryClient.INSTANCE.config()
             .getBoolean("admin")) return;
         int width = server ? 30 : 66;
+        int upgrade = upgradeStatus();
         ui.canvas.button(
             226,
             x,
@@ -647,14 +649,17 @@ final class HologramUiLibrary {
             width,
             13,
             server ? "升级" : "升级旧蓝图",
-            !HologramLibraryClient.INSTANCE.busy() && !HologramBackgroundTasks.busy()
+            upgrade > 0 && !HologramLibraryClient.INSTANCE.busy()
+                && !HologramBackgroundTasks.busy()
                 && ui.session.pendingSequence() < 0,
             mx,
             my);
         if (mx >= x && mx < x + width && my >= 301 && my < 314) {
             ui.canvas.tooltip(new ArrayList<>());
             ui.canvas.tooltip()
-                .add(server ? "管理员：无损压缩服务器公库，校准 JSON / PNG 文件名。" : "一键无损压缩本地旧蓝图，校准 JSON / PNG 文件名。");
+                .add(upgrade == 0 ? "蓝图 GTMB 版本已一致，无需升级。" : upgrade == 2 ? "包含重要处理更新：建议升级旧蓝图。" : "只有版本信息更新，可按需升级。");
+            ui.canvas.tooltip()
+                .add("仅更新 GTMB 元数据及兼容存储；保留原整合包、其他 Mod 版本和方块内容。");
             ui.canvas.tooltip()
                 .add("保留逻辑ID、最近蓝图与上传映射；缺图或配对不明确时保留原件并报告。");
             String status = HologramLibraryClient.INSTANCE.status();
@@ -666,6 +671,18 @@ final class HologramUiLibrary {
             if (details.size() > 8) ui.canvas.tooltip()
                 .add("另有 " + (details.size() - 8) + " 条跳过原因，完整明细见游戏日志。");
         }
+    }
+
+    int upgradeStatus() {
+        NBTTagList rows = HologramLibraryClient.dedicated() ? HologramLibraryClient.INSTANCE.rows(this.publicLibrary)
+            : ui.session.state().data.getTagList("presets", 10);
+        int status = 0;
+        for (int i = 0; i < rows.tagCount(); i++) status = Math.max(
+            status,
+            com.miaokatze.gtmb.hologram.HologramBlueprintUpgrade.status(
+                rows.getCompoundTagAt(i)
+                    .getString("gtmbVersion")));
+        return status;
     }
 
     private void upgradedLibrary() {

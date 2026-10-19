@@ -47,6 +47,9 @@ final class HologramCutClient {
     private HologramState preview;
     private NBTTagCompound rawPreview;
     private Transform pose = new Transform(0, 0, 0, 0);
+    private HologramCutRawPreviewSession completedPreview;
+    private long completedPreviewUntil;
+    private int[] completedAnchor;
     private int[] locked;
     private com.miaokatze.gtmb.hologram.HologramAreaSelection selection;
     private final HologramSelectionInput selectionInput = new HologramSelectionInput();
@@ -595,6 +598,8 @@ final class HologramCutClient {
     }
 
     void cancel() {
+        if (completedPreview != null) completedPreview.release();
+        completedPreview = null;
         continuous.exit();
         requests.exitActivity();
         operationProgress.clear();
@@ -612,6 +617,17 @@ final class HologramCutClient {
 
     int[] anchor() {
         return locked == null ? HologramClient.cutAnchor(true) : locked.clone();
+    }
+
+    private void completePreview() {
+        NBTTagCompound raw = rawPreview == null ? null : detachedPreview(rawPreview);
+        int[] at = anchor();
+        cancel();
+        if (raw == null || at == null) return;
+        completedPreview = HologramCutRawPreview.newSession();
+        completedPreview.update(raw);
+        completedAnchor = at.clone();
+        completedPreviewUntil = System.nanoTime() + HologramProjectionLifetime.RETENTION_NANOS;
     }
 
     private void lockPreview(boolean locked) {
@@ -704,7 +720,7 @@ final class HologramCutClient {
                 status.show(text(completed ? "resultConfirmed" : "notExecuted"));
                 if ("cut".equals(resolved.action)) finishCut(resolved.id, completed);
                 if (completed && requests.currentActivity(resolved)
-                    && ("paste".equals(resolved.action) || "undo".equals(resolved.action))) cancel();
+                    && ("paste".equals(resolved.action) || "undo".equals(resolved.action))) completePreview();
             }
         }
         if ("list".equals(op) && !reply.target.isEmpty()
@@ -712,7 +728,7 @@ final class HologramCutClient {
                 .isEmpty())
             status.directoryFailed(n.getBoolean("success") ? text("syncTimeout") : n.getString("message"));
         if (n.getBoolean("success")) {
-            if (requests.currentActivity(reply) && ("paste".equals(op) || "undo".equals(op))) cancel();
+            if (requests.currentActivity(reply) && ("paste".equals(op) || "undo".equals(op))) completePreview();
             if (requests.currentActivity(reply)
                 && (stage == HologramCutInput.Stage.MOVING || stage == HologramCutInput.Stage.LOCKED)
                 && n.hasKey("preview")
@@ -802,6 +818,15 @@ final class HologramCutClient {
     }
 
     boolean render(float ticks) {
+        if (completedPreview != null) {
+            if (System.nanoTime() >= completedPreviewUntil || active() || !cutMode) {
+                completedPreview.release();
+                completedPreview = null;
+            } else if (held()) {
+                completedPreview.render(completedAnchor[0], completedAnchor[1], completedAnchor[2], ticks);
+                return true;
+            }
+        }
         if (!active() || !held()) return false;
         if (selecting()) {
             NBTTagCompound data = selection.snapshot();

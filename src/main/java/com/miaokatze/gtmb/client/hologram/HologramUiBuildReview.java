@@ -67,7 +67,8 @@ final class HologramUiBuildReview {
     void tickMaterialDialog() {
         updateMaterialReviewPresentation();
         if (ui.host == null || ui.host.parent() == null) return;
-        boolean show = confirmation && !ui.nbt.nbtDrawer()
+        boolean show = confirmation && !ui.session.state().data.getBoolean("placementValidating")
+            && !ui.nbt.nbtDrawer()
             && !ui.bindings.networkDrawer()
             && !ui.identity.deidentificationDrawer()
             && ui.ae.aeReview() == null
@@ -332,6 +333,10 @@ final class HologramUiBuildReview {
     }
 
     void acknowledgeReview(HologramState next) {
+        if (next.data.getBoolean("placementValidating")) {
+            confirmation = false;
+            return;
+        }
         if (confirmation && confirmedRevision != ui.session.revision()) confirmation = false;
         if (next.data.getBoolean("blueprintAwaitingConfirmation")
             && !next.data.getBoolean("presetBrowseForPlacement")) {
