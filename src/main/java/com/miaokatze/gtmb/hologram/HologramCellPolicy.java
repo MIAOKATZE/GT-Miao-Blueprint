@@ -887,7 +887,10 @@ final class HologramCellPolicy {
             List<ItemStack> result = new ArrayList<>();
             if (cell.structureTargets != null) {
                 cell.candidateBoundary = "仅提供本格保存的结构声明候选；共享格须同时符合各成员结构";
-                for (ItemStack sample : cell.structureTargets) if (placeableSample(s, cell, sample)) result.add(sample);
+                for (ItemStack identity : cell.structureTargets) {
+                    ItemStack sample = declaredSample(s, cell, identity);
+                    if (placeableSample(s, cell, sample)) result.add(sample);
+                }
                 return result;
             }
             for (HologramPresets.Cell entry : s.virtualPreset.palette) {
@@ -1078,6 +1081,20 @@ final class HologramCellPolicy {
         cell.unknown = false;
     }
 
+    /** Saved declarations contain identities, while native cuts require the exact retained shape NBT. */
+    private static ItemStack declaredSample(HologramSession s, HologramCapture.Cell cell, ItemStack identity) {
+        if (s.virtual && s.virtualPreset.schema >= 2 && HologramNativePlacement.supported(cell.block)) {
+            try {
+                ItemStack nativeSample = HologramNativePlacement
+                    .sample(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
+                return HologramValues.sameMaterial(identity, nativeSample) ? nativeSample : null;
+            } catch (java.io.IOException invalid) {
+                return null;
+            }
+        }
+        return identity;
+    }
+
     static boolean acceptableSample(HologramSession s, HologramCapture.Cell cell, ItemStack sample) {
         if (!placeableSample(s, cell, sample)) return false;
         if ("templateController".equals(cell.role))
@@ -1093,7 +1110,11 @@ final class HologramCellPolicy {
             && cell.blueprintItem.equals(Item.itemRegistry.getNameForObject(sample.getItem()))) return true;
         if (cell.structureTargets != null || (!s.areaStructureId.isEmpty() && !cell.memberships()
             .isEmpty())) {
-            if (candidates(s, cell).stream()
+            // placeableSample above already validates the full native payload. Compare the declared
+            // identity here; validating its intentionally tagless serialization would discard all cuts.
+            List<ItemStack> declared = s.virtual && cell.structureTargets != null ? cell.structureTargets
+                : candidates(s, cell);
+            if (declared.stream()
                 .anyMatch(option -> HologramValues.sameMaterial(option, sample))) return true;
             // Old height-dependent declarations can describe a different cap at this coordinate.
             // Only an exact, verified plain source may bypass that stale editing list; never enlarge it.

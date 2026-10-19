@@ -24,8 +24,16 @@ public final class HologramLibraryService {
 
     /** No callback from a completed transfer can recreate or reopen a closed/replaced session. */
     public static boolean sessionCurrent(EntityPlayerMP player, NBTTagCompound request) {
-        return HologramLibraryFacade.enabled() && connectedProjector(player)
+        return (HologramLibraryFacade.enabled() || request != null && ("privateBegin".equals(request.getString("op"))
+            || "publicPrepare".equals(request.getString("op")) && !request.getString("integratedPresetId")
+                .isEmpty()))
+            && connectedProjector(player)
             && HologramService.librarySessionCurrent(player, request);
+    }
+
+    /** Content preparation is owner/connection bound and deliberately has no workspace or placement admission. */
+    static boolean contentCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        return request != null && request.getLong("clientTaskToken") > 0 && connectedProjector(player);
     }
 
     static boolean saveCurrent(EntityPlayerMP player, NBTTagCompound request) {
@@ -48,7 +56,7 @@ public final class HologramLibraryService {
     }
 
     public static void quickBootstrap(EntityPlayerMP player, NBTTagCompound request) {
-        if (!HologramLibraryFacade.enabled() || !connectedProjector(player)) return;
+        if (!connectedProjector(player)) return;
         try {
             HologramNetwork.sendLibraryReply(player, HologramService.libraryQuickBootstrap(player, request));
         } catch (IOException | RuntimeException invalid) {
@@ -57,8 +65,7 @@ public final class HologramLibraryService {
     }
 
     public static void quickCancel(EntityPlayerMP player, NBTTagCompound request) {
-        if (HologramLibraryFacade.enabled() && request != null)
-            HologramService.libraryQuickCancel(player, request.getString("quickToken"));
+        if (request != null) HologramService.libraryQuickCancel(player, request.getString("quickToken"));
     }
 
     static void quickFallback(EntityPlayerMP player, NBTTagCompound request) {

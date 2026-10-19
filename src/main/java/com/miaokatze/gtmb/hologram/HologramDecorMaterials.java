@@ -280,20 +280,24 @@ public final class HologramDecorMaterials {
                             && prebuilt.hasTagCompound()
                             && !prebuilt.getTagCompound()
                                 .hasKey("isStructure")
-                            && prebuilt.getTagCompound()
+                            && (prebuilt.getTagCompound()
                                 .getString("tID")
-                                .equals("BlockTileBlock")) {
-                                    NBTTagCompound cut = prebuilt.getTagCompound();
-                                    int x = cut.getInteger("sizex"), y = cut.getInteger("sizey"),
-                                        z = cut.getInteger("sizez");
-                                    if (x <= 0 || x > 16 || y <= 0 || y > 16 || z <= 0 || z > 16)
-                                        throw new IOException("Invalid LittleTiles static cutting dimensions");
-                                    Block material = Block.getBlockFromName(cut.getString("block"));
-                                    ItemStack raw = new ItemStack(material, 1, cut.getInteger("meta"));
-                                    result.add(new Cost(prebuilt, raw, (long) x * y * z * prebuilt.stackSize, 4096));
-                                } else {
-                                    result.add(new Cost(prebuilt, prebuilt, prebuilt.stackSize, 1));
-                                }
+                                .equals("BlockTileBlock")
+                                || prebuilt.getTagCompound()
+                                    .getString("tID")
+                                    .equals("BlockTileColored"))) {
+                                        NBTTagCompound cut = prebuilt.getTagCompound();
+                                        int x = cut.getInteger("sizex"), y = cut.getInteger("sizey"),
+                                            z = cut.getInteger("sizez");
+                                        if (x <= 0 || x > 16 || y <= 0 || y > 16 || z <= 0 || z > 16)
+                                            throw new IOException("Invalid LittleTiles static cutting dimensions");
+                                        Block material = Block.getBlockFromName(cut.getString("block"));
+                                        ItemStack raw = new ItemStack(material, 1, cut.getInteger("meta"));
+                                        result
+                                            .add(new Cost(prebuilt, raw, (long) x * y * z * prebuilt.stackSize, 4096));
+                                    } else {
+                                        result.add(new Cost(prebuilt, prebuilt, prebuilt.stackSize, 1));
+                                    }
             }
             return new Descriptor(result);
         } catch (IOException failure) {

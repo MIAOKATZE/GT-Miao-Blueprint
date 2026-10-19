@@ -37,7 +37,6 @@ import org.lwjgl.input.Mouse;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramV011Evidence;
 
@@ -2046,9 +2045,8 @@ public final class HologramV011WorkbenchClientSmoke {
             .resolve(id + ".json");
     }
 
-    private static JsonObject diskBlueprint(HologramBlueprintArtifact.Artifact artifact) {
-        JsonObject root = new JsonParser().parse(new String(artifact.json, StandardCharsets.UTF_8))
-            .getAsJsonObject();
+    private static JsonObject diskBlueprint(HologramBlueprintArtifact.Artifact artifact) throws java.io.IOException {
+        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(artifact.json);
         return root.has("blueprint") ? root.getAsJsonObject("blueprint") : root;
     }
 

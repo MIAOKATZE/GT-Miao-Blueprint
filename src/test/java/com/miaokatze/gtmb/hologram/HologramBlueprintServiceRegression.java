@@ -21,6 +21,116 @@ import com.mojang.authlib.GameProfile;
 /** Production geometry edits against a world fixture that rejects every write. */
 final class HologramBlueprintServiceRegression {
 
+    private static void deletion(HologramSession source) throws java.io.IOException {
+        HologramSession session = new HologramSession(source.player, source.x, source.y, source.z, false, 2);
+        session.virtual = true;
+        session.virtualPreset = HologramPresets.copy(source.virtualPreset);
+        session.materialSettings.main = false;
+        session.materialSettings.containers = false;
+        session.materialSettings.me = false;
+        session.materialContext = new HologramMaterials.Context(source.player, session.materialSettings);
+        HologramBlueprintProjection.populateVirtual(session);
+        HologramPresets.Structure group = new HologramPresets.Structure();
+        group.id = "delete-members";
+        session.virtualPreset.structures.add(group);
+        for (HologramCapture.Cell cell : session.capture.cells)
+            HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(group.id));
+        HologramPresets.Cell palette = HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false);
+        palette.structureId = group.id;
+        session.virtualPreset.palette.add(palette);
+        HologramEditState original = new HologramEditState(session);
+        int history = session.undoEdits.size();
+        NBTTagCompound action = new NBTTagCompound();
+        action.setIntArray("indices", new int[] { 0 });
+        action.setLong("planRevision", session.planRevision);
+        HologramBlueprintEditor.deleteBlueprintCells(session, action);
+        SimpleAssert
+            .eq(1, session.capture.cells.size(), "Delete removes selected blueprint geometry rather than excluding it");
+        SimpleAssert.eq(
+            1,
+            HologramBlueprintProjection.blueprint(session, "deleted").cells.size(),
+            "saved blueprint omits deleted geometry");
+        SimpleAssert.eq(
+            1,
+            session.virtualPreset.structures.size(),
+            "deleting one ordinary member retains its remaining structure");
+        SimpleAssert.eq(history + 1, session.undoEdits.size(), "deletion is one history step");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editUndo");
+        SimpleAssert.eq(2, session.capture.cells.size(), "undo restores removed geometry");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editRedo");
+        SimpleAssert.eq(1, session.capture.cells.size(), "redo removes the same geometry");
+        action.setLong("planRevision", session.planRevision);
+        HologramBlueprintEditor.deleteBlueprintCells(session, action);
+        SimpleAssert
+            .eq(0, session.virtualPreset.structures.size(), "deleting the last member removes the empty declaration");
+        SimpleAssert.that(
+            session.virtualPreset.palette.get(0)
+                .memberships()
+                .isEmpty(),
+            "palette never references a removed declaration");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editUndo");
+        SimpleAssert.eq(1, session.virtualPreset.structures.size(), "undo restores the declaration atomically");
+        original.apply(session);
+        HologramTextBox text = new HologramTextBox();
+        text.id = HologramTextBox.PREFIX + "11111111-1111-1111-1111-111111111111";
+        text.width = text.height = 1;
+        text.bitmap = new byte[] { 1 };
+        group = session.virtualPreset.structures.get(0);
+        group.id = text.id;
+        group.textBoxNbt = HologramBlueprintNbt.encodeCaptured(text.write());
+        for (HologramCapture.Cell cell : session.capture.cells)
+            HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(group.id));
+        action.setLong("planRevision", session.planRevision);
+        HologramCapture capture = session.capture;
+        try {
+            HologramBlueprintEditor.deleteBlueprintCells(session, action);
+            throw new AssertionError("partial text deletion accepted");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                session.capture == capture && capture.cells.size() == 2,
+                "partial text refusal preserves all geometry");
+        }
+        text.id = HologramPictureBox.PREFIX + "22222222-2222-2222-2222-222222222222";
+        text.picture = new HologramPictureBox();
+        text.picture.filename = "embedded.png";
+        text.picture.originalWidth = text.picture.originalHeight = text.picture.sourceWidth = text.picture.sourceHeight = 1;
+        text.picture.source = new int[] { 0xffdddddd };
+        text.picture.resizeShortSide(16);
+        group.id = text.id;
+        group.textBoxNbt = HologramBlueprintNbt.encodeCaptured(text.write());
+        for (HologramCapture.Cell cell : session.capture.cells)
+            HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(group.id));
+        action.setLong("planRevision", session.planRevision);
+        try {
+            HologramBlueprintEditor.deleteBlueprintCells(session, action);
+            throw new AssertionError("partial image deletion accepted");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(session.capture == capture && capture.cells.size() == 2, "image deletion is atomic too");
+        }
+        action.setIntArray("indices", new int[] { 0, 1 });
+        HologramBlueprintEditor.deleteBlueprintCells(session, action);
+        SimpleAssert.eq(0, session.capture.cells.size(), "whole image Delete removes all hosts");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editUndo");
+        SimpleAssert.eq(2, session.capture.cells.size(), "undo restores the entire image");
+        HologramTextBox imageDefinition = HologramTextBox
+            .read(HologramTextWorkflow.definition(session.virtualPreset.structures.get(0)));
+        SimpleAssert
+            .eq("embedded.png", imageDefinition.picture.filename, "history retains editable embedded image data");
+        original.apply(session);
+        session.undoEdits.clear();
+        session.redoEdits.clear();
+        action.setLong("planRevision", session.planRevision);
+        session.virtual = false;
+        try {
+            HologramBlueprintEditor.deleteBlueprintCells(session, action);
+            throw new AssertionError("controller accepted blueprint delete");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.eq(2, session.capture.cells.size(), "controller structure rejects geometry deletion");
+        } finally {
+            session.virtual = true;
+        }
+    }
+
     static void run() {
         try {
             ItemStack stone = HologramArea.serverSample(Blocks.stone, 0, null);
@@ -90,6 +200,7 @@ final class HologramBlueprintServiceRegression {
             HologramCapture capture = (HologramCapture) get(session, "capture");
             SimpleAssert
                 .that(!capture.incomplete, "schema2 item-only factory cells infer their block: " + capture.failure);
+            deletion((HologramSession) session);
             spatialWorkOrder((HologramSession) session);
             HologramBlueprintSourceMaterialRegression.run((HologramSession) session);
             capture.cells.get(0).prompt = "keep configuration";

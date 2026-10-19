@@ -177,7 +177,7 @@ final class HologramBlueprintProcessing {
         policy.deidentificationLevel = Math
             .max(HologramDeidentification.checked(minimumLevel), "share".equals(tendency) ? 6 : 0);
         policy.quantum = "share".equals(tendency) ? "rebind" : "preserve";
-        policy.autoHints = "share".equals(tendency) ? "full" : "light";
+        policy.autoHints = "light";
         return policy;
     }
 
@@ -416,6 +416,18 @@ final class HologramBlueprintProcessing {
         }
     }
 
+    /** Native Carpenter skins already have a separate exact material bill in the construction planner. */
+    private static HologramBlueprintResources.Plan resourcePlan(HologramPresets.Cell cell, String scope,
+        NBTTagCompound tag) throws IOException {
+        List<net.minecraft.item.ItemStack> components = "tile".equals(scope)
+            && HologramDeidentification.carpenterBlock(cell.block())
+                ? new ArrayList<>(
+                    HologramDecorMaterials.carpenterAttributeCosts(HologramBlueprintNbt.nativePayload(tag))
+                        .values())
+                : java.util.Collections.emptyList();
+        return HologramBlueprintResources.plan(tag, components);
+    }
+
     private static final class ScopeReviews {
 
         // A null value is a validated success, not a miss. Failures may be resolved by later author projections.
@@ -449,7 +461,7 @@ final class HologramBlueprintProcessing {
                     tag = (NBTTagCompound) tag.copy();
                     for (String root : analysis.handledRoots) tag.removeTag(root);
                 }
-                HologramBlueprintResources.plan(tag);
+                resourcePlan(cell, scope, tag);
             } catch (IOException invalid) {
                 error = invalid.getMessage();
             }
@@ -534,7 +546,7 @@ final class HologramBlueprintProcessing {
             }
             Set<String> preserved = HologramFullPreservation.roots(tag);
             try {
-                HologramBlueprintResources.plan(tag);
+                resourcePlan(cell, scope, tag);
                 for (String root : preserved) {
                     NBTTagCompound row = resourceRow(cell, -1, scope, "/" + escape(root), "此路径已完全保留", true);
                     row.setBoolean("preserved", true);
@@ -546,7 +558,7 @@ final class HologramBlueprintProcessing {
                             .copy());
                     HologramBlueprintNbt.includeResourceCompanions(tag, ordinary, root);
                     try {
-                        HologramBlueprintResources.plan(ordinary);
+                        resourcePlan(cell, scope, ordinary);
                         row.setBoolean("canCancel", true);
                     } catch (IOException stillUnknown) {
                         row.setString("message", "此路径已完全保留；取消后仍须移除或重新选择完全保留");
@@ -567,7 +579,7 @@ final class HologramBlueprintProcessing {
                             .copy());
                     HologramBlueprintNbt.includeResourceCompanions(tag, selected, root);
                     try {
-                        HologramBlueprintResources.plan(selected);
+                        resourcePlan(cell, scope, selected);
                         if (preserved.contains(root)) {
                             NBTTagCompound row = resourceRow(cell, -1, scope, "/" + escape(root), "此路径已完全保留", true);
                             row.setBoolean("preserved", true);
@@ -580,7 +592,7 @@ final class HologramBlueprintProcessing {
                         String message = invalid.getMessage();
                         try {
                             HologramFullPreservation.mark(selected, root);
-                            HologramBlueprintResources.plan(selected);
+                            resourcePlan(cell, scope, selected);
                             preserve = true;
                         } catch (IOException unparsed) {
                             message = unparsed.getMessage();

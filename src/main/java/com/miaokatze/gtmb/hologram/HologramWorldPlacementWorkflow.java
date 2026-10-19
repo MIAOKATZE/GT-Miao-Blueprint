@@ -158,7 +158,7 @@ final class HologramWorldPlacementWorkflow {
             || s.capture.incomplete
             || s.capture.pending
             || s.capturePending) return;
-        if (!moveVirtual(s, x, y, z, side)) {
+        if (!moveVirtual(s, x, y, z, side, true)) {
             s.status = "该位置或结构范围不合法，预览与蓝图保留；请调整位置后重试";
             HologramProjectorWorkflow.libraryCloseUi(s);
             HologramSnapshots.send(s);
@@ -170,7 +170,6 @@ final class HologramWorldPlacementWorkflow {
         s.blueprintAwaitingConfirmation = true;
         s.placementReviewIssued = false;
         s.forcePlacementReady = false;
-        HologramResourcePlanner.refreshPlan(s);
         s.openPurpose = "";
         s.placementReviewNonce++;
         s.status = "位置已锁定；Shift + 右键取消锁定，普通右键打开材料与 NBT 放置确认";
@@ -446,6 +445,10 @@ final class HologramWorldPlacementWorkflow {
 
     /** Rebase the in-memory draft without publishing a temporary lock or discarding edits. */
     static boolean moveVirtual(HologramSession s, int x, int y, int z, int side) {
+        return moveVirtual(s, x, y, z, side, false);
+    }
+
+    private static boolean moveVirtual(HologramSession s, int x, int y, int z, int side, boolean deferred) {
         if (HologramSessionPolicy.blockedByAreaImport(s)) return false;
         EntityPlayerMP player = s.player;
         if (s.capture == null || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
@@ -458,7 +461,9 @@ final class HologramWorldPlacementWorkflow {
             s.z = z;
         }
         s.side = side;
-        HologramResourcePlanner.refreshPlan(s);
+        if (deferred && s.virtualPreset != null && s.virtualPreset.schema >= 2)
+            HologramDeferredPlanRefresh.request(s, java.util.Collections.emptySet());
+        else HologramResourcePlanner.refreshPlan(s);
         return true;
     }
 
@@ -493,6 +498,12 @@ final class HologramWorldPlacementWorkflow {
 
     /** Stage every coordinate and front before committing; stable cell order keeps all indexed targets selected. */
     static boolean transformVirtual(HologramSession s, int x, int y, int z, boolean rotate, boolean vertical) {
+        return transformVirtual(s, x, y, z, rotate, vertical, true);
+    }
+
+    /** Intermediate template turns retain schema checks; physical pose rules apply to the final orientation. */
+    static boolean transformVirtual(HologramSession s, int x, int y, int z, boolean rotate, boolean vertical,
+        boolean validateFinalPose) {
         HologramPresets.Preset preset = s.virtualPreset;
         ExtendedFacing controller = null;
         if (rotate) {
@@ -507,9 +518,10 @@ final class HologramWorldPlacementWorkflow {
             gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = preset.controllerId < 0
                 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length ? null
                     : GregTechAPI.METATILEENTITIES[preset.controllerId];
-            if ((preset.schema < 2 || preset.controllerId >= 0) && (!(prototype instanceof MTEEnhancedMultiBlockBase)
-                || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits()
-                    .isNewExtendedFacingValid(controller)))
+            if (validateFinalPose && (preset.schema < 2 || preset.controllerId >= 0)
+                && (!(prototype instanceof MTEEnhancedMultiBlockBase)
+                    || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits()
+                        .isNewExtendedFacingValid(controller)))
                 return false;
             preset.controllerFacing = controller.ordinal();
             Map<String, Integer> currentFacings = new HashMap<>();
@@ -540,7 +552,8 @@ final class HologramWorldPlacementWorkflow {
                 saved.facing = HologramBlockTransforms.isPipe(saved.stack()) ? -1
                     : saved.controller && preset.schema < 2 ? controller.getDirection()
                         .ordinal() : HologramVirtualTransform.front(front, vertical);
-                if (saved.stack() != null && !saved.missing()
+                if (validateFinalPose && saved.stack() != null
+                    && !saved.missing()
                     && !HologramCellPolicy.virtualFrontAllowed(saved.stack(), saved.facing)) return false;
             }
         }
@@ -557,6 +570,19 @@ final class HologramWorldPlacementWorkflow {
             saved.x = coordinate[0];
             saved.y = coordinate[1];
             saved.z = coordinate[2];
+            if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
+                try {
+                    NBTTagCompound definition = HologramBlueprintNbt.decode(saved.textBoxNbt);
+                    int[] previous = definition.getIntArray("turns");
+                    if (previous.length >= 96) return false;
+                    int[] turns = java.util.Arrays.copyOf(previous, previous.length + 1);
+                    turns[previous.length] = vertical ? 2 : 1;
+                    definition.setIntArray("turns", turns);
+                    saved.textBoxNbt = HologramBlueprintNbt.encodeCaptured(definition);
+                } catch (java.io.IOException invalid) {
+                    return false;
+                }
+            }
         }
         if (rotate) for (HologramPresets.HintArea hint : preset.hintAreas) {
             int[] a = HologramVirtualTransform.turn(hint.x1, hint.y1, hint.z1, vertical);
@@ -589,11 +615,16 @@ final class HologramWorldPlacementWorkflow {
             int[] offset = new int[] { old.x - s.x, old.y - s.y, old.z - s.z };
             if (rotate) offset = HologramVirtualTransform.turn(offset[0], offset[1], offset[2], vertical);
             long xx = (long) x + offset[0], yy = (long) y + offset[1], zz = (long) z + offset[2];
-            if (xx < -30000000L || xx >= 30000000L
+            if (xx < Integer.MIN_VALUE || xx > Integer.MAX_VALUE
+                || yy < Integer.MIN_VALUE
+                || yy > Integer.MAX_VALUE
+                || zz < Integer.MIN_VALUE
+                || zz > Integer.MAX_VALUE) return false;
+            if (validateFinalPose && (xx < -30000000L || xx >= 30000000L
                 || yy < 0
                 || yy >= s.player.worldObj.getHeight()
                 || zz < -30000000L
-                || zz >= 30000000L) return false;
+                || zz >= 30000000L)) return false;
             HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(old, (int) xx, (int) yy, (int) zz);
             if (rotate && preset.schema >= 2) {
                 try {
@@ -619,7 +650,7 @@ final class HologramWorldPlacementWorkflow {
                 if (rotate)
                     front = "templateController".equals(old.role) && preset.schema < 2 ? controller.getDirection()
                         .ordinal() : HologramVirtualTransform.front(front, vertical);
-                if (HologramCellPolicy.targetFor(s, old, i) != null
+                if (validateFinalPose && HologramCellPolicy.targetFor(s, old, i) != null
                     && !HologramCellPolicy.virtualFrontAllowed(HologramCellPolicy.targetFor(s, old, i), front))
                     return false;
                 facings.put(key, front);

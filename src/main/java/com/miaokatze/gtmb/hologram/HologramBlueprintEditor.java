@@ -422,6 +422,55 @@ final class HologramBlueprintEditor {
         return complete;
     }
 
+    /** Remove workspace geometry only; controller structure edits retain their default-shell action. */
+    static void deleteBlueprintCells(HologramSession s, NBTTagCompound action) throws java.io.IOException {
+        if (!HologramSessionPolicy.authoring(s) || !s.blueprintActiveStructure.isEmpty()
+            || !s.player.capabilities.allowEdit
+            || s.capture == null
+            || s.capturePending
+            || s.capture.pending
+            || s.capture.incomplete
+            || s.localPlanPending
+            || s.job == 1
+            || s.job == 2
+            || !action.hasKey("planRevision", 4)
+            || action.getLong("planRevision") != s.planRevision) throw new java.io.IOException("请在完整的蓝图编辑工作区选择方块后删除");
+        int[] indices = geometryIndices(s, action);
+        java.util.Set<Integer> selected = new java.util.HashSet<>();
+        for (int index : indices) selected.add(index);
+        for (HologramPresets.Structure group : s.virtualPreset.structures) {
+            if (group.textBoxNbt == null || group.textBoxNbt.isEmpty()) continue;
+            boolean any = false, whole = true;
+            for (int index = 0; index < s.capture.cells.size(); index++) if (s.capture.cells.get(index)
+                .belongsTo(group.id)) {
+                    any |= selected.contains(index);
+                    whole &= selected.contains(index);
+                }
+            if (any && !whole) throw new java.io.IOException("文字或图片须整体选择后删除");
+        }
+        java.util.Set<String> remove = new java.util.HashSet<>(), touched = new java.util.HashSet<>();
+        for (int index : indices) {
+            HologramCapture.Cell source = s.capture.cells.get(index);
+            if (source.anchor) throw new java.io.IOException("控制器始终受保护");
+            remove.add(HologramValues.position(source));
+            touched.addAll(source.memberships());
+        }
+        stageGeometry(s, java.util.Collections.emptyList(), remove, false);
+        java.util.Set<String> remaining = new java.util.HashSet<>();
+        for (HologramCapture.Cell cell : s.capture.cells) remaining.addAll(cell.memberships());
+        touched.removeAll(remaining);
+        s.virtualPreset.structures.removeIf(structure -> touched.contains(structure.id));
+        for (HologramPresets.Cell cell : s.virtualPreset.palette) {
+            List<String> members = cell.memberships();
+            members.removeAll(touched);
+            cell.structureIds = members;
+            cell.structureId = members.isEmpty() ? "" : members.get(0);
+        }
+        s.localEdits.invalidate();
+        HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
+        s.status = "已删除选中蓝图内容，可撤销；现场方块保持原状";
+    }
+
     static int[] geometryIndices(HologramSession s, NBTTagCompound action) throws java.io.IOException {
         int[] raw = action.getIntArray("indices");
         if (raw.length == 0) raw = action.getIntArray("selectedIndices");
@@ -509,6 +558,9 @@ final class HologramBlueprintEditor {
             long x = (long) source.x + action.getInteger("dx"), y = (long) source.y + action.getInteger("dy"),
                 z = (long) source.z + action.getInteger("dz");
             validateBlueprintCoordinate(s, x, y, z);
+            if (!s.player.worldObj.blockExists((int) x, (int) y, (int) z)
+                || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z))
+                throw new java.io.IOException("移动目标必须是已加载的空气方块；原选区保留");
             HologramCapture.Cell copy = HologramBlueprintData.blueprintCell(source, (int) x, (int) y, (int) z);
             HologramBlueprintData.setMemberships(
                 copy,
@@ -557,6 +609,12 @@ final class HologramBlueprintEditor {
 
     static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
         boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups) throws java.io.IOException {
+        stageGeometry(s, copies, remove, overlay, retained, copyGroups, null);
+    }
+
+    static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
+        boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups,
+        Map<String, Integer> preparedSizes) throws java.io.IOException {
         Map<String, HologramCapture.Cell> staged = new LinkedHashMap<>();
         Map<String, ItemStack> targets = new HashMap<>();
         Map<String, Integer> facings = new HashMap<>(s.facingPins);
@@ -584,6 +642,20 @@ final class HologramBlueprintEditor {
                 }
         }
         java.util.Set<String> added = new java.util.HashSet<>();
+        if (copyGroups) for (HologramPresets.Structure original : s.virtualPreset.structures) {
+            if (original.textBoxNbt == null || original.textBoxNbt.isEmpty() || groupIds.containsKey(original.id))
+                continue;
+            int[] before = textMinimum(s.capture.cells, original.id), after = textMinimum(copies, original.id);
+            if (after == null || before == null) continue;
+            HologramPresets.Structure duplicate = HologramBlueprintData.copyStructure(original);
+            duplicate.id = (HologramTextWorkflow.definition(original)
+                .hasKey("picture", 10) ? HologramPictureBox.PREFIX : HologramTextBox.PREFIX) + UUID.randomUUID();
+            duplicate.x += after[0] - before[0];
+            duplicate.y += after[1] - before[1];
+            duplicate.z += after[2] - before[2];
+            copiedStructures.add(duplicate);
+            groupIds.put(original.id, duplicate.id);
+        }
         for (HologramCapture.Cell copy : copies) {
             String key = HologramValues.position(copy);
             if (!added.add(key) || (!overlay && staged.containsKey(key)))
@@ -620,7 +692,8 @@ final class HologramBlueprintEditor {
             if (value == null || value.isEmpty()) continue;
             Integer size = sizes.get(value);
             if (size == null) {
-                size = HologramBlueprintNbt.expandedBytes(value);
+                size = preparedSizes == null ? HologramBlueprintNbt.expandedBytes(value) : preparedSizes.get(value);
+                if (size == null) throw new java.io.IOException("附加对象数据预算已变化，请重新确认");
                 sizes.put(value, size);
             }
             expanded += size;
@@ -628,6 +701,14 @@ final class HologramBlueprintEditor {
         }
         remember(s.undoEdits, new HologramEditState(s));
         s.redoEdits.clear();
+        if (!copyGroups && !remove.isEmpty()) for (HologramPresets.Structure structure : s.virtualPreset.structures) {
+            if (structure.textBoxNbt == null || structure.textBoxNbt.isEmpty()) continue;
+            int[] before = textMinimum(s.capture.cells, structure.id), after = textMinimum(copies, structure.id);
+            if (before == null || after == null) continue;
+            structure.x += after[0] - before[0];
+            structure.y += after[1] - before[1];
+            structure.z += after[2] - before[2];
+        }
         s.virtualPreset.structures.addAll(copiedStructures);
         if (!copyGroups) for (HologramCapture.Cell copy : copies) if ("templateController".equals(copy.role))
             for (HologramPresets.Structure structure : s.virtualPreset.structures)
@@ -665,6 +746,19 @@ final class HologramBlueprintEditor {
             : s.selectedIndices.iterator()
                 .next();
         HologramResourcePlanner.refreshPlan(s);
+    }
+
+    private static int[] textMinimum(List<HologramCapture.Cell> cells, String group) {
+        int[] result = null;
+        for (HologramCapture.Cell cell : cells) if (cell.belongsTo(group)) {
+            if (result == null) result = new int[] { cell.x, cell.y, cell.z };
+            else {
+                result[0] = Math.min(result[0], cell.x);
+                result[1] = Math.min(result[1], cell.y);
+                result[2] = Math.min(result[2], cell.z);
+            }
+        }
+        return result;
     }
 
     /** An explicit preview confirmation excludes only server-reported blocker cells; it never removes world blocks. */

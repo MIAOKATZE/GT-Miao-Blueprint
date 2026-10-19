@@ -16,7 +16,28 @@ public final class DecorationVoucherConfig {
     private static final String CATEGORY = "decorationVoucher";
     private static final String[] DEFAULT_MOD_IDS = { "CarpentersBlocks", "ForgeMultipart", "ForgeMicroblock",
         "LittleTiles", "ArchitectureCraft", "chisel", "chiseltones", "Ztones", "BiblioCraft", "Bibliowoods",
-        "floodlights", "fairylights", "GardenStuff", "GardenCore", "GardenTrees", "malisisdoors", "cfm" };
+        "BiblioWoodsBoP", "BiblioWoodsForestry", "BiblioWoodsNatura", "floodlights", "fairylights", "GardenStuff",
+        "GardenCore", "GardenTrees", "malisisdoors", "cfm" };
+    private static final String[] DEFAULT_BLOCKS = { "minecraft:wool", "minecraft:stained_hardened_clay",
+        "minecraft:hardened_clay", "minecraft:carpet", "minecraft:stained_glass", "minecraft:stained_glass_pane",
+        "minecraft:stonebrick", "minecraft:stone_slab@5", "minecraft:stone_brick_stairs", "minecraft:quartz_stairs",
+        "minecraft:quartz_block@1", "minecraft:quartz_block@2", "minecraft:flower_pot", "minecraft:yellow_flower",
+        "minecraft:red_flower", "minecraft:double_plant", "minecraft:tallgrass", "minecraft:deadbush",
+        "minecraft:leaves", "minecraft:leaves2", "minecraft:vine", "etfuturum:concrete", "etfuturum:concrete_powder",
+        "extrautilities:color_block", "extrautilities:greenscreen", "extrautilities:colorStoneBrick",
+        "extrautilities:colorWoodPlanks", "extrautilities:color_brick", "extrautilities:color_lightgem",
+        "extrautilities:color_redstoneLight", "extrautilities:color_quartzBlock",
+        "projred|illumination:projectred.illumination.lamp@16", "projred|illumination:projectred.illumination.lamp@17",
+        "projred|illumination:projectred.illumination.lamp@18", "projred|illumination:projectred.illumination.lamp@19",
+        "projred|illumination:projectred.illumination.lamp@20", "projred|illumination:projectred.illumination.lamp@21",
+        "projred|illumination:projectred.illumination.lamp@22", "projred|illumination:projectred.illumination.lamp@23",
+        "projred|illumination:projectred.illumination.lamp@24", "projred|illumination:projectred.illumination.lamp@25",
+        "projred|illumination:projectred.illumination.lamp@26", "projred|illumination:projectred.illumination.lamp@27",
+        "projred|illumination:projectred.illumination.lamp@28", "projred|illumination:projectred.illumination.lamp@29",
+        "projred|illumination:projectred.illumination.lamp@30",
+        "projred|illumination:projectred.illumination.lamp@31" };
+    private static Configuration configuration;
+    private static long revision;
     // Mixed gameplay mods are intentionally absent: their machines must not become decoration for free.
     private static volatile View current = new View(true, Arrays.asList(DEFAULT_MOD_IDS));
 
@@ -26,20 +47,52 @@ public final class DecorationVoucherConfig {
 
         public final boolean enabled;
         public final Set<String> allowedModIds;
+        public final Set<String> allowedBlocks, allowedOres, deniedModIds, deniedBlocks, deniedOres;
 
         public View(boolean enabled, Iterable<String> modIds) {
+            this(
+                enabled,
+                modIds,
+                Arrays.asList(DEFAULT_BLOCKS),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList());
+        }
+
+        public View(boolean enabled, Iterable<String> modIds, Iterable<String> blocks, Iterable<String> ores,
+            Iterable<String> deniedMods, Iterable<String> deniedBlocks, Iterable<String> deniedOres) {
             this.enabled = enabled;
             Set<String> names = new HashSet<>();
             for (String name : modIds) {
                 if (name == null) continue;
                 String normalized = normalize(name.trim());
-                if (normalized.matches("[a-z0-9_.-]+")) names.add(normalized);
+                if (normalized.matches("[a-z0-9_.|+-]+")) names.add(normalized);
             }
             allowedModIds = Collections.unmodifiableSet(names);
+            allowedBlocks = names(blocks);
+            allowedOres = names(ores);
+            deniedModIds = names(deniedMods);
+            this.deniedBlocks = names(deniedBlocks);
+            this.deniedOres = names(deniedOres);
         }
 
         public boolean allows(String modId) {
-            return enabled && allowedModIds.contains(normalize(modId));
+            return enabled && allowedModIds.contains(normalize(modId)) && !deniedModIds.contains(normalize(modId));
+        }
+
+        public boolean denied(net.minecraft.item.ItemStack stack) {
+            if (stack == null || stack.getItem() == null) return true;
+            String id = normalize(net.minecraft.item.Item.itemRegistry.getNameForObject(stack.getItem()));
+            return deniedModIds.contains(namespace(id)) || matches(deniedBlocks, id, stack.getItemDamage())
+                || oreMatches(deniedOres, stack);
+        }
+
+        public boolean allows(net.minecraft.item.ItemStack stack) {
+            if (!enabled || stack == null || denied(stack)) return false;
+            String id = normalize(net.minecraft.item.Item.itemRegistry.getNameForObject(stack.getItem()));
+            return allows(namespace(id)) || matches(allowedBlocks, id, stack.getItemDamage())
+                || oreMatches(allowedOres, stack);
         }
     }
 
@@ -49,7 +102,7 @@ public final class DecorationVoucherConfig {
 
     /** Called during item registration. Administrators can edit the file and restart the server. */
     public static synchronized void load(File configDirectory) {
-        Configuration config = new Configuration(new File(configDirectory, FILE_NAME));
+        Configuration config = configuration = new Configuration(new File(configDirectory, FILE_NAME));
         config.load();
         boolean enabled = config
             .get(
@@ -66,11 +119,97 @@ public final class DecorationVoucherConfig {
                 "Registered decoration mod IDs (case insensitive). Edit and restart. GT/AE and industrial resources "
                     + "are always charged, including when embedded in a decoration. Do not allow mixed machine mods.")
             .getStringList();
-        current = new View(enabled, Arrays.asList(modIds));
+        current = new View(
+            enabled,
+            Arrays.asList(modIds),
+            read("allowedBlocks", DEFAULT_BLOCKS),
+            read("allowedOres", new String[0]),
+            read("deniedModIds", new String[0]),
+            read("deniedBlocks", new String[0]),
+            read("deniedOres", new String[0]));
+        revision++;
         if (config.hasChanged()) config.save();
     }
 
     static String normalize(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    }
+
+    public static View defaults() {
+        return new View(true, Arrays.asList(DEFAULT_MOD_IDS));
+    }
+
+    private static boolean matches(Set<String> rules, String id, int meta) {
+        return rules.contains(id) || rules.contains(id + "@*") || rules.contains(id + "@" + meta);
+    }
+
+    private static boolean oreMatches(Set<String> rules, net.minecraft.item.ItemStack stack) {
+        if (rules.isEmpty()) return false;
+        for (int id : net.minecraftforge.oredict.OreDictionary.getOreIDs(stack))
+            if (rules.contains(normalize(net.minecraftforge.oredict.OreDictionary.getOreName(id)))) return true;
+        return false;
+    }
+
+    private static Set<String> names(Iterable<String> values) {
+        Set<String> result = new java.util.TreeSet<>();
+        for (String value : values) {
+            String name = normalize(value == null ? "" : value.trim());
+            if (!name.isEmpty() && name.length() <= 192 && name.matches("[a-z0-9_.:|@*+/-]+")) result.add(name);
+        }
+        return Collections.unmodifiableSet(result);
+    }
+
+    private static Iterable<String> read(String key, String[] defaults) {
+        return Arrays.asList(
+            configuration
+                .get(
+                    CATEGORY,
+                    key,
+                    defaults,
+                    "Blocks: namespace:name or namespace:name@metadata. Blacklists win. /gtmb voucher edits live.")
+                .getStringList());
+    }
+
+    static synchronized boolean save(View next, long expectedRevision) {
+        if (configuration == null || expectedRevision != revision) return false;
+        configuration.get(CATEGORY, "enabled", true)
+            .set(next.enabled);
+        String[] keys = ruleKeys();
+        Set<?>[] lists = lists(next);
+        for (int i = 0; i < keys.length; i++) configuration.get(CATEGORY, keys[i], new String[0])
+            .set(lists[i].toArray(new String[0]));
+        configuration.save();
+        current = next;
+        revision++;
+        return true;
+    }
+
+    static String[] ruleKeys() {
+        return new String[] { "allowedModIds", "allowedBlocks", "allowedOres", "deniedModIds", "deniedBlocks",
+            "deniedOres" };
+    }
+
+    private static Set<?>[] lists(View value) {
+        return new Set<?>[] { value.allowedModIds, value.allowedBlocks, value.allowedOres, value.deniedModIds,
+            value.deniedBlocks, value.deniedOres };
+    }
+
+    static net.minecraft.nbt.NBTTagCompound snapshot() {
+        net.minecraft.nbt.NBTTagCompound result = new net.minecraft.nbt.NBTTagCompound();
+        result.setLong("revision", revision);
+        result.setBoolean("enabled", current.enabled);
+        String[] keys = ruleKeys();
+        Set<?>[] lists = lists(current);
+        for (int i = 0; i < keys.length; i++) {
+            net.minecraft.nbt.NBTTagList list = new net.minecraft.nbt.NBTTagList();
+            for (Object entry : lists[i]) list.appendTag(new net.minecraft.nbt.NBTTagString(entry.toString()));
+            result.setTag(keys[i], list);
+        }
+        return result;
+    }
+
+    static String namespace(String id) {
+        int colon = id.indexOf(':');
+        return colon < 0 ? "" : id.substring(0, colon);
     }
 }

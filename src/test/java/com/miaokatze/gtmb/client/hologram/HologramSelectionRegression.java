@@ -61,6 +61,18 @@ public final class HologramSelectionRegression {
         selection.retain(4);
         SimpleAssert.eq(4, selection.size(), "snapshot shrink never leaves invalid indices");
         snapshotShrinkRegression();
+        NBTTagCompound pictureState = (NBTTagCompound) volume().fullData();
+        String pictureId = com.miaokatze.gtmb.hologram.HologramPictureBox.PREFIX
+            + "33333333-3333-3333-3333-333333333333";
+        NBTTagList pictureCells = pictureState.getTagList("cells", 10);
+        for (int i = 0; i < 8; i++) pictureCells.getCompoundTagAt(i)
+            .setString("structureId", pictureId);
+        NBTTagList pictureGroups = pictureState.getTagList("structures", 10);
+        for (int i = 0; i < pictureGroups.tagCount(); i++) pictureGroups.getCompoundTagAt(i)
+            .setString("id", pictureId);
+        HologramState image = new HologramState(pictureState);
+        selection.previewClick(image, 0, "", false, false);
+        SimpleAssert.eq(8, selection.size(), "clicking one image host selects the entire attachment");
         HologramInputContextRegression.run();
         HologramDeidentificationMemoryRegression.run();
         sharedWallRegression();
@@ -90,6 +102,27 @@ public final class HologramSelectionRegression {
         gizmo.begin(2, 100, 100);
         SimpleAssert.eq(2, gizmo.update(76, 100), "Z handle follows camera orientation");
         SimpleAssert.that(HologramGizmo.distance(5, 3, 0, 0, 10, 0) == 3, "axis pick uses segment distance");
+        for (double yaw : new double[] { .65, 2.2, 4.4 })
+            for (int handle = HologramGizmo.XY; handle <= HologramGizmo.YZ; handle++) {
+                gizmo.project(100, 100, yaw, .65, 20);
+                double[][] corners = gizmo.plane(handle);
+                int mx = (int) Math.round((corners[0][0] + corners[2][0]) / 2);
+                int my = (int) Math.round((corners[0][1] + corners[2][1]) / 2);
+                SimpleAssert.eq(handle, gizmo.pick(mx, my), "each camera-oriented plane has its own pick region");
+                int a = handle == HologramGizmo.YZ ? 1 : 0, b = handle == HologramGizmo.XY ? 1 : 2;
+                double[] origin = gizmo.start(), first = gizmo.end(a), second = gizmo.end(b);
+                gizmo.begin(handle, mx, my);
+                gizmo.update(
+                    mx + (int) Math.round((2 * (first[0] - origin[0]) - 3 * (second[0] - origin[0])) * 20 / 42),
+                    my + (int) Math.round((2 * (first[1] - origin[1]) - 3 * (second[1] - origin[1])) * 20 / 42));
+                int[] offset = gizmo.offset();
+                SimpleAssert.that(
+                    offset[a] == 2 && offset[b] == -3 && offset[3 - a - b] == 0,
+                    "plane drag moves both allowed world axes and locks its normal");
+                gizmo.cancel();
+                SimpleAssert
+                    .that(java.util.Arrays.equals(new int[3], gizmo.offset()), "cancel clears both plane offsets");
+            }
         HologramNbtSelection storage = new HologramNbtSelection();
         storage.load(true, new NBTTagList());
         java.util.List<String> available = java.util.Arrays.asList("Items", "Tank", "Configuration");
@@ -224,25 +257,55 @@ public final class HologramSelectionRegression {
     private static void replacementFamilyRegression() {
         NBTTagCompound data = (NBTTagCompound) volume().fullData();
         NBTTagList cells = data.getTagList("cells", 10);
-        cells.getCompoundTagAt(0)
-            .setString("family", "coil");
-        cells.getCompoundTagAt(4)
-            .setString("family", "coil");
-        cells.getCompoundTagAt(8)
-            .setString("family", "coil");
-        HologramState state = new HologramState(data);
-        HologramSelection selection = new HologramSelection();
-        selection.previewClick(state, 0, "", false, false);
-        SimpleAssert.that(
-            selection.size() == 2 && selection.contains(0) && selection.contains(4),
-            "declared coil family selects its structure members automatically across grades");
-        SimpleAssert.that(
-            !selection.contains(8) && !selection.contains(1),
-            "family expansion never reaches another scope or unrelated casing");
-        selection.previewClick(state, 0, "", true, false);
-        SimpleAssert.that(
-            selection.size() == 4 && selection.contains(1) && !selection.contains(4),
-            "T uses exact identity rather than replacement family");
+        for (String family : new String[] { "coil", "tiered:fixture", "frame:fixture", "glass:fixture" }) {
+            for (int index : new int[] { 0, 4, 8 }) cells.getCompoundTagAt(index)
+                .setString("family", family);
+            // A hatch can retain its source casing's declaration family after an independent edit.
+            cells.getCompoundTagAt(2)
+                .setString("family", family);
+            cells.getCompoundTagAt(2)
+                .setString("wantId", "gregtech:gt.blockmachines");
+            HologramState state = new HologramState(data);
+            HologramSelection selection = new HologramSelection();
+            selection.previewClick(state, 0, "", false, false);
+            SimpleAssert.eq(1, selection.size(), "grade casing stays independently editable: " + family);
+            SimpleAssert.that(selection.canSelectRelated(state), "unselected related casings keep the T hint visible");
+            SimpleAssert.that(
+                selection.related(state)
+                    .contains(4)
+                    && !selection.related(state)
+                        .contains(8)
+                    && !selection.related(state)
+                        .contains(2),
+                "related outlines stay in the structure and exclude current hatch targets");
+            selection.selectRelated(state, false);
+            SimpleAssert.that(
+                selection.size() == 2 && selection.contains(0) && selection.contains(4),
+                "explicit T selects the declared grade family across metadata variants");
+            SimpleAssert.that(!selection.canSelectRelated(state), "fully selected grade group clears the hint");
+            selection.previewClick(state, 2, "", false, false);
+            SimpleAssert.eq(1, selection.size(), "current hatch with casing provenance remains independently editable");
+            SimpleAssert.that(!selection.canSelectRelated(state), "current hatch never offers casing grade expansion");
+            selection.previewClick(state, 2, "", true, false);
+            SimpleAssert.eq(1, selection.size(), "T on the current hatch uses its exact device identity");
+            selection.clear();
+            SimpleAssert.that(
+                selection.related(state)
+                    .isEmpty(),
+                "clearing selection invalidates related outlines");
+        }
+        for (String family : new String[] { "declared:fixture", "wildcard:fixture" }) {
+            for (int index : new int[] { 0, 4, 8 }) cells.getCompoundTagAt(index)
+                .setString("family", family);
+            HologramState state = new HologramState(data);
+            HologramSelection selection = new HologramSelection();
+            selection.previewClick(state, 0, "", false, false);
+            SimpleAssert.eq(2, selection.size(), "ordinary declared family retains existing selection semantics");
+            selection.previewClick(state, 0, "", true, false);
+            SimpleAssert.that(
+                selection.size() == 3 && selection.contains(1) && !selection.contains(4),
+                "T on ordinary declared families retains exact variant semantics");
+        }
     }
 
     private static void metaTileIdentityRegression() {

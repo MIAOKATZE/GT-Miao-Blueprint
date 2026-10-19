@@ -36,8 +36,8 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 /** Bounded binary NBT transport and detached ownership rewriting for shared blueprints. */
 final class HologramBlueprintNbt {
 
-    static final int MAX_COMPRESSED = 1024 * 1024;
-    static final int MAX_EXPANDED = 4 * 1024 * 1024;
+    static final int MAX_COMPRESSED = 8 * 1024 * 1024;
+    static final int MAX_EXPANDED = 8 * 1024 * 1024;
     private static final int MAX_DEPTH = 512;
     static final String ITEM_REGISTRY = "gtitBlueprintItemRegistry";
     static final String MISSING_ITEM = "gtitBlueprintMissingItem";

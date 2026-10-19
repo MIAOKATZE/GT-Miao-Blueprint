@@ -58,9 +58,9 @@ final class HologramGuidance {
         if (state.data.getBoolean("virtualPlacement")) return state.data.getBoolean("virtualLocked")
             ? "位置已锁定（青色）· 方向键水平微调，Alt+上下调高度 · 右键重新核对材料 · Shift+右键解锁 · Esc 取消"
             : "位置预览（绿色）· Alt+滚轮调悬空距离（0=脚下）· 右键锁定 · R 旋转 · Esc 取消";
-        if (selected >= 0) return "T+点击同种 · Ctrl 多选 · Shift 框选 · Alt 选空气 · Esc/E 关闭面板"
+        if (selected >= 0) return "T 同种全选 · Ctrl 多选 · Shift 框选 · Alt 选空气 · Esc/E 关闭面板"
             + (state.data.getBoolean("virtual") ? " · 完整结构 G 移动轴 · Ctrl+拖轴复制" : "");
-        return "点击选方块 · 线圈等部件自动同族 · T+点击同种 · 点击结构边缘整选 · Alt 选空气";
+        return "点击选方块 · T 同种全选 · 点击结构边缘整选 · Alt 选空气";
     }
 
     static int recommended(HologramState state, int selected, boolean blueprints, boolean confirmation) {
@@ -85,6 +85,7 @@ final class HologramGuidance {
 
     static int accent(HologramState state, int id, int selected, boolean blueprints, boolean confirmation,
         boolean savedSelected) {
+        if (id == 330 && !state.cells.isEmpty()) return HologramUiAccent.WARNING;
         if (id == 52 && (state.data.getInteger("job") == 1 || state.data.getInteger("job") == 2)
             || id == 54 && confirmation
             || id == 136

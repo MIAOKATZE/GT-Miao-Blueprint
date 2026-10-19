@@ -35,6 +35,10 @@ public final class HologramBlueprintProcessingRegression {
     }
 
     public static void run() throws Exception {
+        SimpleAssert.eq(
+            "light",
+            HologramBlueprintProcessing.defaults("share", 0).autoHints,
+            "Sharing defaults to light automatic hints");
         adaptiveStages();
         explicitStagesAndSessionBacktracking();
         sharingKeepsAnonymousNetworkSlots();

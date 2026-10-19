@@ -104,7 +104,14 @@ public final class HologramUiModuleRegression {
 
     private static void presentationSnapshotFailure() {
         try {
-            for (String operation : new String[] { "previewPreset", "choosePlacementPreset", "lockVirtual" }) {
+            HologramUiModules processing = presentationUi("attachment-processing", 0);
+            processing.session.state().data.setBoolean("attachmentPending", true);
+            SimpleAssert
+                .that(!processing.session.editable(), "an attachment progress receipt cannot reopen competing edits");
+            processing.session.state().data.setBoolean("attachmentPending", false);
+            SimpleAssert.that(processing.session.editable(), "terminal attachment state releases editing");
+            for (String operation : new String[] { "previewPreset", "choosePlacementPreset", "lockVirtual",
+                "placeTextBox" }) {
                 HologramUiModules ui = presentationUi("presentation-" + operation, 0);
                 ui.session.send(operation, null, true);
                 long failedSequence = ui.session.pendingSequence();
@@ -363,7 +370,7 @@ public final class HologramUiModuleRegression {
             singleton.set(
                 null,
                 ((sun.misc.Unsafe) unsafeField.get(null)).allocateInstance(net.minecraft.client.Minecraft.class));
-            for (int action : new int[] { 14001, 139, 141 }) {
+            for (int action : new int[] { 139 }) {
                 HologramUiModules ui = librarySwitchUi();
                 HologramState state = ui.session.state();
                 ui.router.activate(action);
@@ -387,16 +394,43 @@ public final class HologramUiModuleRegression {
                 NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
                 SimpleAssert
                     .eq("chosen-target", confirmed.getString("presetId"), "confirmation retains the clicked identity");
-                SimpleAssert.eq(
-                    action == 139 ? "editPreset" : action == 141 ? "choosePlacementPreset" : "previewPreset",
-                    confirmed.getString("op"),
-                    "confirmation retains the original operation");
+                SimpleAssert.eq("editPreset", confirmed.getString("op"), "confirmation retains the original operation");
                 SimpleAssert.that(
                     confirmed.getBoolean("confirmDiscard") && ui.session.sequence() == 1 && !ui.library.discardReview(),
                     "one confirmation submits the switch through the existing discard gate without a separate discard command");
             }
+            HologramUiModules browsing = librarySwitchUi();
+            HologramState editing = browsing.session.state();
+            browsing.preview.selection()
+                .click(4, false);
+            SimpleAssert.that(
+                !browsing.library.prepareLibraryNavigation(14001) && !browsing.library.discardReview(),
+                "pure display row selection never replaces or discards the draft");
+            SimpleAssert.that(
+                !browsing.library.prepareLibraryNavigation(141) && !browsing.library.discardReview()
+                    && browsing.session.state() == editing
+                    && browsing.session.sequence() == 0
+                    && browsing.preview.selection()
+                        .contains(4),
+                "local world positioning retains the unsaved draft without a source-switch confirmation");
+            setUiField(browsing.library, "browsePreview", true);
+            SimpleAssert.that(browsing.library.browsePreviewActive(), "library display has an explicit read-only mode");
+            browsing.preview.activateControl(11);
+            browsing.preview.activateControl(13);
+            browsing.preview.editAction("editUndo");
+            SimpleAssert.that(
+                !browsing.preview.handleEditorShortcut(org.lwjgl.input.Keyboard.KEY_T, 0)
+                    && !browsing.preview.handleEditorShortcut(org.lwjgl.input.Keyboard.KEY_X, 1)
+                    && !browsing.preview.canMoveSelection(),
+                "display cannot enable selection shortcuts or geometry edits");
+            SimpleAssert.that(
+                browsing.session.state() == editing && browsing.session.sequence() == 0
+                    && uiField(browsing.diagnostics, "capturedRenderSmokeAction") == null
+                    && browsing.preview.selection()
+                        .contains(4),
+                "display layer controls and denied edits preserve the authoritative state and original selection");
             HologramUiModules cancelled = librarySwitchUi();
-            cancelled.router.activate(14001);
+            cancelled.router.activate(139);
             cancelled.router.activate(225);
             SimpleAssert.that(
                 !cancelled.library.discardReview() && cancelled.session.sequence() == 0
@@ -409,7 +443,7 @@ public final class HologramUiModuleRegression {
 
             HologramUiModules rejected = librarySwitchUi();
             rejected.session.state().data.setBoolean("discardConfirmationRequired", true);
-            rejected.session.state().data.setString("discardTargetOp", "previewPreset");
+            rejected.session.state().data.setString("discardTargetOp", "editPreset");
             rejected.session.state().data.setString("discardTargetId", "chosen-target");
             rejected.library.acceptSourceSwitchProposal();
             SimpleAssert
@@ -418,7 +452,7 @@ public final class HologramUiModuleRegression {
             rejected.router.activate(224);
             NBTTagCompound retry = (NBTTagCompound) uiField(rejected.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                "previewPreset".equals(retry.getString("op")) && "chosen-target".equals(retry.getString("presetId"))
+                "editPreset".equals(retry.getString("op")) && "chosen-target".equals(retry.getString("presetId"))
                     && retry.getBoolean("confirmDiscard")
                     && rejected.session.sequence() == 1,
                 "a server-requested confirmation retries its exact target and operation once");

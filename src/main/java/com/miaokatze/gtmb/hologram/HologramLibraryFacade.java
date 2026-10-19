@@ -111,9 +111,9 @@ public final class HologramLibraryFacade {
     }
 
     public static HologramPresets.Preset get(EntityPlayerMP player, String id) throws IOException {
+        if (id != null && id.startsWith("private_")) return HologramService.libraryPrivatePreset(player, id);
         if (!enabled()) return HologramPresets.get(id);
         if (id == null) return null;
-        if (id.startsWith("private_")) return HologramService.libraryPrivatePreset(player, id);
         if (!id.startsWith("public_") || library == null) return null;
         return library.get(id);
     }
@@ -129,10 +129,7 @@ public final class HologramLibraryFacade {
     /** Netty ingress is capped before anything is posted to the main-thread queue. */
     static void receive(EntityPlayerMP player, NBTTagCompound request) {
         String operation = request.getString("op");
-        if (!enabled() && !("previewBegin".equals(operation) || "previewChunk".equals(operation)
-            || "cancel".equals(operation)
-            || "saveStatus".equals(operation)
-            || "saveResultConsumed".equals(operation))) return;
+        if (!enabled() && !integratedOperation(operation)) return;
         synchronized (pending) {
             UUID owner = actorId(player);
             boolean chunk = HologramLibraryProtocol.uploadChunk(request);
@@ -174,16 +171,34 @@ public final class HologramLibraryFacade {
         }
     }
 
+    /** Integrated worlds use private content transport while public publishing and administration stay disabled. */
+    static boolean integratedOperation(String operation) {
+        return "quickBootstrap".equals(operation) || "quickCancel".equals(operation)
+            || "publicPrepare".equals(operation)
+            || "contentResolve".equals(operation)
+            || "privateBegin".equals(operation)
+            || "privateChunk".equals(operation)
+            || "previewBegin".equals(operation)
+            || "previewChunk".equals(operation)
+            || "cancel".equals(operation)
+            || "saveStatus".equals(operation)
+            || "saveResultConsumed".equals(operation);
+    }
+
     static void importPrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) {
+        importPrivate(player, request, preset, "privateImported");
+    }
+
+    static void importPrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset,
+        String reply) {
         scheduleLibraryCallback(player, request, () -> {
             PrivateReceiver receiver = privateReceiver;
-            if (enabled() && receiver != null
-                && library != null
+            if (receiver != null && library != null
                 && library.draftTaskCurrent(player, request)
                 && HologramLibraryService.sessionCurrent(player, request)) {
                 try {
                     String id = receiver.accept(player, request, preset);
-                    NBTTagCompound result = HologramLibraryProtocol.reply("privateImported");
+                    NBTTagCompound result = HologramLibraryProtocol.reply(reply);
                     result.setString("id", id == null ? "" : id);
                     result.setString("session", request.getString("session"));
                     result.setString("transfer", request.getString("transfer"));
@@ -239,6 +254,8 @@ public final class HologramLibraryFacade {
     static void draftPreparationFailed(EntityPlayerMP player, NBTTagCompound request, String message) {
         NBTTagCompound proof = (NBTTagCompound) request.copy();
         scheduleLibraryCallback(player, proof, () -> {
+            HologramServerLibrary current = library;
+            if (current != null) current.discardSavedContent(player, proof);
             // Admission can fail before a library peer exists. The exact issued server receipt is authoritative.
             if (!HologramLibraryService.draftCurrent(player, proof)) return;
             if (!proof.getString("saveReceipt")
@@ -326,6 +343,8 @@ public final class HologramLibraryFacade {
         if (!savedResults.containsKey(owner) && savedResults.size() >= 64)
             throw new IOException("Blueprint save result queue is busy");
         SavedResult next = new SavedResult(player, verified), previous = savedResults.put(owner, next);
+        if (previous != null && previous.matches(player, verified) && previous.proof.hasKey("contentHash", 8))
+            next.proof.setString("contentHash", previous.proof.getString("contentHash"));
         if (previous != null && "pending".equals(previous.outcome) && !previous.matches(player, verified)) {
             previous.outcome = "saveRejected";
             previous.finishedAtNanos = System.nanoTime();
@@ -349,6 +368,14 @@ public final class HologramLibraryFacade {
             result.send();
             return;
         }
+        HologramServerLibrary current = library;
+        if (current != null) {
+            if (committed) {
+                String hash = current.savedContentCommitted(player, result.proof);
+                result.proof.setString("contentHash", hash);
+                result.proof.setBoolean("contentCached", !hash.isEmpty());
+            } else current.discardSavedContent(player, result.proof);
+        }
         result.outcome = committed ? "saveCommitted" : "saveRejected";
         result.finishedAtNanos = System.nanoTime();
         result.message = message == null ? "" : message;
@@ -357,7 +384,11 @@ public final class HologramLibraryFacade {
 
     static void resolveSavedResult(EntityPlayerMP player, NBTTagCompound request, boolean cancel) {
         // Preview or IO can fail before the verified-byte result exists. Still revoke the exact owner receipt.
-        if (cancel) HologramService.librarySaveCancelled(player, request);
+        if (cancel) {
+            HologramService.librarySaveCancelled(player, request);
+            HologramServerLibrary current = library;
+            if (current != null) current.discardSavedContent(player, request);
+        }
         SavedResult result = savedResults.get(actorId(player));
         if (result == null || !result.matches(player, request)) return;
         result.bindLocalPreview(request);
@@ -438,6 +469,8 @@ public final class HologramLibraryFacade {
                     result.outcome = "saveRejected";
                     result.finishedAtNanos = now;
                     result.message = "Blueprint source changed before its disk ACK";
+                    HologramServerLibrary current = library;
+                    if (current != null) current.discardSavedContent(result.actor, result.proof);
                     result.send();
                 }
         }
@@ -506,6 +539,7 @@ public final class HologramLibraryFacade {
     public static synchronized void stop() {
         HologramServerLibrary previous = library;
         library = null;
+        HologramPresets.clearCache();
         synchronized (pending) {
             inbound.clear();
             pending.clear();
@@ -572,8 +606,17 @@ public final class HologramLibraryFacade {
                     else HologramLibraryService.quickCancel(next.player, next.request);
                     continue;
                 }
-                if (("privateBegin".equals(op) || "exportDraft".equals(op))
-                    && !HologramLibraryService.sessionCurrent(next.player, next.request)) {
+                boolean contentOnly = "privateBegin".equals(op) && next.request.getBoolean("contentOnly");
+                if ((contentOnly || "contentResolve".equals(op))
+                    && !HologramLibraryService.contentCurrent(next.player, next.request)) {
+                    error(
+                        next.player,
+                        "Blueprint content preparation connection changed",
+                        next.request.getLong("clientTaskToken"));
+                    continue;
+                }
+                if (("privateBegin".equals(op) && !contentOnly || "publicPrepare".equals(op)
+                    || "exportDraft".equals(op)) && !HologramLibraryService.sessionCurrent(next.player, next.request)) {
                     error(next.player, "蓝图会话已变更，请重新打开后重试", next.request.getLong("clientTaskToken"));
                     continue;
                 }

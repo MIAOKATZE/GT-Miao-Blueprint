@@ -24,6 +24,8 @@
 
 *Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
+v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.md)：从 `.minecraft/MiaoBlueprintPicture` 读取图片，默认短边 64 像素，支持比例锁定、固定羊毛/黏土/混凝土组合、滤镜与边缘同色抠图。图片沿用 [文字附加](README/text-blueprints.md) 的整体编辑、旋转、轴面位移和冲突校验，随蓝图保存后可脱离原文件再次编辑。图片分辨率上限为 1024×1024，支持像素大小与厚度；文字和图片均支持处理预设、后台生成与分块上传。下载请见 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
+
 <p align="center">
   <a href="README/screenshots/projector-preview.png"><img src="README/screenshots/projector-preview.png" alt="世界中的半透明结构投影 / Translucent structure projection in the world" width="620"></a><br>
   <strong>把结构直接投到现场：外壳、仓室、控制器与内部空间一眼看清。</strong><br>
@@ -119,11 +121,46 @@
 
 结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后出现操作帮助，任何动作都会收起帮助并继续响应输入。
 
+与机器等级关联的线圈、分级外壳、框架和玻璃可单独选中；相关外壳显示紫色框及持续的「全选 T」提示，按 **T** 才扩选同一结构的相关外壳，已设置的仓室保持独立。
+
+*Tier-related casings can be selected individually. Purple outlines and the T hint identify related cells in the same structure; press T to select them together while keeping configured hatches independent.*
+
 *Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles movement axes, and idle help dismisses on input.*
+
+### 让文字与图片成为蓝图的一部分 / Add text & picture art
+
+在空白工作区、结构调整或放置前的蓝图编辑中，点击顶部的「文字转蓝图」或「添加图片」，用 **LittleTiles 小瓷砖**制作标牌、立体字与像素画。文字可调整字体、颜色、材料和三维形态；图片从 `.minecraft/MiaoBlueprintPicture` 读取，支持固定材料组合、滤镜与边缘背景抠除。文字和图片都能保存处理预设，并按同色实体体积合并瓷砖及完整方块。
+
+*Create signs, 3D lettering and pixel art with LittleTiles. Choose text fonts and materials, or convert local pictures with fixed palettes, filters and background removal; reuse processing presets and merge solid geometry.*
+
+<p align="center">
+  <a href="README/screenshots/text-picture-showcase.png"><img src="README/screenshots/text-picture-showcase.png" alt="小瓷砖文字与图片在世界中的展示 / LittleTiles text and picture art in the world" width="640"></a><br>
+  <strong>把标牌、文字和图片放进设计，让蓝图也能表达你的想法。</strong><br>
+  <em>Bring lettering and picture art into your designs.</em>
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/screenshots/text-attachment-editor.png"><img src="README/screenshots/text-attachment-editor.png" alt="文字转蓝图编辑器：字形预览与形态参数 / Text editor with glyph preview and shape controls" width="310"></a></td>
+    <td width="50%"><a href="README/screenshots/picture-attachment-editor.png"><img src="README/screenshots/picture-attachment-editor.png" alt="添加图片编辑器：材料色预览与像素尺寸 / Picture editor with material-color preview and pixel dimensions" width="310"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>文字：字体、颜色、厚度、竖排与居中弧形。</strong><br><em>Fonts, colors, thickness, upright columns and centered curves.</em></td>
+    <td align="center"><strong>图片：比例、像素大小、厚度、滤镜与抠图。</strong><br><em>Aspect ratio, pixel size, thickness, filters and background removal.</em></td>
+  </tr>
+</table>
+
+确认内容后，在已有蓝图中点击选位，再用 **R / Alt+R、方向键或共用的轴线与平面手柄**整体调整；空工作区会直接创建新蓝图。点击高亮「确认放置」后校验冲突，失败保留预览供移动重试。附加对象随蓝图保存，整体选中后可再次编辑；实际建造仍按材料体积核算。详见[文字操作](README/text-blueprints.md)与[图片操作](README/picture-blueprints.md)。
+
+*Pick a position and move or rotate the whole attachment before confirming. Saved attachments remain editable; construction still charges their actual material volume. An empty workspace creates a new blueprint directly.*
 
 ### 私用还是分享，由你逐步确认 / Review for private use or sharing
 
 「蓝图设置」负责处理与保存：按私用或分享倾向核对身份、坐标、网络和资源等选项，再命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导会说明「蓝图设置」和「结构调整」的区别，也支持不再显示。
+
+自动提示词在私用和分享倾向下均默认轻度。木匠方块原生包含玩家身份字段，身份报告使用通用蓝图标题；等级 1–9 的去标识处理保留可计价饰面，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
+
+*Automatic annotations default to Light for both private and shared designs. Carpenter identity review retains payable decoration at levels 1–9; construction still charges its materials. Vanilla standing and wall signs consume one sign and retain their text.*
 
 *Blueprint Settings handles processing and saving. Review identity, coordinate, network and resource choices for private use or sharing, resolve conflicts, then save.*
 
@@ -138,6 +175,10 @@
 ## 04 · 把蓝图带回世界，锁定后再确认 / Position in the world
 
 从蓝图库点击「放置所选蓝图」，在真实环境中检查占地与高度。预览可贴合命中表面，也可悬空；**右键立即固定当前位置，边框由绿色切为青色**。调整位置与姿态后，再右键打开材料确认；Esc 取消。
+
+蓝图库浏览使用独立的客户端显示数据。预览区域中的大图可先显示 PNG 或首批方块，再逐步补齐；现有页脚按阶段显示进度，依赖数据的操作在数据就绪后开放，小图不强制等待 PNG。点击「放置所选蓝图」后，先只按内容哈希查找玩家可信缓存和服务器蓝图库；命中时直接复用，不打包或上传整份蓝图。未命中时才打包，并在蓝图库界面底部显示上传与校验进度，完成后进入世界预览。移动、旋转与微调只更新本地预览，不上传蓝图或发起服务器校验，锁定后仍可旋转。服务器蓝图的显示副本按版本缓存在本次连接中；完整下载才取得原件。
+
+*Browsing uses independent client display data. Large previews may first show a PNG or an initial batch of blocks and fill in progressively; the existing footer shows stage progress and data-dependent controls become available when ready, while small previews need not wait for a PNG. Place selected blueprint first probes the player's trusted cache and server library by content hash alone; a hit reuses the content without building or uploading the full bundle. Only a miss builds the bundle and shows upload and validation progress in the library footer before entering the world preview. Moving, turning and nudging update the local preview without upload or server validation; rotation also works while locked. Server-library previews are cached by revision for the current connection; a full download retrieves the original.*
 
 *Place a selected blueprint into the world preview, align it with the site and right-click to lock the position. Review materials before construction.*
 
@@ -162,6 +203,14 @@
 <a id="materials"></a>
 
 ## 05 · 看清每一笔材料，再开工 / Review exact costs
+
+锁定世界预览后，再次右键打开**材料确认窗口**，按窗口内的核算进度与**需求 / 已有 / 缺失**清单，核对放置位置、NBT 保留选项和当前库存，再确认施工。AE 缺料下单、刷新材料与装饰抵用券也在这个窗口操作；服务器按当前放置者核对真实材料、权限与现场条件。
+
+*After locking the world preview, right-click again to open the material confirmation dialog. Follow its calculation progress and review required, available and missing quantities, placement, retained NBT and current stock before confirming construction. AE ordering, stock refresh and decoration vouchers use this dialog; the server checks actual materials, permissions and site conditions for the current placing player.*
+
+蓝图使用无损字典压缩，重复方块描述与 NBT 内容只保存一份，旧格式仍可读取。服务端为每位玩家缓存最多 **10 份、合计 100 MB** 的可信内容，并可直接复用服务器蓝图库中相同哈希的原件；压缩不改变材料、配置与归属信息，实际施工仍绑定当前放置者。
+
+*Lossless dictionaries store repeated block descriptions and NBT once while retaining legacy-file support. Each player can cache up to 10 admitted blueprints totaling 100 MB; matching server-library originals can also be reused. Construction still binds the current placing player.*
 
 施工前打开独立的 **MUI2 材料确认窗口**，逐项查看**需求 / 已有 / 缺失**。每行对应图标、精确物品／NBT 与单位，同名材料不会混成一项；创造模式也显示完整需求。材料整行左右留白一致，表头与各列对齐；没有可处理内容的按钮禁用，悬停可查看原因。
 
@@ -219,9 +268,9 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
   <em>Choose Blueprint for designs or Cut for moving existing builds.</em>
 </p>
 
-**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；空闲时 Ctrl + Shift + 右键可重开。选择「剪切」开始框选，完整选区后 Shift + 右键确认剪切。保存条目后继续下一次框选；没有完整框时，这个快捷键打开暂存列表并保留已有角点。
+**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；非框选时 Ctrl + Shift + 右键直接打开剪切列表。选择「剪切」开始框选，完整选区后 Shift + 右键确认剪切。保存条目后继续下一次框选；没有完整框时，这个快捷键打开暂存列表并保留已有角点。
 
-*Hold Shift and right-click to cycle modes, then release Shift to enter. Confirm a complete cut selection with Shift + right-click; without a complete box, it opens stored cuts.*
+*Hold Shift and right-click to cycle modes, then release Shift to enter. Outside selection, Ctrl+Shift+right-click opens stored cuts directly. Confirm a complete cut selection with Shift+right-click; without a complete box, it opens stored cuts.*
 
 <p align="center">
   <a href="README/screenshots/cut-queue.png"><img src="README/screenshots/cut-queue.png" alt="剪切暂存列表、每项尺寸与独立三维预览，画面包含诊断文字 / Stored cuts with dimensions and individual 3D preview; screenshot includes diagnostic text" width="620"></a><br>
@@ -248,6 +297,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | **蓝图站 / Blueprint site** | 在 [miaokatze.com/blueprints](https://miaokatze.com/blueprints) 浏览、下载或分享设计。 / Browse, download or share designs on the site. |
 | **游戏内公库 / In-game server library** | 蓝图库「客户端／服务器」切换，完成上传与下载。 / Switch Client/Server for library transfers. |
 | **直接转交文件 / Manual transfer** | 将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`。 / Copy the same-basename JSON + PNG pair into the recipient's game-directory `MiaoBlueprints/`. |
+
+独立蓝图现在以 **蓝图名＋完整内容哈希** 命名，JSON 与 PNG 使用同一个文件名主体。蓝图库中的「升级旧蓝图」会一键重新无损压缩、校准配对文件名，并保留最近蓝图与上传关联；旧文件仍可读取。缺图、配对不明确或写入失败的条目会保留原件并报告原因。服务器公库升级由管理员执行。
+
+*Individual blueprints use their name plus the full content hash, with matching JSON/PNG basenames. Upgrade old blueprints recompresses and renames existing pairs while retaining recent and upload associations. Unreadable or ambiguous pairs remain intact and are reported; server-library upgrades require an administrator.*
 
 剪切暂存归当前存档与玩家，不参与蓝图分享。保存后的配置、资源与网络选择请按实际用途核对；完整处理规则见 [使用指南](https://miaokatze.com/wiki?mod=gtmb)。
 

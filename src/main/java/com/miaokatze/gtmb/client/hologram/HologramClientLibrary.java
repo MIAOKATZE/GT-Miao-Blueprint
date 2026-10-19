@@ -11,8 +11,8 @@ import java.util.UUID;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 
 /** Client-owned files, independent of world saves and server identities. Call from the library worker only. */
@@ -23,6 +23,7 @@ final class HologramClientLibrary {
     private final Path metadataFile;
     private final PairIo pairIo;
     private final java.util.Map<String, CachedEntry> entryCache = new java.util.HashMap<>();
+    private final java.util.Map<String, Path> displayPaths = new java.util.HashMap<>();
 
     interface PairIo {
 
@@ -63,12 +64,11 @@ final class HologramClientLibrary {
     private static final class CachedEntry {
 
         final Entry entry;
-        final String jsonHash, pngHash;
+        final String stamp;
 
-        CachedEntry(Entry entry, HologramBlueprintArtifact.Artifact actual) {
+        CachedEntry(Entry entry, Path path) throws IOException {
             this.entry = entry;
-            jsonHash = actual.jsonSha256;
-            pngHash = actual.pngSha256;
+            stamp = stamp(path);
         }
     }
 
@@ -92,7 +92,7 @@ final class HologramClientLibrary {
 
     static final class Entry {
 
-        final String id, name, authorName, authorUuid, sourceMod;
+        final String id, name, authorName, authorUuid, sourceMod, gtmbVersion;
         final int cells, structures;
         final long bytes, createdAt;
 
@@ -102,11 +102,28 @@ final class HologramClientLibrary {
             authorName = string(blueprint, "authorName");
             authorUuid = string(blueprint, "authorUuid");
             sourceMod = string(blueprint, "sourceMod");
+            gtmbVersion = blueprint.has("nativeBlueprint") && blueprint.get("nativeBlueprint")
+                .isJsonObject() ? string(blueprint.getAsJsonObject("nativeBlueprint"), "gtmbVersion") : "";
             createdAt = blueprint.has("createdAt") ? blueprint.get("createdAt")
                 .getAsLong() : 0;
-            cells = size(blueprint, "cells");
-            structures = size(blueprint, "structures");
+            cells = blueprint.has("displayCells") ? blueprint.get("displayCells")
+                .getAsInt() : size(blueprint, "cells");
+            structures = blueprint.has("displayStructures") ? blueprint.get("displayStructures")
+                .getAsInt() : size(blueprint, "structures");
             this.bytes = bytes;
+        }
+
+        Entry(String id, Entry source) {
+            this.id = id;
+            name = source.name;
+            authorName = source.authorName;
+            authorUuid = source.authorUuid;
+            sourceMod = source.sourceMod;
+            gtmbVersion = source.gtmbVersion;
+            cells = source.cells;
+            structures = source.structures;
+            bytes = source.bytes;
+            createdAt = source.createdAt;
         }
     }
 
@@ -114,27 +131,30 @@ final class HologramClientLibrary {
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
-        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*.json")) {
-            for (Path file : files) {
-                String id = file.getFileName()
-                    .toString()
-                    .replaceFirst("\\.json$", "");
-                if (!id.matches("local_[a-fA-F0-9-]{36}")) continue;
-                seen.add(id);
+        displayPaths.clear();
+        {
+            for (java.util.Map.Entry<String, Path> member : HologramBlueprintFiles.displayCandidates(directory)
+                .entrySet()) {
+                Path file = member.getValue();
+                String key = file.toString();
+                seen.add(key);
                 try {
-                    CachedEntry cached = entryCache.get(id);
-                    if (cached == null || !cached.jsonHash.equals(memberHash(file, MAX_BYTES))
-                        || !cached.pngHash.equals(
-                            memberHash(
-                                HologramBlueprintArtifact.previewPath(file),
-                                HologramBlueprintArtifact.MAX_PNG_BYTES))) {
-                        HologramBlueprintArtifact.Artifact actual = pairIo.read(file);
-                        cached = new CachedEntry(new Entry(id, blueprint(actual.json), actual.json.length), actual);
-                        entryCache.put(id, cached);
+                    String signature = stamp(file);
+                    CachedEntry cached = entryCache.get(key);
+                    if (cached == null || !cached.stamp.equals(signature)) {
+                        JsonObject display = displayMetadata(file);
+                        String id = HologramBlueprintFiles.displayId(directory, file, string(display, "id"));
+                        cached = new CachedEntry(new Entry(id, display, Files.size(file)), file);
+                        if (!signature.equals(cached.stamp))
+                            throw new IOException("Blueprint changed during catalog read");
+                        entryCache.put(key, cached);
                     }
-                    entries.add(cached.entry);
+                    Entry entry = cached.entry;
+                    if (displayPaths.containsKey(entry.id) && !file.equals(displayPaths.get(entry.id)))
+                        entry = new Entry(HologramBlueprintFiles.displayId(directory, file, ""), entry);
+                    if (displayPaths.putIfAbsent(entry.id, file) == null) entries.add(entry);
                 } catch (IOException | RuntimeException invalid) {
-                    entryCache.remove(id);
+                    entryCache.remove(key);
                     // A damaged individual file must not hide every other portable blueprint.
                 }
                 if (entries.size() >= MAX_ENTRIES) break;
@@ -149,20 +169,70 @@ final class HologramClientLibrary {
         return entries;
     }
 
-    private static String memberHash(Path path, int maximum) throws IOException {
-        if (!Files.isRegularFile(path) || Files.size(path) > maximum)
-            throw new IOException("Invalid local artifact member");
-        byte[] bytes = Files.readAllBytes(path);
-        if (bytes.length > maximum) throw new IOException("Invalid local artifact member");
-        return HologramBlueprintArtifact.hash(bytes);
+    private static String stamp(Path path) throws IOException {
+        java.nio.file.attribute.BasicFileAttributes attributes = Files
+            .readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
+        if (!attributes.isRegularFile() || attributes.size() > MAX_BYTES)
+            throw new IOException("Invalid local blueprint member");
+        return path.toAbsolutePath()
+            .normalize() + ":"
+            + attributes.fileKey()
+            + ":"
+            + attributes.size()
+            + ":"
+            + attributes.lastModifiedTime();
     }
 
-    /** One validation before writing and one actual readback; later catalog refreshes reuse these exact hashes. */
+    /** Stream catalog fields and skip payloads; no DTO expansion, PNG decode, digest or construction validation. */
+    private static JsonObject displayMetadata(Path path) throws IOException {
+        try (com.google.gson.stream.JsonReader reader = new com.google.gson.stream.JsonReader(
+            Files.newBufferedReader(path, StandardCharsets.UTF_8))) {
+            JsonObject metadata = new JsonObject();
+            reader.beginObject();
+            boolean blueprint = false;
+            while (reader.hasNext()) {
+                String name = reader.nextName();
+                if (!name.equals("blueprint")) {
+                    reader.skipValue();
+                    continue;
+                }
+                blueprint = true;
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    String key = reader.nextName();
+                    if (key.equals("cells") || key.equals("structures")) {
+                        int count = 0;
+                        reader.beginArray();
+                        while (reader.hasNext()) {
+                            reader.skipValue();
+                            count++;
+                        }
+                        reader.endArray();
+                        metadata.addProperty(key.equals("cells") ? "displayCells" : "displayStructures", count);
+                    } else if (key.equals("nativeBlueprint"))
+                        metadata.add(key, new com.google.gson.JsonParser().parse(reader));
+                    else if (key.equals("createdAt")) metadata.addProperty(key, reader.nextLong());
+                    else if (key.equals("id") || key.equals("name")
+                        || key.equals("authorName")
+                        || key.equals("authorUuid")
+                        || key.equals("sourceMod")) metadata.addProperty(key, reader.nextString());
+                    else reader.skipValue();
+                }
+                reader.endObject();
+            }
+            reader.endObject();
+            if (!blueprint || !metadata.has("displayCells")) throw new IOException("Missing blueprint display data");
+            return metadata;
+        }
+    }
+
+    /** Save validation and actual readback remain separate from display-only catalog hints. */
     LocalSave prepareLocalSave(byte[] data, byte[] preview, String id, java.util.function.BooleanSupplier stillCurrent)
         throws IOException {
         JsonObject blueprint = blueprint(data);
-        Path target = file(id);
-        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        Path previous = file(id);
+        if (!Files.exists(previous) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
+        Path target = HologramBlueprintFiles.target(directory, id, data);
         if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
             throw new IOException("蓝图缺少服务器确认的作者信息");
         HologramBlueprintArtifact.PairWrite written = pairIo.write(target, data, preview, stillCurrent);
@@ -171,7 +241,8 @@ final class HologramClientLibrary {
             if (!written.jsonSha256.equals(actual.jsonSha256) || !written.pngSha256.equals(actual.pngSha256))
                 throw new IOException("Actual saved artifact differs from written bytes");
             if (!stillCurrent.getAsBoolean()) throw new IOException("Blueprint save source changed");
-            entryCache.put(id, new CachedEntry(new Entry(id, blueprint, actual.json.length), actual));
+            HologramBlueprintFiles.track(directory, id, written);
+            entryCache.put(target.toString(), new CachedEntry(new Entry(id, blueprint, actual.json.length), target));
             return new LocalSave(written, string(blueprint, "name"), target, actual);
         } catch (IOException | RuntimeException failure) {
             try {
@@ -189,13 +260,9 @@ final class HologramClientLibrary {
 
     String save(byte[] data, byte[] preview, String replaceId, java.util.function.BooleanSupplier stillCurrent)
         throws IOException {
-        JsonObject blueprint = blueprint(data);
         String id = replaceId == null || replaceId.isEmpty() ? "local_" + UUID.randomUUID() : replaceId;
-        Path target = file(id);
-        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
-        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
-            throw new IOException("蓝图缺少服务器确认的作者信息");
-        HologramBlueprintArtifact.writePair(target, data, preview, stillCurrent);
+        LocalSave saved = prepareLocalSave(data, preview, id, stillCurrent);
+        saved.write.commit();
         return id;
     }
 
@@ -207,12 +274,18 @@ final class HologramClientLibrary {
 
     HologramBlueprintArtifact.PairWrite savePending(byte[] data, byte[] preview, String id,
         java.util.function.BooleanSupplier stillCurrent) throws IOException {
-        JsonObject blueprint = blueprint(data);
-        Path target = file(id);
-        if (!Files.exists(target) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
-        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
-            throw new IOException("蓝图缺少服务器确认的作者信息");
-        return HologramBlueprintArtifact.writePairPending(target, data, preview, stillCurrent);
+        return prepareLocalSave(data, preview, id, stillCurrent).write;
+    }
+
+    String upgradeLegacy() throws IOException {
+        return upgradeLegacy(() -> true, (done, total) -> {});
+    }
+
+    String upgradeLegacy(java.util.function.BooleanSupplier current,
+        java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
+        String result = HologramBlueprintFiles.upgrade(directory, current, progress);
+        entryCache.clear();
+        return result;
     }
 
     /** Resolve only this local integrated save if shutdown outpaces its final network reply. */
@@ -225,9 +298,8 @@ final class HologramClientLibrary {
             "蓝图库超过 " + HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES / (1024 * 1024) + " MiB 上限");
         JsonObject expected = blueprint(artifact.json);
         try {
-            JsonObject collection = new JsonParser()
-                .parse(new String(Files.readAllBytes(catalog), StandardCharsets.UTF_8))
-                .getAsJsonObject();
+            JsonObject collection = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+                .parse(Files.readAllBytes(catalog), HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
             JsonElement rows = collection.get("presets");
             if (rows == null || !rows.isJsonArray()) return false;
             for (JsonElement row : rows.getAsJsonArray()) if (expected.equals(row)) return true;
@@ -249,6 +321,12 @@ final class HologramClientLibrary {
         return HologramBlueprintArtifact.encode(saved.json, saved.png);
     }
 
+    /** Placement upload only: validate and package the original pair after a server hash miss. */
+    byte[] previewArtifact(String id) throws IOException {
+        HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
+        return HologramBlueprintArtifact.encode(saved.json, saved.png);
+    }
+
     Path savedPath(String id) throws IOException {
         return file(id);
     }
@@ -258,7 +336,14 @@ final class HologramClientLibrary {
     }
 
     void delete(String id) throws IOException {
-        HologramBlueprintArtifact.deletePair(file(id));
+        Path selected = file(id);
+        if (!selected.equals(HologramBlueprintFiles.resolve(directory, id))) {
+            HologramBlueprintFiles.managed(directory);
+            if (!selected.equals(HologramBlueprintFiles.resolve(directory, id)))
+                throw new IOException("Blueprint selection changed before delete");
+        }
+        HologramBlueprintFiles.delete(directory, id);
+        displayPaths.remove(id);
     }
 
     String uploadedId(String server, String localId) throws IOException {
@@ -374,11 +459,10 @@ final class HologramClientLibrary {
 
     private Path file(String id) throws IOException {
         if (id == null || !id.matches("local_[a-fA-F0-9-]{36}")) throw new IOException("客户端蓝图 ID 无效");
-        Path path = directory.resolve(id + ".json")
-            .normalize();
-        if (!path.getParent()
-            .equals(directory)) throw new IOException("客户端蓝图路径无效");
-        return path;
+        Path indexed = HologramBlueprintFiles.resolve(directory, id);
+        if (Files.isRegularFile(indexed)) return indexed;
+        Path displayed = displayPaths.get(id);
+        return displayed == null ? indexed : displayed;
     }
 
     private static JsonObject parse(byte[] data) throws IOException {
@@ -399,9 +483,7 @@ final class HologramClientLibrary {
                     if (++depth > 64) throw new IOException("蓝图 JSON 嵌套过深");
                 } else if (character == '}' || character == ']') depth--;
             }
-            JsonElement root = new JsonParser().parse(json);
-            if (!root.isJsonObject()) throw new IOException("蓝图 JSON 无效");
-            JsonObject object = root.getAsJsonObject();
+            JsonObject object = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(data);
             blueprint(object);
             HologramLibraryFacade.validateNativeJson(data);
             return object;

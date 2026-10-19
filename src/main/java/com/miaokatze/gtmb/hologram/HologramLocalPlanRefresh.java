@@ -664,6 +664,7 @@ final class HologramLocalPlanRefresh {
         state.setString("status", s.status);
         state.setInteger("job", s.job);
         state.setBoolean("localPlanPending", s.localPlanPending);
+        state.setBoolean("placementValidating", s.placementValidating);
         state.setString("localPlanError", s.localPlanError);
         state.setInteger("selected", s.selected);
         state.setInteger("scope", s.scope);

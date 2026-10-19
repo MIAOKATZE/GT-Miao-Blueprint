@@ -1070,8 +1070,13 @@ public final class HologramInteractionClientSmoke {
                     previewMouseClick(screen, x, y, 0);
                     int[] selected = screen.smokeSelectedIndices();
                     require(
+                        selected.length == 1 && selected[0] == index,
+                        "actual_coil_face_mouse_click_selects_one_independently_editable_cell");
+                    HologramMuiProbeInput.key(screen, 't', Keyboard.KEY_T);
+                    selected = screen.smokeSelectedIndices();
+                    require(
                         selected.length == 16 && coilSelectionCoordinates(snapshot, selected).size() == 16,
-                        "actual_coil_face_mouse_click_automatically_selects_sixteen_same_family_cells");
+                        "explicit_T_after_actual_coil_mouse_click_selects_sixteen_same_family_cells");
                     return selected;
                 }
         throw new IllegalStateException("Real EBF preview has no visible coil face for repeated-grade interaction");

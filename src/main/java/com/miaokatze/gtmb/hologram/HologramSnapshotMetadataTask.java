@@ -322,6 +322,13 @@ final class HologramSnapshotMetadataTask {
         if (s.virtualPreset != null && !s.virtualPreset.structures.isEmpty()) {
             HologramPresets.Structure saved = s.virtualPreset.structures.get(cursor++);
             row.setString("id", saved.id);
+            if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
+                try {
+                    row.setTag("textBox", HologramTextWorkflow.definition(saved));
+                } catch (IOException invalid) {
+                    row.setString("textBoxError", "文字定义损坏");
+                }
+            }
             row.setString("name", saved.name == null ? "\u7ed3\u6784" : saved.name);
             row.setInteger("x", s.x + saved.x);
             row.setInteger("y", s.y + saved.y);

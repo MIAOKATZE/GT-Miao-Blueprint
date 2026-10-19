@@ -94,15 +94,26 @@ final class HologramUiPreview {
     private int[] airBounds;
 
     private long pendingSelectionSequence = -1;
+    private HologramState browseState;
+    private long browseCameraEpoch = Long.MIN_VALUE;
+    private double browseYaw = Math.PI / 4, browsePitch = Math.PI / 6, browseZoom = 1;
+    private int browseLayer;
+    private boolean browseAllLayers = true, browseDragging;
 
     int previewHeight() {
-        return HologramScreenLayout
-            .previewHeight(ui.library.libraryDrawer(), HologramGuidance.authorWorkspace(ui.session.state()));
+        return HologramScreenLayout.previewHeight(
+            ui.library.libraryDrawer(),
+            !ui.library.browsePreviewActive() && HologramGuidance.authorWorkspace(ui.session.state()));
     }
 
     void drawPreview(int mx, int my) {
+        if (ui.library.browsePreviewActive()) {
+            drawBrowsePreview(mx, my);
+            return;
+        }
         int height = previewHeight();
         HologramRenderer.selection = this.selection;
+        HologramRenderer.moveOffset = this.gizmo.offset();
         HologramRenderer.showEmptyCells = this.inventory || ui.position.positionDrawer()
             || ui.preview.airSelectionHeld();
         HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
@@ -143,6 +154,7 @@ final class HologramUiPreview {
                 mx,
                 my,
                 -1);
+            ui.textBoxes.draw();
         } finally {
             GL11.glPopAttrib();
         }
@@ -150,7 +162,9 @@ final class HologramUiPreview {
         ui.canvas.button(11, 84, 55, 50, 17, this.allLayers ? "全部层" : "层 " + this.layer, true, mx, my);
         ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().minY, mx, my);
         ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().maxY, mx, my);
-        if (this.selection.size() > 0) ui.canvas.text("选中 " + this.selection.size() + " 格", 186, 61, 100, 0xffe59b);
+        if (this.selection.size() > 0)
+            ui.canvas.text("选中 " + this.selection.size() + " 格 · G 移动轴", 186, 61, 122, 0xffe59b);
+        if (this.selection.canSelectRelated(ui.session.state())) ui.canvas.text("全选 T", 264, 61, 42, 0xc99bff);
         if (!ui.library.libraryDrawer()) ui.preview.drawMoveHandleControl(mx, my);
         if (!ui.library.libraryDrawer()) {
             ui.canvas.button(14, 38, 282, 66, 17, "复位视角", true, mx, my);
@@ -215,8 +229,121 @@ final class HologramUiPreview {
         }
     }
 
+    /** A library display has its own camera and no selection, session, or editing capability. */
+    private void drawBrowsePreview(int mx, int my) {
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        HologramState display = library.browsePreviewState();
+        if (browseCameraEpoch != library.browsePreviewEpoch()) {
+            browseCameraEpoch = library.browsePreviewEpoch();
+            browseAllLayers = true;
+            browseLayer = display == null ? 0 : display.minY;
+            browseYaw = Math.PI / 4;
+            browsePitch = Math.PI / 6;
+            browseZoom = 1;
+            browseDragging = false;
+        }
+        if (display != browseState) {
+            if (display != null) browseLayer = browseState == null ? display.minY
+                : Math.max(display.minY, Math.min(display.maxY, browseLayer));
+            browseState = display;
+        }
+        int height = previewHeight();
+        drawRect(viewportX, viewportY, viewportX + viewportWidth, viewportY + height, 0xff0c1e28);
+        HologramRenderer.selection = null;
+        HologramRenderer.showEmptyCells = false;
+        HologramRenderer.selectedStructureId = "";
+        HologramRenderer.projectionLayer = browseAllLayers ? Integer.MAX_VALUE : browseLayer;
+        if (display == null) {
+            if (drawBrowseImage(library, height)) return;
+            String status = HologramLibraryClient.INSTANCE.browsePreviewStatus();
+            ui.canvas.text(
+                status.isEmpty() ? "在右侧选择蓝图以预览" : status,
+                viewportX + 12,
+                viewportY + 35,
+                viewportWidth - 24,
+                0xb9d5d4);
+            return;
+        }
+        int factor = new net.minecraft.client.gui.ScaledResolution(
+            ui.host.minecraft(),
+            ui.host.minecraft().displayWidth,
+            ui.host.minecraft().displayHeight).getScaleFactor();
+        GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL11.glScissor(
+            Math.round((ui.canvas.originX() + viewportX * ui.canvas.scale()) * factor),
+            ui.host.minecraft().displayHeight
+                - Math.round((ui.canvas.originY() + (viewportY + height) * ui.canvas.scale()) * factor),
+            Math.round(viewportWidth * ui.canvas.scale() * factor),
+            Math.round(height * ui.canvas.scale() * factor));
+        try {
+            HologramRenderer.preview(
+                display,
+                viewportX,
+                viewportY,
+                viewportWidth,
+                height,
+                browseYaw,
+                browsePitch,
+                browseZoom,
+                0,
+                0,
+                browseAllLayers ? Integer.MAX_VALUE : browseLayer,
+                0,
+                -1,
+                mx,
+                my,
+                -1);
+        } finally {
+            GL11.glPopAttrib();
+        }
+        boolean visible = HologramRenderer.previewMeshVisible(display);
+        if (!visible) drawBrowseImage(library, height);
+        if (!display.data.getBoolean("displayPartial") && HologramRenderer.previewMeshReady(display))
+            library.releaseBrowseImage();
+        ui.canvas.text("只读预览", 38, 61, 76, 0x81dce9);
+        ui.canvas.button(11, 116, 55, 50, 17, browseAllLayers ? "全部层" : "层 " + browseLayer, visible, mx, my);
+        ui.canvas.button(12, 168, 55, 20, 17, "−", visible && browseLayer > display.minY, mx, my);
+        ui.canvas.button(13, 190, 55, 22, 17, "+", visible && browseLayer < display.maxY, mx, my);
+    }
+
+    private boolean browseMeshInteractive() {
+        return browseState != null && HologramRenderer.previewMeshVisible(browseState);
+    }
+
+    private boolean drawBrowseImage(HologramLibraryClient library, int height) {
+        net.minecraft.util.ResourceLocation texture = library.browsePreviewTexture();
+        java.awt.image.BufferedImage image = library.browsePreviewImage();
+        if (texture == null || image == null) return false;
+        double scale = Math.min((viewportWidth - 16.0) / image.getWidth(), (height - 16.0) / image.getHeight());
+        double width = image.getWidth() * scale, imageHeight = image.getHeight() * scale;
+        double left = viewportX + (viewportWidth - width) / 2, top = viewportY + (height - imageHeight) / 2;
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_CURRENT_BIT);
+        try {
+            ui.host.minecraft()
+                .getTextureManager()
+                .bindTexture(texture);
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glColor4f(1, 1, 1, 1);
+            net.minecraft.client.renderer.Tessellator tessellator = net.minecraft.client.renderer.Tessellator.instance;
+            tessellator.startDrawingQuads();
+            tessellator.addVertexWithUV(left, top + imageHeight, 0, 0, 1);
+            tessellator.addVertexWithUV(left + width, top + imageHeight, 0, 1, 1);
+            tessellator.addVertexWithUV(left + width, top, 0, 1, 0);
+            tessellator.addVertexWithUV(left, top, 0, 0, 0);
+            tessellator.draw();
+        } finally {
+            GL11.glPopAttrib();
+        }
+        return true;
+    }
+
     boolean canMoveSelection() {
-        return ui.session.state().data.getBoolean("geometryEditable") && ui.session.state().data.getBoolean("virtual")
+        return !ui.library.browsePreviewActive() && ui.session.state().data.getBoolean("geometryEditable")
+            && ui.session.state().data.getBoolean("virtual")
             && ui.session.state().data.getBoolean("supported")
             && ui.session.editable()
             && this.selection.movable(ui.session.state());
@@ -362,51 +489,19 @@ final class HologramUiPreview {
         }
         int count = this.selection.size();
         if (count == 0) return;
-        double[] center = HologramRenderer.project(x / count, y / count, z / count);
-        this.gizmo.project(center[0], center[1], this.yaw, this.pitch);
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glLineWidth(3);
-        net.minecraft.client.renderer.Tessellator t = net.minecraft.client.renderer.Tessellator.instance;
-        t.startDrawing(GL11.GL_LINES);
-        for (int axis = 0; axis < 3; axis++) {
-            int color = HologramGizmo.COLORS[axis];
-            double[] end = this.gizmo.end(axis);
-            t.setColorOpaque_I(color & 0xffffff);
-            t.addVertex(center[0], center[1], 5);
-            t.addVertex(end[0], end[1], 5);
-        }
-        t.draw();
-        GL11.glEnable(GL11.GL_TEXTURE_2D);
-        for (int axis = 0; axis < 3; axis++) {
-            double[] end = this.gizmo.end(axis);
-            drawRect(
-                (int) end[0] - 3,
-                (int) end[1] - 3,
-                (int) end[0] + 4,
-                (int) end[1] + 4,
-                HologramGizmo.COLORS[axis]);
-            ui.canvas.text(
-                new String[] { "X", "Y", "Z" }[axis],
-                (int) end[0] + 5,
-                (int) end[1] - 4,
-                14,
-                HologramGizmo.COLORS[axis]);
-        }
-        GL11.glPopAttrib();
-        if (this.gizmo.axis() >= 0) ui.canvas.text(
-            (this.gizmoCopy ? "复制移动 " : "移动 ") + new String[] { "X", "Y", "Z" }[this.gizmo.axis()]
-                + " "
-                + this.gizmo.delta()
-                + " 格",
+        int[] offset = gizmo.offset();
+        double[] center = HologramRenderer.project(x / count + offset[0], y / count + offset[1], z / count + offset[2]);
+        gizmo.project(center[0], center[1], yaw, pitch, HologramRenderer.gridScale());
+        HologramGizmoRenderer.draw(gizmo, ui.canvas, mx, my);
+        if (gizmo.axis() >= 0) ui.canvas.text(
+            (gizmoCopy ? "复制移动 " : "移动 ") + HologramGizmo
+                .label(gizmo.axis()) + " " + offset[0] + "," + offset[1] + "," + offset[2] + " 格",
             38,
             263,
-            180,
+            280,
             0xffffaa);
-        // Preview hint and structure overlays may append to the axis tooltip in this same frame.
-        else if (this.gizmo.pick(mx, my) >= 0)
-            ui.canvas.tooltip(new ArrayList<>(Collections.singletonList("拖动轴移动；按住 Ctrl 开始拖动即复制；松开提交规划")));
+        else if (gizmo.pick(mx, my) >= 0)
+            ui.canvas.tooltip(new ArrayList<>(Collections.singletonList("拖轴沿单轴移动，拖彩色小面沿平面移动；Ctrl 开始拖动即复制；松开提交规划")));
     }
 
     void drawInventory(int mx, int my) {
@@ -608,11 +703,22 @@ final class HologramUiPreview {
     }
 
     boolean handleEditorShortcut(int key, int modifiers) {
-        if (!ui.preview.previewInteractive() || this.inventory
+        if (ui.library.browsePreviewActive() || !ui.preview.previewInteractive()
+            || this.inventory
             || ui.router.textFieldFocused()
             || ui.shortcuts.captureBinding() >= 0) return false;
+        if (key == Keyboard.KEY_R && modifiers == 4 && ui.textBoxes.selectedDefinition() != null) {
+            editAction("rotateTextVertical");
+            return true;
+        }
         if (key == Keyboard.KEY_A && modifiers == 1) {
             this.selection.all(ui.session.state());
+            this.selected = this.selection.first();
+            ui.config.syncTargetSelectors();
+            return true;
+        }
+        if (key == Keyboard.KEY_T && (modifiers == 0 || modifiers == 1) && this.selected >= 0) {
+            this.selection.selectRelated(ui.session.state(), modifiers == 1);
             this.selected = this.selection.first();
             ui.config.syncTargetSelectors();
             return true;
@@ -631,6 +737,7 @@ final class HologramUiPreview {
     }
 
     boolean previewBlockedAt(int x, int y) {
+        if (ui.library.browsePreviewActive()) return ui.canvas.inPanel(x, y);
         if (!ui.annotations.pinnedAnnotation()
             .isEmpty() && ui.canvas.inViewport(x, y)
             && y >= ui.annotations.pinnedAnnotationTop()
@@ -640,6 +747,7 @@ final class HologramUiPreview {
     }
 
     void editAction(String action) {
+        if (ui.library.browsePreviewActive()) return;
         boolean history = "editUndo".equals(action) || "editRedo".equals(action);
         HologramState.Cell cell = ui.session.selectedCell();
         if (!history && cell == null) return;
@@ -680,6 +788,18 @@ final class HologramUiPreview {
         request.setInteger("selected", target);
         request.setIntArray("indices", indices);
         request.setIntArray("selectedIndices", indices);
+        if ("rotateTextVertical".equals(action)) {
+            request.setBoolean("vertical", true);
+            action = "rotateCell";
+        }
+        if ("restoreCell".equals(action) && ui.session.state().data.getBoolean("virtual")
+            && !ui.session.state().data.getBoolean("virtualPlacement")
+            && ui.session.state().data.getString("activeStructure")
+                .isEmpty()) {
+            action = "editDelete";
+            request.setLong("planRevision", ui.session.revision());
+        }
+        if ("rotateCell".equals(action)) request.setLong("planRevision", ui.session.revision());
         ui.session.send(action, request, true);
     }
 
@@ -730,7 +850,8 @@ final class HologramUiPreview {
     void movePreviewCamera() {
         long now = System.nanoTime(), previous = this.cameraFrame;
         this.cameraFrame = now;
-        if (HologramBackgroundTasks.busy() || previous == 0
+        if (ui.library.browsePreviewActive() || HologramBackgroundTasks.busy()
+            || previous == 0
             || !org.lwjgl.opengl.Display.isActive()
             || !ui.preview.previewInteractive()
             || ui.router.textFieldFocused()
@@ -772,7 +893,9 @@ final class HologramUiPreview {
 
     boolean rotateCameraControl(int id) {
         if (id == 223) {
-            this.yaw = this.yaw + (Math.PI / 2);
+            if (ui.library.browsePreviewActive()) {
+                if (browseMeshInteractive()) browseYaw += Math.PI / 2;
+            } else this.yaw = this.yaw + (Math.PI / 2);
             return true;
         }
         return false;
@@ -799,6 +922,16 @@ final class HologramUiPreview {
     }
 
     boolean activateControl(int id) {
+        if (ui.library.browsePreviewActive() && id >= 10 && id <= 15) {
+            if (!browseMeshInteractive()) return true;
+            if (id == 11) browseAllLayers = !browseAllLayers;
+            else if (id == 12 || id == 13) {
+                browseAllLayers = false;
+                if (browseState != null) browseLayer = Math
+                    .max(browseState.minY, Math.min(browseState.maxY, browseLayer + (id == 12 ? -1 : 1)));
+            }
+            return true;
+        }
         switch (id) {
             case 178:
                 if (ui.session.editable()) HologramClient.beginAreaSelection();
@@ -894,6 +1027,7 @@ final class HologramUiPreview {
     }
 
     boolean consumeViewportRightMouse(int mx, int my, int button) {
+        if (ui.library.browsePreviewActive()) return button == 1 && ui.canvas.inViewport(mx, my);
         if (button == 1 && ui.preview.previewInteractive()
             && ui.canvas.inViewport(mx, my)
             && !ui.preview.previewBlockedAt(mx, my)) {
@@ -908,7 +1042,17 @@ final class HologramUiPreview {
     }
 
     boolean consumeViewportLeftMouse(int mx, int my, int button) {
+        if (ui.library.browsePreviewActive()) {
+            if (button != 0) return false;
+            if (button == 0 && browseMeshInteractive() && ui.canvas.inViewport(mx, my) && !previewBlockedAt(mx, my)) {
+                browseDragging = true;
+                dragX = mx;
+                dragY = my;
+            }
+            return true;
+        }
         if (button == 0) {
+            if (ui.textBoxes.mouse(mx, my, button)) return true;
             if (ui.preview.previewInteractive() && ui.canvas.inViewport(mx, my)
                 && !ui.preview.previewBlockedAt(mx, my)
                 && ui.session.editable()) {
@@ -1038,6 +1182,17 @@ final class HologramUiPreview {
     }
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), false)) return;
+        if (ui.library.browsePreviewActive()) {
+            if (browseDragging && browseMeshInteractive()) {
+                int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
+                browseYaw -= (mx - dragX) * .012;
+                browsePitch = Math.max(-1.35, Math.min(1.35, browsePitch + (my - dragY) * .012));
+                dragX = mx;
+                dragY = my;
+            }
+            return;
+        }
         if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
             return;
         if (this.gizmo.axis() >= 0) {
@@ -1062,16 +1217,25 @@ final class HologramUiPreview {
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
+        if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
+        if (ui.library.browsePreviewActive()) {
+            if (button == 0) browseDragging = false;
+            return;
+        }
         if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
             return;
         if (ui.ae.aeReview() != null) return;
         if (button == 0 && this.gizmo.axis() >= 0) {
-            int axis = this.gizmo.axis(), delta = this.gizmo.update(ui.canvas.localX(x), ui.canvas.localY(y));
+            this.gizmo.update(ui.canvas.localX(x), ui.canvas.localY(y));
+            int[] offset = this.gizmo.offset();
             this.gizmo.cancel();
-            if (delta != 0 && ui.session.editable() && ui.preview.canMoveSelection()) {
+            if ((offset[0] != 0 || offset[1] != 0 || offset[2] != 0) && ui.session.editable()
+                && ui.preview.canMoveSelection()) {
                 NBTTagCompound move = new NBTTagCompound();
                 move.setIntArray("indices", this.selection.indices());
-                move.setInteger(axis == 0 ? "dx" : axis == 1 ? "dy" : "dz", delta);
+                move.setInteger("dx", offset[0]);
+                move.setInteger("dy", offset[1]);
+                move.setInteger("dz", offset[2]);
                 move.setBoolean("copy", this.gizmoCopy);
                 ui.session.send("editMove", move, true);
             }
@@ -1308,11 +1472,13 @@ final class HologramUiPreview {
     }
 
     double zoom() {
-        return this.zoom;
+        return ui.library.browsePreviewActive() ? browseZoom : this.zoom;
     }
 
     double zoom(double value) {
-        this.zoom = value;
+        if (ui.library.browsePreviewActive()) {
+            if (browseMeshInteractive()) browseZoom = value;
+        } else this.zoom = value;
         return value;
     }
 
@@ -1322,6 +1488,8 @@ final class HologramUiPreview {
 
     void recordSelectionCommand(String op, long sequence) {
         if ("addPosition".equals(op) || "editPaste".equals(op)
+            || "editDelete".equals(op)
+            || "rotateCell".equals(op)
             || "editMove".equals(op)
             || "editUndo".equals(op)
             || "editRedo".equals(op)

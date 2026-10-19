@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.block.Block;
+import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -496,7 +497,8 @@ public final class HologramNativePlacement {
         public boolean supports(Block block) {
             String type = block.getClass()
                 .getName();
-            return type.equals("codechicken.multipart.BlockMultipart") || type.startsWith("com.carpentersblocks.block.")
+            return HologramBlockIdentity.vanillaSign(block) || type.equals("codechicken.multipart.BlockMultipart")
+                || type.startsWith("com.carpentersblocks.block.")
                 || type.equals("com.creativemd.littletiles.common.blocks.BlockTile")
                 || type.equals("gcewing.architecture.common.block.BlockShape")
                 || type.equals("crazypants.enderio.conduit.BlockConduitBundle")
@@ -507,6 +509,16 @@ public final class HologramNativePlacement {
             TileEntity tile;
             String type = block.getClass()
                 .getName();
+            if (HologramBlockIdentity.vanillaSign(block)) {
+                if (metadata < 0 || metadata > 15
+                    || block == net.minecraft.init.Blocks.wall_sign && (metadata < 2 || metadata > 5))
+                    throw unsupported("invalid vanilla sign orientation");
+                tile = block.createTileEntity(world, metadata);
+                validateFactoryId(tag, tile);
+                tile.setWorldObj(world);
+                tile.readFromNBT((NBTTagCompound) tag.copy());
+                return tile;
+            }
             if (type.equals("codechicken.multipart.BlockMultipart")) {
                 // MultipartSaveLoad uses savedMultipart -> TileNBTContainer at load time, then creates a dynamic tile.
                 // Its writer maps every dynamic tile class back to this exact native persistence carrier.
@@ -632,6 +644,10 @@ public final class HologramNativePlacement {
         @SuppressWarnings("unchecked")
         public List<ItemStack> materials(Block block, int metadata, TileEntity tile) throws Exception {
             List<ItemStack> costs = new ArrayList<>();
+            if (HologramBlockIdentity.vanillaSign(block)) {
+                costs.add(new ItemStack(Items.sign, 1, 0));
+                return costs;
+            }
             String type = block.getClass()
                 .getName();
             if (type.equals("codechicken.multipart.BlockMultipart")) {

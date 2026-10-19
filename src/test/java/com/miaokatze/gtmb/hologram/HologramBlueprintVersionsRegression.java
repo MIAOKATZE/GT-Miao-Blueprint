@@ -48,11 +48,11 @@ public final class HologramBlueprintVersionsRegression {
     }
 
     private static void releaseAndPackAreIndependent() throws Exception {
-        SimpleAssert.eq("0.1.17", Tags.RELEASE_VERSION, "blueprint release is the explicit semantic release property");
+        SimpleAssert.eq("0.1.25", Tags.RELEASE_VERSION, "blueprint release is the explicit semantic release property");
         HologramPresets.Preset client = blueprint();
         client.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-RC-2");
         HologramBlueprintVersions.validate(client);
-        SimpleAssert.eq("0.1.17", client.nativeBlueprint.gtmbVersion, "GTMB release does not become the pack version");
+        SimpleAssert.eq("0.1.25", client.nativeBlueprint.gtmbVersion, "GTMB release does not become the pack version");
         SimpleAssert.eq("2.9.0-RC-2", client.nativeBlueprint.gtnhVersion, "exact RC-2 environment is preserved");
         HologramPresets.Preset server = blueprint();
         server.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-RC-1");
@@ -317,7 +317,14 @@ public final class HologramBlueprintVersionsRegression {
                         .get(0)),
                 "failed artifact delete restores detached native cache");
             try (java.util.stream.Stream<Path> files = Files.list(library.getParent())) {
-                SimpleAssert.eq(3, (int) files.count(), "failed three-member deletion leaves no temporary files");
+                SimpleAssert.eq(
+                    3,
+                    (int) files.filter(
+                        path -> !path.getFileName()
+                            .toString()
+                            .equals(".gtmb-blueprint-files.properties"))
+                        .count(),
+                    "failed three-member deletion leaves no temporary files alongside the filename index");
             }
             HologramPresets.delete(prepared.id);
             SimpleAssert.that(
@@ -340,6 +347,7 @@ public final class HologramBlueprintVersionsRegression {
             if (json != null) Files.deleteIfExists(json);
             if (png != null) Files.deleteIfExists(png);
             Files.deleteIfExists(game.resolve("MiaoBlueprints/hologram-presets.json"));
+            Files.deleteIfExists(game.resolve("MiaoBlueprints/.gtmb-blueprint-files.properties"));
             Files.deleteIfExists(game.resolve("MiaoBlueprints"));
             Files.deleteIfExists(game);
         }

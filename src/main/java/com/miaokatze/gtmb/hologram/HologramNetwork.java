@@ -66,6 +66,7 @@ public final class HologramNetwork {
     private HologramNetwork() {}
 
     static void clearServerQueues() {
+        HologramAttachmentUpload.clearServer();
         actionGate.clear();
         receiptGate.clear();
         for (Outbox box : outgoing.values()) retire(box);
@@ -97,6 +98,17 @@ public final class HologramNetwork {
         channel.registerMessage(LibrarySnapshotHandler.class, LibrarySnapshotFragment.class, 5, Side.CLIENT);
         channel.registerMessage(CutServerHandler.class, CutAction.class, 6, Side.SERVER);
         channel.registerMessage(CutFragmentHandler.class, CutFragment.class, 7, Side.CLIENT);
+        channel.registerMessage(
+            HologramAttachmentUpload.Handler.class,
+            HologramAttachmentUpload.Fragment.class,
+            8,
+            Side.SERVER);
+        channel.registerMessage(
+            HologramAttachmentUpload.AckHandler.class,
+            HologramAttachmentUpload.Ack.class,
+            9,
+            Side.CLIENT);
+        HologramAttachmentUpload.init(channel);
         HologramLibraryFacade.init();
         FMLCommonHandler.instance()
             .bus()
@@ -110,6 +122,7 @@ public final class HologramNetwork {
 
     public static void clearLibraryClientTransport() {
         librarySnapshots.reset();
+        HologramAttachmentUpload.clearClient();
     }
 
     public static void setClientInteractionSender(Consumer<NBTTagCompound> value) {
@@ -153,7 +166,34 @@ public final class HologramNetwork {
     }
 
     public static void sendAction(NBTTagCompound tag) {
-        if (channel != null) channel.sendToServer(new Action(tag));
+        if (channel == null) return;
+        if ("placeTextBox".equals(tag.getString("op"))) HologramAttachmentUpload.send(tag);
+        else channel.sendToServer(new Action(tag));
+    }
+
+    static void clientActionFailure(NBTTagCompound action, String reason) {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("transportError", true);
+        state.setString("session", action.getString("session"));
+        state.setLong("uiSequence", action.getLong("uiSequence"));
+        state.setString("errorCode", "attachment.upload");
+        state.setString("errorMessage", reason == null ? "附加数据上传失败，请重新确认" : reason);
+        Consumer<NBTTagCompound> client = receiver;
+        if (client != null) client.accept(state);
+    }
+
+    /** Called on the server thread after complete bounded decoding; late uploads cannot revive cancelled work. */
+    static void receiveUploadedAction(EntityPlayerMP player, net.minecraft.world.World world, NBTTagCompound tag) {
+        HologramSession current = HologramWorkspace.find(player.getUniqueID());
+        if (current == null || current.player != player
+            || !current.id.equals(tag.getString("session"))
+            || tag.getLong("uiSequence") < current.uiSequence) return;
+        HologramRequestGate.Lease lease = actionGate.acquire(player);
+        if (lease == null) {
+            HologramBusyReplies.reject(player, tag, HologramBusyReplies.Kind.ACTION);
+            return;
+        }
+        runQueuedAction(player, world, lease, () -> dispatch(player, tag));
     }
 
     public static void setCutReceiver(Consumer<NBTTagCompound> value) {
@@ -165,6 +205,10 @@ public final class HologramNetwork {
                 .clear();
             HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.CUT_DECODER_DEPTH, 0);
         }
+    }
+
+    public static void clearAttachmentClientTransport() {
+        HologramAttachmentUpload.clearClient();
     }
 
     public static void clearCutClientTransport() {
@@ -455,6 +499,11 @@ public final class HologramNetwork {
 
     public static void sendState(EntityPlayerMP player, NBTTagCompound tag) {
         if (channel == null) return;
+        // Configuration replies have no workspace nonce and must not replace its snapshot outbox.
+        if (tag.getBoolean("voucherEditor")) {
+            if (progressConnected(player)) channel.sendTo(new State(tag), player);
+            return;
+        }
         if (tag.getBoolean("progressOnly")) {
             if (!progressConnected(player)) return;
             NBTTagCompound event = (NBTTagCompound) tag.copy();
@@ -804,6 +853,11 @@ public final class HologramNetwork {
     public static final class TransportTicks {
 
         @SubscribeEvent
+        public void clientTick(TickEvent.ClientTickEvent event) {
+            if (event.phase == TickEvent.Phase.END) HologramAttachmentUpload.clientTick();
+        }
+
+        @SubscribeEvent
         public void tick(TickEvent.ServerTickEvent event) {
             if (event.phase != TickEvent.Phase.END) return;
             long started = HologramRuntimeMetrics.start();
@@ -816,6 +870,7 @@ public final class HologramNetwork {
         }
 
         private void tickTransfers() {
+            HologramAttachmentUpload.tick();
             HologramSnapshotPreparation.pruneRetired();
             tickEncoding();
             Iterator<CutOutbox> cuts = cutOutgoing.values()
@@ -1212,6 +1267,10 @@ public final class HologramNetwork {
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         String action = tag.getString("action");
+        if ("voucherEditor".equals(action)) {
+            HologramVoucherEditor.handle(player, tag);
+            return;
+        }
         if (HologramAeCraftingOrders.active(player) && !(action.isEmpty() || "useAir".equals(action)
             || "useBlock".equals(action)
             || "openSettings".equals(action))) {

@@ -86,9 +86,11 @@ final class HologramUiRouter {
 
     void drawImportBusy(int mx, int my) {
         boolean importing = ui.session.areaImporting();
-        ui.canvas.text(importing ? "正在导入框选区域" : "正在准备蓝图快照", 142, 13, 360, 0xf5e4b9);
+        boolean validating = ui.session.state().data.getBoolean("placementValidating");
+        ui.canvas.text(validating ? "正在核对放置位置与材料" : importing ? "正在导入框选区域" : "正在准备蓝图快照", 142, 13, 360, 0xf5e4b9);
         drawRect(30, 62, 650, 282, 0xff172f36);
-        ui.canvas.text(importing ? "正在导入区域 · 请稍候" : "正在读取蓝图 · 请稍候", 50, 78, 580, 0xffe59b);
+        ui.canvas
+            .text(validating ? "放置校验 · 完成后显示材料核算" : importing ? "正在导入区域 · 请稍候" : "正在读取蓝图 · 请稍候", 50, 78, 580, 0xffe59b);
         String stage = ui.session.state().data.getString("areaImportStage");
         if (stage.isEmpty()) stage = "blocks";
         ui.canvas.text("准备完成前，暂不能编辑、保存或放置蓝图。", 50, 123, 580, 0xe5c28d);
@@ -164,7 +166,8 @@ final class HologramUiRouter {
                     return;
                 }
             }
-            if (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending")) {
+            if (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending")
+                || ui.session.state().data.getBoolean("placementValidating")) {
                 ui.router.drawImportBusy(mx, my);
                 if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction())
                     drawTaskStatus(mx, my);
@@ -289,6 +292,9 @@ final class HologramUiRouter {
                     mx,
                     my);
             ui.canvas.button(178, 478, 9, 92, 17, "框选区域", ui.session.editable(), mx, my);
+            ui.canvas.button(330, 320, 34, 102, 17, "清空工作区", ui.session.editable(), mx, my);
+            ui.canvas.button(331, 158, 34, 76, 17, ui.textBoxes.label(false), ui.textBoxes.allowed(false), mx, my);
+            ui.canvas.button(332, 238, 34, 78, 17, ui.textBoxes.label(true), ui.textBoxes.allowed(true), mx, my);
             if (!ui.library.libraryDrawer())
                 ui.canvas.button(179, 578, 9, 94, 17, "AE 容器标记", ui.ae.canOpenAePreview(), mx, my);
             if (ui.config.drawer() || ui.preview.inventory()
@@ -683,6 +689,7 @@ final class HologramUiRouter {
 
     void keyTyped(char c, int key) {
         ui.shortcuts.activity();
+        if (ui.textBoxes.key(key)) return;
         if (ui.review.consumeMaterialDialogKey(key)) return;
         if (ui.library.consumeSaveGuidanceKey(key)) return;
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
@@ -746,10 +753,10 @@ final class HologramUiRouter {
             return;
         }
         if (ui.config.resetReview()) return;
-        if (key == Keyboard.KEY_T && !ui.router.textFieldFocused()) return;
         if (ui.library.consumeBrowserKey(c, key)) return;
         if (ui.preview.consumeCameraKey(c, key)) return;
         if (ui.preview.handleEditorShortcut(key, HologramKeyBindings.modifiers())) return;
+        if (key == Keyboard.KEY_T && !ui.router.textFieldFocused()) return;
         if (ui.position.positionDrawer() && !ui.review.confirmation()) {
             if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) ui.router.activate(76);
             else {
@@ -785,6 +792,14 @@ final class HologramUiRouter {
     }
 
     void activate(int id) {
+        if (id == 331 || id == 332) {
+            ui.textBoxes.activate(id == 332);
+            return;
+        }
+        if (id == 330) {
+            ui.session.send("clearWorkspace", null, true);
+            return;
+        }
         if (id == 193 && (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending"))) {
             closeRoot();
             return;

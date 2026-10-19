@@ -33,6 +33,7 @@ final class HologramBlueprintData {
         copy.name = original.name;
         copy.sourceMod = original.sourceMod;
         copy.sourceClass = original.sourceClass;
+        copy.textBoxNbt = original.textBoxNbt;
         copy.controllerId = original.controllerId;
         copy.x = original.x;
         copy.y = original.y;

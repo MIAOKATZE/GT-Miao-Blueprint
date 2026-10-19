@@ -14,6 +14,10 @@ public final class HologramSelection {
     private int version, mobilityVersion = -1;
     private HologramState mobilityState;
     private boolean mobility;
+    private HologramState relatedState;
+    private int relatedVersion = -1;
+    private Set<Integer> related = java.util.Collections.emptySet();
+    private boolean relatedAvailable;
 
     public void clear() {
         version++;
@@ -78,8 +82,13 @@ public final class HologramSelection {
         clickedStructureId = knownStructure(state, id) ? id : "";
     }
 
-    /** T selects exact block variants; declared replacement families stay inside the clicked structure. */
+    /** Grade families expand only on explicit T input, inside the clicked structure. */
     void previewClick(HologramState state, int index, String outline, boolean sameType, boolean additive) {
+        if (index >= 0 && index < state.cells.size()) for (String group : state.cells.get(index).structureIds)
+            if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(group)) {
+                structure(state, group, additive);
+                return;
+            }
         if (!outline.isEmpty() && knownStructure(state, outline)) {
             structure(state, outline, additive);
             return;
@@ -89,7 +98,7 @@ public final class HologramSelection {
             return;
         }
         HologramState.Cell clicked = state.cells.get(index);
-        if (!sameType && clicked.family.isEmpty()) {
+        if (!sameType && (clicked.family.isEmpty() || gradeFamilyId(clicked.family))) {
             click(index, additive);
             return;
         }
@@ -102,12 +111,58 @@ public final class HologramSelection {
         matched.add(index);
         for (int member : state.structureMembers.getOrDefault(scope, java.util.Collections.emptyList())) {
             HologramState.Cell cell = state.cells.get(member);
-            boolean matches = sameType ? sameType(clicked, cell) : clicked.family.equals(cell.family);
+            boolean matches = sameType ? gradeFamily(clicked) ? relatedGrade(clicked, cell) : sameType(clicked, cell)
+                : clicked.family.equals(cell.family);
             if (matches) matched.add(cell.index);
         }
         if (additive && indices.containsAll(matched)) indices.removeAll(matched);
         else indices.addAll(matched);
         corner = index;
+    }
+
+    /** Existing hatch targets keep their independent device identity when casing grades are selected. */
+    private static boolean gradeFamily(HologramState.Cell cell) {
+        return !"gregtech:gt.blockmachines".equals(cell.wantId) && gradeFamilyId(cell.family);
+    }
+
+    private static boolean gradeFamilyId(String family) {
+        return family.equals("coil") || family.startsWith("tiered:")
+            || family.startsWith("frame:")
+            || family.startsWith("glass:");
+    }
+
+    private static boolean relatedGrade(HologramState.Cell source, HologramState.Cell cell) {
+        return gradeFamily(cell) && source.family.equals(cell.family);
+    }
+
+    /** Cached per selection and immutable snapshot; drawing never scans the structure per face. */
+    Set<Integer> related(HologramState state) {
+        if (relatedState == state && relatedVersion == version) return related;
+        relatedState = state;
+        relatedVersion = version;
+        related = new LinkedHashSet<>();
+        relatedAvailable = false;
+        int primary = first();
+        if (primary < 0 || primary >= state.cells.size()) return related;
+        HologramState.Cell source = state.cells.get(primary);
+        if (!gradeFamily(source)) return related;
+        String active = state.data.getString("activeStructure");
+        String scope = source.belongsToStructure(active) ? active : source.structureId;
+        for (int member : state.structureMembers.getOrDefault(scope, java.util.Collections.emptyList())) {
+            HologramState.Cell cell = state.cells.get(member);
+            if (relatedGrade(source, cell)) related.add(member);
+        }
+        relatedAvailable = !indices.containsAll(related);
+        return related;
+    }
+
+    boolean canSelectRelated(HologramState state) {
+        related(state);
+        return relatedAvailable;
+    }
+
+    void selectRelated(HologramState state, boolean additive) {
+        previewClick(state, first(), "", true, additive);
     }
 
     static boolean sameType(HologramState.Cell a, HologramState.Cell b) {

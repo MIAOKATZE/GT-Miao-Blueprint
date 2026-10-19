@@ -160,6 +160,7 @@ final class HologramUiCanvas {
                                         ui.library.libraryDrawer(),
                                         ui.review.confirmation(),
                                         ui.library.selectedPresetExists());
+        if (id == 330 && ui.textBoxes.active()) accent = HologramUiAccent.WARNING;
         if (ui.bindings.networkDrawer()) accent = HologramNetworkBindingNavigation.accent(
             id,
             ui.session.state().data,
@@ -190,6 +191,12 @@ final class HologramUiCanvas {
             || id == 163 && ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing)
             accent = 0xff7272;
         if (id == 309 || id == 310) accent = ui.library.websiteAccent();
+        if (id == 226) accent = ui.library.upgradeStatus() == 2 ? HologramUiAccent.NEXT : 0;
+        if (id == 139 && ui.library.selectedPresetExists()) accent = HologramUiAccent.WEBSITE;
+        if ((id == 331 && ui.textBoxes.active(false)) || (id == 332 && ui.textBoxes.active(true)))
+            accent = ui.textBoxes.choosingPosition() ? HologramUiAccent.SPECTRUM : HologramUiAccent.NEXT;
+        if (ui.identity.deidentificationDrawer() && id == 212) accent = HologramUiAccent.SUGGESTION;
+        if (ui.identity.deidentificationDrawer() && id == 214) accent = HologramUiAccent.INFORMATION;
         drawn.label = label;
         drawn.accent = enabled ? accent : 0;
         if (c.contains(mx, my)) {
@@ -250,6 +257,10 @@ final class HologramUiCanvas {
 
     String controlHelp(int id) {
         switch (id) {
+            case 331:
+                return "文字附加：本地编辑，整体选择；确认位置后由服务器检查冲突。";
+            case 332:
+                return "从 .minecraft/MiaoBlueprintPicture 读取图片，使用固定材料组合生成小瓷砖像素画；支持滤镜和边缘同色抠图。";
             case 309:
             case 310:
                 return HologramUiText.localized("gtmb.hologram.website.help", "前往蓝图站浏览、下载与分享蓝图；在浏览器中打开。") + "\n"

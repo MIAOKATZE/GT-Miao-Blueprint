@@ -54,6 +54,11 @@ public final class HologramProcessingFlowRegression {
         check(!flow.chosen() && !flow.next() && flow.stage == 0, "Opening a policy cannot advance it");
         flow.tendency(true);
         check(
+            "light".equals(
+                flow.values()
+                    .getString("autoHints")),
+            "Sharing keeps automatic hints light by default");
+        check(
             "rebind".equals(
                 flow.values()
                     .getString("quantum")),

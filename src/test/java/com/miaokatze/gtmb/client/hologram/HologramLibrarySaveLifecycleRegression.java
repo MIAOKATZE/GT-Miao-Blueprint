@@ -28,6 +28,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             detachedFailureAndRetry();
             encodingFailureAndImmediateRetry();
             timeoutAndHeaderRefusalKeepTheirFailureReason();
+            freshPreviewAndAdmissionOwnTheirIdleBudget();
             exactUiTerminalReleasesSaveButtons();
             cancelledSourceRetainsBaselineOrRecoversOnce();
             confirmationAdvancesUiAcknowledgement();
@@ -35,6 +36,119 @@ public final class HologramLibrarySaveLifecycleRegression {
             preparationActivityIsCorrelatedAndBounded();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Blueprint save lifecycle", failure);
+        }
+    }
+
+    private static void freshPreviewAndAdmissionOwnTheirIdleBudget() throws ReflectiveOperationException {
+        Field singleton = null;
+        for (Field field : net.minecraft.client.Minecraft.class.getDeclaredFields())
+            if (field.getType() == net.minecraft.client.Minecraft.class
+                && java.lang.reflect.Modifier.isStatic(field.getModifiers())) singleton = field;
+        if (singleton == null) throw new NoSuchFieldException("Minecraft singleton");
+        singleton.setAccessible(true);
+        Object previous = singleton.get(null);
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        HologramLibraryClient client = client();
+        try {
+            singleton.set(
+                null,
+                ((sun.misc.Unsafe) unsafeField.get(null)).allocateInstance(net.minecraft.client.Minecraft.class));
+            Method start = HologramLibraryClient.class.getDeclaredMethod("beginBackgroundTask", String.class);
+            start.setAccessible(true);
+            Method finish = HologramLibraryClient.class
+                .getDeclaredMethod("finishBackgroundTask", long.class, boolean.class, String.class);
+            finish.setAccessible(true);
+            SimpleAssert.eq(0L, get(client, "lastActivity"), "a fresh client has no prior transport activity");
+            long before = System.nanoTime();
+            SimpleAssert.that((Boolean) start.invoke(client, "读取蓝图预览"), "fresh preview acquires its actual owner");
+            long first = client.backgroundTaskToken(), started = (Long) get(client, "lastActivity");
+            SimpleAssert.that(started >= before, "disk preparation receives an idle budget before its first tick");
+            set(client, "preparing", true);
+            client.tick();
+            SimpleAssert
+                .eq(first, client.backgroundTaskToken(), "first disk preparation tick cannot time out immediately");
+            start.invoke(client, "读取蓝图预览");
+            SimpleAssert.eq(started, get(client, "lastActivity"), "continuing an owner cannot refresh its idle budget");
+            set(client, "preparing", false);
+            finish.invoke(client, first, true, "preview read");
+            set(client, "lastActivity", System.nanoTime() - java.util.concurrent.TimeUnit.SECONDS.toNanos(121));
+            before = System.nanoTime();
+            start.invoke(client, "准备蓝图内容");
+            long second = client.backgroundTaskToken();
+            SimpleAssert.that(
+                second != first && (Long) get(client, "lastActivity") >= before,
+                "admission after a completed disk task receives a fresh owner and idle budget");
+            Method receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
+            receive.setAccessible(true);
+            long expiredActivity = System.nanoTime() - java.util.concurrent.TimeUnit.SECONDS.toNanos(121);
+            set(client, "lastActivity", expiredActivity);
+            NBTTagCompound stale = new NBTTagCompound();
+            stale.setString("op", "contentReady");
+            stale.setLong("clientTaskToken", first);
+            receive.invoke(client, stale);
+            SimpleAssert.eq(
+                expiredActivity,
+                get(client, "lastActivity"),
+                "late content receipts cannot extend a successor task");
+            set(client, "preparing", true);
+            client.tick();
+            SimpleAssert
+                .eq(0L, client.backgroundTaskToken(), "a genuinely idle preparation still fails at the existing bound");
+            start.invoke(client, "升级服务器蓝图");
+            long upgradeToken = client.backgroundTaskToken();
+            Class<?> upgradeClass = Class.forName(HologramLibraryClient.class.getName() + "$UpgradeTask");
+            Constructor<?> upgradeConstructor = upgradeClass
+                .getDeclaredConstructor(long.class, long.class, boolean.class, Runnable.class);
+            upgradeConstructor.setAccessible(true);
+            java.util.concurrent.atomic.AtomicInteger refreshed = new java.util.concurrent.atomic.AtomicInteger();
+            set(
+                client,
+                "upgradeTask",
+                upgradeConstructor
+                    .newInstance(upgradeToken, get(client, "generation"), true, (Runnable) refreshed::incrementAndGet));
+            set(client, "preparing", true);
+            NBTTagCompound report = new NBTTagCompound();
+            report.setString("op", "upgradeLibraryResult");
+            report.setLong("clientTaskToken", upgradeToken);
+            report.setInteger("pages", 2);
+            report.setInteger("skipped", 1);
+            NBTTagList entries = new NBTTagList();
+            NBTTagCompound skipped = new NBTTagCompound();
+            skipped.setString("id", "public_fixture");
+            skipped.setString("state", "skipped");
+            skipped.setString("reason", "missing paired PNG");
+            entries.appendTag(skipped);
+            report.setTag("entries", entries);
+            receive.invoke(client, report);
+            SimpleAssert.that(
+                client.busy() && refreshed.get() == 0,
+                "an accepted partial upgrade report retains its owner until the last page");
+            receive.invoke(client, report);
+            SimpleAssert.eq(
+                1,
+                client.upgradeDetails()
+                    .size(),
+                "a duplicate report page cannot duplicate skip details");
+            report.setInteger("page", 1);
+            report.setBoolean("complete", true);
+            report.setTag("entries", new NBTTagList());
+            report.setLong("clientTaskToken", first);
+            long activity = (Long) get(client, "lastActivity");
+            receive.invoke(client, report);
+            SimpleAssert.eq(activity, get(client, "lastActivity"), "a stale upgrade report cannot extend another task");
+            report.setLong("clientTaskToken", upgradeToken);
+            receive.invoke(client, report);
+            receive.invoke(client, report);
+            SimpleAssert.that(
+                !client.busy() && refreshed.get() == 1
+                    && client.upgradeDetails()
+                        .get(0)
+                        .contains("missing paired PNG"),
+                "only the matching final page completes once and retains skip reasons");
+        } finally {
+            client.cancel();
+            singleton.set(null, previous);
         }
     }
 

@@ -257,6 +257,13 @@ final class HologramSnapshots {
                 NBTTagCompound row = new NBTTagCompound();
                 row.setString("id", saved.id);
                 row.setString("name", saved.name == null ? "结构" : saved.name);
+                if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
+                    try {
+                        row.setTag("textBox", HologramTextWorkflow.definition(saved));
+                    } catch (java.io.IOException invalid) {
+                        row.setString("textBoxError", "文字定义损坏");
+                    }
+                }
                 row.setInteger("x", s.x + saved.x);
                 row.setInteger("y", s.y + saved.y);
                 row.setInteger("z", s.z + saved.z);
@@ -659,6 +666,8 @@ final class HologramSnapshots {
         NBTTagCompound state = areaSelection(s);
         if (presets != null) state.setTag("presets", presets);
         state.setBoolean("workspaceUiOnly", true);
+        state.setTag("textPlacementAck", s.textPlacementAck.copy());
+        state.setBoolean("attachmentPending", s.attachmentTask != null);
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
         state.setBoolean("snapshotPending", s.capture != null || s.capturePending);
@@ -684,6 +693,7 @@ final class HologramSnapshots {
         state.setBoolean("blueprintProcessingComplete", s.processingReviewed);
         state.setBoolean("blueprintProcessingRequired", !s.processingReviewed);
         state.setBoolean("localPlanPending", s.localPlanPending);
+        state.setBoolean("placementValidating", s.placementValidating);
         state.setBoolean("planIncomplete", s.localPlanPending);
         state.setString("localPlanError", s.localPlanError);
         state.setString("quickToken", s.libraryQuickToken);
@@ -832,6 +842,9 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("attachmentPending", s.attachmentTask != null);
+        state.setTag("textPlacementAck", s.textPlacementAck.copy());
+        state.setBoolean("placementValidating", s.placementValidating);
         state.setBoolean("open", s.open);
         state.setString("quickToken", s.libraryQuickToken);
         state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
@@ -867,6 +880,7 @@ final class HologramSnapshots {
         state.setLong("captureRetryDue", s.captureRetryDue);
         state.setLong("planRevision", s.planRevision);
         state.setBoolean("localPlanPending", s.localPlanPending);
+        state.setBoolean("placementValidating", s.placementValidating);
         state.setString("localPlanError", s.localPlanError);
         state.setBoolean("planIncomplete", s.localPlanPending);
         state.setTag("progress", progress(s));

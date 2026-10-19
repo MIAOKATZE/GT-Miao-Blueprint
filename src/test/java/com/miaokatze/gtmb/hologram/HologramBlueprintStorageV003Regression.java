@@ -74,7 +74,12 @@ final class HologramBlueprintStorageV003Regression {
             SimpleAssert.that(
                 Files.size(share) < HologramBlueprintSharing.MAX_BYTES,
                 "64k cells and 500 tile payloads fit the expanded bounded share budget");
-            SimpleAssert.that(Files.size(share) > 8 * 1024 * 1024, "compact 64k fixture exceeds the old 8MiB limit");
+            SimpleAssert.that(
+                HologramBlueprintCompactCodec.expandedBytes(large) > 8 * 1024 * 1024,
+                "64k fixture retains logical data beyond the old 8MiB limit");
+            SimpleAssert.that(
+                Files.size(share) < HologramBlueprintCompactCodec.expandedBytes(large),
+                "repeated cell descriptions reduce disk bytes without dropping the logical payload");
             HologramPresets.Preset restored = HologramBlueprintSharing.read(share);
             SimpleAssert.eq(64000, restored.cells.size(), "all large structure cells survive");
             for (int i = 0; i < 500; i++) SimpleAssert.eq(
@@ -99,8 +104,9 @@ final class HologramBlueprintStorageV003Regression {
             List<HologramPresets.Preset> entries = new ArrayList<>(Arrays.asList(large, second));
             write.invoke(null, library, entries);
             SimpleAssert.that(
-                Files.size(library) > 8 * 1024 * 1024,
-                "two bounded blueprints may exceed the old whole-library limit");
+                HologramBlueprintCompactCodec.expandedBytes(large) + HologramBlueprintCompactCodec.expandedBytes(second)
+                    > 8 * 1024 * 1024,
+                "two bounded blueprints retain logical content beyond the old whole-library limit");
             SimpleAssert.eq(2, ((List<?>) read.invoke(null, library)).size(), "larger library reloads completely");
             byte[] original = Files.readAllBytes(library);
             remove.invoke(null, entries, "large_a");

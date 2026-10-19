@@ -71,6 +71,7 @@ final class HologramUiSession {
         Integer previousChoice = ui.identity.prepareSnapshot(library.sourceChanged);
         boolean newSession = !state.session.equals(next.session);
         if (newSession) {
+            ui.textBoxes.reset();
             ui.identity.resetSession();
             ui.memory.rememberUi();
             ui.library.restoreSession(next, library);
@@ -85,6 +86,7 @@ final class HologramUiSession {
             libraryTaskSession = "";
         }
         state = next;
+        ui.textBoxes.acknowledge(next);
         if (materialReviewSequence >= 0 && revision() != materialReviewRevision) clearMaterialReviewAction();
         ui.library.acceptSourceSwitchProposal();
         ui.config.acknowledgeConfiguration(next);
@@ -102,7 +104,9 @@ final class HologramUiSession {
         ui.library.applyOpeningPurpose();
         ui.preview.acknowledgeSelection(next);
         ui.library.acknowledgeSnapshot(next, library, newSession);
-        if (pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence"))) commandProgress.clear();
+        if (!next.data.getCompoundTag("textPlacementAck")
+            .getBoolean("pending") && pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence")))
+            commandProgress.clear();
         ui.preview.acknowledgeEdits(next);
         ui.review.acknowledgeReview(next);
         ui.preview.syncLayerAndSelection(next);
@@ -228,6 +232,7 @@ final class HologramUiSession {
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
             && !this.state.data.getBoolean("areaSelectionShell")
+            && !this.state.data.getBoolean("attachmentPending")
             && job != 1
             && job != 2
             && pendingTicket.sequence() < 0
@@ -250,6 +255,7 @@ final class HologramUiSession {
     }
 
     String editingReason() {
+        if (state.data.getBoolean("attachmentPending")) return "正在生成和校验文字或图片；可按 Esc 取消后再编辑。";
         if (this.state.data.getBoolean("targetClosed")) return "控制器已拆除；保留最终统计，重新右键新控制器开启任务。";
         if (pendingTicket.sequence() >= 0) return "等待服务端回执后可操作。";
         if (this.state.data.getBoolean("capturePending")) return "正在采集结构，请稍候。";
@@ -361,8 +367,8 @@ final class HologramUiSession {
 
     /** A failed presentation transfer releases its own UI request, never a world/save/order task owner. */
     boolean presentationTransportFailed(NBTTagCompound event, String message) {
-        if (!event.getBoolean("transportError") || !event.getString("errorCode")
-            .startsWith("snapshot.")
+        if (!event.getBoolean("transportError") || !(event.getString("errorCode")
+            .startsWith("snapshot.") || "attachment.upload".equals(event.getString("errorCode")))
             || !event.hasKey("uiSequence", 4)
             || event.getLong("clientTaskToken") != 0
             || HologramBackgroundTasks.busy()
@@ -375,12 +381,14 @@ final class HologramUiSession {
         int presentation = switch (pendingOperation) {
             case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset" -> 1;
             case "lockVirtual", "unlockVirtual" -> 2;
+            case "placeTextBox" -> 3;
             default -> 0;
         };
         if (presentation == 0) return false;
         rejectTransport(event, message);
         if (pendingTicket.sequence() >= 0) return false;
         if (presentation == 1) ui.library.cancelLibraryNavigation();
+        if (presentation == 3) ui.textBoxes.uploadFailed();
         pendingOperation = "";
         return true;
     }

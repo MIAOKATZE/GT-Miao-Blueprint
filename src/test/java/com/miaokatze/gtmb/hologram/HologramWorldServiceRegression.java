@@ -668,14 +668,22 @@ public final class HologramWorldServiceRegression {
             SimpleAssert.eq(true, get(session, "virtualLocked"), "preview can lock again after Shift right");
             nonce = (Long) get(session, "placementReviewNonce");
             HologramService.openWorld(player, 0, 64, 0, 1);
-            SimpleAssert
-                .eq(true, get(session, "placementReviewIssued"), "second ordinary right issues material review");
+            SimpleAssert.eq(true, get(session, "libraryUiActive"), "second right publishes the progress UI shell");
+            SimpleAssert.that(
+                (Boolean) get(session, "placementReviewIssued") || (Boolean) get(session, "placementValidating"),
+                "second right either reuses a complete quote or starts budgeted validation");
             SimpleAssert.that(
                 sessions.get(player.getUniqueID()) == session,
                 "locked placement retains its session on block use");
             SimpleAssert
                 .that((Long) get(session, "placementReviewNonce") > nonce, "second right opens a fresh review nonce");
             SimpleAssert.eq(0, get(session, "job"), "opening material review never starts construction");
+            HologramSession planning = (HologramSession) session;
+            for (int slice = 0; planning.localPlanPending && slice < 128; slice++)
+                HologramDeferredPlanRefresh.tick(planning, Integer.MAX_VALUE, 1_000_000_000L, ignored -> {});
+            SimpleAssert.that(
+                !planning.localPlanPending && planning.placementReviewIssued,
+                "budgeted placement validation finishes before policy edits receive review authority");
             Method dismiss = HologramProjectorWorkflow.class
                 .getDeclaredMethod("dismissPresetBrowse", session.getClass());
             dismiss.setAccessible(true);

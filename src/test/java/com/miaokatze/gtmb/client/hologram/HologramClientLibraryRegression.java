@@ -31,8 +31,80 @@ public final class HologramClientLibraryRegression {
             exerciseSaveRequest();
             HologramLibrarySaveLifecycleRegression.run();
             exerciseQuickFence();
+            exerciseLegacyMappings();
+            exerciseDisplayListing();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
+        }
+    }
+
+    private static void exerciseLegacyMappings() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-upgrade-memory-");
+        try {
+            HologramClientLibrary library = new HologramClientLibrary(game);
+            String id = "local_11111111-1111-1111-1111-111111111111";
+            String publicId = "public_22222222-2222-2222-2222-222222222222";
+            Files.createDirectories(library.directory());
+            Path old = library.directory()
+                .resolve(id + ".json");
+            HologramBlueprintArtifact.writePair(old, json("Legacy memory", "Alice"), png(0xff335577));
+            library.rememberLocal("server", id);
+            library.uploadedId("server", id, publicId);
+            library.upgradeLegacy();
+            SimpleAssert.that(
+                !Files.exists(old) && library.list()
+                    .size() == 1,
+                "legacy upgrade replaces one pair without duplicating its library entry");
+            SimpleAssert.eq(id, library.lastSource("server").localId, "renaming preserves the recent logical ID");
+            SimpleAssert.eq(publicId, library.uploadedId("server", id), "renaming preserves the upload link");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static void exerciseDisplayListing() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-display-catalog-");
+        try {
+            CountingPairs pairs = new CountingPairs();
+            HologramClientLibrary library = new HologramClientLibrary(game, pairs);
+            Files.createDirectories(library.directory());
+            Path source = library.directory()
+                .resolve("中文便携蓝图_未核验.json");
+            Files.write(source, json("Visible source", "Alice"));
+            Files.write(HologramBlueprintArtifact.previewPath(source), new byte[] { 1, 2, 3 });
+            HologramClientLibrary.Entry cold = library.list()
+                .get(0);
+            HologramClientLibrary.Entry warm = library.list()
+                .get(0);
+            SimpleAssert.that(cold == warm, "unchanged source stamps reuse exact catalog entries");
+            SimpleAssert.eq(0, pairs.reads, "cold and warm catalog reads never validate artifact pairs");
+            SimpleAssert.that(
+                !Files.exists(
+                    library.directory()
+                        .resolve(".gtmb-blueprint-files.properties")),
+                "ordinary portable discovery does not adopt or write a trusted index");
+            SimpleAssert
+                .eq(source, library.savedPath(cold.id), "temporary logical identity resolves the displayed source");
+            SimpleAssert.eq(
+                cold.id,
+                new HologramClientLibrary(game).list()
+                    .get(0).id,
+                "read-only portable discovery keeps logical identity stable across restart");
+            reject(() -> library.artifact(cold.id), "real uploads still reject an unverified invalid PNG");
+            Files.write(source, json("Changed display title", "Alice"));
+            SimpleAssert.eq(
+                "Changed display title",
+                library.list()
+                    .get(0).name,
+                "actual JSON identity changes invalidate catalog hints");
+        } finally {
+            try (java.util.stream.Stream<Path> files = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) files.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
         }
     }
 
@@ -101,11 +173,12 @@ public final class HologramClientLibraryRegression {
                     .toAbsolutePath(),
                 library.directory(),
                 "private files are rooted under the actual client game directory");
-            SimpleAssert.eq(
-                game.resolve("MiaoBlueprints/" + first + ".json")
-                    .toAbsolutePath(),
-                library.savedPath(first),
-                "new saves use the exact top-level blueprint path");
+            SimpleAssert.that(
+                library.savedPath(first)
+                    .getFileName()
+                    .toString()
+                    .matches("Original_[a-f0-9]{64}\\.json"),
+                "new saves use the blueprint name and full semantic hash independently of logical ID");
             SimpleAssert.that(Files.isRegularFile(library.savedPath(first)), "new blueprint is persisted at that path");
             SimpleAssert.that(
                 Files.isRegularFile(HologramBlueprintArtifact.previewPath(library.savedPath(first))),
@@ -301,14 +374,21 @@ public final class HologramClientLibraryRegression {
             Files.write(path, changed);
             Files.setLastModifiedTime(path, time);
             SimpleAssert.eq(
-                0,
+                1,
                 library.list()
                     .size(),
-                "same-size same-mtime JSON change invalidates PNG binding");
-            SimpleAssert.eq(2, pairs.reads, "changed content is actually revalidated");
+                "catalog identity hints do not perform full PNG binding validation");
+            SimpleAssert.eq(1, pairs.reads, "same-stamp refresh never rereads an artifact pair");
+            reject(() -> library.read(id), "an actual content operation still rejects a mismatched JSON/PNG pair");
+            Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.fromMillis(time.toMillis() + 2000));
+            SimpleAssert.eq(
+                "Modified",
+                library.list()
+                    .get(0).name,
+                "changed source stamp refreshes catalog metadata");
+            SimpleAssert.eq(1, pairs.reads, "changed metadata reads JSON fields without pair validation");
             Files.write(path, original);
             library.list();
-            SimpleAssert.eq(3, pairs.reads, "restored pair is validated after invalidation");
             Path pngPath = HologramBlueprintArtifact.previewPath(path);
             byte[] originalPng = Files.readAllBytes(pngPath);
             java.nio.file.attribute.FileTime pngTime = Files.getLastModifiedTime(pngPath);
@@ -317,11 +397,12 @@ public final class HologramClientLibraryRegression {
             Files.write(pngPath, corrupt);
             Files.setLastModifiedTime(pngPath, pngTime);
             SimpleAssert.eq(
-                0,
+                1,
                 library.list()
                     .size(),
-                "same-size same-mtime PNG damage invalidates metadata");
-            SimpleAssert.eq(4, pairs.reads, "changed PNG receives full validation");
+                "PNG changes do not block display-only catalog metadata");
+            SimpleAssert.eq(1, pairs.reads, "catalog refresh never decodes PNG pixels");
+            reject(() -> library.read(id), "actual artifact reads still validate corrupted PNG data");
             Files.write(pngPath, originalPng);
             library.list();
             pairs.failRead = true;

@@ -31,8 +31,43 @@ final class HologramDecorMaterialsRegression {
             aggregateVariantsAndExactTags();
             emptyCost();
             factoryIdentity();
+            vanillaSigns();
         } catch (Exception failure) {
             throw new AssertionError("Native decoration payment regression", failure);
+        }
+    }
+
+    private static void vanillaSigns() throws Exception {
+        for (Block block : new Block[] { Blocks.standing_sign, Blocks.wall_sign }) {
+            int metadata = block == Blocks.wall_sign ? 5 : 13;
+            NBTTagCompound data = new NBTTagCompound();
+            data.setString("id", "Sign");
+            for (int line = 1; line <= 4; line++) data.setString("Text" + line, "native line " + line);
+            ItemStack carrier = HologramBlockIdentity.materialStack(block, metadata);
+            SimpleAssert.that(
+                carrier.getItem() == Items.sign && carrier.getItemDamage() == 0,
+                "Both vanilla sign blocks consume the actual independent sign item");
+            SimpleAssert.that(
+                HologramNativePlacement.supported(block)
+                    && HologramNativePlacement.matchesSample(block, metadata, data, carrier),
+                "Vanilla sign native planner accepts its physical carrier");
+            List<ItemStack> bill = HologramNativePlacement.materials(block, metadata, data);
+            SimpleAssert.that(
+                bill.size() == 1 && bill.get(0)
+                    .getItem() == Items.sign && bill.get(0).stackSize == 1,
+                "Sign text and orientation require exactly one sign");
+            TileEntity tile = HologramNativePlacement.adapter(block)
+                .create(block, metadata, data, HologramResourceWorld.create(block, metadata));
+            NBTTagCompound restored = new NBTTagCompound();
+            tile.writeToNBT(restored);
+            for (int line = 1; line <= 4; line++) SimpleAssert.eq(
+                data.getString("Text" + line),
+                restored.getString("Text" + line),
+                "Native sign text survives reconstruction");
+            data.setString("id", "Chest");
+            SimpleAssert.that(
+                !HologramNativePlacement.matchesSample(block, metadata, data, carrier),
+                "A sign carrier cannot restore another native tile family");
         }
     }
 
@@ -213,6 +248,7 @@ final class HologramDecorMaterialsRegression {
             HologramBlueprintResources.plan(captured, nativeBill).items.isEmpty(),
             "construction resource inspection never charges the paid native attributes twice");
         HologramPresets.Preset preset = carpenterPreset(slope, captured);
+        carpenterAuthoringRetainsPaidDecor(slope, captured, nativeBill);
         HologramBlueprintResources.Plan review = HologramAePolicy.materials(preset);
         SimpleAssert
             .that(preset.aeIssues.isEmpty(), "complete draft resource review accepts registered Carpenter attributes");
@@ -347,6 +383,54 @@ final class HologramDecorMaterialsRegression {
         cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
         preset.cells.add(cell);
         return preset;
+    }
+
+    private static void carpenterAuthoringRetainsPaidDecor(Block block, NBTTagCompound captured,
+        List<ItemStack> nativeBill) throws Exception {
+        HologramPresets.Preset source = carpenterPreset(block, captured);
+        for (int level = 1; level < 10; level++) {
+            HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("share", 0);
+            policy.deidentificationLevel = level;
+            policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+            SimpleAssert.eq(
+                0,
+                HologramBlueprintProcessing.state(source, policy, 0, 0, 64, 0)
+                    .getTagList("resourceBlockers", 10)
+                    .tagCount(),
+                "Native Carpenter skins do not ask the author to remove payable decoration");
+            HologramPresets.Preset result = HologramBlueprintProcessing.process(source, policy, 0, 0, 64, 0);
+            NBTTagCompound processed = HologramBlueprintNbt
+                .nativePayload(HologramBlueprintNbt.decode(result.cells.get(0).tileNbt));
+            SimpleAssert.eq(
+                captured.getTag("cbAttrList"),
+                processed.getTag("cbAttrList"),
+                "Identity level " + level + " retains exact native skins, dye and overlay");
+            SimpleAssert.eq(
+                captured.getInteger("cbMetadata"),
+                processed.getInteger("cbMetadata"),
+                "Identity processing retains native Carpenter shape");
+            assertSameBill(
+                nativeBill,
+                HologramNativePlacement.materials(block, 0, processed),
+                "Authoring credits never remove the construction bill");
+        }
+        source.cells.get(0).block = "minecraft:stone";
+        SimpleAssert.that(
+            HologramBlueprintProcessing.state(source, HologramBlueprintProcessing.defaults("self", 0), 0, 0, 64, 0)
+                .getTagList("resourceBlockers", 10)
+                .tagCount() > 0,
+            "An ordinary block cannot claim Carpenter material credits by copying its tile ID and attributes");
+        source = carpenterPreset(block, captured);
+        NBTTagCompound malformed = (NBTTagCompound) captured.copy();
+        malformed.getTagList("cbAttrList", 10)
+            .getCompoundTagAt(0)
+            .setByte("Count", (byte) 2);
+        source.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(malformed);
+        SimpleAssert.that(
+            HologramBlueprintProcessing.state(source, HologramBlueprintProcessing.defaults("self", 0), 0, 0, 64, 0)
+                .getTagList("resourceBlockers", 10)
+                .tagCount() > 0,
+            "Malformed native Carpenter attributes remain authoring blockers");
     }
 
     private static void rejectCarpenterEverywhere(Block block, NBTTagCompound payload, List<ItemStack> credit)

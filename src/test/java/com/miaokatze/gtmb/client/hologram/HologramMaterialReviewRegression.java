@@ -97,6 +97,25 @@ public final class HologramMaterialReviewRegression {
         SimpleAssert.that(!model.ready(), "stale material quote cannot enable the new transaction button");
         metadataFence();
         contextAndUnchangedChoices();
+        incompleteEstimateCannotEnableConfirmation();
+    }
+
+    private static void incompleteEstimateCannotEnableConfirmation() {
+        NBTTagCompound row = HologramMaterialQuote.itemRow(new ItemStack(Items.diamond), 37, 0);
+        row.setBoolean("voucherEligible", true);
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(row);
+        NBTTagCompound quote = new NBTTagCompound();
+        quote.setBoolean("complete", false);
+        quote.setBoolean("localEstimate", true);
+        quote.setTag("rows", rows);
+        NBTTagCompound state = new NBTTagCompound();
+        state.setTag("materialQuote", quote);
+        HologramMaterialReview model = new HologramMaterialReview();
+        model.update(state);
+        SimpleAssert.that(
+            !model.ready() && !model.hasItemShortage() && !model.hasVoucherDemand(),
+            "an incomplete estimate cannot enable confirmation, material orders or voucher controls");
     }
 
     private static void contextAndUnchangedChoices() {

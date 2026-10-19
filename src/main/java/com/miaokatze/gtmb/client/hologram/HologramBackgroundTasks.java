@@ -647,6 +647,7 @@ public final class HologramBackgroundTasks {
 
     static String transportFailureMessage(NBTTagCompound failure) {
         String reason = switch (failure.getString("errorCode")) {
+            case "attachment.upload" -> "文字或图片数据上传失败";
             case "snapshot.prepare" -> "蓝图快照准备失败";
             case "snapshot.encode" -> "蓝图快照编码失败";
             case "snapshot.queue" -> "蓝图快照发送队列已满";

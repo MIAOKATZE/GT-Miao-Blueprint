@@ -32,6 +32,17 @@ final class HologramActionDispatcher {
             if (HologramLibraryWorkflow.acknowledgeBlueprintSave(s, action)) HologramSnapshots.send(s);
             return;
         }
+        if (s.attachmentTask != null) {
+            String operation = action.getString("op");
+            if ("cancelAttachment".equals(operation) || "cancel".equals(operation)
+                || "clearWorkspace".equals(operation)) {
+                s.attachmentTask.cancel("附加对象处理已取消，原工作区保留");
+                if ("cancelAttachment".equals(operation)) return;
+            } else if (!"close".equals(operation)) {
+                HologramSnapshots.sendUi(s);
+                return;
+            }
+        }
         // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
         if (action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
             && !HologramMaterialWorkflow.lightweight(action.getString("op")))
@@ -43,6 +54,38 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if ("placeTextBox".equals(op)) {
+            HologramTextWorkflow.apply(s, action);
+            return;
+        }
+        if ("clearWorkspace".equals(op) && HologramSessionPolicy.valid(s)
+            && s.job != 1
+            && s.job != 2
+            && !HologramAeCraftingOrders.active(player)) {
+            HologramDeferredPlanRefresh.cancel(s);
+            HologramSession.cancelCaptureRetry(s);
+            HologramWorkspace.clearAreaSelection(s);
+            if (player.getHeldItem() != null && player.getHeldItem()
+                .hasTagCompound()) {
+                player.getHeldItem()
+                    .getTagCompound()
+                    .removeTag(HologramSessionKeys.DRAFT);
+                player.getHeldItem()
+                    .getTagCompound()
+                    .removeTag(HologramSessionKeys.SELECTED_PRESET);
+            }
+            s.cancelled = true;
+            HologramSession empty = HologramWorkspace
+                .create(player, (int) player.posX, (int) player.posY, (int) player.posZ, false, 1);
+            empty.virtual = true;
+            empty.open = true;
+            empty.openPurpose = "workspaceClear";
+            empty.workspaceTab = s.workspaceTab;
+            empty.status = "工作区已清空，可框选区域、载入蓝图或新建文字";
+            HologramWorkspace.activate(player.getUniqueID(), empty);
+            HologramSnapshots.send(empty);
+            return;
+        }
         if (HologramMaterialWorkflow.action(s, action, op)) return;
         HologramLibraryWorkflow.captureClientTaskToken(s, action);
         if ("refreshPresetLibrary".equals(op)) {
@@ -75,6 +118,15 @@ final class HologramActionDispatcher {
             return;
         }
         if (HologramDeferredPlanRefresh.blocksAction(s, op)) {
+            HologramSnapshots.send(s);
+            return;
+        }
+        if ("editDelete".equals(op)) {
+            try {
+                HologramBlueprintEditor.deleteBlueprintCells(s, action);
+            } catch (java.io.IOException failure) {
+                s.status = "蓝图删除被拒绝：" + failure.getMessage();
+            }
             HologramSnapshots.send(s);
             return;
         }
@@ -189,6 +241,7 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if ("rotateCell".equals(op) && HologramTextWorkflow.rotateSelected(s, action)) return;
         HologramEditState beforeEdit = HologramBlueprintEditor.isPlanningEdit(op) && !"editCopy".equals(op)
             && s.job != 1
             && s.job != 2

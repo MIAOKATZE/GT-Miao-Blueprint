@@ -43,6 +43,7 @@ final class HologramUiDeidentification {
     }
 
     void offerPlacementDeidentification() {
+        if (ui.session.state().data.getBoolean("placementValidating")) return;
         if (!ui.review.placementReviewActive()
             || !ui.session.state().data.getBoolean("placementDeidentificationRecommended")
             || ui.session.state().data.getBoolean("placementDeidentificationChosen")
@@ -145,7 +146,7 @@ final class HologramUiDeidentification {
             ui.session.editable() && ui.review.placementReviewActive() && ui.review.materialBlockers() > 0,
             mx,
             my);
-        ui.canvas.button(212, 54, 274, 278, 20, "取消", true, mx, my);
+        ui.canvas.button(212, 54, 274, 278, 20, this.deidentificationPlacement ? "无需去标识" : "取消", true, mx, my);
         ui.canvas.button(
             213,
             342,
@@ -173,8 +174,12 @@ final class HologramUiDeidentification {
             return true;
         }
         if (id == 212) {
-            this.deidentificationDrawer = false;
-            return true;
+            if (!this.deidentificationPlacement) {
+                this.deidentificationDrawer = false;
+                return true;
+            }
+            this.deidentificationLevel = 0;
+            id = 213;
         }
         if (id != 213 && id != 214 && id != 215 && id != 216) return false;
         if (!ui.session.editable()) return true;

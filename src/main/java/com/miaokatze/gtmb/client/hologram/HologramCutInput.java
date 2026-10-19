@@ -48,10 +48,10 @@ final class HologramCutInput {
         return snapshot.getBoolean("capturePending") || stage != HologramWorldFlow.Stage.WORKSPACE;
     }
 
-    /** Mode selection is local and remains reachable while a cut write awaits its authoritative result. */
+    /** Storage remains reachable while a cut write awaits its authoritative result. */
     static Intent right(Stage stage, boolean shift, boolean alt, boolean blueprintBusy, boolean cutMode,
         boolean control) {
-        if (stage != Stage.SELECTING && control && shift && !alt && !blueprintBusy) return Intent.SWITCHER;
+        if (stage != Stage.SELECTING && control && shift && !alt && !blueprintBusy) return Intent.STORAGE;
         if (stage == Stage.SELECTING && !blueprintBusy) {
             if (shift && alt) return Intent.MORE;
             if (shift && !control) return Intent.CONFIRM_SELECTION;
@@ -98,12 +98,11 @@ final class HologramCutInput {
     }
 
     static HologramWorldFlow.Nudge nudgeDirection(int index, boolean alt) {
-        if (index < 0 || index > 5) throw new IllegalArgumentException("cut nudge key");
+        if (index < 0 || index > 3) throw new IllegalArgumentException("cut nudge key");
         if (index == 0) return alt ? HologramWorldFlow.Nudge.UP : HologramWorldFlow.Nudge.FORWARD;
         if (index == 1) return alt ? HologramWorldFlow.Nudge.DOWN : HologramWorldFlow.Nudge.BACKWARD;
         if (index == 2) return HologramWorldFlow.Nudge.LEFT;
-        if (index == 3) return HologramWorldFlow.Nudge.RIGHT;
-        return index == 4 ? HologramWorldFlow.Nudge.UP : HologramWorldFlow.Nudge.DOWN;
+        return HologramWorldFlow.Nudge.RIGHT;
     }
 
     static final class Switcher {

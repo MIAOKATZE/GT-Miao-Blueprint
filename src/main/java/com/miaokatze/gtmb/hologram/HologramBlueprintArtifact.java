@@ -89,6 +89,8 @@ public final class HologramBlueprintArtifact {
         private final Path oldJson, oldPng;
         private final PairWrite previousOwner;
         private volatile Outcome outcome = Outcome.OPEN;
+        private Completion accepted = () -> {}, rejected = () -> {};
+        private String cleanupWarning = "";
 
         private PairWrite(Path path, byte[] json, byte[] png, Path oldJson, Path oldPng, PairWrite previousOwner) {
             this.path = path;
@@ -103,9 +105,21 @@ public final class HologramBlueprintArtifact {
         public synchronized void commit() throws IOException {
             synchronized (HologramBlueprintArtifact.class) {
                 if (outcome == Outcome.ROLLED_BACK) throw new IOException("Pending blueprint write was rolled back");
+                boolean first = outcome == Outcome.OPEN;
                 outcome = Outcome.COMMITTED;
                 if (PENDING_WRITES.get(path) == this) PENDING_WRITES.remove(path);
-                removeBackups();
+                try {
+                    removeBackups();
+                } catch (IOException cleanup) {
+                    cleanupWarning = java.util.Objects
+                        .toString(cleanup.getMessage(), "Storage cleanup failed after commit");
+                }
+                if (first) try {
+                    accepted.run();
+                } catch (IOException cleanup) {
+                    cleanupWarning = java.util.Objects
+                        .toString(cleanup.getMessage(), "Storage cleanup failed after commit");
+                }
             }
         }
 
@@ -135,8 +149,21 @@ public final class HologramBlueprintArtifact {
                 if (previousOwner != null && previousOwner.outcome == Outcome.OPEN)
                     PENDING_WRITES.put(path, previousOwner);
                 else PENDING_WRITES.remove(path);
+                rejected.run();
                 removeBackups();
             }
+        }
+
+        /** Attach the logical filename index to the same save acknowledgement/rollback lifecycle. */
+        public synchronized void onCompletion(Completion accepted, Completion rejected) throws IOException {
+            if (outcome != Outcome.OPEN) throw new IOException("Blueprint write already completed");
+            this.accepted = accepted;
+            this.rejected = rejected;
+        }
+
+        /** Acceptance is final even if obsolete-file cleanup is temporarily blocked by the filesystem. */
+        public synchronized String cleanupWarning() {
+            return cleanupWarning;
         }
 
         private void removeBackups() throws IOException {
@@ -144,6 +171,20 @@ public final class HologramBlueprintArtifact {
             boolean removed = removeRecovery(oldJson, failure) & removeRecovery(oldPng, failure);
             if (!removed) throw failure;
         }
+    }
+
+    public interface Completion {
+
+        void run() throws IOException;
+    }
+
+    /** Legacy unbound previews are usable only as an explicitly named sibling during migration. */
+    public static boolean previewMatches(byte[] json, byte[] png) throws IOException {
+        return hash(json).equals(inspectPng(png).source);
+    }
+
+    public static boolean previewHasBinding(byte[] png) throws IOException {
+        return inspectPng(png).source != null;
     }
 
     /** Rebinding changes only the source-digest text chunk; compressed pixel bytes are untouched. */

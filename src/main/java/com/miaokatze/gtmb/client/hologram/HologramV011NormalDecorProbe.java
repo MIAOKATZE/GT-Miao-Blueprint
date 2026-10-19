@@ -3,7 +3,6 @@ package com.miaokatze.gtmb.client.hologram;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -20,7 +19,6 @@ import net.minecraft.nbt.NBTTagList;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.Tags;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
@@ -59,8 +57,7 @@ final class HologramV011NormalDecorProbe {
         Path pngPath = HologramBlueprintArtifact.previewPath(jsonPath);
         HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(jsonPath);
         HologramLibraryFacade.validateNativeJson(artifact.json);
-        JsonObject root = new JsonParser().parse(new String(artifact.json, StandardCharsets.UTF_8))
-            .getAsJsonObject();
+        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(artifact.json);
         JsonObject blueprint = root.getAsJsonObject("blueprint");
         require(blueprint != null, "actual saved native JSON carries blueprint");
         String presetId = string(blueprint, "id");
