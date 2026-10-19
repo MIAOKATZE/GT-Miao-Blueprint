@@ -191,7 +191,9 @@ final class HologramUiCanvas {
             accent = 0xff7272;
         if (id == 309 || id == 310) accent = ui.library.websiteAccent();
         if (id == 226) accent = ui.library.upgradeStatus() == 2 ? HologramUiAccent.NEXT : 0;
-        if (id == 331 && ui.textBoxes.active()) accent = HologramUiAccent.NEXT;
+        if (id == 139 && ui.library.selectedPresetExists()) accent = HologramUiAccent.WEBSITE;
+        if (id == 331 && ui.textBoxes.active())
+            accent = ui.textBoxes.choosingPosition() ? HologramUiAccent.SPECTRUM : HologramUiAccent.NEXT;
         if (ui.identity.deidentificationDrawer() && id == 212) accent = HologramUiAccent.SUGGESTION;
         if (ui.identity.deidentificationDrawer() && id == 214) accent = HologramUiAccent.INFORMATION;
         drawn.label = label;

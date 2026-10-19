@@ -24,7 +24,7 @@
 
 *Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
-v0.1.21 候选增加 [LittleTiles 文字转蓝图与抵用券可视化配置](README/text-blueprints.md)：文本可整体编辑、弯曲与移动，服务器核对位置后加入蓝图；管理员可按 Mod、方块和矿词维护抵扣规则及黑名单。放置确认增加校验进度，材料核算以金色标出可用抵用券，完成预览保留 15 秒。正式发布状态以 Releases 为准。
+v0.1.22 候选完善 [LittleTiles 文字转蓝图与抵用券可视化配置](README/text-blueprints.md)：文本可整体编辑和旋转、逐字竖排，支持轴线及平面手柄移动；字体切换保留设置，原生调色器与背包槽位提供材质预览，蓝图 Delete 可撤销删除，服务器核对位置后加入蓝图；管理员可按 Mod、方块和矿词维护抵扣规则及黑名单。放置确认增加校验进度，材料核算以金色标出可用抵用券，完成预览保留 15 秒。正式发布状态以 Releases 为准。
 
 <p align="center">
   <a href="README/screenshots/projector-preview.png"><img src="README/screenshots/projector-preview.png" alt="世界中的半透明结构投影 / Translucent structure projection in the world" width="620"></a><br>

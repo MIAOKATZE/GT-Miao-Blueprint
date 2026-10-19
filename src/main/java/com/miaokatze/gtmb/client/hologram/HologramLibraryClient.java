@@ -685,7 +685,7 @@ final class HologramLibraryClient {
     }
 
     private boolean quickScreenAllowed(Minecraft mc) {
-        return mc.currentScreen == null
+        return mc.currentScreen == null || mc.currentScreen instanceof HologramPlacementLoadingScreen
             || mc.currentScreen instanceof HologramScreen && HologramBackgroundTasks.libraryTask();
     }
 

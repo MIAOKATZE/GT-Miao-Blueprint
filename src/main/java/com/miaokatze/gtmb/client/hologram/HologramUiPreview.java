@@ -113,8 +113,7 @@ final class HologramUiPreview {
         }
         int height = previewHeight();
         HologramRenderer.selection = this.selection;
-        HologramRenderer.moveAxis = this.gizmo.axis();
-        HologramRenderer.moveDelta = this.gizmo.delta();
+        HologramRenderer.moveOffset = this.gizmo.offset();
         HologramRenderer.showEmptyCells = this.inventory || ui.position.positionDrawer()
             || ui.preview.airSelectionHeld();
         HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
@@ -490,51 +489,19 @@ final class HologramUiPreview {
         }
         int count = this.selection.size();
         if (count == 0) return;
-        double[] center = HologramRenderer.project(x / count, y / count, z / count);
-        this.gizmo.project(center[0], center[1], this.yaw, this.pitch);
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glLineWidth(3);
-        net.minecraft.client.renderer.Tessellator t = net.minecraft.client.renderer.Tessellator.instance;
-        t.startDrawing(GL11.GL_LINES);
-        for (int axis = 0; axis < 3; axis++) {
-            int color = HologramGizmo.COLORS[axis];
-            double[] end = this.gizmo.end(axis);
-            t.setColorOpaque_I(color & 0xffffff);
-            t.addVertex(center[0], center[1], 5);
-            t.addVertex(end[0], end[1], 5);
-        }
-        t.draw();
-        GL11.glEnable(GL11.GL_TEXTURE_2D);
-        for (int axis = 0; axis < 3; axis++) {
-            double[] end = this.gizmo.end(axis);
-            drawRect(
-                (int) end[0] - 3,
-                (int) end[1] - 3,
-                (int) end[0] + 4,
-                (int) end[1] + 4,
-                HologramGizmo.COLORS[axis]);
-            ui.canvas.text(
-                new String[] { "X", "Y", "Z" }[axis],
-                (int) end[0] + 5,
-                (int) end[1] - 4,
-                14,
-                HologramGizmo.COLORS[axis]);
-        }
-        GL11.glPopAttrib();
-        if (this.gizmo.axis() >= 0) ui.canvas.text(
-            (this.gizmoCopy ? "复制移动 " : "移动 ") + new String[] { "X", "Y", "Z" }[this.gizmo.axis()]
-                + " "
-                + this.gizmo.delta()
-                + " 格",
+        int[] offset = gizmo.offset();
+        double[] center = HologramRenderer.project(x / count + offset[0], y / count + offset[1], z / count + offset[2]);
+        gizmo.project(center[0], center[1], yaw, pitch, HologramRenderer.gridScale());
+        HologramGizmoRenderer.draw(gizmo, ui.canvas, mx, my);
+        if (gizmo.axis() >= 0) ui.canvas.text(
+            (gizmoCopy ? "复制移动 " : "移动 ") + HologramGizmo
+                .label(gizmo.axis()) + " " + offset[0] + "," + offset[1] + "," + offset[2] + " 格",
             38,
             263,
-            180,
+            280,
             0xffffaa);
-        // Preview hint and structure overlays may append to the axis tooltip in this same frame.
-        else if (this.gizmo.pick(mx, my) >= 0)
-            ui.canvas.tooltip(new ArrayList<>(Collections.singletonList("拖动轴移动；按住 Ctrl 开始拖动即复制；松开提交规划")));
+        else if (gizmo.pick(mx, my) >= 0)
+            ui.canvas.tooltip(new ArrayList<>(Collections.singletonList("拖轴沿单轴移动，拖彩色小面沿平面移动；Ctrl 开始拖动即复制；松开提交规划")));
     }
 
     void drawInventory(int mx, int my) {
@@ -740,6 +707,10 @@ final class HologramUiPreview {
             || this.inventory
             || ui.router.textFieldFocused()
             || ui.shortcuts.captureBinding() >= 0) return false;
+        if (key == Keyboard.KEY_R && modifiers == 4 && ui.textBoxes.selectedDefinition() != null) {
+            editAction("rotateTextVertical");
+            return true;
+        }
         if (key == Keyboard.KEY_A && modifiers == 1) {
             this.selection.all(ui.session.state());
             this.selected = this.selection.first();
@@ -817,6 +788,18 @@ final class HologramUiPreview {
         request.setInteger("selected", target);
         request.setIntArray("indices", indices);
         request.setIntArray("selectedIndices", indices);
+        if ("rotateTextVertical".equals(action)) {
+            request.setBoolean("vertical", true);
+            action = "rotateCell";
+        }
+        if ("restoreCell".equals(action) && ui.session.state().data.getBoolean("virtual")
+            && !ui.session.state().data.getBoolean("virtualPlacement")
+            && ui.session.state().data.getString("activeStructure")
+                .isEmpty()) {
+            action = "editDelete";
+            request.setLong("planRevision", ui.session.revision());
+        }
+        if ("rotateCell".equals(action)) request.setLong("planRevision", ui.session.revision());
         ui.session.send(action, request, true);
     }
 
@@ -1243,12 +1226,16 @@ final class HologramUiPreview {
             return;
         if (ui.ae.aeReview() != null) return;
         if (button == 0 && this.gizmo.axis() >= 0) {
-            int axis = this.gizmo.axis(), delta = this.gizmo.update(ui.canvas.localX(x), ui.canvas.localY(y));
+            this.gizmo.update(ui.canvas.localX(x), ui.canvas.localY(y));
+            int[] offset = this.gizmo.offset();
             this.gizmo.cancel();
-            if (delta != 0 && ui.session.editable() && ui.preview.canMoveSelection()) {
+            if ((offset[0] != 0 || offset[1] != 0 || offset[2] != 0) && ui.session.editable()
+                && ui.preview.canMoveSelection()) {
                 NBTTagCompound move = new NBTTagCompound();
                 move.setIntArray("indices", this.selection.indices());
-                move.setInteger(axis == 0 ? "dx" : axis == 1 ? "dy" : "dz", delta);
+                move.setInteger("dx", offset[0]);
+                move.setInteger("dy", offset[1]);
+                move.setInteger("dz", offset[2]);
                 move.setBoolean("copy", this.gizmoCopy);
                 ui.session.send("editMove", move, true);
             }
@@ -1501,6 +1488,8 @@ final class HologramUiPreview {
 
     void recordSelectionCommand(String op, long sequence) {
         if ("addPosition".equals(op) || "editPaste".equals(op)
+            || "editDelete".equals(op)
+            || "rotateCell".equals(op)
             || "editMove".equals(op)
             || "editUndo".equals(op)
             || "editRedo".equals(op)

@@ -20,7 +20,8 @@ final class HologramUiTextBoxes {
     private final HologramGizmo gizmo = new HologramGizmo();
     private HologramTextBox draft;
     private List<HologramTextBox.Cell> ghost = Collections.emptyList();
-    private int originalX, originalY, originalZ, axisStart;
+    private int originalX, originalY, originalZ;
+    private int[] dragOrigin;
     private boolean chosen, pending;
     private long request;
 
@@ -42,6 +43,10 @@ final class HologramUiTextBoxes {
         return draft != null;
     }
 
+    boolean choosingPosition() {
+        return draft != null && !chosen && !pending;
+    }
+
     void reset() {
         draft = null;
         ghost = Collections.emptyList();
@@ -50,7 +55,7 @@ final class HologramUiTextBoxes {
     }
 
     String label() {
-        return draft != null ? pending ? "校验文字…" : chosen ? "确认放置" : "选择文字位置"
+        return draft != null ? pending ? "校验文字…" : chosen ? "确认放置" : "请选择文字位置"
             : selectedDefinition() != null ? "编辑内容" : "文字转蓝图";
     }
 
@@ -93,10 +98,15 @@ final class HologramUiTextBoxes {
                     activate();
                     return;
                 }
-        ui.session.notice("点击工作区选择文字位置；小键盘 8/2/4/6 调整平面，Alt+8/2 调整高度，或拖动坐标轴；确认放置时校验");
+        if (ui.session.state().cells.isEmpty()) {
+            chosen = true;
+            activate();
+            return;
+        }
+        ui.session.notice("点击工作区按视角选位；R 整体旋转，Alt+R 竖转；小键盘调整位置，拖轴或彩色小面移动，再确认放置");
     }
 
-    private NBTTagCompound selectedDefinition() {
+    NBTTagCompound selectedDefinition() {
         HologramState.Cell selected = ui.session.selectedCell();
         if (selected == null) return null;
         NBTTagList structures = ui.session.state().data.getTagList("structures", 10);
@@ -130,6 +140,21 @@ final class HologramUiTextBoxes {
             gizmo.cancel();
             return true;
         }
+        if (key == Keyboard.KEY_R) {
+            int[] previous = draft.turns;
+            try {
+                draft.turn(HologramClient.altHeld());
+                ghost = draft.generate();
+                originalX = draft.x;
+                originalY = draft.y;
+                originalZ = draft.z;
+            } catch (java.io.IOException invalid) {
+                draft.turns = previous;
+                ui.session.notice(invalid.getMessage());
+            }
+            return true;
+        }
+        if (!chosen) return false;
         int direction = key == Keyboard.KEY_NUMPAD8 || key == Keyboard.KEY_UP ? 1
             : key == Keyboard.KEY_NUMPAD2 || key == Keyboard.KEY_DOWN ? -1 : 0;
         if (direction != 0) {
@@ -148,18 +173,14 @@ final class HologramUiTextBoxes {
     boolean mouse(int mx, int my, int button) {
         if (draft == null || pending || button != 0 || !ui.canvas.inViewport(mx, my)) return false;
         for (HologramUiCanvas.Control control : ui.canvas.controls()) if (control.contains(mx, my)) return false;
-        int axis = gizmo.pick(mx, my);
+        int axis = chosen ? gizmo.pick(mx, my) : -1;
         if (axis >= 0) {
             gizmo.begin(axis, mx, my);
-            axisStart = axis == 0 ? draft.x : axis == 1 ? draft.y : draft.z;
+            dragOrigin = new int[] { draft.x, draft.y, draft.z };
             return true;
         }
-        int target = HologramRenderer.pick(mx, my);
-        int[] point;
-        if (target >= 0) {
-            HologramState.Cell cell = ui.session.state().cells.get(target);
-            point = new int[] { cell.x, cell.y + 1, cell.z };
-        } else point = HologramRenderer
+        int[] point = HologramRenderer.pickAdjacentVoxel(mx, my);
+        if (point == null) point = HologramRenderer
             .pickEmptyVoxel(ui.session.state(), mx, my, ui.session.state().data.getInteger("y") + draft.y);
         if (point != null) {
             draft.x = point[0] - ui.session.state().data.getInteger("x");
@@ -172,10 +193,11 @@ final class HologramUiTextBoxes {
 
     boolean drag(int mx, int my, boolean release) {
         if (draft == null || gizmo.axis() < 0) return false;
-        int axis = gizmo.axis(), value = axisStart + gizmo.update(mx, my);
-        if (axis == 0) draft.x = value;
-        else if (axis == 1) draft.y = value;
-        else draft.z = value;
+        gizmo.update(mx, my);
+        int[] offset = gizmo.offset();
+        draft.x = dragOrigin[0] + offset[0];
+        draft.y = dragOrigin[1] + offset[1];
+        draft.z = dragOrigin[2] + offset[2];
         chosen = true;
         if (release) gizmo.cancel();
         return true;
@@ -183,6 +205,15 @@ final class HologramUiTextBoxes {
 
     void draw() {
         if (draft == null) return;
+        if (!chosen) {
+            ui.canvas.text(
+                "请先点击工作区选择文字位置 · R 旋转 / Alt+R 竖转 · Esc 取消",
+                38,
+                245,
+                390,
+                HologramUiAccent.color(HologramUiAccent.SPECTRUM));
+            return;
+        }
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
@@ -191,7 +222,13 @@ final class HologramUiTextBoxes {
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             Tessellator t = Tessellator.instance;
             t.startDrawingQuads();
-            int color = draft.color == 0xffffff ? 0xc19cf4 : draft.color;
+            int color = HologramTextColors.preview(
+                draft.material,
+                new net.minecraft.item.ItemStack(
+                    net.minecraft.block.Block.getBlockFromName(draft.material),
+                    1,
+                    draft.metadata),
+                draft.color);
             t.setColorRGBA_I(color, 104);
             for (HologramTextBox.Cell cell : ghost) for (int i = 0; i < cell.tile.getInteger("tilesCount"); i++) {
                 NBTTagCompound box = cell.tile.getCompoundTag("t" + i);
@@ -207,21 +244,14 @@ final class HologramUiTextBoxes {
                     for (int vertex : face) t.addVertex(points[vertex][0], points[vertex][1], 10);
             }
             t.draw();
-            double[] anchor = HologramRenderer.project(draft.x, draft.y, draft.z);
-            gizmo.project(anchor[0], anchor[1], ui.preview.yaw(), ui.preview.pitch());
-            t.startDrawing(GL11.GL_LINES);
-            for (int axis = 0; axis < 3; axis++) {
-                double[] end = gizmo.end(axis);
-                t.setColorOpaque_I(HologramGizmo.COLORS[axis]);
-                t.addVertex(anchor[0], anchor[1], 20);
-                t.addVertex(end[0], end[1], 20);
-            }
-            t.draw();
         } finally {
             GL11.glPopAttrib();
         }
+        double[] anchor = HologramRenderer.project(draft.x, draft.y, draft.z);
+        gizmo.project(anchor[0], anchor[1], ui.preview.yaw(), ui.preview.pitch(), HologramRenderer.gridScale());
+        HologramGizmoRenderer.draw(gizmo, ui.canvas, -1000, -1000);
         ui.canvas.text(
-            "文字位置 " + draft.x + "," + draft.y + "," + draft.z + " · 点击选位 / 拖轴 / 小键盘 · Esc 取消",
+            "文字位置 " + draft.x + "," + draft.y + "," + draft.z + " · R / Alt+R · 拖轴/彩色面 · Esc 取消",
             38,
             245,
             390,

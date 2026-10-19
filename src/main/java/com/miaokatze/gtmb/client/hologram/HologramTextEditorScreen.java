@@ -6,8 +6,15 @@ import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
 
+import com.cleanroommc.modularui.api.IPanelHandler;
+import com.cleanroommc.modularui.api.widget.Interactable;
+import com.cleanroommc.modularui.drawable.GuiTextures;
+import com.cleanroommc.modularui.value.ObjectValue;
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widget.ParentWidget;
+import com.cleanroommc.modularui.widgets.ColorPickerDialog;
+import com.cleanroommc.modularui.widgets.Dialog;
+import com.cleanroommc.modularui.widgets.ItemDisplayWidget;
 import com.cleanroommc.modularui.widgets.textfield.TextEditorWidget;
 import com.miaokatze.gtmb.hologram.HologramTextBox;
 
@@ -33,6 +40,9 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
         this.ui = ui;
         this.text = text;
         document = new Document(text.text);
+        value("material", text.material);
+        value("metadata", Integer.toString(text.metadata));
+        value("color", String.format(java.util.Locale.ROOT, "%06X", text.color));
     }
 
     @Override
@@ -47,11 +57,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
             new FontPreview().pos(426, 40)
                 .size(150, 82)
                 .background(HologramMuiTheme.PANEL));
-        panel().child(HologramMuiTheme.button(this::fontName, 14, 130, 218, 20, () -> {
-            int at = java.util.Arrays.asList(FONTS)
-                .indexOf(text.font);
-            text.font = FONTS[(at + 1) % FONTS.length];
-        }));
+        panel().child(HologramMuiTheme.button(this::fontName, 14, 130, 218, 20, this::cycleFont));
         panel().child(
             HologramMuiTheme
                 .button(() -> (text.bold ? "✓ " : "") + "加粗", 240, 130, 76, 20, () -> text.bold = !text.bold));
@@ -65,7 +71,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 () -> text.underline = !text.underline));
         panel().child(
             HologramMuiTheme.button(
-                () -> (text.vertical ? "✓ " : "") + "竖向",
+                () -> (text.vertical ? "✓ " : "") + "竖向排列",
                 408,
                 130,
                 76,
@@ -94,60 +100,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
         ParentWidget<?> material = new ParentWidget<>().pos(14, 158)
             .size(562, 170)
             .setEnabledIf(w -> materials);
-        material.child(
-            HologramMuiTheme
-                .label(() -> "材料方块注册名 / 元数据 / RGB 色值（FFFFFF 保持原材质）", 0, 0, 560, 16, HologramMuiTheme.MUTED));
-        values.put("material", new StringValue(text.material));
-        values.put("metadata", new StringValue(Integer.toString(text.metadata)));
-        values.put("color", new StringValue(String.format(java.util.Locale.ROOT, "%06X", text.color)));
-        material.child(HologramMuiTheme.textField(values.get("material"), 0, 20, 312, 20, 192));
-        material.child(HologramMuiTheme.textField(values.get("metadata"), 320, 20, 74, 20, 5));
-        material.child(HologramMuiTheme.textField(values.get("color"), 402, 20, 160, 20, 6));
-        material.child(HologramMuiTheme.button(() -> "羊毛调色板", 0, 46, 180, 19, () -> palette("minecraft:wool")));
-        material.child(
-            HologramMuiTheme
-                .button(() -> "染色黏土调色板", 188, 46, 180, 19, () -> palette("minecraft:stained_hardened_clay")));
-        material.child(
-            HologramMuiTheme.button(
-                () -> "使用主手方块",
-                376,
-                46,
-                186,
-                19,
-                () -> sample(Minecraft.getMinecraft().thePlayer.getHeldItem())));
-        for (int i = 0; i < 16; i++) {
-            final int meta = i;
-            material.child(
-                HologramMuiTheme.button(
-                    () -> COLOR_NAMES[meta],
-                    i * 35,
-                    71,
-                    32,
-                    19,
-                    () -> values.get("metadata")
-                        .setStringValue(Integer.toString(meta)))
-                    .background(paletteBackground(meta, false))
-                    .hoverBackground(paletteBackground(meta, true))
-                    .overlay(
-                        com.cleanroommc.modularui.api.drawable.IKey.str(COLOR_NAMES[meta])
-                            .color(
-                                meta == 0 || meta == 3 || meta == 4 || meta == 5 || meta == 6 || meta == 8 ? 0xff182028
-                                    : 0xfff6f1e9)
-                            .shadow(false))
-                    .tooltipBuilder(t -> t.addLine(COLOR_NAMES[meta] + " · 元数据 " + meta)));
-        }
-        for (int i = 0; i < 18; i++) {
-            final int slot = i;
-            material.child(HologramMuiTheme.button(() -> {
-                ItemStack item = Minecraft.getMinecraft().thePlayer.inventory.mainInventory[slot];
-                return item == null ? "—" : item.getDisplayName();
-            },
-                i % 9 * 62,
-                98 + i / 9 * 26,
-                58,
-                23,
-                () -> sample(Minecraft.getMinecraft().thePlayer.inventory.mainInventory[slot])));
-        }
+        buildMaterials(material);
         panel().child(material);
         panel().child(
             HologramMuiTheme.label(() -> notice, 14, 336, 562, 23, HologramMuiTheme.TITLE)
@@ -162,36 +115,226 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 20,
                 () -> Minecraft.getMinecraft()
                     .displayGuiScreen(ui.host.parent())));
-        panel().child(HologramMuiTheme.primaryButton(() -> "确认内容 · 选择放置位置", 312, 368, 264, 20, this::confirm));
+        panel().child(
+            HologramMuiTheme.primaryButton(
+                () -> ui.session.state().cells.isEmpty() ? "确认内容 · 生成文字" : "确认内容 · 选择放置位置",
+                312,
+                368,
+                264,
+                20,
+                this::confirm));
     }
 
     private void field(ParentWidget<?> panel, String key, String name, double initial, int x, int y) {
-        StringValue value = new StringValue(
+        StringValue value = value(
+            key,
             initial == Math.rint(initial) ? Long.toString((long) initial) : Double.toString(initial));
-        values.put(key, value);
         panel.child(HologramMuiTheme.label(() -> name, x, y, 180, 15, HologramMuiTheme.MUTED));
         panel.child(HologramMuiTheme.textField(value, x, y + 16, 180, 20, 10));
+    }
+
+    private StringValue value(String key, String initial) {
+        return values.computeIfAbsent(key, ignored -> new StringValue(initial));
+    }
+
+    private void cycleFont() {
+        int at = java.util.Arrays.asList(FONTS)
+            .indexOf(text.font);
+        text.font = FONTS[(at + 1) % FONTS.length];
+    }
+
+    private void buildMaterials(ParentWidget<?> material) {
+        ParentWidget<?> base = new ParentWidget<>().pos(0, 0)
+            .size(276, 170)
+            .background(HologramMuiTheme.PANEL);
+        ParentWidget<?> dye = new ParentWidget<>().pos(286, 0)
+            .size(276, 170)
+            .background(HologramMuiTheme.PANEL);
+        material.child(base)
+            .child(dye);
+        base.child(HologramMuiTheme.label(() -> "基础材质", 12, 8, 252, 16, HologramMuiTheme.TITLE));
+        base.child(
+            new MaterialSample(this::selectedMaterial, () -> openInventory()).pos(12, 29)
+                .size(24));
+        base.child(HologramMuiTheme.textField(values.get("material"), 44, 29, 180, 22, 192));
+        base.child(HologramMuiTheme.textField(values.get("metadata"), 230, 29, 34, 22, 5));
+        base.child(HologramMuiTheme.button(() -> "羊毛", 12, 59, 92, 22, () -> palette("minecraft:wool")));
+        base.child(
+            HologramMuiTheme.button(() -> "染色黏土", 110, 59, 92, 22, () -> palette("minecraft:stained_hardened_clay")));
+        base.child(HologramMuiTheme.button(() -> "背包", 208, 59, 56, 22, this::openInventory));
+        for (int i = 0; i < 16; i++) {
+            final int meta = i;
+            base.child(
+                new MaterialSample(
+                    () -> variant(meta),
+                    () -> values.get("metadata")
+                        .setStringValue(Integer.toString(meta))).pos(12 + i % 8 * 31, 90 + i / 8 * 32)
+                            .size(26)
+                            .background((context, x, y, width, height, theme) -> {
+                                HologramMuiTheme.BUTTON.draw(context, x, y, width, height, theme);
+                                if (Integer.toString(meta)
+                                    .equals(
+                                        values.get("metadata")
+                                            .getStringValue()))
+                                    com.cleanroommc.modularui.drawable.GuiDraw
+                                        .drawRect(x + 2, y + height - 2, width - 4, 1, HologramMuiTheme.TITLE);
+                            })
+                            .tooltipBuilder(t -> t.addLine(COLOR_NAMES[meta] + " · 材质色 " + meta))
+                            .setEnabledIf(w -> coloredMaterial()));
+        }
+        base.child(
+            HologramMuiTheme.label(() -> "点击背包槽位选择方块", 12, 113, 252, 30, HologramMuiTheme.MUTED)
+                .setEnabledIf(w -> !coloredMaterial()));
+        dye.child(HologramMuiTheme.label(() -> "瓷砖染色", 12, 8, 252, 16, HologramMuiTheme.TITLE));
+        dye.child(
+            new ParentWidget<>().pos(12, 29)
+                .size(30, 22)
+                .background(
+                    (context, x, y, width, height, theme) -> com.cleanroommc.modularui.drawable.GuiDraw
+                        .drawRect(x, y, width, height, 0xff000000 | tint())));
+        dye.child(HologramMuiTheme.textField(values.get("color"), 50, 29, 112, 22, 6));
+        dye.child(
+            HologramMuiTheme.button(
+                () -> "原材色",
+                172,
+                29,
+                92,
+                22,
+                () -> values.get("color")
+                    .setStringValue("FFFFFF")));
+        dye.child(HologramMuiTheme.button(() -> "调色器 · RGB / HSV", 12, 59, 252, 24, this::openColorPicker));
+        for (int i = 0; i < 16; i++) {
+            final int color = i;
+            dye.child(
+                HologramMuiTheme.button(
+                    () -> "",
+                    12 + i % 8 * 31,
+                    92 + i / 8 * 32,
+                    26,
+                    26,
+                    () -> values.get("color")
+                        .setStringValue(String.format(java.util.Locale.ROOT, "%06X", COLORS[color])))
+                    .background(colorChip(color, false))
+                    .hoverBackground(colorChip(color, true))
+                    .tooltipBuilder(t -> t.addLine(COLOR_NAMES[color] + " · 染色")));
+        }
+    }
+
+    private boolean coloredMaterial() {
+        String material = values.get("material")
+            .getStringValue();
+        return "minecraft:wool".equals(material) || "minecraft:stained_hardened_clay".equals(material);
     }
 
     private void palette(String material) {
         values.get("material")
             .setStringValue(material);
-        values.get("color")
-            .setStringValue("FFFFFF");
     }
 
-    private com.cleanroommc.modularui.api.drawable.IDrawable paletteBackground(int metadata, boolean hover) {
+    private ItemStack selectedMaterial() {
+        try {
+            net.minecraft.block.Block block = net.minecraft.block.Block.getBlockFromName(
+                values.get("material")
+                    .getStringValue());
+            return block == null || block == net.minecraft.init.Blocks.air ? null
+                : new ItemStack(block, 1, (int) number("metadata"));
+        } catch (RuntimeException invalidDraft) {
+            return null;
+        }
+    }
+
+    private ItemStack variant(int metadata) {
+        ItemStack stack = selectedMaterial();
+        if (stack != null) stack.setItemDamage(metadata);
+        return stack;
+    }
+
+    private int tint() {
+        try {
+            return Integer.parseInt(
+                values.get("color")
+                    .getStringValue(),
+                16) & 0xffffff;
+        } catch (NumberFormatException incomplete) {
+            return text.color;
+        }
+    }
+
+    private int previewColor() {
+        return HologramTextColors.preview(
+            values.get("material")
+                .getStringValue(),
+            selectedMaterial(),
+            tint());
+    }
+
+    private com.cleanroommc.modularui.api.drawable.IDrawable colorChip(int color, boolean hover) {
         return (context, x, y, width, height, theme) -> {
             (hover ? HologramMuiTheme.PRESSED : HologramMuiTheme.BUTTON).draw(context, x, y, width, height, theme);
             com.cleanroommc.modularui.drawable.GuiDraw
-                .drawRect(x + 3, y + 3, width - 6, height - 6, 0xff000000 | COLORS[metadata]);
-            if (Integer.toString(metadata)
-                .equals(
-                    values.get("metadata")
-                        .getStringValue()))
-                com.cleanroommc.modularui.drawable.GuiDraw
-                    .drawRect(x + 2, y + height - 2, width - 4, 1, HologramMuiTheme.TITLE);
+                .drawRect(x + 3, y + 3, width - 6, height - 6, 0xff000000 | COLORS[color]);
+            if (COLORS[color] == tint()) com.cleanroommc.modularui.drawable.GuiDraw
+                .drawRect(x + 2, y + height - 2, width - 4, 1, HologramMuiTheme.TITLE);
         };
+    }
+
+    private void openColorPicker() {
+        IPanelHandler
+            .simple(
+                panel(),
+                (parent, player) -> new ColorPickerDialog(
+                    "gtmb_text_color",
+                    color -> values.get("color")
+                        .setStringValue(String.format(java.util.Locale.ROOT, "%06X", color & 0xffffff)),
+                    0xff000000 | tint(),
+                    false).background(HologramMuiTheme.CLOTH),
+                true)
+            .openPanel();
+    }
+
+    private void openInventory() {
+        IPanelHandler.simple(panel(), (parent, player) -> {
+            Dialog<ItemStack> inventory = new Dialog<>("gtmb_text_material_inventory", this::sample);
+            inventory.size(202, 166)
+                .background(HologramMuiTheme.CLOTH);
+            HologramMuiTheme.header(inventory, () -> "背包 · 选择材质", 202);
+            for (int i = 0; i < 36; i++) {
+                final int slot = i < 27 ? i + 9 : i - 27;
+                inventory.child(new MaterialSample(() -> player.inventory.mainInventory[slot], () -> {
+                    ItemStack stack = player.inventory.mainInventory[slot];
+                    if (stack != null
+                        && net.minecraft.block.Block.getBlockFromItem(stack.getItem()) != net.minecraft.init.Blocks.air)
+                        inventory.closeWith(stack.copy());
+                }).pos(20 + i % 9 * 18, i < 27 ? 42 + i / 9 * 18 : 104)
+                    .size(18)
+                    .background(i < 27 ? GuiTextures.SLOT_ITEM_PLAYER : GuiTextures.SLOT_ITEM_HOTBAR));
+            }
+            inventory.child(HologramMuiTheme.button(() -> "返回材质设置", 20, 136, 162, 20, inventory::closeIfOpen));
+            return inventory;
+        }, true)
+            .openPanel();
+    }
+
+    /** Native item rendering and slot backgrounds; sampling never moves or edits the real inventory. */
+    private static final class MaterialSample extends ItemDisplayWidget implements Interactable {
+
+        private final Runnable select;
+
+        MaterialSample(java.util.function.Supplier<ItemStack> supplier, Runnable select) {
+            this.select = select;
+            item(new ObjectValue.Dynamic<>(ItemStack.class, supplier, ignored -> {}));
+            background(GuiTextures.SLOT_ITEM);
+            tooltipBuilder(t -> {
+                ItemStack stack = supplier.get();
+                if (stack != null) t.addLine(stack.getDisplayName());
+            }).tooltipAutoUpdate(true);
+        }
+
+        @Override
+        public Result onMousePressed(int button) {
+            if (button == 0) select.run();
+            return Result.SUCCESS;
+        }
     }
 
     private void sample(ItemStack stack) {
@@ -207,6 +350,15 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
         int at = java.util.Arrays.asList(FONTS)
             .indexOf(text.font);
         return FONT_NAMES[Math.max(0, at)];
+    }
+
+    private double previewPixel(String key) {
+        try {
+            double value = number(key);
+            return Double.isFinite(value) ? Math.max(1, Math.min(16, value)) : 1;
+        } catch (RuntimeException incomplete) {
+            return 1;
+        }
     }
 
     private double number(String key) {
@@ -268,7 +420,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
         public void draw(com.cleanroommc.modularui.screen.viewport.ModularGuiContext context,
             com.cleanroommc.modularui.theme.WidgetThemeEntry<?> theme) {
             String content = document.content();
-            String current = content + '\u0000' + text.font + text.bold + text.underline;
+            String current = content + '\u0000' + text.font + text.bold + text.underline + text.vertical;
             if (!signature.equals(current)) {
                 signature = current;
                 error = "";
@@ -279,6 +431,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                     candidate.font = text.font;
                     candidate.bold = text.bold;
                     candidate.underline = text.underline;
+                    candidate.vertical = text.vertical;
                     HologramTextRasterizer.rasterize(candidate);
                     mask = candidate;
                 } catch (Exception failure) {
@@ -291,20 +444,22 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 font.drawString(font.trimStringToWidth(error, 138), 6, 26, HologramMuiTheme.MUTED);
                 return;
             }
-            double scale = Math.min(3, Math.min(138d / mask.width, 57d / mask.height));
-            double left = (150 - mask.width * scale) / 2, top = 20 + (57 - mask.height * scale) / 2;
+            double pixelX = previewPixel("pixelX"), pixelY = previewPixel("pixelY");
+            double scale = Math.min(3, Math.min(138d / (mask.width * pixelX), 57d / (mask.height * pixelY)));
+            double sx = scale * pixelX, sy = scale * pixelY;
+            double left = (150 - mask.width * sx) / 2, top = 20 + (57 - mask.height * sy) / 2;
             org.lwjgl.opengl.GL11.glPushAttrib(org.lwjgl.opengl.GL11.GL_ALL_ATTRIB_BITS);
             try {
                 org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_TEXTURE_2D);
                 org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
                 net.minecraft.client.renderer.Tessellator buffer = net.minecraft.client.renderer.Tessellator.instance;
                 buffer.startDrawingQuads();
-                buffer.setColorOpaque_I(0xf2e6cf);
+                buffer.setColorOpaque_I(previewColor());
                 for (int y = 0; y < mask.height; y++) for (int x = 0; x < mask.width; x++) if (mask.pixel(x, y)) {
-                    double xx = left + x * scale, yy = top + y * scale;
-                    buffer.addVertex(xx, yy + scale, 0);
-                    buffer.addVertex(xx + scale, yy + scale, 0);
-                    buffer.addVertex(xx + scale, yy, 0);
+                    double xx = left + x * sx, yy = top + y * sy;
+                    buffer.addVertex(xx, yy + sy, 0);
+                    buffer.addVertex(xx + sx, yy + sy, 0);
+                    buffer.addVertex(xx + sx, yy, 0);
                     buffer.addVertex(xx, yy, 0);
                 }
                 buffer.draw();

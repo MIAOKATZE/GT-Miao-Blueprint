@@ -72,16 +72,16 @@ final class HologramRenderer {
     private static HologramState boundsState;
     private static double boundsX, boundsY, boundsZ, boundsExtent;
     static int projectionLayer = Integer.MAX_VALUE;
-    static int moveAxis = -1, moveDelta;
+    static int[] moveOffset = new int[3];
 
     private static boolean moving(HologramState.Cell cell) {
-        return moveAxis >= 0 && moveDelta != 0 && selection != null && selection.contains(cell.index);
+        return (moveOffset[0] != 0 || moveOffset[1] != 0 || moveOffset[2] != 0) && selection != null
+            && selection.contains(cell.index);
     }
 
     private static double[] moveScreen(HologramState.Cell cell) {
         if (!moving(cell)) return new double[] { 0, 0 };
-        double[] from = project(0, 0, 0),
-            to = project(moveAxis == 0 ? moveDelta : 0, moveAxis == 1 ? moveDelta : 0, moveAxis == 2 ? moveDelta : 0);
+        double[] from = project(0, 0, 0), to = project(moveOffset[0], moveOffset[1], moveOffset[2]);
         return new double[] { to[0] - from[0], to[1] - from[1] };
     }
 
@@ -502,10 +502,7 @@ final class HologramRenderer {
                 GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
                 GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
                 GL11.glTranslated(cell.dx - boundsX - panX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - panZ - .5);
-                if (moving(cell)) GL11.glTranslated(
-                    moveAxis == 0 ? moveDelta : 0,
-                    moveAxis == 1 ? moveDelta : 0,
-                    moveAxis == 2 ? moveDelta : 0);
+                if (moving(cell)) GL11.glTranslated(moveOffset[0], moveOffset[1], moveOffset[2]);
                 GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
                 if (moving(cell)) {
                     GL11.glEnable(GL11.GL_BLEND);
@@ -664,6 +661,19 @@ final class HologramRenderer {
         double ry = py * Math.cos(projectedPitch) - rz * Math.sin(projectedPitch);
         return new double[] { projectedX + projectedWidth / 2.0 + rx * projectedScale,
             projectedY + projectedHeight / 2.0 - ry * projectedScale };
+    }
+
+    static double gridScale() {
+        return projectedScale;
+    }
+
+    /** Use the same visible faces as selection, including the camera-facing placement side. */
+    static int[] pickAdjacentVoxel(int x, int y) {
+        Face hit = null;
+        for (Face face : cachedFaces) if (!face.empty && face.contains(x, y)) hit = face;
+        if (hit == null) return null;
+        int[] normal = NORMALS[hit.side];
+        return new int[] { hit.cell.x + normal[0], hit.cell.y + normal[1], hit.cell.z + normal[2] };
     }
 
     /** Intersect the orthographic view ray with a horizontal plane at an absolute world Y. */

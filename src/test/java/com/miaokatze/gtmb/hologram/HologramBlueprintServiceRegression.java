@@ -21,6 +21,47 @@ import com.mojang.authlib.GameProfile;
 /** Production geometry edits against a world fixture that rejects every write. */
 final class HologramBlueprintServiceRegression {
 
+    private static void deletion(HologramSession source) throws java.io.IOException {
+        HologramSession session = new HologramSession(source.player, source.x, source.y, source.z, false, 2);
+        session.virtual = true;
+        session.virtualPreset = HologramPresets.copy(source.virtualPreset);
+        session.materialSettings.main = false;
+        session.materialSettings.containers = false;
+        session.materialSettings.me = false;
+        session.materialContext = new HologramMaterials.Context(source.player, session.materialSettings);
+        HologramBlueprintProjection.populateVirtual(session);
+        HologramEditState original = new HologramEditState(session);
+        int history = session.undoEdits.size();
+        NBTTagCompound action = new NBTTagCompound();
+        action.setIntArray("indices", new int[] { 0 });
+        action.setLong("planRevision", session.planRevision);
+        HologramBlueprintEditor.deleteBlueprintCells(session, action);
+        SimpleAssert
+            .eq(1, session.capture.cells.size(), "Delete removes selected blueprint geometry rather than excluding it");
+        SimpleAssert.eq(
+            1,
+            HologramBlueprintProjection.blueprint(session, "deleted").cells.size(),
+            "saved blueprint omits deleted geometry");
+        SimpleAssert.eq(history + 1, session.undoEdits.size(), "multi-cell deletion is one history step");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editUndo");
+        SimpleAssert.eq(2, session.capture.cells.size(), "undo restores removed geometry");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editRedo");
+        SimpleAssert.eq(1, session.capture.cells.size(), "redo removes the same geometry");
+        original.apply(session);
+        session.undoEdits.clear();
+        session.redoEdits.clear();
+        action.setLong("planRevision", session.planRevision);
+        session.virtual = false;
+        try {
+            HologramBlueprintEditor.deleteBlueprintCells(session, action);
+            throw new AssertionError("controller accepted blueprint delete");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.eq(2, session.capture.cells.size(), "controller structure rejects geometry deletion");
+        } finally {
+            session.virtual = true;
+        }
+    }
+
     static void run() {
         try {
             ItemStack stone = HologramArea.serverSample(Blocks.stone, 0, null);
@@ -90,6 +131,7 @@ final class HologramBlueprintServiceRegression {
             HologramCapture capture = (HologramCapture) get(session, "capture");
             SimpleAssert
                 .that(!capture.incomplete, "schema2 item-only factory cells infer their block: " + capture.failure);
+            deletion((HologramSession) session);
             spatialWorkOrder((HologramSession) session);
             HologramBlueprintSourceMaterialRegression.run((HologramSession) session);
             capture.cells.get(0).prompt = "keep configuration";

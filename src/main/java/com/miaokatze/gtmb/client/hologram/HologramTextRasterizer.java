@@ -26,6 +26,7 @@ final class HologramTextRasterizer {
     static void rasterize(HologramTextBox text) throws IOException {
         if (text.text.length() > 512 || text.text.trim()
             .isEmpty()) throw new IOException("请输入 1–512 字符的文字");
+        text.layoutVersion = 1;
         BufferedImage image = "minecraft".equals(text.font) ? minecraft(text) : openFont(text);
         text.width = image.getWidth();
         text.height = image.getHeight();
@@ -46,7 +47,7 @@ final class HologramTextRasterizer {
         BufferedImage measure = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = measure.createGraphics();
         int width = 1, lineHeight, ascent;
-        String[] lines = text.text.split("\n", -1);
+        String[] lines = text.lines();
         try {
             g.setFont(font);
             lineHeight = g.getFontMetrics()
@@ -66,7 +67,8 @@ final class HologramTextRasterizer {
         } finally {
             g.dispose();
         }
-        if (width > 1024 || (long) lines.length * lineHeight > 128) throw new IOException("文字过宽或行数过多，请分成多个文本框");
+        if (width > 1024 || (long) lines.length * lineHeight > (text.vertical ? 1024 : 128)
+            || (long) width * lines.length * lineHeight > 131072) throw new IOException("文字过宽或行数过多，请分成多个文本框");
         BufferedImage result = new BufferedImage(width, lines.length * lineHeight, BufferedImage.TYPE_INT_ARGB);
         g = result.createGraphics();
         try {
@@ -123,10 +125,11 @@ final class HologramTextRasterizer {
 
     private static BufferedImage minecraft(HologramTextBox text) throws IOException {
         Minecraft mc = Minecraft.getMinecraft();
-        String[] lines = text.text.split("\n", -1);
+        String[] lines = text.lines();
         int width = 1;
         for (String line : lines) width = Math.max(width, mc.fontRenderer.getStringWidth(line) * 2 + 3);
-        if (width > 1024 || lines.length > 7) throw new IOException("文字过宽或超过 7 行，请分成多个文本框");
+        if (width > 1024 || (long) lines.length * 18 > (text.vertical ? 1024 : 128)
+            || (long) width * lines.length * 18 > 131072) throw new IOException("文字过宽或行数过多，请分成多个文本框");
         BufferedImage result = new BufferedImage(width, lines.length * 18, BufferedImage.TYPE_INT_ARGB);
         BufferedImage ascii = image("textures/font/ascii.png");
         Map<Integer, BufferedImage> pages = new HashMap<>();

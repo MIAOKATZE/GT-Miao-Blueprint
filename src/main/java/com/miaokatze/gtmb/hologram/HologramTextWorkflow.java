@@ -9,12 +9,36 @@ import java.util.Set;
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
 /** Atomic authoring operation: validate generated geometry before replacing any workspace content. */
 final class HologramTextWorkflow {
 
     private HologramTextWorkflow() {}
+
+    /** Text owns one rigid orientation; never feed its hosts to the per-cell rotation loop. */
+    static boolean rotateSelected(HologramSession s, NBTTagCompound action) {
+        if (s.capture == null || s.virtualPreset == null) return false;
+        int selected = action.hasKey("selected", 3) ? action.getInteger("selected") : s.selected;
+        if (selected < 0 || selected >= s.capture.cells.size()) return false;
+        HologramCapture.Cell cell = s.capture.cells.get(selected);
+        for (HologramPresets.Structure group : s.virtualPreset.structures) {
+            if (!cell.belongsTo(group.id) || group.textBoxNbt == null || group.textBoxNbt.isEmpty()) continue;
+            try {
+                HologramTextBox text = HologramTextBox.read(definition(group));
+                text.turn(action.getBoolean("vertical"));
+                NBTTagCompound request = (NBTTagCompound) action.copy();
+                request.setTag("textBox", text.write());
+                apply(s, request);
+            } catch (IOException failure) {
+                s.status = "文字旋转被拒绝：" + failure.getMessage();
+                HologramSnapshots.send(s);
+            }
+            return true;
+        }
+        return false;
+    }
 
     static void apply(HologramSession s, NBTTagCompound request) {
         NBTTagCompound ack = new NBTTagCompound();
@@ -41,12 +65,12 @@ final class HologramTextWorkflow {
                 throw new IOException("需要 LittleTiles 1.6.59 兼容方块");
             HologramPresets.Preset preset = s.virtualPreset != null ? s.virtualPreset
                 : s.capture == null ? new HologramPresets.Preset() : HologramBlueprintProjection.blueprint(s, "文字蓝图");
-            if (preset.structures.size() >= 256) throw new IOException("结构与文字对象数量超过上限");
             HologramPresets.Structure existing = null;
             for (HologramPresets.Structure structure : preset.structures)
                 if (text.id.equals(structure.id)) existing = structure;
             if (existing != null && (existing.textBoxNbt == null || existing.textBoxNbt.isEmpty()))
                 throw new IOException("目标不是文字对象");
+            if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与文字对象数量超过上限");
             List<HologramTextBox.Cell> generated = text.generate();
             List<HologramCapture.Cell> additions = new ArrayList<>();
             Set<String> remove = new HashSet<>();
@@ -63,11 +87,13 @@ final class HologramTextWorkflow {
                 if (!s.player.worldObj.blockExists(wx, wy, wz) || !s.player.worldObj.isAirBlock(wx, wy, wz))
                     throw new IOException("文字目标必须是已加载的空气位置，请移动后确认");
                 HologramCapture.Cell added = new HologramCapture.Cell(null, wx, wy, wz);
-                added.block = host;
-                added.meta = 0;
-                added.blueprintBlock = "littletiles:BlockLittleTiles";
-                added.tileNbt = HologramBlueprintNbt.encodeCaptured(cell.tile);
-                added.actualStack = HologramNativePlacement.sample(host, 0, cell.tile);
+                boolean ordinary = cell.fullBlock && material.isOpaqueCube() && material.renderAsNormalBlock();
+                added.block = ordinary ? material : host;
+                added.meta = ordinary ? text.metadata : 0;
+                added.blueprintBlock = ordinary ? text.material : "littletiles:BlockLittleTiles";
+                added.tileNbt = ordinary ? "" : HologramBlueprintNbt.encodeCaptured(cell.tile);
+                added.actualStack = ordinary ? new ItemStack(material, 1, text.metadata)
+                    : HologramNativePlacement.sample(host, 0, cell.tile);
                 if (added.actualStack == null) throw new IOException("LittleTiles 材料样本生成失败");
                 added.blueprintItem = Item.itemRegistry.getNameForObject(added.actualStack.getItem());
                 added.blueprintDamage = added.actualStack.getItemDamage();

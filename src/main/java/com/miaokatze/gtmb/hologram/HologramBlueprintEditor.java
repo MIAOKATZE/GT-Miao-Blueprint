@@ -422,6 +422,45 @@ final class HologramBlueprintEditor {
         return complete;
     }
 
+    /** Remove workspace geometry only; controller structure edits retain their default-shell action. */
+    static void deleteBlueprintCells(HologramSession s, NBTTagCompound action) throws java.io.IOException {
+        if (!HologramSessionPolicy.authoring(s) || !s.blueprintActiveStructure.isEmpty()
+            || !s.player.capabilities.allowEdit
+            || s.capture == null
+            || s.capturePending
+            || s.capture.pending
+            || s.capture.incomplete
+            || s.localPlanPending
+            || s.job == 1
+            || s.job == 2
+            || !action.hasKey("planRevision", 4)
+            || action.getLong("planRevision") != s.planRevision) throw new java.io.IOException("请在完整的蓝图编辑工作区选择方块后删除");
+        int[] indices = geometryIndices(s, action);
+        java.util.Set<String> complete = completeGeometrySelection(s, indices);
+        java.util.Set<String> remove = new java.util.HashSet<>();
+        Map<String, HologramCapture.Cell> retained = new HashMap<>();
+        for (int index : indices) {
+            HologramCapture.Cell source = s.capture.cells.get(index);
+            if (source.anchor) throw new java.io.IOException("控制器始终受保护");
+            List<String> remaining = source.memberships()
+                .stream()
+                .filter(id -> !complete.contains(id))
+                .collect(java.util.stream.Collectors.toList());
+            String key = HologramValues.position(source);
+            if (remaining.isEmpty()) remove.add(key);
+            else {
+                HologramCapture.Cell stay = HologramBlueprintData.blueprintCell(source, source.x, source.y, source.z);
+                HologramBlueprintData.setMemberships(stay, remaining);
+                retained.put(key, stay);
+            }
+        }
+        stageGeometry(s, java.util.Collections.emptyList(), remove, false, retained, false);
+        s.virtualPreset.structures.removeIf(structure -> complete.contains(structure.id));
+        s.localEdits.invalidate();
+        HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
+        s.status = "已删除选中蓝图内容，可撤销；现场方块保持原状";
+    }
+
     static int[] geometryIndices(HologramSession s, NBTTagCompound action) throws java.io.IOException {
         int[] raw = action.getIntArray("indices");
         if (raw.length == 0) raw = action.getIntArray("selectedIndices");

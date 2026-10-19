@@ -2,10 +2,10 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
 
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -19,6 +19,7 @@ public final class HologramTextBox {
     public int x, y, z;
     public double yaw, pitch, roll, arc, bend, twist, shear;
     public boolean bold, underline, vertical;
+    public int layoutVersion = 1;
     public byte[] bitmap = new byte[0];
     public int[] turns = new int[0];
 
@@ -50,6 +51,7 @@ public final class HologramTextBox {
         tag.setBoolean("bold", bold);
         tag.setBoolean("underline", underline);
         tag.setBoolean("vertical", vertical);
+        tag.setInteger("layoutVersion", layoutVersion);
         return tag;
     }
 
@@ -81,6 +83,7 @@ public final class HologramTextBox {
         result.bold = tag.getBoolean("bold");
         result.underline = tag.getBoolean("underline");
         result.vertical = tag.getBoolean("vertical");
+        result.layoutVersion = tag.getInteger("layoutVersion");
         result.validate();
         return result;
     }
@@ -98,7 +101,10 @@ public final class HologramTextBox {
             || width < 1
             || width > 1024
             || height < 1
-            || height > 128
+            || height > (vertical && layoutVersion == 1 ? 1024 : 128)
+            || (long) width * height > 131072
+            || layoutVersion < 0
+            || layoutVersion > 1
             || bitmap.length != (width * height + 7) / 8
             || pixelX < 1
             || pixelX > 16
@@ -118,23 +124,44 @@ public final class HologramTextBox {
         return (bitmap[bit >>> 3] & (1 << (bit & 7))) != 0;
     }
 
+    /** Upright glyph layout; explicit newlines retain a gap in a vertical column. */
+    public String[] lines() {
+        if (!vertical) return text.split("\n", -1);
+        List<String> lines = new ArrayList<>();
+        text.codePoints()
+            .filter(value -> value != '\r')
+            .forEach(value -> lines.add(value == '\n' ? "" : new String(Character.toChars(value))));
+        return lines.toArray(new String[0]);
+    }
+
+    /** One rigid orientation for all hosts and microvoxels; the recipe stays bounded. */
+    public void turn(boolean verticalTurn) {
+        HologramPreviewPose pose = new HologramPreviewPose();
+        for (int turn : turns) pose = pose.turn(turn == 2);
+        turns = pose.turn(verticalTurn)
+            .recipe();
+        for (int i = 0; i < turns.length; i++) turns[i]++;
+    }
+
     public static final class Cell {
 
         public final int x, y, z;
         public final NBTTagCompound tile;
+        public final boolean fullBlock;
 
-        Cell(int x, int y, int z, NBTTagCompound tile) {
+        Cell(int x, int y, int z, NBTTagCompound tile, boolean fullBlock) {
             this.x = x;
             this.y = y;
             this.z = z;
             this.tile = tile;
+            this.fullBlock = fullBlock;
         }
     }
 
     /** Column sampling plus Euler rotation; overlapping samples of the same text are unioned before packing. */
     public List<Cell> generate() throws IOException {
         validate();
-        Map<String, TreeSet<Integer>> blocks = new LinkedHashMap<>();
+        Map<String, BitSet> blocks = new LinkedHashMap<>();
         Map<String, int[]> positions = new LinkedHashMap<>();
         int voxels = 0, attempts = 0;
         double span = Math.max(1, width * pixelX - 1), verticalSpan = height * pixelY;
@@ -144,28 +171,66 @@ public final class HologramTextBox {
                 for (int sy = 0; sy < pixelY; sy++) for (int sz = 0; sz < thickness; sz++) {
                     if (++attempts > MAX_VOXELS * 4) throw new IOException("文字采样超过上限，请减小文字、像素大小或厚度");
                     double xx = px * pixelX + sx, yy = (height - py - 1) * pixelY + sy, zz = sz;
-                    if (Math.abs(arc) >= .001) {
-                        double angle = Math.toRadians(arc), radius = span / angle, at = xx / span * angle;
-                        xx = Math.sin(at) * (radius + yy);
-                        yy = Math.cos(at) * (radius + yy) - radius;
-                    }
-                    if (Math.abs(bend) >= .001) {
-                        double angle = Math.toRadians(bend), radius = span / angle,
-                            at = (px * pixelX + sx) / span * angle;
-                        double before = xx;
-                        xx = Math.sin(at) * (radius + zz);
-                        zz = Math.cos(at) * (radius + zz) - radius;
-                        // Arc and spatial curvature remain independently editable.
-                        if (Math.abs(arc) >= .001) xx += before - px * pixelX - sx;
-                    }
-                    if (twist != 0) {
-                        double at = Math.toRadians(twist) * (px * pixelX + sx) / span;
-                        double oldY = yy - verticalSpan / 2;
-                        yy = Math.cos(at) * oldY - Math.sin(at) * zz + verticalSpan / 2;
-                        zz = Math.sin(at) * oldY + Math.cos(at) * zz;
+                    if (layoutVersion == 1) {
+                        // The running direction is the line for horizontal text and the column for vertical text.
+                        // Keep its midpoint fixed; equal distances on either side receive opposite angles.
+                        double centerX = (width * pixelX - 1) / 2d, centerY = (verticalSpan - 1) / 2d,
+                            centerZ = (thickness - 1) / 2d;
+                        double runningSpan = vertical ? Math.max(1, verticalSpan - 1) : span;
+                        double originalU = vertical ? yy : xx, centerU = vertical ? centerY : centerX;
+                        double at = (originalU - centerU) / runningSpan;
+                        if (Math.abs(arc) >= .001) {
+                            double angle = Math.toRadians(arc), radius = runningSpan / angle;
+                            double cross = vertical ? xx - centerX : yy - centerY;
+                            double along = Math.sin(at * angle) * (radius + cross) + centerU;
+                            double across = Math.cos(at * angle) * (radius + cross) - radius;
+                            if (vertical) {
+                                yy = along;
+                                xx = centerX + across;
+                            } else {
+                                xx = along;
+                                yy = centerY + across;
+                            }
+                        }
+                        if (Math.abs(bend) >= .001) {
+                            double angle = Math.toRadians(bend), radius = runningSpan / angle;
+                            double along = Math.sin(at * angle) * (radius + zz - centerZ) + centerU;
+                            zz = Math.cos(at * angle) * (radius + zz - centerZ) - radius + centerZ;
+                            if (vertical) yy += along - originalU;
+                            else xx += along - originalU;
+                        }
+                        if (twist != 0) {
+                            double angle = Math.toRadians(twist) * at, cross = vertical ? xx - centerX : yy - centerY;
+                            double depth = zz - centerZ;
+                            double across = Math.cos(angle) * cross - Math.sin(angle) * depth;
+                            zz = Math.sin(angle) * cross + Math.cos(angle) * depth + centerZ;
+                            if (vertical) xx = across + centerX;
+                            else yy = across + centerY;
+                        }
+                    } else {
+                        if (Math.abs(arc) >= .001) {
+                            double angle = Math.toRadians(arc), radius = span / angle, at = xx / span * angle;
+                            xx = Math.sin(at) * (radius + yy);
+                            yy = Math.cos(at) * (radius + yy) - radius;
+                        }
+                        if (Math.abs(bend) >= .001) {
+                            double angle = Math.toRadians(bend), radius = span / angle,
+                                at = (px * pixelX + sx) / span * angle;
+                            double before = xx;
+                            xx = Math.sin(at) * (radius + zz);
+                            zz = Math.cos(at) * (radius + zz) - radius;
+                            // Arc and spatial curvature remain independently editable.
+                            if (Math.abs(arc) >= .001) xx += before - px * pixelX - sx;
+                        }
+                        if (twist != 0) {
+                            double at = Math.toRadians(twist) * (px * pixelX + sx) / span;
+                            double oldY = yy - verticalSpan / 2;
+                            yy = Math.cos(at) * oldY - Math.sin(at) * zz + verticalSpan / 2;
+                            zz = Math.sin(at) * oldY + Math.cos(at) * zz;
+                        }
                     }
                     xx += shear * yy / 100;
-                    if (vertical) {
+                    if (vertical && layoutVersion == 0) {
                         double previous = xx;
                         xx = -yy;
                         yy = previous;
@@ -185,56 +250,63 @@ public final class HologramTextBox {
                     }
                     int bx = Math.floorDiv(vx, 16), by = Math.floorDiv(vy, 16), bz = Math.floorDiv(vz, 16);
                     String key = bx + "," + by + "," + bz;
-                    TreeSet<Integer> occupied = blocks.computeIfAbsent(key, ignored -> new TreeSet<>());
+                    BitSet occupied = blocks.computeIfAbsent(key, ignored -> new BitSet(4096));
                     positions.putIfAbsent(key, new int[] { bx, by, bz });
-                    if (occupied.add(
-                        (Math.floorMod(vy, 16) << 8) | (Math.floorMod(vz, 16) << 4) | Math.floorMod(vx, 16))) voxels++;
+                    int voxel = (Math.floorMod(vy, 16) << 8) | (Math.floorMod(vz, 16) << 4) | Math.floorMod(vx, 16);
+                    if (!occupied.get(voxel)) {
+                        occupied.set(voxel);
+                        voxels++;
+                    }
                     if (voxels > MAX_VOXELS || blocks.size() > MAX_BLOCKS) throw new IOException("文字瓷砖或方块数量超过上限");
                 }
         }
         if (blocks.isEmpty()) throw new IOException("文字没有可见像素");
         List<Cell> result = new ArrayList<>();
-        for (Map.Entry<String, TreeSet<Integer>> entry : blocks.entrySet()) {
+        for (Map.Entry<String, BitSet> entry : blocks.entrySet()) {
             NBTTagCompound tile = new NBTTagCompound();
             tile.setString("id", "LittleTilesTileEntity");
+            BitSet occupied = entry.getValue();
+            boolean fullBlock = color == 0xffffff && occupied.cardinality() == 4096;
             int count = 0;
-            java.util.Iterator<Integer> iterator = entry.getValue()
-                .iterator();
-            Integer pending = iterator.hasNext() ? iterator.next() : null;
-            while (pending != null) {
-                int first = pending, last = first;
-                pending = null;
-                while (iterator.hasNext()) {
-                    int next = iterator.next();
-                    if (next == last + 1 && (next >>> 4) == (first >>> 4)) last = next;
-                    else {
-                        pending = next;
-                        break;
-                    }
-                }
+            // Deterministic greedy boxes: expand X, then Z, then Y without filling any empty voxel.
+            for (int first = occupied.nextSetBit(0); first >= 0; first = occupied.nextSetBit(0)) {
+                int minX = first & 15, minY = first >>> 8, minZ = (first >>> 4) & 15;
+                int maxX = minX + 1, maxZ = minZ + 1, maxY = minY + 1;
+                while (maxX < 16 && occupied.get(minY << 8 | minZ << 4 | maxX)) maxX++;
+                while (maxZ < 16 && solid(occupied, minX, maxX, minY, minY + 1, maxZ, maxZ + 1)) maxZ++;
+                while (maxY < 16 && solid(occupied, minX, maxX, maxY, maxY + 1, minZ, maxZ)) maxY++;
+                for (int yy = minY; yy < maxY; yy++) for (int zz = minZ; zz < maxZ; zz++)
+                    occupied.clear(yy << 8 | zz << 4 | minX, (yy << 8 | zz << 4) + maxX);
                 NBTTagCompound box = new NBTTagCompound();
                 box.setString("tID", color == 0xffffff ? "BlockTileBlock" : "BlockTileColored");
                 box.setString("block", material);
                 box.setInteger("meta", metadata);
                 box.setInteger("color", color);
                 box.setInteger("bSize", 1);
-                int minX = first & 15, minY = first >>> 8, minZ = (first >>> 4) & 15;
                 box.setInteger("cVecx", minX);
                 box.setInteger("cVecy", minY);
                 box.setInteger("cVecz", minZ);
                 box.setInteger("bBox0minX", minX);
                 box.setInteger("bBox0minY", minY);
                 box.setInteger("bBox0minZ", minZ);
-                box.setInteger("bBox0maxX", (last & 15) + 1);
-                box.setInteger("bBox0maxY", minY + 1);
-                box.setInteger("bBox0maxZ", minZ + 1);
+                box.setInteger("bBox0maxX", maxX);
+                box.setInteger("bBox0maxY", maxY);
+                box.setInteger("bBox0maxZ", maxZ);
                 tile.setTag("t" + count++, box);
             }
             tile.setInteger("tilesCount", count);
             int[] pos = positions.get(entry.getKey());
-            result.add(new Cell(pos[0] + x, pos[1] + y, pos[2] + z, tile));
+            result.add(new Cell(pos[0] + x, pos[1] + y, pos[2] + z, tile, fullBlock));
         }
         return result;
+    }
+
+    private static boolean solid(BitSet occupied, int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
+        for (int y = minY; y < maxY; y++) for (int z = minZ; z < maxZ; z++) {
+            int row = y << 8 | z << 4;
+            if (occupied.nextClearBit(row + minX) < row + maxX) return false;
+        }
+        return true;
     }
 
     private static double[] rotate(double x, double y, double z, double yaw, double pitch, double roll) {

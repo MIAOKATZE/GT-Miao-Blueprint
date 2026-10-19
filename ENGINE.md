@@ -1,3 +1,5 @@
+v0.1.22 使用共用 `HologramGizmo` / `HologramGizmoRenderer` 提供轴线与 XY/XZ/YZ 面平移。文字的 R/Alt+R 先经工作区权限/结构范围检查，再通过 `HologramTextWorkflow.rotateSelected` 重建整个对象并原子校验；有界立方体朝向替代无限追加旋转历史。`layoutVersion` 区分历史旋转式竖向与新逐字直立栅格；当前弧形、弯曲及扭转以横行或竖列中点为基准。微体素用 BitSet 去重后按 X/Z/Y 贪心合并精确长方体，填满整格且无额外染色的等价普通实心立方体在服务端落为无 TileEntity 的普通方块，仍保留文字定义与归属。`editDelete` 仅接纳无活动控制器结构的作者蓝图，复用几何 staging/单步撤销，控制器 `restoreCell` 原意保留。文字属性共用稳定草稿值，原生 MUI2 调色及只读背包采样子窗口不触发真实槽位搬运。加载材料时的 `HologramPlacementLoadingScreen` 属于快捷放置允许的过渡界面。
+
 # GTMB 服务器引擎模块
 
 v0.1.21 新增 `HologramTextBox`（无世界访问的有限文字栅格/形变/LittleTiles 打包）、`HologramTextWorkflow`（服务端位置与冲突校验后原子加入草稿）、`HologramVoucherEditor`（等级 4 的配置入口、版本冲突检查与权威回显）。文字定义保存在结构描述的 `textBoxNbt`，普通原生 tile NBT 不携带文本身份；原有结构归属、复制及撤销链维护整体选择。放置锁定的 schema-2 材料规划使用 `DeferredPlanRefresh`；`placementValidating` 阻止提前打开材料确认，完成后回到原核算流程。

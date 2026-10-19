@@ -110,6 +110,15 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if ("editDelete".equals(op)) {
+            try {
+                HologramBlueprintEditor.deleteBlueprintCells(s, action);
+            } catch (java.io.IOException failure) {
+                s.status = "蓝图删除被拒绝：" + failure.getMessage();
+            }
+            HologramSnapshots.send(s);
+            return;
+        }
         if (HologramAuthoringWorkflow.changesBlueprintSource(op)
             && !HologramAuthoringWorkflow.allowBlueprintDiscard(s, action, op, action.getString("presetId"))) {
             HologramSnapshots.send(s);
@@ -221,6 +230,7 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if ("rotateCell".equals(op) && HologramTextWorkflow.rotateSelected(s, action)) return;
         HologramEditState beforeEdit = HologramBlueprintEditor.isPlanningEdit(op) && !"editCopy".equals(op)
             && s.job != 1
             && s.job != 2
