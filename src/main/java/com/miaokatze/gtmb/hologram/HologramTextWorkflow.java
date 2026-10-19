@@ -87,7 +87,9 @@ final class HologramTextWorkflow {
                 if (!s.player.worldObj.blockExists(wx, wy, wz) || !s.player.worldObj.isAirBlock(wx, wy, wz))
                     throw new IOException("文字目标必须是已加载的空气位置，请移动后确认");
                 HologramCapture.Cell added = new HologramCapture.Cell(null, wx, wy, wz);
-                boolean ordinary = cell.fullBlock && material.isOpaqueCube() && material.renderAsNormalBlock();
+                boolean ordinary = cell.fullBlock && text.metadata <= 15
+                    && material.isOpaqueCube()
+                    && material.renderAsNormalBlock();
                 added.block = ordinary ? material : host;
                 added.meta = ordinary ? text.metadata : 0;
                 added.blueprintBlock = ordinary ? text.material : "littletiles:BlockLittleTiles";

@@ -678,6 +678,10 @@ final class HologramRenderer {
 
     /** Intersect the orthographic view ray with a horizontal plane at an absolute world Y. */
     static int[] pickEmptyVoxel(HologramState state, int mx, int my, int planeY) {
+        return pickEmptyVoxel(state, mx, my, planeY, true);
+    }
+
+    static int[] pickEmptyVoxel(HologramState state, int mx, int my, int planeY, boolean adjacentOnly) {
         if (state == null || projectedScale <= 0
             || mx < projectedX
             || mx >= projectedX + projectedWidth
@@ -694,7 +698,7 @@ final class HologramRenderer {
             .floor(-rx * Math.sin(projectedYaw) + rz * Math.cos(projectedYaw) + boundsZ + projectedPanZ + .5);
         HologramState.Cell occupied = state.regions.at(x, planeY, z);
         if (occupied != null && !occupied.wantId.equals("minecraft:air")) return null;
-        return state.regions.withinMargin(x, planeY, z) ? new int[] { x, planeY, z } : null;
+        return !adjacentOnly || state.regions.withinMargin(x, planeY, z) ? new int[] { x, planeY, z } : null;
     }
 
     private static void buildStructureBoxes(HologramState state) {

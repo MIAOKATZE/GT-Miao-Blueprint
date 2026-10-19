@@ -181,7 +181,7 @@ final class HologramUiTextBoxes {
         }
         int[] point = HologramRenderer.pickAdjacentVoxel(mx, my);
         if (point == null) point = HologramRenderer
-            .pickEmptyVoxel(ui.session.state(), mx, my, ui.session.state().data.getInteger("y") + draft.y);
+            .pickEmptyVoxel(ui.session.state(), mx, my, ui.session.state().data.getInteger("y") + draft.y, false);
         if (point != null) {
             draft.x = point[0] - ui.session.state().data.getInteger("x");
             draft.y = point[1] - ui.session.state().data.getInteger("y");
