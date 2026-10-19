@@ -22,6 +22,9 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "picture_attachment_palette_filters_background_volume_and_portability",
+            HologramPictureBoxRegression::run);
+        cases.put(
             "text_microblock_volume_editable_metadata_version_provenance_and_blacklist",
             HologramTextBoxRegression::run);
         cases.put(

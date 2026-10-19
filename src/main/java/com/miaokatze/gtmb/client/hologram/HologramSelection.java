@@ -85,7 +85,7 @@ public final class HologramSelection {
     /** Grade families expand only on explicit T input, inside the clicked structure. */
     void previewClick(HologramState state, int index, String outline, boolean sameType, boolean additive) {
         if (index >= 0 && index < state.cells.size()) for (String group : state.cells.get(index).structureIds)
-            if (group.startsWith(com.miaokatze.gtmb.hologram.HologramTextBox.PREFIX)) {
+            if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(group)) {
                 structure(state, group, additive);
                 return;
             }

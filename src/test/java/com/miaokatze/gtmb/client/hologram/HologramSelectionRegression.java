@@ -61,6 +61,18 @@ public final class HologramSelectionRegression {
         selection.retain(4);
         SimpleAssert.eq(4, selection.size(), "snapshot shrink never leaves invalid indices");
         snapshotShrinkRegression();
+        NBTTagCompound pictureState = (NBTTagCompound) volume().fullData();
+        String pictureId = com.miaokatze.gtmb.hologram.HologramPictureBox.PREFIX
+            + "33333333-3333-3333-3333-333333333333";
+        NBTTagList pictureCells = pictureState.getTagList("cells", 10);
+        for (int i = 0; i < 8; i++) pictureCells.getCompoundTagAt(i)
+            .setString("structureId", pictureId);
+        NBTTagList pictureGroups = pictureState.getTagList("structures", 10);
+        for (int i = 0; i < pictureGroups.tagCount(); i++) pictureGroups.getCompoundTagAt(i)
+            .setString("id", pictureId);
+        HologramState image = new HologramState(pictureState);
+        selection.previewClick(image, 0, "", false, false);
+        SimpleAssert.eq(8, selection.size(), "clicking one image host selects the entire attachment");
         HologramInputContextRegression.run();
         HologramDeidentificationMemoryRegression.run();
         sharedWallRegression();

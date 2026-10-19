@@ -90,6 +90,32 @@ final class HologramBlueprintServiceRegression {
                 session.capture == capture && capture.cells.size() == 2,
                 "partial text refusal preserves all geometry");
         }
+        text.id = HologramPictureBox.PREFIX + "22222222-2222-2222-2222-222222222222";
+        text.picture = new HologramPictureBox();
+        text.picture.filename = "embedded.png";
+        text.picture.originalWidth = text.picture.originalHeight = text.picture.sourceWidth = text.picture.sourceHeight = 1;
+        text.picture.source = new int[] { 0xffdddddd };
+        text.picture.resizeShortSide(16);
+        group.id = text.id;
+        group.textBoxNbt = HologramBlueprintNbt.encodeCaptured(text.write());
+        for (HologramCapture.Cell cell : session.capture.cells)
+            HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(group.id));
+        action.setLong("planRevision", session.planRevision);
+        try {
+            HologramBlueprintEditor.deleteBlueprintCells(session, action);
+            throw new AssertionError("partial image deletion accepted");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(session.capture == capture && capture.cells.size() == 2, "image deletion is atomic too");
+        }
+        action.setIntArray("indices", new int[] { 0, 1 });
+        HologramBlueprintEditor.deleteBlueprintCells(session, action);
+        SimpleAssert.eq(0, session.capture.cells.size(), "whole image Delete removes all hosts");
+        HologramBlueprintEditor.edit(session, new NBTTagCompound(), "editUndo");
+        SimpleAssert.eq(2, session.capture.cells.size(), "undo restores the entire image");
+        HologramTextBox imageDefinition = HologramTextBox
+            .read(HologramTextWorkflow.definition(session.virtualPreset.structures.get(0)));
+        SimpleAssert
+            .eq("embedded.png", imageDefinition.picture.filename, "history retains editable embedded image data");
         original.apply(session);
         session.undoEdits.clear();
         session.redoEdits.clear();

@@ -292,8 +292,9 @@ final class HologramUiRouter {
                     mx,
                     my);
             ui.canvas.button(178, 478, 9, 92, 17, "框选区域", ui.session.editable(), mx, my);
-            ui.canvas.button(330, 238, 34, 102, 17, "清空工作区", ui.session.editable(), mx, my);
-            ui.canvas.button(331, 158, 34, 76, 17, ui.textBoxes.label(), ui.textBoxes.allowed(), mx, my);
+            ui.canvas.button(330, 320, 34, 102, 17, "清空工作区", ui.session.editable(), mx, my);
+            ui.canvas.button(331, 158, 34, 76, 17, ui.textBoxes.label(false), ui.textBoxes.allowed(false), mx, my);
+            ui.canvas.button(332, 238, 34, 78, 17, ui.textBoxes.label(true), ui.textBoxes.allowed(true), mx, my);
             if (!ui.library.libraryDrawer())
                 ui.canvas.button(179, 578, 9, 94, 17, "AE 容器标记", ui.ae.canOpenAePreview(), mx, my);
             if (ui.config.drawer() || ui.preview.inventory()
@@ -791,8 +792,8 @@ final class HologramUiRouter {
     }
 
     void activate(int id) {
-        if (id == 331) {
-            ui.textBoxes.activate();
+        if (id == 331 || id == 332) {
+            ui.textBoxes.activate(id == 332);
             return;
         }
         if (id == 330) {

@@ -11,6 +11,7 @@ import net.minecraft.nbt.NBTTagList;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.GL11;
 
+import com.miaokatze.gtmb.hologram.HologramPictureBox;
 import com.miaokatze.gtmb.hologram.HologramTextBox;
 
 /** Local text placement intent, including pixel ghost and axis/keyboard positioning. */
@@ -54,13 +55,30 @@ final class HologramUiTextBoxes {
         gizmo.cancel();
     }
 
+    boolean active(boolean picture) {
+        return draft != null && (draft.picture != null) == picture;
+    }
+
+    boolean allowed(boolean picture) {
+        return allowed() && (draft == null || active(picture));
+    }
+
     String label() {
-        return draft != null ? pending ? "校验文字…" : chosen ? "确认放置" : "请选择文字位置"
-            : selectedDefinition() != null ? "编辑内容" : "文字转蓝图";
+        return label(false);
+    }
+
+    String label(boolean picture) {
+        String noun = picture ? "图片" : "文字";
+        return active(picture) ? pending ? "校验" + noun + "…" : chosen ? "确认放置" : "请选择" + noun + "位置"
+            : selectedDefinition(picture) != null ? picture ? "编辑图片" : "编辑内容" : picture ? "图片附加" : "文字转蓝图";
     }
 
     void activate() {
-        if (!allowed() || pending) return;
+        activate(draft != null && draft.picture != null);
+    }
+
+    void activate(boolean picture) {
+        if (!allowed(picture) || pending) return;
         if (draft != null && chosen) {
             NBTTagCompound action = new NBTTagCompound();
             action.setLong("planRevision", ui.session.revision());
@@ -71,19 +89,25 @@ final class HologramUiTextBoxes {
             return;
         }
         try {
-            NBTTagCompound selected = selectedDefinition();
+            NBTTagCompound selected = selectedDefinition(picture);
             HologramTextBox value = draft != null ? HologramTextBox.read(draft.write())
                 : selected == null ? new HologramTextBox() : HologramTextBox.read(selected);
-            if (value.id.isEmpty()) value.id = HologramTextBox.PREFIX + java.util.UUID.randomUUID();
+            if (value.id.isEmpty())
+                value.id = (picture ? HologramPictureBox.PREFIX : HologramTextBox.PREFIX) + java.util.UUID.randomUUID();
             Minecraft.getMinecraft()
-                .displayGuiScreen(new HologramTextEditorScreen(ui, value));
+                .displayGuiScreen(
+                    picture ? new HologramPictureEditorScreen(ui, value) : new HologramTextEditorScreen(ui, value));
         } catch (Exception failure) {
             ui.session.notice(failure.getMessage());
         }
     }
 
     void begin(HologramTextBox value) throws java.io.IOException {
-        ghost = value.generate();
+        begin(value, value.generate());
+    }
+
+    void begin(HologramTextBox value, List<HologramTextBox.Cell> generated) {
+        ghost = generated;
         draft = value;
         originalX = value.x;
         originalY = value.y;
@@ -118,6 +142,11 @@ final class HologramUiTextBoxes {
         return null;
     }
 
+    private NBTTagCompound selectedDefinition(boolean picture) {
+        NBTTagCompound definition = selectedDefinition();
+        return definition != null && definition.hasKey("picture", 10) == picture ? definition : null;
+    }
+
     void acknowledge(HologramState state) {
         NBTTagCompound ack = state.data.getCompoundTag("textPlacementAck");
         if (!pending || ack.getLong("request") != request) return;
@@ -128,7 +157,7 @@ final class HologramUiTextBoxes {
             gizmo.cancel();
         } else {
             chosen = true;
-            ui.session.notice(ack.getString("message") + "；文字预览保留，请移动后再次确认");
+            ui.session.notice(ack.getString("message") + "；" + draft.noun() + "预览保留，请移动后再次确认");
         }
     }
 
@@ -207,7 +236,7 @@ final class HologramUiTextBoxes {
         if (draft == null) return;
         if (!chosen) {
             ui.canvas.text(
-                "请先点击工作区选择文字位置 · R 旋转 / Alt+R 竖转 · Esc 取消",
+                "请先点击工作区选择" + draft.noun() + "位置 · R 旋转 / Alt+R 竖转 · Esc 取消",
                 38,
                 245,
                 390,
@@ -222,16 +251,17 @@ final class HologramUiTextBoxes {
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             Tessellator t = Tessellator.instance;
             t.startDrawingQuads();
-            int color = HologramTextColors.preview(
-                draft.material,
-                new net.minecraft.item.ItemStack(
-                    net.minecraft.block.Block.getBlockFromName(draft.material),
-                    1,
-                    draft.metadata),
-                draft.color);
-            t.setColorRGBA_I(color, 104);
             for (HologramTextBox.Cell cell : ghost) for (int i = 0; i < cell.tile.getInteger("tilesCount"); i++) {
                 NBTTagCompound box = cell.tile.getCompoundTag("t" + i);
+                String material = box.getString("block");
+                int color = draft.picture == null ? HologramTextColors.preview(
+                    material,
+                    new net.minecraft.item.ItemStack(
+                        net.minecraft.block.Block.getBlockFromName(material),
+                        1,
+                        box.getInteger("meta")),
+                    draft.color) : pictureColor(material, box.getInteger("meta"));
+                t.setColorRGBA_I(color, 104);
                 double x = cell.x + draft.x - originalX - .5, y = cell.y + draft.y - originalY - .5,
                     z = cell.z + draft.z - originalZ - .5;
                 double[][] points = new double[8][];
@@ -251,10 +281,17 @@ final class HologramUiTextBoxes {
         gizmo.project(anchor[0], anchor[1], ui.preview.yaw(), ui.preview.pitch(), HologramRenderer.gridScale());
         HologramGizmoRenderer.draw(gizmo, ui.canvas, -1000, -1000);
         ui.canvas.text(
-            "文字位置 " + draft.x + "," + draft.y + "," + draft.z + " · R / Alt+R · 拖轴/彩色面 · Esc 取消",
+            draft.noun() + "位置 " + draft.x + "," + draft.y + "," + draft.z + " · R / Alt+R · 拖轴/彩色面 · Esc 取消",
             38,
             245,
             390,
             0xd6b6ff);
     }
+
+    private int pictureColor(String material, int metadata) {
+        for (int i = 0; i < draft.picture.paletteSize(); i++) if (draft.picture.material(i)
+            .equals(material) && draft.picture.metadata(i) == metadata) return draft.picture.paletteColor(i);
+        return 0xffffff;
+    }
+
 }

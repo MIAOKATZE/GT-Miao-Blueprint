@@ -994,7 +994,7 @@ final class HologramPresets {
             text(structure.sourceMod, 256);
             text(structure.sourceClass, 512);
             if (structure.textBoxNbt != null && !structure.textBoxNbt.isEmpty()) {
-                if (!structure.id.startsWith(HologramTextBox.PREFIX) || structure.textBoxNbt.length() > 131072)
+                if (!HologramTextBox.isAttachmentId(structure.id) || structure.textBoxNbt.length() > 524288)
                     throw new IOException("文字对象标识或数据长度无效");
                 HologramTextBox.read(HologramTextWorkflow.definition(structure));
             }

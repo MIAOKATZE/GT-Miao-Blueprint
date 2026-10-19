@@ -562,8 +562,7 @@ final class HologramRenderer {
                     else if (entry.getKey()
                         .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
                     else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
-                    else if (entry.getKey()
-                        .startsWith(com.miaokatze.gtmb.hologram.HologramTextBox.PREFIX))
+                    else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(entry.getKey()))
                         t.setColorRGBA_F(.78f, .52f, 1, .85f);
                     else t.setColorRGBA_F(.45f, .85f, 1, .72f);
                     for (int[] edge : EDGES) {

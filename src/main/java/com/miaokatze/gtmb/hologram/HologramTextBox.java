@@ -2,10 +2,7 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.BitSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -20,6 +17,7 @@ public final class HologramTextBox {
     public double yaw, pitch, roll, arc, bend, twist, shear;
     public boolean bold, underline, vertical;
     public int layoutVersion = 1;
+    public HologramPictureBox picture;
     public byte[] bitmap = new byte[0];
     public int[] turns = new int[0];
 
@@ -52,6 +50,7 @@ public final class HologramTextBox {
         tag.setBoolean("underline", underline);
         tag.setBoolean("vertical", vertical);
         tag.setInteger("layoutVersion", layoutVersion);
+        if (picture != null) tag.setTag("picture", picture.write());
         return tag;
     }
 
@@ -84,6 +83,7 @@ public final class HologramTextBox {
         result.underline = tag.getBoolean("underline");
         result.vertical = tag.getBoolean("vertical");
         result.layoutVersion = tag.getInteger("layoutVersion");
+        if (tag.hasKey("picture", 10)) result.picture = HologramPictureBox.read(tag.getCompoundTag("picture"));
         result.validate();
         return result;
     }
@@ -91,6 +91,25 @@ public final class HologramTextBox {
     public void validate() throws IOException {
         if (turns.length > 96) throw new IOException("文字旋转历史过长，请重建文本框");
         for (int turn : turns) if (turn != 1 && turn != 2) throw new IOException("文字旋转记录无效");
+        if (picture != null) {
+            picture.validate();
+            if ((!id.isEmpty() && !id.matches(HologramPictureBox.PREFIX + "[a-f0-9-]{36}")) || pixelX < 1
+                || pixelX > 16
+                || pixelY != pixelX
+                || thickness < 1
+                || thickness > 16
+                || Math.abs((long) x) > 30000000
+                || Math.abs((long) y) > 256
+                || Math.abs((long) z) > 30000000
+                || arc != 0
+                || bend != 0
+                || twist != 0
+                || shear != 0
+                || vertical) throw new IOException("图片附加的像素边长、厚度、姿态或标识无效");
+            for (double value : new double[] { yaw, pitch, roll })
+                if (!Double.isFinite(value) || Math.abs(value) > 360) throw new IOException("图片旋转参数超出范围");
+            return;
+        }
         if ((!id.isEmpty() && !id.matches(PREFIX + "[a-f0-9-]{36}")) || text.length() > 512
             || text.trim()
                 .isEmpty()
@@ -161,9 +180,9 @@ public final class HologramTextBox {
     /** Column sampling plus Euler rotation; overlapping samples of the same text are unioned before packing. */
     public List<Cell> generate() throws IOException {
         validate();
-        Map<String, BitSet> blocks = new LinkedHashMap<>();
-        Map<String, int[]> positions = new LinkedHashMap<>();
-        int voxels = 0, attempts = 0;
+        if (picture != null) return picture.generate(this);
+        HologramMicroTiles tiles = new HologramMicroTiles();
+        int attempts = 0;
         double span = Math.max(1, width * pixelX - 1), verticalSpan = height * pixelY;
         for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
             if (!pixel(px, py)) continue;
@@ -235,78 +254,35 @@ public final class HologramTextBox {
                         xx = -yy;
                         yy = previous;
                     }
-                    double[] turned = rotate(xx, yy, zz, yaw, pitch, roll);
-                    int vx = (int) Math.round(turned[0]), vy = (int) Math.round(turned[1]),
-                        vz = (int) Math.round(turned[2]);
-                    for (int turn : turns) {
-                        int previousZ = vz;
-                        if (turn == 1) {
-                            vz = vx;
-                            vx = 15 - previousZ;
-                        } else {
-                            vz = vy;
-                            vy = 15 - previousZ;
-                        }
-                    }
-                    int bx = Math.floorDiv(vx, 16), by = Math.floorDiv(vy, 16), bz = Math.floorDiv(vz, 16);
-                    String key = bx + "," + by + "," + bz;
-                    BitSet occupied = blocks.computeIfAbsent(key, ignored -> new BitSet(4096));
-                    positions.putIfAbsent(key, new int[] { bx, by, bz });
-                    int voxel = (Math.floorMod(vy, 16) << 8) | (Math.floorMod(vz, 16) << 4) | Math.floorMod(vx, 16);
-                    if (!occupied.get(voxel)) {
-                        occupied.set(voxel);
-                        voxels++;
-                    }
-                    if (voxels > MAX_VOXELS || blocks.size() > MAX_BLOCKS) throw new IOException("文字瓷砖或方块数量超过上限");
+                    int[] voxel = orient(xx, yy, zz);
+                    tiles.add(voxel[0], voxel[1], voxel[2], material, metadata, color);
                 }
         }
-        if (blocks.isEmpty()) throw new IOException("文字没有可见像素");
-        List<Cell> result = new ArrayList<>();
-        for (Map.Entry<String, BitSet> entry : blocks.entrySet()) {
-            NBTTagCompound tile = new NBTTagCompound();
-            tile.setString("id", "LittleTilesTileEntity");
-            BitSet occupied = entry.getValue();
-            boolean fullBlock = color == 0xffffff && occupied.cardinality() == 4096;
-            int count = 0;
-            // Deterministic greedy boxes: expand X, then Z, then Y without filling any empty voxel.
-            for (int first = occupied.nextSetBit(0); first >= 0; first = occupied.nextSetBit(0)) {
-                int minX = first & 15, minY = first >>> 8, minZ = (first >>> 4) & 15;
-                int maxX = minX + 1, maxZ = minZ + 1, maxY = minY + 1;
-                while (maxX < 16 && occupied.get(minY << 8 | minZ << 4 | maxX)) maxX++;
-                while (maxZ < 16 && solid(occupied, minX, maxX, minY, minY + 1, maxZ, maxZ + 1)) maxZ++;
-                while (maxY < 16 && solid(occupied, minX, maxX, maxY, maxY + 1, minZ, maxZ)) maxY++;
-                for (int yy = minY; yy < maxY; yy++) for (int zz = minZ; zz < maxZ; zz++)
-                    occupied.clear(yy << 8 | zz << 4 | minX, (yy << 8 | zz << 4) + maxX);
-                NBTTagCompound box = new NBTTagCompound();
-                box.setString("tID", color == 0xffffff ? "BlockTileBlock" : "BlockTileColored");
-                box.setString("block", material);
-                box.setInteger("meta", metadata);
-                box.setInteger("color", color);
-                box.setInteger("bSize", 1);
-                box.setInteger("cVecx", minX);
-                box.setInteger("cVecy", minY);
-                box.setInteger("cVecz", minZ);
-                box.setInteger("bBox0minX", minX);
-                box.setInteger("bBox0minY", minY);
-                box.setInteger("bBox0minZ", minZ);
-                box.setInteger("bBox0maxX", maxX);
-                box.setInteger("bBox0maxY", maxY);
-                box.setInteger("bBox0maxZ", maxZ);
-                tile.setTag("t" + count++, box);
-            }
-            tile.setInteger("tilesCount", count);
-            int[] pos = positions.get(entry.getKey());
-            result.add(new Cell(pos[0] + x, pos[1] + y, pos[2] + z, tile, fullBlock));
-        }
-        return result;
+        return tiles.finish(x, y, z);
     }
 
-    private static boolean solid(BitSet occupied, int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
-        for (int y = minY; y < maxY; y++) for (int z = minZ; z < maxZ; z++) {
-            int row = y << 8 | z << 4;
-            if (occupied.nextClearBit(row + minX) < row + maxX) return false;
+    public static boolean isAttachmentId(String id) {
+        return id.startsWith(PREFIX) || id.startsWith(HologramPictureBox.PREFIX);
+    }
+
+    public String noun() {
+        return picture == null ? "文字" : "图片";
+    }
+
+    int[] orient(double x, double y, double z) {
+        double[] rotated = rotate(x, y, z, yaw, pitch, roll);
+        int vx = (int) Math.round(rotated[0]), vy = (int) Math.round(rotated[1]), vz = (int) Math.round(rotated[2]);
+        for (int turn : turns) {
+            int previousZ = vz;
+            if (turn == 1) {
+                vz = vx;
+                vx = 15 - previousZ;
+            } else {
+                vz = vy;
+                vy = 15 - previousZ;
+            }
         }
-        return true;
+        return new int[] { vx, vy, vz };
     }
 
     private static double[] rotate(double x, double y, double z, double yaw, double pitch, double roll) {

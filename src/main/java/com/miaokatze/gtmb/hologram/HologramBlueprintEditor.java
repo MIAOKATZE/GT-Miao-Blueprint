@@ -446,7 +446,7 @@ final class HologramBlueprintEditor {
                     any |= selected.contains(index);
                     whole &= selected.contains(index);
                 }
-            if (any && !whole) throw new java.io.IOException("文字须整体选择后删除");
+            if (any && !whole) throw new java.io.IOException("文字或图片须整体选择后删除");
         }
         java.util.Set<String> remove = new java.util.HashSet<>(), touched = new java.util.HashSet<>();
         for (int index : indices) {
@@ -642,7 +642,8 @@ final class HologramBlueprintEditor {
             int[] before = textMinimum(s.capture.cells, original.id), after = textMinimum(copies, original.id);
             if (after == null || before == null) continue;
             HologramPresets.Structure duplicate = HologramBlueprintData.copyStructure(original);
-            duplicate.id = HologramTextBox.PREFIX + UUID.randomUUID();
+            duplicate.id = (HologramTextWorkflow.definition(original)
+                .hasKey("picture", 10) ? HologramPictureBox.PREFIX : HologramTextBox.PREFIX) + UUID.randomUUID();
             duplicate.x += after[0] - before[0];
             duplicate.y += after[1] - before[1];
             duplicate.z += after[2] - before[2];

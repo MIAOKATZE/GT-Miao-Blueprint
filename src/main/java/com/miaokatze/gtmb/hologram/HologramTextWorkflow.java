@@ -52,25 +52,24 @@ final class HologramTextWorkflow {
                 || s.capture != null && (s.capture.pending || s.capture.incomplete)
                 || s.localPlanPending
                 || !s.player.capabilities.allowEdit
-                || !HologramSessionPolicy.valid(s)) throw new IOException("文字仅用于空工作区、结构编辑及放置前的蓝图编辑");
-            if (request.getLong("planRevision") != s.planRevision) throw new IOException("蓝图已变化，请重新确认文字位置");
+                || !HologramSessionPolicy.valid(s)) throw new IOException("附加对象仅用于空工作区、结构编辑及放置前的蓝图编辑");
+            if (request.getLong("planRevision") != s.planRevision) throw new IOException("蓝图已变化，请重新确认附加位置");
             HologramTextBox text = HologramTextBox.read(request.getCompoundTag("textBox"));
-            if (text.id.isEmpty()) throw new IOException("缺少文字对象标识");
-            Block material = Block.getBlockFromName(text.material);
-            if (material == null || material == Blocks.air
-                || material.hasTileEntity(text.metadata)
-                || Item.getItemFromBlock(material) == null) throw new IOException("文字材料必须是无容器的普通方块");
+            if (text.id.isEmpty()) throw new IOException("缺少附加对象标识");
+            if (text.picture == null) validateMaterial(text.material, text.metadata);
+            else for (int i = 0; i < text.picture.paletteSize(); i++)
+                validateMaterial(text.picture.material(i), text.picture.metadata(i));
             Block host = Block.getBlockFromName("littletiles:BlockLittleTiles");
             if (host == null || host == Blocks.air || !HologramNativePlacement.supported(host))
                 throw new IOException("需要 LittleTiles 1.6.59 兼容方块");
             HologramPresets.Preset preset = s.virtualPreset != null ? s.virtualPreset
-                : s.capture == null ? new HologramPresets.Preset() : HologramBlueprintProjection.blueprint(s, "文字蓝图");
+                : s.capture == null ? new HologramPresets.Preset() : HologramBlueprintProjection.blueprint(s, "附加蓝图");
             HologramPresets.Structure existing = null;
             for (HologramPresets.Structure structure : preset.structures)
                 if (text.id.equals(structure.id)) existing = structure;
             if (existing != null && (existing.textBoxNbt == null || existing.textBoxNbt.isEmpty()))
-                throw new IOException("目标不是文字对象");
-            if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与文字对象数量超过上限");
+                throw new IOException("目标不是附加对象");
+            if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与附加对象数量超过上限");
             List<HologramTextBox.Cell> generated = text.generate();
             List<HologramCapture.Cell> additions = new ArrayList<>();
             Set<String> remove = new HashSet<>();
@@ -79,22 +78,27 @@ final class HologramTextWorkflow {
             for (HologramTextBox.Cell cell : generated) {
                 int wx = s.x + cell.x, wy = s.y + cell.y, wz = s.z + cell.z;
                 HologramBlueprintEditor.validateBlueprintCoordinate(s, wx, wy, wz);
-                if (!HologramSessionPolicy.previewReach(s.player, wx, wy, wz)) throw new IOException("文字位置超出编辑距离");
+                if (!HologramSessionPolicy.previewReach(s.player, wx, wy, wz))
+                    throw new IOException(text.noun() + "位置超出编辑距离");
                 String key = wx + "," + wy + "," + wz;
                 HologramCapture.Cell occupied = s.capture == null ? null : s.capture.positions.get(key);
                 if (occupied != null && !remove.contains(key) && occupied.block != Blocks.air && !occupied.excluded)
-                    throw new IOException("文字与工作区内容冲突，请移动后确认");
+                    throw new IOException(text.noun() + "与工作区内容冲突，请移动后确认");
                 if (!s.player.worldObj.blockExists(wx, wy, wz) || !s.player.worldObj.isAirBlock(wx, wy, wz))
-                    throw new IOException("文字目标必须是已加载的空气位置，请移动后确认");
+                    throw new IOException(text.noun() + "目标必须是已加载的空气位置，请移动后确认");
                 HologramCapture.Cell added = new HologramCapture.Cell(null, wx, wy, wz);
-                boolean ordinary = cell.fullBlock && text.metadata <= 15
+                NBTTagCompound paint = cell.tile.getCompoundTag("t0");
+                String materialName = paint.getString("block");
+                int metadata = paint.getInteger("meta");
+                Block material = Block.getBlockFromName(materialName);
+                boolean ordinary = cell.fullBlock && metadata <= 15
                     && material.isOpaqueCube()
                     && material.renderAsNormalBlock();
                 added.block = ordinary ? material : host;
-                added.meta = ordinary ? text.metadata : 0;
-                added.blueprintBlock = ordinary ? text.material : "littletiles:BlockLittleTiles";
+                added.meta = ordinary ? metadata : 0;
+                added.blueprintBlock = ordinary ? materialName : "littletiles:BlockLittleTiles";
                 added.tileNbt = ordinary ? "" : HologramBlueprintNbt.encodeCaptured(cell.tile);
-                added.actualStack = ordinary ? new ItemStack(material, 1, text.metadata)
+                added.actualStack = ordinary ? new ItemStack(material, 1, metadata)
                     : HologramNativePlacement.sample(host, 0, cell.tile);
                 if (added.actualStack == null) throw new IOException("LittleTiles 材料样本生成失败");
                 added.blueprintItem = Item.itemRegistry.getNameForObject(added.actualStack.getItem());
@@ -110,11 +114,12 @@ final class HologramTextWorkflow {
             s.virtual = true;
             s.virtualPreset = preset;
             preset.schema = 2;
-            if (preset.name == null) preset.name = "文字蓝图";
+            if (preset.name == null) preset.name = "附加蓝图";
             HologramBlueprintEditor.stageGeometry(s, additions, remove, false, java.util.Collections.emptyMap(), false);
             HologramPresets.Structure group = existing == null ? new HologramPresets.Structure() : existing;
             group.id = text.id;
-            group.name = "文字 · " + text.text.substring(0, Math.min(28, text.text.length()));
+            String title = text.picture == null ? text.text : text.picture.filename;
+            group.name = text.noun() + " · " + title.substring(0, Math.min(28, title.length()));
             group.sourceClass = "";
             group.sourceMod = "gtmb";
             group.x = text.x;
@@ -128,7 +133,7 @@ final class HologramTextWorkflow {
             s.blueprintSource = "draft";
             HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
             s.openPurpose = "blueprintEdit";
-            s.status = "文字已加入工作区；点击文字整体编辑或移动，保存后随蓝图保留";
+            s.status = text.noun() + "已加入工作区；点击对象整体编辑或移动，保存后随蓝图保留";
             ack.setBoolean("accepted", true);
             ack.setString("id", text.id);
         } catch (IOException | RuntimeException | LinkageError failure) {
@@ -139,6 +144,14 @@ final class HologramTextWorkflow {
         s.textPlacementAck = ack;
         s.localEdits.invalidate();
         HologramSnapshots.send(s);
+    }
+
+    private static void validateMaterial(String name, int metadata) throws IOException {
+        Block block = Block.getBlockFromName(name);
+        if (block == null || block == Blocks.air
+            || block.hasTileEntity(metadata)
+            || Item.getItemFromBlock(block) == null)
+            throw new IOException("附加材料不可用：" + name + "；混凝土组合需要 Et Futurum Requiem");
     }
 
     static NBTTagCompound definition(HologramPresets.Structure structure) throws IOException {
