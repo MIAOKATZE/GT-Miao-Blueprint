@@ -436,26 +436,36 @@ final class HologramBlueprintEditor {
             || !action.hasKey("planRevision", 4)
             || action.getLong("planRevision") != s.planRevision) throw new java.io.IOException("请在完整的蓝图编辑工作区选择方块后删除");
         int[] indices = geometryIndices(s, action);
-        java.util.Set<String> complete = completeGeometrySelection(s, indices);
-        java.util.Set<String> remove = new java.util.HashSet<>();
-        Map<String, HologramCapture.Cell> retained = new HashMap<>();
+        java.util.Set<Integer> selected = new java.util.HashSet<>();
+        for (int index : indices) selected.add(index);
+        for (HologramPresets.Structure group : s.virtualPreset.structures) {
+            if (group.textBoxNbt == null || group.textBoxNbt.isEmpty()) continue;
+            boolean any = false, whole = true;
+            for (int index = 0; index < s.capture.cells.size(); index++) if (s.capture.cells.get(index)
+                .belongsTo(group.id)) {
+                    any |= selected.contains(index);
+                    whole &= selected.contains(index);
+                }
+            if (any && !whole) throw new java.io.IOException("文字须整体选择后删除");
+        }
+        java.util.Set<String> remove = new java.util.HashSet<>(), touched = new java.util.HashSet<>();
         for (int index : indices) {
             HologramCapture.Cell source = s.capture.cells.get(index);
             if (source.anchor) throw new java.io.IOException("控制器始终受保护");
-            List<String> remaining = source.memberships()
-                .stream()
-                .filter(id -> !complete.contains(id))
-                .collect(java.util.stream.Collectors.toList());
-            String key = HologramValues.position(source);
-            if (remaining.isEmpty()) remove.add(key);
-            else {
-                HologramCapture.Cell stay = HologramBlueprintData.blueprintCell(source, source.x, source.y, source.z);
-                HologramBlueprintData.setMemberships(stay, remaining);
-                retained.put(key, stay);
-            }
+            remove.add(HologramValues.position(source));
+            touched.addAll(source.memberships());
         }
-        stageGeometry(s, java.util.Collections.emptyList(), remove, false, retained, false);
-        s.virtualPreset.structures.removeIf(structure -> complete.contains(structure.id));
+        stageGeometry(s, java.util.Collections.emptyList(), remove, false);
+        java.util.Set<String> remaining = new java.util.HashSet<>();
+        for (HologramCapture.Cell cell : s.capture.cells) remaining.addAll(cell.memberships());
+        touched.removeAll(remaining);
+        s.virtualPreset.structures.removeIf(structure -> touched.contains(structure.id));
+        for (HologramPresets.Cell cell : s.virtualPreset.palette) {
+            List<String> members = cell.memberships();
+            members.removeAll(touched);
+            cell.structureIds = members;
+            cell.structureId = members.isEmpty() ? "" : members.get(0);
+        }
         s.localEdits.invalidate();
         HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
         s.status = "已删除选中蓝图内容，可撤销；现场方块保持原状";
