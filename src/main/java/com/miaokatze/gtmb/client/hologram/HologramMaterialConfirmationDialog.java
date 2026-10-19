@@ -217,7 +217,7 @@ final class HologramMaterialConfirmationDialog {
             if (row.item != null) for (Object line : row.item.getTooltip(Minecraft.getMinecraft().thePlayer, false))
                 t.addLine(String.valueOf(line));
             t.addLine("清单条目 #" + (row.index + 1) + (row.tagged ? " · 精确 NBT，独立计费" : ""));
-            if (row.data.getBoolean("voucherEligible")) t.addLine("本次可使用猫猫装饰抵用券抵扣");
+            if (row.data.getBoolean("voucherEligible")) t.addLine("选用猫猫装饰抵用券后优先抵扣；已有库存不会为此消耗");
             if (!row.data.getString("nbtKey")
                 .isEmpty()) t.addLine("设备资源：" + row.data.getString("nbtKey"));
         })
@@ -294,12 +294,14 @@ final class HologramMaterialConfirmationDialog {
                 this::voucher,
                 () -> editable() && HologramPlacementConfirmation
                     .voucherChoiceAvailable(state(), hasVoucherDemand(), voucherSelected()),
-                () -> voucherSelected() ? HologramUiAccent.SUGGESTION : 0).tooltipBuilder(t -> {
-                    t.addLine(
-                        state().getCompoundTag("materialQuote")
-                            .getBoolean("creativePaymentsFree") ? "创造模式可切换并核查抵扣方案；施工不消耗抵用券。"
-                                : "使用 1 张抵本次建筑 Mod 材料；工业设备、内部资源和封存物品仍按清单取料。");
-                }));
+                () -> voucherEnabled() && (hasVoucherDemand() || voucherSelected()) ? HologramUiAccent.SUGGESTION : 0)
+                    .tooltipBuilder(t -> {
+                        t.addLine("有可抵扣方块即可勾选查看减免；不要求其他材料或抵用券已备齐。生存施工仍需主背包中的抵用券。");
+                        t.addLine(
+                            state().getCompoundTag("materialQuote")
+                                .getBoolean("creativePaymentsFree") ? "创造模式可切换并核查抵扣方案；施工不消耗抵用券。"
+                                    : "使用 1 张抵本次建筑 Mod 材料；工业设备、内部资源和封存物品仍按清单取料。");
+                    }));
         panel.child(
             button(
                 211,
@@ -357,6 +359,8 @@ final class HologramMaterialConfirmationDialog {
         if (state().getBoolean("localPlanPending")) return "材料规划更新中；完成后再核对清单。";
         if (ui.session.materialReviewPending()) return "正在更新本次材料报价…可继续切换抵用券。";
         if (!materials.ready()) return "等待服务器的精确材料清单…";
+        if (!HologramPlacementConfirmation.voucherPaymentReady(state()))
+            return "已展示抵扣方案；生存施工前请在主背包补充 1 张猫猫装饰抵用券，或取消勾选。";
         NBTTagCompound order = state().getCompoundTag("materialOrder");
         if (orderActive()) return "AE 本次订单 " + order
             .getLong("done") + " / " + order.getLong("total") + " · " + order.getString("status") + " · 可关闭界面，后台继续";
@@ -380,7 +384,10 @@ final class HologramMaterialConfirmationDialog {
         if (!voucherEnabled()) return "猫猫装饰抵用券：配置已禁用";
         boolean creative = state().getCompoundTag("materialQuote")
             .getBoolean("creativePaymentsFree");
-        return (voucherSelected() ? creative ? "✓ 查看抵扣方案 · 创造不扣券" : "✓ 本次使用 1 张" : "本次使用猫猫装饰抵用券") + " · 持有 "
+        return (voucherSelected() ? creative ? "✓ 查看抵扣方案 · 创造不扣券"
+            : state().getCompoundTag("decorativeVoucher")
+                .getLong("available") > 0 ? "✓ 本次使用 1 张" : "✓ 查看方案 · 待补充抵用券"
+            : "本次使用猫猫装饰抵用券") + " · 持有 "
             + state().getCompoundTag("decorativeVoucher")
                 .getLong("available");
     }
@@ -405,8 +412,6 @@ final class HologramMaterialConfirmationDialog {
         if (id == 245 && !voucherSelected()) {
             if (!voucherEnabled()) return "服务器配置已禁用猫猫装饰抵用券。";
             if (!hasVoucherDemand()) return "本次没有可抵扣的建筑材料需求。";
-            if (state().getCompoundTag("decorativeVoucher")
-                .getLong("available") < 1) return "主背包没有猫猫装饰抵用券。";
         }
         return "";
     }

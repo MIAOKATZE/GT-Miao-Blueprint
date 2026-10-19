@@ -341,6 +341,7 @@ final class HologramUiLibrary {
             entry.label = (active ? "\u25b6 " : "") + row.getString(
                 "name") + "\n" + row.getInteger("cells") + " \u683c \u00b7 " + ui.library.blueprintSource(row);
             entry.accent = active ? 0x81dce9 : 0;
+            entry.voucherRibbon = row.getBoolean("fullyVoucherCovered");
             if (entry.contains(mx, my)) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
@@ -531,6 +532,7 @@ final class HologramUiLibrary {
                 + " \u00b7 "
                 + HologramLibraryClient.bytes(row.getLong("bytes"));
             entry.accent = active ? 0x81dce9 : 0;
+            entry.voucherRibbon = row.getBoolean("fullyVoucherCovered");
             if (entry.contains(mx, my)) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()

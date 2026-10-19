@@ -87,11 +87,16 @@ final class HologramWorkspaceScheduler {
             || s.libraryWorld != s.player.worldObj) return false;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
-        return s.attachmentTask != null && s.attachmentTask.ready() || s.localPlanPending && s.localPlanError.isEmpty()
+        return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
+            || s.localPlanPending && s.localPlanError.isEmpty()
             || HologramSnapshotPreparation.canAdvance(s);
     }
 
     private static void continueSession(HologramSession s) {
+        if (s.voucherCoverageTask != null) {
+            s.voucherCoverageTask.tick();
+            return;
+        }
         if (s.attachmentTask != null) {
             s.attachmentTask.tick();
             return;
@@ -105,6 +110,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        if (s.voucherCoverageTask != null) {
+            s.voucherCoverageTask.tick();
+            return;
+        }
         if (s.attachmentTask != null) {
             s.attachmentTask.tick();
             return;

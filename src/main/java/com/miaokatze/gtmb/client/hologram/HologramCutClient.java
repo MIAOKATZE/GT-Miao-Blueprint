@@ -103,7 +103,7 @@ final class HologramCutClient {
     }
 
     private boolean blueprintBusy() {
-        return HologramClient.state != null && HologramCutInput.blueprintBusy(HologramClient.state.data);
+        return HologramClient.blueprintInputBusy();
     }
 
     boolean interceptsUse() {
@@ -148,6 +148,12 @@ final class HologramCutClient {
             closeScreen();
             requests.observeHeld(false);
             return;
+        }
+        // Recover an overlapping local cut left by older input routing without touching its server-owned queue.
+        if (blueprintBusy()
+            && HologramCutInput.exitsMode(stage, cutMode, cutSession, rawPreview != null || preview != null)) {
+            chooseBlueprintMode();
+            closeScreen();
         }
         if (requests.observeHeld(true)) refreshDirectory();
         boolean enabled = mc.currentScreen == null && cutMode
@@ -203,7 +209,7 @@ final class HologramCutClient {
     /** Cancel mouse events before Minecraft updates attack/use bindings. */
     boolean mouse(MouseEvent event) {
         if (event.button == 1 && !event.buttonstate) rightDown = false;
-        if (!held() || mc().currentScreen != null) return false;
+        if (!held() || mc().currentScreen != null || blueprintBusy()) return false;
         if (event.dwheel != 0 && aiming() && alt()) return false; // shared distance handler owns the wheel
         boolean intercept = event.button == 1 && interceptsUse() || event.button == 0 && active();
         if (!intercept) return false;
@@ -466,7 +472,7 @@ final class HologramCutClient {
     }
 
     void beginPreview() {
-        if (busy()) return;
+        if (busy() || blueprintBusy() || HologramBackgroundTasks.busy()) return;
         if (selected.isEmpty() || entries.isEmpty()) {
             status.show(text("emptyPreview"));
             return;
@@ -486,7 +492,7 @@ final class HologramCutClient {
 
     /** Browsing never changes the world preview; an explicit storage action starts it once. */
     void beginStoragePlacement(String id) {
-        if (!held() || busy() || !containsEntry(id)) return;
+        if (!held() || busy() || blueprintBusy() || HologramBackgroundTasks.busy() || !containsEntry(id)) return;
         stage = HologramCutInput.Stage.IDLE;
         select(id); // IDLE suppresses select's in-world cycle preview request.
         beginPreview();
@@ -587,8 +593,8 @@ final class HologramCutClient {
     }
 
     void chooseCutMode() {
+        if (blueprintBusy() || HologramBackgroundTasks.busy()) return;
         cancel();
-        cutMode = true;
         beginSelection();
     }
 

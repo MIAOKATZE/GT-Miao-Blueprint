@@ -189,6 +189,7 @@ final class HologramSnapshotPreparation {
         final World world;
         final String session, phase, active;
         final long revision, ui, batch, planGeneration, clientTask;
+        final long voucherRevision = DecorationVoucherConfig.revision();
         final int x, y, z, size, job, scope, layer, selected;
         final boolean authoring, draftOnly;
         final String planError;
@@ -247,6 +248,7 @@ final class HologramSnapshotPreparation {
 
         boolean valid() {
             return ticket.current() && HologramWorkspace.find(s.player.getUniqueID()) == s
+                && voucherRevision == DecorationVoucherConfig.revision()
                 && session.equals(s.id)
                 && s.player.worldObj == world
                 && capture == s.capture
@@ -397,6 +399,7 @@ final class HologramSnapshotPreparation {
                 progress("snapshot.prepare", stageDetail(), stageDone(), stageTotal(), false);
                 if (quoted) {
                     state.setTag("materialQuote", materialQuote.result());
+                    HologramMaterialWorkflow.writeState(s, state);
                     stage = 10;
                     index = 0;
                 }

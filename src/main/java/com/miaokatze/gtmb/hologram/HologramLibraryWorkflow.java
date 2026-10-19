@@ -309,6 +309,11 @@ final class HologramLibraryWorkflow {
     /** This flag is generated only by the authenticated native-controller template save path. */
     static void saveReviewedArtifact(HologramSession s, HologramPresets.Preset preset, String operation, boolean update,
         boolean ae, boolean nativeTemplate) throws java.io.IOException {
+        HologramVoucherCoverage.begin(s, preset, operation, update, ae, nativeTemplate);
+    }
+
+    static void finishReviewedArtifact(HologramSession s, HologramPresets.Preset preset, String operation,
+        boolean update, boolean ae, boolean nativeTemplate) throws java.io.IOException {
         if (HologramDeferredPlanRefresh.blocked(s)) throw new java.io.IOException(s.status);
         if (nativeTemplate) {
             if (!s.processingReviewed || s.virtual

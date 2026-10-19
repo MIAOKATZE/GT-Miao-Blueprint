@@ -17,6 +17,7 @@ final class HologramPlacementConfirmation {
 
     static boolean canBuild(NBTTagCompound state, long reviewedRevision) {
         return reviewedRevision == state.getLong("planRevision") && networksReady(state)
+            && voucherPaymentReady(state)
             && (!state.getBoolean("virtual") || lockedBlueprint(state))
             && (state.getInteger("missing") == 0 || lockedBlueprint(state));
     }
@@ -120,9 +121,16 @@ final class HologramPlacementConfirmation {
         return new BigDecimal(cacheAmount(row, key));
     }
 
+    static boolean voucherPaymentReady(NBTTagCompound state) {
+        NBTTagCompound voucher = state.getCompoundTag("decorativeVoucher");
+        return !voucher.getBoolean("selected")
+            || voucher.getBoolean("enabled") && (state.getCompoundTag("materialQuote")
+                .getBoolean("creativePaymentsFree") || voucher.getLong("available") > 0);
+    }
+
     static boolean voucherChoiceAvailable(NBTTagCompound state, boolean demand, boolean selected) {
         NBTTagCompound voucher = state.getCompoundTag("decorativeVoucher");
-        return voucher.getBoolean("enabled") && (selected || demand && voucher.getLong("available") > 0);
+        return voucher.getBoolean("enabled") && (selected || demand);
     }
 
     private static NBTTagCompound cacheSummaryResource(NBTTagCompound state) {

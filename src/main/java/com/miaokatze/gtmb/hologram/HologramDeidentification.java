@@ -150,17 +150,18 @@ final class HologramDeidentification {
     }
 
     static boolean foreignOwner(NBTTagCompound tag, UUID actor, String actorName) {
-        return foreignOwner(tag, actor, actorName, false, false);
+        return foreignOwner(tag, actor, actorName, false, false, null);
     }
 
     static boolean foreignOwner(Block block, NBTTagCompound tag, UUID actor, String actorName) {
-        if (carpenterOwner(block, tag)) {
-            String owner = tag.getString("cbOwner");
-            if (!owner.isEmpty() && !owner.equals("00000000-0000-0000-0000-000000000000")
-                && !owner.equalsIgnoreCase(actor.toString())
-                && !owner.equalsIgnoreCase(actorName)) return true;
-        }
-        return foreignOwner(tag, actor, actorName);
+        return foreignOwner(tag, actor, actorName, false, false, block);
+    }
+
+    /** Native placement assigns this root owner to the installer; it is not a retained network identity. */
+    static boolean carpenterPlacementOwner(Block block, NBTTagCompound tag, String key) {
+        return tag != null && ("cbOwner".equals(key) || "owner".equals(key))
+            && tag.hasKey(key, 8)
+            && (block == null ? CARPENTER_TILES.contains(tag.getString("id")) : carpenterBlock(block));
     }
 
     /** TEBase 3.7.3's exact registered root IDs and string field; never arbitrary or nested cbOwner data. */
@@ -215,6 +216,7 @@ final class HologramDeidentification {
             return;
         for (Object raw : before.func_150296_c()) {
             String key = (String) raw;
+            if (retained && !cover && carpenterPlacementOwner(cell.block(), before, key)) continue;
             int group = !cover && "cbOwner".equals(key) && carpenterOwner(cell.block(), before) ? 1 : 0;
             for (int index = 1; index <= (registered || cover ? 10 : 2); index++)
                 for (String field : FIELDS[index]) if (key.equalsIgnoreCase(field)) group = index;
@@ -291,15 +293,15 @@ final class HologramDeidentification {
 
     private static boolean foreignOwner(NBTTagCompound tag, UUID actor, String actorName, boolean actorContext,
         boolean coverContext) {
+        return foreignOwner(tag, actor, actorName, actorContext, coverContext, null);
+    }
+
+    private static boolean foreignOwner(NBTTagCompound tag, UUID actor, String actorName, boolean actorContext,
+        boolean coverContext, Block block) {
         if (tag == null || tag.hasKey("id", 99) && tag.hasKey("Count", 99) && tag.hasKey("Damage", 99)) return false;
-        if (!actorContext && !coverContext && carpenterOwner(tag)) {
-            String owner = tag.getString("cbOwner");
-            if (!owner.isEmpty() && !owner.equals("00000000-0000-0000-0000-000000000000")
-                && !owner.equalsIgnoreCase(actor.toString())
-                && !owner.equalsIgnoreCase(actorName)) return true;
-        }
         for (Object raw : tag.func_150296_c()) {
             String key = (String) raw;
+            if (!actorContext && !coverContext && carpenterPlacementOwner(block, tag, key)) continue;
             String normalized = key.toLowerCase(Locale.ROOT);
             boolean owner = actorContext && (normalized.equals("id") || normalized.equals("uuid")
                 || normalized.equals("name")

@@ -70,15 +70,18 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     protected void renderScene(int mouseX, int mouseY, float ticks) {
         canvasTransform(ui.canvas.originX(), ui.canvas.originY(), ui.canvas.scale());
         ui.router.drawScreen(mouseX, mouseY, ticks);
-        for (HologramUiCanvas.Control control : ui.canvas.controls()) nativeButton(
-            control.id,
-            control.x,
-            control.y,
-            control.w,
-            control.h,
-            control.label,
-            control.enabled,
-            control.accent);
+        for (HologramUiCanvas.Control control : ui.canvas.controls()) {
+            nativeButton(
+                control.id,
+                control.x,
+                control.y,
+                control.w,
+                control.h,
+                control.label,
+                control.enabled,
+                control.accent);
+            nativeVoucherRibbon(control.id, control.voucherRibbon);
+        }
     }
 
     long saveQuantumGroups(NBTTagList groups, long sourceRevision) {

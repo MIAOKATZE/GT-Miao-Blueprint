@@ -14,30 +14,36 @@ public final class DecorationVoucherConfig {
 
     public static final String FILE_NAME = "gtmb-decoration-voucher.cfg";
     private static final String CATEGORY = "decorationVoucher";
+    private static final String[] TILE_MATERIALS = { "minecraft:wool", "minecraft:hardened_clay",
+        "minecraft:stained_hardened_clay", "etfuturum:concrete", HologramPictureBox.WOOLEN_CLAY };
+    private static final String[] QUARTZ_GLASS = { "EnderIO:blockFusedQuartz@0", "EnderIO:blockFusedQuartz@1",
+        "EnderIO:blockFusedQuartz@2", "EnderIO:blockFusedQuartz@3", "EnderIO:blockFusedQuartz@4",
+        "EnderIO:blockFusedQuartz@5" };
     private static final String[] DEFAULT_MOD_IDS = { "CarpentersBlocks", "ForgeMultipart", "ForgeMicroblock",
         "LittleTiles", "ArchitectureCraft", "chisel", "chiseltones", "Ztones", "BiblioCraft", "Bibliowoods",
         "BiblioWoodsBoP", "BiblioWoodsForestry", "BiblioWoodsNatura", "floodlights", "fairylights", "GardenStuff",
         "GardenCore", "GardenTrees", "malisisdoors", "cfm" };
-    private static final String[] DEFAULT_BLOCKS = { "minecraft:wool", "minecraft:stained_hardened_clay",
-        "minecraft:hardened_clay", "minecraft:carpet", "minecraft:stained_glass", "minecraft:stained_glass_pane",
-        "minecraft:stonebrick", "minecraft:stone_slab@5", "minecraft:stone_brick_stairs", "minecraft:quartz_stairs",
-        "minecraft:quartz_block@1", "minecraft:quartz_block@2", "minecraft:flower_pot", "minecraft:yellow_flower",
-        "minecraft:red_flower", "minecraft:double_plant", "minecraft:tallgrass", "minecraft:deadbush",
-        "minecraft:leaves", "minecraft:leaves2", "minecraft:vine", "etfuturum:concrete", "etfuturum:concrete_powder",
-        "extrautilities:color_block", "extrautilities:greenscreen", "extrautilities:colorStoneBrick",
-        "extrautilities:colorWoodPlanks", "extrautilities:color_brick", "extrautilities:color_lightgem",
-        "extrautilities:color_redstoneLight", "extrautilities:color_quartzBlock",
-        "projred|illumination:projectred.illumination.lamp@16", "projred|illumination:projectred.illumination.lamp@17",
-        "projred|illumination:projectred.illumination.lamp@18", "projred|illumination:projectred.illumination.lamp@19",
-        "projred|illumination:projectred.illumination.lamp@20", "projred|illumination:projectred.illumination.lamp@21",
-        "projred|illumination:projectred.illumination.lamp@22", "projred|illumination:projectred.illumination.lamp@23",
-        "projred|illumination:projectred.illumination.lamp@24", "projred|illumination:projectred.illumination.lamp@25",
-        "projred|illumination:projectred.illumination.lamp@26", "projred|illumination:projectred.illumination.lamp@27",
-        "projred|illumination:projectred.illumination.lamp@28", "projred|illumination:projectred.illumination.lamp@29",
-        "projred|illumination:projectred.illumination.lamp@30",
+    private static final String[] DEFAULT_BLOCKS = { HologramPictureBox.WOOLEN_CLAY, "minecraft:wool",
+        "minecraft:stained_hardened_clay", "minecraft:hardened_clay", "minecraft:carpet", "minecraft:stained_glass",
+        "minecraft:stained_glass_pane", "minecraft:stonebrick", "minecraft:stone_slab@5",
+        "minecraft:stone_brick_stairs", "minecraft:quartz_stairs", "minecraft:quartz_block@1",
+        "minecraft:quartz_block@2", "minecraft:flower_pot", "minecraft:yellow_flower", "minecraft:red_flower",
+        "minecraft:double_plant", "minecraft:tallgrass", "minecraft:deadbush", "minecraft:leaves", "minecraft:leaves2",
+        "minecraft:vine", "etfuturum:concrete", "etfuturum:concrete_powder", "extrautilities:color_block",
+        "extrautilities:greenscreen", "extrautilities:colorStoneBrick", "extrautilities:colorWoodPlanks",
+        "extrautilities:color_brick", "extrautilities:color_lightgem", "extrautilities:color_redstoneLight",
+        "extrautilities:color_quartzBlock", "projred|illumination:projectred.illumination.lamp@16",
+        "projred|illumination:projectred.illumination.lamp@17", "projred|illumination:projectred.illumination.lamp@18",
+        "projred|illumination:projectred.illumination.lamp@19", "projred|illumination:projectred.illumination.lamp@20",
+        "projred|illumination:projectred.illumination.lamp@21", "projred|illumination:projectred.illumination.lamp@22",
+        "projred|illumination:projectred.illumination.lamp@23", "projred|illumination:projectred.illumination.lamp@24",
+        "projred|illumination:projectred.illumination.lamp@25", "projred|illumination:projectred.illumination.lamp@26",
+        "projred|illumination:projectred.illumination.lamp@27", "projred|illumination:projectred.illumination.lamp@28",
+        "projred|illumination:projectred.illumination.lamp@29", "projred|illumination:projectred.illumination.lamp@30",
         "projred|illumination:projectred.illumination.lamp@31" };
     private static Configuration configuration;
-    private static long revision;
+    private static File configurationFile;
+    private static volatile long revision;
     // Mixed gameplay mods are intentionally absent: their machines must not become decoration for free.
     private static volatile View current = new View(true, Arrays.asList(DEFAULT_MOD_IDS));
 
@@ -53,7 +59,7 @@ public final class DecorationVoucherConfig {
             this(
                 enabled,
                 modIds,
-                Arrays.asList(DEFAULT_BLOCKS),
+                defaultBlocks(),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyList(),
@@ -100,9 +106,14 @@ public final class DecorationVoucherConfig {
         return current;
     }
 
+    static long revision() {
+        return revision;
+    }
+
     /** Called during item registration. Administrators can edit the file and restart the server. */
     public static synchronized void load(File configDirectory) {
-        Configuration config = configuration = new Configuration(new File(configDirectory, FILE_NAME));
+        configurationFile = new File(configDirectory, FILE_NAME);
+        Configuration config = configuration = new Configuration(configurationFile);
         config.load();
         boolean enabled = config
             .get(
@@ -119,16 +130,35 @@ public final class DecorationVoucherConfig {
                 "Registered decoration mod IDs (case insensitive). Edit and restart. GT/AE and industrial resources "
                     + "are always charged, including when embedded in a decoration. Do not allow mixed machine mods.")
             .getStringList();
-        current = new View(
+        Set<String> blocks = names(read("allowedBlocks", DEFAULT_BLOCKS));
+        Set<String> allowedMods = names(Arrays.asList(modIds));
+        if (config.get(CATEGORY, "decorationModDefaultsVersion", 0)
+            .getInt(0) < 1) {
+            allowedMods = new java.util.TreeSet<>(allowedMods);
+            allowedMods.add("ztones");
+            allowedMods.add("chiseltones");
+        }
+        if (config.get(CATEGORY, "tileMaterialDefaultsVersion", 0)
+            .getInt(0) < 1) {
+            blocks = new java.util.TreeSet<>(blocks);
+            blocks.addAll(Arrays.asList(TILE_MATERIALS));
+        }
+        if (config.get(CATEGORY, "quartzGlassDefaultsVersion", 0)
+            .getInt(0) < 1) {
+            blocks = new java.util.TreeSet<>(blocks);
+            blocks.addAll(Arrays.asList(QUARTZ_GLASS));
+        }
+        View loaded = new View(
             enabled,
-            Arrays.asList(modIds),
-            read("allowedBlocks", DEFAULT_BLOCKS),
+            allowedMods,
+            blocks,
             read("allowedOres", new String[0]),
             read("deniedModIds", new String[0]),
             read("deniedBlocks", new String[0]),
             read("deniedOres", new String[0]));
+        persist(loaded);
+        current = loaded;
         revision++;
-        if (config.hasChanged()) config.save();
     }
 
     static String normalize(String value) {
@@ -137,6 +167,12 @@ public final class DecorationVoucherConfig {
 
     public static View defaults() {
         return new View(true, Arrays.asList(DEFAULT_MOD_IDS));
+    }
+
+    private static Iterable<String> defaultBlocks() {
+        java.util.List<String> result = new java.util.ArrayList<>(Arrays.asList(DEFAULT_BLOCKS));
+        result.addAll(Arrays.asList(QUARTZ_GLASS));
+        return result;
     }
 
     private static boolean matches(Set<String> rules, String id, int meta) {
@@ -172,16 +208,67 @@ public final class DecorationVoucherConfig {
 
     static synchronized boolean save(View next, long expectedRevision) {
         if (configuration == null || expectedRevision != revision) return false;
-        configuration.get(CATEGORY, "enabled", true)
-            .set(next.enabled);
-        String[] keys = ruleKeys();
-        Set<?>[] lists = lists(next);
-        for (int i = 0; i < keys.length; i++) configuration.get(CATEGORY, keys[i], new String[0])
-            .set(lists[i].toArray(new String[0]));
-        configuration.save();
+        persist(next);
         current = next;
         revision++;
         return true;
+    }
+
+    /** Forge logs save IO failures. Verify a staged file before publishing live rules. */
+    private static void persist(View next) {
+        java.nio.file.Path file = configurationFile.toPath()
+            .toAbsolutePath();
+        java.nio.file.Path temporary = null;
+        try {
+            java.nio.file.Files.createDirectories(file.getParent());
+            if (java.nio.file.Files.exists(file) && !java.nio.file.Files.isRegularFile(file))
+                throw new java.io.IOException("Voucher configuration is not a regular file");
+            temporary = java.nio.file.Files.createTempFile(file.getParent(), "voucher-rules-", ".cfg");
+            if (java.nio.file.Files.exists(file))
+                java.nio.file.Files.write(temporary, HologramBlueprintSharing.readBytes(file, 8 * 1024 * 1024));
+            Configuration staged = new Configuration(temporary.toFile());
+            staged.load();
+            staged.get(CATEGORY, "enabled", true)
+                .set(next.enabled);
+            staged.get(CATEGORY, "tileMaterialDefaultsVersion", 1)
+                .set(1);
+            staged.get(CATEGORY, "decorationModDefaultsVersion", 1)
+                .set(1);
+            staged.get(CATEGORY, "quartzGlassDefaultsVersion", 1)
+                .set(1);
+            String[] keys = ruleKeys();
+            Set<?>[] values = lists(next);
+            for (int i = 0; i < keys.length; i++) staged.get(CATEGORY, keys[i], new String[0])
+                .set(values[i].toArray(new String[0]));
+            staged.save();
+            Configuration readback = new Configuration(temporary.toFile());
+            readback.load();
+            if (readback.get(CATEGORY, "enabled", !next.enabled)
+                .getBoolean(!next.enabled) != next.enabled
+                || readback.get(CATEGORY, "tileMaterialDefaultsVersion", 0)
+                    .getInt(0) != 1
+                || readback.get(CATEGORY, "decorationModDefaultsVersion", 0)
+                    .getInt(0) != 1
+                || readback.get(CATEGORY, "quartzGlassDefaultsVersion", 0)
+                    .getInt(0) != 1)
+                throw new java.io.IOException("Voucher configuration read-back failed");
+            for (int i = 0; i < keys.length; i++) if (!names(
+                Arrays.asList(
+                    readback.get(CATEGORY, keys[i], new String[0])
+                        .getStringList())).equals(values[i]))
+                throw new java.io.IOException("Voucher configuration rule read-back failed");
+            HologramBlueprintSharing.atomicWrite(file, HologramBlueprintSharing.readBytes(temporary, 8 * 1024 * 1024));
+            configuration = new Configuration(file.toFile());
+            configuration.load();
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("抵用券配置保存失败，原规则保留", failure);
+        } finally {
+            if (temporary != null) try {
+                java.nio.file.Files.deleteIfExists(temporary);
+            } catch (java.io.IOException cleanup) {
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Voucher staging cleanup failed", cleanup);
+            }
+        }
     }
 
     static String[] ruleKeys() {

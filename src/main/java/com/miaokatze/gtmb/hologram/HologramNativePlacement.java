@@ -207,7 +207,7 @@ public final class HologramNativePlacement {
         return matchesPlaced(block, metadata, actual, payload, null);
     }
 
-    /** Actor-aware projection binds only an empty native Carpenter owner; every other field remains exact. */
+    /** A newly placed Carpenter belongs to its installer, matching native onBlockPlacedBy. */
     public static boolean matchesPlaced(Block block, int metadata, TileEntity actual, NBTTagCompound payload,
         net.minecraft.entity.player.EntityPlayerMP actor) {
         if (actual == null || payload == null) return false;
@@ -222,7 +222,7 @@ public final class HologramNativePlacement {
                 detached);
             if (expected == null || !actual.getClass()
                 .equals(expected.getClass())) return false;
-            bindUnownedCarpenter(block, expected, actor);
+            bindCarpenterOwner(block, expected, actor);
             NBTTagCompound actualTag = HologramNativeCapture.capture(actual), expectedTag = new NBTTagCompound();
             expected.writeToNBT(expectedTag);
             actualTag = HologramEnergyPayload.withoutBuffers(actualTag);
@@ -323,7 +323,7 @@ public final class HologramNativePlacement {
                 }
                 if (changed) tile = adapter.create(block, metadata, tag, detached);
             }
-            bindUnownedCarpenter(block, tile, actor);
+            bindCarpenterOwner(block, tile, actor);
             world.removeTileEntity(x, y, z);
             tile.setWorldObj(world);
             tile.xCoord = x;
@@ -395,15 +395,10 @@ public final class HologramNativePlacement {
         }
     }
 
-    private static void bindUnownedCarpenter(Block block, TileEntity tile,
+    private static void bindCarpenterOwner(Block block, TileEntity tile,
         net.minecraft.entity.player.EntityPlayerMP actor) throws Exception {
-        if (actor == null || !block.getClass()
-            .getName()
-            .startsWith("com.carpentersblocks.block.")) return;
-        // TEBase.getOwner returns exactly its persisted cbOwner string. An empty string is the native unowned state.
-        // ProtectedObject selects UUID on an online server and the player's display name on an offline server.
-        String retained = (String) call(tile, "getOwner", new Class<?>[0]);
-        if (!retained.isEmpty()) return;
+        if (actor == null || !HologramDeidentification.carpenterBlock(block)) return;
+        // The copied source stays intact. Only the new native TE gets the installer's online UUID/offline name.
         Class<?> owner = Class.forName("com.carpentersblocks.util.protection.ProtectedObject");
         call(
             tile,

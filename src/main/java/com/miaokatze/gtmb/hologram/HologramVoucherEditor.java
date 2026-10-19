@@ -33,14 +33,9 @@ public final class HologramVoucherEditor {
                         rows(request, "deniedModIds"),
                         rows(request, "deniedBlocks"),
                         rows(request, "deniedOres"));
-                status = DecorationVoucherConfig.save(value, request.getLong("revision")) ? "已保存并立即生效"
-                    : "其他管理员已修改配置；已载入最新列表，请重新编辑";
-                // Retire cached quotations; the next review/transaction must use these server rules.
-                HologramWorkspace.forEachConnected(session -> {
-                    session.materialQuoteCache = null;
-                    session.forcePlacementReady = false;
-                    session.placementReviewIssued = false;
-                });
+                boolean saved = DecorationVoucherConfig.save(value, request.getLong("revision"));
+                status = saved ? "已保存并立即生效，材料核算正在同步更新" : "其他管理员已修改配置；已载入最新列表，请重新编辑";
+                if (saved) HologramWorkspace.forEachConnected(HologramVoucherEditor::refreshRules);
             } catch (RuntimeException failure) {
                 status = "配置保存失败：" + failure.getMessage();
             }
@@ -63,6 +58,27 @@ public final class HologramVoucherEditor {
         }
         reply.setTag("mods", mods);
         HologramNetwork.sendState(player, reply);
+    }
+
+    /** Retire old quotes/consent while keeping the existing material review open. */
+    static void invalidateRules(HologramSession session) {
+        session.materialQuoteCache = null;
+        session.materialQuote = null;
+        session.forcePlacementReady = false;
+        session.placementReviewNonce++;
+        session.batchSeq++;
+        HologramSnapshotPreparation.cancel(session);
+        session.localEdits.invalidate();
+    }
+
+    static void refreshRules(HologramSession session) {
+        invalidateRules(session);
+        if (!session.cancelled && session.capture != null
+            && !session.capturePending
+            && !session.localPlanPending
+            && session.job != 1
+            && session.job != 2
+            && HologramSessionPolicy.valid(session)) HologramSnapshots.send(session);
     }
 
     private static List<String> rows(NBTTagCompound request, String key) {

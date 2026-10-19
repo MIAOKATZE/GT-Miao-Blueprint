@@ -402,7 +402,7 @@ gtmb.hologram.progress.area.detail.paused=材料规划已暂停
 # Decoration voucher
 item.decoration_voucher.name=猫猫装饰抵用券
 item.decoration_voucher.description.0=§7为§f一次蓝图施工§7抵扣允许的建筑装饰材料。§r
-item.decoration_voucher.description.1=§e主背包至少持有一张§7，在§f材料确认页§7主动勾选。§r
+item.decoration_voucher.description.1=§e有可抵扣方块即可在材料确认页勾选查看§7；生存施工须在主背包备券。§r
 item.decoration_voucher.description.2=§7仅抵扣允许的建筑材料；§6工业资源仍按实际需求核算§7。§r
 
 gtmb.hologram.progress.snapshot.detail.export_json=编码蓝图 JSON

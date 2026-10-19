@@ -26,6 +26,7 @@ public final class HologramMaterialQuote {
 
         final String session;
         final long revision;
+        final long voucherRevision = DecorationVoucherConfig.revision();
         final HologramCapture capture;
         final NBTTagCompound ordinary, voucher;
         final long eligibleDemand;
@@ -62,6 +63,7 @@ public final class HologramMaterialQuote {
 
         boolean current(HologramSession s) {
             return session.equals(s.id) && revision == s.planRevision
+                && voucherRevision == DecorationVoucherConfig.revision()
                 && capture == s.capture
                 && !s.localPlanPending
                 && !HologramSessionPolicy.authoring(s);
@@ -240,6 +242,7 @@ public final class HologramMaterialQuote {
     }
 
     private static void stamp(HologramSession s, NBTTagCompound quote) {
+        quote.setLong("voucherRulesRevision", DecorationVoucherConfig.revision());
         quote.setString("session", s.id);
         quote.setLong("planRevision", s.planRevision);
         quote.setLong("placementReviewNonce", s.placementReviewNonce);
@@ -431,6 +434,7 @@ public final class HologramMaterialQuote {
         private final Thread owner = Thread.currentThread();
         private final String session;
         private final long revision;
+        private final long voucherRevision = DecorationVoucherConfig.revision();
         private final HologramCapture capture;
         private final NBTTagList materials, voucherMaterials, resources;
         private final List<NBTTagCompound> ordinaryRows, waivedRows;
@@ -461,7 +465,9 @@ public final class HologramMaterialQuote {
 
         boolean step(int maxWork, long deadline) {
             if (Thread.currentThread() != owner) throw new IllegalStateException("Quote stock requires owner thread");
-            if (!done() && (!session.equals(s.id) || revision != s.planRevision || capture != s.capture))
+            if (!done() && (!session.equals(s.id) || revision != s.planRevision
+                || capture != s.capture
+                || voucherRevision != DecorationVoucherConfig.revision()))
                 throw new IllegalStateException("Obsolete quote preparation cannot observe or publish a new plan");
             int work = 0;
             while (!done() && work < maxWork && (work == 0 || System.nanoTime() < deadline)) {
@@ -622,6 +628,7 @@ public final class HologramMaterialQuote {
     /** Recheck only cached payable identities. No cell/world traversal, plan rebuild or render-payload encoding. */
     static void recheck(HologramSession s) throws IOException {
         if (s.materialQuote == null || !s.materialQuote.getBoolean("complete")
+            || s.materialQuote.getLong("voucherRulesRevision") != DecorationVoucherConfig.revision()
             || s.materialQuote.getLong("planRevision") != s.planRevision
             || !s.id.equals(s.materialQuote.getString("session"))) throw new IOException("材料需求缓存已失效，请重新打开材料确认");
         StockSnapshot inventory = new StockSnapshot(stock(s));

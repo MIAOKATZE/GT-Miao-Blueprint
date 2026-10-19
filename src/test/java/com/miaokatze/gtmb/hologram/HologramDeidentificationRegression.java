@@ -62,8 +62,22 @@ public final class HologramDeidentificationRegression {
             !HologramDeidentification.foreignOwner(nativeTag, actor, "display name"),
             "registered Carpenter owner's own UUID can use level zero");
         SimpleAssert.that(
-            HologramDeidentification.foreignOwner(nativeTag, other, "different player"),
-            "level-zero native Carpenter identity belonging to another player is detected");
+            !HologramDeidentification.foreignOwner(nativeTag, other, "different player"),
+            "source Carpenter ownership never blocks a new actor's level-zero placement");
+        NBTTagCompound legacyOwner = (NBTTagCompound) nativeTag.copy();
+        legacyOwner.removeTag("cbOwner");
+        legacyOwner.setString("owner", actor.toString());
+        SimpleAssert.that(
+            !HologramDeidentification.foreignOwner(legacyOwner, other, "other"),
+            "the native pre-3.3.1 root owner has the same placement semantics");
+        legacyOwner.setString("mOwnerUUID", actor.toString());
+        SimpleAssert.that(
+            HologramDeidentification.foreignOwner(legacyOwner, other, "other"),
+            "the exception does not hide unrelated device ownership fields");
+        legacyOwner.removeTag("mOwnerUUID");
+        SimpleAssert.that(
+            HologramDeidentification.foreignOwner(net.minecraft.init.Blocks.stone, legacyOwner, other, "other"),
+            "a Carpenter-looking tile ID on another block cannot waive its ownership checks");
         NBTTagCompound cleared = (NBTTagCompound) nativeTag.copy();
         HologramDeidentification.project(cleared, 1);
         SimpleAssert.that(

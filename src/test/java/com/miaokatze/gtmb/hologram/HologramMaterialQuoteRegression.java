@@ -603,6 +603,11 @@ final class HologramMaterialQuoteRegression {
 
     /** Real server review/projection and the successful placement transaction share the creative no-debit rule. */
     private static void creativeVoucherSelectionAndCommittedPlacement() throws Exception {
+        voucherSelectionAndCommittedPlacement(true);
+        voucherSelectionAndCommittedPlacement(false);
+    }
+
+    private static void voucherSelectionAndCommittedPlacement(boolean creative) throws Exception {
         java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
@@ -628,7 +633,9 @@ final class HologramMaterialQuoteRegression {
         player.worldObj = world;
         player.posY = 64;
         player.capabilities = new net.minecraft.entity.player.PlayerCapabilities();
-        player.capabilities.isCreativeMode = player.capabilities.allowEdit = true;
+        player.capabilities.isCreativeMode = creative;
+        player.capabilities.allowEdit = true;
+        player.inventory.mainInventory[2] = new ItemStack(net.minecraft.init.Blocks.stone, 64);
         player.inventory.mainInventory[0] = new ItemStack(Items.feather);
         java.lang.reflect.Field config = DecorationVoucherConfig.class.getDeclaredField("current");
         config.setAccessible(true);
@@ -698,12 +705,12 @@ final class HologramMaterialQuoteRegression {
 
                     public long exact(ItemStack item, long limit) {
                         inventoryReads[0]++;
-                        return 0;
+                        return creative ? 0 : limit;
                     }
 
                     public long fuzzy(ItemStack item, long limit) {
                         inventoryReads[0]++;
-                        return 0;
+                        return creative ? 0 : limit;
                     }
                 });
             HologramMaterialQuote
@@ -754,7 +761,8 @@ final class HologramMaterialQuoteRegression {
                         && choice.getLong("eligibleDemand") == 5,
                     "creative players holding vouchers receive usable, selected server UI metadata");
                 require(
-                    quote.getBoolean("creativePaymentsFree") && quote.getBoolean("useDecorationVoucher") == selected
+                    quote.getBoolean("creativePaymentsFree") == creative
+                        && quote.getBoolean("useDecorationVoucher") == selected
                         && quote.getLong("placementReviewNonce") == session.placementReviewNonce
                         && quote.getTagList("rows", 10)
                             .getCompoundTagAt(0)
@@ -762,13 +770,37 @@ final class HologramMaterialQuoteRegression {
                     "creative selection projects the cached shell waiver while retaining exact embedded requirements");
                 if (i == 1) {
                     player.inventory.mainInventory[1] = null;
+                    NBTTagCompound shortage = cache.voucher.getTagList("rows", 10)
+                        .getCompoundTagAt(0);
+                    long previousAvailable = shortage.getLong("available"),
+                        previousMissing = shortage.getLong("missing");
+                    shortage.setLong("available", 0);
+                    shortage.setLong("missing", 2);
                     long nonce = session.placementReviewNonce;
                     action.setLong("placementReviewNonce", nonce);
                     action.setBoolean("enabled", true);
                     HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher");
                     require(
-                        !session.jobVoucherRequested && session.placementReviewNonce == nonce,
-                        "creative selection still requires a real clean voucher in the main inventory");
+                        session.jobVoucherRequested && session.placementReviewNonce == nonce + 1,
+                        "actual server action permits discount preview without a carried voucher");
+                    require(
+                        session.planMissing == (creative ? 0 : 2),
+                        "voucher preview remains selected while nonwaived materials are still missing");
+                    action.setLong("placementReviewNonce", session.placementReviewNonce);
+                    boolean paymentRejected = false;
+                    try {
+                        HologramMaterialWorkflow.validateConfirmation(session, action);
+                    } catch (java.io.IOException expected) {
+                        paymentRejected = true;
+                    }
+                    require(
+                        paymentRejected == !creative,
+                        "only survival confirmation still requires real voucher payment");
+                    action.setBoolean("enabled", false);
+                    HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher");
+                    require(!session.jobVoucherRequested, "discount preview can be deselected without a voucher");
+                    shortage.setLong("available", previousAvailable);
+                    shortage.setLong("missing", previousMissing);
                     player.inventory.mainInventory[1] = voucher;
                 }
             }
@@ -784,11 +816,12 @@ final class HologramMaterialQuoteRegression {
             require(
                 "placed".equals(cell.status) && world.placed == net.minecraft.init.Blocks.stone
                     && nativePlacements[0] == 1
-                    && !session.jobVoucherConsumed
+                    && session.jobVoucherConsumed == !creative
                     && player.inventory.mainInventory[1] == voucher
-                    && voucher.stackSize == 2
-                    && HologramDecorationVoucher.available(player) == 2,
-                "an actual successful creative placement consumes neither a shell item nor its selected voucher");
+                    && voucher.stackSize == (creative ? 2 : 1)
+                    && HologramDecorationVoucher.available(player) == (creative ? 2 : 1)
+                    && player.inventory.mainInventory[2].stackSize == 64,
+                "voucher placement preserves stocked shells; survival pays one voucher and creative pays none");
         } finally {
             config.set(null, previousConfig);
             com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = previousVoucher;

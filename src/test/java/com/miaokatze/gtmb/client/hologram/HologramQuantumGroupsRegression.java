@@ -225,9 +225,25 @@ public final class HologramQuantumGroupsRegression {
             "creative players carrying a voucher can select the real discount quote");
         voucher.setLong("available", 0);
         SimpleAssert.that(
-            !HologramPlacementConfirmation.voucherChoiceAvailable(state, true, false)
+            HologramPlacementConfirmation.voucherChoiceAvailable(state, true, false)
                 && HologramPlacementConfirmation.voucherChoiceAvailable(state, true, true),
-            "creative selection still needs a carried voucher while deselection remains available");
+            "previewing a discount never requires a carried voucher");
+        creativeQuote.setBoolean("creativePaymentsFree", false);
+        state.setInteger("missing", 100);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.voucherChoiceAvailable(state, true, false),
+            "unrelated material shortages cannot disable voucher selection");
+        voucher.setBoolean("selected", true);
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.voucherPaymentReady(state)
+                && !HologramPlacementConfirmation.canBuild(state, state.getLong("planRevision")),
+            "survival preview without a voucher never enables actual confirmation");
+        creativeQuote.setBoolean("creativePaymentsFree", true);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.voucherPaymentReady(state),
+            "creative construction does not need a voucher");
+        voucher.setBoolean("selected", false);
+        state.setInteger("missing", 0);
         row.setString("available", "7");
         row.setBoolean("emptyFallback", true);
         SimpleAssert.that(

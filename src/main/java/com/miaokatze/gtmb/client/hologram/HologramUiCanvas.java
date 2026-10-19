@@ -70,6 +70,7 @@ final class HologramUiCanvas {
         final boolean enabled;
         String label = "";
         int accent;
+        boolean voucherRibbon;
 
         Control(int id, int x, int y, int w, int h, boolean enabled) {
             this.id = id;

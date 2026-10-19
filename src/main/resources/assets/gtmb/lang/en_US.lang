@@ -402,7 +402,7 @@ gtmb.hologram.progress.area.detail.paused=Material planning paused
 # Decoration voucher
 item.decoration_voucher.name=Miao Decoration Voucher
 item.decoration_voucher.description.0=§7Covers allowed building materials for §fone blueprint construction job§7.§r
-item.decoration_voucher.description.1=§eKeep at least one in your main inventory§7; select it in §fmaterial review§7.§r
+item.decoration_voucher.description.1=§ePreview eligible discounts in material review§7; survival construction needs a voucher in your main inventory.§r
 item.decoration_voucher.description.2=§7Covers allowed building materials; §6industrial resources retain their actual costs§7.§r
 
 gtmb.hologram.progress.snapshot.detail.export_json=Encode blueprint JSON

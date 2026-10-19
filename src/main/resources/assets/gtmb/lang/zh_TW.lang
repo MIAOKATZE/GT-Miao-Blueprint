@@ -154,7 +154,7 @@ gtmb.hologram.progress.area.detail.paused=材料規劃已暫停
 # Decoration voucher
 item.decoration_voucher.name=裝飾抵用券
 item.decoration_voucher.description.0=§7為§f一次藍圖施工§7抵扣允許的建築裝飾材料。§r
-item.decoration_voucher.description.1=§e主背包至少持有一張§7，在§f材料確認頁§7主動勾選。§r
+item.decoration_voucher.description.1=§e有可抵扣方塊即可在材料確認頁勾選查看§7；生存施工須在主背包備券。§r
 item.decoration_voucher.description.2=§7僅抵扣允許的建築材料；§6工業資源仍按實際需求核算§7。§r
 
 gtmb.hologram.progress.snapshot.detail.export_json=編碼藍圖 JSON
@@ -193,7 +193,7 @@ item.decoration_voucher.detail.industrial=§6GT / AE 與工業材料§7不在抵
 item.decoration_voucher.detail.assets=§7內部庫存物品、流體與 §eEU§7 均保留實際需求。§r
 item.decoration_voucher.detail.consume=§7首次成功提交抵扣材料的方塊後§f消耗一張§7，本次任務後續沿用。§r
 item.decoration_voucher.detail.rollback=§a未成功抵扣不消耗§7；僅勾選、核對或失敗放置不會扣券。§r
-item.decoration_voucher.detail.creative=§d創造模式§7也須持有券才能勾選核查減免方案；施工§a不扣券§7。§r
+item.decoration_voucher.detail.creative=§d創造模式§7無須持券即可核查減免方案；施工§a不扣券§7。§r
 item.decoration_voucher.detail.config=§7管理員可設定§f啟用開關與模組白名單§7：§r
 item.decoration_voucher.detail.reload=§fgtmb-decoration-voucher.cfg §8（修改後重啟伺服器）§r
 

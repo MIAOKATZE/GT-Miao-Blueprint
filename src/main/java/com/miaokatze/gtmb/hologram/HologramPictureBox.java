@@ -14,7 +14,10 @@ public final class HologramPictureBox {
 
     public static final String PREFIX = "gtmb_picture_";
     public static final int MAX_PIXELS = 1024 * 1024, MAX_SIDE = 1024;
-    public static final String[] PALETTE_NAMES = { "羊毛 + 染色黏土", "羊毛", "混凝土" };
+    public static final String WOOLEN_CLAY = "chisel:woolen_clay";
+    public static final int DEFAULT_PALETTE = 3;
+    // Keep legacy palette indices stable for existing blueprints and saved presets.
+    public static final String[] PALETTE_NAMES = { "羊毛 + 染色黏土", "羊毛", "混凝土", "羊毛粘土为主 + 陶瓦 + 羊毛" };
     public static final String[] FILTER_NAMES = { "原图", "黑白", "怀旧", "反色", "色阶", "柔化", "锐化", "轮廓" };
     private static final int[][] COLORS = {
         { 0xdddddd, 0xdb7d3e, 0xb350bc, 0x6b8ac9, 0xb1a627, 0x41ae38, 0xd08499, 0x404040, 0x9aa1a1, 0x2e6e89, 0x7e3db5,
@@ -22,11 +25,14 @@ public final class HologramPictureBox {
         { 0xd1b1a1, 0x9f5224, 0x95586c, 0x706c8a, 0xba8523, 0x677534, 0xa04d4e, 0x392a23, 0x876b62, 0x575b5b, 0x7a4958,
             0x4c3e5c, 0x4c3223, 0x4c522a, 0x8e3c2e, 0x251610 },
         { 0xcfd5d6, 0xe06101, 0xa9309f, 0x2389c6, 0xf0af15, 0x5ea818, 0xd5658e, 0x36393d, 0x7d7d73, 0x157788, 0x64209c,
-            0x2c2e8f, 0x603b1f, 0x495b24, 0x8e2020, 0x080a0f } };
+            0x2c2e8f, 0x603b1f, 0x495b24, 0x8e2020, 0x080a0f },
+        // Mean RGB of Chisel 2.17.34's sixteen woolenClay textures, in registered metadata order.
+        { 0xdedede, 0xdb7d3f, 0xb451bd, 0x6b8ac9, 0xb1a628, 0x42ae39, 0xd08499, 0x414141, 0x9ba1a1, 0x2f6f89, 0x7f3eb6,
+            0x2e398e, 0x4f331f, 0x35471c, 0x973431, 0x1a1616 } };
     public String filename = "";
     public int originalWidth, originalHeight, sourceWidth, sourceHeight;
     public int[] source = new int[0];
-    public int width = 64, height = 64, shortSide = 64, palette, filter;
+    public int width = 64, height = 64, shortSide = 64, palette = DEFAULT_PALETTE, filter;
     public int brightness, contrast, saturation = 100, backgroundTolerance;
     public boolean keepAspect = true, removeBackground, dither;
 
@@ -134,10 +140,12 @@ public final class HologramPictureBox {
     }
 
     public int paletteSize() {
-        return palette == 0 ? 32 : 16;
+        return palette == DEFAULT_PALETTE ? 48 : palette == 0 ? 32 : 16;
     }
 
     public String material(int index) {
+        if (palette == DEFAULT_PALETTE)
+            return index < 16 ? WOOLEN_CLAY : index < 32 ? "minecraft:stained_hardened_clay" : "minecraft:wool";
         return palette == 2 ? "etfuturum:concrete"
             : palette == 0 && index >= 16 ? "minecraft:stained_hardened_clay" : "minecraft:wool";
     }
@@ -147,7 +155,12 @@ public final class HologramPictureBox {
     }
 
     public int paletteColor(int index) {
-        return COLORS[palette == 2 ? 2 : palette == 0 && index >= 16 ? 1 : 0][index & 15];
+        return COLORS[palette == DEFAULT_PALETTE ? index < 16 ? 3 : index < 32 ? 1 : 0
+            : palette == 2 ? 2 : palette == 0 && index >= 16 ? 1 : 0][index & 15];
+    }
+
+    public static int woolenClayColor(int metadata) {
+        return COLORS[3][metadata & 15];
     }
 
     /** Zero is transparent; other bytes index the fixed material palette plus one. */
@@ -198,6 +211,8 @@ public final class HologramPictureBox {
                         db = b - (color & 255);
                     long distance = (512L + r + (color >>> 16 & 255)) * dr * dr + 1024L * dg * dg
                         + (767L - r - (color >>> 16 & 255)) * db * db;
+                    // Prefer smooth woolen clay for near-equal colors; auxiliaries still fill larger color gaps.
+                    if (palette == DEFAULT_PALETTE && i >= 16) distance += 48_000L;
                     if (distance < nearest) {
                         nearest = distance;
                         best = i;

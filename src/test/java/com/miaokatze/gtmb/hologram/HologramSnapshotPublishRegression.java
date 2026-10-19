@@ -611,7 +611,8 @@ public final class HologramSnapshotPublishRegression {
         tasksField.setAccessible(true);
         HologramSession current = null;
         Object previousCache = null;
-        try {
+        try (DecorationVoucherConfigRegression.Fixture fixture = new DecorationVoucherConfigRegression.Fixture()) {
+            DecorationVoucherConfig.load(fixture.directory.toFile());
             player.capabilities.isCreativeMode = false;
             for (int size : new int[] { 64, 17 }) {
                 current = (HologramSession) factory.invoke(null, player, size);
@@ -705,6 +706,7 @@ public final class HologramSnapshotPublishRegression {
                     "final shortage is published after the completed quotation rather than the discarded early estimate");
                 previousCache = current.materialQuoteCache;
                 HologramNetwork.clearServerQueues();
+                if (size == 17) liveVoucherRules(current, work);
             }
         } finally {
             if (current != null) HologramSnapshotPreparation.cancel(current);
@@ -713,6 +715,92 @@ public final class HologramSnapshotPublishRegression {
             else sessions.put(player.getUniqueID(), previous);
             HologramNetwork.clearServerQueues();
             WIRE.clear();
+        }
+    }
+
+    private static void liveVoucherRules(HologramSession s, Queue<Runnable> work) throws java.io.IOException {
+        s.blueprintAwaitingConfirmation = s.placementReviewIssued = true;
+        s.phase = "ACK";
+        Object materialContext = s.materialContext;
+        long planRevision = s.planRevision;
+        for (boolean deny : new boolean[] { false, true }) {
+            HologramMaterialQuote.Preparation obsolete = new HologramMaterialQuote.Preparation(
+                s,
+                new NBTTagList(),
+                new NBTTagList(),
+                new NBTTagList(),
+                new HologramMaterialQuote.StockSnapshot(HologramMaterialQuote.stock(s)));
+            HologramMaterialQuote.Cache oldCache = s.materialQuoteCache;
+            HologramSnapshots.send(s);
+            long nonce = s.placementReviewNonce, batch = s.batchSeq;
+            DecorationVoucherConfig.View policy = new DecorationVoucherConfig.View(
+                true,
+                java.util.Collections.emptyList(),
+                java.util.Collections.singleton("minecraft:stone"),
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(),
+                deny ? java.util.Collections.singleton("minecraft:stone") : java.util.Collections.emptyList(),
+                java.util.Collections.emptyList());
+            SimpleAssert.that(
+                DecorationVoucherConfig.save(policy, DecorationVoucherConfig.revision()),
+                "actual server rule save succeeds");
+            SimpleAssert
+                .that(!oldCache.current(s), "same capture/revision cannot reuse a quote from old voucher rules");
+            boolean rejected = false;
+            try {
+                obsolete.step(1, Long.MAX_VALUE);
+            } catch (IllegalStateException expected) {
+                rejected = true;
+            }
+            SimpleAssert.that(rejected, "in-flight quote under old rules cannot publish");
+            rejected = false;
+            try {
+                HologramMaterialQuote.recheck(s);
+            } catch (java.io.IOException expected) {
+                rejected = true;
+            }
+            SimpleAssert.that(rejected, "old payable rows cannot be relabeled as a fresh policy quote");
+            HologramVoucherEditor.refreshRules(s);
+            SimpleAssert.that(
+                s.materialQuote == null && s.materialQuoteCache == null,
+                "save retires both displayed and cached quote before preparation");
+            SimpleAssert.that(
+                s.placementReviewIssued && s.blueprintAwaitingConfirmation,
+                "open material review keeps its refresh permission");
+            SimpleAssert.eq(nonce + 1, s.placementReviewNonce, "old consent is retired");
+            SimpleAssert.eq(batch + 1, s.batchSeq, "fresh PREPARE cannot be discarded behind the previous ACK");
+            SimpleAssert.eq(materialContext, s.materialContext, "material reservations survive rule refresh");
+            WIRE.clear();
+            drainPublication(s, work);
+            NBTTagCompound full = latestFull();
+            SimpleAssert.eq(
+                deny ? 0L : 17L,
+                full.getCompoundTag("decorativeVoucher")
+                    .getLong("eligibleDemand"),
+                "new whitelist and blacklist eligibility reaches the actual encoded client snapshot");
+            SimpleAssert.eq(
+                DecorationVoucherConfig.revision(),
+                full.getCompoundTag("materialQuote")
+                    .getLong("voucherRulesRevision"),
+                "snapshot carries the fresh material policy revision");
+            s.jobVoucherRequested = true;
+            HologramMaterialQuote.project(s);
+            SimpleAssert
+                .eq(deny ? 16 : 0, s.planMissing, "selected waiver recalculates payable shortages under current rules");
+            s.jobVoucherRequested = false;
+            HologramMaterialQuote.project(s);
+            NBTTagCompound action = new NBTTagCompound();
+            action.setString("session", s.id);
+            action.setLong("planRevision", s.planRevision);
+            action.setLong("placementReviewNonce", s.placementReviewNonce);
+            SimpleAssert.that(
+                HologramMaterialWorkflow.action(s, action, "refreshMaterialQuote"),
+                "existing material UI can refresh again");
+            SimpleAssert.that(
+                !s.status.contains("请先确定") && HologramMaterialQuote.cached(s),
+                "live policy edit no longer strands the material confirmation dialog");
+            SimpleAssert.eq(planRevision, s.planRevision, "rule refresh never rebuilds or mutates blueprint geometry");
+            HologramNetwork.clearServerQueues();
         }
     }
 

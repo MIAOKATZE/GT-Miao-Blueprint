@@ -26,6 +26,35 @@ public final class HologramPictureBoxRegression {
 
     public static void run() {
         try {
+            SimpleAssert.eq(
+                HologramPictureBox.WOOLEN_CLAY,
+                new HologramTextBox().material,
+                "new text defaults to Chisel woolen clay");
+            HologramPictureBox composite = picture(16, 1);
+            SimpleAssert
+                .eq(HologramPictureBox.DEFAULT_PALETTE, composite.palette, "new picture defaults to composite palette");
+            for (int meta = 0; meta < 16; meta++)
+                composite.source[meta] = 0xff000000 | HologramPictureBox.woolenClayColor(meta);
+            byte[] chosen = composite.rasterize();
+            for (int meta = 0; meta < 16; meta++) {
+                int index = (chosen[meta] & 255) - 1;
+                SimpleAssert.eq(
+                    HologramPictureBox.WOOLEN_CLAY,
+                    composite.material(index),
+                    "matching colors prefer woolen clay");
+                SimpleAssert.eq(meta, composite.metadata(index), "registered sixteen-color metadata order is retained");
+            }
+            composite.source[0] = 0xff000000 | composite.paletteColor(16);
+            SimpleAssert.eq(
+                "minecraft:stained_hardened_clay",
+                composite.material((composite.rasterize()[0] & 255) - 1),
+                "terracotta supplements a color outside the woolen clay range");
+            SimpleAssert.eq("minecraft:wool", composite.material(32), "wool remains an auxiliary fixed material");
+            NBTTagCompound legacyPalette = composite.write();
+            legacyPalette.setInteger("palette", 0);
+            HologramPictureBox oldPalette = HologramPictureBox.read(legacyPalette);
+            SimpleAssert.eq(32, oldPalette.paletteSize(), "old image palette indices keep their original meaning");
+            SimpleAssert.eq("minecraft:wool", oldPalette.material(0), "old image wool is never silently changed");
             HologramPictureBox ratio = picture(20, 10);
             ratio.keepAspect = true;
             ratio.resizeShortSide(64);
@@ -58,7 +87,7 @@ public final class HologramPictureBoxRegression {
             int normal = color.rasterize()[0];
             color.filter = 3;
             SimpleAssert.that(color.rasterize()[0] != normal, "inversion changes material selection");
-            for (int palette = 0; palette < 3; palette++) {
+            for (int palette = 0; palette < HologramPictureBox.PALETTE_NAMES.length; palette++) {
                 color.palette = palette;
                 for (int filter = 0; filter < HologramPictureBox.FILTER_NAMES.length; filter++) {
                     color.filter = filter;
@@ -70,9 +99,13 @@ public final class HologramPictureBoxRegression {
                             "all effects stay inside the fixed palette");
                         String material = color.material(index);
                         SimpleAssert.that(
-                            palette == 2 ? material.equals("etfuturum:concrete")
-                                : material.equals("minecraft:wool")
-                                    || palette == 0 && material.equals("minecraft:stained_hardened_clay"),
+                            palette == HologramPictureBox.DEFAULT_PALETTE
+                                ? material.equals(HologramPictureBox.WOOLEN_CLAY)
+                                    || material.equals("minecraft:stained_hardened_clay")
+                                    || material.equals("minecraft:wool")
+                                : palette == 2 ? material.equals("etfuturum:concrete")
+                                    : material.equals("minecraft:wool")
+                                        || palette == 0 && material.equals("minecraft:stained_hardened_clay"),
                             "image settings cannot introduce a custom material");
                     }
                 }

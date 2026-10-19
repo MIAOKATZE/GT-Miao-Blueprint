@@ -111,6 +111,7 @@ final class HologramPresets {
             if (!java.util.Objects.equals(current, FileStamp.read(library))) throw new IOException("蓝图库在刷新期间已更新，请重试");
             rememberCatalog(library, loaded, exact[0]);
         }
+        discoverPortableArtifacts(library);
         // Navigation checks only source/member metadata. It cannot reparse or sanitize unchanged cell payloads.
         Map<Path, FileStamp> members = new LinkedHashMap<>();
         Map<String, Boolean> complete = new LinkedHashMap<>();
@@ -136,6 +137,35 @@ final class HologramPresets {
         if (!unchanged) cached = refreshed;
         artifactStamps = members;
         if (!unchanged) clearContentCache();
+    }
+
+    /**
+     * Adopt independently saved client pairs at explicit navigation boundaries, preserving source bytes and versions.
+     */
+    private static void discoverPortableArtifacts(Path library) throws IOException {
+        Set<String> known = new HashSet<>();
+        for (Preset preset : catalogSource) known.add("local_" + preset.id);
+        List<Preset> merged = null;
+        for (Map.Entry<String, Path> member : HologramBlueprintFiles.managed(library.getParent())
+            .entrySet()) {
+            if (known.contains(member.getKey())) continue;
+            if ((merged == null ? catalogSource.size() : merged.size()) >= 32) break;
+            try {
+                Preset imported = HologramBlueprintSharing.read(member.getValue());
+                // A second exported copy cannot replace an existing logical source, including an incomplete pair.
+                String nativeId = imported.id.startsWith("local_") ? imported.id : "local_" + imported.id;
+                if (known.contains(nativeId) || !member.getKey()
+                    .equals(nativeId)) continue;
+                imported.id = member.getKey()
+                    .substring("local_".length());
+                if (merged == null) merged = new ArrayList<>(catalogSource);
+                merged.add(imported);
+                known.add(member.getKey());
+            } catch (IOException | RuntimeException invalid) {
+                // A damaged pair must not hide the other portable blueprints or overwrite their files.
+            }
+        }
+        if (merged != null) write(library, merged);
     }
 
     /** Local invalidation hint only; trusted content is still admitted from bounded, validated source bytes. */
@@ -275,6 +305,7 @@ final class HologramPresets {
         String authorName, authorUuid;
         long createdAt;
         HologramBlueprintVersions.Metadata nativeBlueprint;
+        Boolean fullyVoucherCovered;
         int schema = 1;
         int aePolicyVersion;
         int deidentificationVersion, deidentificationLevel;
@@ -336,6 +367,7 @@ final class HologramPresets {
             List<Preset> loaded = readLibrary(path, exact);
             if (!java.util.Objects.equals(before, FileStamp.read(path))) throw new IOException("蓝图库在读取期间已更新，请重试");
             rememberCatalog(path, loaded, exact[0]);
+            discoverPortableArtifacts(path);
         }
     }
 
@@ -453,6 +485,7 @@ final class HologramPresets {
     }
 
     static synchronized void save(Preset preset) throws IOException {
+        preset.fullyVoucherCovered = HologramVoucherCoverage.compute(preset);
         List<Preset> list = all();
         Preset saved = put(list, preset, false);
         validate(saved);
@@ -462,6 +495,7 @@ final class HologramPresets {
     }
 
     static synchronized void update(Preset preset) throws IOException {
+        preset.fullyVoucherCovered = HologramVoucherCoverage.compute(preset);
         List<Preset> list = all();
         Preset updated = put(list, preset, true);
         validate(updated);
@@ -578,10 +612,12 @@ final class HologramPresets {
             // A complete pair retains the existing identity check before any destructive operation.
             if (Files.exists(HologramBlueprintArtifact.previewPath(artifact))) {
                 Preset artifactBlueprint = HologramBlueprintSharing.read(artifact);
-                if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+                if (!id.equals(artifactBlueprint.id) && !("local_" + id).equals(artifactBlueprint.id))
+                    throw new IOException("蓝图文件身份与集合条目不一致");
             } else {
                 Preset artifactBlueprint = decodeArtifactIdentity(artifact);
-                if (!id.equals(artifactBlueprint.id)) throw new IOException("蓝图文件身份与集合条目不一致");
+                if (!id.equals(artifactBlueprint.id) && !("local_" + id).equals(artifactBlueprint.id))
+                    throw new IOException("蓝图文件身份与集合条目不一致");
             }
         }
         byte[] previousBytes = HologramBlueprintSharing.readBytes(library, MAX_LIBRARY_BYTES);
@@ -825,6 +861,7 @@ final class HologramPresets {
             row.setString("sourceMod", preset.sourceMod == null ? "" : preset.sourceMod);
             row.setString("sourceClass", preset.sourceClass == null ? "" : preset.sourceClass);
             row.setString("gtmbVersion", preset.nativeBlueprint == null ? "" : preset.nativeBlueprint.gtmbVersion);
+            row.setBoolean("fullyVoucherCovered", Boolean.TRUE.equals(preset.fullyVoucherCovered));
             row.setInteger("structures", preset.structures.size());
             row.setInteger("cells", preset.cells.size());
             row.setInteger("schema", preset.schema);
