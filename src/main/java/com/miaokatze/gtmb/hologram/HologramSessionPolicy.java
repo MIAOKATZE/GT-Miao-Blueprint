@@ -112,7 +112,12 @@ final class HologramSessionPolicy {
 
     /** Running/paused construction keeps its admitted context; editors and other tasks retain admission checks. */
     static boolean tickValid(HologramSession s) {
-        return s.job == 1 || s.job == 2 ? jobValid(s) : valid(s);
+        return s.job == 1 || s.job == 2 ? jobValid(s) : !s.blueprintSaveReceipt.isEmpty() ? saveValid(s) : valid(s);
+    }
+
+    /** A reviewed save owns the original tool slot; changing the held slot is presentation only. */
+    static boolean saveValid(HologramSession s) {
+        return !s.cancelled && jobTool(s) != null && validWorldContext(s, true);
     }
 
     private static boolean validWorldContext(HologramSession s, boolean admittedJob) {
