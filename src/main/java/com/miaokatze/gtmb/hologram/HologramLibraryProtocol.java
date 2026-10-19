@@ -268,7 +268,9 @@ public final class HologramLibraryProtocol {
                 ? Math.max(
                     BURST_BYTES,
                     (int) (((long) bytesPerSecond + 20L * CHUNK_BYTES - 1) / (20L * CHUNK_BYTES)) * CHUNK_BYTES)
-                : BURST_BYTES;
+                : Math.max(
+                    BURST_BYTES,
+                    ((int) (((long) bytesPerSecond + 20L * CHUNK_BYTES - 1) / (20L * CHUNK_BYTES)) + 1) * CHUNK_BYTES);
             available = Math.min(burst, available + Math.max(0L, now - last) / 1.0e9 * bytesPerSecond);
             last = now;
             if (available < bytes) return false;

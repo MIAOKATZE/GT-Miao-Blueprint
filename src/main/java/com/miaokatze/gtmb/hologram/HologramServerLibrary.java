@@ -359,12 +359,19 @@ final class HologramServerLibrary {
         for (Peer peer : round) {
             flushUploadAck(peer);
             sendUpgradeReport(peer);
-            try {
-                sendDownload(peer, now); // Downloads retain their existing once-per-50ms pump semantics.
-            } catch (RuntimeException failure) {
-                long clientTaskToken = taskToken(peer);
-                clearDownload(peer);
-                error(peer, failure.getMessage(), clientTaskToken);
+        }
+        // A single 16 KiB slice per 50ms caps throughput at 320 KiB/s regardless
+        // of configuration. Drain a bounded number of fair rounds instead.
+        for (int pass = 0; pass < 4; pass++) {
+            for (int n = 0; n < round.size(); n++) {
+                Peer peer = round.get((start + n) % round.size());
+                try {
+                    sendDownload(peer, now);
+                } catch (RuntimeException failure) {
+                    long clientTaskToken = taskToken(peer);
+                    clearDownload(peer);
+                    error(peer, failure.getMessage(), clientTaskToken);
+                }
             }
         }
     }

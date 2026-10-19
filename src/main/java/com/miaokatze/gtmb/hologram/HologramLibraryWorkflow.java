@@ -383,8 +383,7 @@ final class HologramLibraryWorkflow {
 
     /** A successful transfer is not a successful disk write. Only this owner-bound receipt clears the draft. */
     static boolean acknowledgeBlueprintSave(HologramSession s, NBTTagCompound request) {
-        if (!librarySaveCurrent(s.player, request) || !HologramLibraryService.connectedProjector(s.player)
-            || !s.id.equals(request.getString("session"))
+        if (!HologramLibraryService.saveCurrent(s.player, request) || !s.id.equals(request.getString("session"))
             || s.blueprintSaveReceipt.isEmpty()
             || !s.blueprintSaveReceipt.equals(request.getString("saveReceipt"))
             || !s.blueprintSaveLocalId.equals(request.getString("localId"))
@@ -411,9 +410,10 @@ final class HologramLibraryWorkflow {
                 return true;
             }
         }
-        if (!s.blueprintSaveSelectedPresetId.isEmpty()) HologramSessionPolicy.currentTool(s)
+        if (!s.blueprintSaveSelectedPresetId.isEmpty()) HologramSessionPolicy.jobTool(s)
             .getTagCompound()
             .setString(HologramSessionKeys.SELECTED_PRESET, s.blueprintSaveSelectedPresetId);
+        s.player.inventory.markDirty();
         s.blueprintSaveSelectedPresetId = "";
         s.blueprintSaveReceipt = "";
         s.blueprintDirty = false;
@@ -431,9 +431,8 @@ final class HologramLibraryWorkflow {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         return s != null && s.player == player
             && !s.cancelled
-            && s.libraryUiActive
             && HologramWorkspace.areaSessionOwned(s)
-            && HologramSessionPolicy.valid(s)
+            && HologramSessionPolicy.saveValid(s)
             && s.id.equals(request.getString("session"))
             && request.hasKey("planRevision", 4)
             && s.planRevision == request.getLong("planRevision")

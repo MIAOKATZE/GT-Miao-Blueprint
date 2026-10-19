@@ -16,6 +16,7 @@ public final class HologramNativePreviewIsolationRegression {
     public static void run() {
         try {
             isolatedHydration();
+            boundedNeighborHydration();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("native preview isolation fixture", failure);
         }
@@ -147,6 +148,62 @@ public final class HologramNativePreviewIsolationRegression {
                 .that(planned.getWorldObj() == isolated, "rejected provider never reassigns the existing tile's world");
         } finally {
             HologramNativeRenderRegistry.unregister(adapter);
+        }
+    }
+
+    private static void boundedNeighborHydration() throws ReflectiveOperationException {
+        Block block = net.minecraft.init.Blocks.stone;
+        HologramNativeRenderRegistry.Adapter adapter = new HologramNativeRenderRegistry.Adapter() {
+
+            public boolean supports(Block candidate) {
+                return candidate == block;
+            }
+
+            public TileEntity createTile(Block candidate, int metadata, World isolated) {
+                return new NeighborTile();
+            }
+        };
+        HologramNativeRenderRegistry.register(adapter);
+        try {
+            NBTTagList rows = new NBTTagList();
+            for (int x = 0; x < 2048; x++) {
+                NBTTagCompound row = new NBTTagCompound(), display = new NBTTagCompound();
+                row.setString("wantId", "minecraft:stone");
+                row.setInteger("x", x);
+                row.setInteger("y", 64);
+                display.setTag("nativeTile", new NBTTagCompound());
+                row.setTag("targetDisplay", display);
+                rows.appendTag(row);
+            }
+            NBTTagCompound scene = new NBTTagCompound();
+            scene.setTag("cells", rows);
+            HologramBlockAccess access = access(new HologramState(scene), false);
+            NeighborTile.reads = 0;
+            SimpleAssert.that(access.getTileEntity(0, 64, 0) != null, "connected surface admits first tile");
+            SimpleAssert.eq(1, NeighborTile.reads, "native neighbor callbacks do not recursively load the surface");
+            for (int x = 1; x < 2048; x++) SimpleAssert.that(
+                access.getTileEntity(x, 64, 0) != null,
+                "deferred neighbor remains available for its own render request");
+            SimpleAssert.eq(2048, NeighborTile.reads, "every host is decoded once without recursion");
+            SimpleAssert.that(
+                access.getTileEntity(0, 64, 0)
+                    .getWorldObj()
+                    .getTileEntity(1, 64, 0) != null,
+                "completed adjacent hosts remain visible for native face culling");
+        } finally {
+            HologramNativeRenderRegistry.unregister(adapter);
+        }
+    }
+
+    public static final class NeighborTile extends TileEntity {
+
+        static int reads;
+
+        public void readFromNBT(NBTTagCompound tag) {
+            super.readFromNBT(tag);
+            reads++;
+            getWorldObj().getTileEntity(xCoord + 1, yCoord, zCoord);
+            getWorldObj().getTileEntity(xCoord - 1, yCoord, zCoord);
         }
     }
 

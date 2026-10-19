@@ -26,6 +26,7 @@ public final class HologramCutRawPreviewRegression {
 
     public static void run() throws ReflectiveOperationException {
         registeredHandlerRouting();
+        boundedNeighborHydration();
         AtomicInteger failures = new AtomicInteger();
         HologramCutRawPreviewWorld world = shell((cell, error) -> failures.incrementAndGet());
         NBTTagCompound selectedAir = new NBTTagCompound();
@@ -108,6 +109,38 @@ public final class HologramCutRawPreviewRegression {
             world.getTileEntity(2, 3, 4) == null && failures.get() == 1,
             "failed native factory is not retried every frame");
         check(cell.raw.equals(failingOriginal) && row.equals(original), "failed reader retains the complete raw cache");
+        world.release();
+    }
+
+    private static void boundedNeighborHydration() throws ReflectiveOperationException {
+        HologramCutRawPreviewWorld world = shell(
+            (cell, error) -> { throw new AssertionError("connected native surface", error); });
+        Field block = HologramCutRawPreviewWorld.Cell.class.getDeclaredField("block");
+        block.setAccessible(true);
+        ProbeBlock host = new ProbeBlock();
+        for (int x = 0; x < 2048; x++) {
+            NBTTagCompound row = new NBTTagCompound(), tile = new NBTTagCompound();
+            row.setInteger("x", x);
+            row.setInteger("y", 64);
+            row.setString("block", "minecraft:stone");
+            tile.setBoolean("walkNeighbors", true);
+            row.setTag("tile", tile);
+            HologramCutRawPreviewWorld.Cell cell = new HologramCutRawPreviewWorld.Cell(row);
+            block.set(cell, host);
+            world.cells.put(HologramCutRawPreviewWorld.key(x, 64, 0), cell);
+        }
+        ProbeTile.reads = 0;
+        check(
+            world.getTileEntity(0, 64, 0) != null && ProbeTile.reads == 1,
+            "raw hydration never recursively loads neighbors");
+        for (int x = 1; x < 2048; x++)
+            check(world.getTileEntity(x, 64, 0) != null, "raw deferred host remains available");
+        check(ProbeTile.reads == 2048, "raw connected surface loads each host once");
+        check(
+            world.getTileEntity(2047, 64, 0)
+                .getWorldObj()
+                .getTileEntity(2046, 64, 0) != null,
+            "raw completed neighbors remain visible");
         world.release();
     }
 
@@ -239,6 +272,10 @@ public final class HologramCutRawPreviewRegression {
         public void readFromNBT(NBTTagCompound tag) {
             super.readFromNBT(tag);
             reads++;
+            if (tag.getBoolean("walkNeighbors")) {
+                getWorldObj().getTileEntity(xCoord + 1, yCoord, zCoord);
+                getWorldObj().getTileEntity(xCoord - 1, yCoord, zCoord);
+            }
             seen = (NBTTagCompound) tag.copy();
             tag.getCompoundTag("unknown")
                 .setString("privateAddonField", "reader mutated its input");

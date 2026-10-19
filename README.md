@@ -354,9 +354,9 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 <details>
 <summary><strong>传输、后台任务与开发者说明 / Transfers, background tasks and developer notes</strong></summary>
 
-新安装默认全服聚合上传限速 **1024 KiB/s（1 MiB/s）**、下载限速 **128 KiB/s**。管理员可在服务器蓝图库设置中调整；已有配置值保留。客户端与服务端均更新后，上传连续发送分片并合并回执；连接旧服务端时保留原单片传输。
+新安装默认全服聚合上传限速 **128 KiB/s**、下载限速 **512 KiB/s**。管理员可在服务器蓝图库设置中调整；旧版未标记的上下行 16/16 配置首次升级为上述默认值，其他自定义值保留，之后明确设置的 16/16 不会重复迁移。客户端与服务端均更新后，上传连续发送分片并合并回执；连接旧服务端时保留原单片传输。
 
-New servers default to shared upload/download limits of **1024 KiB/s (1 MiB/s)** and **128 KiB/s**. Operators can adjust both in server library settings; existing configuration values are preserved. Updated clients and servers pipeline uploads; older servers retain compatible single-chunk transfer.
+New servers default to shared upload/download limits of **128 KiB/s** and **512 KiB/s**. Operators can adjust both in server library settings. Unversioned legacy 16/16 limits migrate once to these defaults; other custom values and later explicit 16/16 choices are preserved. Updated clients and servers pipeline uploads; older servers retain compatible single-chunk transfer.
 
 等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置与结构调整的区别，并支持不再显示。
 

@@ -106,6 +106,25 @@ final class HologramLibraryServiceRegression {
             SimpleAssert.that(
                 HologramService.librarySaveCurrent(owner, saveRequest),
                 "native artifact save capability is owner, source revision, and local ID bound");
+            owner.inventory.currentItem = 1;
+            set(session, "libraryUiActive", false);
+            SimpleAssert.that(
+                HologramLibraryService.saveCurrent(owner, saveRequest)
+                    && HologramSessionPolicy.tickValid((HologramSession) session),
+                "admitted save continues in the background with its original tool in the original slot");
+            ItemStack originalTool = owner.inventory.mainInventory[0];
+            owner.inventory.mainInventory[0] = null;
+            SimpleAssert.that(
+                !HologramLibraryService.saveCurrent(owner, saveRequest),
+                "removing original tool revokes the save");
+            owner.inventory.mainInventory[0] = originalTool;
+            NBTTagCompound changed = (NBTTagCompound) saveRequest.copy();
+            changed.setLong("planRevision", 43L);
+            SimpleAssert.that(
+                !HologramLibraryService.saveCurrent(owner, changed),
+                "background save cannot accept a changed plan");
+            owner.inventory.currentItem = 0;
+            set(session, "libraryUiActive", true);
             SimpleAssert.that(
                 !HologramService.librarySaveCurrent(other, saveRequest),
                 "other actor cannot submit a saved preview for the owner");
@@ -142,10 +161,20 @@ final class HologramLibraryServiceRegression {
                 (Boolean) get(session, "blueprintDirty"),
                 "old source revision cannot acknowledge a complete artifact");
             acknowledgement.setLong("planRevision", 42L);
+            owner.inventory.currentItem = 1;
+            NBTTagCompound backgroundClose = (NBTTagCompound) request.copy();
+            backgroundClose.setString("op", "close");
+            HologramService.handle(owner, backgroundClose);
+            SimpleAssert.eq(
+                saveReceipt,
+                get(session, "blueprintSaveReceipt"),
+                "closing presentation preserves exact admitted receipt");
             HologramService.handle(owner, acknowledgement);
             SimpleAssert.that(
                 !(Boolean) get(session, "blueprintDirty") && ((String) get(session, "blueprintSaveReceipt")).isEmpty(),
                 "only exact JSON and verified PNG disk ACK retires the nonce");
+            owner.inventory.currentItem = 0;
+            set(session, "libraryUiActive", true);
             exerciseLocalReceipt(owner, other, reconnect, session, request, savedLocal, jsonSha, previewSha);
             NBTTagCompound close = (NBTTagCompound) request.copy();
             close.setString("op", "close");

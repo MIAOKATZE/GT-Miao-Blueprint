@@ -37,7 +37,7 @@ public final class HologramLibraryService {
     }
 
     static boolean saveCurrent(EntityPlayerMP player, NBTTagCompound request) {
-        return connectedProjector(player) && HologramService.librarySaveCurrent(player, request);
+        return connected(player) && HologramService.librarySaveCurrent(player, request);
     }
 
     static boolean draftCurrent(EntityPlayerMP player, NBTTagCompound request) {
@@ -46,13 +46,17 @@ public final class HologramLibraryService {
     }
 
     static boolean connectedProjector(EntityPlayerMP player) {
+        return connected(player)
+            && com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem());
+    }
+
+    private static boolean connected(EntityPlayerMP player) {
         return player != null && !player.isDead
             && player.worldObj != null
             && !player.worldObj.isRemote
             && player.playerNetServerHandler != null
             && player.playerNetServerHandler.netManager != null
-            && player.playerNetServerHandler.netManager.isChannelOpen()
-            && com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem());
+            && player.playerNetServerHandler.netManager.isChannelOpen();
     }
 
     public static void quickBootstrap(EntityPlayerMP player, NBTTagCompound request) {

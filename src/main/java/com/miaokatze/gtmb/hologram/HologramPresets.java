@@ -994,8 +994,9 @@ final class HologramPresets {
             text(structure.sourceMod, 256);
             text(structure.sourceClass, 512);
             if (structure.textBoxNbt != null && !structure.textBoxNbt.isEmpty()) {
-                if (!HologramTextBox.isAttachmentId(structure.id) || structure.textBoxNbt.length() > 524288)
-                    throw new IOException("文字对象标识或数据长度无效");
+                if (!HologramTextBox.isAttachmentId(structure.id)) throw new IOException("文字或图片对象标识无效");
+                // The shared decoder and payloadBudget already enforce the per-NBT and aggregate byte limits.
+                // A picture retains its source pixels, regardless of the smaller selected output dimensions.
                 HologramTextBox.read(HologramTextWorkflow.definition(structure));
             }
             if (structure.main < 1 || structure.channels == null || structure.channels.size() > 64)

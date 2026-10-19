@@ -108,7 +108,9 @@ final class HologramActionDispatcher {
         if ("close".equals(op)) HologramAuthoringWorkflow.clearSourceSwitch(s);
         boolean runningControl = (s.job == 1 || s.job == 2 || HologramAeCraftingOrders.active(player))
             && ("close".equals(op) || "pause".equals(op) || "resume".equals(op) || "cancel".equals(op));
-        if (!(runningControl ? HologramSessionPolicy.jobValid(s) : HologramSessionPolicy.valid(s))) {
+        boolean closingSave = "close".equals(op) && !s.blueprintSaveReceipt.isEmpty();
+        if (!(closingSave ? HologramSessionPolicy.saveValid(s)
+            : runningControl ? HologramSessionPolicy.jobValid(s) : HologramSessionPolicy.valid(s))) {
             if (!HologramWorkspace.areaSessionOwned(s)) HologramWorkspace.clearAreaSelection(s);
             s.job = 4;
             HologramSession.cancelCaptureRetry(s);
@@ -151,6 +153,12 @@ final class HologramActionDispatcher {
             return;
         }
         if ("close".equals(op)) {
+            if (closingSave) {
+                s.open = false;
+                s.libraryUiActive = false;
+                HologramSnapshots.sendUi(s);
+                return;
+            }
             HologramAuthoringWorkflow.clearSourceSwitch(s);
             s.libraryQuickToken = "";
             HologramProjectorWorkflow.dismissPresetBrowse(s);

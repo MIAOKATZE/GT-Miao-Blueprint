@@ -1360,16 +1360,19 @@ public final class HologramClient {
                 if (same && screen.retainsPlacementReview(next)) screen.updateState(next);
                 else mc.displayGuiScreen(null);
             }
-        } else if (HologramAeContainerScreen.activeForSession(next.session) != null && same) {
-            // The MUI2 stack preserves this child while NEI temporarily owns the vanilla screen.
-            HologramAeContainerScreen.activeForSession(next.session)
-                .updateState(next);
-        } else if (mc.currentScreen instanceof HologramScreen
-            && (same || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
-                ((HologramScreen) mc.currentScreen).updateState(next);
-            } else if (!same || nbt.getBoolean("open")) {
-                mc.displayGuiScreen(new HologramScreen(next));
-            }
+        } else
+            if (same && mc.currentScreen instanceof HologramMuiScreen editor && editor.retainAttachmentEditor(next)) {
+                // Local text/picture drafts survive an unchanged workspace snapshot.
+            } else if (HologramAeContainerScreen.activeForSession(next.session) != null && same) {
+                // The MUI2 stack preserves this child while NEI temporarily owns the vanilla screen.
+                HologramAeContainerScreen.activeForSession(next.session)
+                    .updateState(next);
+            } else if (mc.currentScreen instanceof HologramScreen
+                && (same || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
+                    ((HologramScreen) mc.currentScreen).updateState(next);
+                } else if (!same || nbt.getBoolean("open")) {
+                    mc.displayGuiScreen(new HologramScreen(next));
+                }
     }
 
     private static final HologramPlacementDeidentificationSync placementIdentitySync = new HologramPlacementDeidentificationSync();

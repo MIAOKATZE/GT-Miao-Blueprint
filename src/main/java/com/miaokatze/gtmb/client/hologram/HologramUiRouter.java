@@ -133,6 +133,7 @@ final class HologramUiRouter {
         ui.bindings.tickField();
         ui.config.tickChannelFields();
         ui.position.tickFields();
+        ui.textBoxes.tickEditor();
     }
 
     void drawScreen(int mouseX, int mouseY, float ticks) {

@@ -24,6 +24,7 @@ final class HologramUiTextBoxes {
     private int originalX, originalY, originalZ;
     private int[] dragOrigin;
     private boolean chosen, pending;
+    private int requestedEditor = -1;
     private long request;
     private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job localJob;
     private byte[] picturePixels;
@@ -54,6 +55,7 @@ final class HologramUiTextBoxes {
     }
 
     void reset() {
+        requestedEditor = -1;
         if (pending) com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
         if (localJob != null) localJob.cancel();
         localJob = null;
@@ -96,7 +98,7 @@ final class HologramUiTextBoxes {
     }
 
     void activate(boolean picture) {
-        if (!allowed(picture) || pending || localJob != null) return;
+        if (!allowed(picture) || pending || localJob != null || requestedEditor >= 0) return;
         if (draft != null && chosen) {
             NBTTagCompound action = new NBTTagCompound();
             action.setLong("planRevision", ui.session.revision());
@@ -106,18 +108,45 @@ final class HologramUiTextBoxes {
             ui.session.send("placeTextBox", action, true);
             return;
         }
+        // Finish the current MUI mouse dispatch before replacing its active screen and viewport tree.
+        requestedEditor = picture ? 1 : 0;
+    }
+
+    void tickEditor() {
+        if (requestedEditor < 0) return;
+        boolean picture = requestedEditor == 1;
+        requestedEditor = -1;
+        if (Minecraft.getMinecraft().currentScreen != ui.host.parent() || !allowed(picture)
+            || pending
+            || localJob != null) return;
         try {
             NBTTagCompound selected = selectedDefinition(picture);
             HologramTextBox value = draft != null ? HologramTextBox.read(draft.write())
                 : selected == null ? new HologramTextBox() : HologramTextBox.read(selected);
             if (value.id.isEmpty())
                 value.id = (picture ? HologramPictureBox.PREFIX : HologramTextBox.PREFIX) + java.util.UUID.randomUUID();
-            Minecraft.getMinecraft()
-                .displayGuiScreen(
-                    picture ? new HologramPictureEditorScreen(ui, value) : new HologramTextEditorScreen(ui, value));
+            HologramMuiScreen editor = picture ? new HologramPictureEditorScreen(ui, value)
+                : new HologramTextEditorScreen(ui, value);
+            editor.openFrom(ui.host.parent());
         } catch (Exception failure) {
-            ui.session.notice(failure.getMessage());
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Attachment editor could not open", failure);
+            ui.session.notice("打开编辑器失败，请重试：" + (failure.getMessage() == null ? "窗口初始化失败" : failure.getMessage()));
         }
+    }
+
+    /** A repeated workspace snapshot must not replace a local editor with a new root screen. */
+    boolean retainEditor(HologramState next) {
+        HologramState current = ui.session.state();
+        NBTTagCompound data = next.data;
+        if (!current.session.equals(next.session) || ui.session.revision() != data.getLong("planRevision")
+            || current.data.getLong("uiSequence") != data.getLong("uiSequence")
+            || !data.getBoolean("open")
+            || data.getBoolean("settingsOnly")
+            || data.getBoolean("virtualPlacement")
+            || data.getBoolean("areaSelecting")) return false;
+        ui.host.parent()
+            .updateState(next);
+        return true;
     }
 
     void begin(HologramTextBox value) throws java.io.IOException {

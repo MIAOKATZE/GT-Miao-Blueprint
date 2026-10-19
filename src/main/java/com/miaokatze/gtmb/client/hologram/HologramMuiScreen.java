@@ -1,5 +1,8 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiScreen;
+
 import org.lwjgl.input.Keyboard;
 
 import com.cleanroommc.modularui.api.UpOrDown;
@@ -39,12 +42,31 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
     @Override
     public void initGui() {
         if (!built) {
-            built = true;
             buildPanel();
+            built = true;
         }
     }
 
+    /** Build before Minecraft takes input ownership; an initialization failure must leave a usable parent. */
+    final void openFrom(GuiScreen parent) {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.currentScreen != parent) return;
+        try {
+            initGui();
+            minecraft.displayGuiScreen(this);
+        } catch (RuntimeException failure) {
+            if (minecraft.currentScreen == this) minecraft.displayGuiScreen(parent);
+            else onMuiClose();
+            throw failure;
+        }
+        if (minecraft.currentScreen != this) onMuiClose();
+    }
+
     protected abstract void buildPanel();
+
+    boolean retainAttachmentEditor(HologramState next) {
+        return false;
+    }
 
     protected void onMuiClose() {}
 

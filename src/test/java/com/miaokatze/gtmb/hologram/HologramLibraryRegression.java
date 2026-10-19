@@ -1319,7 +1319,7 @@ public final class HologramLibraryRegression {
         download.take(slice, rate, 1);
         burst = 0;
         for (int i = 0; i < 8; i++) if (download.take(slice, rate, 50000001L)) burst++;
-        SimpleAssert.eq(2, burst, "download burst remains unchanged even at a high administrator setting");
+        SimpleAssert.eq(3, burst, "download drain admits only elapsed byte credit at a high administrator setting");
         HologramLibraryProtocol.FairBudget fair = new HologramLibraryProtocol.FairBudget(true);
         UUID[] owners = { UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID() };
         int[] served = new int[4];
@@ -1454,16 +1454,16 @@ public final class HologramLibraryRegression {
         Path file = Files.createTempDirectory("gtmb-library-config-")
             .resolve("library.cfg");
         HologramLibraryConfig config = new HologramLibraryConfig(file.toFile());
-        SimpleAssert.eq(1024, config.view().uploadKiB, "fresh default aggregate upload is 1 MiB/s");
-        SimpleAssert.eq(128, config.view().downloadKiB, "fresh default aggregate download");
+        SimpleAssert.eq(128, config.view().uploadKiB, "fresh default aggregate upload is 128 KiB/s");
+        SimpleAssert.eq(512, config.view().downloadKiB, "fresh default aggregate download is 512 KiB/s");
         SimpleAssert.eq(10, config.view().maxUploads, "default UUID quota");
         NBTTagCompound defaults = config.view()
             .tag(true);
-        SimpleAssert.eq(1024, defaults.getInteger("uploadKiB"), "administrator UI receives new upload default");
-        SimpleAssert.eq(128, defaults.getInteger("downloadKiB"), "administrator UI retains download default");
+        SimpleAssert.eq(128, defaults.getInteger("uploadKiB"), "administrator UI receives new upload default");
+        SimpleAssert.eq(512, defaults.getInteger("downloadKiB"), "administrator UI receives download default");
         HologramLibraryConfig freshReopened = new HologramLibraryConfig(file.toFile());
-        SimpleAssert.eq(1024, freshReopened.view().uploadKiB, "new upload default persists in actual Forge file");
-        SimpleAssert.eq(128, freshReopened.view().downloadKiB, "new file keeps existing download behavior");
+        SimpleAssert.eq(128, freshReopened.view().uploadKiB, "new upload default persists in actual Forge file");
+        SimpleAssert.eq(512, freshReopened.view().downloadKiB, "new download default persists");
         Path previousDefaultFile = file.resolveSibling("existing-128.cfg");
         Files.write(
             previousDefaultFile,
@@ -1490,7 +1490,7 @@ public final class HologramLibraryRegression {
             ("serverblueprintlibrary {\n I:downloadKiBPerSecond=16\n I:maxUploadsPerPlayer=7\n}\n")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         HologramLibraryConfig missingUpload = new HologramLibraryConfig(missingUploadFile.toFile());
-        SimpleAssert.eq(1024, missingUpload.view().uploadKiB, "missing upload key uses new upload default");
+        SimpleAssert.eq(128, missingUpload.view().uploadKiB, "missing upload key uses new upload default");
         SimpleAssert.eq(16, missingUpload.view().downloadKiB, "missing upload key does not migrate existing download");
         SimpleAssert.eq(7, missingUpload.view().maxUploads, "missing upload key does not migrate existing quota");
         Path legacyFile = file.resolveSibling("existing-16.cfg");
@@ -1499,13 +1499,22 @@ public final class HologramLibraryRegression {
             ("serverblueprintlibrary {\n I:uploadKiBPerSecond=16\n I:downloadKiBPerSecond=16\n I:maxUploadsPerPlayer=7\n}\n")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         HologramLibraryConfig legacyConfig = new HologramLibraryConfig(legacyFile.toFile());
-        SimpleAssert.eq(16, legacyConfig.view().uploadKiB, "existing explicit upload 16 is retained");
-        SimpleAssert.eq(16, legacyConfig.view().downloadKiB, "existing explicit download 16 is retained");
+        SimpleAssert.eq(128, legacyConfig.view().uploadKiB, "unversioned legacy pair migrates upload");
+        SimpleAssert.eq(512, legacyConfig.view().downloadKiB, "unversioned legacy pair migrates download");
         HologramLibraryConfig legacyReopened = new HologramLibraryConfig(legacyFile.toFile());
-        SimpleAssert.eq(16, legacyReopened.view().uploadKiB, "persisting existing config does not migrate its upload");
-        SimpleAssert
-            .eq(16, legacyReopened.view().downloadKiB, "persisting existing config does not migrate its download");
+        SimpleAssert.eq(128, legacyReopened.view().uploadKiB, "migrated upload persists after reopen");
+        SimpleAssert.eq(512, legacyReopened.view().downloadKiB, "migrated download persists after reopen");
         SimpleAssert.eq(7, legacyReopened.view().maxUploads, "existing quota remains unchanged");
+        legacyReopened.update(true, legacyReopened.view().revision, 16, 16, 7);
+        HologramLibraryConfig explicitSlow = new HologramLibraryConfig(legacyFile.toFile());
+        SimpleAssert.eq(16, explicitSlow.view().uploadKiB, "versioned explicit slow upload remains configurable");
+        SimpleAssert.eq(16, explicitSlow.view().downloadKiB, "migration never repeats over an administrator choice");
+        HologramLibraryProtocol.Budget download = new HologramLibraryProtocol.Budget();
+        int slice = HologramLibraryProtocol.CHUNK_BYTES, transferred = 0;
+        download.take(slice, 512 * 1024, 1);
+        for (int tick = 1; tick <= 400; tick++) for (int pass = 0; pass < 4; pass++)
+            if (download.take(slice, 512 * 1024, 1L + tick * 50000000L)) transferred += slice;
+        SimpleAssert.eq(20 * 512 * 1024, transferred, "fair multi-slice pump sustains configured 512 KiB/s");
         denied(() -> config.update(false, 1, 20, 30, 2), "OP3/read-only cannot change config");
         config.update(true, 1, 20, 30, 2);
         denied(() -> config.update(true, 1, 16, 16, 10), "stale GUI revision cannot overwrite command changes");
