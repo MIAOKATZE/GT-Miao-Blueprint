@@ -162,6 +162,9 @@ final class HologramMaterialWorkflow {
             || !action.hasKey("placementReviewNonce", 4)
             || action.getLong("placementReviewNonce") != s.placementReviewNonce)
             throw new IOException("材料确认已更新，请重新核对材料与抵扣券选择");
+        if (s.materialQuote == null
+            || s.materialQuote.getLong("voucherRulesRevision") != DecorationVoucherConfig.revision())
+            throw new IOException("抵用券规则已更新，正在重新核算材料，请稍候");
     }
 
     static void writeState(HologramSession s, NBTTagCompound state) {

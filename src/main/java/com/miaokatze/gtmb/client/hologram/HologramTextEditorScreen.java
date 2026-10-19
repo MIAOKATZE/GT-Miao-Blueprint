@@ -164,10 +164,18 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 .size(24));
         base.child(HologramMuiTheme.textField(values.get("material"), 44, 29, 180, 22, 192));
         base.child(HologramMuiTheme.textField(values.get("metadata"), 230, 29, 34, 22, 5));
-        base.child(HologramMuiTheme.button(() -> "羊毛", 12, 59, 92, 22, () -> palette("minecraft:wool")));
         base.child(
-            HologramMuiTheme.button(() -> "染色黏土", 110, 59, 92, 22, () -> palette("minecraft:stained_hardened_clay")));
-        base.child(HologramMuiTheme.button(() -> "背包", 208, 59, 56, 22, this::openInventory));
+            HologramMuiTheme.button(
+                () -> "羊毛粘土",
+                12,
+                59,
+                76,
+                22,
+                () -> palette(com.miaokatze.gtmb.hologram.HologramPictureBox.WOOLEN_CLAY)));
+        base.child(
+            HologramMuiTheme.button(() -> "陶瓦", 94, 59, 60, 22, () -> palette("minecraft:stained_hardened_clay")));
+        base.child(HologramMuiTheme.button(() -> "羊毛", 160, 59, 50, 22, () -> palette("minecraft:wool")));
+        base.child(HologramMuiTheme.button(() -> "背包", 216, 59, 48, 22, this::openInventory));
         for (int i = 0; i < 16; i++) {
             final int meta = i;
             base.child(
@@ -229,7 +237,8 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     private boolean coloredMaterial() {
         String material = values.get("material")
             .getStringValue();
-        return "minecraft:wool".equals(material) || "minecraft:stained_hardened_clay".equals(material);
+        return "minecraft:wool".equals(material) || "minecraft:stained_hardened_clay".equals(material)
+            || com.miaokatze.gtmb.hologram.HologramPictureBox.WOOLEN_CLAY.equals(material);
     }
 
     private void palette(String material) {

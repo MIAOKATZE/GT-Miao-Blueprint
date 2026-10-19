@@ -15,9 +15,12 @@ final class HologramTextColors {
 
     static int preview(String material, ItemStack stack, int dye) {
         int metadata = stack == null ? 0 : stack.getItemDamage();
-        int base = "minecraft:wool".equals(material) ? WOOL[metadata & 15]
-            : "minecraft:stained_hardened_clay".equals(material) ? CLAY[metadata & 15] : 0xffffff;
-        if (stack != null && !"minecraft:wool".equals(material)
+        boolean woolenClay = com.miaokatze.gtmb.hologram.HologramPictureBox.WOOLEN_CLAY.equals(material);
+        int base = woolenClay ? com.miaokatze.gtmb.hologram.HologramPictureBox.woolenClayColor(metadata)
+            : "minecraft:wool".equals(material) ? WOOL[metadata & 15]
+                : "minecraft:stained_hardened_clay".equals(material) ? CLAY[metadata & 15] : 0xffffff;
+        if (stack != null && !woolenClay
+            && !"minecraft:wool".equals(material)
             && !"minecraft:stained_hardened_clay".equals(material)) {
             Block block = Block.getBlockFromItem(stack.getItem());
             if (block != null) base = block.getRenderColor(metadata);

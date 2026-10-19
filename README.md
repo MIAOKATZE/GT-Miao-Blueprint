@@ -24,6 +24,8 @@
 
 *Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
+v0.1.28 开发版本将新建文字与图片的默认材质调整为 Chisel 羊毛粘土；图片优先使用羊毛粘土，并以陶瓦、羊毛补色。羊毛、陶瓦、混凝土与羊毛粘土均纳入抵用券默认规则，管理员保存后自动更新材料核算。已有蓝图与预设的材质保留。
+
 v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.md)：从 `.minecraft/MiaoBlueprintPicture` 读取图片，默认短边 64 像素，支持比例锁定、固定羊毛/黏土/混凝土组合、滤镜与边缘同色抠图。图片沿用 [文字附加](README/text-blueprints.md) 的整体编辑、旋转、轴面位移和冲突校验，随蓝图保存后可脱离原文件再次编辑。图片分辨率上限为 1024×1024，支持像素大小与厚度；文字和图片均支持处理预设、后台生成与分块上传。下载请见 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
 
 <p align="center">

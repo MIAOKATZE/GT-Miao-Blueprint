@@ -23,6 +23,11 @@ public final class DecorationVoucherRegression {
     private DecorationVoucherRegression() {}
 
     public static void run() {
+        try {
+            DecorationVoucherConfigRegression.run();
+        } catch (java.io.IOException | ReflectiveOperationException failure) {
+            throw new AssertionError("Voucher configuration", failure);
+        }
         Item voucher = new ItemDecorationVoucher();
         Item official = new ItemConstructableTrigger();
         SimpleAssert.eq(64, voucher.getItemStackLimit(), "voucher stacks as consumable banknotes");

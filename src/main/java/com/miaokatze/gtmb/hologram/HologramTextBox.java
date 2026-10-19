@@ -12,7 +12,7 @@ public final class HologramTextBox {
     public static final String PREFIX = "gtmb_text_";
     public static final int MAX_VOXELS = 64 * 1024 * 1024, MAX_BLOCKS = 16384;
     public static final int MAX_PIXEL_SIZE = 1024, MAX_SAMPLES = 4 * 1024 * 1024;
-    public String id = "", text = "猫猫蓝图", font = "minecraft", material = "minecraft:wool";
+    public String id = "", text = "猫猫蓝图", font = "minecraft", material = HologramPictureBox.WOOLEN_CLAY;
     public int metadata, color = 0xffffff, width, height, pixelX = 1, pixelY = 1, thickness = 1;
     public int x, y, z;
     public double yaw, pitch, roll, arc, bend, twist, shear;
