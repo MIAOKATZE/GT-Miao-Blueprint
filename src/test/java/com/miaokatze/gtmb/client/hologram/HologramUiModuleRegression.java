@@ -104,7 +104,8 @@ public final class HologramUiModuleRegression {
 
     private static void presentationSnapshotFailure() {
         try {
-            for (String operation : new String[] { "previewPreset", "choosePlacementPreset", "lockVirtual" }) {
+            for (String operation : new String[] { "previewPreset", "choosePlacementPreset", "lockVirtual",
+                "placeTextBox" }) {
                 HologramUiModules ui = presentationUi("presentation-" + operation, 0);
                 ui.session.send(operation, null, true);
                 long failedSequence = ui.session.pendingSequence();

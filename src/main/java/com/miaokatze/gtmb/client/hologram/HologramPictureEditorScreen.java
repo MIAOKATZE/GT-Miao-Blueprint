@@ -48,6 +48,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
     private String notice = "将图片放入 MiaoBlueprintPicture，点击列表读取；滤镜仅改变本地草稿";
     private String previewSignature = "";
     private byte[] preview;
+    private final HologramPictureTexture previewTexture = new HologramPictureTexture();
     private HologramPictureBox previewPicture;
 
     HologramPictureEditorScreen(HologramUiModules ui, HologramTextBox value) {
@@ -80,6 +81,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                     t -> t.addLine(
                         folder.toAbsolutePath()
                             .toString())));
+        panel().child(HologramMuiTheme.button(() -> "图片预设", 344, 38, 128, 22, this::openPresets));
         panel().child(HologramMuiTheme.button(() -> "刷新图片", 480, 38, 126, 22, this::refresh));
         ParentWidget<?> catalog = new ParentWidget<>().pos(14, 66)
             .size(178, 278)
@@ -152,7 +154,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 20,
                 HologramMuiTheme.TEXT)
                 .setEnabledIf(w -> keepAspect));
-        field(dimensions, "pixel", "像素边长 / 16", 0, 42, () -> true);
+        field(dimensions, "pixel", "像素大小 · 1/16 格", 0, 42, () -> true);
         field(dimensions, "thickness", "图片厚度 · 1–64", 136, 42, () -> true);
         dimensions.child(HologramMuiTheme.label(() -> "固定材料组合", 272, 42, 130, 15, HologramMuiTheme.MUTED));
         dimensions.child(
@@ -168,7 +170,8 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         dimensions.child(
             HologramMuiTheme.button(() -> (dither ? "✓ " : "") + "颜色抖动", 204, 88, 198, 22, () -> dither = !dither));
         dimensions.child(
-            HologramMuiTheme.label(() -> "厚度 16 = 1 格；同材质体积自动合并，填满后使用完整方块。", 0, 116, 402, 16, HologramMuiTheme.MUTED));
+            HologramMuiTheme
+                .label(() -> "最大 1024×1024；像素 1–16，超过 16 须为 16 倍数（≤1024）。", 0, 116, 402, 16, HologramMuiTheme.MUTED));
         panel().child(dimensions);
         ParentWidget<?> effects = new ParentWidget<>().pos(204, 264)
             .size(402, 134)
@@ -349,31 +352,51 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
             draft.pixelX = draft.pixelY = number("pixel");
             draft.thickness = number("thickness");
             draft.validate();
-            loading = true;
-            long token = ++generation;
-            worker.getQueue()
-                .clear();
-            worker.execute(() -> {
-                try {
-                    List<HologramTextBox.Cell> geometry = draft.generate();
-                    main(() -> {
-                        if (token != generation || closed) return;
-                        loading = false;
-                        if (!ui.textBoxes.allowed()) {
-                            notice = "工作区状态已变化，请返回后重试";
-                            return;
-                        }
-                        ui.textBoxes.begin(draft, geometry);
-                        Minecraft.getMinecraft()
-                            .displayGuiScreen(ui.host.parent());
-                    });
-                } catch (Exception failure) {
-                    failed(token, failure);
-                }
-            });
+            HologramAttachmentPresetDialogs.confirm(
+                this,
+                true,
+                com.miaokatze.gtmb.hologram.HologramAttachmentPresets.settings(draft),
+                () -> place(draft));
         } catch (Exception failure) {
             notice = message(failure);
         }
+    }
+
+    private void place(HologramTextBox draft) {
+        try {
+            ui.textBoxes.begin(draft);
+            Minecraft.getMinecraft()
+                .displayGuiScreen(ui.host.parent());
+        } catch (java.io.IOException failure) {
+            notice = failure.getMessage();
+        }
+    }
+
+    private void openPresets() {
+        HologramAttachmentPresetDialogs.open(this, true, settings -> {
+            try {
+                HologramTextBox base = new HologramTextBox();
+                base.id = original.id;
+                base.picture = source;
+                HologramTextBox applied = com.miaokatze.gtmb.hologram.HologramAttachmentPresets.apply(base, settings);
+                HologramPictureBox picture = applied.picture;
+                keepAspect = picture.keepAspect;
+                removeBackground = picture.removeBackground;
+                dither = picture.dither;
+                palette = picture.palette;
+                filter = picture.filter;
+                String[] keys = { "shortSide", "width", "height", "pixel", "thickness", "brightness", "contrast",
+                    "saturation", "tolerance" };
+                int[] numbers = { picture.shortSide, picture.width, picture.height, applied.pixelX, applied.thickness,
+                    picture.brightness, picture.contrast, picture.saturation, picture.backgroundTolerance };
+                for (int i = 0; i < keys.length; i++) values.get(keys[i])
+                    .setStringValue(Integer.toString(numbers[i]));
+                previewSignature = "";
+                notice = "已应用图片处理预设；原图与位置保留";
+            } catch (java.io.IOException failure) {
+                throw new IllegalArgumentException(failure.getMessage(), failure);
+            }
+        });
     }
 
     private void failed(long token, Exception failure) {
@@ -398,6 +421,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
     @Override
     protected void onMuiClose() {
         closed = true;
+        previewTexture.clear();
         generation++;
         worker.shutdownNow();
     }
@@ -451,18 +475,25 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                     t.setColorOpaque_I(((x / 10 + y / 10) & 1) == 0 ? 0x35414a : 0x253039);
                     quad(t, x, y, Math.min(10, 394 - x), Math.min(10, 154 - y));
                 }
+                t.draw();
                 if (preview != null && previewPicture != null) {
                     double scale = Math.min(386d / previewPicture.width, 130d / previewPicture.height);
                     double left = (402 - previewPicture.width * scale) / 2,
                         top = 24 + (130 - previewPicture.height * scale) / 2;
-                    for (int y = 0; y < previewPicture.height; y++) for (int x = 0; x < previewPicture.width; x++) {
-                        int index = (preview[y * previewPicture.width + x] & 255) - 1;
-                        if (index < 0) continue;
-                        t.setColorOpaque_I(previewPicture.paletteColor(index));
-                        quad(t, left + x * scale, top + y * scale, scale, scale);
-                    }
+                    double width = previewPicture.width * scale, height = previewPicture.height * scale;
+                    previewTexture.update(previewPicture, preview);
+                    previewTexture.bind();
+                    GL11.glEnable(GL11.GL_TEXTURE_2D);
+                    GL11.glEnable(GL11.GL_BLEND);
+                    GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                    t.startDrawingQuads();
+                    t.setColorOpaque_I(0xffffff);
+                    t.addVertexWithUV(left, top + height, 0, 0, 1);
+                    t.addVertexWithUV(left + width, top + height, 0, 1, 1);
+                    t.addVertexWithUV(left + width, top, 0, 1, 0);
+                    t.addVertexWithUV(left, top, 0, 0, 0);
+                    t.draw();
                 }
-                t.draw();
             } finally {
                 GL11.glPopAttrib();
             }

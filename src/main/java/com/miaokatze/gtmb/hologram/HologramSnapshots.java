@@ -666,6 +666,8 @@ final class HologramSnapshots {
         NBTTagCompound state = areaSelection(s);
         if (presets != null) state.setTag("presets", presets);
         state.setBoolean("workspaceUiOnly", true);
+        state.setTag("textPlacementAck", s.textPlacementAck.copy());
+        state.setBoolean("attachmentPending", s.attachmentTask != null);
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
         state.setBoolean("snapshotPending", s.capture != null || s.capturePending);

@@ -29,13 +29,21 @@ public final class HologramTextBoxRegression {
         SimpleAssert.eq(2, packed.size(), "large filled glyph spans two complete blocks");
         for (HologramTextBox.Cell cell : packed) {
             SimpleAssert.that(cell.fullBlock, "uncolored full occupancy may use an equivalent ordinary cube");
-            SimpleAssert.eq(1, cell.tile.getInteger("tilesCount"), "4096 voxels merge into one cuboid");
+            SimpleAssert.eq(
+                1,
+                cell.tile()
+                    .getInteger("tilesCount"),
+                "4096 voxels merge into one cuboid");
         }
         SimpleAssert.eq(8192, voxels(packed).size(), "three-dimensional packing retains exact material volume");
         text.color = 0x123456;
         for (HologramTextBox.Cell cell : text.generate()) {
             SimpleAssert.that(!cell.fullBlock, "arbitrary tint cannot be lost by converting to an ordinary block");
-            SimpleAssert.eq(1, cell.tile.getInteger("tilesCount"), "colored full cube still uses only one native tile");
+            SimpleAssert.eq(
+                1,
+                cell.tile()
+                    .getInteger("tilesCount"),
+                "colored full cube still uses only one native tile");
         }
         text.width = 2;
         text.height = 2;
@@ -48,7 +56,9 @@ public final class HologramTextBoxRegression {
         SimpleAssert.eq(
             2,
             text.generate()
-                .get(0).tile.getInteger("tilesCount"),
+                .get(0)
+                .tile()
+                .getInteger("tilesCount"),
             "L-shaped glyph packs into two exact cuboids");
     }
 
@@ -117,13 +127,15 @@ public final class HologramTextBoxRegression {
 
     private static java.util.Set<String> voxels(List<HologramTextBox.Cell> cells) {
         java.util.Set<String> result = new java.util.HashSet<>();
-        for (HologramTextBox.Cell cell : cells) for (int i = 0; i < cell.tile.getInteger("tilesCount"); i++) {
-            NBTTagCompound box = cell.tile.getCompoundTag("t" + i);
-            for (int x = box.getInteger("bBox0minX"); x < box.getInteger("bBox0maxX"); x++)
-                for (int y = box.getInteger("bBox0minY"); y < box.getInteger("bBox0maxY"); y++)
-                    for (int z = box.getInteger("bBox0minZ"); z < box.getInteger("bBox0maxZ"); z++)
-                        result.add((cell.x * 16 + x) + "," + (cell.y * 16 + y) + "," + (cell.z * 16 + z));
-        }
+        for (HologramTextBox.Cell cell : cells) for (int i = 0; i < cell.tile()
+            .getInteger("tilesCount"); i++) {
+                NBTTagCompound box = cell.tile()
+                    .getCompoundTag("t" + i);
+                for (int x = box.getInteger("bBox0minX"); x < box.getInteger("bBox0maxX"); x++)
+                    for (int y = box.getInteger("bBox0minY"); y < box.getInteger("bBox0maxY"); y++)
+                        for (int z = box.getInteger("bBox0minZ"); z < box.getInteger("bBox0maxZ"); z++)
+                            result.add((cell.x * 16 + x) + "," + (cell.y * 16 + y) + "," + (cell.z * 16 + z));
+            }
         return result;
     }
 
@@ -148,9 +160,15 @@ public final class HologramTextBoxRegression {
             SimpleAssert.eq(-1, cells.get(0).x, "negative block placement is exact");
             int volume = 0;
             for (HologramTextBox.Cell cell : cells) {
-                SimpleAssert.eq("LittleTilesTileEntity", cell.tile.getString("id"), "native tile entity identity");
-                for (int i = 0; i < cell.tile.getInteger("tilesCount"); i++) {
-                    NBTTagCompound box = cell.tile.getCompoundTag("t" + i);
+                SimpleAssert.eq(
+                    "LittleTilesTileEntity",
+                    cell.tile()
+                        .getString("id"),
+                    "native tile entity identity");
+                for (int i = 0; i < cell.tile()
+                    .getInteger("tilesCount"); i++) {
+                    NBTTagCompound box = cell.tile()
+                        .getCompoundTag("t" + i);
                     SimpleAssert.that(
                         !box.hasKey("isStructure") && !box.hasKey("text"),
                         "external payload consists of ordinary native tiles");

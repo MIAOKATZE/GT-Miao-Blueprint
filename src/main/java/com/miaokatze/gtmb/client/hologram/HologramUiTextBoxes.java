@@ -25,6 +25,11 @@ final class HologramUiTextBoxes {
     private int[] dragOrigin;
     private boolean chosen, pending;
     private long request;
+    private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job localJob;
+    private byte[] picturePixels;
+    private final HologramPictureTexture pictureTexture = new HologramPictureTexture();
+    private static final int[][] FACES = { { 0, 1, 3, 2 }, { 4, 6, 7, 5 }, { 0, 4, 5, 1 }, { 2, 3, 7, 6 },
+        { 0, 2, 6, 4 }, { 1, 5, 7, 3 } };
 
     HologramUiTextBoxes(HologramUiModules ui) {
         this.ui = ui;
@@ -49,6 +54,11 @@ final class HologramUiTextBoxes {
     }
 
     void reset() {
+        if (pending) com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
+        if (localJob != null) localJob.cancel();
+        localJob = null;
+        picturePixels = null;
+        pictureTexture.clear();
         draft = null;
         ghost = Collections.emptyList();
         pending = chosen = false;
@@ -69,6 +79,14 @@ final class HologramUiTextBoxes {
 
     String label(boolean picture) {
         String noun = picture ? "图片" : "文字";
+        if (active(picture) && localJob != null) return "生成" + noun + "…";
+        if (active(picture) && pending) {
+            String transfer = com.miaokatze.gtmb.hologram.HologramAttachmentUpload.clientProgress();
+            NBTTagCompound progress = ui.session.state().data.getCompoundTag("textPlacementAck");
+            return !transfer.isEmpty() ? transfer
+                : progress.getBoolean("pending") ? "处理 " + progress.getLong("done") + "/" + progress.getLong("total")
+                    : "校验" + noun + "…";
+        }
         return active(picture) ? pending ? "校验" + noun + "…" : chosen ? "确认放置" : "请选择" + noun + "位置"
             : selectedDefinition(picture) != null ? picture ? "编辑图片" : "编辑内容" : picture ? "添加图片" : "文字转蓝图";
     }
@@ -78,7 +96,7 @@ final class HologramUiTextBoxes {
     }
 
     void activate(boolean picture) {
-        if (!allowed(picture) || pending) return;
+        if (!allowed(picture) || pending || localJob != null) return;
         if (draft != null && chosen) {
             NBTTagCompound action = new NBTTagCompound();
             action.setLong("planRevision", ui.session.revision());
@@ -103,7 +121,13 @@ final class HologramUiTextBoxes {
     }
 
     void begin(HologramTextBox value) throws java.io.IOException {
-        begin(value, value.generate());
+        if (localJob != null) localJob.cancel();
+        pictureTexture.clear();
+        picturePixels = null;
+        localJob = com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.submit(value);
+        draft = value;
+        ghost = Collections.emptyList();
+        chosen = pending = false;
     }
 
     void begin(HologramTextBox value, List<HologramTextBox.Cell> generated) {
@@ -150,11 +174,10 @@ final class HologramUiTextBoxes {
     void acknowledge(HologramState state) {
         NBTTagCompound ack = state.data.getCompoundTag("textPlacementAck");
         if (!pending || ack.getLong("request") != request) return;
+        if (ack.getBoolean("pending")) return;
         pending = false;
         if (ack.getBoolean("accepted")) {
-            draft = null;
-            ghost = Collections.emptyList();
-            gizmo.cancel();
+            reset();
         } else {
             chosen = true;
             ui.session.notice(ack.getString("message") + "；" + draft.noun() + "预览保留，请移动后再次确认");
@@ -162,18 +185,20 @@ final class HologramUiTextBoxes {
     }
 
     boolean key(int key) {
-        if (draft == null || pending || ui.router.textFieldFocused()) return false;
+        if (draft == null || ui.router.textFieldFocused()) return false;
         if (key == Keyboard.KEY_ESCAPE) {
-            draft = null;
-            ghost = Collections.emptyList();
-            gizmo.cancel();
+            if (pending) ui.session.send("cancelAttachment", new NBTTagCompound(), false);
+            reset();
             return true;
         }
+        if (pending || localJob != null) return false;
         if (key == Keyboard.KEY_R) {
             int[] previous = draft.turns;
             try {
                 draft.turn(HologramClient.altHeld());
-                ghost = draft.generate();
+                if (draft.picture == null) {
+                    localJob = com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.submit(draft);
+                }
                 originalX = draft.x;
                 originalY = draft.y;
                 originalZ = draft.z;
@@ -232,8 +257,39 @@ final class HologramUiTextBoxes {
         return true;
     }
 
+    void uploadFailed() {
+        com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
+        pending = false;
+        chosen = true;
+    }
+
     void draw() {
         if (draft == null) return;
+        if (localJob != null) {
+            if (!localJob.done) {
+                ui.canvas.text(
+                    "后台生成" + draft.noun() + " " + localJob.completed + "/" + localJob.total + " · Esc 取消",
+                    38,
+                    245,
+                    390,
+                    0xd6b6ff);
+                return;
+            }
+            com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job ready = localJob;
+            localJob = null;
+            if (ready.failure != null) {
+                ui.session.notice(ready.failure.getMessage());
+                reset();
+                return;
+            }
+            picturePixels = ready.picturePixels;
+            boolean wasChosen = chosen;
+            if (ghost.isEmpty()) begin(draft, ready.cells);
+            else {
+                ghost = ready.cells;
+                chosen = wasChosen;
+            }
+        }
         if (!chosen) {
             ui.canvas.text(
                 "请先点击工作区选择" + draft.noun() + "位置 · R 旋转 / Alt+R 竖转 · Esc 取消",
@@ -250,30 +306,55 @@ final class HologramUiTextBoxes {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             Tessellator t = Tessellator.instance;
-            t.startDrawingQuads();
-            for (HologramTextBox.Cell cell : ghost) for (int i = 0; i < cell.tile.getInteger("tilesCount"); i++) {
-                NBTTagCompound box = cell.tile.getCompoundTag("t" + i);
-                String material = box.getString("block");
-                int color = draft.picture == null ? HologramTextColors.preview(
-                    material,
-                    new net.minecraft.item.ItemStack(
-                        net.minecraft.block.Block.getBlockFromName(material),
-                        1,
-                        box.getInteger("meta")),
-                    draft.color) : pictureColor(material, box.getInteger("meta"));
-                t.setColorRGBA_I(color, 104);
-                double x = cell.x + draft.x - originalX - .5, y = cell.y + draft.y - originalY - .5,
-                    z = cell.z + draft.z - originalZ - .5;
+            if (draft.picture != null && picturePixels != null) {
+                pictureTexture.update(draft.picture, picturePixels);
+                pictureTexture.bind();
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                GL11.glEnable(GL11.GL_ALPHA_TEST);
+                GL11.glAlphaFunc(GL11.GL_GREATER, .1f);
                 double[][] points = new double[8][];
-                for (int v = 0; v < 8; v++) points[v] = HologramRenderer.project(
-                    x + box.getInteger((v & 1) == 0 ? "bBox0minX" : "bBox0maxX") / 16d,
-                    y + box.getInteger((v & 2) == 0 ? "bBox0minY" : "bBox0maxY") / 16d,
-                    z + box.getInteger((v & 4) == 0 ? "bBox0minZ" : "bBox0maxZ") / 16d);
-                for (int[] face : new int[][] { { 0, 1, 3, 2 }, { 4, 6, 7, 5 }, { 0, 4, 5, 1 }, { 2, 3, 7, 6 },
-                    { 0, 2, 6, 4 }, { 1, 5, 7, 3 } })
-                    for (int vertex : face) t.addVertex(points[vertex][0], points[vertex][1], 10);
+                for (int v = 0; v < 8; v++) {
+                    double[] point = draft.corner(
+                        (v & 1) == 0 ? 0 : draft.picture.width * draft.pixelX,
+                        (v & 2) == 0 ? 0 : draft.picture.height * draft.pixelY,
+                        (v & 4) == 0 ? 0 : draft.thickness);
+                    points[v] = HologramRenderer.project(
+                        draft.x - .5 + point[0] / 16,
+                        draft.y - .5 + point[1] / 16,
+                        draft.z - .5 + point[2] / 16);
+                }
+                t.startDrawingQuads();
+                t.setColorRGBA_I(0xffffff, 150);
+                for (int[] face : FACES) for (int v : face)
+                    t.addVertexWithUV(points[v][0], points[v][1], 10, (v & 1) == 0 ? 0 : 1, (v & 2) == 0 ? 1 : 0);
+                t.draw();
+            } else {
+                int total = 0;
+                for (HologramTextBox.Cell cell : ghost) total += cell.boxes.length / 7;
+                int stride = Math.max(1, (total + 2047) / 2048), visited = 0;
+                int color = HologramTextColors.preview(
+                    draft.material,
+                    new net.minecraft.item.ItemStack(
+                        net.minecraft.block.Block.getBlockFromName(draft.material),
+                        1,
+                        draft.metadata),
+                    draft.color);
+                t.startDrawingQuads();
+                t.setColorRGBA_I(color, 104);
+                for (HologramTextBox.Cell cell : ghost) for (int at = 0; at < cell.boxes.length; at += 7) {
+                    if (visited++ % stride != 0) continue;
+                    double x = cell.x + draft.x - originalX - .5, y = cell.y + draft.y - originalY - .5,
+                        z = cell.z + draft.z - originalZ - .5;
+                    double[][] points = new double[8][];
+                    for (int v = 0; v < 8; v++) points[v] = HologramRenderer.project(
+                        x + cell.boxes[at + ((v & 1) == 0 ? 1 : 4)] / 16d,
+                        y + cell.boxes[at + ((v & 2) == 0 ? 2 : 5)] / 16d,
+                        z + cell.boxes[at + ((v & 4) == 0 ? 3 : 6)] / 16d);
+                    for (int[] face : FACES)
+                        for (int vertex : face) t.addVertex(points[vertex][0], points[vertex][1], 10);
+                }
+                t.draw();
             }
-            t.draw();
         } finally {
             GL11.glPopAttrib();
         }
@@ -286,12 +367,6 @@ final class HologramUiTextBoxes {
             245,
             390,
             0xd6b6ff);
-    }
-
-    private int pictureColor(String material, int metadata) {
-        for (int i = 0; i < draft.picture.paletteSize(); i++) if (draft.picture.material(i)
-            .equals(material) && draft.picture.metadata(i) == metadata) return draft.picture.paletteColor(i);
-        return 0xffffff;
     }
 
 }

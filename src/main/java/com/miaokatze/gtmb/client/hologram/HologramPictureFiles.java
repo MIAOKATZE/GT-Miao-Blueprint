@@ -91,7 +91,7 @@ final class HologramPictureFiles {
         double scale = Math.min(
             1,
             Math.min(
-                512d / Math.max(image.getWidth(), image.getHeight()),
+                HologramPictureBox.MAX_SIDE / (double) Math.max(image.getWidth(), image.getHeight()),
                 Math.sqrt(HologramPictureBox.MAX_PIXELS / (double) ((long) image.getWidth() * image.getHeight()))));
         picture.sourceWidth = Math.max(1, (int) Math.floor(image.getWidth() * scale));
         picture.sourceHeight = Math.max(1, (int) Math.floor(image.getHeight() * scale));

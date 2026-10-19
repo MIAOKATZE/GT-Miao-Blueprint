@@ -85,6 +85,7 @@ final class HologramGuidance {
 
     static int accent(HologramState state, int id, int selected, boolean blueprints, boolean confirmation,
         boolean savedSelected) {
+        if (id == 330 && !state.cells.isEmpty()) return HologramUiAccent.WARNING;
         if (id == 52 && (state.data.getInteger("job") == 1 || state.data.getInteger("job") == 2)
             || id == 54 && confirmation
             || id == 136

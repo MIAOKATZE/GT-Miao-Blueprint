@@ -92,8 +92,12 @@ public final class HologramPictureBoxRegression {
             SimpleAssert.eq(1, uniform.size(), "filled picture occupies one host");
             SimpleAssert
                 .that(uniform.get(0).fullBlock, "single-material complete image cube may become ordinary block");
-            SimpleAssert
-                .eq(1, uniform.get(0).tile.getInteger("tilesCount"), "uniform micro-pixels merge into one cuboid");
+            SimpleAssert.eq(
+                1,
+                uniform.get(0)
+                    .tile()
+                    .getInteger("tilesCount"),
+                "uniform micro-pixels merge into one cuboid");
             attachment.thickness = 64;
             List<HologramTextBox.Cell> thick = HologramTextBox.read(attachment.write())
                 .generate();
@@ -101,7 +105,11 @@ public final class HologramPictureBoxRegression {
             SimpleAssert.eq(16384, voxels(thick).size(), "thickness preserves every material voxel");
             for (HologramTextBox.Cell cell : thick) {
                 SimpleAssert.that(cell.fullBlock, "thick uniform image collapses to ordinary full cubes");
-                SimpleAssert.eq(1, cell.tile.getInteger("tilesCount"), "each filled host stores one cuboid");
+                SimpleAssert.eq(
+                    1,
+                    cell.tile()
+                        .getInteger("tilesCount"),
+                    "each filled host stores one cuboid");
             }
             attachment.thickness = 65;
             try {
@@ -115,7 +123,9 @@ public final class HologramPictureBoxRegression {
             SimpleAssert.that(!mixed.get(0).fullBlock, "multiple materials cannot collapse to one ordinary block");
             SimpleAssert.eq(
                 2,
-                mixed.get(0).tile.getInteger("tilesCount"),
+                mixed.get(0)
+                    .tile()
+                    .getInteger("tilesCount"),
                 "neighboring equal pixels pack without crossing material boundaries");
             Map<String, String> original = voxels(mixed);
             SimpleAssert.eq(4096, original.size(), "mixed material packing preserves exact volume without overlaps");
@@ -146,7 +156,7 @@ public final class HologramPictureBoxRegression {
                 HologramTextBox.read(malformed);
                 throw new AssertionError("truncated source admitted");
             } catch (java.io.IOException expectedFailure) {}
-            attachment.picture.width = 513;
+            attachment.picture.width = 1025;
             try {
                 attachment.generate();
                 throw new AssertionError("oversized image admitted");
@@ -159,16 +169,18 @@ public final class HologramPictureBoxRegression {
 
     private static Map<String, String> voxels(List<HologramTextBox.Cell> cells) {
         Map<String, String> result = new HashMap<>();
-        for (HologramTextBox.Cell cell : cells) for (int i = 0; i < cell.tile.getInteger("tilesCount"); i++) {
-            NBTTagCompound tile = cell.tile.getCompoundTag("t" + i);
-            String material = tile.getString("block") + "@" + tile.getInteger("meta");
-            for (int x = tile.getInteger("bBox0minX"); x < tile.getInteger("bBox0maxX"); x++)
-                for (int y = tile.getInteger("bBox0minY"); y < tile.getInteger("bBox0maxY"); y++)
-                    for (int z = tile.getInteger("bBox0minZ"); z < tile.getInteger("bBox0maxZ"); z++) {
-                        String key = (cell.x * 16 + x) + "," + (cell.y * 16 + y) + "," + (cell.z * 16 + z);
-                        SimpleAssert.that(result.put(key, material) == null, "no overlapping material micro-tiles");
-                    }
-        }
+        for (HologramTextBox.Cell cell : cells) for (int i = 0; i < cell.tile()
+            .getInteger("tilesCount"); i++) {
+                NBTTagCompound tile = cell.tile()
+                    .getCompoundTag("t" + i);
+                String material = tile.getString("block") + "@" + tile.getInteger("meta");
+                for (int x = tile.getInteger("bBox0minX"); x < tile.getInteger("bBox0maxX"); x++)
+                    for (int y = tile.getInteger("bBox0minY"); y < tile.getInteger("bBox0maxY"); y++)
+                        for (int z = tile.getInteger("bBox0minZ"); z < tile.getInteger("bBox0maxZ"); z++) {
+                            String key = (cell.x * 16 + x) + "," + (cell.y * 16 + y) + "," + (cell.z * 16 + z);
+                            SimpleAssert.that(result.put(key, material) == null, "no overlapping material micro-tiles");
+                        }
+            }
         return result;
     }
 }

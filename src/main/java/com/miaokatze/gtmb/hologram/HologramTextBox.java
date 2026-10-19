@@ -10,7 +10,8 @@ import net.minecraft.nbt.NBTTagCompound;
 public final class HologramTextBox {
 
     public static final String PREFIX = "gtmb_text_";
-    public static final int MAX_VOXELS = 262144, MAX_BLOCKS = 2048;
+    public static final int MAX_VOXELS = 64 * 1024 * 1024, MAX_BLOCKS = 16384;
+    public static final int MAX_PIXEL_SIZE = 1024, MAX_SAMPLES = 4 * 1024 * 1024;
     public String id = "", text = "猫猫蓝图", font = "minecraft", material = "minecraft:wool";
     public int metadata, color = 0xffffff, width, height, pixelX = 1, pixelY = 1, thickness = 1;
     public int x, y, z;
@@ -93,8 +94,8 @@ public final class HologramTextBox {
         for (int turn : turns) if (turn != 1 && turn != 2) throw new IOException("文字旋转记录无效");
         if (picture != null) {
             picture.validate();
-            if ((!id.isEmpty() && !id.matches(HologramPictureBox.PREFIX + "[a-f0-9-]{36}")) || pixelX < 1
-                || pixelX > 16
+            if ((!id.isEmpty() && !id.matches(HologramPictureBox.PREFIX + "[a-f0-9-]{36}"))
+                || !validPicturePixelSize(pixelX)
                 || pixelY != pixelX
                 || thickness < 1
                 || thickness > 64
@@ -165,16 +166,82 @@ public final class HologramTextBox {
     public static final class Cell {
 
         public final int x, y, z;
-        public final NBTTagCompound tile;
+        /** Seven integers per cuboid: paint index followed by min/max XYZ. No retained native NBT tree. */
+        public final int[] boxes;
+        public final String[] materials;
+        public final int[] metadata, colors;
         public final boolean fullBlock;
+        private String encodedTile;
 
-        Cell(int x, int y, int z, NBTTagCompound tile, boolean fullBlock) {
+        Cell(int x, int y, int z, int[] boxes, String[] materials, int[] metadata, int[] colors, boolean fullBlock) {
             this.x = x;
             this.y = y;
             this.z = z;
-            this.tile = tile;
+            this.boxes = boxes;
+            this.materials = materials;
+            this.metadata = metadata;
+            this.colors = colors;
             this.fullBlock = fullBlock;
         }
+
+        public NBTTagCompound tile() {
+            return tile(boxes.length / 7);
+        }
+
+        NBTTagCompound sampleTile() {
+            return tile(1);
+        }
+
+        String encodedTile() throws IOException {
+            if (encodedTile == null) encodedTile = HologramBlueprintNbt.encodeCaptured(tile());
+            return encodedTile;
+        }
+
+        private NBTTagCompound tile(int count) {
+            NBTTagCompound tile = new NBTTagCompound();
+            tile.setString("id", "LittleTilesTileEntity");
+            tile.setInteger("tilesCount", count);
+            for (int i = 0; i < count; i++) {
+                int at = i * 7, paint = boxes[at];
+                NBTTagCompound box = new NBTTagCompound();
+                box.setString("tID", colors[paint] == 0xffffff ? "BlockTileBlock" : "BlockTileColored");
+                box.setString("block", materials[paint]);
+                box.setInteger("meta", metadata[paint]);
+                box.setInteger("color", colors[paint]);
+                box.setInteger("bSize", 1);
+                for (int axis = 0; axis < 3; axis++) {
+                    String name = axis == 0 ? "X" : axis == 1 ? "Y" : "Z";
+                    box.setInteger("cVec" + name.toLowerCase(java.util.Locale.ROOT), boxes[at + 1 + axis]);
+                    box.setInteger("bBox0min" + name, boxes[at + 1 + axis]);
+                    box.setInteger("bBox0max" + name, boxes[at + 4 + axis]);
+                }
+                tile.setTag("t" + i, box);
+            }
+            return tile;
+        }
+    }
+
+    public static boolean validPicturePixelSize(int size) {
+        return size >= 1 && size <= MAX_PIXEL_SIZE && (size <= 16 || size % 16 == 0);
+    }
+
+    boolean axisAligned() {
+        return yaw % 90 == 0 && pitch % 90 == 0 && roll % 90 == 0;
+    }
+
+    void box(HologramMicroTiles tiles, int x, int y, int z, int width, int height, int depth, String material,
+        int metadata, int color) throws IOException {
+        int[] a = orient(x, y, z), b = orient(x + width - 1, y + height - 1, z + depth - 1);
+        tiles.addBox(
+            Math.min(a[0], b[0]),
+            Math.min(a[1], b[1]),
+            Math.min(a[2], b[2]),
+            Math.max(a[0], b[0]) + 1,
+            Math.max(a[1], b[1]) + 1,
+            Math.max(a[2], b[2]) + 1,
+            material,
+            metadata,
+            color);
     }
 
     /** Column sampling plus Euler rotation; overlapping samples of the same text are unioned before packing. */
@@ -185,10 +252,29 @@ public final class HologramTextBox {
         int attempts = 0;
         double span = Math.max(1, width * pixelX - 1), verticalSpan = height * pixelY;
         for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
+            if (px == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
             if (!pixel(px, py)) continue;
+            if (arc == 0 && bend == 0
+                && twist == 0
+                && shear == 0
+                && !(vertical && layoutVersion == 0)
+                && axisAligned()) {
+                box(
+                    tiles,
+                    px * pixelX,
+                    (height - py - 1) * pixelY,
+                    0,
+                    pixelX,
+                    pixelY,
+                    thickness,
+                    material,
+                    metadata,
+                    color);
+                continue;
+            }
             for (int sx = 0; sx < pixelX; sx++)
                 for (int sy = 0; sy < pixelY; sy++) for (int sz = 0; sz < thickness; sz++) {
-                    if (++attempts > MAX_VOXELS * 4) throw new IOException("文字采样超过上限，请减小文字、像素大小或厚度");
+                    if (++attempts > MAX_SAMPLES) throw new IOException("文字采样超过上限，请减小文字、像素大小或厚度");
                     double xx = px * pixelX + sx, yy = (height - py - 1) * pixelY + sy, zz = sz;
                     if (layoutVersion == 1) {
                         // The running direction is the line for horizontal text and the column for vertical text.
@@ -283,6 +369,23 @@ public final class HologramTextBox {
             }
         }
         return new int[] { vx, vy, vz };
+    }
+
+    /** Continuous voxel boundary transform for the local image proof plane. */
+    public double[] corner(double x, double y, double z) {
+        double[] point = rotate(x - .5, y - .5, z - .5, yaw, pitch, roll);
+        for (int turn : turns) {
+            double previousZ = point[2];
+            if (turn == 1) {
+                point[2] = point[0];
+                point[0] = 15 - previousZ;
+            } else {
+                point[2] = point[1];
+                point[1] = 15 - previousZ;
+            }
+        }
+        for (int axis = 0; axis < 3; axis++) point[axis] += .5;
+        return point;
     }
 
     private static double[] rotate(double x, double y, double z, double yaw, double pitch, double roll) {

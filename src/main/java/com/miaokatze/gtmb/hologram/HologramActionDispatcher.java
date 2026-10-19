@@ -32,6 +32,17 @@ final class HologramActionDispatcher {
             if (HologramLibraryWorkflow.acknowledgeBlueprintSave(s, action)) HologramSnapshots.send(s);
             return;
         }
+        if (s.attachmentTask != null) {
+            String operation = action.getString("op");
+            if ("cancelAttachment".equals(operation) || "cancel".equals(operation)
+                || "clearWorkspace".equals(operation)) {
+                s.attachmentTask.cancel("附加对象处理已取消，原工作区保留");
+                if ("cancelAttachment".equals(operation)) return;
+            } else if (!"close".equals(operation)) {
+                HologramSnapshots.sendUi(s);
+                return;
+            }
+        }
         // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
         if (action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
             && !HologramMaterialWorkflow.lightweight(action.getString("op")))

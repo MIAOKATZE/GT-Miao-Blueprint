@@ -13,7 +13,7 @@ import net.minecraft.nbt.NBTTagCompound;
 public final class HologramPictureBox {
 
     public static final String PREFIX = "gtmb_picture_";
-    public static final int MAX_PIXELS = 65536, MAX_SIDE = 512;
+    public static final int MAX_PIXELS = 1024 * 1024, MAX_SIDE = 1024;
     public static final String[] PALETTE_NAMES = { "羊毛 + 染色黏土", "羊毛", "混凝土" };
     public static final String[] FILTER_NAMES = { "原图", "黑白", "怀旧", "反色", "色阶", "柔化", "锐化", "轮廓" };
     private static final int[][] COLORS = {
@@ -79,7 +79,7 @@ public final class HologramPictureBox {
 
     public void resizeShortSide(int size) throws IOException {
         if (size < 1 || size > MAX_SIDE || originalWidth < 1 || originalHeight < 1)
-            throw new IOException("图片短边像素应为 1–512");
+            throw new IOException("图片短边像素应为 1–1024");
         shortSide = size;
         if (originalWidth <= originalHeight) {
             width = size;
@@ -122,7 +122,7 @@ public final class HologramPictureBox {
             || saturation < 0
             || saturation > 200
             || backgroundTolerance < 0
-            || backgroundTolerance > 64) throw new IOException("图片尺寸、采样数据或滤镜参数超出范围（每边最多 512，总像素最多 65536）");
+            || backgroundTolerance > 64) throw new IOException("图片尺寸、采样数据或滤镜参数超出范围（每边最多 1024，总像素最多 1048576）");
         if (keepAspect) {
             int expectedW = originalWidth <= originalHeight ? shortSide
                 : (int) Math.round(shortSide * (double) originalWidth / originalHeight);
@@ -312,11 +312,28 @@ public final class HologramPictureBox {
     List<HologramTextBox.Cell> generate(HologramTextBox placement) throws IOException {
         byte[] pixels = rasterize();
         HologramMicroTiles tiles = new HologramMicroTiles();
+        int samples = 0;
         for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
+            if (px == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
             int index = (pixels[py * width + px] & 255) - 1;
             if (index < 0) continue;
+            if (placement.axisAligned()) {
+                placement.box(
+                    tiles,
+                    px * placement.pixelX,
+                    (height - py - 1) * placement.pixelY,
+                    0,
+                    placement.pixelX,
+                    placement.pixelY,
+                    placement.thickness,
+                    material(index),
+                    metadata(index),
+                    0xffffff);
+                continue;
+            }
             for (int sx = 0; sx < placement.pixelX; sx++)
                 for (int sy = 0; sy < placement.pixelY; sy++) for (int sz = 0; sz < placement.thickness; sz++) {
+                    if (++samples > HologramTextBox.MAX_SAMPLES) throw new IOException("旋转图片采样过大，请减小像素或使用直角旋转");
                     int[] voxel = placement
                         .orient(px * placement.pixelX + sx, (height - py - 1) * placement.pixelY + sy, sz);
                     tiles.add(voxel[0], voxel[1], voxel[2], material(index), metadata(index), 0xffffff);

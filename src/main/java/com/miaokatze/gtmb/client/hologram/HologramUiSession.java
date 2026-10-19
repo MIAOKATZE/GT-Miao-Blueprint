@@ -363,8 +363,8 @@ final class HologramUiSession {
 
     /** A failed presentation transfer releases its own UI request, never a world/save/order task owner. */
     boolean presentationTransportFailed(NBTTagCompound event, String message) {
-        if (!event.getBoolean("transportError") || !event.getString("errorCode")
-            .startsWith("snapshot.")
+        if (!event.getBoolean("transportError") || !(event.getString("errorCode")
+            .startsWith("snapshot.") || "attachment.upload".equals(event.getString("errorCode")))
             || !event.hasKey("uiSequence", 4)
             || event.getLong("clientTaskToken") != 0
             || HologramBackgroundTasks.busy()
@@ -377,12 +377,14 @@ final class HologramUiSession {
         int presentation = switch (pendingOperation) {
             case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset" -> 1;
             case "lockVirtual", "unlockVirtual" -> 2;
+            case "placeTextBox" -> 3;
             default -> 0;
         };
         if (presentation == 0) return false;
         rejectTransport(event, message);
         if (pendingTicket.sequence() >= 0) return false;
         if (presentation == 1) ui.library.cancelLibraryNavigation();
+        if (presentation == 3) ui.textBoxes.uploadFailed();
         pendingOperation = "";
         return true;
     }

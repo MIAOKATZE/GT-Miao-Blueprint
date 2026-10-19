@@ -48,6 +48,7 @@ final class HologramSession {
     /** Explicit material-review choice; the voucher is charged only by a successful covered transaction. */
     boolean jobVoucherRequested, jobVoucherConsumed;
     boolean placementValidating;
+    HologramTextWorkflow.Task attachmentTask;
     NBTTagCompound textPlacementAck = new NBTTagCompound();
     NBTTagCompound materialQuote = new NBTTagCompound();
     HologramMaterialQuote.Cache materialQuoteCache;

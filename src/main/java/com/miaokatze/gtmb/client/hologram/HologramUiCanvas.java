@@ -160,6 +160,7 @@ final class HologramUiCanvas {
                                         ui.library.libraryDrawer(),
                                         ui.review.confirmation(),
                                         ui.library.selectedPresetExists());
+        if (id == 330 && ui.textBoxes.active()) accent = HologramUiAccent.WARNING;
         if (ui.bindings.networkDrawer()) accent = HologramNetworkBindingNavigation.accent(
             id,
             ui.session.state().data,

@@ -29,7 +29,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     private static final String[] FONT_NAMES = { "游戏字体 / 资源包", "Miao Wiki Pixel", "Fusion Pixel 完整版", "DejaVu Sans",
         "DejaVu Serif" };
     private final HologramUiModules ui;
-    private final HologramTextBox text;
+    private HologramTextBox text;
     private final Map<String, StringValue> values = new LinkedHashMap<>();
     private final Document document;
     private boolean materials;
@@ -115,6 +115,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 20,
                 () -> Minecraft.getMinecraft()
                     .displayGuiScreen(ui.host.parent())));
+        panel().child(HologramMuiTheme.button(() -> "字体预设", 180, 368, 124, 20, this::openPresets));
         panel().child(
             HologramMuiTheme.primaryButton(
                 () -> ui.session.state().cells.isEmpty() ? "确认内容 · 生成文字" : "确认内容 · 选择放置位置",
@@ -388,12 +389,48 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                     .getStringValue(),
                 16);
             HologramTextRasterizer.rasterize(text);
-            ui.textBoxes.begin(text);
-            Minecraft.getMinecraft()
-                .displayGuiScreen(ui.host.parent());
+            HologramAttachmentPresetDialogs.confirm(
+                this,
+                false,
+                com.miaokatze.gtmb.hologram.HologramAttachmentPresets.settings(text),
+                this::place);
+
         } catch (Exception failure) {
             notice = failure.getMessage() == null ? "文字参数无效" : failure.getMessage();
         }
+    }
+
+    private void place() {
+        try {
+            ui.textBoxes.begin(text);
+            Minecraft.getMinecraft()
+                .displayGuiScreen(ui.host.parent());
+        } catch (java.io.IOException failure) {
+            notice = failure.getMessage();
+        }
+    }
+
+    private void openPresets() {
+        HologramAttachmentPresetDialogs.open(this, false, settings -> {
+            try {
+                text = com.miaokatze.gtmb.hologram.HologramAttachmentPresets.apply(text, settings);
+                String[] integers = { "pixelX", "pixelY", "thickness", "metadata" };
+                int[] numbers = { text.pixelX, text.pixelY, text.thickness, text.metadata };
+                for (int i = 0; i < integers.length; i++) values.get(integers[i])
+                    .setStringValue(Integer.toString(numbers[i]));
+                String[] decimals = { "yaw", "pitch", "roll", "arc", "bend", "twist", "shear" };
+                double[] angles = { text.yaw, text.pitch, text.roll, text.arc, text.bend, text.twist, text.shear };
+                for (int i = 0; i < decimals.length; i++) values.get(decimals[i])
+                    .setStringValue(Double.toString(angles[i]));
+                values.get("material")
+                    .setStringValue(text.material);
+                values.get("color")
+                    .setStringValue(String.format(java.util.Locale.ROOT, "%06X", text.color));
+                notice = "已应用字体处理预设；文字内容与位置保留";
+            } catch (java.io.IOException failure) {
+                throw new IllegalArgumentException(failure.getMessage(), failure);
+            }
+        });
     }
 
     private static final class Document extends TextEditorWidget {

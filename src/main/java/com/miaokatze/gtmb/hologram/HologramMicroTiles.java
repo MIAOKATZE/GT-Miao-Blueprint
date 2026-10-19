@@ -7,43 +7,76 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import net.minecraft.nbt.NBTTagCompound;
-
 /** Shared exact occupancy and native cuboid packing for editable LittleTiles attachments. */
 final class HologramMicroTiles {
 
     private final Map<String, Host> hosts = new LinkedHashMap<>();
-    private int samples, voxels;
+    private long samples, voxels;
 
     void add(int x, int y, int z, String material, int metadata, int color) throws IOException {
-        if (++samples > HologramTextBox.MAX_VOXELS * 4) throw new IOException("附加对象采样超过上限，请减小尺寸或厚度");
-        int bx = Math.floorDiv(x, 16), by = Math.floorDiv(y, 16), bz = Math.floorDiv(z, 16);
-        String key = bx + "," + by + "," + bz;
-        Host host = hosts.computeIfAbsent(key, ignored -> new Host(bx, by, bz));
-        int voxel = Math.floorMod(y, 16) << 8 | Math.floorMod(z, 16) << 4 | Math.floorMod(x, 16);
-        // Rounded rotations may map multiple samples to one voxel. First sample owns its material.
-        if (!host.occupied.get(voxel)) {
-            host.occupied.set(voxel);
-            String paint = material + ":" + metadata + ":" + color;
-            host.layers.computeIfAbsent(paint, ignored -> new Layer(material, metadata, color)).occupied.set(voxel);
-            voxels++;
-        }
-        if (voxels > HologramTextBox.MAX_VOXELS || hosts.size() > HologramTextBox.MAX_BLOCKS)
-            throw new IOException("附加对象瓷砖体积或方块数量超过上限");
+        addBox(x, y, z, x + 1, y + 1, z + 1, material, metadata, color);
+    }
+
+    /** Split exact cuboids at native 16-unit boundaries instead of expanding scaled pixels voxel by voxel. */
+    void addBox(int x, int y, int z, int endX, int endY, int endZ, String material, int metadata, int color)
+        throws IOException {
+        long volume = (long) (endX - x) * (endY - y) * (endZ - z);
+        samples += volume;
+        if (volume <= 0 || samples > 4L * HologramTextBox.MAX_VOXELS) throw new IOException("附加对象采样超过上限，请减小尺寸或厚度");
+        for (int by = Math.floorDiv(y, 16); by <= Math.floorDiv(endY - 1, 16); by++)
+            for (int bz = Math.floorDiv(z, 16); bz <= Math.floorDiv(endZ - 1, 16); bz++)
+                for (int bx = Math.floorDiv(x, 16); bx <= Math.floorDiv(endX - 1, 16); bx++) {
+                    String key = bx + "," + by + "," + bz;
+                    Host host = hosts.get(key);
+                    if (host == null) {
+                        if (hosts.size() >= HologramTextBox.MAX_BLOCKS)
+                            throw new IOException("附加对象方块数量超过上限，请减小像素尺寸或厚度");
+                        host = new Host(bx, by, bz);
+                        hosts.put(key, host);
+                    }
+                    String paint = material + ":" + metadata + ":" + color;
+                    Layer layer = host.layers.computeIfAbsent(paint, ignored -> new Layer(material, metadata, color));
+                    int minX = Math.max(x - bx * 16, 0), maxX = Math.min(endX - bx * 16, 16);
+                    for (int yy = Math.max(y - by * 16, 0); yy < Math.min(endY - by * 16, 16); yy++)
+                        for (int zz = Math.max(z - bz * 16, 0); zz < Math.min(endZ - bz * 16, 16); zz++) {
+                            int row = yy << 8 | zz << 4;
+                            for (int first = host.occupied.nextClearBit(row + minX); first
+                                < row + maxX; first = host.occupied.nextClearBit(first)) {
+                                int end = Math.min(host.occupied.nextSetBit(first), row + maxX);
+                                if (end < 0) end = row + maxX;
+                                host.occupied.set(first, end);
+                                layer.occupied.set(first, end);
+                                voxels += end - first;
+                                first = end;
+                            }
+                        }
+                    if (voxels > HologramTextBox.MAX_VOXELS) throw new IOException("附加对象体积超过上限，请减小像素尺寸或厚度");
+                }
     }
 
     List<HologramTextBox.Cell> finish(int x, int y, int z) throws IOException {
         if (hosts.isEmpty()) throw new IOException("附加对象没有可见像素");
         List<HologramTextBox.Cell> result = new ArrayList<>();
-        for (Host host : hosts.values()) {
-            NBTTagCompound tile = new NBTTagCompound();
-            tile.setString("id", "LittleTilesTileEntity");
+        int total = hosts.size(), completed = 0;
+        java.util.Iterator<Host> iterator = hosts.values()
+            .iterator();
+        while (iterator.hasNext()) {
+            Host host = iterator.next();
+            HologramAttachmentGeometry.checkpoint("packing", completed++, total);
+            host.layers.values()
+                .removeIf(layer -> layer.occupied.isEmpty());
             boolean full = host.occupied.cardinality() == 4096 && host.layers.size() == 1
                 && host.layers.values()
                     .iterator()
                     .next().color == 0xffffff;
-            int count = 0;
+            String[] materials = new String[host.layers.size()];
+            int[] metadata = new int[materials.length], colors = new int[materials.length];
+            int[] boxes = new int[112];
+            int count = 0, paint = 0;
             for (Layer layer : host.layers.values()) {
+                materials[paint] = layer.material;
+                metadata[paint] = layer.metadata;
+                colors[paint] = layer.color;
                 BitSet occupied = layer.occupied;
                 for (int first = occupied.nextSetBit(0); first >= 0; first = occupied.nextSetBit(0)) {
                     int minX = first & 15, minY = first >>> 8, minZ = first >>> 4 & 15;
@@ -53,26 +86,22 @@ final class HologramMicroTiles {
                     while (maxY < 16 && solid(occupied, minX, maxX, maxY, maxY + 1, minZ, maxZ)) maxY++;
                     for (int yy = minY; yy < maxY; yy++) for (int zz = minZ; zz < maxZ; zz++)
                         occupied.clear(yy << 8 | zz << 4 | minX, (yy << 8 | zz << 4) + maxX);
-                    NBTTagCompound box = new NBTTagCompound();
-                    box.setString("tID", layer.color == 0xffffff ? "BlockTileBlock" : "BlockTileColored");
-                    box.setString("block", layer.material);
-                    box.setInteger("meta", layer.metadata);
-                    box.setInteger("color", layer.color);
-                    box.setInteger("bSize", 1);
-                    box.setInteger("cVecx", minX);
-                    box.setInteger("cVecy", minY);
-                    box.setInteger("cVecz", minZ);
-                    box.setInteger("bBox0minX", minX);
-                    box.setInteger("bBox0minY", minY);
-                    box.setInteger("bBox0minZ", minZ);
-                    box.setInteger("bBox0maxX", maxX);
-                    box.setInteger("bBox0maxY", maxY);
-                    box.setInteger("bBox0maxZ", maxZ);
-                    tile.setTag("t" + count++, box);
+                    if (count + 7 > boxes.length) boxes = java.util.Arrays.copyOf(boxes, boxes.length * 2);
+                    for (int value : new int[] { paint, minX, minY, minZ, maxX, maxY, maxZ }) boxes[count++] = value;
                 }
+                paint++;
             }
-            tile.setInteger("tilesCount", count);
-            result.add(new HologramTextBox.Cell(host.x + x, host.y + y, host.z + z, tile, full));
+            result.add(
+                new HologramTextBox.Cell(
+                    host.x + x,
+                    host.y + y,
+                    host.z + z,
+                    java.util.Arrays.copyOf(boxes, count),
+                    materials,
+                    metadata,
+                    colors,
+                    full));
+            iterator.remove(); // Release occupancy before retaining the next compact host.
         }
         return result;
     }

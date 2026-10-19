@@ -609,6 +609,12 @@ final class HologramBlueprintEditor {
 
     static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
         boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups) throws java.io.IOException {
+        stageGeometry(s, copies, remove, overlay, retained, copyGroups, null);
+    }
+
+    static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
+        boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups,
+        Map<String, Integer> preparedSizes) throws java.io.IOException {
         Map<String, HologramCapture.Cell> staged = new LinkedHashMap<>();
         Map<String, ItemStack> targets = new HashMap<>();
         Map<String, Integer> facings = new HashMap<>(s.facingPins);
@@ -686,7 +692,8 @@ final class HologramBlueprintEditor {
             if (value == null || value.isEmpty()) continue;
             Integer size = sizes.get(value);
             if (size == null) {
-                size = HologramBlueprintNbt.expandedBytes(value);
+                size = preparedSizes == null ? HologramBlueprintNbt.expandedBytes(value) : preparedSizes.get(value);
+                if (size == null) throw new java.io.IOException("附加对象数据预算已变化，请重新确认");
                 sizes.put(value, size);
             }
             expanded += size;
