@@ -27,6 +27,7 @@ public final class HologramLargeAttachmentRegression {
             fragmentedPicture();
             largeGeometry();
             savedPictureDefinitions();
+            authoringOccupancy();
             presets();
         } catch (Exception failure) {
             throw new RuntimeException(failure);
@@ -268,6 +269,36 @@ public final class HologramLargeAttachmentRegression {
                 + "x"
                 + value.picture.height
                 + " brightness=80 sourceUnchanged=true");
+    }
+
+    private static void authoringOccupancy() throws Exception {
+        HologramCapture.Cell air = new HologramCapture.Cell(null, 0, 64, 0);
+        air.block = net.minecraft.init.Blocks.air;
+        air.unknown = false;
+        SimpleAssert.that(
+            !HologramTextWorkflow.occupiesBlueprintPosition(air, null),
+            "declared blueprint air does not reserve a host position");
+        SimpleAssert.that(
+            HologramTextWorkflow
+                .occupiesBlueprintPosition(air, new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.wool)),
+            "a planned block in an originally empty cell remains a real collision");
+        air.unknown = true;
+        SimpleAssert.that(
+            HologramTextWorkflow.occupiesBlueprintPosition(air, null),
+            "unresolved blueprint content cannot be treated as air");
+        air.excluded = true;
+        SimpleAssert.that(
+            !HologramTextWorkflow
+                .occupiesBlueprintPosition(air, new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.wool)),
+            "excluded blueprint content does not reserve a position");
+        HologramTextBox sparse = new HologramTextBox();
+        sparse.width = 48;
+        sparse.height = 1;
+        sparse.bitmap = new byte[] { 1, 0, 0, 0, 0, (byte) 128 };
+        List<HologramTextBox.Cell> cells = sparse.generate();
+        SimpleAssert.eq(2, cells.size(), "glyph gaps do not become occupied cells of its bounding rectangle");
+        for (HologramTextBox.Cell cell : cells)
+            SimpleAssert.that(cell.x != 1, "empty host between visible glyph pixels is outside collision validation");
     }
 
     private static void presets() throws Exception {

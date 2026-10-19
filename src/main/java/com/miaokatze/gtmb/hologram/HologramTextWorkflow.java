@@ -86,6 +86,7 @@ final class HologramTextWorkflow {
         private final HologramAttachmentGeometry.Job geometry;
         private final List<HologramCapture.Cell> additions = new ArrayList<>();
         private final Set<String> remove = new HashSet<>();
+        private final Set<String> occupiedPositions = new HashSet<>();
         private final Block host;
         private final long revision, request;
         private int cursor;
@@ -113,9 +114,12 @@ final class HologramTextWorkflow {
                 throw new IOException("目标不是附加对象");
             if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与附加对象数量超过上限");
             List<String> retained = new ArrayList<>();
-            if (capture != null) for (HologramCapture.Cell cell : capture.cells) {
+            if (capture != null) for (int i = 0; i < capture.cells.size(); i++) {
+                HologramCapture.Cell cell = capture.cells.get(i);
                 if (cell.belongsTo(text.id)) remove.add(HologramValues.position(cell));
                 else {
+                    if (occupiesBlueprintPosition(cell, HologramCellPolicy.targetFor(s, cell, i)))
+                        occupiedPositions.add(HologramValues.position(cell));
                     retained.add(cell.tileNbt);
                     retained.add(cell.itemNbt);
                 }
@@ -189,10 +193,8 @@ final class HologramTextWorkflow {
                 throw new IOException(text.noun() + "位置超出编辑距离");
             String key = wx + "," + wy + "," + wz;
             HologramCapture.Cell occupied = capture == null ? null : capture.positions.get(key);
-            if (occupied != null && !remove.contains(key) && occupied.block != Blocks.air && !occupied.excluded)
-                throw new IOException(text.noun() + "与工作区内容冲突，请移动后确认");
-            if (!s.player.worldObj.blockExists(wx, wy, wz) || !s.player.worldObj.isAirBlock(wx, wy, wz))
-                throw new IOException(text.noun() + "目标必须是已加载的空气位置，请移动后确认");
+            if (occupiedPositions.contains(key)) throw new IOException(text.noun() + "与工作区内容冲突，请移动后确认");
+            // These are virtual blueprint coordinates, not a request to place blocks at the player's site.
             int paint = cell.boxes[0];
             String materialName = cell.materials[paint];
             int metadata = cell.metadata[paint];
@@ -215,16 +217,14 @@ final class HologramTextWorkflow {
             added.sourceWarning = "";
             HologramBlueprintData.setMemberships(added, java.util.Collections.singletonList(text.id));
             additions.add(added);
-            if (occupied != null && (occupied.block == Blocks.air || occupied.excluded)) remove.add(key);
+            if (occupied != null) remove.add(key);
         }
 
         private void commit() throws IOException {
-            // Earlier batches may have been checked several ticks ago. Recheck immediately before atomic admission.
+            // The task owns this plan revision. Physical site checks belong to actual construction, not authoring.
             for (HologramCapture.Cell cell : additions) {
-                if (!HologramSessionPolicy.previewReach(s.player, cell.x, cell.y, cell.z)
-                    || !s.player.worldObj.blockExists(cell.x, cell.y, cell.z)
-                    || !s.player.worldObj.isAirBlock(cell.x, cell.y, cell.z))
-                    throw new IOException("附加对象目标在校验期间发生变化，请移动后重新确认");
+                if (!HologramSessionPolicy.previewReach(s.player, cell.x, cell.y, cell.z))
+                    throw new IOException("附加对象位置超出编辑距离，请移动后重新确认");
             }
             HologramCapture previousCapture = s.capture;
             HologramPresets.Preset previousPreset = s.virtualPreset;
@@ -275,6 +275,10 @@ final class HologramTextWorkflow {
             s.localEdits.invalidate();
             HologramSnapshots.send(s);
         }
+    }
+
+    static boolean occupiesBlueprintPosition(HologramCapture.Cell cell, ItemStack target) {
+        return !cell.excluded && (cell.unknown || cell.block != Blocks.air || target != null);
     }
 
     private static void validateMaterial(String name, int metadata) throws IOException {
