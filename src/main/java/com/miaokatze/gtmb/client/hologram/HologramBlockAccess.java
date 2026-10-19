@@ -21,6 +21,7 @@ final class HologramBlockAccess implements IBlockAccess {
     private final java.util.Set<String> loaded = new java.util.HashSet<>();
     private final java.util.Set<String> topologyPrepared = new java.util.HashSet<>();
     private boolean preparingTopology;
+    private boolean loadingTile;
     private HologramRenderWorld renderWorld;
 
     HologramBlockAccess(HologramState state) {
@@ -49,6 +50,11 @@ final class HologramBlockAccess implements IBlockAccess {
 
     public TileEntity getTileEntity(int x, int y, int z) {
         String key = key(x, y, z);
+        // Native NBT readers can invalidate all six neighbors. A connected picture
+        // must not recursively deserialize the entire surface on the Java stack.
+        // Only completed neighbors are visible during hydration; unvisited cells
+        // remain eligible for their own later render request.
+        if (loadingTile) return tiles.get(key);
         try {
             if (loaded.contains(key)) {
                 TileEntity tile = tiles.get(key);
@@ -62,14 +68,20 @@ final class HologramBlockAccess implements IBlockAccess {
             NBTTagCompound display = actual ? cell.actualDisplay : cell.targetDisplay;
             if (!display.hasKey("nativeTile", 10)) return null;
             if (renderWorld == null) renderWorld = new HologramRenderWorld(this);
-            TileEntity tile = HologramNativeTiles.create(
-                getBlock(x, y, z),
-                getBlockMetadata(x, y, z),
-                display.getCompoundTag("nativeTile"),
-                renderWorld,
-                x,
-                y,
-                z);
+            TileEntity tile;
+            loadingTile = true;
+            try {
+                tile = HologramNativeTiles.create(
+                    getBlock(x, y, z),
+                    getBlockMetadata(x, y, z),
+                    display.getCompoundTag("nativeTile"),
+                    renderWorld,
+                    x,
+                    y,
+                    z);
+            } finally {
+                loadingTile = false;
+            }
             if (tile != null) {
                 tiles.put(key, tile);
                 prepareTopology(key, tile);

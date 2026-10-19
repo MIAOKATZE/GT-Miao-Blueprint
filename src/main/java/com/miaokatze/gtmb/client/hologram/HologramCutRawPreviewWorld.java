@@ -29,6 +29,7 @@ final class HologramCutRawPreviewWorld extends World {
     private BiConsumer<Cell, Throwable> failure;
     private final Map<String, Integer> renderMetadata = new LinkedHashMap<>();
     private boolean released;
+    private boolean loadingTile;
 
     HologramCutRawPreviewWorld(NBTTagCompound entry, BiConsumer<Cell, Throwable> failure) {
         super(
@@ -84,10 +85,14 @@ final class HologramCutRawPreviewWorld extends World {
     @Override
     public TileEntity getTileEntity(int x, int y, int z) {
         Cell cell = cell(x, y, z);
+        // Neighbor invalidation during native decoding may only see completed
+        // tiles, never start another decode or expose a half-loaded instance.
+        if (loadingTile) return cell == null || cell.loading ? null : cell.tile;
         if (released || cell == null || cell.attempted || cell.loading) return cell == null ? null : cell.tile;
         if (cell.block == null || cell.block == Blocks.air) return null;
         if (!cell.raw.hasKey("tile", 10) && !cell.block.hasTileEntity(cell.meta)) return null;
         cell.loading = true;
+        loadingTile = true;
         try {
             cell.tile = HologramCutRawPreviewFactory.create(this, cell);
             if (cell.tile == null) throw new IllegalStateException("Native tile factory returned null");
@@ -98,6 +103,7 @@ final class HologramCutRawPreviewWorld extends World {
             cell.tile = null;
             failure.accept(cell, invalid);
         } finally {
+            loadingTile = false;
             cell.loading = false;
             cell.attempted = true;
         }
