@@ -1,6 +1,6 @@
 # 文字转蓝图与装饰抵用券
 
-适用于 v0.1.25 候选源码；是否发布以 Releases 为准。
+适用于 [v0.1.25](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases/tag/v0.1.25)。
 
 工作区顶部的“文字转蓝图”在空白工作区、结构编辑及放置前的蓝图编辑中可用。需要安装 LittleTiles；世界定位、施工、未完成采集和只读浏览时不开放。空工作区确认首个文字后成为新的作者蓝图。
 

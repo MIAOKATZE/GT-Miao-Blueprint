@@ -24,7 +24,7 @@
 
 *Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
-v0.1.25 候选支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.md)：从 `.minecraft/MiaoBlueprintPicture` 读取图片，默认短边 64 像素，支持比例锁定、固定羊毛/黏土/混凝土组合、滤镜与边缘同色抠图。图片沿用 [文字附加](README/text-blueprints.md) 的整体编辑、旋转、轴面位移和冲突校验，随蓝图保存后可脱离原文件再次编辑。图片分辨率上限为 1024×1024，支持像素大小与厚度；文字和图片均支持处理预设、后台生成与分块上传。正式发布状态以 Releases 为准。
+v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.md)：从 `.minecraft/MiaoBlueprintPicture` 读取图片，默认短边 64 像素，支持比例锁定、固定羊毛/黏土/混凝土组合、滤镜与边缘同色抠图。图片沿用 [文字附加](README/text-blueprints.md) 的整体编辑、旋转、轴面位移和冲突校验，随蓝图保存后可脱离原文件再次编辑。图片分辨率上限为 1024×1024，支持像素大小与厚度；文字和图片均支持处理预设、后台生成与分块上传。下载请见 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
 
 <p align="center">
   <a href="README/screenshots/projector-preview.png"><img src="README/screenshots/projector-preview.png" alt="世界中的半透明结构投影 / Translucent structure projection in the world" width="620"></a><br>
@@ -126,6 +126,33 @@ v0.1.25 候选支持 [LittleTiles 添加图片与像素画](README/picture-bluep
 *Tier-related casings can be selected individually. Purple outlines and the T hint identify related cells in the same structure; press T to select them together while keeping configured hatches independent.*
 
 *Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles movement axes, and idle help dismisses on input.*
+
+### 让文字与图片成为蓝图的一部分 / Add text & picture art
+
+在空白工作区、结构调整或放置前的蓝图编辑中，点击顶部的「文字转蓝图」或「添加图片」，用 **LittleTiles 小瓷砖**制作标牌、立体字与像素画。文字可调整字体、颜色、材料和三维形态；图片从 `.minecraft/MiaoBlueprintPicture` 读取，支持固定材料组合、滤镜与边缘背景抠除。文字和图片都能保存处理预设，并按同色实体体积合并瓷砖及完整方块。
+
+*Create signs, 3D lettering and pixel art with LittleTiles. Choose text fonts and materials, or convert local pictures with fixed palettes, filters and background removal; reuse processing presets and merge solid geometry.*
+
+<p align="center">
+  <a href="README/screenshots/text-picture-showcase.png"><img src="README/screenshots/text-picture-showcase.png" alt="小瓷砖文字与图片在世界中的展示 / LittleTiles text and picture art in the world" width="640"></a><br>
+  <strong>把标牌、文字和图片放进设计，让蓝图也能表达你的想法。</strong><br>
+  <em>Bring lettering and picture art into your designs.</em>
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/screenshots/text-attachment-editor.png"><img src="README/screenshots/text-attachment-editor.png" alt="文字转蓝图编辑器：字形预览与形态参数 / Text editor with glyph preview and shape controls" width="310"></a></td>
+    <td width="50%"><a href="README/screenshots/picture-attachment-editor.png"><img src="README/screenshots/picture-attachment-editor.png" alt="添加图片编辑器：材料色预览与像素尺寸 / Picture editor with material-color preview and pixel dimensions" width="310"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>文字：字体、颜色、厚度、竖排与居中弧形。</strong><br><em>Fonts, colors, thickness, upright columns and centered curves.</em></td>
+    <td align="center"><strong>图片：比例、像素大小、厚度、滤镜与抠图。</strong><br><em>Aspect ratio, pixel size, thickness, filters and background removal.</em></td>
+  </tr>
+</table>
+
+确认内容后，在已有蓝图中点击选位，再用 **R / Alt+R、方向键或共用的轴线与平面手柄**整体调整；空工作区会直接创建新蓝图。点击高亮「确认放置」后校验冲突，失败保留预览供移动重试。附加对象随蓝图保存，整体选中后可再次编辑；实际建造仍按材料体积核算。详见[文字操作](README/text-blueprints.md)与[图片操作](README/picture-blueprints.md)。
+
+*Pick a position and move or rotate the whole attachment before confirming. Saved attachments remain editable; construction still charges their actual material volume. An empty workspace creates a new blueprint directly.*
 
 ### 私用还是分享，由你逐步确认 / Review for private use or sharing
 
