@@ -46,6 +46,11 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     }
 
     @Override
+    boolean retainAttachmentEditor(HologramState next) {
+        return ui.textBoxes.retainEditor(next);
+    }
+
+    @Override
     protected void buildPanel() {
         HologramMuiTheme.header(panel(), () -> "文字转蓝图 · LittleTiles 文本框", 590);
         panel().child(

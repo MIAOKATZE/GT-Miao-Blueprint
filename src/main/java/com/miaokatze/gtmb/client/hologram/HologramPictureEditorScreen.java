@@ -73,6 +73,11 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
     }
 
     @Override
+    boolean retainAttachmentEditor(HologramState next) {
+        return ui.textBoxes.retainEditor(next);
+    }
+
+    @Override
     protected void buildPanel() {
         HologramMuiTheme.header(panel(), () -> "添加图片 · LittleTiles 像素画", 620);
         panel().child(

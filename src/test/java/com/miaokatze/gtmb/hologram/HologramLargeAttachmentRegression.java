@@ -26,6 +26,7 @@ public final class HologramLargeAttachmentRegression {
         try {
             fragmentedPicture();
             largeGeometry();
+            savedPictureDefinitions();
             presets();
         } catch (Exception failure) {
             throw new RuntimeException(failure);
@@ -186,6 +187,87 @@ public final class HologramLargeAttachmentRegression {
             overlap.finish(0, 0, 0)
                 .get(0).fullBlock,
             "fully occluded paints do not defeat complete-cube packing");
+    }
+
+    private static void savedPictureDefinitions() throws Exception {
+        HologramTextBox noise = picture(512);
+        Random random = new Random(526);
+        for (int i = 0; i < noise.picture.source.length; i++)
+            noise.picture.source[i] = 0xff000000 | random.nextInt(1 << 24);
+        savedPictureDefinition(noise, "synthetic");
+        String originals = System.getenv("GTMB_QA_PICTURES_JSON");
+        if (originals == null || originals.isEmpty()) return;
+        int index = 0;
+        for (String filename : new com.google.gson.Gson().fromJson(originals, String[].class)) {
+            Path path = java.nio.file.Paths.get(filename);
+            byte[] before = Files.readAllBytes(path);
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(before));
+            SimpleAssert.that(image != null, "provided image decodes");
+            HologramTextBox value = picture(1);
+            HologramPictureBox p = value.picture;
+            p.sourceWidth = p.originalWidth = image.getWidth();
+            p.sourceHeight = p.originalHeight = image.getHeight();
+            p.source = image.getRGB(0, 0, image.getWidth(), image.getHeight(), null, 0, image.getWidth());
+            savedPictureDefinition(value, "provided-" + ++index);
+            SimpleAssert.that(Arrays.equals(before, Files.readAllBytes(path)), "provided image remains unchanged");
+        }
+    }
+
+    private static void savedPictureDefinition(HologramTextBox value, String label) throws Exception {
+        value.picture.keepAspect = true;
+        value.picture.resizeShortSide(256);
+        value.picture.brightness = 80;
+        value.validate();
+        String definition = HologramBlueprintNbt.encodeCaptured(value.write());
+        SimpleAssert.that(definition.length() > 524288, "source crosses the obsolete attachment save limit");
+        HologramPresets.Preset preset = new HologramPresets.Preset();
+        preset.id = "attachment_save";
+        preset.name = "Picture save";
+        preset.schema = 2;
+        HologramPresets.Structure group = new HologramPresets.Structure();
+        group.id = value.id;
+        group.textBoxNbt = definition;
+        preset.structures.add(group);
+        HologramPresets.Cell cell = new HologramPresets.Cell();
+        cell.item = cell.block = "minecraft:wool";
+        cell.structureId = group.id;
+        preset.cells.add(cell);
+        HologramBlueprintVersions.stamp(preset);
+        HologramPresets.validate(preset);
+        Path directory = Files.createTempDirectory("gtmb-picture-save-");
+        try {
+            Path file = directory.resolve("picture.json");
+            HologramBlueprintSharing
+                .write(file, preset, com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng());
+            HologramPresets.Preset restored = HologramBlueprintSharing.read(file);
+            SimpleAssert.eq(
+                definition,
+                restored.structures.get(0).textBoxNbt,
+                "paired save and reload preserve the entire editable source definition");
+            SimpleAssert.eq(
+                value.write(),
+                HologramTextWorkflow.definition(restored.structures.get(0)),
+                "brightness, output dimensions and original pixels survive save");
+            group.id = "not_an_attachment";
+            try {
+                HologramPresets.validate(preset);
+                throw new AssertionError("invalid attachment identity admitted");
+            } catch (IOException expected) {}
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(directory)) {
+                for (Path path : (Iterable<Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+        System.out.println(
+            "GTMB_PICTURE_SAVE source=" + label
+                + " definitionChars="
+                + definition.length()
+                + " output="
+                + value.picture.width
+                + "x"
+                + value.picture.height
+                + " brightness=80 sourceUnchanged=true");
     }
 
     private static void presets() throws Exception {
