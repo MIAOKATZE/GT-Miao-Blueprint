@@ -104,7 +104,9 @@ final class HologramUiSession {
         ui.library.applyOpeningPurpose();
         ui.preview.acknowledgeSelection(next);
         ui.library.acknowledgeSnapshot(next, library, newSession);
-        if (pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence"))) commandProgress.clear();
+        if (!next.data.getCompoundTag("textPlacementAck")
+            .getBoolean("pending") && pendingTicket.acknowledge(next.session, next.data.getLong("uiSequence")))
+            commandProgress.clear();
         ui.preview.acknowledgeEdits(next);
         ui.review.acknowledgeReview(next);
         ui.preview.syncLayerAndSelection(next);
@@ -230,6 +232,7 @@ final class HologramUiSession {
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
             && !this.state.data.getBoolean("areaSelectionShell")
+            && !this.state.data.getBoolean("attachmentPending")
             && job != 1
             && job != 2
             && pendingTicket.sequence() < 0
@@ -252,6 +255,7 @@ final class HologramUiSession {
     }
 
     String editingReason() {
+        if (state.data.getBoolean("attachmentPending")) return "正在生成和校验文字或图片；可按 Esc 取消后再编辑。";
         if (this.state.data.getBoolean("targetClosed")) return "控制器已拆除；保留最终统计，重新右键新控制器开启任务。";
         if (pendingTicket.sequence() >= 0) return "等待服务端回执后可操作。";
         if (this.state.data.getBoolean("capturePending")) return "正在采集结构，请稍候。";

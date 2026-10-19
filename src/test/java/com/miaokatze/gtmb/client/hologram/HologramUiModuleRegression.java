@@ -104,6 +104,12 @@ public final class HologramUiModuleRegression {
 
     private static void presentationSnapshotFailure() {
         try {
+            HologramUiModules processing = presentationUi("attachment-processing", 0);
+            processing.session.state().data.setBoolean("attachmentPending", true);
+            SimpleAssert
+                .that(!processing.session.editable(), "an attachment progress receipt cannot reopen competing edits");
+            processing.session.state().data.setBoolean("attachmentPending", false);
+            SimpleAssert.that(processing.session.editable(), "terminal attachment state releases editing");
             for (String operation : new String[] { "previewPreset", "choosePlacementPreset", "lockVirtual",
                 "placeTextBox" }) {
                 HologramUiModules ui = presentationUi("presentation-" + operation, 0);
