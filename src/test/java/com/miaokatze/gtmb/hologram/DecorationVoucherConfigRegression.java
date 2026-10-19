@@ -42,6 +42,9 @@ final class DecorationVoucherConfigRegression {
                     .that(migrated.allowedBlocks.contains(material), "old configs gain tile material: " + material);
             SimpleAssert
                 .that(migrated.allowedBlocks.contains("minecraft:glass@2"), "custom allow rules survive migration");
+            for (int meta = 0; meta < 6; meta++) SimpleAssert.that(
+                migrated.allowedBlocks.contains("enderio:blockfusedquartz@" + meta),
+                "old configs gain all registered Ender IO quartz-glass variants");
             DecorationVoucherConfig.View enabled = copy(migrated, true, migrated.allowedBlocks);
             SimpleAssert.that(
                 DecorationVoucherConfig.save(enabled, DecorationVoucherConfig.revision()),

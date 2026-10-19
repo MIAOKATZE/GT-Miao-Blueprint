@@ -3,11 +3,14 @@ package com.miaokatze.gtmb.hologram;
 import java.util.Arrays;
 import java.util.Collections;
 
+import net.minecraft.block.Block;
+import net.minecraft.block.material.Material;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Items;
 import net.minecraft.inventory.Container;
 import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.ShapelessRecipes;
 
@@ -22,10 +25,15 @@ public final class DecorationVoucherRegression {
 
     private DecorationVoucherRegression() {}
 
+    public static void main(String[] args) throws Exception {
+        if (com.miaokatze.gtmb.testutil.MinecraftTestBootstrap.enter(DecorationVoucherRegression.class, args)) run();
+    }
+
     public static void run() {
         try {
             DecorationVoucherConfigRegression.run();
             HologramVoucherCoverageRegression.run();
+            enderIoGlass();
         } catch (Exception failure) {
             throw new AssertionError("Voucher configuration", failure);
         }
@@ -71,7 +79,7 @@ public final class DecorationVoucherRegression {
             !new DecorationVoucherConfig.View(false, Collections.singletonList("LittleTiles")).allows("LittleTiles"),
             "disabled policy rejects otherwise allowed decorations");
         for (String industrial : new String[] { "gregtech", "appliedenergistics2", "bartworks", "miscutils",
-            "GoodGenerator", "IC2", "tectech", "ExtraUtilities" }) {
+            "GoodGenerator", "IC2", "tectech", "ExtraUtilities", "EnderIO" }) {
             SimpleAssert.that(
                 HologramDecorationVoucher.industrial(industrial, "example.Item"),
                 "administrator mod allowlist cannot waive industrial resources: " + industrial);
@@ -94,5 +102,74 @@ public final class DecorationVoucherRegression {
         SimpleAssert.that(
             !HologramDecorationVoucher.isVoucher(new ItemStack(voucher)),
             "unregistered voucher placeholder does not authenticate payment");
+    }
+
+    private static void enderIoGlass() throws ReflectiveOperationException {
+        java.lang.reflect.Field config = DecorationVoucherConfig.class.getDeclaredField("current");
+        config.setAccessible(true);
+        Object previous = config.get(null);
+        try {
+            config.set(null, DecorationVoucherConfig.defaults());
+            Block glass = fixture("EnderIO:blockFusedQuartz", Material.glass);
+            for (int meta = 0; meta < 6; meta++) {
+                ItemStack sample = new ItemStack(glass, 1, meta);
+                SimpleAssert.that(
+                    HologramDecorationVoucher.covered(glass, sample),
+                    "registered Ender IO glass metadata is covered: " + meta
+                        + " block="
+                        + Block.blockRegistry.getNameForObject(glass)
+                        + " item="
+                        + Item.itemRegistry.getNameForObject(sample.getItem())
+                        + " match="
+                        + (Block.getBlockFromItem(sample.getItem()) == glass)
+                        + " safe="
+                        + HologramDecorationVoucher.safe(sample)
+                        + " allowed="
+                        + DecorationVoucherConfig.view()
+                            .allows(sample));
+            }
+            SimpleAssert.that(
+                !HologramDecorationVoucher.eligible(new ItemStack(glass, 1, 6)),
+                "undefined metadata cannot acquire the Ender IO glass exception");
+            Block machine = fixture("EnderIO:blockAlloySmelter", Material.iron);
+            config.set(null, new DecorationVoucherConfig.View(true, Collections.singleton("EnderIO")));
+            SimpleAssert.that(
+                !HologramDecorationVoucher.eligible(new ItemStack(machine)),
+                "even an entire Ender IO allow rule never waives machines");
+            DecorationVoucherConfig.View defaults = DecorationVoucherConfig.defaults();
+            config.set(
+                null,
+                new DecorationVoucherConfig.View(
+                    true,
+                    defaults.allowedModIds,
+                    defaults.allowedBlocks,
+                    defaults.allowedOres,
+                    defaults.deniedModIds,
+                    Collections.singleton("enderio:blockfusedquartz@2"),
+                    defaults.deniedOres));
+            SimpleAssert.that(
+                !HologramDecorationVoucher.eligible(new ItemStack(glass, 1, 2))
+                    && HologramDecorationVoucher.eligible(new ItemStack(glass, 1, 0)),
+                "individual glass blacklist overrides the default exception");
+        } finally {
+            config.set(null, previous);
+        }
+    }
+
+    private static Block fixture(String name, Material material) throws ReflectiveOperationException {
+        Block existing = (Block) Block.blockRegistry.getObject(name);
+        if (existing != null && existing != net.minecraft.init.Blocks.air) return existing;
+        int free = 3700;
+        while (free > 0
+            && (Item.getItemById(free) != null || Block.getBlockById(free) != net.minecraft.init.Blocks.air)) free--;
+        if (free == 0) throw new AssertionError("No isolated glass fixture registry slot");
+        Block block = new Block(material) {};
+        // Vanilla's addObject routes through GameData and prefixes minecraft: outside an active Mod container.
+        java.lang.reflect.Method add = cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry.class
+            .getDeclaredMethod("add", int.class, String.class, Object.class, java.util.BitSet.class);
+        add.setAccessible(true);
+        add.invoke(Block.blockRegistry, free, name, block, new java.util.BitSet());
+        add.invoke(Item.itemRegistry, free, name, new ItemBlock(block), new java.util.BitSet());
+        return block;
     }
 }

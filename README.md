@@ -24,7 +24,7 @@
 
 *Preview a multiblock or a factory, edit its blueprint, then build with your own materials—or move existing builds with a persistent Cut queue.*
 
-v0.1.28 开发版本将新建文字与图片的默认材质调整为 Chisel 羊毛粘土；图片优先使用羊毛粘土，并以陶瓦、羊毛补色。羊毛、陶瓦、混凝土与羊毛粘土均纳入抵用券默认规则，管理员保存后自动更新材料核算。已有蓝图与预设的材质保留。选券后优先抵扣并保留已有装饰库存；保存或升级时生成「完全抵用」标记，游戏与蓝图站显示金色角标。
+v0.1.28 开发版本将新建文字与图片的默认材质调整为 Chisel 羊毛粘土；图片优先使用羊毛粘土，并以陶瓦、羊毛补色。羊毛、陶瓦、混凝土、羊毛粘土及 Ender IO 的六种石英/纯净玻璃变种均纳入抵用券默认规则，管理员保存后自动更新材料核算。已有蓝图与预设的材质保留。有可抵扣方块即高亮，材料或券未备齐也能勾选预览；选券后优先抵扣并保留已有装饰库存；保存或升级时生成「完全抵用」标记，游戏与蓝图站显示金色角标。
 
 v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.md)：从 `.minecraft/MiaoBlueprintPicture` 读取图片，默认短边 64 像素，支持比例锁定、固定羊毛/黏土/混凝土组合、滤镜与边缘同色抠图。图片沿用 [文字附加](README/text-blueprints.md) 的整体编辑、旋转、轴面位移和冲突校验，随蓝图保存后可脱离原文件再次编辑。图片分辨率上限为 1024×1024，支持像素大小与厚度；文字和图片均支持处理预设、后台生成与分块上传。下载请见 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
 
@@ -248,7 +248,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 ### 建筑装饰可选抵用券 / Optional Decoration Voucher
 
-无序合成 **2 个原生 StructureLib 全息投影仪 → 1 张装饰抵用券**。在材料确认中主动选用，主背包中的一张券可抵扣**本次施工**允许的建筑 Mod 材料；**GT、AE、工业部件、库存、流体与能量仍按实际需求支付**。只有成功放置抵扣材料后才消耗券；创造模式持券可核对覆盖范围，创造施工不消耗券。
+无序合成 **2 个原生 StructureLib 全息投影仪 → 1 张装饰抵用券**。在材料确认中主动选用，主背包中的一张券可抵扣**本次施工**允许的建筑 Mod 材料；**GT、AE、工业部件、库存、流体与能量仍按实际需求支付**。有可抵扣方块时即可勾选查看方案，不要求其他材料或券已备齐；生存施工仍须主背包备券，只有成功放置抵扣材料后才消耗券。创造模式无需持券即可核对覆盖范围，施工不消耗券。
 
 *Craft a voucher from two native StructureLib projectors and select it for one construction job. It covers eligible decoration only, is consumed when covered material is placed, and is not consumed in creative mode.*
 

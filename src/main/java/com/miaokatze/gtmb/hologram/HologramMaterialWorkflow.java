@@ -36,9 +36,7 @@ final class HologramMaterialWorkflow {
                 s.status = "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存";
             } else if ("setDecorativeVoucher".equals(op)) {
                 boolean selected = action.getBoolean("enabled");
-                if (selected
-                    && (!HologramDecorationVoucher.enabled() || HologramDecorationVoucher.available(s.player) < 1))
-                    throw new IOException("建筑材料抵扣券未启用或主背包中没有可用抵扣券");
+                if (selected && !HologramDecorationVoucher.enabled()) throw new IOException("猫猫装饰抵用券未启用");
                 if (selected != s.jobVoucherRequested) {
                     if (!HologramMaterialQuote.cached(s)) throw new IOException("请等待完整材料计划后选择抵扣券");
                     if (selected && s.materialQuoteCache.eligibleDemand == 0)
@@ -92,8 +90,8 @@ final class HologramMaterialWorkflow {
         if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 合成完成并刷新材料后再施工");
         if (action.hasKey("useDecorationVoucher") && action.getBoolean("useDecorationVoucher") != s.jobVoucherRequested)
             throw new IOException("抵扣券选择已变化，请先更新材料报价再确认");
-        if (s.jobVoucherRequested
-            && (!HologramDecorationVoucher.enabled() || HologramDecorationVoucher.available(s.player) < 1))
+        if (s.jobVoucherRequested && (!HologramDecorationVoucher.enabled()
+            || !s.player.capabilities.isCreativeMode && HologramDecorationVoucher.available(s.player) < 1))
             throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
     }
 

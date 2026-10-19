@@ -770,13 +770,37 @@ final class HologramMaterialQuoteRegression {
                     "creative selection projects the cached shell waiver while retaining exact embedded requirements");
                 if (i == 1) {
                     player.inventory.mainInventory[1] = null;
+                    NBTTagCompound shortage = cache.voucher.getTagList("rows", 10)
+                        .getCompoundTagAt(0);
+                    long previousAvailable = shortage.getLong("available"),
+                        previousMissing = shortage.getLong("missing");
+                    shortage.setLong("available", 0);
+                    shortage.setLong("missing", 2);
                     long nonce = session.placementReviewNonce;
                     action.setLong("placementReviewNonce", nonce);
                     action.setBoolean("enabled", true);
                     HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher");
                     require(
-                        !session.jobVoucherRequested && session.placementReviewNonce == nonce,
-                        "creative selection still requires a real clean voucher in the main inventory");
+                        session.jobVoucherRequested && session.placementReviewNonce == nonce + 1,
+                        "actual server action permits discount preview without a carried voucher");
+                    require(
+                        session.planMissing == (creative ? 0 : 2),
+                        "voucher preview remains selected while nonwaived materials are still missing");
+                    action.setLong("placementReviewNonce", session.placementReviewNonce);
+                    boolean paymentRejected = false;
+                    try {
+                        HologramMaterialWorkflow.validateConfirmation(session, action);
+                    } catch (java.io.IOException expected) {
+                        paymentRejected = true;
+                    }
+                    require(
+                        paymentRejected == !creative,
+                        "only survival confirmation still requires real voucher payment");
+                    action.setBoolean("enabled", false);
+                    HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher");
+                    require(!session.jobVoucherRequested, "discount preview can be deselected without a voucher");
+                    shortage.setLong("available", previousAvailable);
+                    shortage.setLong("missing", previousMissing);
                     player.inventory.mainInventory[1] = voucher;
                 }
             }

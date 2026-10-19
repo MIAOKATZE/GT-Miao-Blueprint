@@ -16,6 +16,9 @@ public final class DecorationVoucherConfig {
     private static final String CATEGORY = "decorationVoucher";
     private static final String[] TILE_MATERIALS = { "minecraft:wool", "minecraft:hardened_clay",
         "minecraft:stained_hardened_clay", "etfuturum:concrete", HologramPictureBox.WOOLEN_CLAY };
+    private static final String[] QUARTZ_GLASS = { "EnderIO:blockFusedQuartz@0", "EnderIO:blockFusedQuartz@1",
+        "EnderIO:blockFusedQuartz@2", "EnderIO:blockFusedQuartz@3", "EnderIO:blockFusedQuartz@4",
+        "EnderIO:blockFusedQuartz@5" };
     private static final String[] DEFAULT_MOD_IDS = { "CarpentersBlocks", "ForgeMultipart", "ForgeMicroblock",
         "LittleTiles", "ArchitectureCraft", "chisel", "chiseltones", "Ztones", "BiblioCraft", "Bibliowoods",
         "BiblioWoodsBoP", "BiblioWoodsForestry", "BiblioWoodsNatura", "floodlights", "fairylights", "GardenStuff",
@@ -56,7 +59,7 @@ public final class DecorationVoucherConfig {
             this(
                 enabled,
                 modIds,
-                Arrays.asList(DEFAULT_BLOCKS),
+                defaultBlocks(),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyList(),
@@ -140,6 +143,11 @@ public final class DecorationVoucherConfig {
             blocks = new java.util.TreeSet<>(blocks);
             blocks.addAll(Arrays.asList(TILE_MATERIALS));
         }
+        if (config.get(CATEGORY, "quartzGlassDefaultsVersion", 0)
+            .getInt(0) < 1) {
+            blocks = new java.util.TreeSet<>(blocks);
+            blocks.addAll(Arrays.asList(QUARTZ_GLASS));
+        }
         View loaded = new View(
             enabled,
             allowedMods,
@@ -159,6 +167,12 @@ public final class DecorationVoucherConfig {
 
     public static View defaults() {
         return new View(true, Arrays.asList(DEFAULT_MOD_IDS));
+    }
+
+    private static Iterable<String> defaultBlocks() {
+        java.util.List<String> result = new java.util.ArrayList<>(Arrays.asList(DEFAULT_BLOCKS));
+        result.addAll(Arrays.asList(QUARTZ_GLASS));
+        return result;
     }
 
     private static boolean matches(Set<String> rules, String id, int meta) {
@@ -220,6 +234,8 @@ public final class DecorationVoucherConfig {
                 .set(1);
             staged.get(CATEGORY, "decorationModDefaultsVersion", 1)
                 .set(1);
+            staged.get(CATEGORY, "quartzGlassDefaultsVersion", 1)
+                .set(1);
             String[] keys = ruleKeys();
             Set<?>[] values = lists(next);
             for (int i = 0; i < keys.length; i++) staged.get(CATEGORY, keys[i], new String[0])
@@ -232,6 +248,8 @@ public final class DecorationVoucherConfig {
                 || readback.get(CATEGORY, "tileMaterialDefaultsVersion", 0)
                     .getInt(0) != 1
                 || readback.get(CATEGORY, "decorationModDefaultsVersion", 0)
+                    .getInt(0) != 1
+                || readback.get(CATEGORY, "quartzGlassDefaultsVersion", 0)
                     .getInt(0) != 1)
                 throw new java.io.IOException("Voucher configuration read-back failed");
             for (int i = 0; i < keys.length; i++) if (!names(

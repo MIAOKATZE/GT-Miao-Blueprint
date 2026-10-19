@@ -165,7 +165,8 @@ public final class HologramDecorationVoucher {
         if (stack == null || stack.getItem() == null || stack.stackSize <= 0) return false;
         Item item = stack.getItem();
         String namespace = modId(item);
-        boolean selectedMixedDecoration = "extrautilities".equals(namespace) && Block.getBlockFromItem(item) != null
+        boolean selectedMixedDecoration = ("extrautilities".equals(namespace) || enderIoGlass(stack))
+            && Block.getBlockFromItem(item) != null
             && Block.getBlockFromItem(item) != net.minecraft.init.Blocks.air
             && DecorationVoucherConfig.view()
                 .allows(stack);
@@ -176,6 +177,14 @@ public final class HologramDecorationVoucher {
             || selectedMixedDecoration)
             && !(item instanceof IFluidContainerItem)
             && !FluidContainerRegistry.isFilledContainer(stack);
+    }
+
+    /** The six registered glass variants are an explicit exception; the rest of Ender IO stays industrial. */
+    private static boolean enderIoGlass(ItemStack stack) {
+        return "enderio:blockfusedquartz"
+            .equals(DecorationVoucherConfig.normalize(Item.itemRegistry.getNameForObject(stack.getItem())))
+            && stack.getItemDamage() >= 0
+            && stack.getItemDamage() < 6;
     }
 
     static String modId(Item item) {
