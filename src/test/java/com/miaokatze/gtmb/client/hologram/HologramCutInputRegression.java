@@ -1,10 +1,14 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.miaokatze.gtmb.api.CutTransforms.Transform;
+import com.miaokatze.gtmb.hologram.HologramAreaSelection;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -13,6 +17,7 @@ public final class HologramCutInputRegression {
     private HologramCutInputRegression() {}
 
     public static void run() {
+        localBlueprintOwnsSelection();
         recoveryIsolation();
         selectedModeRouting();
         continuousAndNudge();
@@ -155,6 +160,86 @@ public final class HologramCutInputRegression {
             "complete owner-private payload",
             raw.getString("secretInventory"),
             "raw renderer input is detached from authenticated payload");
+    }
+
+    private static void localBlueprintOwnsSelection() {
+        HologramCutClient cut = HologramCutClient.INSTANCE;
+        HologramState previous = HologramClient.state;
+        String[] names = { "localArea", "localAreaAwaitingBegin", "localAreaFinishing", "localAreaCancelling" };
+        Field[] fields = new Field[names.length];
+        Object[] saved = new Object[names.length];
+        int captured = 0;
+        try {
+            for (int i = 0; i < names.length; i++) {
+                fields[i] = HologramClient.class.getDeclaredField(names[i]);
+                fields[i].setAccessible(true);
+                saved[i] = fields[i].get(null);
+                captured++;
+                fields[i].set(null, i == 0 ? null : Boolean.FALSE);
+            }
+            HologramClient.state = new HologramState(new NBTTagCompound());
+            Method busy = HologramCutClient.class.getDeclaredMethod("blueprintBusy");
+            busy.setAccessible(true);
+            SimpleAssert.that(!(Boolean) busy.invoke(cut), "initial workspace permits choosing cut mode");
+
+            HologramAreaSelection area = new HologramAreaSelection();
+            area.point(1, 0, 64, 0, "replace");
+            area.point(2, 8, 72, 8, "replace");
+            area.beginNext("subtract");
+            fields[0].set(null, area);
+            SimpleAssert.that(
+                (Boolean) busy.invoke(cut),
+                "local subtract selection owns input before its server snapshot arrives");
+            area.point(1, 2, 66, 2, "replace");
+            area.point(2, 4, 68, 4, "replace");
+            NBTTagCompound geometry = area.snapshot();
+            for (HologramCutInput.Stage stage : HologramCutInput.Stage.values())
+                for (boolean shift : new boolean[] { false, true }) for (boolean alt : new boolean[] { false, true })
+                    for (boolean control : new boolean[] { false, true }) {
+                        boolean owned = (Boolean) busy.invoke(cut);
+                        SimpleAssert.eq(
+                            HologramCutInput.Intent.NONE,
+                            HologramCutInput.right(stage, shift, alt, owned, true, control),
+                            "even a residual cut cannot steal any subtract-selection modifier combination");
+                        SimpleAssert.that(
+                            !HologramCutInput.interceptsUse(stage, shift, owned, true),
+                            "blueprint mouse events reach their owner even when a stale cut stage exists");
+                    }
+            cut.beginSelection();
+            cut.chooseCutMode();
+            SimpleAssert.that(!cut.active() && !cut.cutMode(), "blocked cut entry never leaves an armed cut mode");
+            SimpleAssert.eq(geometry, area.snapshot(), "attempted cut leaves both inclusion and subtraction intact");
+            Method worldStage = HologramClient.class.getDeclaredMethod("worldStage");
+            worldStage.setAccessible(true);
+            SimpleAssert.eq(
+                HologramWorldFlow.Intent.FINISH_AREA,
+                HologramWorldFlow
+                    .intent((HologramWorldFlow.Stage) worldStage.invoke(null), HologramWorldFlow.Gesture.SHIFT_RIGHT),
+                "Shift-right still finishes blueprint import after the rejected Ctrl-Shift-Alt-right gesture");
+
+            fields[0].set(null, null);
+            for (int i = 1; i < names.length; i++) {
+                fields[i].setBoolean(null, true);
+                SimpleAssert.that(
+                    (Boolean) busy.invoke(cut),
+                    names[i] + " fences cut entry until the server receipt completes");
+                fields[i].setBoolean(null, false);
+            }
+            SimpleAssert.that(!(Boolean) busy.invoke(cut), "completed area lifecycle restores initial workspace input");
+            SimpleAssert.eq(
+                HologramCutInput.Intent.SELECT,
+                HologramCutInput.right(HologramCutInput.Stage.IDLE, true, true, false, false, true),
+                "Ctrl-Shift-Alt-right remains available from the initial workspace");
+        } catch (ReflectiveOperationException | java.io.IOException failure) {
+            throw new AssertionError("Local blueprint and cut input ownership", failure);
+        } finally {
+            HologramClient.state = previous;
+            try {
+                for (int i = 0; i < captured; i++) fields[i].set(null, saved[i]);
+            } catch (IllegalAccessException failure) {
+                throw new AssertionError("Restore local selection fixture", failure);
+            }
+        }
     }
 
     private static void recoveryIsolation() {

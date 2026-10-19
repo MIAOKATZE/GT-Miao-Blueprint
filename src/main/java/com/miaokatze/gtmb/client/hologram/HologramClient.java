@@ -211,6 +211,15 @@ public final class HologramClient {
             state == null ? "" : state.session);
     }
 
+    /** Local geometry owns its gestures even before the server acknowledges selection or placement. */
+    static boolean blueprintInputBusy() {
+        return localArea != null || localAreaAwaitingBegin
+            || localAreaFinishing
+            || localAreaCancelling
+            || HologramLocalPlacement.INSTANCE.active()
+            || state != null && HologramCutInput.blueprintBusy(state.data);
+    }
+
     private static HologramWorldFlow.Stage worldStage() {
         if (HologramLocalPlacement.INSTANCE.active())
             return HologramLocalPlacement.INSTANCE.locked() ? HologramWorldFlow.Stage.LOCKED

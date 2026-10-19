@@ -51,6 +51,7 @@ final class HologramCutInput {
     /** Storage remains reachable while a cut write awaits its authoritative result. */
     static Intent right(Stage stage, boolean shift, boolean alt, boolean blueprintBusy, boolean cutMode,
         boolean control) {
+        if (blueprintBusy) return Intent.NONE;
         if (stage != Stage.SELECTING && control && shift && !alt && !blueprintBusy) return Intent.STORAGE;
         if (stage == Stage.SELECTING && !blueprintBusy) {
             if (shift && alt) return Intent.MORE;
@@ -73,7 +74,7 @@ final class HologramCutInput {
     }
 
     static boolean interceptsUse(Stage stage, boolean shift, boolean blueprintBusy, boolean cutMode) {
-        return stage != Stage.IDLE || !blueprintBusy && (cutMode || shift);
+        return !blueprintBusy && (stage != Stage.IDLE || cutMode || shift);
     }
 
     static boolean cancelsActivity(Stage stage, boolean session, boolean preview) {
