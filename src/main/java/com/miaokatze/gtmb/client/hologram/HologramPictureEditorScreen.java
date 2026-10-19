@@ -87,11 +87,15 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         catalog.child(HologramMuiTheme.label(() -> "本地图片 · " + files.size(), 10, 8, 158, 16, HologramMuiTheme.TITLE));
         for (int i = 0; i < 9; i++) {
             final int row = i;
-            catalog.child(
-                HologramMuiTheme.button(() -> filename(row), 8, 30 + i * 24, 162, 22, () -> load(filename(row)))
-                    .setEnabledIf(w -> !loading && page * 9 + row < files.size())
+            ParentWidget<?> fileRow = new ParentWidget<>().pos(8, 30 + i * 24)
+                .size(162, 22)
+                .setEnabledIf(w -> page * 9 + row < files.size());
+            fileRow.child(
+                HologramMuiTheme.button(() -> filename(row), 0, 0, 162, 22, () -> load(filename(row)))
+                    .setEnabledIf(w -> !loading)
                     .tooltipBuilder(t -> t.addLine(filename(row)))
                     .tooltipAutoUpdate(true));
+            catalog.child(fileRow);
         }
         catalog.child(HologramMuiTheme.button(() -> "‹", 8, 250, 38, 20, () -> page = Math.max(0, page - 1)));
         catalog.child(
@@ -128,6 +132,26 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         field(dimensions, "shortSide", "短边像素 · 默认 64", 0, 0, () -> keepAspect);
         field(dimensions, "width", "横向像素", 136, 0, () -> !keepAspect);
         field(dimensions, "height", "竖向像素", 272, 0, () -> !keepAspect);
+        dimensions.child(
+            HologramMuiTheme.label(
+                () -> values.get("width")
+                    .getStringValue() + " px",
+                136,
+                16,
+                130,
+                20,
+                HologramMuiTheme.TEXT)
+                .setEnabledIf(w -> keepAspect));
+        dimensions.child(
+            HologramMuiTheme.label(
+                () -> values.get("height")
+                    .getStringValue() + " px",
+                272,
+                16,
+                130,
+                20,
+                HologramMuiTheme.TEXT)
+                .setEnabledIf(w -> keepAspect));
         field(dimensions, "pixel", "像素边长 / 16", 0, 42, () -> true);
         field(dimensions, "thickness", "厚度 / 16", 136, 42, () -> true);
         dimensions.child(HologramMuiTheme.label(() -> "固定材料组合", 272, 42, 130, 15, HologramMuiTheme.MUTED));
