@@ -116,6 +116,10 @@ final class HologramUiLibrary {
 
     private String overwriteName = "";
 
+    private String overwriteAutomaticName = "";
+
+    private boolean overwriteManualName;
+
     private int deferredLibraryAction = -1;
 
     private String deferredLibraryTargetId = "";
@@ -1210,6 +1214,8 @@ final class HologramUiLibrary {
                 HologramLibraryClient.INSTANCE.refreshLocal();
             }
             this.overwriteTarget = this.overwriteName = "";
+            this.overwriteAutomaticName = this.presetNameField.getText();
+            this.overwriteManualName = false;
             return true;
         }
         return false;
@@ -1249,6 +1255,12 @@ final class HologramUiLibrary {
                 : ui.session.state().data.getTagList("presets", 10)).getCompoundTagAt(id - 14000);
             this.overwriteTarget = row.getString("id");
             this.overwriteName = row.getString("name");
+            this.overwriteManualName |= !this.presetNameField.getText()
+                .equals(this.overwriteAutomaticName);
+            if (!this.overwriteManualName) {
+                this.presetNameField.setText(this.overwriteName);
+                this.overwriteAutomaticName = this.presetNameField.getText();
+            }
             return true;
         }
         if (id == 140 && this.overwriteMode) {
@@ -1721,6 +1733,8 @@ final class HologramUiLibrary {
         state.setBoolean("overwriteReview", overwriteReview);
         state.setString("overwriteTarget", overwriteTarget);
         state.setString("overwriteName", overwriteName);
+        state.setString("overwriteAutomaticName", overwriteAutomaticName);
+        state.setBoolean("overwriteManualName", overwriteManualName);
         state.setInteger("deferredLibraryAction", deferredLibraryAction);
         state.setString("deferredLibraryTargetId", deferredLibraryTargetId);
         state.setBoolean("discardReview", discardReview);
@@ -1748,6 +1762,8 @@ final class HologramUiLibrary {
         overwriteReview = state.getBoolean("overwriteReview");
         overwriteTarget = state.getString("overwriteTarget");
         overwriteName = state.getString("overwriteName");
+        overwriteAutomaticName = state.getString("overwriteAutomaticName");
+        overwriteManualName = state.getBoolean("overwriteManualName");
         deferredLibraryAction = state.getInteger("deferredLibraryAction");
         deferredLibraryTargetId = state.getString("deferredLibraryTargetId");
         discardReview = state.getBoolean("discardReview");

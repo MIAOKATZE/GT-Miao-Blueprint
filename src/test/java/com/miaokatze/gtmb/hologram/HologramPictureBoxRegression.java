@@ -94,6 +94,21 @@ public final class HologramPictureBoxRegression {
                 .that(uniform.get(0).fullBlock, "single-material complete image cube may become ordinary block");
             SimpleAssert
                 .eq(1, uniform.get(0).tile.getInteger("tilesCount"), "uniform micro-pixels merge into one cuboid");
+            attachment.thickness = 64;
+            List<HologramTextBox.Cell> thick = HologramTextBox.read(attachment.write())
+                .generate();
+            SimpleAssert.eq(4, thick.size(), "four-block image thickness survives save and reload");
+            SimpleAssert.eq(16384, voxels(thick).size(), "thickness preserves every material voxel");
+            for (HologramTextBox.Cell cell : thick) {
+                SimpleAssert.that(cell.fullBlock, "thick uniform image collapses to ordinary full cubes");
+                SimpleAssert.eq(1, cell.tile.getInteger("tilesCount"), "each filled host stores one cuboid");
+            }
+            attachment.thickness = 65;
+            try {
+                attachment.validate();
+                throw new AssertionError("out-of-range image thickness admitted");
+            } catch (java.io.IOException expectedFailure) {}
+            attachment.thickness = 16;
             for (int y = 0; y < 16; y++)
                 for (int x = 8; x < 16; x++) attachment.picture.source[y * 16 + x] = 0xff963430;
             List<HologramTextBox.Cell> mixed = attachment.generate();

@@ -97,7 +97,7 @@ public final class HologramTextBox {
                 || pixelX > 16
                 || pixelY != pixelX
                 || thickness < 1
-                || thickness > 16
+                || thickness > 64
                 || Math.abs((long) x) > 30000000
                 || Math.abs((long) y) > 256
                 || Math.abs((long) z) > 30000000
@@ -105,7 +105,7 @@ public final class HologramTextBox {
                 || bend != 0
                 || twist != 0
                 || shear != 0
-                || vertical) throw new IOException("图片附加的像素边长、厚度、姿态或标识无效");
+                || vertical) throw new IOException("图片的像素边长、厚度、姿态或标识无效");
             for (double value : new double[] { yaw, pitch, roll })
                 if (!Double.isFinite(value) || Math.abs(value) > 360) throw new IOException("图片旋转参数超出范围");
             return;

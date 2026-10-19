@@ -73,7 +73,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> "图片附加 · LittleTiles 像素画", 620);
+        HologramMuiTheme.header(panel(), () -> "添加图片 · LittleTiles 像素画", 620);
         panel().child(
             HologramMuiTheme.label(() -> ".minecraft / MiaoBlueprintPicture", 14, 40, 450, 18, HologramMuiTheme.MUTED)
                 .tooltipBuilder(
@@ -153,7 +153,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 HologramMuiTheme.TEXT)
                 .setEnabledIf(w -> keepAspect));
         field(dimensions, "pixel", "像素边长 / 16", 0, 42, () -> true);
-        field(dimensions, "thickness", "厚度 / 16", 136, 42, () -> true);
+        field(dimensions, "thickness", "图片厚度 · 1–64", 136, 42, () -> true);
         dimensions.child(HologramMuiTheme.label(() -> "固定材料组合", 272, 42, 130, 15, HologramMuiTheme.MUTED));
         dimensions.child(
             HologramMuiTheme.button(
@@ -168,7 +168,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         dimensions.child(
             HologramMuiTheme.button(() -> (dither ? "✓ " : "") + "颜色抖动", 204, 88, 198, 22, () -> dither = !dither));
         dimensions.child(
-            HologramMuiTheme.label(() -> "每边 ≤512，总像素 ≤65536；像素边长与厚度 1–16。", 0, 116, 402, 16, HologramMuiTheme.MUTED));
+            HologramMuiTheme.label(() -> "厚度 16 = 1 格；同材质体积自动合并，填满后使用完整方块。", 0, 116, 402, 16, HologramMuiTheme.MUTED));
         panel().child(dimensions);
         ParentWidget<?> effects = new ParentWidget<>().pos(204, 264)
             .size(402, 134)

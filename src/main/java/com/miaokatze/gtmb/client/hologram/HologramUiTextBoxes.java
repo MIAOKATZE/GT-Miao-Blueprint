@@ -70,7 +70,7 @@ final class HologramUiTextBoxes {
     String label(boolean picture) {
         String noun = picture ? "图片" : "文字";
         return active(picture) ? pending ? "校验" + noun + "…" : chosen ? "确认放置" : "请选择" + noun + "位置"
-            : selectedDefinition(picture) != null ? picture ? "编辑图片" : "编辑内容" : picture ? "图片附加" : "文字转蓝图";
+            : selectedDefinition(picture) != null ? picture ? "编辑图片" : "编辑内容" : picture ? "添加图片" : "文字转蓝图";
     }
 
     void activate() {
