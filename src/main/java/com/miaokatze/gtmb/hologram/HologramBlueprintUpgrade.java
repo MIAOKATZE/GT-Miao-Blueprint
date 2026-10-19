@@ -62,6 +62,8 @@ public final class HologramBlueprintUpgrade {
         JsonObject versions = mods == null || mods.isJsonNull() ? new JsonObject() : mods.getAsJsonObject();
         versions.addProperty("gtmb", Tags.RELEASE_VERSION);
         blueprint.add("modVersions", versions);
+        HologramPresets.Preset preset = new com.google.gson.Gson().fromJson(blueprint, HologramPresets.Preset.class);
+        blueprint.addProperty("fullyVoucherCovered", HologramVoucherCoverage.compute(preset));
         return true;
     }
 

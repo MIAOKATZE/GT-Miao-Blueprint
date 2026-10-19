@@ -128,6 +128,13 @@ public final class DecorationVoucherConfig {
                     + "are always charged, including when embedded in a decoration. Do not allow mixed machine mods.")
             .getStringList();
         Set<String> blocks = names(read("allowedBlocks", DEFAULT_BLOCKS));
+        Set<String> allowedMods = names(Arrays.asList(modIds));
+        if (config.get(CATEGORY, "decorationModDefaultsVersion", 0)
+            .getInt(0) < 1) {
+            allowedMods = new java.util.TreeSet<>(allowedMods);
+            allowedMods.add("ztones");
+            allowedMods.add("chiseltones");
+        }
         if (config.get(CATEGORY, "tileMaterialDefaultsVersion", 0)
             .getInt(0) < 1) {
             blocks = new java.util.TreeSet<>(blocks);
@@ -135,7 +142,7 @@ public final class DecorationVoucherConfig {
         }
         View loaded = new View(
             enabled,
-            Arrays.asList(modIds),
+            allowedMods,
             blocks,
             read("allowedOres", new String[0]),
             read("deniedModIds", new String[0]),
@@ -211,6 +218,8 @@ public final class DecorationVoucherConfig {
                 .set(next.enabled);
             staged.get(CATEGORY, "tileMaterialDefaultsVersion", 1)
                 .set(1);
+            staged.get(CATEGORY, "decorationModDefaultsVersion", 1)
+                .set(1);
             String[] keys = ruleKeys();
             Set<?>[] values = lists(next);
             for (int i = 0; i < keys.length; i++) staged.get(CATEGORY, keys[i], new String[0])
@@ -221,6 +230,8 @@ public final class DecorationVoucherConfig {
             if (readback.get(CATEGORY, "enabled", !next.enabled)
                 .getBoolean(!next.enabled) != next.enabled
                 || readback.get(CATEGORY, "tileMaterialDefaultsVersion", 0)
+                    .getInt(0) != 1
+                || readback.get(CATEGORY, "decorationModDefaultsVersion", 0)
                     .getInt(0) != 1)
                 throw new java.io.IOException("Voucher configuration read-back failed");
             for (int i = 0; i < keys.length; i++) if (!names(

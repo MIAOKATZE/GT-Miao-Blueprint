@@ -95,10 +95,17 @@ final class HologramClientLibrary {
         final String id, name, authorName, authorUuid, sourceMod, gtmbVersion;
         final int cells, structures;
         final long bytes, createdAt;
+        final boolean fullyVoucherCovered;
 
         Entry(String id, JsonObject blueprint, long bytes) {
             this.id = id;
             name = string(blueprint, "name");
+            fullyVoucherCovered = blueprint.has("fullyVoucherCovered") && blueprint.get("fullyVoucherCovered")
+                .isJsonPrimitive()
+                && blueprint.getAsJsonPrimitive("fullyVoucherCovered")
+                    .isBoolean()
+                && blueprint.get("fullyVoucherCovered")
+                    .getAsBoolean();
             authorName = string(blueprint, "authorName");
             authorUuid = string(blueprint, "authorUuid");
             sourceMod = string(blueprint, "sourceMod");
@@ -120,6 +127,7 @@ final class HologramClientLibrary {
             authorUuid = source.authorUuid;
             sourceMod = source.sourceMod;
             gtmbVersion = source.gtmbVersion;
+            fullyVoucherCovered = source.fullyVoucherCovered;
             cells = source.cells;
             structures = source.structures;
             bytes = source.bytes;
@@ -211,6 +219,9 @@ final class HologramClientLibrary {
                         metadata.addProperty(key.equals("cells") ? "displayCells" : "displayStructures", count);
                     } else if (key.equals("nativeBlueprint"))
                         metadata.add(key, new com.google.gson.JsonParser().parse(reader));
+                    else if (key.equals("fullyVoucherCovered")
+                        && reader.peek() == com.google.gson.stream.JsonToken.BOOLEAN)
+                        metadata.addProperty(key, reader.nextBoolean());
                     else if (key.equals("createdAt")) metadata.addProperty(key, reader.nextLong());
                     else if (key.equals("id") || key.equals("name")
                         || key.equals("authorName")

@@ -217,7 +217,7 @@ final class HologramMaterialConfirmationDialog {
             if (row.item != null) for (Object line : row.item.getTooltip(Minecraft.getMinecraft().thePlayer, false))
                 t.addLine(String.valueOf(line));
             t.addLine("清单条目 #" + (row.index + 1) + (row.tagged ? " · 精确 NBT，独立计费" : ""));
-            if (row.data.getBoolean("voucherEligible")) t.addLine("本次可使用猫猫装饰抵用券抵扣");
+            if (row.data.getBoolean("voucherEligible")) t.addLine("选用猫猫装饰抵用券后优先抵扣；已有库存不会为此消耗");
             if (!row.data.getString("nbtKey")
                 .isEmpty()) t.addLine("设备资源：" + row.data.getString("nbtKey"));
         })

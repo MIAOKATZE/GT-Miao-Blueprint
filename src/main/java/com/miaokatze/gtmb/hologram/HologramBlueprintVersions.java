@@ -99,6 +99,10 @@ final class HologramBlueprintVersions {
             throw new IOException("Missing native blueprint version metadata");
         JsonElement nativeJson = presetJson.getAsJsonObject()
             .get("nativeBlueprint");
+        JsonElement coverage = presetJson.getAsJsonObject()
+            .get("fullyVoucherCovered");
+        if (coverage != null && (!coverage.isJsonPrimitive() || !coverage.getAsJsonPrimitive()
+            .isBoolean())) throw new IOException("fullyVoucherCovered must be a boolean");
         if (nativeJson == null || !nativeJson.isJsonObject())
             throw new IOException("Unsupported old blueprint file: missing nativeBlueprint metadata");
         JsonObject object = nativeJson.getAsJsonObject();

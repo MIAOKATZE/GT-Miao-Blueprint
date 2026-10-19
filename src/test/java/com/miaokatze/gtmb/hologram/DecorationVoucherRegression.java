@@ -25,7 +25,8 @@ public final class DecorationVoucherRegression {
     public static void run() {
         try {
             DecorationVoucherConfigRegression.run();
-        } catch (java.io.IOException | ReflectiveOperationException failure) {
+            HologramVoucherCoverageRegression.run();
+        } catch (Exception failure) {
             throw new AssertionError("Voucher configuration", failure);
         }
         Item voucher = new ItemDecorationVoucher();

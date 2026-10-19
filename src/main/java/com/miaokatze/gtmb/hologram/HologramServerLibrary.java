@@ -866,6 +866,7 @@ final class HologramServerLibrary {
             NBTTagCompound label = new NBTTagCompound();
             label.setString("id", entry.blueprint.id);
             label.setString("name", entry.blueprint.name);
+            label.setBoolean("fullyVoucherCovered", Boolean.TRUE.equals(entry.blueprint.fullyVoucherCovered));
             label.setString(
                 "gtmbVersion",
                 entry.blueprint.nativeBlueprint == null ? "" : entry.blueprint.nativeBlueprint.gtmbVersion);

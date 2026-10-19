@@ -275,6 +275,7 @@ final class HologramPresets {
         String authorName, authorUuid;
         long createdAt;
         HologramBlueprintVersions.Metadata nativeBlueprint;
+        Boolean fullyVoucherCovered;
         int schema = 1;
         int aePolicyVersion;
         int deidentificationVersion, deidentificationLevel;
@@ -453,6 +454,7 @@ final class HologramPresets {
     }
 
     static synchronized void save(Preset preset) throws IOException {
+        preset.fullyVoucherCovered = HologramVoucherCoverage.compute(preset);
         List<Preset> list = all();
         Preset saved = put(list, preset, false);
         validate(saved);
@@ -462,6 +464,7 @@ final class HologramPresets {
     }
 
     static synchronized void update(Preset preset) throws IOException {
+        preset.fullyVoucherCovered = HologramVoucherCoverage.compute(preset);
         List<Preset> list = all();
         Preset updated = put(list, preset, true);
         validate(updated);
@@ -825,6 +828,7 @@ final class HologramPresets {
             row.setString("sourceMod", preset.sourceMod == null ? "" : preset.sourceMod);
             row.setString("sourceClass", preset.sourceClass == null ? "" : preset.sourceClass);
             row.setString("gtmbVersion", preset.nativeBlueprint == null ? "" : preset.nativeBlueprint.gtmbVersion);
+            row.setBoolean("fullyVoucherCovered", Boolean.TRUE.equals(preset.fullyVoucherCovered));
             row.setInteger("structures", preset.structures.size());
             row.setInteger("cells", preset.cells.size());
             row.setInteger("schema", preset.schema);

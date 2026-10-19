@@ -750,6 +750,7 @@ final class HologramLibraryClient {
                 row.setString("authorUuid", entry.authorUuid);
                 row.setString("sourceMod", entry.sourceMod);
                 row.setString("gtmbVersion", entry.gtmbVersion);
+                row.setBoolean("fullyVoucherCovered", entry.fullyVoucherCovered);
                 row.setLong("createdAt", entry.createdAt);
                 row.setInteger("cells", entry.cells);
                 row.setInteger("structures", entry.structures);

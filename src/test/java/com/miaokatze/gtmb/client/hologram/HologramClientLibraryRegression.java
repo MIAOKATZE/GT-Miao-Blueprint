@@ -73,13 +73,25 @@ public final class HologramClientLibraryRegression {
             Files.createDirectories(library.directory());
             Path source = library.directory()
                 .resolve("中文便携蓝图_未核验.json");
-            Files.write(source, json("Visible source", "Alice"));
+            JsonObject tagged = new com.google.gson.JsonParser()
+                .parse(new String(json("Visible source", "Alice"), StandardCharsets.UTF_8))
+                .getAsJsonObject();
+            tagged.getAsJsonObject("blueprint")
+                .addProperty("fullyVoucherCovered", true);
+            Files.write(
+                source,
+                tagged.toString()
+                    .getBytes(StandardCharsets.UTF_8));
             Files.write(HologramBlueprintArtifact.previewPath(source), new byte[] { 1, 2, 3 });
             HologramClientLibrary.Entry cold = library.list()
                 .get(0);
             HologramClientLibrary.Entry warm = library.list()
                 .get(0);
             SimpleAssert.that(cold == warm, "unchanged source stamps reuse exact catalog entries");
+            SimpleAssert.that(
+                cold.fullyVoucherCovered && new HologramClientLibrary(game).list()
+                    .get(0).fullyVoucherCovered,
+                "cold metadata scans and restart retain the saved boolean ribbon marker without full payload decode");
             SimpleAssert.eq(0, pairs.reads, "cold and warm catalog reads never validate artifact pairs");
             SimpleAssert.that(
                 !Files.exists(

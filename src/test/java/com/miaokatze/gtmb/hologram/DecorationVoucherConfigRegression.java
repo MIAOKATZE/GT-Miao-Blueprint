@@ -32,6 +32,9 @@ final class DecorationVoucherConfigRegression {
             legacy.save();
             DecorationVoucherConfig.load(fixture.directory.toFile());
             DecorationVoucherConfig.View migrated = DecorationVoucherConfig.view();
+            SimpleAssert.that(
+                migrated.allowedModIds.contains("ztones") && migrated.allowedModIds.contains("chiseltones"),
+                "legacy partial decoration lists gain both complete Ztones namespaces");
             SimpleAssert.that(!migrated.enabled, "migration preserves the administrator's disabled setting");
             for (String material : new String[] { "minecraft:wool", "minecraft:hardened_clay",
                 "minecraft:stained_hardened_clay", "etfuturum:concrete", HologramPictureBox.WOOLEN_CLAY })

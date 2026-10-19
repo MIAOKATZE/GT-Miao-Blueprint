@@ -291,6 +291,7 @@ final class HologramSnapshotMetadataSource {
         target.authorName = source.authorName;
         target.authorUuid = source.authorUuid;
         target.createdAt = source.createdAt;
+        target.fullyVoucherCovered = source.fullyVoucherCovered;
         target.schema = source.schema;
         target.aePolicyVersion = source.aePolicyVersion;
         target.deidentificationVersion = source.deidentificationVersion;
