@@ -963,7 +963,7 @@ final class HologramBlueprintProcessing {
             row.setString(
                 "detail",
                 depth == 0 && "cbOwner".equals(key) && HologramDeidentification.carpenterOwner(cell.block(), device)
-                    ? "Carpenter 原生所有者：等级0保留，等级1以上清空；放置时仅空身份绑定当前玩家"
+                    ? "Carpenter 来源所有者仅作记录；新放置方块自动归当前玩家，无需为此去标识"
                     : protectedField ? "系统身份由服务器维护"
                         : editable ? "已审阅的配置项；修改后须重新完成NBT核验" : "保留原数据；此项可能含真实资产或未审阅格式，仅支持明确忽略");
             entries.appendTag(row);

@@ -323,7 +323,11 @@ public final class HologramV011WorldSmoke {
             "two distinct native owner identities");
 
         int nativeX = 1460;
-        NBTTagCompound retained = base("carpenter-existing-owner-level0-native-install", world, source, installer);
+        NBTTagCompound retained = base(
+            "carpenter-source-owner-level0-rebound-native-install",
+            world,
+            source,
+            installer);
         retained.setString("fixtureKind", "native WorldServer factory lifecycle; no paid construction claimed");
         retained.setBoolean("paidPlacementClaimed", false);
         retained.setString("existingOwner", existingOwner);
@@ -337,12 +341,16 @@ public final class HologramV011WorldSmoke {
         retained.setTag("installedTile", snapshot(nativeInstalled));
         retained.setTag("sourceTileAfter", snapshot(source.tile));
         retained.setTag("inventoryAfter", inventory(installer));
+        NBTTagCompound expectedNative = (NBTTagCompound) source.payload.copy();
+        expectedNative.setString("cbOwner", installingOwner);
         require(
             snapshot(nativeInstalled).getString("cbOwner")
-                .equals(existingOwner) && sameNativePersistence(snapshot(nativeInstalled), source.payload)
-                && HologramNativePlacement.matchesPlaced(block, source.metadata, nativeInstalled, source.payload)
+                .equals(installingOwner)
+                && sameNativePersistence(snapshot(nativeInstalled), expectedNative)
+                && HologramNativePlacement
+                    .matchesPlaced(block, source.metadata, nativeInstalled, source.payload, installer)
                 && inventory(installer).equals(retained.getTagList("inventoryBefore", 10)),
-            "level0 native install preserves nonempty original owner and all persisted skin data for a different actor");
+            "level0 native install binds the new actor and preserves every other persisted field");
         source.assertUnchanged(world);
         passed(retained);
 
@@ -903,13 +911,12 @@ public final class HologramV011WorldSmoke {
             .startsWith("com.carpentersblocks.block.");
     }
 
-    /** The empty native owner is claimed by the installing actor; the captured source remains untouched. */
+    /** New native copies belong to their installer; the captured source remains untouched. */
     private static NBTTagCompound expectedPlacementPayload(NativeSource source, EntityPlayerMP actor) throws Exception {
         NBTTagCompound expected = (NBTTagCompound) source.payload.copy();
         if (carpenter(source)) {
             require(source.payload.hasKey("cbOwner", 8), "native Carpenter source has a typed persisted owner");
-            if (expected.getString("cbOwner")
-                .isEmpty()) expected.setString("cbOwner", nativeCarpenterOwner(actor));
+            expected.setString("cbOwner", nativeCarpenterOwner(actor));
             NBTTagCompound sourceWithoutOwner = (NBTTagCompound) source.payload.copy();
             NBTTagCompound expectedWithoutOwner = (NBTTagCompound) expected.copy();
             sourceWithoutOwner.removeTag("cbOwner");
@@ -925,8 +932,7 @@ public final class HologramV011WorldSmoke {
         NBTTagCompound expected) throws Exception {
         if (actual == null) return false;
         if (carpenter(source)) {
-            String owner = source.payload.getString("cbOwner");
-            if (owner.isEmpty()) owner = nativeCarpenterOwner(actor);
+            String owner = nativeCarpenterOwner(actor);
             require(
                 expected.getString("cbOwner")
                     .equals(owner),

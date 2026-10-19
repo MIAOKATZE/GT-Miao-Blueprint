@@ -747,17 +747,8 @@ final class HologramCellPolicy {
     }
 
     static boolean foreignBlueprintPayloadOwner(HologramSession s, Block block, NBTTagCompound payload) {
-        if (!HologramDeidentification.carpenterOwner(block, payload)) return HologramDeidentification
-            .foreignOwner(payload, s.player.getUniqueID(), s.player.getCommandSenderName());
-        NBTTagCompound owner = new NBTTagCompound();
-        owner.setString("cbOwner", payload.getString("cbOwner"));
-        if (payload.hasKey("id", 8)) owner.setString("id", payload.getString("id"));
-        if (HologramDeidentification.foreignOwner(block, owner, s.player.getUniqueID(), s.player.getDisplayName()))
-            return true;
-        NBTTagCompound remaining = (NBTTagCompound) payload.copy();
-        remaining.removeTag("cbOwner");
         return HologramDeidentification
-            .foreignOwner(remaining, s.player.getUniqueID(), s.player.getCommandSenderName());
+            .foreignOwner(block, payload, s.player.getUniqueID(), s.player.getCommandSenderName());
     }
 
     /** A physical seal is the paid state. Template data may supply a verified join descriptor, never assets. */

@@ -160,9 +160,9 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 「蓝图设置」负责处理与保存：按私用或分享倾向核对身份、坐标、网络和资源等选项，再命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导会说明「蓝图设置」和「结构调整」的区别，也支持不再显示。
 
-自动提示词在私用和分享倾向下均默认轻度。木匠方块原生包含玩家身份字段，身份报告使用通用蓝图标题；等级 1–9 的去标识处理保留可计价饰面，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
+自动提示词在私用和分享倾向下均默认轻度。木匠方块的来源所有者不会阻塞蓝图，新放置方块按原生规则归当前放置者，无需为此去标识；形状、饰面、染色与其他配置保留，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
 
-*Automatic annotations default to Light for both private and shared designs. Carpenter identity review retains payable decoration at levels 1–9; construction still charges its materials. Vanilla standing and wall signs consume one sign and retain their text.*
+*Automatic annotations default to Light for both private and shared designs. Copied Carpenter blocks belong to their installer without requiring deidentification; shape, skins and other settings remain intact and their materials are still charged. Vanilla standing and wall signs consume one sign and retain their text.*
 
 *Blueprint Settings handles processing and saving. Review identity, coordinate, network and resource choices for private use or sharing, resolve conflicts, then save.*
 
