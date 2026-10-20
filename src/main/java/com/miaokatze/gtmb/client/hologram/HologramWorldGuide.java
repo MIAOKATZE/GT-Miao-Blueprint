@@ -71,6 +71,7 @@ final class HologramWorldGuide {
     }
 
     static void drawSelectionCursor(NBTTagCompound selection, ScaledResolution resolution) {
+        if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) return;
         Minecraft mc = Minecraft.getMinecraft();
         String message = selectionCursorText(selection);
         int x = resolution.getScaledWidth() / 2 + 12, y = resolution.getScaledHeight() / 2 + 10;

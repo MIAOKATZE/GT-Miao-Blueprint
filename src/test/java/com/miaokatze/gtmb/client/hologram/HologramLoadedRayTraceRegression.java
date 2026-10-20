@@ -5,6 +5,8 @@ import java.util.List;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.miaokatze.miaokatzecore.api.camera.CameraRay;
+import com.miaokatze.miaokatzecore.api.camera.HeightSlice;
+import com.miaokatze.miaokatzecore.api.camera.RayInterval;
 
 /** Loaded-world traversal contracts; no Minecraft world, chunk loading or OpenGL required. */
 public final class HologramLoadedRayTraceRegression {
@@ -17,6 +19,7 @@ public final class HologramLoadedRayTraceRegression {
     }
 
     static void run() {
+        slicedInterval();
         List<Integer> visited = new ArrayList<>();
         HologramLoadedRayTrace.Result<Integer> visible = HologramLoadedRayTrace.trace(
             new CameraRay(.5, 64.5, .5, 1, 0, 0),
@@ -68,5 +71,27 @@ public final class HologramLoadedRayTraceRegression {
             (x, y, z) -> false,
             (x, y, z, from, to) -> { throw new AssertionError("unloaded voxel reached collision lookup"); });
         SimpleAssert.that(!absent.available, "an entirely unloaded ray has no valid target");
+    }
+
+    private static void slicedInterval() {
+        CameraRay ray = new CameraRay(.5, 100, .5, 0, -1, 0);
+        RayInterval interval = new RayInterval(ray, 0, 100).clip(HeightSlice.between(60, 80, 1));
+        List<Integer> layers = new ArrayList<>();
+        HologramLoadedRayTrace.Result<Integer> result = HologramLoadedRayTrace.trace(
+            interval.ray(),
+            interval.minDistance(),
+            interval.maxDistance(),
+            (x, y, z) -> true,
+            (x, y, z, from, to) -> {
+                layers.add(y);
+                return null;
+            });
+        SimpleAssert.that(interval.ray() == ray, "slice traversal keeps the displayed near-plane ray origin");
+        SimpleAssert.eq(Integer.valueOf(79), layers.get(0), "an upper cut enters the retained native block layer");
+        SimpleAssert
+            .eq(Integer.valueOf(60), layers.get(layers.size() - 1), "traversal stops at the lower retained layer");
+        SimpleAssert.that(
+            result.available && result.hit == null,
+            "an empty slice interval never manufactures a cut-plane collision");
     }
 }

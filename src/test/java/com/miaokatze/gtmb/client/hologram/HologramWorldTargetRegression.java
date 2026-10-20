@@ -9,6 +9,7 @@ import net.minecraftforge.common.util.ForgeDirection;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.miaokatze.miaokatzecore.api.camera.CameraRay;
+import com.miaokatze.miaokatzecore.api.camera.HeightSlice;
 
 /** Tests the production resolver used by red area cursors, area packets and moving green previews. */
 public final class HologramWorldTargetRegression {
@@ -84,6 +85,64 @@ public final class HologramWorldTargetRegression {
             HologramWorldTarget.resolve(hit, true, true, 6, feet, eyes, look),
             "Alt confirmation retains the same forced floating green target");
         orthographic(feet, hit);
+        sliceSurfaces();
+    }
+
+    private static void sliceSurfaces() {
+        HeightSlice slice = HeightSlice.between(60, 80, 1);
+        MovingObjectPosition cap = new MovingObjectPosition(
+            2,
+            79,
+            3,
+            ForgeDirection.UP.ordinal(),
+            Vec3.createVectorHelper(2.5, 80, 3.5));
+        for (int pixelX = 0; pixelX < 4; pixelX++) for (int pixelY = 0; pixelY < 4; pixelY++) SimpleAssert.that(
+            HologramWorldTarget.visibleSurface(slice, cap, pixelX, pixelY),
+            "a real native upper boundary face stays pickable at every coverage sample");
+        MovingObjectPosition side = new MovingObjectPosition(
+            2,
+            79,
+            3,
+            ForgeDirection.EAST.ordinal(),
+            Vec3.createVectorHelper(3, 79.75, 3.5));
+        SimpleAssert.that(
+            HologramWorldTarget.visibleSurface(slice, side, 0, 0)
+                && !HologramWorldTarget.visibleSurface(slice, side, 0, 3),
+            "native side-face picks use the same displayed-pixel feather coverage as rendering");
+        MovingObjectPosition hidden = new MovingObjectPosition(
+            2,
+            80,
+            3,
+            ForgeDirection.DOWN.ordinal(),
+            Vec3.createVectorHelper(2.5, 80, 3.5));
+        SimpleAssert.that(
+            !HologramWorldTarget.visibleSurface(slice, hidden, 0, 0),
+            "a hidden block cannot be picked through its boundary face");
+        SimpleAssert.that(
+            !HologramWorldTarget.visibleSurface(slice, null, 0, 0),
+            "crossing a slice plane does not synthesize a collision face");
+        CameraRay ray = new CameraRay(0, 80, 0, 1, -1, 0);
+        MovingObjectPosition front = new MovingObjectPosition(
+            0,
+            79,
+            0,
+            ForgeDirection.WEST.ordinal(),
+            Vec3.createVectorHelper(ray.directionX() * .1, 80 + ray.directionY() * .1, 0));
+        MovingObjectPosition back = new MovingObjectPosition(
+            0,
+            79,
+            0,
+            ForgeDirection.EAST.ordinal(),
+            Vec3.createVectorHelper(ray.directionX() * .7, 80 + ray.directionY() * .7, 0));
+        int[] calls = { 0 };
+        MovingObjectPosition revealed = HologramWorldTarget
+            .firstVisibleNativeSurface(ray, 0, 1, slice, 0, 0, (from, to) -> {
+                calls[0]++;
+                return from < .1 ? front : back;
+            });
+        SimpleAssert.that(
+            revealed == back && calls[0] == 2,
+            "a feather-discarded front face reveals the same voxel's real native back face");
     }
 
     private static void orthographic(int[] feet, MovingObjectPosition hit) {

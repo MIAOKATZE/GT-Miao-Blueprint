@@ -30,6 +30,7 @@ import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
+import com.miaokatze.miaokatzecore.client.camera.slice.SliceBackend;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
@@ -270,6 +271,10 @@ public final class HologramClient {
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!projectorWorld()) return;
+        if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
+            invalidCameraTarget();
+            return;
+        }
         if (HologramLocalPlacement.INSTANCE.active() && !HologramLocalPlacement.INSTANCE.submitting()) {
             if (usePressFence.consume()) HologramLocalPlacement.INSTANCE.use(shiftHeld());
             return;
@@ -377,11 +382,6 @@ public final class HologramClient {
     private boolean inputScreenChanged;
     private long cameraEscapeKeyTime = Long.MIN_VALUE;
 
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void cameraMouse(MouseEvent event) {
-        if (HologramIsometricCamera.INSTANCE.mouse(event)) event.setCanceled(true);
-    }
-
     /** Area/cut handlers run first. The remaining world clicks use the same orthographic target. */
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void cameraWorldMouse(MouseEvent event) {
@@ -405,6 +405,11 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void cutMouse(MouseEvent event) {
+        if ((event.button == 0 || event.button == 1) && HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
+            event.setCanceled(true);
+            if (event.buttonstate) invalidCameraTarget();
+            return;
+        }
         if (projectorWorld() && HologramBackgroundTasks.busy() && event.button >= 0) {
             event.setCanceled(true);
             if (event.buttonstate && event.button == 1 && usePressFence.consume()) HologramBackgroundTasks.reopen();
@@ -415,6 +420,10 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
+        if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
+            if (event.dwheel != 0 && altHeld()) event.setCanceled(true);
+            return;
+        }
         if (HologramBackgroundTasks.busy()) return;
         // Plain wheel retains the vanilla hotbar; only Alt-distance adjustment owns a wheel event.
         if (event.dwheel == 0 || !projectorWorld()
@@ -427,7 +436,7 @@ public final class HologramClient {
         event.setCanceled(true);
     }
 
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    @SubscribeEvent(priority = EventPriority.HIGH)
     public void areaMouse(MouseEvent event) {
         if (HologramBackgroundTasks.busy()) return;
         Minecraft mc = Minecraft.getMinecraft();
@@ -660,7 +669,15 @@ public final class HologramClient {
         syncPreviewDistance();
         if (HologramBackgroundTasks.busy()) return;
         if (HologramCutClient.INSTANCE.active()) return;
-        boolean rotate = rotationKey.sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed);
+        boolean cameraBlocked = HologramIsometricCamera.INSTANCE.blocksWorldInput();
+        boolean rotate = rotationKey
+            .sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed || cameraBlocked);
+        if (cameraBlocked) {
+            HologramLocalPlacement.INSTANCE.input(false, true);
+            areaSelectionInput.tick(localArea, false);
+            lockedNudge(mc, true);
+            return;
+        }
         if (HologramLocalPlacement.INSTANCE.active()) {
             HologramLocalPlacement.INSTANCE.input(projectorWorld(), changed);
             if (projectorWorld() && rotate) HologramLocalPlacement.INSTANCE.turn(controlHeld());
@@ -691,6 +708,7 @@ public final class HologramClient {
 
     private void lockedNudge(Minecraft mc, boolean contextChanged) {
         boolean enabled = projectorWorld() && state != null
+            && !HologramIsometricCamera.INSTANCE.blocksWorldInput()
             && mc.theWorld == snapshotWorld
             && worldStage() == HologramWorldFlow.Stage.LOCKED
             && !positionLockPending(state)
@@ -1567,6 +1585,12 @@ public final class HologramClient {
 
     @SubscribeEvent
     public void renderWorld(RenderWorldLastEvent event) {
+        try (SliceBackend.Scope scope = SliceBackend.worldPreview()) {
+            renderWorldPreview(event);
+        }
+    }
+
+    private void renderWorldPreview(RenderWorldLastEvent event) {
         HologramAreaOverlay.clearRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());

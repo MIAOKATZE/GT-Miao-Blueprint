@@ -156,7 +156,9 @@ final class HologramCutClient {
             closeScreen();
         }
         if (requests.observeHeld(true)) refreshDirectory();
-        boolean enabled = mc.currentScreen == null && cutMode
+        boolean cameraReady = !HologramIsometricCamera.INSTANCE.blocksWorldInput();
+        boolean enabled = cameraReady && mc.currentScreen == null
+            && cutMode
             && !entries.isEmpty()
             && !blueprintBusy()
             && !HologramBackgroundTasks.busy()
@@ -164,20 +166,21 @@ final class HologramCutClient {
         boolean previous = previousKey.sample(alt() && key(Keyboard.KEY_A), !enabled);
         boolean next = nextKey.sample(alt() && key(Keyboard.KEY_D), !enabled);
         if (enabled && (previous || next)) cycle(previous ? -1 : 1);
-        boolean poseEnabled = mc.currentScreen == null
+        boolean poseEnabled = cameraReady && mc.currentScreen == null
             && (stage == HologramCutInput.Stage.MOVING || stage == HologramCutInput.Stage.LOCKED)
             && !busy();
         if (rotateKey.sample(key(Keyboard.KEY_R), !poseEnabled)) {
             if (alt()) openTransform();
             else rotate(key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL) ? 0 : 1, 1);
         }
-        selectionInput.tick(selection, selecting() && held() && !busy() && !blueprintBusy());
+        selectionInput.tick(selection, cameraReady && selecting() && held() && !busy() && !blueprintBusy());
         lockedNudge();
     }
 
     private void lockedNudge() {
         Minecraft mc = mc();
         boolean enabled = mc.currentScreen == null && held()
+            && !HologramIsometricCamera.INSTANCE.blocksWorldInput()
             && stage == HologramCutInput.Stage.LOCKED
             && locked != null
             && preview != null

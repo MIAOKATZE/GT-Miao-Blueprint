@@ -3,12 +3,10 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.settings.GameSettings;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
-import net.minecraftforge.client.event.MouseEvent;
 
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
@@ -16,7 +14,14 @@ import org.lwjgl.input.Mouse;
 import com.miaokatze.miaokatzecore.api.camera.CameraIntersections;
 import com.miaokatze.miaokatzecore.api.camera.CameraPose;
 import com.miaokatze.miaokatzecore.api.camera.CameraRay;
+import com.miaokatze.miaokatzecore.api.camera.HeightSlice;
 import com.miaokatze.miaokatzecore.api.camera.OrthographicProjection;
+import com.miaokatze.miaokatzecore.api.camera.RayInterval;
+import com.miaokatze.miaokatzecore.api.camera.ZoomMotion;
+import com.miaokatze.miaokatzecore.client.camera.CameraControl;
+import com.miaokatze.miaokatzecore.client.camera.CameraControls;
+import com.miaokatze.miaokatzecore.client.camera.CameraFrame;
+import com.miaokatze.miaokatzecore.client.camera.CameraSettings;
 import com.miaokatze.miaokatzecore.client.camera.WorldCameraHooks;
 import com.miaokatze.miaokatzecore.client.camera.WorldCameras;
 
@@ -25,22 +30,96 @@ import cpw.mods.fml.client.registry.ClientRegistry;
 /** Blueprint display policy only; Core owns projection, camera hooks and input restoration. */
 final class HologramIsometricCamera implements WorldCameras.Source {
 
-    static final HologramIsometricCamera INSTANCE = new HologramIsometricCamera();
     private static final String OWNER = "gtmb:blueprint";
     private static final double DEFAULT_YAW = 45, DEFAULT_PITCH = 35.264389682754654;
     private static final double DEFAULT_SCALE = 12, MIN_SCALE = 3, MAX_SCALE = 64;
+    private static final double MIN_PITCH = 15, MAX_PITCH = 85;
+    private static final CameraSettings.Render RENDER = CameraSettings.Render.builder()
+        .hideHand(true)
+        .disableFog(true)
+        .disableCull(true)
+        .disableVanillaFrustum(true)
+        .build();
+    private static final CameraSettings.Input INPUT = CameraSettings.Input.builder()
+        .consumeHotbarScroll(false)
+        .blockDebugReloads(true)
+        .freeCursor(true)
+        .movement(WorldCameras.MovementPolicy.ALL)
+        .build();
+    private static final CameraSettings.Hud HUD = CameraSettings.Hud.builder()
+        .crosshair(CameraSettings.Hud.Crosshair.HIDDEN)
+        .panelVisible(true)
+        .panelPosition(12, 54)
+        .panelWidth(196)
+        .build();
+    private static final CameraSettings.Navigation NAVIGATION = CameraSettings.Navigation.builder()
+        .pan(true)
+        .yaw(true)
+        .pitch(true)
+        .zoom(true)
+        .reset(true)
+        .pitchRange(MIN_PITCH, MAX_PITCH)
+        .scaleRange(MIN_SCALE, MAX_SCALE)
+        .basePixelsPerWorldUnit(DEFAULT_SCALE)
+        .sliceRange(0, 256)
+        .build();
+    static final HologramIsometricCamera INSTANCE = new HologramIsometricCamera();
     private final KeyBinding toggle = binding("toggle", Keyboard.KEY_NUMPAD5);
     private final KeyBinding turnLeft = binding("left", Keyboard.KEY_NUMPAD4);
     private final KeyBinding turnRight = binding("right", Keyboard.KEY_NUMPAD6);
     private WorldCameras.Lease lease;
     private Object world;
-    private double x, y, z, yaw = DEFAULT_YAW, scale = DEFAULT_SCALE;
-    private boolean dragging, closing, displaced;
-    private int mouseX, mouseY;
-    private CameraRay tracedRay;
+    private double x, y, z, yaw = DEFAULT_YAW, pitch = DEFAULT_PITCH;
+    private final ZoomMotion zoom = new ZoomMotion(DEFAULT_SCALE, MIN_SCALE, MAX_SCALE);
+    private HeightSlice slice = HeightSlice.disabled();
+    private CameraSettings settings = settingsFor(slice);
+    private boolean closing, displaced;
+    private CameraFrame tracedFrame;
+    private int tracedPixelX, tracedPixelY;
     private long tracedTick = Long.MIN_VALUE;
     private MovingObjectPosition hit;
     private boolean traceAvailable;
+
+    private final CameraControls controls = new CameraControls() {
+
+        @Override
+        public boolean supports(CameraControl control) {
+            return true;
+        }
+
+        @Override
+        public void panWorld(double dx, double dy, double dz) {
+            if (!Double.isFinite(dx) || !Double.isFinite(dy) || !Double.isFinite(dz)) return;
+            x += dx;
+            y += dy;
+            z += dz;
+        }
+
+        @Override
+        public void rotate(double yawDelta, double pitchDelta) {
+            if (!Double.isFinite(yawDelta) || !Double.isFinite(pitchDelta)) return;
+            yaw += yawDelta;
+            pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, pitch + pitchDelta));
+        }
+
+        @Override
+        public void zoom(double factor) {
+            zoom.multiply(factor, 0);
+            zoom.advance(1, 0);
+        }
+
+        @Override
+        public void resetView() {
+            resetCamera();
+        }
+
+        @Override
+        public void requestSlice(HeightSlice requested) {
+            if (requested == null || slice.equals(requested)) return;
+            slice = requested;
+            settings = settingsFor(slice);
+        }
+    };
 
     private HologramIsometricCamera() {}
 
@@ -62,6 +141,10 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         return !active() && WorldCameraHooks.orthographicActive();
     }
 
+    boolean blocksWorldInput() {
+        return active() ? pickFrame() == null : blocksVanillaTarget();
+    }
+
     void tick() {
         Minecraft mc = Minecraft.getMinecraft();
         if (active() && (mc.theWorld != world || mc.thePlayer == null
@@ -72,32 +155,19 @@ final class HologramIsometricCamera implements WorldCameras.Source {
             if (active()) close();
             else if (HologramClient.projectorWorld() && mc.thePlayer != null && !mc.thePlayer.isDead) open();
         }
-        while (turnLeft.isPressed()) if (active()) yaw -= 90;
-        while (turnRight.isPressed()) if (active()) yaw += 90;
-        if (!active()) return;
-        if (Mouse.isCreated()) {
-            int nextX = Mouse.getX(), nextY = Mouse.getY();
-            if (dragging && Mouse.isButtonDown(2)) pan(nextX - mouseX, nextY - mouseY);
-            else dragging = false;
-            mouseX = nextX;
-            mouseY = nextY;
-        }
+        while (turnLeft.isPressed()) if (active()) controls.rotate(-90, 0);
+        while (turnRight.isPressed()) if (active()) controls.rotate(90, 0);
     }
 
     private void open() {
         Minecraft mc = Minecraft.getMinecraft();
-        x = mc.thePlayer.posX;
-        y = mc.thePlayer.boundingBox.minY + mc.thePlayer.getEyeHeight();
-        z = mc.thePlayer.posZ;
-        yaw = DEFAULT_YAW;
-        scale = DEFAULT_SCALE;
+        resetCamera();
         displaced = false;
         world = mc.theWorld;
         lease = WorldCameras.tryAcquire(OWNER, world, 30, this, () -> {
             lease = null;
             world = null;
-            dragging = false;
-            tracedRay = null;
+            tracedFrame = null;
             hit = null;
             traceAvailable = false;
             displaced = !closing;
@@ -117,55 +187,51 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         } finally {
             lease = null;
             world = null;
-            dragging = false;
             closing = false;
             displaced = false;
         }
     }
 
-    /** Returns true only for a camera gesture; Alt retains blueprint distance adjustment. */
-    boolean mouse(MouseEvent event) {
-        if (!active()) return false;
-        if (event.button == 2) {
-            dragging = event.buttonstate;
-            mouseX = Mouse.getX();
-            mouseY = Mouse.getY();
-            return true;
+    private void resetCamera() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null) {
+            x = mc.thePlayer.posX;
+            y = mc.thePlayer.boundingBox.minY + mc.thePlayer.getEyeHeight();
+            z = mc.thePlayer.posZ;
         }
-        if (event.dwheel != 0 && HologramClient.controlHeld() && !HologramClient.altHeld()) {
-            scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * Math.pow(1.15, Math.signum(event.dwheel))));
-            return true;
-        }
-        return false;
+        yaw = DEFAULT_YAW;
+        pitch = DEFAULT_PITCH;
+        zoom.snap(DEFAULT_SCALE);
     }
 
-    private void pan(int dx, int dy) {
+    private CameraFrame pickFrame() {
         Minecraft mc = Minecraft.getMinecraft();
-        ScaledResolution resolution = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight);
-        double units = resolution.getScaledWidth_double() / mc.displayWidth / scale;
-        double angle = Math.toRadians(yaw), pitch = Math.toRadians(DEFAULT_PITCH);
-        // Inverse view rotation: drag the visible plane with the pointer, without moving the player.
-        x -= (Math.cos(angle) * dx + Math.sin(angle) * Math.sin(pitch) * dy) * units;
-        y -= Math.cos(pitch) * dy * units;
-        z -= (Math.sin(angle) * dx - Math.cos(angle) * Math.sin(pitch) * dy) * units;
-    }
-
-    CameraRay ray() {
-        Minecraft mc = Minecraft.getMinecraft();
-        return active() && Mouse.isCreated() ? WorldCameraHooks.mouseRay(OWNER, mc.theWorld, Mouse.getX(), Mouse.getY())
-            : null;
+        if (!active() || !Mouse.isCreated()
+            || mc.currentScreen != null
+            || !mc.inGameHasFocus
+            || WorldCameraHooks.pointerCaptured()) return null;
+        CameraFrame frame = WorldCameraHooks.frame(OWNER, mc.theWorld);
+        return frame != null && frame.pickReady()
+            && frame.requestedSlice()
+                .equals(slice) ? frame : null;
     }
 
     HologramWorldTarget.Target target(boolean floating, boolean adjacent, int distance, int[] feet) {
         Minecraft mc = Minecraft.getMinecraft();
-        CameraRay ray = ray();
-        if (ray == null) return new HologramWorldTarget.Target(null, false);
+        CameraFrame frame = pickFrame();
+        if (frame == null) return new HologramWorldTarget.Target(null, false);
+        int pixelX = Mouse.getX(), pixelY = Mouse.getY();
+        RayInterval interval = WorldCameraHooks.pixelRayInterval(OWNER, mc.theWorld, pixelX, pixelY);
+        if (interval == null) return new HologramWorldTarget.Target(null, false);
+        CameraRay ray = interval.ray();
         long tick = mc.theWorld.getTotalWorldTime();
-        if (!sameRay(ray, tracedRay) || tick != tracedTick) {
-            tracedRay = ray;
+        if (!sameFrame(frame, tracedFrame) || pixelX != tracedPixelX || pixelY != tracedPixelY || tick != tracedTick) {
+            tracedFrame = frame;
+            tracedPixelX = pixelX;
+            tracedPixelY = pixelY;
             tracedTick = tick;
             hit = null;
-            traceAvailable = trace(ray);
+            traceAvailable = trace(interval, frame.displayedSlice(), pixelX, pixelY);
         }
         if (!traceAvailable && !floating) return new HologramWorldTarget.Target(null, false);
         HologramWorldTarget.Target target = HologramWorldTarget.orthographic(
@@ -177,42 +243,55 @@ final class HologramIsometricCamera implements WorldCameras.Source {
             mc.thePlayer.boundingBox.minY + mc.thePlayer.getEyeHeight(),
             ray);
         int[] at = target.anchor;
-        if (floating && distance != 0 && at != null) {
+        if ((floating || hit == null) && distance != 0 && at != null) {
             double base = CameraIntersections
                 .plane(ray, 0, 1, 0, mc.thePlayer.boundingBox.minY + mc.thePlayer.getEyeHeight(), 0, 8192);
             // Alt may ignore solid blocks, but it cannot jump an unloaded gap on its way to the floating point.
-            if (!HologramLoadedRayTrace
-                .trace(ray, 0, base + distance, mc.theWorld::blockExists, (bx, by, bz, from, to) -> null).available)
+            double targetDistance = base + distance;
+            if (targetDistance < interval.minDistance() || targetDistance > interval.maxDistance())
                 return new HologramWorldTarget.Target(null, false);
+            if (!HologramLoadedRayTrace.trace(
+                ray,
+                interval.minDistance(),
+                targetDistance,
+                mc.theWorld::blockExists,
+                (bx, by, bz, from, to) -> null).available) return new HologramWorldTarget.Target(null, false);
         }
-        if (at != null && at[1] >= 0 && at[1] < mc.theWorld.getHeight() && mc.theWorld.blockExists(at[0], at[1], at[2]))
-            return target;
+        if (at != null && at[1] >= 0
+            && at[1] < mc.theWorld.getHeight()
+            && frame.displayedSlice()
+                .containsBlockY(at[1])
+            && mc.theWorld.blockExists(at[0], at[1], at[2])) return target;
         return new HologramWorldTarget.Target(null, false);
     }
 
-    private static boolean sameRay(CameraRay a, CameraRay b) {
-        return b != null && a.originX() == b.originX()
-            && a.originY() == b.originY()
-            && a.originZ() == b.originZ()
-            && a.directionX() == b.directionX()
-            && a.directionY() == b.directionY()
-            && a.directionZ() == b.directionZ();
+    private static boolean sameFrame(CameraFrame a, CameraFrame b) {
+        return b != null && a.ownerEpoch() == b.ownerEpoch()
+            && a.transformRevision() == b.transformRevision()
+            && a.sliceRevision() == b.sliceRevision()
+            && a.geometryRevision() == b.geometryRevision();
     }
 
     /** Skip near-plane void, then trace only the first continuous loaded region of the displayed ray. */
-    private boolean trace(CameraRay ray) {
+    private boolean trace(RayInterval interval, HeightSlice displayedSlice, int pixelX, int pixelY) {
         net.minecraft.world.World level = Minecraft.getMinecraft().theWorld;
-        double start = ray.originY() < level.getHeight() ? 0
-            : CameraIntersections.plane(ray, 0, 1, 0, level.getHeight() - .0001, 0, 8192);
-        double end = CameraIntersections.plane(ray, 0, 1, 0, .0001, 0, 8192);
-        if (Double.isNaN(start) || Double.isNaN(end) || end < start) return false;
+        interval = interval.clip(HeightSlice.between(0, level.getHeight(), 0));
+        if (interval == null) return false;
+        CameraRay ray = interval.ray();
         HologramLoadedRayTrace.Result<MovingObjectPosition> result = HologramLoadedRayTrace
-            .trace(ray, start, end, level::blockExists, (bx, by, bz, from, to) -> {
+            .trace(ray, interval.minDistance(), interval.maxDistance(), level::blockExists, (bx, by, bz, from, to) -> {
                 // Match vanilla's non-liquid block collision policy, without reading an unverified voxel.
+                if (!displayedSlice.containsBlockY(by)) return null;
                 net.minecraft.block.Block block = level.getBlock(bx, by, bz);
-                return block.canCollideCheck(level.getBlockMetadata(bx, by, bz), false)
-                    ? block.collisionRayTrace(level, bx, by, bz, along(ray, from), along(ray, to))
-                    : null;
+                if (!block.canCollideCheck(level.getBlockMetadata(bx, by, bz), false)) return null;
+                return HologramWorldTarget.firstVisibleNativeSurface(
+                    ray,
+                    from,
+                    to,
+                    displayedSlice,
+                    pixelX,
+                    pixelY,
+                    (a, b) -> block.collisionRayTrace(level, bx, by, bz, along(ray, a), along(ray, b)));
             });
         hit = result.hit;
         return result.available;
@@ -227,7 +306,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
     MovingObjectPosition hit() {
         Minecraft mc = Minecraft.getMinecraft();
-        if (ray() == null) return null;
+        if (pickFrame() == null) return null;
         target(false, false, 0, new int[] { 0, 0, 0 });
         return traceAvailable && mc.theWorld == world
             && hit != null
@@ -235,38 +314,41 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     }
 
     void guide(List<String> lines) {
-        if (!HologramClient.projectorWorld()) return;
+        if (!HologramClient.projectorWorld() || active()) return;
         String key = GameSettings.getKeyDisplayString(toggle.getKeyCode());
-        if (!active()) {
-            lines.add(
-                String.format(
-                    HologramClient.text(displaced ? "camera.displaced" : "camera.off", "%s: isometric camera"),
-                    key));
-            return;
-        }
         lines.add(
             String.format(
-                HologramClient.text("camera.on", "Isometric | %s / Esc: exit | Middle drag: pan | Ctrl+scroll: zoom"),
+                HologramClient.text(displaced ? "camera.displaced" : "camera.off", "%s: isometric camera"),
                 key));
-        lines.add(
-            String.format(
-                HologramClient
-                    .text("camera.rotate", "%s / %s: rotate camera | R: blueprint | Alt+scroll: placement distance"),
-                GameSettings.getKeyDisplayString(turnLeft.getKeyCode()),
-                GameSettings.getKeyDisplayString(turnRight.getKeyCode())));
     }
 
     @Override
     public WorldCameras.View sample(float partialTicks, int scaledWidth, int scaledHeight) {
         return new WorldCameras.View(
-            new CameraPose(x, y, z, yaw, DEFAULT_PITCH),
-            OrthographicProjection.scaled(scaledWidth, scaledHeight, scale, 256),
+            new CameraPose(x, y, z, yaw, pitch),
+            OrthographicProjection.scaled(scaledWidth, scaledHeight, zoom.actual(), 256),
             true);
     }
 
     @Override
-    public WorldCameras.Options options() {
-        return new WorldCameras.Options(true, true, true, true, false, true, WorldCameras.MovementPolicy.ALL, true);
+    public CameraSettings settings() {
+        return settings;
+    }
+
+    @Override
+    public CameraControls controls() {
+        return controls;
+    }
+
+    private static CameraSettings settingsFor(HeightSlice slice) {
+        return CameraSettings.builder()
+            .render(RENDER)
+            .input(INPUT)
+            .hud(HUD)
+            .navigation(NAVIGATION)
+            .guiPolicy(WorldCameras.GuiPolicy.RELEASE)
+            .slice(slice)
+            .build();
     }
 
     @Override
