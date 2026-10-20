@@ -31,6 +31,7 @@ final class HologramAreaWorkflow {
             s.status = "区域导入已取消，原规划保留";
         } else {
             area.selecting = !area.selecting;
+            if (area.selecting) retireFinishedPlacement(s);
             HologramSessionPolicy.currentTool(s)
                 .getTagCompound()
                 .setBoolean("gtitHologramAreaSelecting", area.selecting);
@@ -40,6 +41,22 @@ final class HologramAreaWorkflow {
         }
         player.addChatMessage(new ChatComponentText("[猫猫蓝图全息投影仪] " + s.status));
         HologramSnapshots.sendAreaSelection(s);
+    }
+
+    /** A new selection owns its lifecycle; terminal construction receipts cannot govern its import. */
+    static void retireFinishedPlacement(HologramSession s) {
+        if (s.job < 3) return;
+        if (s.virtualPlacement && s.blueprintSource.isEmpty() && !s.blueprintDirty) s.blueprintSource = "placement";
+        s.virtualPlacement = s.virtualLocked = false;
+        s.blueprintAwaitingConfirmation = s.placementReviewIssued = s.forcePlacementReady = false;
+        s.placementReviewNonce++;
+        s.job = 0;
+        s.batchSeq++;
+        s.work.clear();
+        s.cursor = s.completed = 0;
+        HologramSession.clearPending(s);
+        s.phase = "READY";
+        HologramSession.resetJobCounts(s, false);
     }
 
     /** Begin and finish are separate, idempotent gestures; a repeated click never starts an import. */
@@ -55,6 +72,7 @@ final class HologramAreaWorkflow {
             HologramSnapshots.sendAreaSelection(s);
             return;
         }
+        retireFinishedPlacement(s);
         HologramArea area = new HologramArea();
         HologramWorkspace.AREAS.put(player.getUniqueID(), area);
         area.selecting = true;
@@ -224,6 +242,7 @@ final class HologramAreaWorkflow {
             return false;
         }
         try {
+            retireFinishedPlacement(s);
             area.begin(s.player.worldObj);
             s.areaImportPreviousDirty = s.blueprintDirty;
             s.areaImportPreviousSource = s.blueprintSource;

@@ -822,10 +822,66 @@ final class HologramMaterialQuoteRegression {
                     && HologramDecorationVoucher.available(player) == (creative ? 2 : 1)
                     && player.inventory.mainInventory[2].stackSize == 64,
                 "voucher placement preserves stocked shells; survival pays one voucher and creative pays none");
+            if (creative) staticAeDecorationPlacement(world, player);
         } finally {
             config.set(null, previousConfig);
             com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = previousVoucher;
         }
+    }
+
+    private static void staticAeDecorationPlacement(CreativeVoucherWorld world, EntityPlayerMP player)
+        throws Exception {
+        net.minecraft.block.Block decoration = DecorationVoucherRegression
+            .registeredFixture("gtmb:ae_static_placement_fixture", new appeng.block.GtmbAeStaticFixture());
+        ItemStack shell = new ItemStack(decoration);
+        HologramSession s = new HologramSession(player, 0, 64, 0, false, 1);
+        s.virtual = s.virtualPlacement = s.virtualLocked = true;
+        s.virtualPreset = new HologramPresets.Preset();
+        s.virtualPreset.schema = 2;
+        s.virtualPreset.retainNbt = true;
+        s.materialSettings.containers = s.materialSettings.me = false;
+        s.materialContext = mainSource(player);
+        s.capture = new HologramCapture(null, new ItemStack(Items.feather));
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> element = new com.gtnewhorizon.structurelib.structure.IStructureElement<Object>() {
+
+            public boolean check(Object ignored, net.minecraft.world.World target, int x, int y, int z) {
+                return target.getBlock(x, y, z) == decoration;
+            }
+
+            public boolean spawnHint(Object ignored, net.minecraft.world.World target, int x, int y, int z,
+                ItemStack trigger) {
+                return true;
+            }
+
+            public boolean placeBlock(Object ignored, net.minecraft.world.World target, int x, int y, int z,
+                ItemStack trigger) {
+                throw new AssertionError("Use normal survival callback even for creative decoration");
+            }
+
+            public PlaceResult survivalPlaceBlock(Object ignored, net.minecraft.world.World target, int x, int y, int z,
+                ItemStack trigger, com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment environment) {
+                require(
+                    environment.getSource()
+                        .takeOne(shell, false),
+                    "creative callback receives the exact decoration shell");
+                return target.setBlock(x, y, z, decoration, 0, 3) ? PlaceResult.ACCEPT : PlaceResult.REJECT;
+            }
+        };
+        HologramCapture.Cell cell = new HologramCapture.Cell(element, 0, 64, 0);
+        cell.block = decoration;
+        cell.blueprintBlock = cell.blueprintItem = String
+            .valueOf(net.minecraft.block.Block.blockRegistry.getNameForObject(decoration));
+        cell.tileNbt = HologramBlueprintNbt.encodeCanonical(decoration, new NBTTagCompound());
+        require(!cell.tileNbt.isEmpty(), "fixture retains the canonical static-AE transport descriptor from old files");
+        s.capture.cells.add(cell);
+        s.planTargets.add(shell);
+        world.placed = null;
+        require(
+            HologramWorldTransactions.operateChecked(s, cell, 0),
+            "production placement accepts static AE decoration without demanding a nonexistent tile entity");
+        require(
+            world.placed == decoration && "placed".equals(cell.status) && world.getTileEntity(0, 64, 0) == null,
+            "static AE shell commits in creative with its canonical descriptor and no tile");
     }
 
     private static final class CreativeVoucherWorld extends net.minecraft.world.WorldServer {

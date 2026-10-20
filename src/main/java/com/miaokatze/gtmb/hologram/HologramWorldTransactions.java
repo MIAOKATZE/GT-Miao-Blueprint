@@ -548,6 +548,7 @@ final class HologramWorldTransactions {
                     && sealedPlacement == null
                     && !c.tileNbt.isEmpty()
                     && selectedCacheTile != null
+                    && !HologramAeBlueprint.staticBlockShell(c.block, c.meta)
                     && (s.virtualPreset.retainNbt || HologramSessionPolicy.placementRetainCovers(s)
                         || emptyAeNativeShell
                         || requiredNetworkBinding);
@@ -600,12 +601,7 @@ final class HologramWorldTransactions {
                 }
                 if (s.virtual && s.virtualPreset.schema < 2 && "templateController".equals(c.role))
                     applyVirtualControllerAlignment(s, placedTile);
-                if (s.virtual && s.virtualPreset.schema >= 2
-                    && sealedPlacement == null
-                    && !c.tileNbt.isEmpty()
-                    && (s.virtualPreset.retainNbt || HologramSessionPolicy.placementRetainCovers(s)
-                        || emptyAeNativeShell
-                        || requiredNetworkBinding)) {
+                if (restoreBlueprintTileData) {
                     placementStage = "blueprint-state";
                     if (placedTile == null && !nativePlacement)
                         throw new IllegalStateException("blueprint tile missing");

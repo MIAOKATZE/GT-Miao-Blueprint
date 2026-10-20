@@ -293,6 +293,31 @@ final class HologramAreaPreparationRegression {
             field.set(player, new GameProfile(identity, "AreaPreparation"));
         }
         HologramSession previous = new HologramSession(player, 0, 64, 0, false, 2);
+        for (int terminal : new int[] { 3, 4, 5 }) {
+            previous.virtual = previous.virtualPlacement = previous.virtualLocked = true;
+            previous.blueprintSource = "";
+            previous.capture = new HologramCapture(null, new ItemStack(Blocks.stone));
+            previous.blueprintAwaitingConfirmation = previous.placementReviewIssued = true;
+            previous.job = terminal;
+            previous.phase = "ACK";
+            previous.batchSeq = 9;
+            previous.cursor = previous.completed = 17;
+            previous.work.add(0);
+            HologramAreaWorkflow.retireFinishedPlacement(previous);
+            SimpleAssert.that(
+                previous.job == 0 && previous.phase.equals("READY")
+                    && previous.batchSeq == 10
+                    && previous.work.isEmpty()
+                    && previous.cursor == 0
+                    && previous.completed == 0,
+                "a new selection retires the prior terminal job and ACK generation: " + terminal);
+            SimpleAssert.that(
+                !previous.virtualPlacement && !previous.virtualLocked
+                    && !previous.blueprintAwaitingConfirmation
+                    && !previous.placementReviewIssued
+                    && !HologramAuthoringWorkflow.blueprintHasUnsavedChanges(previous),
+                "completed saved placement leaves no old lock, material consent or false unsaved-source prompt");
+        }
         previous.uiSequence = 21;
         previous.planRevision = 17;
         previous.blueprintClientTaskToken = 987;
