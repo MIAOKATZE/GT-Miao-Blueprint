@@ -65,6 +65,7 @@ final class HologramAreaOverlay {
             GL11.glDepthMask(false);
             GL11.glLineWidth(2);
             NBTTagList regions = selection.getTagList("areaRegions", 10);
+            drawPolygon(selection, cursor, px, py, pz);
             for (int i = 0; i < regions.tagCount(); i++) {
                 NBTTagCompound region = regions.getCompoundTagAt(i);
                 boolean current = selection.hasKey("areaCurrentRegion", 3)
@@ -124,5 +125,30 @@ final class HologramAreaOverlay {
             .expand(.002, .002, .002)
             .getOffsetBoundingBox(-px, -py, -pz);
         RenderGlobal.drawOutlinedBoundingBox(box, -1);
+    }
+
+    private static void drawPolygon(NBTTagCompound selection, int[] cursor, double px, double py, double pz) {
+        if (!selection.getBoolean("areaContinuous")) return;
+        int[] vertices = selection.getIntArray("areaPolygon");
+        if (vertices.length < 3) return;
+        boolean closed = selection.getBoolean("areaPolygonClosed");
+        boolean subtract = "subtract".equals(selection.getString("areaPolygonMode"));
+        GL11.glColor4f(subtract ? 1 : .35f, subtract ? .35f : 1, .6f, 1);
+        GL11.glLineWidth(3);
+        int base = vertices[1];
+        int height = selection.getBoolean("areaPolygonHeightChosen") ? selection.getInteger("areaPolygonHeight") : base;
+        for (int level : new int[] { Math.min(base, height), Math.max(base, height) + 1 }) {
+            GL11.glBegin(closed ? GL11.GL_LINE_LOOP : GL11.GL_LINE_STRIP);
+            for (int i = 0; i < vertices.length; i += 3)
+                GL11.glVertex3d(vertices[i] + .5 - px, level - py, vertices[i + 2] + .5 - pz);
+            if (!closed && cursor != null) GL11.glVertex3d(cursor[0] + .5 - px, level - py, cursor[2] + .5 - pz);
+            GL11.glEnd();
+        }
+        GL11.glBegin(GL11.GL_LINES);
+        for (int i = 0; i < vertices.length; i += 3) {
+            GL11.glVertex3d(vertices[i] + .5 - px, Math.min(base, height) - py, vertices[i + 2] + .5 - pz);
+            GL11.glVertex3d(vertices[i] + .5 - px, Math.max(base, height) + 1 - py, vertices[i + 2] + .5 - pz);
+        }
+        GL11.glEnd();
     }
 }

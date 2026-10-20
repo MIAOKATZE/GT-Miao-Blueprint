@@ -146,17 +146,32 @@ public final class HologramWorldTargetRegression {
     }
 
     private static void orthographic(int[] feet, MovingObjectPosition hit) {
-        CameraRay near = new CameraRay(0, 400, 0, 0, -1, 1);
-        CameraRay further = new CameraRay(0, 800, -400, 0, -1, 1);
-        HologramWorldTarget.Target a = HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, near);
-        HologramWorldTarget.Target b = HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, further);
+        CameraRay near = new CameraRay(2.5, 400, 3.5, 0, -1, 0);
+        CameraRay further = new CameraRay(2.5, 800, 3.5, 0, -1, 0);
+        MovingObjectPosition surface = new MovingObjectPosition(
+            2,
+            65,
+            3,
+            ForgeDirection.UP.ordinal(),
+            Vec3.createVectorHelper(2.5, 66, 3.5));
+        HologramWorldTarget.Target a = HologramWorldTarget.orthographic(surface, true, false, 6, feet, 65, near);
+        HologramWorldTarget.Target b = HologramWorldTarget.orthographic(surface, true, false, 6, feet, -100, further);
         target(a.anchor, false, b, "orthographic floating anchor is independent of the clipping-plane origin");
-        target(new int[] { 0, 60, 339 }, false, a, "floating distance begins at the player reference plane");
         target(
-            feet,
-            true,
-            HologramWorldTarget.orthographic(hit, true, true, 0, feet, 65, near),
-            "orthographic distance zero retains feet semantics");
+            new int[] { 2, 71, 3 },
+            false,
+            a,
+            "positive floating offset travels toward the camera from the hit block");
+        target(
+            new int[] { 2, 62, 3 },
+            false,
+            HologramWorldTarget.orthographic(surface, true, false, -3, feet, 65, near),
+            "negative floating offset travels behind the directly pointed block along the view ray");
+        target(
+            new int[] { 2, 65, 3 },
+            false,
+            HologramWorldTarget.orthographic(surface, true, false, 0, feet, 65, near),
+            "orthographic distance zero retains the actual hit block rather than player feet");
         target(
             new int[] { 1, 65, 3 },
             false,
@@ -168,7 +183,10 @@ public final class HologramWorldTargetRegression {
         SimpleAssert.that(
             HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, new CameraRay(0, 400, 0, 1, 0, 0)).anchor
                 == null,
-            "parallel orthographic floating ray refuses a missing reference-plane intersection");
+            "orthographic floating without a direct block hit has no target");
+        SimpleAssert.that(
+            HologramWorldTarget.orthographic(null, false, false, 6, feet, 65, near).anchor == null,
+            "unmodified orthographic pointing never falls back to an eye-height plane");
     }
 
     private static void target(int[] expected, boolean atPlayer, HologramWorldTarget.Target actual, String label) {

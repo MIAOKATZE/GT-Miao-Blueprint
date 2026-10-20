@@ -14,8 +14,14 @@ public class HologramAreaSelection {
     String pointMode = "replace";
     final List<Region> regions = new ArrayList<>();
     final List<SelectionState> regionUndo = new ArrayList<>();
+    private final List<SelectionState> regionRedo = new ArrayList<>();
     private int current = -1;
     private boolean more;
+    private String inputMode = "replace", polygonMode = "replace";
+    private final List<int[]> polygon = new ArrayList<>();
+    private boolean continuous, closed, heightChosen;
+    private int polygonHeight;
+    private int lastWorldCorner;
 
     private final class SelectionState {
 
@@ -24,9 +30,15 @@ public class HologramAreaSelection {
         final String mode = pointMode;
         final int selected = current;
         final boolean adding = more;
+        final String input = inputMode, polyMode = polygonMode;
+        final List<int[]> vertices = new ArrayList<>(polygon);
+        final boolean drawing = continuous, loop = closed, high = heightChosen;
+        final int height = polygonHeight;
+        final int corner = lastWorldCorner;
     }
 
     private void remember() {
+        regionRedo.clear();
         if (regionUndo.size() == 128) regionUndo.remove(0);
         regionUndo.add(new SelectionState());
     }
@@ -68,7 +80,7 @@ public class HologramAreaSelection {
     public void point(int index, int xx, int yy, int zz, String mode) throws IOException {
         if (!validMode(mode)) throw new IOException("区域组合模式无效");
         if (index != 1 && index != 2) throw new IOException("区域角点无效");
-        // Explicit Ctrl combinations retain their add/subtract shortcut; ordinary clicks edit the current box.
+        // Explicit geometry modes remain available to the protocol; world input owns its persistent mode.
         boolean next = first != null && second != null && !"replace".equals(mode);
         if ((next || current < 0) && regions.size() >= 128) throw new IOException("区域组合过多，请撤销或完成");
         remember();
@@ -94,7 +106,18 @@ public class HologramAreaSelection {
     /** Undo one input, including a single corner, a box movement, deletion or the more-box gesture. */
     public void undoRegion() {
         if (regionUndo.isEmpty()) return;
+        regionRedo.add(new SelectionState());
         SelectionState previous = regionUndo.remove(regionUndo.size() - 1);
+        restore(previous);
+    }
+
+    public void redoRegion() {
+        if (regionRedo.isEmpty()) return;
+        regionUndo.add(new SelectionState());
+        restore(regionRedo.remove(regionRedo.size() - 1));
+    }
+
+    private void restore(SelectionState previous) {
         first = previous.a;
         second = previous.b;
         regions.clear();
@@ -102,6 +125,225 @@ public class HologramAreaSelection {
         pointMode = previous.mode;
         current = previous.selected;
         more = previous.adding;
+        inputMode = previous.input;
+        polygonMode = previous.polyMode;
+        polygon.clear();
+        polygon.addAll(previous.vertices);
+        continuous = previous.drawing;
+        closed = previous.loop;
+        heightChosen = previous.high;
+        polygonHeight = previous.height;
+        lastWorldCorner = previous.corner;
+    }
+
+    /** Persistent world input mode; a first complete box is required before add/subtract. */
+    public void toggleMode(String mode) {
+        if (regions.isEmpty() || !validMode(mode) || "replace".equals(mode) || continuous) return;
+        remember();
+        inputMode = mode.equals(inputMode) ? "replace" : mode;
+        if (more) select(regions.size() - 1);
+    }
+
+    public void worldPoint(int index, int x, int y, int z) throws IOException {
+        if (index == 0) index = first == null ? 1 : second == null ? 2 : lastWorldCorner == 1 ? 2 : 1;
+        point(index, x, y, z, inputMode);
+        lastWorldCorner = index;
+    }
+
+    public boolean continuousActive() {
+        return continuous;
+    }
+
+    /** C during line entry resets the line, while keeping the committed selection intact. */
+    public void beginContinuous(boolean subtract) {
+        if (continuous && closed) return;
+        if (subtract && regions.isEmpty()) return;
+        remember();
+        polygonMode = continuous ? polygonMode : regions.isEmpty() ? "replace" : subtract ? "subtract" : "add";
+        continuous = true;
+        closed = heightChosen = false;
+        polygon.clear();
+    }
+
+    public void continuousPoint(int x, int y, int z) throws IOException {
+        if (!continuous) return;
+        if (closed) {
+            remember();
+            polygonHeight = y;
+            heightChosen = true;
+            return;
+        }
+        if (!polygon.isEmpty() && x == polygon.get(0)[0] && z == polygon.get(0)[2]) {
+            if (polygon.size() < 3) throw new IOException("请至少选择三个不同的连续框选点");
+            long area = 0;
+            for (int i = 0; i < polygon.size(); i++) {
+                int[] a = polygon.get(i), b = polygon.get((i + 1) % polygon.size());
+                area += (long) a[0] * b[2] - (long) b[0] * a[2];
+            }
+            if (area == 0) throw new IOException("连续框选轮廓没有面积");
+            if (polygonBoxes(polygon.get(0)[1]).isEmpty()) throw new IOException("连续框选轮廓没有面积");
+            remember();
+            closed = true;
+            return;
+        }
+        if (polygon.size() >= 128) throw new IOException("连续框选点过多");
+        for (int[] vertex : polygon) if (vertex[0] == x && vertex[2] == z) throw new IOException("请点击首点闭合，或选择新的轮廓点");
+        remember();
+        polygon.add(new int[] { x, polygon.isEmpty() ? y : polygon.get(0)[1], z });
+    }
+
+    public void confirmContinuous() throws IOException {
+        if (!continuous || !closed || !heightChosen) throw new IOException("请先闭合连续框选轮廓，再点击方块选择高度");
+        List<Region> boxes = polygonBoxes(polygonHeight);
+        int retained = "replace".equals(polygonMode) ? 0 : regions.size();
+        if (retained + boxes.size() > 128) throw new IOException("区域组合过多，请先合并或简化轮廓");
+        remember();
+        if (retained == 0) regions.clear();
+        regions.addAll(boxes);
+        continuous = closed = heightChosen = false;
+        polygon.clear();
+        select(regions.size() - 1);
+    }
+
+    /** Inclusive block-center polygon raster, merged into bounded row prisms for the existing wire protocol. */
+    private List<Region> polygonBoxes(int height) throws IOException {
+        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, minZ = minX, maxZ = maxX;
+        for (int[] v : polygon) {
+            minX = Math.min(minX, v[0]);
+            maxX = Math.max(maxX, v[0]);
+            minZ = Math.min(minZ, v[2]);
+            maxZ = Math.max(maxZ, v[2]);
+        }
+        if (((long) maxX - minX + 1) * ((long) maxZ - minZ + 1) > 1_048_576L) throw new IOException("连续框选底面过大，请缩小轮廓");
+        List<Region> result = new ArrayList<>();
+        for (int z = minZ; z <= maxZ; z++) {
+            int start = 0;
+            boolean run = false;
+            for (int x = minX; x <= maxX; x++) {
+                boolean inside = polygonContains(x, z);
+                if (inside && !run) {
+                    start = x;
+                    run = true;
+                }
+                if (run && (!inside || x == maxX)) {
+                    int end = inside && x == maxX ? x : x - 1;
+                    Region previous = null;
+                    for (Region box : result)
+                        if (box.minX == start && box.maxX == end && box.maxZ == z - 1) previous = box;
+                    Region row = new Region(
+                        new int[] { start, polygon.get(0)[1], previous == null ? z : previous.minZ },
+                        new int[] { end, height, z },
+                        polygonMode);
+                    if (previous != null) result.set(result.indexOf(previous), row);
+                    else result.add(row);
+                    if (result.size() > 128) throw new IOException("连续框选轮廓过于复杂，请简化轮廓");
+                    run = false;
+                }
+            }
+        }
+        return result;
+    }
+
+    private boolean polygonContains(int x, int z) {
+        boolean inside = false;
+        for (int i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+            int[] a = polygon.get(j), b = polygon.get(i);
+            long cross = (long) (x - a[0]) * (b[2] - a[2]) - (long) (z - a[2]) * (b[0] - a[0]);
+            if (cross == 0 && x >= Math.min(a[0], b[0])
+                && x <= Math.max(a[0], b[0])
+                && z >= Math.min(a[2], b[2])
+                && z <= Math.max(a[2], b[2])) return true;
+            if ((a[2] > z) != (b[2] > z) && x < a[0] + (double) (b[0] - a[0]) * (z - a[2]) / (b[2] - a[2]))
+                inside = !inside;
+        }
+        return inside;
+    }
+
+    /** Resolve ordered masks into disjoint positive boxes without enumerating world cells. */
+    public void mergeRegions() throws IOException {
+        if (continuous || regions.size() < 2) return;
+        List<Region> merged = new ArrayList<>();
+        int work = 0;
+        for (Region box : regions) {
+            if ("subtract".equals(box.mode)) {
+                List<Region> next = new ArrayList<>();
+                for (Region existing : merged) {
+                    if (++work > 131072) throw new IOException("合并计算过于复杂，请减少选区");
+                    split(existing, box, next);
+                }
+                merged = next;
+            } else {
+                List<Region> additions = new ArrayList<>();
+                additions.add(box);
+                for (Region existing : merged) {
+                    List<Region> next = new ArrayList<>();
+                    for (Region addition : additions) {
+                        if (++work > 131072) throw new IOException("合并计算过于复杂，请减少选区");
+                        split(addition, existing, next);
+                    }
+                    additions = next;
+                    if (additions.size() > 4096) throw new IOException("合并结果过于复杂，请减少选区");
+                }
+                merged.addAll(additions);
+            }
+            if (merged.size() > 4096) throw new IOException("合并结果过于复杂，请减少选区");
+        }
+        // Adjacent boxes sharing a complete face can become one box as well.
+        boolean joined;
+        do {
+            joined = false;
+            outer: for (int i = 0; i < merged.size(); i++) for (int j = i + 1; j < merged.size(); j++) {
+                if (++work > 131072) throw new IOException("合并计算过于复杂，请减少选区");
+                Region a = merged.get(i), b = merged.get(j);
+                boolean x = a.minY == b.minY && a.maxY == b.maxY
+                    && a.minZ == b.minZ
+                    && a.maxZ == b.maxZ
+                    && ((long) a.maxX + 1 == b.minX || (long) b.maxX + 1 == a.minX);
+                boolean y = a.minX == b.minX && a.maxX == b.maxX
+                    && a.minZ == b.minZ
+                    && a.maxZ == b.maxZ
+                    && ((long) a.maxY + 1 == b.minY || (long) b.maxY + 1 == a.minY);
+                boolean z = a.minX == b.minX && a.maxX == b.maxX
+                    && a.minY == b.minY
+                    && a.maxY == b.maxY
+                    && ((long) a.maxZ + 1 == b.minZ || (long) b.maxZ + 1 == a.minZ);
+                if (x || y || z) {
+                    merged.set(
+                        i,
+                        new Region(
+                            new int[] { Math.min(a.minX, b.minX), Math.min(a.minY, b.minY), Math.min(a.minZ, b.minZ) },
+                            new int[] { Math.max(a.maxX, b.maxX), Math.max(a.maxY, b.maxY), Math.max(a.maxZ, b.maxZ) },
+                            "add"));
+                    merged.remove(j);
+                    joined = true;
+                    break outer;
+                }
+            }
+        } while (joined);
+        if (merged.size() > 128) throw new IOException("合并结果超过128个区域，请减少选区");
+        remember();
+        regions.clear();
+        for (Region box : merged) regions.add(new Region(box.first, box.second, "add"));
+        inputMode = "replace";
+        select(regions.size() - 1);
+    }
+
+    private static void split(Region a, Region b, List<Region> out) {
+        int x0 = Math.max(a.minX, b.minX), x1 = Math.min(a.maxX, b.maxX);
+        int y0 = Math.max(a.minY, b.minY), y1 = Math.min(a.maxY, b.maxY);
+        int z0 = Math.max(a.minZ, b.minZ), z1 = Math.min(a.maxZ, b.maxZ);
+        if (x0 > x1 || y0 > y1 || z0 > z1) {
+            out.add(a);
+            return;
+        }
+        if (a.minX < x0)
+            out.add(new Region(new int[] { a.minX, a.minY, a.minZ }, new int[] { x0 - 1, a.maxY, a.maxZ }, "add"));
+        if (x1 < a.maxX)
+            out.add(new Region(new int[] { x1 + 1, a.minY, a.minZ }, new int[] { a.maxX, a.maxY, a.maxZ }, "add"));
+        if (a.minY < y0) out.add(new Region(new int[] { x0, a.minY, a.minZ }, new int[] { x1, y0 - 1, a.maxZ }, "add"));
+        if (y1 < a.maxY) out.add(new Region(new int[] { x0, y1 + 1, a.minZ }, new int[] { x1, a.maxY, a.maxZ }, "add"));
+        if (a.minZ < z0) out.add(new Region(new int[] { x0, y0, a.minZ }, new int[] { x1, y1, z0 - 1 }, "add"));
+        if (z1 < a.maxZ) out.add(new Region(new int[] { x0, y0, z1 + 1 }, new int[] { x1, y1, a.maxZ }, "add"));
     }
 
     public int currentRegion() {
@@ -229,6 +471,15 @@ public class HologramAreaSelection {
         state.setString("areaPointMode", pointMode);
         state.setInteger("areaCurrentRegion", current);
         state.setBoolean("areaMore", more);
+        state.setString("areaInputMode", inputMode);
+        state.setBoolean("areaContinuous", continuous);
+        state.setBoolean("areaPolygonClosed", closed);
+        state.setBoolean("areaPolygonHeightChosen", heightChosen);
+        state.setInteger("areaPolygonHeight", polygonHeight);
+        state.setString("areaPolygonMode", polygonMode);
+        int[] vertices = new int[polygon.size() * 3];
+        for (int i = 0; i < polygon.size(); i++) System.arraycopy(polygon.get(i), 0, vertices, i * 3, 3);
+        state.setIntArray("areaPolygon", vertices);
         state.setInteger(
             "areaPendingCorner",
             first != null && second == null ? 1 : first == null && second != null ? 2 : 0);
@@ -281,6 +532,10 @@ public class HologramAreaSelection {
         regions.clear();
         regions.addAll(decoded);
         regionUndo.clear();
+        regionRedo.clear();
+        polygon.clear();
+        continuous = closed = heightChosen = false;
+        inputMode = "replace";
         pointMode = mode;
         more = state.getBoolean("areaMore");
         current = decodedCurrent;

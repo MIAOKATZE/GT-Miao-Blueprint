@@ -5,7 +5,6 @@ import net.minecraft.util.Vec3;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
-import com.miaokatze.miaokatzecore.api.camera.CameraIntersections;
 import com.miaokatze.miaokatzecore.api.camera.CameraRay;
 import com.miaokatze.miaokatzecore.api.camera.HeightSlice;
 import com.miaokatze.miaokatzecore.api.camera.SliceSurfaceRule;
@@ -59,30 +58,33 @@ final class HologramWorldTarget {
         return null;
     }
 
-    /** The displayed orthographic ray must exist even when distance zero selects the player's feet. */
+    /** Positive offsets float toward the camera; negative offsets enter the space behind the real hit. */
     static Target orthographic(MovingObjectPosition hit, boolean forceFloating, boolean adjacent, int distance,
         int[] feet, double referenceY, CameraRay ray) {
-        if (ray == null) return new Target(null, false);
-        if (!forceFloating && hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
+        if (ray == null || hit == null || hit.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK)
+            return new Target(null, false);
+        if (!forceFloating || distance == 0) {
             ForgeDirection face = adjacent ? ForgeDirection.getOrientation(hit.sideHit) : ForgeDirection.UNKNOWN;
             return new Target(
                 new int[] { hit.blockX + face.offsetX, hit.blockY + face.offsetY, hit.blockZ + face.offsetZ },
                 false);
         }
-        if (distance == 0) return new Target(feet, true);
-        // Rebase at a stable player-height plane. Near-plane origin depends on zoom and may be hundreds of blocks away.
-        double base = CameraIntersections.plane(ray, 0, 1, 0, referenceY, 0, 8192);
-        if (Double.isNaN(base)) return new Target(null, false);
+        double base = hitDistance(ray, hit);
+        if (!Double.isFinite(base)) return new Target(null, false);
+        // Start just inside the actual block face so integer boundaries agree with the direct target.
+        double offset = base - distance + 1.0E-7;
         return new Target(
-            HologramWorldFlow.airAnchor(
-                ray.originX() + ray.directionX() * base,
-                ray.originY() + ray.directionY() * base,
-                ray.originZ() + ray.directionZ() * base,
-                ray.directionX(),
-                ray.directionY(),
-                ray.directionZ(),
-                distance),
+            new int[] { (int) Math.floor(ray.originX() + ray.directionX() * offset),
+                (int) Math.floor(ray.originY() + ray.directionY() * offset),
+                (int) Math.floor(ray.originZ() + ray.directionZ() * offset) },
             false);
+    }
+
+    static double hitDistance(CameraRay ray, MovingObjectPosition hit) {
+        if (hit == null || hit.hitVec == null) return Double.NaN;
+        return (hit.hitVec.xCoord - ray.originX()) * ray.directionX()
+            + (hit.hitVec.yCoord - ray.originY()) * ray.directionY()
+            + (hit.hitVec.zCoord - ray.originZ()) * ray.directionZ();
     }
 
     static Target resolve(MovingObjectPosition hit, boolean forceFloating, boolean adjacent, int distance, int[] feet,

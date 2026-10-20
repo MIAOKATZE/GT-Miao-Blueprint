@@ -29,7 +29,11 @@ public final class HologramIsometricCameraRegression {
         SimpleAssert.that(
             !settings.input()
                 .consumeHotbarScroll(),
-            "plain scroll retains the hotbar and Alt scroll retains distance");
+            "Core navigation owns direct wheel zoom while Alt scroll remains a consumer input");
+        SimpleAssert.that(
+            settings.input()
+                .exclusiveKeyboard(),
+            "camera blocks non-whitelisted raw key events");
         SimpleAssert.eq(
             WorldCameras.MovementPolicy.ALL,
             settings.input()
@@ -41,12 +45,37 @@ public final class HologramIsometricCameraRegression {
                 .crosshair(),
             "the orthographic world does not show vanilla's eye-based crosshair");
         SimpleAssert.that(
-            settings.hud()
+            !settings.hud()
                 .panelVisible(),
-            "Core owns the nonmodal camera controls");
-        for (int key : new int[] { Keyboard.KEY_R, Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT,
-            Keyboard.KEY_RIGHT, Keyboard.KEY_Z, Keyboard.KEY_DELETE, Keyboard.KEY_LCONTROL, Keyboard.KEY_LMENU })
-            SimpleAssert.that(camera.allowKey(key), "camera preserves blueprint key input " + key);
+            "camera hides the large generic controls panel");
+        SimpleAssert.that(
+            settings.hud()
+                .sliceBarVisible(),
+            "X-ray retains its independent height strip");
+        SimpleAssert.that(
+            settings.hud()
+                .sliceDirectionVisible()
+                && settings.hud()
+                    .sliceLabelVisible(),
+            "the X-ray strip includes a hide-above/below switch and its Y value");
+        SimpleAssert.eq(
+            1,
+            settings.navigation()
+                .panButton(),
+            "right drag pans without selecting points");
+        SimpleAssert.eq(
+            CameraSettings.Navigation.WheelZoom.DIRECT_EXCEPT_ALT,
+            settings.navigation()
+                .wheelZoom(),
+            "plain scroll zooms directly");
+        for (int key : new int[] { Keyboard.KEY_V, Keyboard.KEY_ESCAPE, Keyboard.KEY_R, Keyboard.KEY_X,
+            Keyboard.KEY_LMENU, Keyboard.KEY_RMENU, Keyboard.KEY_C, Keyboard.KEY_Z, Keyboard.KEY_Y,
+            Keyboard.KEY_LCONTROL, Keyboard.KEY_RCONTROL, Keyboard.KEY_LSHIFT, Keyboard.KEY_RSHIFT, Keyboard.KEY_DELETE,
+            Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT, Keyboard.KEY_W, Keyboard.KEY_E,
+            Keyboard.KEY_F3, Keyboard.KEY_NUMPAD5 }) {
+            SimpleAssert.that(!camera.allowKey(key), "raw polling keeps native KeyBindings blocked " + key);
+            SimpleAssert.that(!camera.allowRawKey(key), "raw polling keeps FML key events blocked " + key);
+        }
         CameraControls controls = camera.controls();
         for (CameraControl control : CameraControl.values())
             SimpleAssert.that(controls.supports(control), "blueprint camera supports its advertised Core controls");
@@ -73,6 +102,18 @@ public final class HologramIsometricCameraRegression {
                 .maxScale(),
             "zoom commands retain the configured maximum scale");
         SimpleAssert.that(camera.settings() == settings, "view commands reuse the immutable settings instance");
+        camera.toggleSlice();
+        HeightSlice defaultSlice = camera.settings()
+            .slice();
+        SimpleAssert.that(
+            defaultSlice.enabled() && defaultSlice.featherWidth() == 1 && defaultSlice.featheredCaps(),
+            "X starts X-ray with one block of feather coverage including cap faces");
+        camera.toggleSlice();
+        SimpleAssert.that(
+            !camera.settings()
+                .slice()
+                .enabled(),
+            "X disables the entire X-ray height strip");
         HeightSlice slice = HeightSlice.between(60, 80, 2);
         controls.requestSlice(slice);
         CameraSettings sliced = camera.settings();

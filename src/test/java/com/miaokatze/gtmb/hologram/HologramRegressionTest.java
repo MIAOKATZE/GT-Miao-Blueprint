@@ -22,6 +22,9 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "isometric_camera_policy_loaded_surface_and_signed_floating_target",
+            () -> com.miaokatze.gtmb.client.hologram.HologramIsometricCameraRegression.main(new String[0]));
+        cases.put(
             "large_attachment_vanilla_boundary_compact_geometry_and_local_presets",
             HologramLargeAttachmentRegression::run);
         cases.put(

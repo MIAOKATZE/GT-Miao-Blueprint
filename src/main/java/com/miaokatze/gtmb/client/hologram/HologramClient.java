@@ -84,6 +84,7 @@ public final class HologramClient {
     public static void install() {
         if (installed) return;
         installed = true;
+        HologramSelectionInput.install();
         HologramIsometricCamera.INSTANCE.install();
         HologramLibraryClient.INSTANCE.install();
         HologramCutClient.INSTANCE.install();
@@ -192,6 +193,12 @@ public final class HologramClient {
     private static long lastUseTick = Long.MIN_VALUE;
     private static net.minecraft.world.World lastUseWorld;
     private static final HologramWorldFlow.PreviewDistance previewDistance = new HologramWorldFlow.PreviewDistance();
+    private static int cameraOffset;
+
+    static void resetCameraOffset() {
+        cameraOffset = 0;
+    }
+
     private static final HologramWorldFlow.UsePressFence usePressFence = new HologramWorldFlow.UsePressFence();
 
     private static void syncPreviewDistance() {
@@ -220,6 +227,48 @@ public final class HologramClient {
             || localAreaCancelling
             || HologramLocalPlacement.INSTANCE.active()
             || state != null && HologramCutInput.blueprintBusy(state.data);
+    }
+
+    static boolean cameraEligible() {
+        if (!projectorWorld() || HologramBackgroundTasks.busy()
+            || localAreaFinishing
+            || localAreaCancelling
+            || state != null && state.data.getBoolean("areaImporting")) return false;
+        return areaProjectorWorld() || HologramCutClient.INSTANCE.cameraContext()
+            || HologramLocalPlacement.INSTANCE.active()
+            || worldStage() == HologramWorldFlow.Stage.MOVING
+            || worldStage() == HologramWorldFlow.Stage.LOCKED;
+    }
+
+    static boolean cameraContext() {
+        return cameraEligible();
+    }
+
+    static boolean cameraToggleRequested() {
+        return !confirmContinuous();
+    }
+
+    static boolean continuousActive() {
+        return areaProjectorWorld() && localArea != null && localArea.continuousActive()
+            || HologramCutClient.INSTANCE.continuousActive();
+    }
+
+    /** V belongs to continuous selection until that local operation has been finished. */
+    static boolean confirmContinuous() {
+        if (!continuousActive()) return false;
+        if (HologramCutClient.INSTANCE.continuousActive()) return HologramCutClient.INSTANCE.confirmContinuous();
+        try {
+            localArea.confirmContinuous();
+            localAreaView = null;
+        } catch (java.io.IOException invalid) {
+            selectionNotice(invalid.getMessage());
+        }
+        return true;
+    }
+
+    static void selectionNotice(String message) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null) mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(message));
     }
 
     private static HologramWorldFlow.Stage worldStage() {
@@ -291,7 +340,7 @@ public final class HologramClient {
             return;
         }
         boolean air = input.getBoolean("air");
-        if (HologramIsometricCamera.INSTANCE.active()) {
+        if (HologramIsometricCamera.INSTANCE.active() && worldStage() != HologramWorldFlow.Stage.LOCKED) {
             HologramWorldTarget.Target target = worldTarget(false);
             if (target.anchor == null) {
                 invalidCameraTarget();
@@ -313,7 +362,8 @@ public final class HologramClient {
         lastUseWorld = mc.theWorld;
         lastUseTick = tick;
         boolean shift = shiftHeld() && (worldStage() != HologramWorldFlow.Stage.AREA || !controlHeld());
-        boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+        boolean alt = (Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU))
+            && !(HologramIsometricCamera.INSTANCE.active() && worldStage() == HologramWorldFlow.Stage.LOCKED);
         HologramWorldFlow.Intent intent = HologramWorldFlow.intent(
             worldStage(),
             shift ? HologramWorldFlow.Gesture.SHIFT_RIGHT
@@ -388,7 +438,11 @@ public final class HologramClient {
         if (!HologramIsometricCamera.INSTANCE.active() || !projectorWorld() || event.button != 0 && event.button != 1)
             return;
         event.setCanceled(true);
-        if (event.button != 1 || !event.buttonstate) return;
+        if (event.button != 0 || !event.buttonstate) return;
+        if (worldStage() == HologramWorldFlow.Stage.LOCKED) {
+            HologramNetwork.clientUse(0, 0, 0, ForgeDirection.UP.ordinal(), true);
+            return;
+        }
         HologramWorldTarget.Target target = worldTarget(false);
         if (target.anchor == null) {
             invalidCameraTarget();
@@ -405,6 +459,11 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void cutMouse(MouseEvent event) {
+        if (HologramIsometricCamera.INSTANCE.active()
+            && (event.button == 1 || event.button == 0 && Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R))) {
+            event.setCanceled(true);
+            return;
+        }
         if ((event.button == 0 || event.button == 1) && HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
             event.setCanceled(true);
             if (event.buttonstate) invalidCameraTarget();
@@ -425,6 +484,11 @@ public final class HologramClient {
             return;
         }
         if (HologramBackgroundTasks.busy()) return;
+        if (event.dwheel != 0 && projectorWorld() && HologramIsometricCamera.INSTANCE.active() && altHeld()) {
+            cameraOffset = Math.max(-64, Math.min(64, cameraOffset + Integer.signum(event.dwheel)));
+            event.setCanceled(true);
+            return;
+        }
         // Plain wheel retains the vanilla hotbar; only Alt-distance adjustment owns a wheel event.
         if (event.dwheel == 0 || !projectorWorld()
             || !HologramCutClient.INSTANCE.aiming()
@@ -444,18 +508,23 @@ public final class HologramClient {
             || !areaProjectorWorld()
             || localArea == null && (state == null || !state.data.getBoolean("areaSelecting"))) return;
         boolean control = controlHeld(), shift = shiftHeld();
-        if (event.button == 1 && shift && altHeld()) {
+        if (localArea != null && localArea.continuousActive()) {
             event.setCanceled(true);
-            if (usePressFence.consume() && localArea != null) try {
-                localArea.beginNext(control ? "subtract" : "add");
-                localAreaView = null;
-            } catch (java.io.IOException invalid) {
-                if (mc.thePlayer != null)
-                    mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(invalid.getMessage()));
+            if (event.button == 0) {
+                int[] point = areaSelectionAnchor();
+                if (point == null) invalidCameraTarget();
+                else try {
+                    localArea.continuousPoint(point[0], point[1], point[2]);
+                    localAreaView = null;
+                } catch (java.io.IOException invalid) {
+                    selectionNotice(invalid.getMessage());
+                }
             }
             return;
         }
-        if (event.button == 1 && shift && !control) {
+        if ((event.button == 1 || HologramIsometricCamera.INSTANCE.active() && event.button == 0) && shift
+            && !control
+            && !altHeld()) {
             event.setCanceled(true);
             if (!usePressFence.consume()) return;
             lastUseWorld = mc.theWorld;
@@ -488,6 +557,16 @@ public final class HologramClient {
         HologramIsometricCamera.INSTANCE.guide(lines);
         if (projectorWorld() && HologramLocalPlacement.INSTANCE.active()
             && !HologramLocalPlacement.INSTANCE.submitting()) {
+            if (HologramIsometricCamera.INSTANCE.active()) {
+                lines.add(
+                    text(
+                        HologramLocalPlacement.INSTANCE.locked() ? "camera.placementLocked" : "camera.placementMoving",
+                        "Left: lock / confirm placement"));
+                if (HologramLocalPlacement.INSTANCE.locked())
+                    lines.add(text("worldGuideSelectionKeys", "Arrows: move"));
+                HologramWorldGuide.draw(lines, event.resolution);
+                return;
+            }
             lines.add(
                 HologramLocalPlacement.INSTANCE.display() == null ? "正在准备蓝图预览…"
                     : HologramLocalPlacement.INSTANCE.locked() ? "位置已锁定；右键核对材料，Shift + 右键解锁" : "移动鼠标预览位置；右键锁定位置");
@@ -545,7 +624,11 @@ public final class HologramClient {
         }
         NBTTagCompound areaSelection = localAreaRenderSelection();
         if (areaSelection != null && (state == null || mc.theWorld != snapshotWorld)) {
-            lines.add(text("worldGuideArea", "Select corners locally; Shift + right-click imports; Esc cancels"));
+            lines.add(
+                text(
+                    HologramIsometricCamera.INSTANCE.active() ? "worldGuideArea.camera" : "worldGuideArea",
+                    "Select corners locally; Shift + right-click imports; Esc cancels"));
+            HologramWorldGuide.selectionGuide(lines, areaSelection);
             HologramWorldGuide.draw(lines, event.resolution);
             return;
         }
@@ -559,7 +642,9 @@ public final class HologramClient {
         lines.add(
             positionLockPending(state)
                 ? text("worldGuideLockPending", "Position locked; checking with the server… Esc cancels")
-                : text(key, "Right-click: projector workspace"));
+                : text(
+                    HologramIsometricCamera.INSTANCE.active() ? key + ".camera" : key,
+                    "Left-click: select / lock / confirm"));
         if (stage == HologramWorldFlow.Stage.AREA && !state.data.getBoolean("areaImporting")) {
             net.minecraft.nbt.NBTTagList regions = areaSelection.getTagList("areaRegions", 10);
             int subtracted = 0;
@@ -573,11 +658,7 @@ public final class HologramClient {
                     text("worldGuideAreaRegions", "Regions %d, subtract %d"),
                     regions.tagCount() - subtracted,
                     subtracted));
-            lines.add(text("worldGuideSelectionEdit", "Left/right: adjust corners · Shift+Alt+right: more boxes"));
-            lines.add(
-                text(
-                    "worldGuideSelectionKeys",
-                    "Arrows: move · Alt+Up/Down: vertical · Scroll: hotbar · Delete: remove · Ctrl+Z: undo"));
+            HologramWorldGuide.selectionGuide(lines, areaSelection);
         }
         if (stage == HologramWorldFlow.Stage.MOVING || stage == HologramWorldFlow.Stage.AREA) {
             int[] anchor = stage == HologramWorldFlow.Stage.AREA ? areaSelectionAnchor() : movingAnchor(state);
@@ -587,7 +668,7 @@ public final class HologramClient {
                 String.format(
                     java.util.Locale.ROOT,
                     text("worldGuideTarget", "Distance %d | Target %d, %d, %d | Alt + scroll: distance"),
-                    previewDistance.distance(),
+                    HologramIsometricCamera.INSTANCE.active() ? cameraOffset : previewDistance.distance(),
                     anchor[0],
                     anchor[1],
                     anchor[2]));
@@ -665,7 +746,11 @@ public final class HologramClient {
             tool,
             inputScreenChanged);
         inputScreenChanged = false;
-        usePressFence.observe(mc.gameSettings.keyBindUseItem.getIsKeyPressed(), changed);
+        usePressFence.observe(
+            HologramIsometricCamera.INSTANCE.active()
+                ? org.lwjgl.input.Mouse.isCreated() && org.lwjgl.input.Mouse.isButtonDown(0)
+                : mc.gameSettings.keyBindUseItem.getIsKeyPressed(),
+            changed);
         syncPreviewDistance();
         if (HologramBackgroundTasks.busy()) return;
         if (HologramCutClient.INSTANCE.active()) return;
@@ -680,13 +765,14 @@ public final class HologramClient {
         }
         if (HologramLocalPlacement.INSTANCE.active()) {
             HologramLocalPlacement.INSTANCE.input(projectorWorld(), changed);
-            if (projectorWorld() && rotate) HologramLocalPlacement.INSTANCE.turn(controlHeld());
+            if (projectorWorld() && rotate && !HologramIsometricCamera.INSTANCE.active())
+                HologramLocalPlacement.INSTANCE.turn(controlHeld());
             return;
         }
         lockedNudge(mc, changed);
         if (areaSelectionInput.tick(localArea, areaProjectorWorld() && !localAreaFinishing)) localAreaView = null;
         if (!projectorWorld() || state == null || mc.theWorld != snapshotWorld) return;
-        if (!rotate
+        if (!rotate || HologramIsometricCamera.INSTANCE.active()
             || HologramWorldFlow.intent(worldStage(), HologramWorldFlow.Gesture.ROTATE)
                 != HologramWorldFlow.Intent.ROTATE
             || state.data.getBoolean("capturePending")
@@ -824,6 +910,7 @@ public final class HologramClient {
     private static void worldAction(String action) {
         if (HologramBackgroundTasks.busy()) return;
         if ("finishAreaSelection".equals(action) && localArea != null) {
+            if (localArea.continuousActive()) return;
             localAreaFinishing = true;
             if (!localAreaAwaitingBegin) {
                 if (localAreaSession.isEmpty() || localAreaRevision < 0) {
@@ -906,7 +993,7 @@ public final class HologramClient {
         if (localAreaFinishing || !localAreaContext()) return false;
         if (localArea == null) return false;
         try {
-            localArea.point(point, x, y, z, mode);
+            localArea.worldPoint(HologramIsometricCamera.INSTANCE.active() ? 0 : point, x, y, z);
             localAreaView = null;
             return true;
         } catch (java.io.IOException invalid) {
@@ -1077,7 +1164,7 @@ public final class HologramClient {
     }
 
     static String areaSelectionMode(boolean control, boolean shift) {
-        return control ? shift ? "subtract" : "add" : "replace";
+        return "replace";
     }
 
     private static int[] playerAnchor(Minecraft mc) {
@@ -1089,8 +1176,8 @@ public final class HologramClient {
     private static HologramWorldTarget.Target worldTarget(boolean adjacent) {
         Minecraft mc = Minecraft.getMinecraft();
         syncPreviewDistance();
-        if (HologramIsometricCamera.INSTANCE.active()) return HologramIsometricCamera.INSTANCE
-            .target(altHeld(), adjacent, previewDistance.distance(), playerAnchor(mc));
+        if (HologramIsometricCamera.INSTANCE.active())
+            return HologramIsometricCamera.INSTANCE.target(altHeld(), adjacent, cameraOffset, playerAnchor(mc));
         if (HologramIsometricCamera.INSTANCE.blocksVanillaTarget()) return new HologramWorldTarget.Target(null, false);
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
         return HologramWorldTarget.resolve(
