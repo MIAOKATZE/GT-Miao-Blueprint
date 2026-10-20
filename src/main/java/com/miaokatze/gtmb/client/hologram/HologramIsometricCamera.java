@@ -61,8 +61,13 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         .zoom(true)
         .reset(true)
         .panButton(1)
+        .panExcludesControl(true)
         .rotateDrag(0, Keyboard.KEY_R)
+        .rotateExcludesControl(true)
         .wheelZoom(CameraSettings.Navigation.WheelZoom.DIRECT_EXCEPT_ALT)
+        .wheelSensitivity(50)
+        .wheelDeltaUnit(CameraSettings.Navigation.WheelDeltaUnit.AUTO)
+        .wheelZoomLimit(1.5)
         .pitchRange(MIN_PITCH, MAX_PITCH)
         .scaleRange(MIN_SCALE, MAX_SCALE)
         .basePixelsPerWorldUnit(DEFAULT_SCALE)
@@ -179,7 +184,8 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         if (slice.enabled()) controls.requestSlice(HeightSlice.disabled());
         else controls.requestSlice(
             lastSlice == null ? HeightSlice.below(Math.max(1, Math.min(256, (int) Math.floor(y) + 1)), 1)
-                .withFeatheredCaps(true) : lastSlice);
+                .withFeatheredCaps(true)
+                .withLightCompensation(true) : lastSlice);
     }
 
     String toggleLabel() {

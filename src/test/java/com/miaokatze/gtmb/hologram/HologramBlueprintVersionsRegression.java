@@ -48,11 +48,11 @@ public final class HologramBlueprintVersionsRegression {
     }
 
     private static void releaseAndPackAreIndependent() throws Exception {
-        SimpleAssert.eq("0.1.32", Tags.RELEASE_VERSION, "blueprint release is the explicit semantic release property");
+        SimpleAssert.eq("0.1.33", Tags.RELEASE_VERSION, "blueprint release is the explicit semantic release property");
         HologramPresets.Preset client = blueprint();
         client.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-RC-2");
         HologramBlueprintVersions.validate(client);
-        SimpleAssert.eq("0.1.32", client.nativeBlueprint.gtmbVersion, "GTMB release does not become the pack version");
+        SimpleAssert.eq("0.1.33", client.nativeBlueprint.gtmbVersion, "GTMB release does not become the pack version");
         SimpleAssert.eq("2.9.0-RC-2", client.nativeBlueprint.gtnhVersion, "exact RC-2 environment is preserved");
         HologramPresets.Preset server = blueprint();
         server.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-RC-1");

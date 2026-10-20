@@ -16,6 +16,7 @@ public final class HologramIsometricCameraRegression {
     private HologramIsometricCameraRegression() {}
 
     public static void main(String[] args) {
+        selectionGestures();
         HologramWorldTargetRegression.run();
         HologramLoadedRayTraceRegression.run();
         HologramIsometricCamera camera = HologramIsometricCamera.INSTANCE;
@@ -63,6 +64,23 @@ public final class HologramIsometricCameraRegression {
             settings.navigation()
                 .panButton(),
             "right drag pans without selecting points");
+        SimpleAssert.that(
+            settings.navigation()
+                .panExcludesControl(),
+            "Ctrl+right reaches selection instead of panning");
+        SimpleAssert.that(
+            settings.navigation()
+                .rotateExcludesControl(),
+            "Ctrl+left reaches selection even when R is held");
+        SimpleAssert.that(
+            settings.navigation()
+                .wheelSensitivity() >= 50,
+            "wheel zoom requests at least fifty-fold sensitivity");
+        SimpleAssert.eq(
+            CameraSettings.Navigation.WheelDeltaUnit.AUTO,
+            settings.navigation()
+                .wheelDeltaUnit(),
+            "wheel zoom adapts to both classic and lwjgl3ify delta units");
         SimpleAssert.eq(
             CameraSettings.Navigation.WheelZoom.DIRECT_EXCEPT_ALT,
             settings.navigation()
@@ -108,6 +126,7 @@ public final class HologramIsometricCameraRegression {
         SimpleAssert.that(
             defaultSlice.enabled() && defaultSlice.featherWidth() == 1 && defaultSlice.featheredCaps(),
             "X starts X-ray with one block of feather coverage including cap faces");
+        SimpleAssert.that(defaultSlice.lightCompensation(), "X-ray opts into local cut-face light compensation");
         camera.toggleSlice();
         SimpleAssert.that(
             !camera.settings()
@@ -128,5 +147,46 @@ public final class HologramIsometricCameraRegression {
         camera.close();
         SimpleAssert.that(!camera.active(), "closing an inactive camera is safe");
         System.out.println("HologramIsometricCameraRegression passed");
+    }
+
+    private static void selectionGestures() {
+        for (boolean shift : new boolean[] { false, true }) for (boolean alt : new boolean[] { false, true }) {
+            SimpleAssert.eq(
+                HologramSelectionInput.CameraAction.CORNER_ONE,
+                HologramSelectionInput.cameraAction(0, true, shift, alt, false, false),
+                "Ctrl+left always fixes corner one");
+            SimpleAssert.eq(
+                HologramSelectionInput.CameraAction.CORNER_TWO,
+                HologramSelectionInput.cameraAction(1, true, shift, alt, false, false),
+                "Ctrl+right always fixes corner two");
+        }
+        SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.NONE,
+            HologramSelectionInput.cameraAction(0, false, false, false, false, false),
+            "plain left cannot alter either box corner");
+        SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.NONE,
+            HologramSelectionInput.cameraAction(1, false, false, false, false, false),
+            "plain right belongs to camera panning");
+        SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.CORNER_ONE,
+            HologramSelectionInput.cameraAction(0, true, false, false, true, false),
+            "Ctrl fixes corner one even when R is held");
+        SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.NONE,
+            HologramSelectionInput.cameraAction(0, false, false, false, true, false),
+            "R+left rotates without selecting a corner");
+        SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.SUBMIT,
+            HologramSelectionInput.cameraAction(0, false, true, false, false, false),
+            "Shift+left explicitly submits the box selection");
+        SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.CONTINUOUS_POINT,
+            HologramSelectionInput.cameraAction(0, false, false, false, false, true),
+            "continuous mode retains plain-left vertices and height");
+        for (int button : new int[] { 0, 1 }) SimpleAssert.eq(
+            HologramSelectionInput.CameraAction.NONE,
+            HologramSelectionInput.cameraAction(button, true, false, false, false, true),
+            "Ctrl corners cannot accidentally append a continuous point");
     }
 }

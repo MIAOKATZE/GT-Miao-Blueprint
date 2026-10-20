@@ -459,8 +459,9 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void cutMouse(MouseEvent event) {
-        if (HologramIsometricCamera.INSTANCE.active()
-            && (event.button == 1 || event.button == 0 && Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R))) {
+        if (HologramIsometricCamera.INSTANCE.active() && (event.button == 1
+            && !(controlHeld() && (areaProjectorWorld() || HologramCutClient.INSTANCE.selecting()))
+            || event.button == 0 && !controlHeld() && Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R))) {
             event.setCanceled(true);
             return;
         }
@@ -508,6 +509,40 @@ public final class HologramClient {
             || !areaProjectorWorld()
             || localArea == null && (state == null || !state.data.getBoolean("areaSelecting"))) return;
         boolean control = controlHeld(), shift = shiftHeld();
+        if (HologramIsometricCamera.INSTANCE.active()) {
+            event.setCanceled(true);
+            HologramSelectionInput.CameraAction action = HologramSelectionInput.cameraAction(
+                event.button,
+                control,
+                shift,
+                altHeld(),
+                Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R),
+                localArea != null && localArea.continuousActive());
+            if (action == HologramSelectionInput.CameraAction.NONE) return;
+            if (action == HologramSelectionInput.CameraAction.SUBMIT) {
+                if (usePressFence.consume()) worldAction("finishAreaSelection");
+                return;
+            }
+            int[] point = areaSelectionAnchor();
+            if (point == null) {
+                invalidCameraTarget();
+                return;
+            }
+            if (action == HologramSelectionInput.CameraAction.CONTINUOUS_POINT) {
+                try {
+                    localArea.continuousPoint(point[0], point[1], point[2]);
+                    localAreaView = null;
+                } catch (java.io.IOException invalid) {
+                    selectionNotice(invalid.getMessage());
+                }
+            } else localAreaPoint(
+                action == HologramSelectionInput.CameraAction.CORNER_ONE ? 1 : 2,
+                point[0],
+                point[1],
+                point[2],
+                areaSelectionMode(control, shift));
+            return;
+        }
         if (localArea != null && localArea.continuousActive()) {
             event.setCanceled(true);
             if (event.button == 0) {
@@ -555,6 +590,10 @@ public final class HologramClient {
         if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null || mc.gameSettings.hideGUI) return;
         java.util.List<String> lines = new java.util.ArrayList<>();
         HologramIsometricCamera.INSTANCE.guide(lines);
+        if (HologramIsometricCamera.INSTANCE.active()) {
+            cameraGuide(lines, event.resolution);
+            return;
+        }
         if (projectorWorld() && HologramLocalPlacement.INSTANCE.active()
             && !HologramLocalPlacement.INSTANCE.submitting()) {
             if (HologramIsometricCamera.INSTANCE.active()) {
@@ -688,6 +727,42 @@ public final class HologramClient {
             if (!positionLockPending(state) && !status.isEmpty()) lines.add(status);
         }
         HologramWorldGuide.draw(lines, event.resolution);
+    }
+
+    /** The active camera shows its own gestures, without ordinary-view or unrelated tool guidance. */
+    private static void cameraGuide(java.util.List<String> lines,
+        net.minecraft.client.gui.ScaledResolution resolution) {
+        NBTTagCompound selection = HologramCutClient.INSTANCE.selectionSnapshot();
+        if (selection == null && areaProjectorWorld()) selection = localAreaRenderSelection();
+        if (selection == null && areaProjectorWorld() && state != null) selection = state.data;
+        if (selection != null) {
+            HologramWorldGuide.drawSelectionCursor(selection, resolution);
+            HologramWorldGuide.selectionGuide(lines, selection);
+        } else if (HologramCutClient.INSTANCE.cameraContext()) {
+            HologramCutClient.INSTANCE.guide(lines);
+        } else {
+            boolean locked = HologramLocalPlacement.INSTANCE.active() ? HologramLocalPlacement.INSTANCE.locked()
+                : worldStage() == HologramWorldFlow.Stage.LOCKED;
+            lines.add(
+                text(locked ? "camera.placementLocked" : "camera.placementMoving", "Left: lock / confirm placement"));
+        }
+        HologramProgress progress = HologramClientProgress.view("server", "");
+        String status = HologramCutClient.INSTANCE.cameraContext() ? HologramCutClient.INSTANCE.cameraStatus()
+            : progress == null ? "" : HologramProgressView.summary(progress, System.nanoTime());
+        if (!status.isEmpty()) lines.add(status);
+        else if (selection != null || worldStage() == HologramWorldFlow.Stage.MOVING) {
+            int[] target = worldTarget(false).anchor;
+            lines.add(
+                target == null ? text("camera.noTarget", "No visible loaded target / camera updating")
+                    : String.format(
+                        java.util.Locale.ROOT,
+                        text("camera.target", "Target %d, %d, %d | Depth %d"),
+                        target[0],
+                        target[1],
+                        target[2],
+                        cameraOffset));
+        }
+        HologramWorldGuide.draw(lines, resolution);
     }
 
     /** Only observed local metadata: no catalog requests, file access, or snapshot/preview preparation. */
@@ -993,7 +1068,7 @@ public final class HologramClient {
         if (localAreaFinishing || !localAreaContext()) return false;
         if (localArea == null) return false;
         try {
-            localArea.worldPoint(HologramIsometricCamera.INSTANCE.active() ? 0 : point, x, y, z);
+            localArea.worldPoint(point, x, y, z);
             localAreaView = null;
             return true;
         } catch (java.io.IOException invalid) {

@@ -13,9 +13,9 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-此版本客户端与服务端均需 [MIAOKATZE Core 0.1.5](https://github.com/MIAOKATZE/MIAOKATZE-Core)（兼容区间：0.1.5 ≤ 版本 < 0.2.0）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+此版本客户端与服务端均需 [MIAOKATZE Core 0.1.6](https://github.com/MIAOKATZE/MIAOKATZE-Core)（兼容区间：0.1.6 ≤ 版本 < 0.2.0）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
-世界蓝图操作新增可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。等距视角下 R + 左拖旋转镜头，右拖平移，滚轮缩放；Alt + 滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移，正值朝向相机悬浮，负值进入方块后方。X 切换 X 光；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
+世界蓝图操作新增可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。等距框选用 Ctrl+左键固定点1、Ctrl+右键固定点2，Shift+左键提交；普通左键不设置两角，连续 C 模式仍用左键添加顶点和选择高度，连续期间禁用 Ctrl 两角操作。R + 左拖旋转镜头，右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）；Alt + 滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移，正值朝向相机悬浮，负值进入方块后方。X 切换 X 光；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 
 <p align="center">
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases">下载 / Download</a> ·
@@ -274,9 +274,9 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
   <em>Choose Blueprint for designs or Cut for moving existing builds.</em>
 </p>
 
-**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；非框选时 Ctrl + Shift + 右键直接打开剪切列表。选择「剪切」开始框选：普通视角用左、右键设置两角；等距视角连续左键设置两角，并用 Shift + 左键确认。保存条目后可继续框选；Ctrl + Shift + 右键打开暂存列表。
+**进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；非框选时 Ctrl + Shift + 右键直接打开剪切列表。选择「剪切」开始框选：普通视角用左、右键设置两角；等距视角用 Ctrl+左键固定点1、Ctrl+右键固定点2，并用 Shift + 左键确认。保存条目后可继续框选；Ctrl + Shift + 右键打开暂存列表。
 
-*Hold Shift and right-click to cycle modes, then release Shift to enter. Outside selection, Ctrl+Shift+right-click opens stored cuts. In ordinary view, set the two cut corners with left- and right-click and confirm with Shift+right-click; in isometric view, set both corners with continuous left-clicks and confirm with Shift+left-click. Save a cut and continue selecting.*
+*Hold Shift and right-click to cycle modes, then release Shift to enter. Outside selection, Ctrl+Shift+right-click opens stored cuts. In ordinary view, set the two cut corners with left- and right-click and confirm with Shift+right-click; in isometric view, Ctrl+left-click fixes corner 1, Ctrl+right-click fixes corner 2, and Shift+left-click submits the selection. Save a cut and continue selecting.*
 
 <p align="center">
   <a href="README/screenshots/cut-queue.png"><img src="README/screenshots/cut-queue.png" alt="剪切暂存列表、每项尺寸与独立三维预览，画面包含诊断文字 / Stored cuts with dimensions and individual 3D preview; screenshot includes diagnostic text" width="620"></a><br>
@@ -346,7 +346,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 操作 / Action | 用途 / Result |
 | --- | --- |
-| 选区 / Selection | 普通视角用左、右键设置两角；Alt+右键可按悬空光标标记第二点。等距视角连续左键设置两角，Shift+左键确认。首次完成选区后，Z 开关加选，Alt+Z 开关减选；重复按对应键关闭。Shift+Z 合并、扣负并去重。可在控制设置绑定 C 使用连续多边形：左键逐点绘制，点击首点闭合，再点方块调整高度，按 V 完成；Shift+C 减选。绘制时再按 C 清除点并重画。Ctrl+Z/Y 逐步撤销/重做；Delete 删除当前框，方向键平移，Alt+上下调高低。蓝图与剪切均适用。 / In ordinary view, set two corners with left- and right-click; Alt+right-click can mark the second point at the floating cursor. In isometric view, set both corners with continuous left-clicks and confirm with Shift+left-click. After the first complete selection, Z toggles add mode and Alt+Z toggles subtract mode; press the same key again to turn it off. Shift+Z merges, subtracts negatives and deduplicates. Bind C in Controls for continuous polygon selection: place points with left-click, click the first point to close, click a block to adjust height, then press V to finish; Shift+C subtracts the selection. Press C while drawing to clear the points and start over. Ctrl+Z/Y undo and redo each step; Delete removes the current box, arrows move it and Alt+up/down changes height. Applies to Blueprint and Cut. |
+| 选区 / Selection | 普通视角用左、右键设置两角；Alt+右键可按悬空光标标记第二点。等距视角用 Ctrl+左键固定点1、Ctrl+右键固定点2，Shift+左键确认。首次完成选区后，Z 开关加选，Alt+Z 开关减选；重复按对应键关闭。Shift+Z 合并、扣负并去重。可在控制设置绑定 C 使用连续多边形：左键逐点绘制，点击首点闭合，再点方块调整高度，按 V 完成；Shift+C 减选。绘制时再按 C 清除点并重画。Ctrl+Z/Y 逐步撤销/重做；Delete 删除当前框，方向键平移，Alt+上下调高低。蓝图与剪切均适用。 / In ordinary view, set two corners with left- and right-click; Alt+right-click can mark the second point at the floating cursor. In isometric view, Ctrl+left-click fixes corner 1, Ctrl+right-click fixes corner 2, and Shift+left-click submits the selection. After the first complete selection, Z toggles add mode and Alt+Z toggles subtract mode; press the same key again to turn it off. Shift+Z merges, subtracts negatives and deduplicates. Bind C in Controls for continuous polygon selection: place points with left-click, click the first point to close, click a block to adjust height, then press V to finish; Shift+C subtracts the selection. Press C while drawing to clear the points and start over. Ctrl+Z/Y undo and redo each step; Delete removes the current box, arrows move it and Alt+up/down changes height. Applies to Blueprint and Cut. |
 | 保存剪切 / Store a cut | 普通视角完整选区时 Shift+右键进入剪切确认；等距视角用 Shift+左键确认。保存至当前玩家／存档队列后可继续框选；非框选时 Ctrl+Shift+右键打开暂存列表。 / In ordinary view, Shift+right-click confirms a complete selection; in isometric view, use Shift+left-click. Saving stores it in this player/save queue and allows another selection; outside selection, Ctrl+Shift+right-click opens the stored cuts list. |
 | 暂存列表 / Stored cuts | 选择条目查看独立 3D 预览，点「放置」进入世界预览。Alt+A/D 切换条目，非框选时 Alt+右键撤销；仅成功粘贴或撤销后消费条目。 / Select an entry for its independent 3D preview and click Place for the world preview. Alt+A/D switches entries; Alt+right-click outside selection undoes a cut. Only successful paste or undo consumes an entry. |
 | 姿态 / Pose | 普通视角下确认前用 R 绕 Y 轴旋转，Ctrl+R 绕 X 轴旋转，Alt+R 打开旋转、镜像和朝向面板；等距视角中 R 用于镜头操作。 / In ordinary view, use R to rotate around Y, Ctrl+R around X, or Alt+R for pose controls; in isometric view, R controls the camera. |
