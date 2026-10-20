@@ -49,6 +49,10 @@ final class DecorationVoucherConfigRegression {
                 migrated.allowedBlocks.contains("appliedenergistics2:tile.blockquartzglass@0")
                     && migrated.allowedBlocks.contains("appliedenergistics2:tile.blockquartzlamp@0"),
                 "old server configuration gains both explicit AE decoration variants exactly once");
+            for (String elevator : new String[] { "elevator", "elevator_rotating" })
+                for (int meta = 0; meta < 16; meta++) SimpleAssert.that(
+                    migrated.allowedBlocks.contains("openblocks:" + elevator + "@" + meta),
+                    "old configs gain both elevator types and every color once");
             DecorationVoucherConfig.View enabled = copy(migrated, true, migrated.allowedBlocks);
             SimpleAssert.that(
                 DecorationVoucherConfig.save(enabled, DecorationVoucherConfig.revision()),

@@ -120,6 +120,35 @@ public final class DecorationVoucherRegression {
                     !HologramDecorationVoucher.eligible(new ItemStack(quartz, 1, 1)),
                     "unregistered AE glass variants are not admitted by the exception");
             }
+            for (String name : new String[] { "OpenBlocks:elevator", "OpenBlocks:elevator_rotating" }) {
+                Block elevator = fixture(name, Material.rock);
+                for (int meta = 0; meta < 16; meta++) SimpleAssert.that(
+                    HologramDecorationVoucher.covered(elevator, new ItemStack(elevator, 1, meta)),
+                    "each ordinary/rotating elevator color is covered");
+                SimpleAssert.that(
+                    !HologramDecorationVoucher.eligible(new ItemStack(elevator, 1, 16)),
+                    "unregistered elevator metadata stays outside defaults");
+            }
+            SimpleAssert.that(
+                !HologramDecorationVoucher.eligible(new ItemStack(fixture("OpenBlocks:tank", Material.iron))),
+                "adding elevators does not enable every OpenBlocks machine");
+            DecorationVoucherConfig.View elevatorDefaults = DecorationVoucherConfig.defaults();
+            config.set(
+                null,
+                new DecorationVoucherConfig.View(
+                    true,
+                    elevatorDefaults.allowedModIds,
+                    elevatorDefaults.allowedBlocks,
+                    elevatorDefaults.allowedOres,
+                    elevatorDefaults.deniedModIds,
+                    Collections.singleton("openblocks:elevator_rotating@5"),
+                    elevatorDefaults.deniedOres));
+            Block blacklistedElevator = Block.getBlockFromName("OpenBlocks:elevator_rotating");
+            SimpleAssert.that(
+                !HologramDecorationVoucher.eligible(new ItemStack(blacklistedElevator, 1, 5))
+                    && HologramDecorationVoucher.eligible(new ItemStack(blacklistedElevator, 1, 6)),
+                "elevator blacklist wins for one color without excluding the others");
+            config.set(null, elevatorDefaults);
             Block aeMachine = fixture("appliedenergistics2:tile.BlockController", Material.iron);
             SimpleAssert.that(
                 !HologramDecorationVoucher.eligible(new ItemStack(aeMachine)),

@@ -16,8 +16,11 @@ public final class HologramProjectionLifetimeRegression {
                 && !HologramVoucherRibbon.contains(10, 20, 220, 28, 225, 48),
             "row text, the next row and the outside edge never acquire the voucher tooltip");
         SimpleAssert.that(
-            HologramVoucherRibbon.contains(10, 20, 220, 14, 228, 21.5f),
+            HologramVoucherRibbon.contains(10, 20, 220, 14, 227.5f, 21.5f),
             "smaller controls keep the same painted-pixel hit region after scaling");
+        SimpleAssert.that(
+            !HologramVoucherRibbon.contains(10, 20, 220, 28, 229, 20),
+            "the open top-right corner retains the blueprint tooltip");
         HologramProjectionLifetime clock = new HologramProjectionLifetime();
         SimpleAssert.that(clock.visible("one", 1, 1), "active work remains visible");
         SimpleAssert.that(clock.visible("one", 3, 2), "completion starts its retention interval");

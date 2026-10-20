@@ -18,6 +18,16 @@ public final class DecorationVoucherConfig {
         "minecraft:stained_hardened_clay", "etfuturum:concrete", HologramPictureBox.WOOLEN_CLAY };
     private static final String[] AE_QUARTZ_GLASS = { "appliedenergistics2:tile.BlockQuartzGlass@0",
         "appliedenergistics2:tile.BlockQuartzLamp@0" };
+    private static final String[] OPENBLOCKS_ELEVATORS = { "OpenBlocks:elevator@0", "OpenBlocks:elevator@1",
+        "OpenBlocks:elevator@2", "OpenBlocks:elevator@3", "OpenBlocks:elevator@4", "OpenBlocks:elevator@5",
+        "OpenBlocks:elevator@6", "OpenBlocks:elevator@7", "OpenBlocks:elevator@8", "OpenBlocks:elevator@9",
+        "OpenBlocks:elevator@10", "OpenBlocks:elevator@11", "OpenBlocks:elevator@12", "OpenBlocks:elevator@13",
+        "OpenBlocks:elevator@14", "OpenBlocks:elevator@15", "OpenBlocks:elevator_rotating@0",
+        "OpenBlocks:elevator_rotating@1", "OpenBlocks:elevator_rotating@2", "OpenBlocks:elevator_rotating@3",
+        "OpenBlocks:elevator_rotating@4", "OpenBlocks:elevator_rotating@5", "OpenBlocks:elevator_rotating@6",
+        "OpenBlocks:elevator_rotating@7", "OpenBlocks:elevator_rotating@8", "OpenBlocks:elevator_rotating@9",
+        "OpenBlocks:elevator_rotating@10", "OpenBlocks:elevator_rotating@11", "OpenBlocks:elevator_rotating@12",
+        "OpenBlocks:elevator_rotating@13", "OpenBlocks:elevator_rotating@14", "OpenBlocks:elevator_rotating@15" };
     private static final String[] QUARTZ_GLASS = { "EnderIO:blockFusedQuartz@0", "EnderIO:blockFusedQuartz@1",
         "EnderIO:blockFusedQuartz@2", "EnderIO:blockFusedQuartz@3", "EnderIO:blockFusedQuartz@4",
         "EnderIO:blockFusedQuartz@5" };
@@ -155,6 +165,11 @@ public final class DecorationVoucherConfig {
             blocks = new java.util.TreeSet<>(blocks);
             blocks.addAll(Arrays.asList(AE_QUARTZ_GLASS));
         }
+        if (config.get(CATEGORY, "openBlocksElevatorDefaultsVersion", 0)
+            .getInt(0) < 1) {
+            blocks = new java.util.TreeSet<>(blocks);
+            blocks.addAll(Arrays.asList(OPENBLOCKS_ELEVATORS));
+        }
         View loaded = new View(
             enabled,
             allowedMods,
@@ -180,6 +195,7 @@ public final class DecorationVoucherConfig {
         java.util.List<String> result = new java.util.ArrayList<>(Arrays.asList(DEFAULT_BLOCKS));
         result.addAll(Arrays.asList(QUARTZ_GLASS));
         result.addAll(Arrays.asList(AE_QUARTZ_GLASS));
+        result.addAll(Arrays.asList(OPENBLOCKS_ELEVATORS));
         return result;
     }
 
@@ -246,6 +262,8 @@ public final class DecorationVoucherConfig {
                 .set(1);
             staged.get(CATEGORY, "aeQuartzGlassDefaultsVersion", 1)
                 .set(1);
+            staged.get(CATEGORY, "openBlocksElevatorDefaultsVersion", 1)
+                .set(1);
             String[] keys = ruleKeys();
             Set<?>[] values = lists(next);
             for (int i = 0; i < keys.length; i++) staged.get(CATEGORY, keys[i], new String[0])
@@ -260,6 +278,8 @@ public final class DecorationVoucherConfig {
                 || readback.get(CATEGORY, "decorationModDefaultsVersion", 0)
                     .getInt(0) != 1
                 || readback.get(CATEGORY, "quartzGlassDefaultsVersion", 0)
+                    .getInt(0) != 1
+                || readback.get(CATEGORY, "openBlocksElevatorDefaultsVersion", 0)
                     .getInt(0) != 1
                 || readback.get(CATEGORY, "aeQuartzGlassDefaultsVersion", 0)
                     .getInt(0) != 1)
