@@ -52,3 +52,9 @@ dependencies {
         runtimeOnlyNonPublishable(files("build/hologram-support/server/mods/gtswn-v1.8.67-dev.jar"))
     }
 }
+
+// Shared library API; immutable candidate versions may be supplied for isolated integration builds.
+dependencies {
+    def coreVersion = project.findProperty("miaokatzeCoreVersion") ?: "0.1.1"
+    api("com.miaokatze.miaokatzecore:miaokatzecore:${coreVersion}:dev") { transitive = false }
+}

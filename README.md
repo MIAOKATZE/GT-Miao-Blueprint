@@ -13,6 +13,8 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
+此版本客户端与服务端均需 [MIAOKATZE Core 0.1.1](https://github.com/MIAOKATZE/MIAOKATZE-Core)（兼容区间：0.1.1 ≤ 版本 < 0.2.0）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+
 <p align="center">
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases">下载 / Download</a> ·
   <a href="https://miaokatze.com/wiki?mod=gtmb">使用指南 / Guide</a> ·
