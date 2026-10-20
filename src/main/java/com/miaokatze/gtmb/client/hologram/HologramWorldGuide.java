@@ -73,10 +73,9 @@ final class HologramWorldGuide {
                     HologramIsometricCamera.INSTANCE.toggleLabel());
         }
         if (HologramIsometricCamera.INSTANCE.active()) {
-            int pending = selection.getInteger("areaPendingCorner");
             return modeText(selection.getString("areaInputMode")) + " · "
                 + HologramClient
-                    .text(pending == 1 ? "camera.selectionSecond" : "camera.selectionFirst", "Left: next corner");
+                    .text("camera.selectionCorners", "Ctrl+left: point 1 · Ctrl+right: point 2 · Shift+left: submit");
         }
         String key = selectionCursorKey(selection);
         String fallback = "worldGuideSelectionSecond".equals(key) ? "Right: point 2"
@@ -92,6 +91,26 @@ final class HologramWorldGuide {
     }
 
     static void selectionGuide(List<String> lines, NBTTagCompound selection) {
+        if (HologramIsometricCamera.INSTANCE.active()) {
+            if (selection != null && selection.getBoolean("areaContinuous")) {
+                lines.add(selectionCursorText(selection));
+                lines.add(HologramClient.text("camera.continuousKeys", "Left: vertex / height · Ctrl+click: ignored"));
+            } else {
+                lines.add(
+                    HologramClient.text(
+                        "camera.selectionCorners",
+                        "Ctrl+left: point 1 · Ctrl+right: point 2 · Shift+left: submit"));
+                lines.add(
+                    String.format(
+                        java.util.Locale.ROOT,
+                        HologramClient.text(
+                            "camera.selectionEdit",
+                            "%s: continuous · Shift+%s: subtract · Z / Alt+Z: add / subtract · Ctrl+Z/Y: undo / redo"),
+                        HologramSelectionInput.continuousLabel(),
+                        HologramSelectionInput.continuousLabel()));
+            }
+            return;
+        }
         lines.add(
             HologramClient.text(
                 HologramIsometricCamera.INSTANCE.active() ? "worldGuideSelectionEdit.camera"

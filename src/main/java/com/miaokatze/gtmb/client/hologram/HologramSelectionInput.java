@@ -14,6 +14,25 @@ import cpw.mods.fml.client.registry.ClientRegistry;
 /** Shared local-only selection shortcuts. All work is bounded by the number of boxes. */
 final class HologramSelectionInput {
 
+    enum CameraAction {
+        NONE,
+        CORNER_ONE,
+        CORNER_TWO,
+        CONTINUOUS_POINT,
+        SUBMIT
+    }
+
+    /** Only selection routes call this; placement clicks and Core camera drags have separate owners. */
+    static CameraAction cameraAction(int button, boolean control, boolean shift, boolean alt, boolean rotate,
+        boolean continuous) {
+        if (button != 0 && button != 1) return CameraAction.NONE;
+        if (continuous && control) return CameraAction.NONE;
+        if (control) return button == 0 ? CameraAction.CORNER_ONE : CameraAction.CORNER_TWO;
+        if (button == 0 && rotate) return CameraAction.NONE;
+        if (continuous) return button == 0 ? CameraAction.CONTINUOUS_POINT : CameraAction.NONE;
+        return button == 0 && shift && !alt ? CameraAction.SUBMIT : CameraAction.NONE;
+    }
+
     private static KeyBinding continuous;
 
     static void install() {

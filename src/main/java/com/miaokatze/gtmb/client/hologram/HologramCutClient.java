@@ -239,6 +239,20 @@ final class HologramCutClient {
         KeyBinding.setKeyBindState(mc().gameSettings.keyBindUseItem.getKeyCode(), false);
         KeyBinding.setKeyBindState(mc().gameSettings.keyBindAttack.getKeyCode(), false);
         if (!event.buttonstate) return true;
+        if (HologramIsometricCamera.INSTANCE.active() && selecting()) {
+            HologramSelectionInput.CameraAction action = HologramSelectionInput.cameraAction(
+                event.button,
+                HologramClient.controlHeld(),
+                shift(),
+                alt(),
+                key(Keyboard.KEY_R),
+                continuousActive());
+            if (action == HologramSelectionInput.CameraAction.CORNER_ONE
+                || action == HologramSelectionInput.CameraAction.CONTINUOUS_POINT) mark(true);
+            else if (action == HologramSelectionInput.CameraAction.CORNER_TWO) mark(false);
+            else if (action == HologramSelectionInput.CameraAction.SUBMIT) confirmSelection();
+            return true;
+        }
         if (event.button == 0) {
             if (HologramIsometricCamera.INSTANCE.active() && !continuousActive()) {
                 if (selecting() && !shift()) mark(true);
@@ -354,11 +368,7 @@ final class HologramCutClient {
                 if (firstCorner) selection.continuousPoint(point[0], point[1], point[2]);
                 return;
             }
-            selection.worldPoint(
-                HologramIsometricCamera.INSTANCE.active() ? 0 : firstCorner ? 1 : 2,
-                point[0],
-                point[1],
-                point[2]);
+            selection.worldPoint(firstCorner ? 1 : 2, point[0], point[1], point[2]);
         } catch (java.io.IOException invalid) {
             status.show(invalid.getMessage());
         }
@@ -429,6 +439,15 @@ final class HologramCutClient {
 
     String status() {
         return status.message();
+    }
+
+    String cameraStatus() {
+        HologramProgress progress = progress(false);
+        if (progress != null) return HologramProgressView.summary(progress, System.nanoTime());
+        String message = status();
+        return message.equals(text("selection")) || message.equals(text("moving")) || message.equals(text("locked"))
+            ? ""
+            : message;
     }
 
     HologramProgress progress(boolean includeDirectory) {
@@ -817,6 +836,11 @@ final class HologramCutClient {
 
     boolean guide(List<String> lines) {
         if (!held() || !cutMode && !active() || blueprintBusy() && !active()) return false;
+        if (HologramIsometricCamera.INSTANCE.active()) {
+            if (selecting()) HologramWorldGuide.selectionGuide(lines, selection.snapshot());
+            else lines.add(text(stage == HologramCutInput.Stage.MOVING ? "moving.camera" : "locked.camera"));
+            return true;
+        }
         if (cutMode) lines.add(text("cutModeHint"));
         if (active()) lines.add(
             text(
