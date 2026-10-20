@@ -17,6 +17,7 @@ public final class HologramIsometricCameraRegression {
 
     public static void main(String[] args) {
         selectionGestures();
+        HologramSelectionOutlineRegression.run();
         HologramWorldTargetRegression.run();
         HologramLoadedRayTraceRegression.run();
         HologramIsometricCamera camera = HologramIsometricCamera.INSTANCE;
@@ -72,6 +73,15 @@ public final class HologramIsometricCameraRegression {
             settings.navigation()
                 .rotateExcludesControl(),
             "Ctrl+left reaches selection even when R is held");
+        SimpleAssert.eq(
+            0,
+            settings.navigation()
+                .rotateKey(),
+            "left drag rotates without a keyboard modifier");
+        SimpleAssert.that(
+            settings.navigation()
+                .rotationClickThreshold() >= 4,
+            "short free-selection clicks are separated from camera dragging");
         SimpleAssert.that(
             settings.navigation()
                 .wheelSensitivity() >= 50,

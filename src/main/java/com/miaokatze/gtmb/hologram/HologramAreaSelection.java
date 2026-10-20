@@ -38,9 +38,13 @@ public class HologramAreaSelection {
     }
 
     private void remember() {
+        remember(new SelectionState());
+    }
+
+    private void remember(SelectionState state) {
         regionRedo.clear();
         if (regionUndo.size() == 128) regionUndo.remove(0);
-        regionUndo.add(new SelectionState());
+        regionUndo.add(state);
     }
 
     static final class Region {
@@ -194,10 +198,54 @@ public class HologramAreaSelection {
 
     public void confirmContinuous() throws IOException {
         if (!continuous || !closed || !heightChosen) throw new IOException("请先闭合连续框选轮廓，再点击方块选择高度");
-        List<Region> boxes = polygonBoxes(polygonHeight);
+        commitContinuous(polygonHeight);
+    }
+
+    /** The same free-selection key closes the pending footprint and confirms its current preview height. */
+    public void finishContinuous(int previewHeight) throws IOException {
+        finishContinuous(previewHeight, null);
+    }
+
+    public void finishContinuous(int[] cursor) throws IOException {
+        SelectionState before = new SelectionState();
+        if (!closed && cursor != null) {
+            boolean existing = false;
+            for (int[] vertex : polygon) if (vertex[0] == cursor[0] && vertex[2] == cursor[2]) existing = true;
+            if (!existing) {
+                if (polygon.size() >= 128) throw new IOException("连续框选点过多");
+                polygon.add(new int[] { cursor[0], polygon.isEmpty() ? cursor[1] : polygon.get(0)[1], cursor[2] });
+            }
+        }
+        try {
+            finishContinuous(cursor != null ? cursor[1] : polygon.isEmpty() ? 0 : polygon.get(0)[1], before);
+        } catch (IOException invalid) {
+            restore(before);
+            throw invalid;
+        }
+    }
+
+    private void finishContinuous(int previewHeight, SelectionState before) throws IOException {
+        if (!continuous || polygon.size() < 3) throw new IOException("请至少选择三个不同的连续框选点");
+        long area = 0;
+        for (int i = 0; i < polygon.size(); i++) {
+            int[] a = polygon.get(i), b = polygon.get((i + 1) % polygon.size());
+            area += (long) a[0] * b[2] - (long) b[0] * a[2];
+        }
+        if (area == 0) throw new IOException("连续框选轮廓没有面积");
+        commitContinuous(heightChosen ? polygonHeight : previewHeight, before);
+    }
+
+    private void commitContinuous(int height) throws IOException {
+        commitContinuous(height, null);
+    }
+
+    private void commitContinuous(int height, SelectionState before) throws IOException {
+        List<Region> boxes = polygonBoxes(height);
+        if (boxes.isEmpty()) throw new IOException("连续框选轮廓没有面积");
         int retained = "replace".equals(polygonMode) ? 0 : regions.size();
         if (retained + boxes.size() > 128) throw new IOException("区域组合过多，请先合并或简化轮廓");
-        remember();
+        if (before == null) remember();
+        else remember(before);
         if (retained == 0) regions.clear();
         regions.addAll(boxes);
         continuous = closed = heightChosen = false;

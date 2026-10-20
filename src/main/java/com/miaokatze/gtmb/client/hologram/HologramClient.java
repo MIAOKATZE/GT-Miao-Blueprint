@@ -245,7 +245,7 @@ public final class HologramClient {
     }
 
     static boolean cameraToggleRequested() {
-        return !confirmContinuous();
+        return true;
     }
 
     static boolean continuousActive() {
@@ -439,6 +439,22 @@ public final class HologramClient {
             return;
         event.setCanceled(true);
         if (event.button != 0 || !event.buttonstate) return;
+        cameraRotationClick(event.button);
+    }
+
+    /** Core invokes this only for a short click after releasing its optional rotation capture. */
+    static void cameraRotationClick(int button) {
+        if (button != 0 || !HologramIsometricCamera.INSTANCE.active() || HologramBackgroundTasks.busy()) return;
+        if (HologramCutClient.INSTANCE.cameraClick(button)) return;
+        if (!projectorWorld()) return;
+        if (HologramLocalPlacement.INSTANCE.active() && !HologramLocalPlacement.INSTANCE.submitting()) {
+            if (usePressFence.consume()) HologramLocalPlacement.INSTANCE.use(shiftHeld());
+            return;
+        }
+        if (areaProjectorWorld()) {
+            cameraAreaClick(button);
+            return;
+        }
         if (worldStage() == HologramWorldFlow.Stage.LOCKED) {
             HologramNetwork.clientUse(0, 0, 0, ForgeDirection.UP.ordinal(), true);
             return;
@@ -455,6 +471,39 @@ public final class HologramClient {
             hit == null ? target.anchor[2] : hit.blockZ,
             hit == null ? ForgeDirection.UP.ordinal() : hit.sideHit,
             hit == null);
+    }
+
+    private static void cameraAreaClick(int button) {
+        HologramSelectionInput.CameraAction action = HologramSelectionInput.cameraAction(
+            button,
+            controlHeld(),
+            shiftHeld(),
+            altHeld(),
+            false,
+            localArea != null && localArea.continuousActive());
+        if (action == HologramSelectionInput.CameraAction.NONE) return;
+        if (action == HologramSelectionInput.CameraAction.SUBMIT) {
+            if (usePressFence.consume()) worldAction("finishAreaSelection");
+            return;
+        }
+        int[] point = areaSelectionAnchor();
+        if (point == null) {
+            invalidCameraTarget();
+            return;
+        }
+        if (action == HologramSelectionInput.CameraAction.CONTINUOUS_POINT) {
+            try {
+                localArea.continuousPoint(point[0], point[1], point[2]);
+                localAreaView = null;
+            } catch (java.io.IOException invalid) {
+                selectionNotice(invalid.getMessage());
+            }
+        } else localAreaPoint(
+            action == HologramSelectionInput.CameraAction.CORNER_ONE ? 1 : 2,
+            point[0],
+            point[1],
+            point[2],
+            areaSelectionMode(controlHeld(), shiftHeld()));
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -736,8 +785,10 @@ public final class HologramClient {
         if (selection == null && areaProjectorWorld()) selection = localAreaRenderSelection();
         if (selection == null && areaProjectorWorld() && state != null) selection = state.data;
         if (selection != null) {
-            HologramWorldGuide.drawSelectionCursor(selection, resolution);
+            lines.clear();
             HologramWorldGuide.selectionGuide(lines, selection);
+            HologramWorldGuide.draw(lines, resolution);
+            return;
         } else if (HologramCutClient.INSTANCE.cameraContext()) {
             HologramCutClient.INSTANCE.guide(lines);
         } else {

@@ -68,6 +68,7 @@ final class HologramRenderer {
     private static int placementColorList, placementColor;
     private static final Set<Coordinate> worldGhosts = new HashSet<>();
     private static final Set<Coordinate> worldOccluders = new HashSet<>();
+    private static final Set<Coordinate> worldOutlineCells = new HashSet<>();
     private static int worldIndex;
     private static HologramState boundsState;
     private static double boundsX, boundsY, boundsZ, boundsExtent;
@@ -163,6 +164,7 @@ final class HologramRenderer {
                     }
                     worldGhosts.remove(position);
                     worldOccluders.remove(position);
+                    worldOutlineCells.remove(position);
                     indexWorldCell(next, next.cells.get(index));
                 }
             }
@@ -1129,6 +1131,7 @@ final class HologramRenderer {
         worldGroups.clear();
         worldGhosts.clear();
         worldOccluders.clear();
+        worldOutlineCells.clear();
         worldIndex = 0;
     }
 
@@ -1167,6 +1170,7 @@ final class HologramRenderer {
                 Coordinate position = coordinate(cell.x, cell.y, cell.z);
                 worldGhosts.remove(position);
                 worldOccluders.remove(position);
+                worldOutlineCells.remove(position);
             }
         }
         for (Coordinate key : touched) {
@@ -1215,6 +1219,7 @@ final class HologramRenderer {
             worldGroups.put(key, group);
         }
         group.cells.add(c);
+        worldOutlineCells.add(coordinate(c.x, c.y, c.z));
         if ((!c.anchor || virtual) && !removal
             && (virtual || !c.status.equals("satisfied") && !worldMatched(c))
             && !c.wantId.equals("minecraft:air")) {
@@ -1316,10 +1321,24 @@ final class HologramRenderer {
                 ((color >> 8) & 255) / 255f,
                 (color & 255) / 255f,
                 c.anchor ? .95f : .65f);
-            for (int[] edge : EDGES) for (int v : edge) t.addVertex(
-                c.x + .5 + VERTICES[v][0] * 1.006,
-                c.y + .5 + VERTICES[v][1] * 1.006,
-                c.z + .5 + VERTICES[v][2] * 1.006);
+            for (int[] edge : EDGES) {
+                double[] a = VERTICES[edge[0]], b = VERTICES[edge[1]];
+                int axis = a[0] != b[0] ? 0 : a[1] != b[1] ? 1 : 2;
+                int x = c.x + (int) (Math.min(a[0], b[0]) + .5);
+                int y = c.y + (int) (Math.min(a[1], b[1]) + .5);
+                int z = c.z + (int) (Math.min(a[2], b[2]) + .5);
+                if (!HologramSelectionOutline.ownsEdge(
+                    c.x,
+                    c.y,
+                    c.z,
+                    x,
+                    y,
+                    z,
+                    axis,
+                    (xx, yy, zz) -> worldOutlineCells.contains(coordinate(xx, yy, zz)))) continue;
+                for (int v : edge)
+                    t.addVertex(c.x + .5 + VERTICES[v][0], c.y + .5 + VERTICES[v][1], c.z + .5 + VERTICES[v][2]);
+            }
             lastWorldGeometry++;
         }
         t.draw();

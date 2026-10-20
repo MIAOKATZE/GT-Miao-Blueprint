@@ -62,7 +62,8 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         .reset(true)
         .panButton(1)
         .panExcludesControl(true)
-        .rotateDrag(0, Keyboard.KEY_R)
+        .rotateDrag(0, 0)
+        .rotationClickThreshold(4)
         .rotateExcludesControl(true)
         .wheelZoom(CameraSettings.Navigation.WheelZoom.DIRECT_EXCEPT_ALT)
         .wheelSensitivity(50)
@@ -89,6 +90,8 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     private long tracedTick = Long.MIN_VALUE;
     private MovingObjectPosition hit;
     private boolean traceAvailable;
+    private boolean clickPosition;
+    private int clickPixelX, clickPixelY;
 
     private final CameraControls controls = new CameraControls() {
 
@@ -262,7 +265,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         Minecraft mc = Minecraft.getMinecraft();
         CameraFrame frame = pickFrame();
         if (frame == null) return new HologramWorldTarget.Target(null, false);
-        int pixelX = Mouse.getX(), pixelY = Mouse.getY();
+        int pixelX = clickPosition ? clickPixelX : Mouse.getX(), pixelY = clickPosition ? clickPixelY : Mouse.getY();
         RayInterval interval = WorldCameraHooks.pixelRayInterval(OWNER, mc.theWorld, pixelX, pixelY);
         if (interval == null) return new HologramWorldTarget.Target(null, false);
         CameraRay ray = interval.ray();
@@ -388,6 +391,18 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     @Override
     public CameraControls controls() {
         return controls;
+    }
+
+    @Override
+    public void rotationClick(int button, int displayX, int displayY) {
+        clickPosition = true;
+        clickPixelX = displayX;
+        clickPixelY = displayY;
+        try {
+            HologramClient.cameraRotationClick(button);
+        } finally {
+            clickPosition = false;
+        }
     }
 
     @Override
