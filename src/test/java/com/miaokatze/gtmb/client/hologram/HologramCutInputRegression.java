@@ -75,15 +75,16 @@ public final class HologramCutInputRegression {
             HologramWorldFlow.Intent.FINISH_AREA,
             HologramWorldFlow.intent(HologramWorldFlow.Stage.AREA, HologramWorldFlow.Gesture.SHIFT_RIGHT),
             "existing blueprint area still consumes Shift-right as finish instead of opening the switcher");
-        SimpleAssert.eq("add", HologramClient.areaSelectionMode(true, false), "blueprint Ctrl area-add is retained");
+        SimpleAssert
+            .eq("replace", HologramClient.areaSelectionMode(true, false), "world Ctrl click no longer adds a box");
         SimpleAssert.eq(
-            "subtract",
+            "replace",
             HologramClient.areaSelectionMode(true, true),
-            "blueprint Ctrl-Shift area-subtract is retained");
+            "world Ctrl Shift click no longer subtracts a box");
         for (boolean shift : new boolean[] { false, true }) for (boolean alt : new boolean[] { false, true }) {
             check(HologramCutInput.Intent.NONE, idle, true, shift, alt, true);
             check(
-                shift && alt ? HologramCutInput.Intent.MORE
+                shift && alt ? HologramCutInput.Intent.MARK
                     : shift ? HologramCutInput.Intent.CONFIRM_SELECTION : HologramCutInput.Intent.MARK,
                 HologramCutInput.Stage.SELECTING,
                 true,
@@ -227,9 +228,9 @@ public final class HologramCutInputRegression {
             }
             SimpleAssert.that(!(Boolean) busy.invoke(cut), "completed area lifecycle restores initial workspace input");
             SimpleAssert.eq(
-                HologramCutInput.Intent.SELECT,
+                HologramCutInput.Intent.SWITCHER,
                 HologramCutInput.right(HologramCutInput.Stage.IDLE, true, true, false, false, true),
-                "Ctrl-Shift-Alt-right remains available from the initial workspace");
+                "Ctrl Shift Alt right no longer starts a direct cut from the initial workspace");
         } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("Local blueprint and cut input ownership", failure);
         } finally {
@@ -337,7 +338,7 @@ public final class HologramCutInputRegression {
             .that(remembered.release(false) && !remembered.cut(), "one additional right press returns to blueprint");
         for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
             SimpleAssert.eq(
-                stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MORE
+                stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MARK
                     : HologramCutInput.Intent.SELECT,
                 HologramCutInput.right(stage, true, true, false, true, false),
                 "Shift-Alt-right starts a fresh local selection before mark/lock/confirm from " + stage);
@@ -417,9 +418,9 @@ public final class HologramCutInputRegression {
                 HologramCutInput.right(HologramCutInput.Stage.SELECTING, false, true, false, cutMode, false),
                 "holding Alt to adjust selection distance never replaces the second corner with undo");
             SimpleAssert.eq(
-                HologramCutInput.Intent.MORE,
+                HologramCutInput.Intent.MARK,
                 HologramCutInput.right(HologramCutInput.Stage.SELECTING, true, true, false, cutMode, false),
-                "explicit Shift-Alt selection reset remains available");
+                "legacy Shift Alt gesture only adjusts a corner");
         }
         for (HologramCutInput.Intent intent : HologramCutInput.Intent.values()) {
             SimpleAssert.eq(

@@ -14,6 +14,7 @@ import net.minecraftforge.common.util.FakePlayer;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
+import com.miaokatze.miaokatzecore.testkit.Deadline;
 
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
@@ -129,11 +130,12 @@ public final class TestLabRuntime {
     @SubscribeEvent
     public void tick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END || task == null) return;
-        long start = System.nanoTime(), deadline = start + config.tickMillis * 1000000L;
+        long start = System.nanoTime();
+        Deadline deadline = Deadline.startingAt(start, config.tickMillis * 1000000L);
         ticks++;
         try {
             if (start - report.started > config.runSeconds * 1000000000L) throw new IOException("Bounded run timeout");
-            for (int operations = 0; operations < config.operations && System.nanoTime() < deadline; operations++) {
+            for (int operations = 0; operations < config.operations && deadline.hasTimeRemaining(); operations++) {
                 requireActor();
                 report.count("ops", 1);
                 int result = task.step();

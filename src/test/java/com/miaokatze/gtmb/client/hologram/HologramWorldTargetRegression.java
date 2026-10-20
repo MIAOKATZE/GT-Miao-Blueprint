@@ -8,11 +8,18 @@ import net.minecraftforge.common.util.ForgeDirection;
 
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.miaokatze.miaokatzecore.api.camera.CameraRay;
+import com.miaokatze.miaokatzecore.api.camera.HeightSlice;
 
 /** Tests the production resolver used by red area cursors, area packets and moving green previews. */
 public final class HologramWorldTargetRegression {
 
     private HologramWorldTargetRegression() {}
+
+    public static void main(String[] args) {
+        run();
+        System.out.println("HologramWorldTargetRegression passed");
+    }
 
     public static void run() {
         Vec3 eyes = Vec3.createVectorHelper(-.25, 65.62, 3.8), look = Vec3.createVectorHelper(1, 0, 0);
@@ -77,6 +84,109 @@ public final class HologramWorldTargetRegression {
             false,
             HologramWorldTarget.resolve(hit, true, true, 6, feet, eyes, look),
             "Alt confirmation retains the same forced floating green target");
+        orthographic(feet, hit);
+        sliceSurfaces();
+    }
+
+    private static void sliceSurfaces() {
+        HeightSlice slice = HeightSlice.between(60, 80, 1);
+        MovingObjectPosition cap = new MovingObjectPosition(
+            2,
+            79,
+            3,
+            ForgeDirection.UP.ordinal(),
+            Vec3.createVectorHelper(2.5, 80, 3.5));
+        for (int pixelX = 0; pixelX < 4; pixelX++) for (int pixelY = 0; pixelY < 4; pixelY++) SimpleAssert.that(
+            HologramWorldTarget.visibleSurface(slice, cap, pixelX, pixelY),
+            "a real native upper boundary face stays pickable at every coverage sample");
+        MovingObjectPosition side = new MovingObjectPosition(
+            2,
+            79,
+            3,
+            ForgeDirection.EAST.ordinal(),
+            Vec3.createVectorHelper(3, 79.75, 3.5));
+        SimpleAssert.that(
+            HologramWorldTarget.visibleSurface(slice, side, 0, 0)
+                && !HologramWorldTarget.visibleSurface(slice, side, 0, 3),
+            "native side-face picks use the same displayed-pixel feather coverage as rendering");
+        MovingObjectPosition hidden = new MovingObjectPosition(
+            2,
+            80,
+            3,
+            ForgeDirection.DOWN.ordinal(),
+            Vec3.createVectorHelper(2.5, 80, 3.5));
+        SimpleAssert.that(
+            !HologramWorldTarget.visibleSurface(slice, hidden, 0, 0),
+            "a hidden block cannot be picked through its boundary face");
+        SimpleAssert.that(
+            !HologramWorldTarget.visibleSurface(slice, null, 0, 0),
+            "crossing a slice plane does not synthesize a collision face");
+        CameraRay ray = new CameraRay(0, 80, 0, 1, -1, 0);
+        MovingObjectPosition front = new MovingObjectPosition(
+            0,
+            79,
+            0,
+            ForgeDirection.WEST.ordinal(),
+            Vec3.createVectorHelper(ray.directionX() * .1, 80 + ray.directionY() * .1, 0));
+        MovingObjectPosition back = new MovingObjectPosition(
+            0,
+            79,
+            0,
+            ForgeDirection.EAST.ordinal(),
+            Vec3.createVectorHelper(ray.directionX() * .7, 80 + ray.directionY() * .7, 0));
+        int[] calls = { 0 };
+        MovingObjectPosition revealed = HologramWorldTarget
+            .firstVisibleNativeSurface(ray, 0, 1, slice, 0, 0, (from, to) -> {
+                calls[0]++;
+                return from < .1 ? front : back;
+            });
+        SimpleAssert.that(
+            revealed == back && calls[0] == 2,
+            "a feather-discarded front face reveals the same voxel's real native back face");
+    }
+
+    private static void orthographic(int[] feet, MovingObjectPosition hit) {
+        CameraRay near = new CameraRay(2.5, 400, 3.5, 0, -1, 0);
+        CameraRay further = new CameraRay(2.5, 800, 3.5, 0, -1, 0);
+        MovingObjectPosition surface = new MovingObjectPosition(
+            2,
+            65,
+            3,
+            ForgeDirection.UP.ordinal(),
+            Vec3.createVectorHelper(2.5, 66, 3.5));
+        HologramWorldTarget.Target a = HologramWorldTarget.orthographic(surface, true, false, 6, feet, 65, near);
+        HologramWorldTarget.Target b = HologramWorldTarget.orthographic(surface, true, false, 6, feet, -100, further);
+        target(a.anchor, false, b, "orthographic floating anchor is independent of the clipping-plane origin");
+        target(
+            new int[] { 2, 71, 3 },
+            false,
+            a,
+            "positive floating offset travels toward the camera from the hit block");
+        target(
+            new int[] { 2, 62, 3 },
+            false,
+            HologramWorldTarget.orthographic(surface, true, false, -3, feet, 65, near),
+            "negative floating offset travels behind the directly pointed block along the view ray");
+        target(
+            new int[] { 2, 65, 3 },
+            false,
+            HologramWorldTarget.orthographic(surface, true, false, 0, feet, 65, near),
+            "orthographic distance zero retains the actual hit block rather than player feet");
+        target(
+            new int[] { 1, 65, 3 },
+            false,
+            HologramWorldTarget.orthographic(hit, false, true, 6, feet, 65, near),
+            "orthographic preview uses its ray's actual hit face");
+        SimpleAssert.that(
+            HologramWorldTarget.orthographic(hit, false, false, 0, feet, 65, null).anchor == null,
+            "missing displayed camera frame refuses even an available vanilla hit or feet target");
+        SimpleAssert.that(
+            HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, new CameraRay(0, 400, 0, 1, 0, 0)).anchor
+                == null,
+            "orthographic floating without a direct block hit has no target");
+        SimpleAssert.that(
+            HologramWorldTarget.orthographic(null, false, false, 6, feet, 65, near).anchor == null,
+            "unmodified orthographic pointing never falls back to an eye-height plane");
     }
 
     private static void target(int[] expected, boolean atPlayer, HologramWorldTarget.Target actual, String label) {

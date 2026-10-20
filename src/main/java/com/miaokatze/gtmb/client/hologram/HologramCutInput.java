@@ -54,11 +54,11 @@ final class HologramCutInput {
         if (blueprintBusy) return Intent.NONE;
         if (stage != Stage.SELECTING && control && shift && !alt && !blueprintBusy) return Intent.STORAGE;
         if (stage == Stage.SELECTING && !blueprintBusy) {
-            if (shift && alt) return Intent.MORE;
+            if (shift && alt) return Intent.MARK;
             if (shift && !control) return Intent.CONFIRM_SELECTION;
             return Intent.MARK;
         }
-        if (shift && alt && !blueprintBusy) return Intent.SELECT;
+        if (shift && alt && !control && !blueprintBusy) return Intent.SELECT;
         // Alt is also held while adjusting selection distance; corner 2 must keep priority over undo.
         if (stage != Stage.SELECTING && cutMode && alt && !shift && !blueprintBusy) return Intent.UNDO;
         if (cutMode && shift && !blueprintBusy) return Intent.STORAGE;

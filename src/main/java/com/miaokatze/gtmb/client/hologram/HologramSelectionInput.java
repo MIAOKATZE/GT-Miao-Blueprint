@@ -1,17 +1,39 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.settings.GameSettings;
+import net.minecraft.client.settings.KeyBinding;
 
 import org.lwjgl.input.Keyboard;
 
 import com.miaokatze.gtmb.hologram.HologramAreaSelection;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
+import cpw.mods.fml.client.registry.ClientRegistry;
+
 /** Shared local-only selection shortcuts. All work is bounded by the number of boxes. */
 final class HologramSelectionInput {
 
+    private static KeyBinding continuous;
+
+    static void install() {
+        continuous = new KeyBinding("gtmb.key.continuousSelection", Keyboard.KEY_C, "gtmb.hologram.camera.category");
+        ClientRegistry.registerKeyBinding(continuous);
+    }
+
+    static String continuousLabel() {
+        return continuous == null ? "C" : GameSettings.getKeyDisplayString(continuous.getKeyCode());
+    }
+
+    static int continuousKeyCode() {
+        return continuous == null ? Keyboard.KEY_C : continuous.getKeyCode();
+    }
+
     private final HologramCutNudge movement = new HologramCutNudge();
     private final HologramWorldFlow.KeyEdge undo = new HologramWorldFlow.KeyEdge();
+    private final HologramWorldFlow.KeyEdge redo = new HologramWorldFlow.KeyEdge();
+    private final HologramWorldFlow.KeyEdge mode = new HologramWorldFlow.KeyEdge();
+    private final HologramWorldFlow.KeyEdge polygon = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge delete = new HologramWorldFlow.KeyEdge();
     private Object previous;
     private boolean wasActive;
@@ -28,6 +50,24 @@ final class HologramSelectionInput {
             selection.undoRegion();
             altered = true;
         }
+        if (redo.sample(key(Keyboard.KEY_Y) && control && !alt, changed) && active) {
+            selection.redoRegion();
+            altered = true;
+        }
+        if (mode.sample(key(Keyboard.KEY_Z) && !control, changed) && active) {
+            try {
+                if (HologramClient.shiftHeld() && !alt) selection.mergeRegions();
+                else if (!HologramClient.shiftHeld()) selection.toggleMode(alt ? "subtract" : "add");
+            } catch (java.io.IOException invalid) {
+                HologramClient.selectionNotice(invalid.getMessage());
+            }
+            altered = true;
+        }
+        if (polygon.sample(continuous != null && GameSettings.isKeyDown(continuous) && !control && !alt, changed)
+            && active) {
+            selection.beginContinuous(HologramClient.shiftHeld());
+            altered = true;
+        }
         if (delete.sample(key(Keyboard.KEY_DELETE), changed) && active) {
             selection.deleteCurrent();
             altered = true;
@@ -40,7 +80,7 @@ final class HologramSelectionInput {
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
         int[] moved = movement.sample(
             anchor,
-            active && selection.complete() && !altered,
+            active && selection.complete() && !selection.continuousActive() && !altered,
             selection == null ? 0 : (long) System.identityHashCode(selection) * 129 + selection.currentRegion(),
             pressed,
             alt,

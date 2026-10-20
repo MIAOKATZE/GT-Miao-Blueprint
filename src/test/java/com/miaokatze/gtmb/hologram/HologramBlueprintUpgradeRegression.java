@@ -9,6 +9,7 @@ import java.util.Map;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.Tags;
 import com.miaokatze.gtmb.testutil.BlueprintArtifactTestData;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -18,11 +19,13 @@ public final class HologramBlueprintUpgradeRegression {
     private HologramBlueprintUpgradeRegression() {}
 
     public static void run() throws Exception {
-        SimpleAssert.eq(1, HologramBlueprintUpgrade.status("0.1.29"), "0.1.29 blueprints can upgrade to 0.1.30");
         SimpleAssert
-            .eq(1, HologramBlueprintUpgrade.status("0.1.28"), "0.1.28 blueprints can upgrade metadata in 0.1.30");
-        SimpleAssert
-            .eq(0, HologramBlueprintUpgrade.status("0.1.30"), "upgraded 0.1.30 blueprints disable repeat upgrades");
+            .eq(1, HologramBlueprintUpgrade.status("0.1.29"), "0.1.29 blueprints can upgrade to the current version");
+        SimpleAssert.eq(1, HologramBlueprintUpgrade.status("0.1.28"), "0.1.28 blueprints can refresh metadata");
+        SimpleAssert.eq(
+            0,
+            HologramBlueprintUpgrade.status(Tags.RELEASE_VERSION),
+            "current-version blueprints disable repeat upgrades");
         Path root = Files.createTempDirectory("gtmb-upgrade-");
         try {
             Path library = Files.createDirectories(root.resolve("library"));

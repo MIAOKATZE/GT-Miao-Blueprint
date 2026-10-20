@@ -1012,6 +1012,7 @@ final class HologramRenderer {
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
+        if (state.data.getBoolean("virtual") && state.data.getBoolean("moving") && anchor == null) return;
         double offsetX = anchor == null ? 0 : anchor[0] - state.data.getInteger("x");
         double offsetY = anchor == null ? 0 : anchor[1] - state.data.getInteger("y");
         double offsetZ = anchor == null ? 0 : anchor[2] - state.data.getInteger("z");

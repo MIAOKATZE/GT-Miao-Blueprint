@@ -98,8 +98,26 @@ final class HologramCutClient {
         return stage == HologramCutInput.Stage.SELECTING || stage == HologramCutInput.Stage.MOVING;
     }
 
+    boolean cameraContext() {
+        return held() && active();
+    }
+
     boolean selecting() {
         return stage == HologramCutInput.Stage.SELECTING;
+    }
+
+    boolean continuousActive() {
+        return held() && selecting() && selection != null && selection.continuousActive();
+    }
+
+    boolean confirmContinuous() {
+        if (!continuousActive()) return false;
+        try {
+            selection.confirmContinuous();
+        } catch (java.io.IOException invalid) {
+            status.show(invalid.getMessage());
+        }
+        return true;
     }
 
     private boolean blueprintBusy() {
@@ -156,7 +174,9 @@ final class HologramCutClient {
             closeScreen();
         }
         if (requests.observeHeld(true)) refreshDirectory();
-        boolean enabled = mc.currentScreen == null && cutMode
+        boolean cameraReady = !HologramIsometricCamera.INSTANCE.blocksWorldInput();
+        boolean enabled = cameraReady && mc.currentScreen == null
+            && cutMode
             && !entries.isEmpty()
             && !blueprintBusy()
             && !HologramBackgroundTasks.busy()
@@ -164,20 +184,22 @@ final class HologramCutClient {
         boolean previous = previousKey.sample(alt() && key(Keyboard.KEY_A), !enabled);
         boolean next = nextKey.sample(alt() && key(Keyboard.KEY_D), !enabled);
         if (enabled && (previous || next)) cycle(previous ? -1 : 1);
-        boolean poseEnabled = mc.currentScreen == null
+        boolean poseEnabled = cameraReady && !HologramIsometricCamera.INSTANCE.active()
+            && mc.currentScreen == null
             && (stage == HologramCutInput.Stage.MOVING || stage == HologramCutInput.Stage.LOCKED)
             && !busy();
         if (rotateKey.sample(key(Keyboard.KEY_R), !poseEnabled)) {
             if (alt()) openTransform();
             else rotate(key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL) ? 0 : 1, 1);
         }
-        selectionInput.tick(selection, selecting() && held() && !busy() && !blueprintBusy());
+        selectionInput.tick(selection, cameraReady && selecting() && held() && !busy() && !blueprintBusy());
         lockedNudge();
     }
 
     private void lockedNudge() {
         Minecraft mc = mc();
         boolean enabled = mc.currentScreen == null && held()
+            && !HologramIsometricCamera.INSTANCE.blocksWorldInput()
             && stage == HologramCutInput.Stage.LOCKED
             && locked != null
             && preview != null
@@ -218,7 +240,10 @@ final class HologramCutClient {
         KeyBinding.setKeyBindState(mc().gameSettings.keyBindAttack.getKeyCode(), false);
         if (!event.buttonstate) return true;
         if (event.button == 0) {
-            if (selecting()) mark(true);
+            if (HologramIsometricCamera.INSTANCE.active() && !continuousActive()) {
+                if (selecting() && !shift()) mark(true);
+                else right(shift(), false);
+            } else if (selecting()) mark(true);
             return true;
         }
         if (rightDown) return true;
@@ -273,6 +298,10 @@ final class HologramCutClient {
                 break;
             case LOCK:
                 locked = HologramClient.cutAnchor(true);
+                if (locked == null) {
+                    HologramClient.invalidCameraTarget();
+                    break;
+                }
                 nudgeContext++;
                 stage = HologramCutInput.Stage.LOCKED;
                 lockPreview(true);
@@ -316,13 +345,20 @@ final class HologramCutClient {
             return;
         }
         int[] point = HologramClient.cutAnchor(false);
+        if (point == null) {
+            HologramClient.invalidCameraTarget();
+            return;
+        }
         try {
-            selection.point(
-                firstCorner ? 1 : 2,
+            if (selection.continuousActive()) {
+                if (firstCorner) selection.continuousPoint(point[0], point[1], point[2]);
+                return;
+            }
+            selection.worldPoint(
+                HologramIsometricCamera.INSTANCE.active() ? 0 : firstCorner ? 1 : 2,
                 point[0],
                 point[1],
-                point[2],
-                HologramClient.areaSelectionMode(HologramClient.controlHeld(), shift()));
+                point[2]);
         } catch (java.io.IOException invalid) {
             status.show(invalid.getMessage());
         }
@@ -330,6 +366,7 @@ final class HologramCutClient {
 
     /** A complete pair remains editable until a separate Shift-right confirmation. */
     private void confirmSelection() {
+        if (selection.continuousActive()) return;
         final NBTTagCompound chosen = selection.snapshot();
         final int[] bounds;
         try {
@@ -783,8 +820,9 @@ final class HologramCutClient {
         if (cutMode) lines.add(text("cutModeHint"));
         if (active()) lines.add(
             text(
-                stage == HologramCutInput.Stage.SELECTING ? "selection"
-                    : stage == HologramCutInput.Stage.MOVING ? "moving" : "locked"));
+                (stage == HologramCutInput.Stage.SELECTING ? "selection"
+                    : stage == HologramCutInput.Stage.MOVING ? "moving" : "locked")
+                    + (HologramIsometricCamera.INSTANCE.active() ? ".camera" : "")));
         else lines.add(text(entries.isEmpty() ? "idle" : busy() ? "recoveryGuide" : "queued"));
         if (!entries.isEmpty()) {
             int index = 0;
@@ -796,17 +834,12 @@ final class HologramCutClient {
         }
         if (aiming()) lines.add(text("target") + " " + coordinates(HologramClient.cutAnchor(!selecting())));
         if (selecting()) {
-            lines.add(
-                HologramClient
-                    .text("worldGuideSelectionEdit", "Left/right: adjust corners · Shift+Alt+right: more boxes"));
-            lines.add(
-                HologramClient.text(
-                    "worldGuideSelectionKeys",
-                    "Arrows: move · Alt+Up/Down: vertical · Scroll: hotbar · Delete: remove · Ctrl+Z: undo"));
+            HologramWorldGuide.selectionGuide(lines, selection.snapshot());
         }
         if (active() && !selecting()) {
             lines.add(poseSummary());
-            lines.add("R: Y +90 | Ctrl+R: X +90 | Alt+R: " + text("transform"));
+            if (!HologramIsometricCamera.INSTANCE.active())
+                lines.add("R: Y +90 | Ctrl+R: X +90 | Alt+R: " + text("transform"));
             if (rawPreview != null && rawPreview.getTagList("transformUnknown", 8)
                 .tagCount() > 0)
                 lines.add(
@@ -839,7 +872,7 @@ final class HologramCutClient {
             HologramAreaOverlay.render(new HologramState(data), ticks, HologramClient.cutAnchor(false));
         } else if (rawPreview != null && previewId.equals(selected)) {
             int[] at = anchor();
-            HologramCutRawPreview.render(at[0], at[1], at[2], ticks);
+            if (at != null) HologramCutRawPreview.render(at[0], at[1], at[2], ticks);
         }
         return true;
     }
@@ -913,6 +946,8 @@ final class HologramCutClient {
     }
 
     static String coordinates(int[] at) {
+        if (at == null)
+            return HologramClient.text("camera.noTarget", "No valid displayed target / target chunk is not loaded");
         return at[0] + ", " + at[1] + ", " + at[2];
     }
 

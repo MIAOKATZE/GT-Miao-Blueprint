@@ -12,6 +12,7 @@ import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.MovingObjectPosition;
 
+import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
 import cpw.mods.fml.common.Loader;
@@ -60,20 +61,64 @@ final class HologramWorldGuide {
     }
 
     static String selectionCursorText(NBTTagCompound selection) {
+        if (selection.getBoolean("areaContinuous")) {
+            String stage = selection.getBoolean("areaPolygonClosed")
+                ? selection.getBoolean("areaPolygonHeightChosen") ? "continuousReady" : "continuousHeight"
+                : "continuousLine";
+            return modeText(selection.getString("areaPolygonMode")) + " · "
+                + String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text(stage, "%s / %s"),
+                    HologramSelectionInput.continuousLabel(),
+                    HologramIsometricCamera.INSTANCE.toggleLabel());
+        }
+        if (HologramIsometricCamera.INSTANCE.active()) {
+            int pending = selection.getInteger("areaPendingCorner");
+            return modeText(selection.getString("areaInputMode")) + " · "
+                + HologramClient
+                    .text(pending == 1 ? "camera.selectionSecond" : "camera.selectionFirst", "Left: next corner");
+        }
         String key = selectionCursorKey(selection);
         String fallback = "worldGuideSelectionSecond".equals(key) ? "Right: point 2"
             : "worldGuideSelectionFirst".equals(key) ? "Left: point 1"
                 : "worldGuideSelectionDone".equals(key) ? "Selected"
                     : "worldGuideSelectionMore".equals(key) ? "More boxes · Left: point 1 · Right: point 2"
                         : "Left: point 1 · Right: point 2";
-        return HologramClient.text(key, fallback);
+        return modeText(selection.getString("areaInputMode")) + " · " + HologramClient.text(key, fallback);
+    }
+
+    private static String modeText(String mode) {
+        return HologramClient.text("selectionMode." + (mode.isEmpty() ? "replace" : mode), mode);
+    }
+
+    static void selectionGuide(List<String> lines, NBTTagCompound selection) {
+        lines.add(
+            HologramClient.text(
+                HologramIsometricCamera.INSTANCE.active() ? "worldGuideSelectionEdit.camera"
+                    : "worldGuideSelectionEdit",
+                "Z: add · Alt+Z: subtract · Shift+Z: merge"));
+        lines.add(HologramClient.text("worldGuideSelectionKeys", "Ctrl+Z: undo · Ctrl+Y: redo"));
+        lines.add(
+            String.format(
+                java.util.Locale.ROOT,
+                HologramClient.text("continuousGuide", "%s: continuous selection · Shift+%s: subtract · %s: finish"),
+                HologramSelectionInput.continuousLabel(),
+                HologramSelectionInput.continuousLabel(),
+                HologramIsometricCamera.INSTANCE.toggleLabel()));
+        if (selection != null && selection.getBoolean("areaContinuous")) lines.add(selectionCursorText(selection));
     }
 
     static void drawSelectionCursor(NBTTagCompound selection, ScaledResolution resolution) {
+        if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) return;
         Minecraft mc = Minecraft.getMinecraft();
         String message = selectionCursorText(selection);
         int x = resolution.getScaledWidth() / 2 + 12, y = resolution.getScaledHeight() / 2 + 10;
+        if (HologramIsometricCamera.INSTANCE.active() && Mouse.isCreated()) {
+            x = Mouse.getX() * resolution.getScaledWidth() / mc.displayWidth + 12;
+            y = resolution.getScaledHeight() - Mouse.getY() * resolution.getScaledHeight() / mc.displayHeight + 10;
+        }
         x = Math.max(4, Math.min(x, resolution.getScaledWidth() - mc.fontRenderer.getStringWidth(message) - 6));
+        y = Math.max(4, Math.min(y, resolution.getScaledHeight() - mc.fontRenderer.FONT_HEIGHT - 4));
         mc.fontRenderer.drawStringWithShadow(message, x, y, 0x7FFFFF);
     }
 
