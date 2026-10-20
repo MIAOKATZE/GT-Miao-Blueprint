@@ -36,16 +36,16 @@ final class HologramSelectionInput {
     private static KeyBinding continuous;
 
     static void install() {
-        continuous = new KeyBinding("gtmb.key.continuousSelection", Keyboard.KEY_C, "gtmb.hologram.camera.category");
+        continuous = new KeyBinding("gtmb.key.continuousSelection", Keyboard.KEY_B, "gtmb.hologram.camera.category");
         ClientRegistry.registerKeyBinding(continuous);
     }
 
     static String continuousLabel() {
-        return continuous == null ? "C" : GameSettings.getKeyDisplayString(continuous.getKeyCode());
+        return continuous == null ? "B" : GameSettings.getKeyDisplayString(continuous.getKeyCode());
     }
 
     static int continuousKeyCode() {
-        return continuous == null ? Keyboard.KEY_C : continuous.getKeyCode();
+        return continuous == null ? Keyboard.KEY_B : continuous.getKeyCode();
     }
 
     private final HologramCutNudge movement = new HologramCutNudge();
@@ -84,7 +84,15 @@ final class HologramSelectionInput {
         }
         if (polygon.sample(continuous != null && GameSettings.isKeyDown(continuous) && !control && !alt, changed)
             && active) {
-            selection.beginContinuous(HologramClient.shiftHeld());
+            try {
+                if (selection.continuousActive()) {
+                    int[] cursor = HologramCutClient.INSTANCE.continuousActive() ? HologramClient.cutAnchor(false)
+                        : HologramClient.areaSelectionAnchor();
+                    selection.finishContinuous(cursor);
+                } else selection.beginContinuous(HologramClient.shiftHeld());
+            } catch (java.io.IOException invalid) {
+                HologramClient.selectionNotice(invalid.getMessage());
+            }
             altered = true;
         }
         if (delete.sample(key(Keyboard.KEY_DELETE), changed) && active) {

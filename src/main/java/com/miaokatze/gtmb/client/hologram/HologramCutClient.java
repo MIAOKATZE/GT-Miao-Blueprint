@@ -329,6 +329,19 @@ final class HologramCutClient {
         }
     }
 
+    boolean cameraClick(int button) {
+        if (!held() || !active() || mc().currentScreen != null || blueprintBusy()) return false;
+        if (selecting()) {
+            HologramSelectionInput.CameraAction action = HologramSelectionInput
+                .cameraAction(button, HologramClient.controlHeld(), shift(), alt(), false, continuousActive());
+            if (action == HologramSelectionInput.CameraAction.CORNER_ONE
+                || action == HologramSelectionInput.CameraAction.CONTINUOUS_POINT) mark(true);
+            else if (action == HologramSelectionInput.CameraAction.CORNER_TWO) mark(false);
+            else if (action == HologramSelectionInput.CameraAction.SUBMIT) confirmSelection();
+        } else if (button == 0) right(shift(), false);
+        return true;
+    }
+
     void beginSelection() {
         if (HologramBackgroundTasks.busy() || blueprintBusy()) return;
         cutMode = true;

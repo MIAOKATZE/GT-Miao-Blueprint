@@ -70,12 +70,11 @@ final class HologramWorldGuide {
                     java.util.Locale.ROOT,
                     HologramClient.text(stage, "%s / %s"),
                     HologramSelectionInput.continuousLabel(),
-                    HologramIsometricCamera.INSTANCE.toggleLabel());
+                    HologramSelectionInput.continuousLabel());
         }
         if (HologramIsometricCamera.INSTANCE.active()) {
-            return modeText(selection.getString("areaInputMode")) + " · "
-                + HologramClient
-                    .text("camera.selectionCorners", "Ctrl+left: point 1 · Ctrl+right: point 2 · Shift+left: submit");
+            return HologramClient
+                .text(cameraSelectionKey(selection, HologramClient.controlHeld()), "Hold Ctrl to select");
         }
         String key = selectionCursorKey(selection);
         String fallback = "worldGuideSelectionSecond".equals(key) ? "Right: point 2"
@@ -84,6 +83,15 @@ final class HologramWorldGuide {
                     : "worldGuideSelectionMore".equals(key) ? "More boxes · Left: point 1 · Right: point 2"
                         : "Left: point 1 · Right: point 2";
         return modeText(selection.getString("areaInputMode")) + " · " + HologramClient.text(key, fallback);
+    }
+
+    static String cameraSelectionKey(NBTTagCompound selection, boolean control) {
+        if (selection.getIntArray("areaPoints").length == 6) return "camera.selectionDone";
+        if (!control) return "camera.selectionHold";
+        int pending = selection.getInteger("areaPendingCorner");
+        if (pending == 1) return "camera.selectionSecond";
+        if (pending == 2) return "camera.selectionFirst";
+        return "camera.selectionBoth";
     }
 
     private static String modeText(String mode) {
@@ -96,18 +104,7 @@ final class HologramWorldGuide {
                 lines.add(selectionCursorText(selection));
                 lines.add(HologramClient.text("camera.continuousKeys", "Left: vertex / height · Ctrl+click: ignored"));
             } else {
-                lines.add(
-                    HologramClient.text(
-                        "camera.selectionCorners",
-                        "Ctrl+left: point 1 · Ctrl+right: point 2 · Shift+left: submit"));
-                lines.add(
-                    String.format(
-                        java.util.Locale.ROOT,
-                        HologramClient.text(
-                            "camera.selectionEdit",
-                            "%s: continuous · Shift+%s: subtract · Z / Alt+Z: add / subtract · Ctrl+Z/Y: undo / redo"),
-                        HologramSelectionInput.continuousLabel(),
-                        HologramSelectionInput.continuousLabel()));
+                lines.add(selectionCursorText(selection));
             }
             return;
         }
@@ -123,7 +120,7 @@ final class HologramWorldGuide {
                 HologramClient.text("continuousGuide", "%s: continuous selection · Shift+%s: subtract · %s: finish"),
                 HologramSelectionInput.continuousLabel(),
                 HologramSelectionInput.continuousLabel(),
-                HologramIsometricCamera.INSTANCE.toggleLabel()));
+                HologramSelectionInput.continuousLabel()));
         if (selection != null && selection.getBoolean("areaContinuous")) lines.add(selectionCursorText(selection));
     }
 

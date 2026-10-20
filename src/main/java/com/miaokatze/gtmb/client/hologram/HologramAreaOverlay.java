@@ -28,6 +28,9 @@ final class HologramAreaOverlay {
     }
 
     private static RenderWitness lastRenderWitness;
+    private static int[] outlineVertices, outlineCursor;
+    private static boolean outlineClosed;
+    private static java.util.List<int[]> outline = java.util.Collections.emptyList();
 
     private HologramAreaOverlay() {}
 
@@ -102,7 +105,7 @@ final class HologramAreaOverlay {
                 draw(points[0], points[1], points[2], bx, by, bz, px, py, pz);
             }
             // Draw last so the live red target remains legible on confirmed regions and the pending cyan box.
-            if (cursor != null) {
+            if (cursor != null && showTarget(HologramIsometricCamera.INSTANCE.active(), HologramClient.controlHeld())) {
                 GL11.glLineWidth(3);
                 GL11.glColor4f(1, .15f, .15f, 1);
                 draw(cursor[0], cursor[1], cursor[2], cursor[0], cursor[1], cursor[2], px, py, pz);
@@ -111,6 +114,10 @@ final class HologramAreaOverlay {
         } finally {
             GL11.glPopAttrib();
         }
+    }
+
+    static boolean showTarget(boolean isometric, boolean control) {
+        return !isometric || control;
     }
 
     private static void draw(int ax, int ay, int az, int bx, int by, int bz, double px, double py, double pz) {
@@ -136,19 +143,33 @@ final class HologramAreaOverlay {
         GL11.glColor4f(subtract ? 1 : .35f, subtract ? .35f : 1, .6f, 1);
         GL11.glLineWidth(3);
         int base = vertices[1];
-        int height = selection.getBoolean("areaPolygonHeightChosen") ? selection.getInteger("areaPolygonHeight") : base;
-        for (int level : new int[] { Math.min(base, height), Math.max(base, height) + 1 }) {
-            GL11.glBegin(closed ? GL11.GL_LINE_LOOP : GL11.GL_LINE_STRIP);
-            for (int i = 0; i < vertices.length; i += 3)
-                GL11.glVertex3d(vertices[i] + .5 - px, level - py, vertices[i + 2] + .5 - pz);
-            if (!closed && cursor != null) GL11.glVertex3d(cursor[0] + .5 - px, level - py, cursor[2] + .5 - pz);
-            GL11.glEnd();
+        int height = selection.getBoolean("areaPolygonHeightChosen") ? selection.getInteger("areaPolygonHeight")
+            : cursor != null ? cursor[1] : base;
+        if (!java.util.Arrays.equals(vertices, outlineVertices) || !java.util.Arrays.equals(cursor, outlineCursor)
+            || closed != outlineClosed) {
+            outlineVertices = vertices.clone();
+            outlineCursor = cursor == null ? null : cursor.clone();
+            outlineClosed = closed;
+            outline = HologramSelectionOutline.polygon(vertices, cursor, closed);
         }
+        java.util.Map<Long, Integer> corners = new java.util.HashMap<>();
         GL11.glBegin(GL11.GL_LINES);
-        for (int i = 0; i < vertices.length; i += 3) {
-            GL11.glVertex3d(vertices[i] + .5 - px, Math.min(base, height) - py, vertices[i + 2] + .5 - pz);
-            GL11.glVertex3d(vertices[i] + .5 - px, Math.max(base, height) + 1 - py, vertices[i + 2] + .5 - pz);
+        for (int[] edge : outline) {
+            for (int level : new int[] { Math.min(base, height), Math.max(base, height) + 1 }) {
+                GL11.glVertex3d(edge[0] - px, level - py, edge[1] - pz);
+                GL11.glVertex3d(edge[2] - px, level - py, edge[3] - pz);
+            }
+            for (int i : new int[] { 0, 2 }) {
+                long key = (long) edge[i] << 32 | edge[i + 1] & 0xffffffffL;
+                corners.put(key, corners.getOrDefault(key, 0) | (edge[0] == edge[2] ? 1 : 2));
+            }
         }
+        corners.forEach((key, directions) -> {
+            if (directions != 3) return;
+            int x = (int) (key >> 32), z = (int) (long) key;
+            GL11.glVertex3d(x - px, Math.min(base, height) - py, z - pz);
+            GL11.glVertex3d(x - px, Math.max(base, height) + 1 - py, z - pz);
+        });
         GL11.glEnd();
     }
 }
