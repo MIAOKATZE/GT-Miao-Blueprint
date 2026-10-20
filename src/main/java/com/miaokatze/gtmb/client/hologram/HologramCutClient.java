@@ -273,6 +273,10 @@ final class HologramCutClient {
                 break;
             case LOCK:
                 locked = HologramClient.cutAnchor(true);
+                if (locked == null) {
+                    HologramClient.invalidCameraTarget();
+                    break;
+                }
                 nudgeContext++;
                 stage = HologramCutInput.Stage.LOCKED;
                 lockPreview(true);
@@ -316,6 +320,10 @@ final class HologramCutClient {
             return;
         }
         int[] point = HologramClient.cutAnchor(false);
+        if (point == null) {
+            HologramClient.invalidCameraTarget();
+            return;
+        }
         try {
             selection.point(
                 firstCorner ? 1 : 2,
@@ -839,7 +847,7 @@ final class HologramCutClient {
             HologramAreaOverlay.render(new HologramState(data), ticks, HologramClient.cutAnchor(false));
         } else if (rawPreview != null && previewId.equals(selected)) {
             int[] at = anchor();
-            HologramCutRawPreview.render(at[0], at[1], at[2], ticks);
+            if (at != null) HologramCutRawPreview.render(at[0], at[1], at[2], ticks);
         }
         return true;
     }
@@ -913,6 +921,8 @@ final class HologramCutClient {
     }
 
     static String coordinates(int[] at) {
+        if (at == null)
+            return HologramClient.text("camera.noTarget", "No valid displayed target / target chunk is not loaded");
         return at[0] + ", " + at[1] + ", " + at[2];
     }
 

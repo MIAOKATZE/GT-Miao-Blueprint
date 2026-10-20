@@ -12,6 +12,7 @@ import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.MovingObjectPosition;
 
+import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
 import cpw.mods.fml.common.Loader;
@@ -73,7 +74,12 @@ final class HologramWorldGuide {
         Minecraft mc = Minecraft.getMinecraft();
         String message = selectionCursorText(selection);
         int x = resolution.getScaledWidth() / 2 + 12, y = resolution.getScaledHeight() / 2 + 10;
+        if (HologramIsometricCamera.INSTANCE.active() && Mouse.isCreated()) {
+            x = Mouse.getX() * resolution.getScaledWidth() / mc.displayWidth + 12;
+            y = resolution.getScaledHeight() - Mouse.getY() * resolution.getScaledHeight() / mc.displayHeight + 10;
+        }
         x = Math.max(4, Math.min(x, resolution.getScaledWidth() - mc.fontRenderer.getStringWidth(message) - 6));
+        y = Math.max(4, Math.min(y, resolution.getScaledHeight() - mc.fontRenderer.FONT_HEIGHT - 4));
         mc.fontRenderer.drawStringWithShadow(message, x, y, 0x7FFFFF);
     }
 

@@ -421,3 +421,15 @@ item.decoration_voucher.detail.rollback=§aNo successful covered placement, no c
 item.decoration_voucher.detail.creative=§dCreative§7 can inspect the discount; construction §adoes not consume vouchers§7.§r
 item.decoration_voucher.detail.config=§7Administrators: §f/gtmb voucher §7to edit, save or restore defaults.§r
 item.decoration_voucher.detail.reload=§7UI saves apply immediately; direct edits to §fgtmb-decoration-voucher.cfg §7need a server restart.§r
+
+# Original-world isometric blueprint camera
+gtmb.hologram.camera.category=Neko Blueprint Camera
+gtmb.hologram.camera.toggle=Toggle world isometric camera
+gtmb.hologram.camera.left=Rotate camera left
+gtmb.hologram.camera.right=Rotate camera right
+gtmb.hologram.camera.off=%s: enable isometric camera (Controls: Neko Blueprint Camera)
+gtmb.hologram.camera.on=Isometric | %s / Esc: exit | Middle drag: pan | Ctrl+scroll: zoom
+gtmb.hologram.camera.rotate=%s / %s: rotate camera | R: blueprint | Alt+scroll: placement distance
+gtmb.hologram.camera.busy=Another camera has priority; close it before enabling the blueprint camera
+gtmb.hologram.camera.displaced=Camera released | %s: enable again when the other camera is finished
+gtmb.hologram.camera.noTarget=No valid displayed target / target chunk is not loaded

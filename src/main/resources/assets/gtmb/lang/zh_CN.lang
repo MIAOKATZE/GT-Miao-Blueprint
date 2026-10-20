@@ -421,3 +421,15 @@ item.decoration_voucher.detail.rollback=§a未成功抵扣不消耗§7；仅勾�
 item.decoration_voucher.detail.creative=§d创造模式§7可查看抵扣方案；施工§a不消耗抵用券§7。§r
 item.decoration_voucher.detail.config=§7管理员使用 §f/gtmb voucher §7可视化编辑、保存或恢复默认。§r
 item.decoration_voucher.detail.reload=§7界面保存立即生效；直接修改 §fgtmb-decoration-voucher.cfg §7后重启服务器。§r
+
+# Original-world isometric blueprint camera
+gtmb.hologram.camera.category=喵喵蓝图镜头
+gtmb.hologram.camera.toggle=切换原世界等距镜头
+gtmb.hologram.camera.left=镜头向左旋转
+gtmb.hologram.camera.right=镜头向右旋转
+gtmb.hologram.camera.off=%s：开启等距镜头（按键设置：喵喵蓝图镜头）
+gtmb.hologram.camera.on=等距镜头 | %s / Esc：退出 | 中键拖动：平移 | Ctrl+滚轮：缩放
+gtmb.hologram.camera.rotate=%s / %s：旋转镜头 | R：旋转蓝图 | Alt+滚轮：放置距离
+gtmb.hologram.camera.busy=其他镜头优先占用中，请在其结束后重新开启蓝图镜头
+gtmb.hologram.camera.displaced=镜头已释放 | %s：其他镜头结束后可重新开启
+gtmb.hologram.camera.noTarget=当前没有有效的已显示目标，或目标区块尚未加载

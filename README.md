@@ -13,7 +13,9 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-此版本客户端与服务端均需 [MIAOKATZE Core 0.1.2](https://github.com/MIAOKATZE/MIAOKATZE-Core)（兼容区间：0.1.2 ≤ 版本 < 0.2.0）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+此版本客户端与服务端均需 [MIAOKATZE Core 0.1.3](https://github.com/MIAOKATZE/MIAOKATZE-Core)（兼容区间：0.1.3 ≤ 版本 < 0.2.0）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+
+世界蓝图操作新增可选等距视角：手持投影仪，按小键盘5开启/退出，小键盘4/6旋转镜头，中键拖动平移，Ctrl+滚轮缩放。键位可在控制设置中调整；R仍旋转蓝图，Alt+滚轮仍调整放置距离。Esc先退出镜头，打开界面也会释放；相机移动不会移动玩家或扩大服务端施工权限。此模式直接调用Core引擎，无需安装Outpost。
 
 <p align="center">
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases">下载 / Download</a> ·

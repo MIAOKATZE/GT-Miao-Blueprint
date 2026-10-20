@@ -8,11 +8,17 @@ import net.minecraftforge.common.util.ForgeDirection;
 
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.miaokatze.miaokatzecore.api.camera.CameraRay;
 
 /** Tests the production resolver used by red area cursors, area packets and moving green previews. */
 public final class HologramWorldTargetRegression {
 
     private HologramWorldTargetRegression() {}
+
+    public static void main(String[] args) {
+        run();
+        System.out.println("HologramWorldTargetRegression passed");
+    }
 
     public static void run() {
         Vec3 eyes = Vec3.createVectorHelper(-.25, 65.62, 3.8), look = Vec3.createVectorHelper(1, 0, 0);
@@ -77,6 +83,33 @@ public final class HologramWorldTargetRegression {
             false,
             HologramWorldTarget.resolve(hit, true, true, 6, feet, eyes, look),
             "Alt confirmation retains the same forced floating green target");
+        orthographic(feet, hit);
+    }
+
+    private static void orthographic(int[] feet, MovingObjectPosition hit) {
+        CameraRay near = new CameraRay(0, 400, 0, 0, -1, 1);
+        CameraRay further = new CameraRay(0, 800, -400, 0, -1, 1);
+        HologramWorldTarget.Target a = HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, near);
+        HologramWorldTarget.Target b = HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, further);
+        target(a.anchor, false, b, "orthographic floating anchor is independent of the clipping-plane origin");
+        target(new int[] { 0, 60, 339 }, false, a, "floating distance begins at the player reference plane");
+        target(
+            feet,
+            true,
+            HologramWorldTarget.orthographic(hit, true, true, 0, feet, 65, near),
+            "orthographic distance zero retains feet semantics");
+        target(
+            new int[] { 1, 65, 3 },
+            false,
+            HologramWorldTarget.orthographic(hit, false, true, 6, feet, 65, near),
+            "orthographic preview uses its ray's actual hit face");
+        SimpleAssert.that(
+            HologramWorldTarget.orthographic(hit, false, false, 0, feet, 65, null).anchor == null,
+            "missing displayed camera frame refuses even an available vanilla hit or feet target");
+        SimpleAssert.that(
+            HologramWorldTarget.orthographic(null, true, false, 6, feet, 65, new CameraRay(0, 400, 0, 1, 0, 0)).anchor
+                == null,
+            "parallel orthographic floating ray refuses a missing reference-plane intersection");
     }
 
     private static void target(int[] expected, boolean atPlayer, HologramWorldTarget.Target actual, String label) {

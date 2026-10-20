@@ -136,6 +136,10 @@ final class HologramLocalPlacement {
             anchor = null;
         } else if (!locked) {
             anchor = HologramClient.localPlacementAnchor();
+            if (anchor == null) {
+                HologramClient.invalidCameraTarget();
+                return;
+            }
             locked = true;
         } else {
             submit(reviewOptions());
