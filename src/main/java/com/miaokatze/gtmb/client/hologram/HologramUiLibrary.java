@@ -342,7 +342,19 @@ final class HologramUiLibrary {
                 "name") + "\n" + row.getInteger("cells") + " \u683c \u00b7 " + ui.library.blueprintSource(row);
             entry.accent = active ? 0x81dce9 : 0;
             entry.voucherRibbon = row.getBoolean("fullyVoucherCovered");
-            if (entry.contains(mx, my)) {
+            entry.sceneTooltip = true;
+            boolean voucherHover = entry.voucherRibbon
+                && HologramVoucherRibbon.contains(entry.x, entry.y, entry.w, entry.h, mx, my);
+            if (voucherHover) {
+                ui.canvas.tooltip(new ArrayList<>());
+                ui.canvas.tooltip()
+                    .add(HologramVoucherRibbon.TITLE);
+                ui.canvas.tooltip()
+                    .addAll(
+                        ui.host.font()
+                            .listFormattedStringToWidth(HologramVoucherRibbon.HELP, 230));
+            }
+            if (entry.contains(mx, my) && !voucherHover) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
                     .add(row.getString("name"));
@@ -533,7 +545,19 @@ final class HologramUiLibrary {
                 + HologramLibraryClient.bytes(row.getLong("bytes"));
             entry.accent = active ? 0x81dce9 : 0;
             entry.voucherRibbon = row.getBoolean("fullyVoucherCovered");
-            if (entry.contains(mx, my)) {
+            entry.sceneTooltip = true;
+            boolean voucherHover = entry.voucherRibbon
+                && HologramVoucherRibbon.contains(entry.x, entry.y, entry.w, entry.h, mx, my);
+            if (voucherHover) {
+                ui.canvas.tooltip(new ArrayList<>());
+                ui.canvas.tooltip()
+                    .add(HologramVoucherRibbon.TITLE);
+                ui.canvas.tooltip()
+                    .addAll(
+                        ui.host.font()
+                            .listFormattedStringToWidth(HologramVoucherRibbon.HELP, 230));
+            }
+            if (entry.contains(mx, my) && !voucherHover) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
                     .add(row.getString("name"));

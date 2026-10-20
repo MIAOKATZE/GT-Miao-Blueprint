@@ -672,6 +672,12 @@ public final class HologramAeProtocolRegression {
 
     private static void repeatedSanitizationAndExplicitResolution() throws Exception {
         Block block = fixture();
+        SimpleAssert.that(
+            HologramAeBlueprint.staticBlockShell(block, 0),
+            "static AE decoration has no tile-state restore requirement");
+        SimpleAssert.that(
+            !HologramAeBlueprint.staticBlockShell(Blocks.stone, 0),
+            "static-shell exception does not classify unrelated blocks");
         NBTTagCompound raw = new NBTTagCompound();
         NBTTagCompound unsafe = new NBTTagCompound();
         unsafe.setString("externalReference", "must not be copied or silently accepted");

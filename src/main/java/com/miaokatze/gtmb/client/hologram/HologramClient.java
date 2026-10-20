@@ -1496,14 +1496,20 @@ public final class HologramClient {
             HologramRenderer.world(localPreview, event.partialTicks);
             return;
         }
-        if (state != null
-            && !projectionLifetime.visible(state.session, state.data.getInteger("job"), System.nanoTime())) return;
         NBTTagCompound localSelection = localAreaRenderSelection();
-        if (localSelection != null) HologramAreaOverlay.renderSelection(
-            state,
-            localSelection,
-            event.partialTicks,
-            areaProjectorWorld() ? areaSelectionAnchor() : null);
+        if (localSelection != null) {
+            HologramAreaOverlay.renderSelection(
+                state,
+                localSelection,
+                event.partialTicks,
+                areaProjectorWorld() ? areaSelectionAnchor() : null);
+            return;
+        }
+        if (state != null && !projectionLifetime.visible(
+            state.session,
+            state.data.getInteger("job"),
+            System.nanoTime(),
+            localArea != null && localAreaContext())) return;
         if (state == null) return;
         if (mc.theWorld == null || mc.theWorld != snapshotWorld
             || mc.thePlayer == null
@@ -1515,8 +1521,11 @@ public final class HologramClient {
         if (pendingPositionLock.cancelling(state.data)) return;
         if (localSelection == null && !localAreaCancelling && state.data.getBoolean("areaSelecting"))
             HologramAreaOverlay.render(state, event.partialTicks);
-        if (!worldPreview
-            || !projectionLifetime.visible(state.session, state.data.getInteger("job"), System.nanoTime())) return;
+        if (!worldPreview || !projectionLifetime.visible(
+            state.session,
+            state.data.getInteger("job"),
+            System.nanoTime(),
+            localArea != null && localAreaContext())) return;
         if (state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement")) return;
         if (!HologramInputContext.worldProjection(
             state,

@@ -16,6 +16,8 @@ public final class DecorationVoucherConfig {
     private static final String CATEGORY = "decorationVoucher";
     private static final String[] TILE_MATERIALS = { "minecraft:wool", "minecraft:hardened_clay",
         "minecraft:stained_hardened_clay", "etfuturum:concrete", HologramPictureBox.WOOLEN_CLAY };
+    private static final String[] AE_QUARTZ_GLASS = { "appliedenergistics2:tile.BlockQuartzGlass@0",
+        "appliedenergistics2:tile.BlockQuartzLamp@0" };
     private static final String[] QUARTZ_GLASS = { "EnderIO:blockFusedQuartz@0", "EnderIO:blockFusedQuartz@1",
         "EnderIO:blockFusedQuartz@2", "EnderIO:blockFusedQuartz@3", "EnderIO:blockFusedQuartz@4",
         "EnderIO:blockFusedQuartz@5" };
@@ -148,6 +150,11 @@ public final class DecorationVoucherConfig {
             blocks = new java.util.TreeSet<>(blocks);
             blocks.addAll(Arrays.asList(QUARTZ_GLASS));
         }
+        if (config.get(CATEGORY, "aeQuartzGlassDefaultsVersion", 0)
+            .getInt() < 1) {
+            blocks = new java.util.TreeSet<>(blocks);
+            blocks.addAll(Arrays.asList(AE_QUARTZ_GLASS));
+        }
         View loaded = new View(
             enabled,
             allowedMods,
@@ -172,6 +179,7 @@ public final class DecorationVoucherConfig {
     private static Iterable<String> defaultBlocks() {
         java.util.List<String> result = new java.util.ArrayList<>(Arrays.asList(DEFAULT_BLOCKS));
         result.addAll(Arrays.asList(QUARTZ_GLASS));
+        result.addAll(Arrays.asList(AE_QUARTZ_GLASS));
         return result;
     }
 
@@ -236,6 +244,8 @@ public final class DecorationVoucherConfig {
                 .set(1);
             staged.get(CATEGORY, "quartzGlassDefaultsVersion", 1)
                 .set(1);
+            staged.get(CATEGORY, "aeQuartzGlassDefaultsVersion", 1)
+                .set(1);
             String[] keys = ruleKeys();
             Set<?>[] values = lists(next);
             for (int i = 0; i < keys.length; i++) staged.get(CATEGORY, keys[i], new String[0])
@@ -250,6 +260,8 @@ public final class DecorationVoucherConfig {
                 || readback.get(CATEGORY, "decorationModDefaultsVersion", 0)
                     .getInt(0) != 1
                 || readback.get(CATEGORY, "quartzGlassDefaultsVersion", 0)
+                    .getInt(0) != 1
+                || readback.get(CATEGORY, "aeQuartzGlassDefaultsVersion", 0)
                     .getInt(0) != 1)
                 throw new java.io.IOException("Voucher configuration read-back failed");
             for (int i = 0; i < keys.length; i++) if (!names(

@@ -379,6 +379,13 @@ public final class HologramAeBlueprint {
             .startsWith("appeng.block.");
     }
 
+    /** Static AE decoration has no native tile to restore, including canonical transport-only shell metadata. */
+    public static boolean staticBlockShell(Block block, int metadata) {
+        return supports(block) && !(block instanceof AEBaseTileBlock)
+            && !HologramNetworkBindings.node(block)
+            && !block.hasTileEntity(metadata);
+    }
+
     public static boolean supports(Block block, NBTTagCompound payload) {
         if (supports(block)) return true;
         if (block == null || payload == null

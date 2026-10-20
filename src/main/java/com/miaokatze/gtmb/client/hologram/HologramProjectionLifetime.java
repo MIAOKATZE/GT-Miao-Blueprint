@@ -11,6 +11,10 @@ final class HologramProjectionLifetime {
         if (state != null) visible(state.session, state.data.getInteger("job"), System.nanoTime());
     }
 
+    boolean visible(String id, int job, long now, boolean activeSelection) {
+        return activeSelection || visible(id, job, now);
+    }
+
     boolean visible(String id, int job, long now) {
         if (!session.equals(id)) {
             session = id;

@@ -45,6 +45,10 @@ final class DecorationVoucherConfigRegression {
             for (int meta = 0; meta < 6; meta++) SimpleAssert.that(
                 migrated.allowedBlocks.contains("enderio:blockfusedquartz@" + meta),
                 "old configs gain all registered Ender IO quartz-glass variants");
+            SimpleAssert.that(
+                migrated.allowedBlocks.contains("appliedenergistics2:tile.blockquartzglass@0")
+                    && migrated.allowedBlocks.contains("appliedenergistics2:tile.blockquartzlamp@0"),
+                "old server configuration gains both explicit AE decoration variants exactly once");
             DecorationVoucherConfig.View enabled = copy(migrated, true, migrated.allowedBlocks);
             SimpleAssert.that(
                 DecorationVoucherConfig.save(enabled, DecorationVoucherConfig.revision()),

@@ -98,6 +98,11 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         if (entry != null) entry.voucherRibbon = visible;
     }
 
+    final void nativeSceneTooltip(int id, boolean owned) {
+        NativeButton entry = buttons.get(id);
+        if (entry != null) entry.sceneTooltip = owned;
+    }
+
     final void resetNativeFields() {
         for (HologramMuiTextField field : fields) controls.remove(field.widget());
         fields.clear();
@@ -180,7 +185,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         private long frame;
         private String text = "";
         private boolean enabled;
-        private boolean voucherRibbon;
+        private boolean voucherRibbon, sceneTooltip;
         private int accent, x = -1, y = -1, w, h;
         private final ButtonWidget<?> widget;
 
@@ -196,12 +201,9 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                         if (voucherRibbon) HologramVoucherRibbon.draw(x, y, width, height);
                     })
                 .tooltipBuilder(tooltip -> {
+                    if (sceneTooltip) return;
                     String help = nativeTooltip(id, enabled);
                     tooltip.addLine(help == null || help.isEmpty() ? text : help);
-                    if (voucherRibbon) {
-                        tooltip.addLine(HologramVoucherRibbon.TITLE);
-                        tooltip.addLine(HologramVoucherRibbon.HELP);
-                    }
                 })
                 .tooltipAutoUpdate(true)
                 .onMousePressed(button -> {

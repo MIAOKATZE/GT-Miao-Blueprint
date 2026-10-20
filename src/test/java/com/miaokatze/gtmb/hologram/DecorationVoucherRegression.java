@@ -110,6 +110,20 @@ public final class DecorationVoucherRegression {
         Object previous = config.get(null);
         try {
             config.set(null, DecorationVoucherConfig.defaults());
+            for (String name : new String[] { "appliedenergistics2:tile.BlockQuartzGlass",
+                "appliedenergistics2:tile.BlockQuartzLamp" }) {
+                Block quartz = fixture(name, Material.glass);
+                SimpleAssert.that(
+                    HologramDecorationVoucher.covered(quartz, new ItemStack(quartz, 1, 0)),
+                    "ordinary and vibrant AE quartz glass are explicitly covered");
+                SimpleAssert.that(
+                    !HologramDecorationVoucher.eligible(new ItemStack(quartz, 1, 1)),
+                    "unregistered AE glass variants are not admitted by the exception");
+            }
+            Block aeMachine = fixture("appliedenergistics2:tile.BlockController", Material.iron);
+            SimpleAssert.that(
+                !HologramDecorationVoucher.eligible(new ItemStack(aeMachine)),
+                "AE controllers retain the industrial veto");
             Block glass = fixture("EnderIO:blockFusedQuartz", Material.glass);
             for (int meta = 0; meta < 6; meta++) {
                 ItemStack sample = new ItemStack(glass, 1, meta);
@@ -157,13 +171,16 @@ public final class DecorationVoucherRegression {
     }
 
     private static Block fixture(String name, Material material) throws ReflectiveOperationException {
+        return registeredFixture(name, new Block(material) {});
+    }
+
+    static Block registeredFixture(String name, Block block) throws ReflectiveOperationException {
         Block existing = (Block) Block.blockRegistry.getObject(name);
         if (existing != null && existing != net.minecraft.init.Blocks.air) return existing;
         int free = 3700;
         while (free > 0
             && (Item.getItemById(free) != null || Block.getBlockById(free) != net.minecraft.init.Blocks.air)) free--;
         if (free == 0) throw new AssertionError("No isolated glass fixture registry slot");
-        Block block = new Block(material) {};
         // Vanilla's addObject routes through GameData and prefixes minecraft: outside an active Mod container.
         java.lang.reflect.Method add = cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry.class
             .getDeclaredMethod("add", int.class, String.class, Object.class, java.util.BitSet.class);

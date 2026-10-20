@@ -71,6 +71,7 @@ final class HologramUiCanvas {
         String label = "";
         int accent;
         boolean voucherRibbon;
+        boolean sceneTooltip;
 
         Control(int id, int x, int y, int w, int h, boolean enabled) {
             this.id = id;
