@@ -113,6 +113,7 @@ final class HologramStructureIsolationRegression {
                 !(Boolean) accepts.invoke(null, furnaceSession, furnaceCell, inertCasing),
                 "server rejects foreign inventory/source casing");
             attachmentProjection(player, furnace, furnaceElement, hotCasing);
+            mandatoryHatchHint(player, furnace);
 
             HologramArea area = new HologramArea();
             area.structures.put("furnace", new HologramArea.Structure(0, 64, 0, furnace));
@@ -270,7 +271,17 @@ final class HologramStructureIsolationRegression {
         saved.tileNbt = HologramBlueprintNbt.encodeCaptured(projectedPayload);
 
         HologramBlueprintData.setMemberships(physical, Arrays.asList("physical-left", "physical-right"));
+        int physicalMeta = physical.meta;
+        physical.meta = 0;
         HologramCapture detached = HologramBlueprintData.projectedCapture(sourceCapture, projection, 0, 64, 0);
+        SimpleAssert.eq(
+            saved.metadata,
+            detached.cells.get(0).meta,
+            "detached cells use the projected native metadata rather than the old physical hint variant");
+        SimpleAssert
+            .that(detached.cells.get(0).block == saved.block(), "detached cells use the projected native block");
+        SimpleAssert.eq(0, physical.meta, "installing projected state never rewrites the physical capture");
+        physical.meta = physicalMeta;
         SimpleAssert.eq(
             Arrays.asList("physical-left", "physical-right"),
             physical.memberships(),
@@ -350,6 +361,7 @@ final class HologramStructureIsolationRegression {
                     && session.coordinatePins.size() == 1,
                 "budget rejection leaves physical memberships, pins and undo untouched");
         }
+        session.planTargets.set(0, new ItemStack(Blocks.dirt));
         HologramTextWorkflow.stageAttachment(
             session,
             projection,
@@ -411,6 +423,135 @@ final class HologramStructureIsolationRegression {
         SimpleAssert.that(
             session.capture.cells.get(0) == converted,
             "existing virtual content is not detached or converted a second time");
+    }
+
+    private static void mandatoryHatchHint(EntityPlayerMP player, MTEElectricBlastFurnace furnace)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field hintField = com.gtnewhorizon.structurelib.StructureLib.class.getDeclaredField("blockHint");
+        hintField.setAccessible(true);
+        Block oldHint = (Block) hintField.get(null), oldMachines = GregTechAPI.sBlockMachines;
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity[] oldRegistry = GregTechAPI.METATILEENTITIES.clone();
+        try {
+            // Use StructureLib's actual marker/item pair: marker 1 drops damage 0, so the strict validator is right.
+            Block hint = new com.gtnewhorizon.structurelib.block.BlockHint();
+            Block.blockRegistry.addObject(4048, "gtmb:isolation_hint", hint);
+            Item.itemRegistry
+                .addObject(4048, "gtmb:isolation_hint", new com.gtnewhorizon.structurelib.item.ItemBlockHint(hint));
+            hintField.set(null, hint);
+            Block machines = new Block(net.minecraft.block.material.Material.iron) {
+
+                @Override
+                public boolean hasTileEntity(int metadata) {
+                    return true;
+                }
+            };
+            Block.blockRegistry.addObject(4049, "gtmb:isolation_muffler_machines", machines);
+            Item.itemRegistry
+                .addObject(4049, "gtmb:isolation_muffler_machines", new gregtech.common.blocks.ItemMachines(machines));
+            GregTechAPI.sBlockMachines = machines;
+            Arrays.fill(GregTechAPI.METATILEENTITIES, null);
+            Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            GregTechAPI.METATILEENTITIES[32001] = (DeclaredMuffler) unsafe.allocateInstance(DeclaredMuffler.class);
+
+            // This is the same native GT declaration as EBF's mandatory 'm', without a casing fallback.
+            gregtech.api.util.HatchElementBuilder<MTEElectricBlastFurnace> builder = gregtech.api.util.GTStructureUtility
+                .buildHatchAdder(MTEElectricBlastFurnace.class)
+                .atLeast(gregtech.api.enums.HatchElement.Muffler)
+                .casingIndex(11)
+                .hint(2);
+            HologramHatchPolicy
+                .declare(builder, java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler), false);
+            IStructureElement<?> element = builder.build();
+            HologramHatchPolicy.built(builder, element);
+            HologramSession session = hintSession(player, furnace, element, hint);
+            session.planTargets.add(new ItemStack(hint, 1, 1));
+            ItemStack expected = new ItemStack(machines, 1, 32001);
+            SimpleAssert.that(
+                same(HologramCellPolicy.targetFor(session, session.capture.cells.get(0), 0), expected),
+                "mandatory hatch replaces cached visual marker with a real declared Muffler candidate");
+            HologramSession noAutomaticHatches = hintSession(player, furnace, element, hint);
+            noAutomaticHatches.noHatches = true;
+            SimpleAssert.that(
+                same(
+                    HologramCellPolicy.targetFor(noAutomaticHatches, noAutomaticHatches.capture.cells.get(0), 0),
+                    expected),
+                "disabling automatic optional hatches cannot remove a declaration's mandatory hatch material");
+            SimpleAssert.that(
+                !HologramCellPolicy.placeableSample(session, session.capture.cells.get(0), new ItemStack(hint, 1, 0)),
+                "even damage-zero StructureLib markers cannot be paid construction samples");
+            try {
+                HologramPresets.validateMaterialVariant(hint, 1, new ItemStack(hint, 1, 1));
+                throw new AssertionError("native marker drop mismatch must remain rejected");
+            } catch (java.io.IOException expectedMismatch) {
+                SimpleAssert.that(
+                    !expectedMismatch.getMessage()
+                        .isEmpty(),
+                    "strict material error is retained");
+            }
+            HologramPresets.Cell projected = HologramBlueprintProjection
+                .projectedCell(session, 0, new HologramPresets.Preset(), new java.util.HashSet<>());
+            SimpleAssert.that(
+                same(projected.stack(), expected) && projected.block()
+                    .equals(machines),
+                "exported mandatory hatch uses the actual declared machine, never StructureLib's visual sentinel");
+
+            session.pins.put(0, new ItemStack(hint, 1, 0));
+            rejectHintProjection(session, "an explicit damage-zero marker pin");
+            GregTechAPI.METATILEENTITIES[32001] = null;
+            HologramSession missing = hintSession(player, furnace, element, hint);
+            SimpleAssert.that(
+                HologramCellPolicy.targetFor(missing, missing.capture.cells.get(0), 0) == null,
+                "missing declared hatch candidates never fall back to payable hint markers");
+            rejectHintProjection(missing, "an unavailable mandatory hatch");
+        } finally {
+            hintField.set(null, oldHint);
+            GregTechAPI.sBlockMachines = oldMachines;
+            System.arraycopy(oldRegistry, 0, GregTechAPI.METATILEENTITIES, 0, oldRegistry.length);
+        }
+    }
+
+    private static HologramSession hintSession(EntityPlayerMP player, MTEElectricBlastFurnace furnace,
+        IStructureElement<?> element, Block hint) {
+        HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+        session.machine = furnace;
+        session.capture = new HologramCapture(null, new ItemStack(Blocks.stone));
+        HologramCapture.Cell cell = new HologramCapture.Cell(element, 4, 88, 1);
+        cell.block = hint;
+        cell.meta = 1;
+        cell.unknown = true;
+        cell.role = "hatch";
+        session.capture.cells.add(cell);
+        session.capture.positions.put(HologramValues.position(cell), cell);
+        return session;
+    }
+
+    private static void rejectHintProjection(HologramSession session, String label) {
+        try {
+            HologramBlueprintProjection
+                .projectedCell(session, 0, new HologramPresets.Preset(), new java.util.HashSet<>());
+            throw new AssertionError(label + " must fail with a user-actionable target error");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("4,88,1")
+                    && expected.getMessage()
+                        .contains("\u58f0\u660e\u5019\u9009"),
+                label + " reports the exact cell and guides selection from its declared candidates");
+        }
+    }
+
+    private static final class DeclaredMuffler extends gregtech.api.metatileentity.implementations.MTEHatchMuffler {
+
+        private DeclaredMuffler() {
+            super("isolation_muffler", 1, new String[0], (gregtech.api.interfaces.ITexture[][][]) null);
+        }
+
+        @Override
+        public ItemStack getStackForm(long amount) {
+            return new ItemStack(GregTechAPI.sBlockMachines, (int) amount, 32001);
+        }
     }
 
     private static void rejectProjection(HologramSession session, HologramPresets.Preset projection,

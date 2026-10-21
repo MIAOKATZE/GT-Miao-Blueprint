@@ -53,6 +53,27 @@ final class HologramEditorShell {
         return build(host, null);
     }
 
+    IWidget buildLessonContent(ModularPanel host, ParentWidget<?> body, IWidget preview, IWidget bottom) {
+        if (root != null) {
+            if (this.host != host) throw new IllegalStateException("A shell belongs to one native panel");
+            return root;
+        }
+        this.host = host;
+        content = body;
+        scene = preview;
+        HologramEditorNativeTheme.apply(
+            ui.host.parent()
+                .getScreen());
+        root = Flow.column()
+            .sizeRel(1f)
+            .childPadding(0)
+            .background(EDITOR_BACKDROP)
+            .child(body);
+        if (bottom != null) root.child(bottom);
+        registerTarget("viewport", preview);
+        return root;
+    }
+
     IWidget build(ModularPanel host, IWidget bottomOverride) {
         if (root != null) {
             if (this.host != host) throw new IllegalStateException("A shell belongs to one native panel");
@@ -205,7 +226,7 @@ final class HologramEditorShell {
     }
 
     void tick() {
-        if (root == null || paused) return;
+        if (root == null || paused || properties == null) return;
         if (ui.host.screenWidth() > 0 && ui.host.screenWidth() < 460) dock.expanded(false);
         properties.refresh();
         library.refresh();

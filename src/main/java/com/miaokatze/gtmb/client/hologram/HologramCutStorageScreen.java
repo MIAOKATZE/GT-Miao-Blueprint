@@ -9,13 +9,10 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.input.Keyboard;
 
-import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
-import com.cleanroommc.modularui.utils.Alignment;
 import com.cleanroommc.modularui.widget.Widget;
-import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
 
 /** Read-only directory selection and an isolated raw camera; only explicit actions change the world flow. */
@@ -26,6 +23,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
     private final List<NBTTagCompound> directory = new ArrayList<>();
     private ListWidget<IWidget, ?> list;
     private HologramCutStoragePreviewWidget camera;
+    private HologramCutStorageBrowserView browser;
     private boolean autoTutorialChecked, tutorialOpening;
 
     HologramCutStorageScreen() {
@@ -53,9 +51,6 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        int leftWidth = (panelWidth - 34) * 34 / 100;
-        int rightX = leftWidth + 22, rightWidth = panelWidth - rightX - 12;
-        int bodyTop = 54, bodyHeight = panelHeight - 112;
         HologramMuiTheme
             .header(panel(), () -> trim(text("title") + " · " + directory.size(), panelWidth - 124), panelWidth);
         panel().child(
@@ -63,44 +58,32 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
                 .button(() -> "剪切教程", panelWidth - 83, 8, 71, 20, () -> deferAction(() -> openTutorial(true)))
                 .name("cut_storage_tutorial"));
         panel().child(HologramMuiTheme.label(() -> text("hint"), 12, 35, panelWidth - 24, 15, HologramMuiTheme.MUTED));
-        list = new HologramRecessedList().pos(12, bodyTop)
-            .size(leftWidth, bodyHeight)
-            .background(HologramMuiTheme.PANEL)
-            .padding(4);
-        panel().child(list);
-        camera = new HologramCutStoragePreviewWidget(preview).pos(rightX, bodyTop)
-            .size(rightWidth, Math.max(28, bodyHeight - 36));
-        panel().child(camera);
-        panel().child(
-            HologramMuiTheme
-                .label(
-                    () -> trim(selectedName(), rightWidth),
-                    rightX,
-                    bodyTop + bodyHeight - 30,
-                    rightWidth,
-                    12,
-                    HologramMuiTheme.TITLE)
-                .tooltipBuilder(t -> t.addLine(selectedName()))
-                .tooltipAutoUpdate(true));
-        panel().child(
-            HologramMuiTheme.label(
-                this::selectedDetails,
-                rightX,
-                bodyTop + bodyHeight - 17,
-                rightWidth,
-                13,
-                HologramMuiTheme.MUTED));
-        panel().child(
-            HologramMuiTheme
-                .label(
-                    () -> trim(previewNotice(), rightWidth),
-                    rightX,
-                    bodyTop + bodyHeight + 3,
-                    rightWidth,
-                    12,
-                    HologramMuiTheme.MUTED)
-                .tooltipBuilder(t -> t.addLine(previewNotice()))
-                .tooltipAutoUpdate(true));
+        browser = new HologramCutStorageBrowserView(
+            panelWidth,
+            panelHeight,
+            new HologramCutStorageBrowserView.Selection() {
+
+                public List<NBTTagCompound> entries() {
+                    return directory;
+                }
+
+                public String selected() {
+                    return preview.state.selected();
+                }
+
+                public void select(String id) {
+                    preview.select(id);
+                }
+
+                public String notice() {
+                    return previewNotice();
+                }
+            },
+            preview,
+            null);
+        list = browser.list;
+        camera = browser.camera;
+        panel().child(browser);
         int gap = 5, bw = (panelWidth - 24 - gap * 3) / 4, y = panelHeight - 43;
         panel().child(
             HologramMuiTheme.primaryButton(() -> text("place"), 12, y, bw, 20, this::place)
@@ -169,62 +152,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
                         : directory.get(0)
                             .getString("id"));
         }
-        list.removeAll();
-        if (directory.isEmpty()) {
-            list.child(
-                IKey.dynamic(() -> text("empty"))
-                    .color(HologramEditorTheme.MUTED)
-                    .shadow(false)
-                    .asWidget()
-                    .widthRel(1f)
-                    .height(30));
-            return;
-        }
-        for (NBTTagCompound entry : directory) {
-            String id = entry.getString("id");
-            // No explicit Y position: ListWidget owns layout, clipping and transformed hit testing.
-            ButtonWidget<?> row = new ButtonWidget<>().height(36)
-                .widthRel(1f)
-                .marginBottom(4)
-                .background(
-                    HologramMuiTheme.row(
-                        () -> preview.state.selected()
-                            .equals(id),
-                        false))
-                .hoverBackground(
-                    HologramMuiTheme.row(
-                        () -> preview.state.selected()
-                            .equals(id),
-                        true))
-                .child(
-                    IKey.dynamic(() -> rowText(entry))
-                        .color(
-                            () -> preview.state.selected()
-                                .equals(id) ? HologramMuiTheme.TITLE : HologramMuiTheme.TEXT)
-                        .shadow(false)
-                        .asWidget()
-                        .textAlign(Alignment.CenterLeft)
-                        .sizeRel(1f)
-                        .padding(6))
-                .name("cut_entry_" + id)
-                .onMousePressed(button -> {
-                    if (button != 0) return false;
-                    choose(id);
-                    return true;
-                });
-            row.tooltipBuilder(t -> {
-                t.addLine(entry.getString("name"));
-                t.addLine(details(entry));
-                t.addLine(id);
-            });
-            list.child(row);
-        }
-    }
-
-    private String rowText(NBTTagCompound entry) {
-        int width = Math.max(24, (panelWidth - 34) * 34 / 100 - 24);
-        return trim("#" + entry.getLong("sequence") + "  " + entry.getString("name"), width) + "\n\u00a77"
-            + trim(details(entry), width);
+        browser.refreshRows();
     }
 
     private void choose(String id) {
@@ -239,24 +167,6 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
         for (NBTTagCompound entry : directory) if (preview.state.selected()
             .equals(entry.getString("id"))) return entry;
         return null;
-    }
-
-    private String selectedName() {
-        NBTTagCompound entry = selectedEntry();
-        return entry == null ? "" : "#" + entry.getLong("sequence") + "  " + entry.getString("name");
-    }
-
-    private String selectedDetails() {
-        NBTTagCompound entry = selectedEntry();
-        return entry == null ? "" : details(entry);
-    }
-
-    private static String details(NBTTagCompound entry) {
-        return dimensions(entry) + " · DIM " + entry.getInteger("dimension");
-    }
-
-    private static String dimensions(NBTTagCompound entry) {
-        return entry.getInteger("sizeX") + " × " + entry.getInteger("sizeY") + " × " + entry.getInteger("sizeZ");
     }
 
     private static String trim(String value, int width) {

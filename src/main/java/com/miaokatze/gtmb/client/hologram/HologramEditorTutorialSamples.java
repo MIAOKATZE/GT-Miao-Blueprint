@@ -15,8 +15,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
-import net.minecraft.nbt.JsonToNBT;
-import net.minecraft.nbt.NBTBase;
+import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -25,7 +24,9 @@ final class HologramEditorTutorialSamples {
 
     enum Kind {
         PHYSICAL,
-        AUTHOR
+        AUTHOR,
+        MEMBER,
+        OVERVIEW
     }
 
     private static final String ROOT = "/assets/gtmb/tutorial/";
@@ -43,9 +44,9 @@ final class HologramEditorTutorialSamples {
     }
 
     static synchronized NBTTagCompound sameSourceMetadata(String id) throws IOException {
-        Sample author = sample(Kind.AUTHOR), physical = sample(Kind.PHYSICAL);
+        Sample author = sample(Kind.AUTHOR), physical = sample(Kind.PHYSICAL), member = sample(Kind.MEMBER);
         require(
-            "true".equals(manifest.getProperty("composedSameSourceMetadata")) && author.primaryStructure.equals(id),
+            author.primaryStructure.equals(id) && member.primaryStructure.equals(id),
             "No observed source configuration for this member");
         NBTTagCompound declared = null;
         NBTTagList structures = author.data.getTagList("structures", 10);
@@ -73,7 +74,36 @@ final class HologramEditorTutorialSamples {
             before.getInteger(axis) == after.getInteger(axis)
                 && before.getInteger(axis) == physical.data.getInteger(axis),
             "Recorded controller cells differ");
-        return (NBTTagCompound) physical.data.copy();
+        NBTTagCompound memberController = controller(member.data, false);
+        require(
+            memberController != null && after.getCompoundTag("targetStack")
+                .equals(memberController.getCompoundTag("targetStack")),
+            "Recorded member controller identity differs");
+        for (String axis : new String[] { "x", "y", "z" }) require(
+            after.getInteger(axis) == memberController.getInteger(axis),
+            "Recorded member controller coordinates differ");
+        require(
+            required(manifest, "author.sourceClass").equals(required(manifest, "member.sourceClass")),
+            "Recorded member source declaration differs");
+        return (NBTTagCompound) member.data.copy();
+    }
+
+    static synchronized NBTTagCompound overviewMetadata() throws IOException {
+        Sample author = sample(Kind.AUTHOR), overview = sample(Kind.OVERVIEW);
+        require(
+            author.primaryStructure.equals(overview.primaryStructure)
+                && required(manifest, "author.sourceClass").equals(required(manifest, "overview.sourceClass")),
+            "Recorded overview source declaration differs");
+        NBTTagCompound before = controller(author.data, false), after = controller(overview.data, false);
+        require(
+            before != null && after != null
+                && before.getCompoundTag("targetStack")
+                    .equals(after.getCompoundTag("targetStack")),
+            "Recorded overview controller identity differs");
+        for (String axis : new String[] { "x", "y", "z" }) require(
+            before.getInteger(axis) == after.getInteger(axis),
+            "Recorded overview controller coordinates differ");
+        return (NBTTagCompound) overview.data.copy();
     }
 
     private static NBTTagCompound controller(NBTTagCompound data, boolean physical) {
@@ -90,7 +120,9 @@ final class HologramEditorTutorialSamples {
         if (existing != null) return existing;
         if (manifest == null) {
             Properties loaded = properties(read("manifest.properties", 64 * 1024));
-            require("1".equals(loaded.getProperty("format")), "Unsupported tutorial observation format");
+            require(
+                "2".equals(loaded.getProperty("format")) && "gzip-nbt".equals(loaded.getProperty("encoding")),
+                "Unsupported tutorial observation format");
             String pack = required(loaded, "gtnhVersion");
             if (!"notRecorded".equals(pack)) try {
                 Class<?> source = Class.forName(
@@ -111,6 +143,9 @@ final class HologramEditorTutorialSamples {
             .toLowerCase(Locale.ROOT) + ".";
         String file = required(manifest, prefix + "snapshot");
         int bytes = number(manifest, prefix + "bytes");
+        require(
+            file.endsWith(".nbt.gz") && bytes > 0 && bytes <= 16 * 1024 * 1024,
+            "Tutorial observation must be bounded compressed NBT");
         byte[] encoded = read(file, bytes);
         require(encoded.length == bytes, "Tutorial observation byte count changed");
         String digest = required(manifest, prefix + "sha256");
@@ -123,19 +158,32 @@ final class HologramEditorTutorialSamples {
         require(
             "true".equals(provenance.getProperty("fullData")) && "false".equals(provenance.getProperty("metadataOnly")),
             "Tutorial observation has no complete cells");
-        require(digest.equals(provenance.getProperty("snapshotSha256")), "Tutorial snapshot provenance differs");
+        require(
+            digest.equals(provenance.getProperty("binarySha256"))
+                && file.equals(provenance.getProperty("binarySnapshot")),
+            "Tutorial snapshot provenance differs");
+        require(
+            "Minecraft CompressedStreamTools.writeCompressed".equals(provenance.getProperty("binaryFormat"))
+                && "true".equals(provenance.getProperty("binaryFullByteArrayFidelity"))
+                && "true".equals(provenance.getProperty("binaryRoundTripEqualsFullCopy"))
+                && "true".equals(manifest.getProperty(prefix + "binaryFullByteArrayFidelity"))
+                && "true".equals(manifest.getProperty(prefix + "binaryRoundTripEqualsFullCopy")),
+            "Tutorial observation has no lossless binary export proof");
         require(
             required(manifest, prefix + "productSha256").equals(provenance.getProperty("productSha256")),
             "Tutorial producer jar provenance differs");
         for (String binding : new String[] { "coreSha256", "addonSha256" }) require(
             required(manifest, prefix + binding).equals(provenance.getProperty(binding)),
             "Tutorial runtime provenance differs: " + binding);
-        require(bytes == number(provenance, "bytes"), "Tutorial provenance byte count differs");
+        require(bytes == number(provenance, "binaryBytes"), "Tutorial provenance byte count differs");
+        int expandedBytes = number(manifest, prefix + "uncompressedBytes");
+        require(
+            expandedBytes > 0 && expandedBytes <= 16 * 1024 * 1024
+                && expandedBytes == number(provenance, "binaryUncompressedBytes"),
+            "Tutorial expanded payload provenance differs");
         NBTTagCompound data;
         try {
-            NBTBase decoded = JsonToNBT.func_150315_a(new String(encoded, StandardCharsets.UTF_8));
-            require(decoded instanceof NBTTagCompound, "Tutorial observation must be a compound");
-            data = (NBTTagCompound) decoded;
+            data = CompressedStreamTools.readCompressed(new ByteArrayInputStream(encoded));
         } catch (Exception failure) {
             throw new IOException("Cannot decode the recorded tutorial observation", failure);
         }
@@ -167,8 +215,30 @@ final class HologramEditorTutorialSamples {
         }
         String primary = manifest.getProperty(prefix + "primaryStructure", "");
         validateStructureLinks(data, primary, number(manifest, prefix + "primaryCells"));
+        if (kind == Kind.MEMBER) require(
+            !primary.isEmpty() && primary.equals(data.getString("activeStructure")),
+            "Tutorial member navigation was not accepted");
+        if (kind == Kind.OVERVIEW) require(
+            data.getString("activeStructure")
+                .isEmpty(),
+            "Tutorial overview navigation was not accepted");
         int candidateCells = 0;
         NBTTagList rows = data.getTagList("cells", 10);
+        if (kind == Kind.MEMBER) {
+            Set<Integer> selected = new HashSet<>();
+            for (int index : data.getIntArray("selectedIndices")) require(
+                index >= 0 && index < rows.tagCount() && selected.add(index),
+                "Recorded member selection is invalid");
+            for (int i = 0; i < rows.tagCount(); i++) {
+                NBTTagCompound cell = rows.getCompoundTagAt(i);
+                boolean belongs = primary.equals(cell.getString("structureId"));
+                NBTTagList links = cell.getTagList("structureIds", 8);
+                for (int j = 0; j < links.tagCount(); j++) belongs |= primary.equals(links.getStringTagAt(j));
+                require(
+                    selected.contains(i) == belongs,
+                    "Recorded member selection does not match its exact footprint");
+            }
+        }
         for (int i = 0; i < rows.tagCount(); i++) if (rows.getCompoundTagAt(i)
             .getTagList("candidates", 10)
             .tagCount() > 0) candidateCells++;

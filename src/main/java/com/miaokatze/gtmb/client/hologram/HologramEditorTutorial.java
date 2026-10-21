@@ -16,6 +16,7 @@ import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
+import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widget.WidgetTree;
 import com.cleanroommc.modularui.widgets.Dialog;
@@ -55,6 +56,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private HologramEditorTutorialOverlay overlay;
     private final HologramEditorMaterialLesson materialLesson = new HologramEditorMaterialLesson();
     private final HologramEditorLessonStage worldStage = new HologramEditorLessonStage();
+    private HologramEditorCutListLesson cutListLesson;
 
     HologramEditorTutorial(HologramUiModules ui) {
         this.ui = ui;
@@ -162,6 +164,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             sandbox.preview.pitch(Math.toRadians(25));
             cornerCount = cutStage = worldOffsetX = worldOffsetZ = 0;
             cutStored = cutConsumed = false;
+            if (id.equals("cut")) cutListLesson = new HologramEditorCutListLesson();
             isolatedCommands = 0;
             step = actionIndex = 0;
             pointerX = ui.host.screenWidth() / 2d;
@@ -199,7 +202,18 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (worldCourse()) sandbox.shell.sceneOverride(worldStage.nativeWidget(sandbox, this));
         try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
             .fieldGraph(sandbox)) {
-            scenePanel.child(
+            if (cutListLesson != null) {
+                ParentWidget<?> body = cutListLesson.build(sandbox);
+                scenePanel.child(
+                    sandbox.shell.buildLessonContent(
+                        scenePanel,
+                        body,
+                        cutListLesson.previewWidget(),
+                        new Widget<>().widthRel(1f)
+                            .height(HologramEditorTutorialOverlay.RESERVED_HEIGHT)));
+                // Explanation and captions use the full dark lesson surface, not the narrow preview camera.
+                sandbox.shell.registerTarget("viewport", body);
+            } else scenePanel.child(
                 sandbox.shell.build(
                     scenePanel,
                     new Widget<>().widthRel(1f)
@@ -231,6 +245,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         playbackVersion++;
         try {
             if (closing != null) cleanup("pointer capture", closing.preview::releasePointerCapture);
+            if (cutListLesson != null) {
+                cleanup("cut list preview", cutListLesson::close);
+                cutListLesson = null;
+            }
             cleanup("material panel", materialLesson::close);
             cleanup("tutorial panels", this::closeOwnedPanels);
         } finally {
@@ -430,7 +448,9 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 return;
             }
             int[] region = target(action);
-            if (region == null || action.drag() && !worldCourse() && !sandbox.preview.canMoveSelection()) {
+            if (region == null || action.drag() && action.operation != Operation.CUT_LIST_ORBIT
+                && !worldCourse()
+                && !sandbox.preview.canMoveSelection()) {
                 if (targetWaitingSince == 0) targetWaitingSince = now;
                 if (now - targetWaitingSince < 650_000_000L) return;
                 if (action.operation == Operation.HOVER) {
@@ -487,7 +507,9 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             double drag = Math.max(0, Math.min(1, (elapsed - MOVE_NS) / (double) MOVE_NS));
             pointerX = targetX + motionX * drag;
             pointerY = targetY + motionY * drag;
-            if (worldCourse()) {
+            if (action.operation == Operation.CUT_LIST_ORBIT) {
+                cutListLesson.orbit((float) (motionX * drag), (float) (motionY * drag));
+            } else if (worldCourse()) {
                 worldOffsetX = (int) Math.round(3 * drag);
                 worldOffsetZ = (int) Math.round(2 * drag);
             } else {
@@ -498,7 +520,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         }
         long hold = hover ? HOVER_NS : PRESS_NS + REST_NS + (action.drag() ? MOVE_NS : 0);
         if (actionApplied && elapsed >= MOVE_NS + hold) {
-            if (action.drag() && !worldCourse()) commitDrag();
+            if (action.drag() && action.operation != Operation.CUT_LIST_ORBIT && !worldCourse()) commitDrag();
             actionIndex++;
             actionStarted = 0;
             pressed = false;
@@ -508,6 +530,14 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private int[] target(Action action) {
+        if (cutListLesson != null) {
+            if (action.operation == Operation.CUT_LIST_ORBIT) {
+                int[] bounds = sandbox.shell.targetBounds(action.target);
+                return bounds == null ? null
+                    : around(new int[] { bounds[0] + bounds[2] / 2, bounds[1] + bounds[3] / 2 });
+            }
+            if (action.operation == Operation.HOVER) return sandbox.shell.targetBounds(action.target);
+        }
         if (action.operation == Operation.HOVER) return hoverToolBounds(action.target);
         String nativeTarget = action.control >= 0 ? "control." + resolvedControlId(action) : action.target;
         if (sandbox.shell.tutorialTargetClipped(nativeTarget)) {
@@ -627,6 +657,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void prepareDrag(Action action) {
+        if (action.operation == Operation.CUT_LIST_ORBIT) {
+            int[] bounds = sandbox.shell.targetBounds(action.target);
+            motionX = bounds == null ? 0 : Math.min(48, bounds[2] * .25);
+            motionY = bounds == null ? 0 : -Math.min(20, bounds[3] * .15);
+            return;
+        }
         if (worldCourse()) {
             double[] point = worldStage.point(4.675, 0, 3.375);
             if (point != null) {
@@ -646,6 +682,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void beginDrag(Action action) {
+        if (action.operation == Operation.CUT_LIST_ORBIT) {
+            cutListLesson.beginOrbit();
+            return;
+        }
         if (worldCourse()) return;
         if (action.operation == Operation.COPY_X) cloneSelection();
         dragStart = snapshot(sandbox.session.state());
@@ -660,6 +700,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         NBTTagCompound data = (NBTTagCompound) dragStart.copy();
         int[] offset = sandbox.preview.gizmo()
             .offset();
+        java.util.Set<String> moved = completeSources(
+            sandbox.session.state(),
+            sandbox.preview.selection()
+                .indices());
         NBTTagList cells = data.getTagList("cells", 10);
         for (int index : sandbox.preview.selection()
             .indices()) if (index >= 0 && index < cells.tagCount()) {
@@ -670,34 +714,76 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     cell.setInteger("d" + key, cell.getInteger("d" + key) + offset[axis]);
                 }
             }
+        NBTTagList structures = data.getTagList("structures", 10);
+        for (int i = 0; i < structures.tagCount(); i++) {
+            NBTTagCompound structure = structures.getCompoundTagAt(i);
+            if (moved.contains(structure.getString("id"))) for (int axis = 0; axis < 3; axis++) {
+                String key = new String[] { "x", "y", "z" }[axis];
+                structure.setInteger(key, structure.getInteger(key) + offset[axis]);
+            }
+        }
         sandbox.session.isolatedSnapshot(new HologramState(data));
         sandbox.preview.gizmo()
             .cancel();
     }
 
+    private static java.util.Set<String> completeSources(HologramState state, int[] selected) {
+        java.util.Set<Integer> chosen = new java.util.HashSet<>();
+        for (int index : selected) if (index >= 0 && index < state.cells.size()) chosen.add(index);
+        java.util.Set<String> complete = new java.util.HashSet<>();
+        state.structureMembers
+            .forEach((id, members) -> { if (!members.isEmpty() && chosen.containsAll(members)) complete.add(id); });
+        return complete;
+    }
+
     private void cloneSelection() {
-        NBTTagCompound data = snapshot(sandbox.session.state());
+        HologramState state = sandbox.session.state();
+        NBTTagCompound data = snapshot(state);
         NBTTagList cells = data.getTagList("cells", 10), structures = data.getTagList("structures", 10);
         int[] selected = sandbox.preview.selection()
             .indices(), copied = new int[selected.length];
+        java.util.Set<String> complete = completeSources(state, selected), known = new java.util.HashSet<>();
+        java.util.Map<String, String> copies = new java.util.HashMap<>();
+        for (int i = 0; i < structures.tagCount(); i++) known.add(
+            structures.getCompoundTagAt(i)
+                .getString("id"));
+        int count = structures.tagCount();
+        NBTTagCompound cached = data.getCompoundTag("tutorialMemberMetadata");
+        String active = data.getString("activeStructure");
+        if (!active.isEmpty()) cached.setTag(active, sourceMetadata(data));
+        for (int i = 0; i < count; i++) {
+            NBTTagCompound original = structures.getCompoundTagAt(i);
+            String id = original.getString("id");
+            if (!complete.contains(id)) continue;
+            String copyId = id + "-tutorial-copy";
+            if (!known.add(copyId)) throw new IllegalStateException("Duplicate tutorial source copy");
+            NBTTagCompound copy = (NBTTagCompound) original.copy();
+            copy.setString("id", copyId);
+            copy.setString(
+                "tutorialObservedSourceId",
+                original.hasKey("tutorialObservedSourceId", 8) ? original.getString("tutorialObservedSourceId") : id);
+            structures.appendTag(copy);
+            copies.put(id, copyId);
+            if (cached.hasKey(id, 10)) cached.setTag(
+                copyId,
+                cached.getCompoundTag(id)
+                    .copy());
+        }
+        data.setTag("tutorialMemberMetadata", cached);
         for (int i = 0; i < selected.length; i++) {
             NBTTagCompound copy = (NBTTagCompound) cells.getCompoundTagAt(selected[i])
                 .copy();
-            if (!copy.getString("structureId")
-                .isEmpty()) copy.setString("structureId", copy.getString("structureId") + "-tutorial-copy");
-            NBTTagList original = copy.getTagList("structureIds", 8), memberships = new NBTTagList();
-            for (int j = 0; j < original.tagCount(); j++)
-                memberships.appendTag(new NBTTagString(original.getStringTagAt(j) + "-tutorial-copy"));
+            HologramState.Cell original = state.cells.get(selected[i]);
+            NBTTagList memberships = new NBTTagList();
+            for (String id : original.structureIds)
+                if (copies.containsKey(id)) memberships.appendTag(new NBTTagString(copies.get(id)));
+            String primary = copies.get(original.structureId);
+            copy.setString(
+                "structureId",
+                primary != null ? primary : memberships.tagCount() > 0 ? memberships.getStringTagAt(0) : "");
             copy.setTag("structureIds", memberships);
             copied[i] = cells.tagCount();
             cells.appendTag(copy);
-        }
-        int count = structures.tagCount();
-        for (int i = 0; i < count; i++) {
-            NBTTagCompound copy = (NBTTagCompound) structures.getCompoundTagAt(i)
-                .copy();
-            copy.setString("id", copy.getString("id") + "-tutorial-copy");
-            structures.appendTag(copy);
         }
         sandbox.session.isolatedSnapshot(new HologramState(data));
         sandbox.preview.selection()
@@ -714,6 +800,9 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private void apply(Action action) {
         switch (action.operation) {
+            case CUT_LIST_CLICK:
+                if (!sandbox.shell.activateTarget(action.target)) unavailable = "此列表控件当前不可用；未执行替代操作。";
+                break;
             case CONTROL:
                 int id = resolvedControlId(action);
                 if (!sandbox.shell.controlEnabled(id)) return;
@@ -866,6 +955,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private NBTTagCompound capture() {
         NBTTagCompound result = new NBTTagCompound();
+        if (cutListLesson != null) result.setTag("cutList", cutListLesson.snapshot());
         result.setTag("state", snapshot(sandbox.session.state()));
         result.setTag("preview", sandbox.preview.backgroundUiState());
         result.setTag("config", sandbox.config.backgroundUiState());
@@ -902,6 +992,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void restore(NBTTagCompound checkpoint) {
+        if (cutListLesson != null) cutListLesson.restore(checkpoint.getCompoundTag("cutList"));
         try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
             .fieldGraph(sandbox)) {
             closePanels();
@@ -1052,7 +1143,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private boolean worldCourse() {
-        return topic.equals("cut") || topic.startsWith("cut-") || topic.startsWith("box-");
+        return topic.startsWith("cut-") || topic.startsWith("box-");
     }
 
     @Override
@@ -1108,16 +1199,31 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setBoolean("cutStored", cutStored);
         result.setBoolean("cutConsumed", cutConsumed);
         result.setInteger("cornerCount", cornerCount);
+        if (cutListLesson != null) result.setTag("cutList", cutListLesson.snapshot());
         return result;
     }
 
     private int preferredCell() {
         HologramState state = sandbox.session.state();
+        String source = state.data.getString("activeStructure");
+        int current = sandbox.preview.selected();
+        if (current >= 0 && current < state.cells.size()
+            && candidateCell(state.cells.get(current))
+            && (source.isEmpty() || state.cells.get(current)
+                .belongsToStructure(source)))
+            return current;
         int recorded = state.data.getInteger("selected");
-        if (recorded >= 0 && recorded < state.cells.size() && candidateCell(state.cells.get(recorded))) return recorded;
-        for (HologramState.Cell cell : state.cells) if (candidateCell(cell)) return cell.index;
-        for (HologramState.Cell cell : state.cells) if (!cell.anchor && !annotationCell(cell)) return cell.index;
-        return state.cells.isEmpty() ? -1 : 0;
+        if (recorded >= 0 && recorded < state.cells.size()
+            && candidateCell(state.cells.get(recorded))
+            && (source.isEmpty() || state.cells.get(recorded)
+                .belongsToStructure(source)))
+            return recorded;
+        for (HologramState.Cell cell : state.cells)
+            if (candidateCell(cell) && (source.isEmpty() || cell.belongsToStructure(source))) return cell.index;
+        for (HologramState.Cell cell : state.cells)
+            if (!cell.anchor && !annotationCell(cell) && (source.isEmpty() || cell.belongsToStructure(source)))
+                return cell.index;
+        return !source.isEmpty() || state.cells.isEmpty() ? -1 : 0;
     }
 
     private static boolean candidateCell(HologramState.Cell cell) {
@@ -1139,11 +1245,22 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         return result;
     }
 
+    private static String observedSourceId(NBTTagCompound data, String id) {
+        NBTTagList structures = data.getTagList("structures", 10);
+        for (int i = 0; i < structures.tagCount(); i++) {
+            NBTTagCompound structure = structures.getCompoundTagAt(i);
+            if (id.equals(structure.getString("id")) && structure.hasKey("tutorialObservedSourceId", 8))
+                return structure.getString("tutorialObservedSourceId");
+        }
+        return id;
+    }
+
     private void selectObservedSource(NBTTagCompound data, String id) {
         String previous = data.getString("activeStructure");
         if (previous.equals(id)) return;
+        NBTTagCompound cached = data.getCompoundTag("tutorialMemberMetadata");
         if (id.isEmpty()) {
-            data.setTag("tutorialMemberMetadata", sourceMetadata(data));
+            cached.setTag(previous, sourceMetadata(data));
             NBTTagCompound overview = data.getCompoundTag("tutorialOverviewMetadata");
             for (String key : SOURCE_METADATA) {
                 data.removeTag(key);
@@ -1153,17 +1270,19 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                         .copy());
             }
         } else {
-            NBTTagCompound recorded;
+            NBTTagCompound recorded, observedOverview;
             try {
-                recorded = HologramEditorTutorialSamples.sameSourceMetadata(id);
+                recorded = HologramEditorTutorialSamples.sameSourceMetadata(observedSourceId(data, id));
+                observedOverview = HologramEditorTutorialSamples.overviewMetadata();
             } catch (java.io.IOException unavailable) {
                 sandbox.session.notice("这个成员没有匹配的真实来源参数：" + unavailable.getMessage());
                 return;
             }
-            if (previous.isEmpty()) data.setTag("tutorialOverviewMetadata", sourceMetadata(data));
-            NBTTagCompound member = data.hasKey("tutorialMemberMetadata", 10)
-                ? data.getCompoundTag("tutorialMemberMetadata")
-                : sourceMetadata(recorded);
+            if (previous.isEmpty()) data.setTag(
+                "tutorialOverviewMetadata",
+                data.hasKey("tutorialOverviewMetadata", 10) ? sourceMetadata(data) : sourceMetadata(observedOverview));
+            else cached.setTag(previous, sourceMetadata(data));
+            NBTTagCompound member = cached.hasKey(id, 10) ? cached.getCompoundTag(id) : sourceMetadata(recorded);
             for (String key : SOURCE_METADATA) {
                 data.removeTag(key);
                 if (member.hasKey(key)) data.setTag(
@@ -1172,6 +1291,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                         .copy());
             }
         }
+        data.setTag("tutorialMemberMetadata", cached);
         data.setString("activeStructure", id);
     }
 

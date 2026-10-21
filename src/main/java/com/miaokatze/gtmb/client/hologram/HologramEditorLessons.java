@@ -42,7 +42,9 @@ final class HologramEditorLessons {
         CUT_TAKE,
         CUT_LOCK,
         CUT_CANCEL,
-        CUT_PLACE
+        CUT_PLACE,
+        CUT_LIST_CLICK,
+        CUT_LIST_ORBIT
     }
 
     static final class Action {
@@ -60,7 +62,8 @@ final class HologramEditorLessons {
         boolean drag() {
             return operation == Operation.MOVE_X || operation == Operation.MOVE_XZ
                 || operation == Operation.COPY_X
-                || operation == Operation.WORLD_MOVE_XZ;
+                || operation == Operation.WORLD_MOVE_XZ
+                || operation == Operation.CUT_LIST_ORBIT;
         }
     }
 
@@ -401,17 +404,31 @@ final class HologramEditorLessons {
     }
 
     private static void cut(List<Step> s) {
-        add(s, "独立私有暂存", "剪切列表与蓝图库分开，教学条目只存在于隔离内存。", "viewport", action(Operation.CUT_STORE, "viewport"));
-        add(s, "条目预览", "选择条目只读预览原样数据，不进入蓝图处理或图文编辑。", "viewport", action(Operation.SELECT_CELL, "viewport"));
+        add(s, "独立私有列表", "这是与原剪切窗口共用的列表和原样预览视图；两个教学条目仅在内存中。", "cut.list", action(Operation.HOVER, "cut.list"));
         add(
             s,
-            "取出与锁定",
-            "先移动目标再锁定，锁定后再次点击才打开确认。",
-            "viewport",
-            action(Operation.CUT_TAKE, "viewport"),
-            action(Operation.CUT_LOCK, "viewport"));
-        add(s, "取消保留条目", "Esc 保留未消费条目；成功放置才消费，撤回原处是独立流程。", "viewport", action(Operation.CUT_CANCEL, "viewport"));
-        add(s, "返回原列表", "完成后回到原列表对象，保留真实选择与预览相机。", "viewport");
+            "切换条目预览",
+            "点击另一行，右侧立即显示该条目的原样预览；切换条目重置预览相机。",
+            "cut.preview",
+            action(Operation.CUT_LIST_CLICK, "cut.row.tutorial-cut-b"));
+        add(
+            s,
+            "旋转预览相机",
+            "在预览中按住左键拖动旋转；滚轮缩放也只影响此预览，不移动世界目标。",
+            "cut.preview",
+            action(Operation.CUT_LIST_ORBIT, "cut.preview"));
+        add(
+            s,
+            "同步列表入口",
+            "真实窗口会请求服务器目录；本段只刷新教学内存，不发送请求。放置与撤回留在世界操作课程。",
+            "cut.sync",
+            action(Operation.CUT_LIST_CLICK, "cut.sync"));
+        add(
+            s,
+            "返回原列表",
+            "关闭教学示例后，点击完成回到原列表对象；真实选择、滚动与预览相机保留。",
+            "cut.closed",
+            action(Operation.CUT_LIST_CLICK, "cut.close"));
     }
 
     private static void world(List<Step> s, String topic) {

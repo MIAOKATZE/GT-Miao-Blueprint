@@ -86,6 +86,9 @@ final class HologramBlueprintData {
             HologramPresets.Cell source = saved.remove(position);
             if (source == null) throw new java.io.IOException("投影来源未包含原结构格：" + position);
             HologramCapture.Cell copy = blueprintCell(old, old.x, old.y, old.z);
+            copy.block = source.block();
+            copy.meta = source.metadata;
+            copy.unknown = source.missing();
             setMemberships(copy, source.memberships());
             copy.blueprintBlock = source.block == null ? "" : source.block;
             copy.blueprintItem = source.item == null ? "" : source.item;

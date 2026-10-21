@@ -74,10 +74,14 @@ final class HologramBlueprintProjection {
     static HologramPresets.Cell projectedCell(HologramSession s, int i, HologramPresets.Preset result,
         java.util.Set<String> palette) throws java.io.IOException {
         HologramCapture.Cell cell = s.capture.cells.get(i);
-        HologramCellPolicy.validateOrdinarySourceVariant(s, cell);
         ItemStack target = cell.anchor && s.target instanceof IGregTechTileEntity
             ? new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) s.target).getMetaTileID())
             : HologramCellPolicy.targetFor(s, cell, i);
+        if (HologramCellPolicy.hintMaterial(target) || target == null && cell.block != null
+            && cell.block == com.gtnewhorizon.structurelib.StructureLibAPI.getBlockHint())
+            throw new java.io.IOException(
+                "位置 " + HologramValues.position(cell) + " 仍是结构提示占位；请在该格的声明候选中选择实际仓室或方块，再处理或保存蓝图");
+        HologramCellPolicy.validateOrdinarySourceVariant(s, cell);
         HologramPresets.Cell saved;
         if (target == null) {
             if (cell.block == Blocks.air && !cell.unknown) cell.blueprintBlock = "minecraft:air";

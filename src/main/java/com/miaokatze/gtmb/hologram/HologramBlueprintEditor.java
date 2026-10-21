@@ -615,6 +615,12 @@ final class HologramBlueprintEditor {
     static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
         boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups,
         Map<String, Integer> preparedSizes) throws java.io.IOException {
+        stageGeometry(s, copies, remove, overlay, retained, copyGroups, preparedSizes, null);
+    }
+
+    static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
+        boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups,
+        Map<String, Integer> preparedSizes, Map<String, ItemStack> projectedTargets) throws java.io.IOException {
         Map<String, HologramCapture.Cell> staged = new LinkedHashMap<>();
         Map<String, ItemStack> targets = new HashMap<>();
         Map<String, Integer> facings = new HashMap<>(s.facingPins);
@@ -622,7 +628,8 @@ final class HologramBlueprintEditor {
             HologramCapture.Cell cell = s.capture.cells.get(index);
             if (remove.contains(HologramValues.position(cell))) continue;
             staged.put(HologramValues.position(cell), retained.getOrDefault(HologramValues.position(cell), cell));
-            ItemStack target = HologramCellPolicy.targetFor(s, cell, index);
+            ItemStack target = projectedTargets == null ? HologramCellPolicy.targetFor(s, cell, index)
+                : projectedTargets.get(HologramValues.position(cell));
             if (target != null) targets.put(HologramValues.position(cell), target.copy());
         }
         List<HologramPresets.Structure> copiedStructures = new ArrayList<>();

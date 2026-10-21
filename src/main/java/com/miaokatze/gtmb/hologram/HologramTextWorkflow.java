@@ -83,6 +83,12 @@ final class HologramTextWorkflow {
         boolean previousVirtual = s.virtual;
         int previousSchema = preset.schema;
         String previousName = preset.name;
+        java.util.Map<String, ItemStack> projectedTargets = null;
+        if (!previousVirtual && previousPreset == null) {
+            projectedTargets = new java.util.HashMap<>();
+            for (HologramPresets.Cell cell : preset.cells)
+                projectedTargets.put((s.x + cell.x) + "," + (s.y + cell.y) + "," + (s.z + cell.z), cell.stack());
+        }
         HologramCapture stagingCapture = previousCapture == null
             ? new HologramCapture(null, HologramSessionPolicy.trigger(s))
             : !previousVirtual && previousPreset == null
@@ -94,8 +100,15 @@ final class HologramTextWorkflow {
         preset.schema = 2;
         if (preset.name == null) preset.name = "附加蓝图";
         try {
-            HologramBlueprintEditor
-                .stageGeometry(s, additions, remove, false, java.util.Collections.emptyMap(), false, payloadSizes);
+            HologramBlueprintEditor.stageGeometry(
+                s,
+                additions,
+                remove,
+                false,
+                java.util.Collections.emptyMap(),
+                false,
+                payloadSizes,
+                projectedTargets);
         } catch (IOException | RuntimeException | LinkageError failure) {
             if (s.capture == stagingCapture) {
                 s.capture = previousCapture;
