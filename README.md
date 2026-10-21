@@ -13,7 +13,7 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.7](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（兼容区间：0.1.7 ≤ 版本 < 0.2.0）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.8 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.8，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 
