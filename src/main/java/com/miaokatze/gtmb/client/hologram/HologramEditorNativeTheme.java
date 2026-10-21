@@ -10,6 +10,7 @@ import net.minecraftforge.common.MinecraftForge;
 import com.cleanroommc.modularui.api.IThemeApi;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.drawable.IKey;
+import com.cleanroommc.modularui.drawable.DrawableSerialization;
 import com.cleanroommc.modularui.drawable.DrawableStack;
 import com.cleanroommc.modularui.drawable.Rectangle;
 import com.cleanroommc.modularui.drawable.UITexture;
@@ -25,6 +26,8 @@ import com.cleanroommc.modularui.widgets.PageButton;
 import com.cleanroommc.modularui.widgets.PagedWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 
@@ -36,13 +39,15 @@ public final class HologramEditorNativeTheme {
         MUTED = HologramEditorTheme.MUTED;
     static final int DARK_TEXT = HologramEditorTheme.BUTTON_TEXT, DISABLED_TEXT = 0xff81745e;
 
-    // Keep raw MUI textures here: ThemeBuilder serializes them, including their actual tiling and nine-slice metadata.
+    // MUI 2.3.92 recurses when serializing unregistered tiled/adaptable textures. Register the final objects first;
+    // ThemeBuilder then serializes stable IDs, whose registry entries retain the actual tiling and nine-slice metadata.
     static final UITexture PAPER = UITexture.builder()
         .location("gtmb", "gui/editor/kraft/paper")
         .tiled(64, 64)
         .nonOpaque()
         .build()
-        .withColorOverride(0xffffffff);
+        .withColorOverride(0xffffffff)
+        .register("gtmb:editor/kraft/paper");
     private static final UITexture FRAME = texture("panel");
     static final IDrawable PANEL = new DrawableStack(PAPER, FRAME);
     static final UITexture INPUT = texture("input"), INPUT_FOCUS = texture("input-focus");
@@ -90,7 +95,8 @@ public final class HologramEditorNativeTheme {
             .adaptable(1)
             .nonOpaque()
             .build()
-            .withColorOverride(0xffffffff);
+            .withColorOverride(0xffffffff)
+            .register("gtmb:editor/kraft/" + name);
     }
 
     private static ThemeBuilder<?> definition() {
@@ -100,7 +106,6 @@ public final class HologramEditorNativeTheme {
             .defaultTextShadow(false)
             .defaultTextHoverShadow(false)
             .defaultBackground(IDrawable.NONE)
-            .background(IThemeApi.PANEL, PANEL)
             .background(IThemeApi.BUTTON, BUTTON)
             .hoverBackground(IThemeApi.BUTTON, HOVER)
             .textColor(IThemeApi.BUTTON, TEXT)
@@ -134,6 +139,15 @@ public final class HologramEditorNativeTheme {
                     .textColor(TEXT)
                     .hintColor(MUTED)
                     .markedColor(0xffb5cdb0));
+        // The 2.3.92 stack serializer serializes children by concrete type. Supply typed texture references explicitly
+        // so the theme parser restores both the tiled paper and its adaptable frame, instead of empty child drawables.
+        JsonArray panelLayers = new JsonArray();
+        panelLayers.add(DrawableSerialization.serialize(PAPER));
+        panelLayers.add(DrawableSerialization.serialize(FRAME));
+        JsonObject panel = new JsonObject();
+        panel.add(IThemeApi.BACKGROUND, panelLayers);
+        theme.getJson()
+            .add(IThemeApi.PANEL.getFullName(), panel);
         // MUI 2.3.92's selectedTextShadow builder takes int; its JSON property is nevertheless boolean.
         theme.getJson()
             .getAsJsonObject(IThemeApi.TOGGLE_BUTTON.getFullName())
