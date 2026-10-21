@@ -25,7 +25,17 @@ The editor uses paper panels, low-resolution pixel icons and tooltips. A full-sc
 
 Eight animated lessons cover Projection, Blueprint, the Cut list, structure controls, and normal/isometric selection and Cut. The demonstration cursor shows each action; only Previous, Next, Skip and Restart are interactive. Previous replays a step from its beginning, and leaving restores the original workspace. Lessons use isolated teaching state and can be replayed without submitting real blueprints or world operations.
 
-README 当前内嵌配图仍是此前提供的 UI 示例，原图与 [截图 manifest](README/screenshots/manifest.json) 保持不变；它们不是 v0.1.37 原生运行截图或验收证据。新原生截图后续放入版本专属目录。
+以下两张为 v0.1.37 原生客户端实机截图；右图展示客户端库为空时的侧栏。原图、采集版本及范围见[原生截图记录](README/native-v0137/manifest.json)。
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/native-v0137/editor-workspace.png"><img src="README/native-v0137/editor-workspace.png" alt="原生等距编辑器：中央快照、左侧工具与可收纳属性侧栏" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0137/library-sidebar-empty.png"><img src="README/native-v0137/library-sidebar-empty.png" alt="原生蓝图库侧栏：空客户端库、蓝图站和管理入口" width="480"></a></td>
+  </tr>
+  <tr><td align="center">等距快照与属性侧栏 / Native workspace</td><td align="center">蓝图库侧栏（空库）/ Library sidebar (empty)</td></tr>
+</table>
+
+其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；旧材质与布局不代表 v0.1.37，也不作为本版原生验收证据。
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 
@@ -86,7 +96,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 **操作要点：**选中模型后用「属性」侧栏修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
 
-*Use Structure Adjustment for planning changes. Check the displayed construction scope; the idle top HUD shows available actions and shortcuts.*
+*Use the Properties sidebar for planning changes. Check the displayed construction scope; the idle top HUD shows available actions and shortcuts.*
 
 <a id="regions"></a>
 
@@ -378,7 +388,7 @@ New servers default to shared upload/download limits of **128 KiB/s** and **512 
 
 等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置、蓝图库与属性编辑的入口，并支持不再显示。
 
-Waiting views show measured progress and percentages when totals are known, or activity and elapsed time otherwise. Long tasks continue after closing the workspace; reopening restores the business page, selection and view. Save guidance explains Blueprint Settings and Structure Adjustment and can be dismissed persistently.
+Waiting views show measured progress and percentages when totals are known, or activity and elapsed time otherwise. Long tasks continue after closing the workspace; reopening restores the business page, selection and view. Save guidance explains Blueprint Settings and the Properties sidebar and can be dismissed persistently.
 
 已确认的蓝图施工可在大图范围内继续，走离预览锚点不会单独终止任务；仍须保持原工具槽中的同一把投影仪、当前世界与维度，实际区块、现场权限和放置事件继续检查。停止、部分完成与全部成功分别显示，进度走完不代表机器成型。保存准备按实际快照与序列化工作显示进度，匹配本次任务的有效活动会延长等待；传输结束后仍须等待原生预览、配对文件与最终保存确认。
 An admitted blueprint construction job can continue while you inspect a large build, including beyond the preview anchor's admission range. Keep the same projector in its original slot and remain in the same world and dimension; chunk, permission and placement checks still apply. Stopped, partial and successful outcomes remain distinct. Save preparation reports actual snapshot and serialization work, and correlated activity extends the wait; transfer completion still requires preview validation, paired files and final save confirmation.
