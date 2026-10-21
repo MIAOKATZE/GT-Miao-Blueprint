@@ -57,7 +57,7 @@ final class HologramEditorNativeTools {
         Flow row = Flow.row()
             .name("editor_native_mode_bar")
             .widthRel(1f)
-            .height(26)
+            .height(24)
             .childPadding(3);
         row.child(
             local(

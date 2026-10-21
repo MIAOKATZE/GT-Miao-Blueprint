@@ -17,6 +17,9 @@ import com.cleanroommc.modularui.widgets.layout.Flow;
 /** Transparent native input shield. The four small navigation widgets are its only actionable children. */
 final class HologramEditorTutorialOverlay {
 
+    private static final int EXPLANATION_HEIGHT = 28, FOOTER_GAP = 7, NAVIGATION_HEIGHT = 20, BOTTOM_GAP = 10;
+    static final int RESERVED_HEIGHT = EXPLANATION_HEIGHT + FOOTER_GAP + NAVIGATION_HEIGHT + BOTTOM_GAP + 6;
+
     interface View {
 
         boolean active();
@@ -91,7 +94,7 @@ final class HologramEditorTutorialOverlay {
                     () -> index != 0 || view.canPrevious(),
                     () -> false,
                     index == 1)
-                .size(78, 20)
+                .size(78, NAVIGATION_HEIGHT)
                 .name("tutorial." + names[i])
                 .disableThemeBackground(true);
             if (index == 1) button.overlay(
@@ -104,14 +107,14 @@ final class HologramEditorTutorialOverlay {
             Flow.col()
                 .widthRel(1f)
                 .coverChildrenHeight()
-                .bottom(10)
-                .childPadding(7)
+                .bottom(BOTTOM_GAP)
+                .childPadding(FOOTER_GAP)
                 .background(IDrawable.NONE)
                 .disableThemeBackground(true)
                 .name("tutorial.footer")
                 .child(
                     new Explanation().widthRel(1f)
-                        .height(28)
+                        .height(EXPLANATION_HEIGHT)
                         .name("tutorial.explanation"))
                 .child(row));
         return panel;
@@ -137,7 +140,8 @@ final class HologramEditorTutorialOverlay {
     int[] footerBounds() {
         int[] nav = navigationBounds();
         if (nav == null) return null;
-        return new int[] { 8, nav[1] - 35, Math.max(1, host.screenWidth() - 16), nav[3] + 35 };
+        return new int[] { 8, host.screenHeight() - RESERVED_HEIGHT, Math.max(1, host.screenWidth() - 16),
+            RESERVED_HEIGHT };
     }
 
     private String label(int index) {

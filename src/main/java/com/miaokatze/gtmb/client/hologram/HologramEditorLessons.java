@@ -92,6 +92,71 @@ final class HologramEditorLessons {
         return Collections.unmodifiableList(steps);
     }
 
+    static List<Step> course(String topic, HologramEditorCommands commands, HologramState observed) {
+        List<Step> steps = new ArrayList<>(course(topic, commands));
+        if (topic.equals("projection") || topic.equals("structure")) {
+            boolean direct = observed.structureMembers.isEmpty();
+            if (direct) {
+                for (int i = 0; i < steps.size(); i++) {
+                    Step old = steps.get(i);
+                    List<Action> actions = new ArrayList<>();
+                    for (Action action : old.actions)
+                        if (action.operation != Operation.SELECT_STRUCTURE && action.control != 163
+                            && action.control != 165) actions.add(action);
+                    steps.set(i, new Step(old.title, old.description, old.focus, actions.toArray(new Action[0])));
+                }
+                int sourceStep = topic.equals("projection") ? 1 : 0;
+                Step source = steps.get(sourceStep);
+                steps.set(
+                    sourceStep,
+                    new Step(
+                        "当前实体来源",
+                        "这个真实样例是单控制器投影，直接编辑其声明参数；无需经过区域成员入口。",
+                        source.focus,
+                        source.actions.toArray(new Action[0])));
+                if (topic.equals("structure")) {
+                    Step back = steps.get(4);
+                    steps.set(
+                        4,
+                        new Step(
+                            "返回当前投影",
+                            "关闭参数窗口返回当前实体投影；这个样例没有区域总览切换。",
+                            back.focus,
+                            back.actions.toArray(new Action[0])));
+                }
+            }
+            boolean details = false;
+            for (HologramState.Cell cell : observed.cells) if (!cell.candidates.isEmpty()) details = true;
+            if (!details) {
+                int candidateStep = topic.equals("projection") ? 3 : 2;
+                Step old = steps.get(candidateStep);
+                List<Action> actions = new ArrayList<>();
+                for (Action action : old.actions) if (action.control != 10000) actions.add(action);
+                steps.set(
+                    candidateStep,
+                    new Step(
+                        "设备候选入口",
+                        "候选由真实选格详情返回；这份物理快照尚未录取该详情，只展示入口，不生成候选。",
+                        old.focus,
+                        actions.toArray(new Action[0])));
+            }
+        }
+        if (topic.equals("blueprint") && observed.data.getTagList("quantumGroups", 10)
+            .tagCount() == 0) {
+            for (int i = 0; i < steps.size(); i++) {
+                Step old = steps.get(i);
+                for (Action action : old.actions) if (action.operation == Operation.NETWORK) steps.set(
+                    i,
+                    new Step(
+                        old.title,
+                        "这份真实样例没有量子组；这里只展示网络入口，不虚构绑定或连接真实网络。",
+                        old.focus,
+                        old.actions.toArray(new Action[0])));
+            }
+        }
+        return Collections.unmodifiableList(steps);
+    }
+
     private static Action control(int id) {
         return new Action(Operation.CONTROL, id, "control." + id);
     }

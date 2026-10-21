@@ -201,16 +201,21 @@ final class HologramEditorGuide {
         if (ui.config.hatchDrawer()) return "从本格合法候选选择具体设备。";
         if (ui.config.drawer()) return "编辑当前来源结构的声明参数，再应用。";
         if (ui.preview.inventory()) return "选择真实背包或已启用来源中的具体物品。";
-        if (ui.shell.built() ? ui.shell.libraryPageSelected() : ui.library.libraryDrawer())
+        if (ui.shell.built() ? ui.shell.libraryPageSelected() && ui.shell.dockExpanded() : ui.library.libraryDrawer())
             return "单击库行更新中央草稿；放置与保存使用库内入口。";
-        if (ui.preview.selected() >= 0) return ui.preview.moveHandles() ? "拖轴改单轴，拖平面同时改两轴。" : "查看所选格目标，或点轮廓整选结构。";
+        if (ui.preview.selected() >= 0)
+            return ui.preview.moveHandles() && ui.preview.canMoveSelection() && ui.preview.previewInteractive()
+                ? "拖轴改单轴，拖平面同时改两轴。"
+                : "查看所选格目标、设备候选与仓室设置。";
         return ui.session.state().data.getBoolean("virtual") ? "点击对象选择，从蓝图库载入或开始空白稿。" : "控制器锚定结构，先调目标再核对材料。";
     }
 
     String keys() {
         if (ui.review.confirmation()) return "Esc 返回编辑 · 确认沿用材料窗口按钮";
         if (ui.config.drawer() || ui.config.hatchDrawer() || ui.config.presetDrawer()) return "Esc 关窗 · ? 完整说明";
-        return "Ctrl 增减 · " + key("sameType") + " 同类 · " + key("moveHandles") + " 手柄";
+        return "Ctrl 增减 · " + key("sameType")
+            + " 同类"
+            + (ui.preview.canMoveSelection() ? " · " + key("moveHandles") + " 手柄" : "");
     }
 
     private String key(String command) {

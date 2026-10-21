@@ -43,6 +43,9 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private double pointerX, pointerY, fromX, fromY, targetX, targetY, motionX, motionY;
     private int[] actionBounds;
     private NBTTagCompound dragStart;
+    private NBTTagCompound pendingNativeScroll;
+    private static final String[] CHECKPOINT_SCROLLS = { "editor_native_tool_rail_list",
+        "editor_native_properties_list", "native_blueprint_settings", "library_content", "library_rows" };
     private int cornerCount, cutStage, worldOffsetX, worldOffsetZ;
     private boolean cutStored, cutConsumed;
     private long isolatedCommands;
@@ -133,7 +136,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         NBTTagCompound data = new NBTTagCompound();
         data.setString("session", "__gtmb_detached_tutorial_host__");
         data.setInteger("y", 64);
-        return sample(new HologramState(data), "cut");
+        return new HologramState(data);
     }
 
     private void begin(String id, boolean replay) {
@@ -144,7 +147,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         try {
             ui.shell.pausePresentation();
             sandbox = new HologramUiModules(ui.host);
-            sandbox.session.initializeIsolated(sample(ui.session.state(), id), this::isolatedCommand);
+            sandbox.session.initializeIsolated(sample(id), this::isolatedCommand);
             try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                 .fieldGraph(sandbox)) {
                 sandbox.config.initializeFields();
@@ -163,7 +166,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             step = actionIndex = 0;
             pointerX = ui.host.screenWidth() / 2d;
             pointerY = ui.host.screenHeight() / 2d;
-            steps = HologramEditorLessons.course(id, ui.tools.commands());
+            steps = HologramEditorLessons.course(id, ui.tools.commands(), sandbox.session.state());
             checkpoints.clear();
             overlay = new HologramEditorTutorialOverlay(sandbox, this);
             sceneHandler = IPanelHandler.simple(
@@ -200,7 +203,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 sandbox.shell.build(
                     scenePanel,
                     new Widget<>().widthRel(1f)
-                        .height(0)));
+                        .height(HologramEditorTutorialOverlay.RESERVED_HEIGHT)));
         }
         scenePanel.onUpdateListener(panel -> {
             if (panel.getArea().width != ui.host.screenWidth() || panel.getArea().height != ui.host.screenHeight())
@@ -221,6 +224,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         actionIndex = 0;
         actionStarted = targetWaitingSince = 0;
         dragStart = null;
+        pendingNativeScroll = null;
         actionBounds = null;
         unavailable = "";
         pressed = queuedNext = actionApplied = actionPending = false;
@@ -352,7 +356,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     @Override
     public String explanation() {
         if (!active()) return "";
-        return unavailable.isEmpty() ? steps.get(step).description : unavailable;
+        String text = unavailable.isEmpty() ? steps.get(step).description : unavailable;
+        return step == 0 ? "仅操作下方四个按钮，其余由演示鼠标完成。" + text : text;
     }
 
     private void playStep() {
@@ -396,6 +401,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     public void frame(long now) {
         if (!active()) return;
         try {
+            // The native graph has now laid out its restored page/groups; clamp against its actual current scroll area.
+            if (pendingNativeScroll != null) {
+                restoreNativeScroll(pendingNativeScroll);
+                pendingNativeScroll = null;
+                return;
+            }
             if (actionIndex >= actions.size()) {
                 if (queuedNext && ui.host.parent()
                     .tryDeferAction(() -> { if (active()) nextStep(); })) queuedNext = false;
@@ -498,6 +509,16 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private int[] target(Action action) {
         if (action.operation == Operation.HOVER) return hoverToolBounds(action.target);
+        String nativeTarget = action.control >= 0 ? "control." + resolvedControlId(action) : action.target;
+        if (sandbox.shell.tutorialTargetClipped(nativeTarget)) {
+            final long version = playbackVersion;
+            ui.host.parent()
+                .tryDeferAction(
+                    () -> {
+                        if (active() && playbackVersion == version) sandbox.shell.revealTutorialTarget(nativeTarget);
+                    });
+            return null;
+        }
         if (action.control >= 0) return sandbox.shell.controlBounds(resolvedControlId(action));
         if (action.operation == Operation.TYPE_CAPABILITY) {
             NBTTagList caps = sandbox.config.capabilities();
@@ -850,6 +871,17 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setTag("config", sandbox.config.backgroundUiState());
         result.setTag("library", sandbox.library.backgroundUiState());
         result.setTag("processing", sandbox.processing.backgroundUiState());
+        NBTTagCompound presentation = new NBTTagCompound();
+        presentation.setInteger("dockPage", sandbox.shell.dockPage());
+        presentation.setBoolean("dockExpanded", sandbox.shell.dockExpanded());
+        for (String name : CHECKPOINT_SCROLLS) {
+            ListWidget<?, ?> list = WidgetTree.findFirstWithNameNullable(sandbox.shell.root(), name, ListWidget.class);
+            if (list != null && list.isValid() && list.getScrollData() != null) presentation.setInteger(
+                name,
+                list.getScrollData()
+                    .getScroll());
+        }
+        result.setTag("nativePresentation", presentation);
         result.setBoolean("targetExpanded", sandbox.shell.propertiesGroupExpanded("target"));
         result.setBoolean("sourceExpanded", sandbox.shell.propertiesGroupExpanded("source"));
         result.setBoolean("materialExpanded", sandbox.shell.propertiesGroupExpanded("material"));
@@ -892,12 +924,26 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         worldOffsetZ = checkpoint.getInteger("worldZ");
         pointerX = checkpoint.getDouble("pointerX");
         pointerY = checkpoint.getDouble("pointerY");
-        sandbox.shell.selectDockPage(sandbox.library.libraryDrawer() ? 2 : 0);
+        NBTTagCompound presentation = checkpoint.getCompoundTag("nativePresentation");
+        sandbox.shell.selectDockPage(
+            checkpoint.hasKey("nativePresentation", 10) ? presentation.getInteger("dockPage")
+                : sandbox.library.libraryDrawer() ? 2 : 0);
+        if (checkpoint.hasKey("nativePresentation", 10))
+            sandbox.shell.setDockExpanded(presentation.getBoolean("dockExpanded"));
         refreshNativeGraph();
         sandbox.shell.restorePropertiesGroups(
             checkpoint.getBoolean("targetExpanded"),
             checkpoint.getBoolean("sourceExpanded"),
             checkpoint.getBoolean("materialExpanded"));
+        pendingNativeScroll = checkpoint.hasKey("nativePresentation", 10) ? (NBTTagCompound) presentation.copy() : null;
+    }
+
+    private void restoreNativeScroll(NBTTagCompound presentation) {
+        for (String name : CHECKPOINT_SCROLLS) if (presentation.hasKey(name, 3)) {
+            ListWidget<?, ?> list = WidgetTree.findFirstWithNameNullable(sandbox.shell.root(), name, ListWidget.class);
+            if (list != null && list.isValid() && list.getScrollData() != null) list.getScrollData()
+                .scrollTo(list.getScrollArea(), presentation.getInteger(name));
+        }
     }
 
     private boolean groupSatisfied(Action action) {
@@ -927,9 +973,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     public void drawFocus(ModularGuiContext context, int width, int height) {
         if (!active()) return;
         int[] focus = actionBounds;
+        if (actionIndex >= actions.size() && unavailable.isEmpty()) {
+            int[] lessonFocus = sandbox.shell.targetBounds(steps.get(step).focus);
+            if (lessonFocus != null) focus = lessonFocus;
+        }
         if (materialLesson.visible()) focus = materialLesson.bounds(width, height);
-        if (focus == null && actionIndex >= actions.size() && unavailable.isEmpty())
-            focus = sandbox.shell.targetBounds(steps.get(step).focus);
         int[] footer = overlay.footerBounds();
         if (focus != null) {
             focus = focus.clone();
@@ -1064,15 +1112,73 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private int preferredCell() {
-        for (HologramState.Cell cell : sandbox.session.state().cells)
-            if (!cell.candidates.isEmpty() && !cell.anchor) return cell.index;
-        return sandbox.session.state().cells.isEmpty() ? -1 : 0;
+        HologramState state = sandbox.session.state();
+        int recorded = state.data.getInteger("selected");
+        if (recorded >= 0 && recorded < state.cells.size() && candidateCell(state.cells.get(recorded))) return recorded;
+        for (HologramState.Cell cell : state.cells) if (candidateCell(cell)) return cell.index;
+        for (HologramState.Cell cell : state.cells) if (!cell.anchor && !annotationCell(cell)) return cell.index;
+        return state.cells.isEmpty() ? -1 : 0;
+    }
+
+    private static boolean candidateCell(HologramState.Cell cell) {
+        return !cell.candidates.isEmpty() && !cell.anchor && !annotationCell(cell);
+    }
+
+    private static boolean annotationCell(HologramState.Cell cell) {
+        return cell.structureId.startsWith("gtmb_text_") || cell.structureId.startsWith("gtmb_picture_");
+    }
+
+    private static final String[] SOURCE_METADATA = { "main", "mainExplicit", "noHatches", "channels", "capabilities" };
+
+    private static NBTTagCompound sourceMetadata(NBTTagCompound data) {
+        NBTTagCompound result = new NBTTagCompound();
+        for (String key : SOURCE_METADATA) if (data.hasKey(key)) result.setTag(
+            key,
+            data.getTag(key)
+                .copy());
+        return result;
+    }
+
+    private void selectObservedSource(NBTTagCompound data, String id) {
+        String previous = data.getString("activeStructure");
+        if (previous.equals(id)) return;
+        if (id.isEmpty()) {
+            data.setTag("tutorialMemberMetadata", sourceMetadata(data));
+            NBTTagCompound overview = data.getCompoundTag("tutorialOverviewMetadata");
+            for (String key : SOURCE_METADATA) {
+                data.removeTag(key);
+                if (overview.hasKey(key)) data.setTag(
+                    key,
+                    overview.getTag(key)
+                        .copy());
+            }
+        } else {
+            NBTTagCompound recorded;
+            try {
+                recorded = HologramEditorTutorialSamples.sameSourceMetadata(id);
+            } catch (java.io.IOException unavailable) {
+                sandbox.session.notice("这个成员没有匹配的真实来源参数：" + unavailable.getMessage());
+                return;
+            }
+            if (previous.isEmpty()) data.setTag("tutorialOverviewMetadata", sourceMetadata(data));
+            NBTTagCompound member = data.hasKey("tutorialMemberMetadata", 10)
+                ? data.getCompoundTag("tutorialMemberMetadata")
+                : sourceMetadata(recorded);
+            for (String key : SOURCE_METADATA) {
+                data.removeTag(key);
+                if (member.hasKey(key)) data.setTag(
+                    key,
+                    member.getTag(key)
+                        .copy());
+            }
+        }
+        data.setString("activeStructure", id);
     }
 
     private void isolatedCommand(String op, NBTTagCompound request) {
         isolatedCommands++;
         NBTTagCompound data = snapshot(sandbox.session.state());
-        if (op.equals("selectStructure")) data.setString("activeStructure", request.getString("structureId"));
+        if (op.equals("selectStructure")) selectObservedSource(data, request.getString("structureId"));
         else if (op.equals("configure")) {
             if (request.getBoolean("applyHatchPreset") && data.getBoolean("virtual")) {
                 sandbox.session.notice("作者蓝图不支持整机仓室预设；此入口用于实体结构的声明配额。");
@@ -1120,16 +1226,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             }
         } else if (op.equals("editPreset")) {
             data.setString("virtualPresetName", "隔离示例 · " + request.getString("presetId"));
-            // Two independent fixture rows share actual typed devices but have distinct local geometry.
-            if (request.getString("presetId")
-                .endsWith("1")) {
-                NBTTagList rows = data.getTagList("cells", 10);
-                for (int i = 0; i < rows.tagCount(); i++) {
-                    NBTTagCompound row = rows.getCompoundTagAt(i);
-                    row.setInteger("dy", row.getInteger("dy") + 1);
-                    row.setInteger("y", row.getInteger("y") + 1);
-                }
-            }
+            // Both rows are explicitly labelled copies of the same recorded geometry.
+
         }
         // All other commands (including build/save/cut/import/network) terminate here without side effects.
         sandbox.session.isolatedSnapshot(new HologramState(data));
@@ -1143,11 +1241,20 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         return data;
     }
 
-    private static HologramState sample(HologramState source, String topic) {
-        NBTTagCompound data = (NBTTagCompound) source.data.copy();
+    private static HologramState sample(String topic) {
+        NBTTagCompound data;
+        try {
+            HologramEditorTutorialSamples.Kind kind = topic.equals("blueprint")
+                ? HologramEditorTutorialSamples.Kind.AUTHOR
+                : HologramEditorTutorialSamples.Kind.PHYSICAL;
+            data = HologramEditorTutorialSamples.snapshot(kind);
+            data.setString("tutorialStructureId", HologramEditorTutorialSamples.primaryStructure(kind));
+        } catch (java.io.IOException unavailable) {
+            throw new IllegalStateException("真实教学样例校验失败：" + unavailable.getMessage(), unavailable);
+        }
         data.setString("session", "__gtmb_tutorial__");
-        data.setString("title", "隔离教学场景 · 不提交真实操作");
-        data.setString("status", "教学数据仅在此会话内存中变化");
+        data.setString("title", "隔离教学场景 · 真实采集样例");
+        data.setString("status", "仅在教学会话内存中演示，不提交真实操作");
         data.setString("activeStructure", "");
         data.setString("openPurpose", topic.equals("blueprint") ? "blueprintEdit" : "");
         data.setInteger("job", 0);
@@ -1158,74 +1265,21 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             data.setBoolean(key, false);
         for (String key : new String[] { "discardTargetAction", "textPlacementAck", "processingPatch", "aeReview",
             "networkBindingNavigation" }) data.removeTag(key);
-        data.setBoolean("virtual", topic.equals("blueprint"));
-        data.setBoolean("geometryEditable", topic.equals("blueprint"));
-        data.setBoolean("supported", source.data.getBoolean("supported"));
         data.setBoolean("open", true);
         data.setBoolean("interactive", true);
-        NBTTagList cells = new NBTTagList();
-        // Prefer a complete small source structure over truncating a large machine's membership.
-        List<Integer> members = null;
-        if (source.cells.size() > 256) {
-            for (java.util.Map.Entry<String, List<Integer>> entry : source.structureMembers.entrySet())
-                if (!entry.getValue()
-                    .isEmpty()
-                    && entry.getValue()
-                        .size() <= 256) {
-                            members = entry.getValue();
-                            data.setString("tutorialStructureId", entry.getKey());
-                            break;
-                        }
-        }
-        java.util.Set<Integer> included = new java.util.HashSet<>();
-        if (members != null) {
-            for (int index : members) {
-                cells.appendTag(
-                    source.cells.get(index)
-                        .tag());
-                included.add(index);
-            }
-        } else for (int i = 0; i < Math.min(256, source.cells.size()); i++) {
-            cells.appendTag(
-                source.cells.get(i)
-                    .tag());
-            included.add(i);
-        }
-        if (source.cells.size() > 256) {
-            NBTTagList structures = data.getTagList("structures", 10), complete = new NBTTagList();
-            for (int i = 0; i < structures.tagCount(); i++) {
-                NBTTagCompound structure = structures.getCompoundTagAt(i);
-                List<Integer> all = source.structureMembers.get(structure.getString("id"));
-                if (all != null && included.containsAll(all)) complete.appendTag(structure.copy());
-            }
-            data.setTag("structures", complete);
-            data.setBoolean("tutorialPartialSample", members == null);
-        }
-        if (cells.tagCount() == 0) for (int x = 0; x < 4; x++) for (int z = 0; z < 3; z++) {
-            NBTTagCompound cell = new NBTTagCompound();
-            cell.setInteger("x", x);
-            cell.setInteger("y", 64);
-            cell.setInteger("z", z);
-            cell.setInteger("dx", x);
-            cell.setInteger("dy", 0);
-            cell.setInteger("dz", z);
-            cell.setString("id", "minecraft:stone");
-            cell.setString("wantId", "minecraft:stone");
-            cell.setString("status", "satisfied");
-            cell.setBoolean("inScope", true);
-            cells.appendTag(cell);
-        }
-        data.setTag("cells", cells);
         NBTTagList presets = new NBTTagList();
         for (int i = 0; i < 2; i++) {
             NBTTagCompound row = new NBTTagCompound();
             row.setString("id", "tutorial-sample-" + i);
-            row.setString("name", i == 0 ? "教学示例 · 当前结构" : "教学示例 · 独立草稿");
-            row.setInteger("cells", cells.tagCount());
+            row.setString("name", i == 0 ? "真实作者样例" : "同一快照 · 隔离副本");
+            row.setInteger(
+                "cells",
+                data.getTagList("cells", 10)
+                    .tagCount());
             presets.appendTag(row);
         }
         data.setTag("presets", presets);
-        data.setString("virtualPresetName", "教学示例");
+        data.setString("virtualPresetName", "真实教学样例");
         return new HologramState(data);
     }
 }

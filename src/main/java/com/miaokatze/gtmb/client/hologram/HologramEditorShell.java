@@ -309,6 +309,14 @@ final class HologramEditorShell {
         return pages != null && pages.getCurrentPageIndex() == 2;
     }
 
+    int dockPage() {
+        return pages == null ? 0 : pages.getCurrentPageIndex();
+    }
+
+    boolean dockExpanded() {
+        return dock != null && dock.isExpanded();
+    }
+
     void selectDockPage(int page) {
         if (pages == null) return;
         setDockExpanded(true);
@@ -418,6 +426,55 @@ final class HologramEditorShell {
             }
         }
         return bounds(best);
+    }
+
+    private IWidget tutorialTarget(String key) {
+        if (!ui.session.isTutorial()) return null;
+        if (key.startsWith("control.")) {
+            List<Entry> entries;
+            try {
+                entries = controls.get(Integer.parseInt(key.substring(8)));
+            } catch (NumberFormatException invalid) {
+                return null;
+            }
+            if (entries != null) for (Entry entry : entries)
+                if (entry.enabled.getAsBoolean() && visible(entry.widget)) return entry.widget;
+        } else {
+            List<IWidget> entries = targets.get(key);
+            if (entries != null)
+                for (int i = entries.size() - 1; i >= 0; i--) if (visible(entries.get(i))) return entries.get(i);
+        }
+        return null;
+    }
+
+    boolean tutorialTargetClipped(String key) {
+        IWidget widget = tutorialTarget(key);
+        if (widget == null) return false;
+        int[] clipped = bounds(widget), full = absoluteBounds(widget);
+        return clipped == null || clipped[2] < full[2] || clipped[3] < full[3];
+    }
+
+    /** Called only as a deferred sandbox action, using the same native scrolling as the player. */
+    void revealTutorialTarget(String key) {
+        IWidget widget = tutorialTarget(key);
+        if (widget == null) return;
+        IWidget parent = widget;
+        while (parent.hasParent()) {
+            parent = parent.getParent();
+            if (parent instanceof com.cleanroommc.modularui.widgets.ListWidget) {
+                com.cleanroommc.modularui.widgets.ListWidget<?, ?> list = (com.cleanroommc.modularui.widgets.ListWidget<?, ?>) parent;
+                int[] viewport = bounds(parent), full = absoluteBounds(widget);
+                if (viewport == null || list.getScrollData() == null) return;
+                int delta = full[1] < viewport[1] ? full[1] - viewport[1]
+                    : Math.max(0, full[1] + full[3] - viewport[1] - viewport[3]);
+                if (delta != 0) list.getScrollData()
+                    .scrollTo(
+                        list.getScrollArea(),
+                        list.getScrollData()
+                            .getScroll() + delta);
+                return;
+            }
+        }
     }
 
     int[] targetBounds(String key) {
