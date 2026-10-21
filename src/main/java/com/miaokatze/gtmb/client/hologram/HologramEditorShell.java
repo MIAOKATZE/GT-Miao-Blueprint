@@ -613,9 +613,17 @@ final class HologramEditorShell {
     private static int[] absoluteBounds(IWidget widget) {
         TransformationMatrix matrix = LocatedWidget.of(widget)
             .getTransformationMatrix();
-        int x = Math.round(matrix.transformX(0, 0)), y = Math.round(matrix.transformY(0, 0));
-        int right = Math.round(matrix.transformX(widget.getArea().width, widget.getArea().height));
-        int bottom = Math.round(matrix.transformY(widget.getArea().width, widget.getArea().height));
+        // LocatedWidget includes a viewport's transformChildren, including its own content scroll.
+        // Its clipping rectangle stays fixed; ancestor scroll remains in the matrix for nested viewports.
+        int scrollX = 0, scrollY = 0;
+        if (widget instanceof com.cleanroommc.modularui.widget.AbstractScrollWidget) {
+            com.cleanroommc.modularui.widget.AbstractScrollWidget<?, ?> scroll = (com.cleanroommc.modularui.widget.AbstractScrollWidget<?, ?>) widget;
+            scrollX = scroll.getScrollX();
+            scrollY = scroll.getScrollY();
+        }
+        int x = Math.round(matrix.transformX(scrollX, scrollY)), y = Math.round(matrix.transformY(scrollX, scrollY));
+        int right = Math.round(matrix.transformX(scrollX + widget.getArea().width, scrollY + widget.getArea().height));
+        int bottom = Math.round(matrix.transformY(scrollX + widget.getArea().width, scrollY + widget.getArea().height));
         return new int[] { x, y, right - x, bottom - y };
     }
 
