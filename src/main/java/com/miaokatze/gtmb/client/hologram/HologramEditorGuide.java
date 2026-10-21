@@ -1,96 +1,158 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import net.minecraft.client.gui.Gui;
+import com.cleanroommc.modularui.api.IPanelHandler;
+import com.cleanroommc.modularui.api.drawable.IDrawable;
+import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.utils.Alignment;
+import com.cleanroommc.modularui.widgets.Dialog;
+import com.cleanroommc.modularui.widgets.ListWidget;
+import com.cleanroommc.modularui.widgets.layout.Flow;
 
-/** A single contextual instruction, with an optional reference sheet and independent lesson entries. */
+/** Persistent native guidance. It owns no editor value or production command handler. */
 final class HologramEditorGuide {
 
     private static final int BASE = HologramEditorControlIds.GUIDE;
     private final HologramUiModules ui;
-    private boolean reference;
+    private Flow bar, chip;
+    private ModularPanel host;
+    private IPanelHandler reference;
 
-    HologramEditorGuide(HologramUiModules ui) {
-        this.ui = ui;
-    }
+    HologramEditorGuide(HologramUiModules ui) { this.ui = ui; }
 
     private HologramEditorPreferences preferences() {
         return HologramEditorPreferences.get(ui.host.minecraft().mcDataDir);
     }
 
-    void draw(int mx, int my) {
-        if (ui.session.isTutorial()) return;
-        int w = ui.canvas.layout()
-            .width(),
-            h = ui.canvas.layout()
-                .height();
-        int x = Math.max(8, (w - 450) / 2), y = h - 34;
-        if (preferences().collapsed()) {
-            ui.canvas.button(BASE, Math.max(8, w / 2 - 34), 3, 68, 17, "指引  v", true, mx, my);
-            ui.canvas.button(BASE + 1, Math.max(80, w / 2 + 38), 3, 20, 17, "?", true, mx, my);
-        } else {
-            ui.canvas.skin("panel", x, y, 450, 30);
-            ui.canvas.text(instruction(), x + 7, y + 4, 388, HologramEditorTheme.TEXT);
-            ui.canvas.text(keys(), x + 7, y + 17, 388, HologramEditorTheme.MUTED);
-            ui.canvas.button(BASE, x + 398, y + 5, 20, 19, "^", true, mx, my);
-            ui.canvas.button(BASE + 1, x + 422, y + 5, 20, 19, "?", true, mx, my);
+    IWidget buildBar() {
+        if (bar != null) return bar;
+        bar = Flow.row().name("guide.bar").widthRel(1f).height(26).childPadding(6)
+            .background(HologramEditorNativeTheme.PAPER).disableThemeBackground(true);
+        bar.child(Flow.col().name("guide.message").expanded().coverChildrenHeight().childPadding(1)
+            .child(HologramEditorNativeTheme.label(this::instruction).widthRel(1f).height(11).name("guide.instruction"))
+            .child(HologramEditorNativeTheme.label(this::keys, HologramEditorNativeTheme.MUTED)
+                .widthRel(1f).height(10).name("guide.keys")));
+        bar.child(HologramEditorNativeTheme.iconButton("collapse-up", () -> "收纳智能指引",
+            this::toggleCollapsed, () -> true, () -> false).size(20).name("guide.collapse"));
+        bar.child(HologramEditorNativeTheme.iconButton("help-circle", () -> "完整说明与独立教程",
+            this::toggleReference, () -> true, () -> false).size(20).name("guide.help"));
+        refreshCollapsed();
+        return bar;
+    }
+
+    void attach(ModularPanel panel) {
+        if (ui.session.isTutorial() || host != null) return;
+        host = panel;
+        reference = IPanelHandler.simple(panel, (ignored, player) -> buildReference(), true);
+        refreshCollapsed();
+    }
+
+    IWidget buildChip() {
+        if (chip != null) return chip;
+        chip = Flow.row().coverChildren().height(20).childPadding(3)
+            .name("guide.collapsed").background(IDrawable.NONE).disableThemeBackground(true);
+        chip.child(HologramEditorNativeTheme.button(() -> "指引", "collapse-down", this::toggleCollapsed)
+            .size(56, 20).name("guide.expand"));
+        chip.child(HologramEditorNativeTheme.iconButton("help-circle", () -> "完整说明", this::toggleReference,
+            () -> true, () -> false).size(20).name("guide.collapsed.help"));
+        refreshCollapsed();
+        return chip;
+    }
+
+    /** Compatibility with the retired canvas route; the native shell owns all guide widgets. */
+    void draw(int mouseX, int mouseY) {}
+
+    private void toggleCollapsed() {
+        preferences().collapsed(!preferences().collapsed());
+        refreshCollapsed();
+    }
+
+    private void refreshCollapsed() {
+        boolean collapsed = preferences().collapsed();
+        if (bar != null) {
+            bar.height(collapsed ? 0 : 26);
+            bar.setEnabled(!collapsed);
+            bar.scheduleResize();
         }
-        if (!reference) return;
-        x = (w - 460) / 2;
-        y = Math.max(54, (h - 242) / 2);
-        Gui.drawRect(x - 3, y - 3, x + 463, y + 245, 0xc12b2118);
-        ui.canvas.skin("panel", x, y, 460, 242);
-        ui.canvas.text("操作说明与独立课程", x + 12, y + 10, 410, HologramEditorTheme.TITLE);
-        String[] paragraphs = { "点一格选择；点结构轮廓整选；" + key("sameType") + " 扩展同类；Ctrl 点选增减。",
-            key("moveHandles") + " 显示三轴和三平面；拖动整格吸附；Ctrl 起拖复制。", "结构参数按来源成员保存；具体设备保持合法候选、朝向与 NBT。",
-            "实体结构可用仓室配额与命名搭配；作者蓝图不能套整机仓室预设。", "点库行切换中央草稿；未保存时沿用原提示；世界 ghost 先定位并锁定。", "材料核验只有一次最终确认；Esc 按当前面板层级返回。" };
-        for (int i = 0; i < paragraphs.length; i++)
-            ui.canvas.text(paragraphs[i], x + 12, y + 31 + i * 15, 436, HologramEditorTheme.TEXT);
-        String[] names = { "投影教程", "蓝图教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切" };
-        for (int i = 0; i < names.length; i++)
-            ui.canvas.button(BASE + 2 + i, x + 12 + i % 4 * 110, y + 133 + i / 4 * 29, 104, 23, names[i], true, mx, my);
-        ui.canvas.button(BASE + 1, x + 348, y + 208, 100, 22, "收起说明", true, mx, my);
+        if (chip != null) chip.setEnabled(collapsed);
+    }
+
+    private void toggleReference() {
+        if (reference == null) return;
+        ui.host.parent().deferAction(() -> {
+            if (reference.isPanelOpen()) reference.closePanel();
+            else reference.openPanel();
+        });
+    }
+
+    private ModularPanel buildReference() {
+        ModularPanel panel = new Dialog<Void>("gtmb_editor_reference").setDisablePanelsBelow(true)
+            .setCloseOnOutOfBoundsClick(false).size(Math.min(520, ui.host.screenWidth() - 16),
+                Math.min(330, ui.host.screenHeight() - 16)).background(HologramEditorNativeTheme.PANEL);
+        Flow column = Flow.col().sizeRel(1f).padding(9).childPadding(7).name("guide.reference.content");
+        column.child(HologramEditorNativeTheme.label(() -> "操作说明与独立课程", HologramEditorNativeTheme.TITLE)
+            .widthRel(1f).height(17));
+        ListWidget<IWidget, ?> details = new ListWidget<>().widthRel(1f).expanded().name("guide.reference.details")
+            .background(IDrawable.NONE).disableThemeBackground(true);
+        String[] commands = { "sameType", "moveHandles", "channels", "candidates", "hatchPreset", "library" };
+        String[] explanations = { "点一格选择，Ctrl 增减；点结构轮廓整选。", "轴线改单轴，平面同时改两轴；Ctrl 起拖复制。",
+            "每个来源结构独立保存声明参数与具名信道。", "筛选后仍须选择具体设备，保留合法候选、朝向和 NBT。",
+            "整机仓室配额用于实体结构，作者蓝图不支持 virtual 套用。", "点库行更新中央草稿，未保存时沿用原提示；世界 ghost 先定位并锁定。" };
+        for (int i = 0; i < commands.length; i++) {
+            final int index = i;
+            details.child(HologramEditorNativeTheme.label(() -> key(commands[index]) + " · " + explanations[index])
+                .widthRel(1f).height(26).name("guide.reference." + commands[i]));
+        }
+        details.child(HologramEditorNativeTheme.label(() -> "材料核验只有一次最终确认；Esc 按面板层级返回。")
+            .widthRel(1f).height(26));
+        column.child(details);
+        String[] topics = { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps", "cut-iso" };
+        String[] labels = { "投影教程", "蓝图教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切" };
+        for (int row = 0; row < 2; row++) {
+            Flow entries = Flow.row().widthRel(1f).height(20).childPadding(5);
+            for (int col = 0; col < 4; col++) {
+                final int index = row * 4 + col;
+                entries.child(HologramEditorNativeTheme.button(() -> labels[index], () ->
+                    ui.host.parent().deferAction(() -> {
+                        reference.closePanel();
+                        ui.tutorial.start(topics[index], true);
+                    })).expanded().height(20).name("guide.lesson." + topics[index]));
+            }
+            column.child(entries);
+        }
+        column.child(Flow.row().widthRel(1f).height(20).mainAxisAlignment(Alignment.MainAxis.END)
+            .child(HologramEditorNativeTheme.button(() -> "关闭说明", this::toggleReference).size(78, 20)));
+        return panel.child(column);
     }
 
     String instruction() {
-        if (ui.session.progress() != null) return "任务正在进行；完成后继续编辑或返回世界查看进度。";
-        if (!ui.session.editable()) return "等待当前操作完成；原有任务和文件处理会继续。";
-        if (ui.review.confirmation()) return "逐项核对真实需求、已有与缺失，确认后按当前规划施工。";
-        if (ui.config.presetDrawer()) return "按本机声明配额生成目标；命名搭配保留具体设备与数量。";
-        if (ui.config.hatchDrawer()) return "从此格合法候选选具体设备；类型与电压只筛选候选。";
-        if (ui.config.drawer()) return "修改当前来源结构的能力参数，再应用；各结构单独保存。";
-        if (ui.preview.inventory()) return "选择背包或已启用来源中的具体物品，再指定目标格。";
-        if (ui.library.libraryDrawer()) return "单击库行在中央预览；编辑、世界放置与保存沿用库内入口。";
-        if (ui.preview.moveHandles()) return "拖动轴线改变一轴，拖动平面同时改变两轴。";
-        if (ui.preview.selected() >= 0) return "查看所选格的合法目标、默认壳与朝向；点轮廓选择完整结构。";
-        return ui.session.state().data.getBoolean("virtual") ? "点击对象选择；从库载入蓝图或开始空白图文稿。" : "控制器锚定当前结构；先调整目标与来源，再核对材料。";
+        if (ui.session.progress() != null) return "任务正在进行；完成后继续编辑。";
+        if (!ui.session.editable()) return "等待当前操作完成，后台业务继续。";
+        if (ui.review.confirmation()) return "核对精确材料与缺口，再作最终确认。";
+        if (ui.processing.processingFlow() != null) return "选择自用或分享倾向，再逐步核对处理策略。";
+        if (ui.config.presetDrawer()) return "按声明配额或精确搭配生成目标，保留手选和现场设备。";
+        if (ui.config.hatchDrawer()) return "从本格合法候选选择具体设备。";
+        if (ui.config.drawer()) return "编辑当前来源结构的声明参数，再应用。";
+        if (ui.preview.inventory()) return "选择真实背包或已启用来源中的具体物品。";
+        if (ui.library.libraryDrawer()) return "单击库行更新中央草稿；放置与保存使用库内入口。";
+        if (ui.preview.selected() >= 0) return ui.preview.moveHandles() ? "拖轴改单轴，拖平面同时改两轴。" : "查看所选格目标，或点轮廓整选结构。";
+        return ui.session.state().data.getBoolean("virtual") ? "点击对象选择，从蓝图库载入或开始空白稿。" : "控制器锚定结构，先调目标再核对材料。";
     }
 
     String keys() {
-        if (ui.review.confirmation()) return "Esc 返回编辑  ·  确认沿用材料窗口按钮";
-        if (ui.config.drawer() || ui.config.hatchDrawer() || ui.config.presetDrawer()) return "Esc 关窗  ·  ? 查看完整说明";
-        return "Ctrl 增减选择  ·  " + key("sameType") + " 同类  ·  " + key("moveHandles") + " 手柄  ·  ? 说明";
+        if (ui.review.confirmation()) return "Esc 返回编辑 · 确认沿用材料窗口按钮";
+        if (ui.config.drawer() || ui.config.hatchDrawer() || ui.config.presetDrawer()) return "Esc 关窗 · ? 完整说明";
+        return "Ctrl 增减 · " + key("sameType") + " 同类 · " + key("moveHandles") + " 手柄";
     }
 
-    private String key(String command) {
-        return ui.tools.commands()
-            .shortcut(command);
-    }
+    private String key(String command) { return ui.tools.commands().shortcut(command); }
 
     boolean activate(int id) {
-        if (id == BASE) {
-            preferences().collapsed(!preferences().collapsed());
-            return true;
-        }
-        if (id == BASE + 1) {
-            reference = !reference;
-            return true;
-        }
+        if (id == BASE) { toggleCollapsed(); return true; }
+        if (id == BASE + 1) { toggleReference(); return true; }
         if (id >= BASE + 2 && id <= BASE + 9) {
-            reference = false;
-            ui.tutorial.start(
-                new String[] { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps",
-                    "cut-iso" }[id - (BASE + 2)],
-                true);
+            if (reference != null && reference.isPanelOpen()) reference.closePanel();
+            ui.tutorial.start(new String[] { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps", "cut-iso" }[id - BASE - 2], true);
             return true;
         }
         return false;

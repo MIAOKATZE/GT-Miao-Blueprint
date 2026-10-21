@@ -14,6 +14,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private boolean detached, detachedStarted, detachedReturned, detachedReplay;
     private String detachedTopic;
     private Runnable detachedReturn;
+    private boolean domainInitialized;
 
     HologramScreen(HologramState state) {
         super("workstation");
@@ -45,25 +46,31 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void updateState(HologramState next) {
-        if (!detached) ui.session.updateState(next);
+        if (!detached) try(FieldGraph ignored=fieldGraph(ui)) { ui.session.updateState(next); }
+    }
+
+    @Override
+    protected boolean buildNativePanel() {
+        if(detached) return true;
+        if(!domainInitialized) {
+            try(FieldGraph ignored=fieldGraph(ui)) { ui.router.initGui(); }
+            domainInitialized=true;
+        }
+        panel().child(ui.shell.build(panel()));
+        return true;
     }
 
     public void initGui() {
         super.initGui();
-        if (detached) {
-            ui.canvas.resize();
-            if (!detachedStarted) {
-                detachedStarted = true;
-                ui.tutorial.startDetached(detachedTopic, detachedReplay, this::returnFromDetached);
+        if(detached) {
+            if(!detachedStarted) {
+                detachedStarted=true;
+                ui.tutorial.startDetached(detachedTopic,detachedReplay,this::returnFromDetached);
             }
             return;
         }
-        if (websiteConfirmationResumePending) {
-            websiteConfirmationResumePending = false;
-            return;
-        }
-        resetNativeFields();
-        ui.router.initGui();
+        if(websiteConfirmationResumePending) websiteConfirmationResumePending=false;
+        ui.canvas.resize();
         HologramBackgroundTasks.restoreUi(ui);
     }
 
@@ -114,10 +121,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     public void updateScreen() {
         if (detached) {
+            ui.tutorial.tick();
             if (detachedStarted && !ui.tutorial.active() && !detachedReturned) deferAction(this::returnFromDetached);
             return;
         }
-        ui.router.updateScreen();
+        try(FieldGraph ignored=fieldGraph(ui)) {
+            ui.router.updateScreen();
+            ui.shell.tick();
+        }
     }
 
     protected void renderScene(int mouseX, int mouseY, float ticks) {
@@ -197,7 +208,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     public void handleMouseInput() {
         if (detached && !ui.tutorial.active()) return;
         super.handleMouseInput();
-        ui.router.handleMouseInput();
+        // Native panels and the bounded scene widget own wheel routing.
     }
 
     public void keyTyped(char c, int key) {
@@ -215,7 +226,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         ui.shortcuts.activity();
         ui.memory.initialEditHint(ui.memory.savedEditHint(false));
         ui.memory.rememberGuidance();
-        ui.router.activate(id);
+        try(FieldGraph ignored=fieldGraph(ui)) { ui.router.activate(id); }
     }
 
     @Override
@@ -250,33 +261,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiKeyBefore(char character, int key) {
-        if (detached || ui.tutorial.blockInput()) return true;
-        if (key != org.lwjgl.input.Keyboard.KEY_ESCAPE && key != org.lwjgl.input.Keyboard.KEY_RETURN
-            && key != org.lwjgl.input.Keyboard.KEY_NUMPADENTER) return false;
-        ui.router.keyTyped(character, key);
-        return true;
+        if(ui.tutorial.blockInput()) return true;
+        if(detached) return true;
+        // Modal key handlers and focused native editors receive Escape/Return before global commands.
+        return false;
     }
 
     @Override
     protected boolean muiMouseBefore(int button) {
-        if (!ui.tutorial.blockInput()) return detached;
-        if (button != 0) return true;
-        int x = ui.tutorial.renderUi().canvas.localX(
-            getScreen().getContext()
-                .getMouseX());
-        int y = ui.tutorial.renderUi().canvas.localY(
-            getScreen().getContext()
-                .getMouseY());
-        for (HologramUiCanvas.Control control : ui.tutorial.renderUi().canvas.controls())
-            if (control.id >= HologramEditorControlIds.TUTORIAL + 1
-                && control.id <= HologramEditorControlIds.TUTORIAL + 4
-                && control.contains(x, y)) return false;
-        return true;
+        if (ui.tutorial.blockInput()) return button != 0 || !ui.tutorial.navigationContains(
+            getScreen().getContext().getAbsMouseX(), getScreen().getContext().getAbsMouseY(), button);
+        return detached && !ui.tutorial.active();
     }
 
     @Override
     protected boolean muiScrollBefore() {
-        return detached || ui.tutorial.blockInput();
+        return ui.tutorial.blockInput() || detached && !ui.tutorial.active();
     }
 
     @Override
@@ -286,6 +286,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiKey(char character, int key) {
+        if(detached || ui.tutorial.blockInput()) return true;
+        if(ui.shell.hasModalPanel()) return false;
         ui.router.keyTyped(character, key);
         return true;
     }
@@ -421,12 +423,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     public void renderText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y, int color) {
-        super.drawString(font, text, x, y, color);
+        font.drawString(text, x, y, color);
     }
 
     @Override
     public void renderCenteredText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y, int color) {
-        super.drawCenteredString(font, text, x, y, color);
+        font.drawString(text, x-font.getStringWidth(text)/2, y, color);
     }
 
     @Override

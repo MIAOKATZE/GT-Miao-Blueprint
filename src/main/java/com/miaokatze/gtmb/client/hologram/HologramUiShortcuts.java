@@ -1,7 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
-import static net.minecraft.client.gui.Gui.*;
 
 import org.lwjgl.input.Keyboard;
 
@@ -39,11 +37,10 @@ final class HologramUiShortcuts {
 
     boolean idleHintsVisible(long now) {
         return idleHints.visible(now) && !HologramBackgroundTasks.busy()
-            && !ui.library.libraryDrawer()
             && !ui.library.saveGuidanceOpen()
             && !ui.preview.inventory()
-            && ui.preview.previewInteractive()
-            && !ui.router.textFieldFocused()
+            && ui.tools.commands().sceneAvailable()
+            && !ui.tools.modalOpen()
             && !ui.preview.boxSelecting()
             && ui.preview.gizmo()
                 .axis() < 0
@@ -101,46 +98,11 @@ final class HologramUiShortcuts {
     }
 
     void drawIdleHints() {
-        if (!idleHintsVisible(System.nanoTime())) return;
-        int x = HologramUiCanvas.viewportX + 6;
-        int y = HologramUiCanvas.viewportY + ui.preview.previewHeight() - 88;
-        int width = HologramUiCanvas.viewportWidth - 12;
-        ui.canvas.skin("panel", x, y, width, 62);
-        ui.canvas.text("快捷键 · 点击结构轮廓可整组选中 · 操作后收起", x + 6, y + 6, width - 12, 0xffe59b);
-        java.util.List<String> lines = idleHintLines();
-        for (int i = 0; i < lines.size(); i++)
-            ui.canvas.text(lines.get(i), x + 6, y + 20 + i * 12, width - 12, 0xb9d5d4);
+        // Native guide widgets consume idleHintLines(); the scene no longer paints UI text.
     }
 
     void drawShortcuts(int mx, int my) {
-        HologramEditorCommands commands = ui.tools.commands();
-        int pages = (commands.size() + BINDINGS_PER_PAGE - 1) / BINDINGS_PER_PAGE;
-        bindingPage = Math.max(0, Math.min(pages - 1, bindingPage));
-        ui.canvas.skin("panel", 70, 53, 478, 253);
-        ui.canvas.text("编辑器快捷键 · 点击条目后按新组合 · E/Esc保留退出", 80, 62, 432, 0xf5e4b9);
-        ui.canvas.button(114, 520, 57, 20, 18, "×", true, mx, my);
-        int first = bindingPage * BINDINGS_PER_PAGE;
-        int end = Math.min(commands.size(), first + BINDINGS_PER_PAGE);
-        for (int i = first; i < end; i++) {
-            HologramEditorCommands.Command command = commands.get(i);
-            ui.canvas.button(
-                BINDING_FIRST + i,
-                80,
-                82 + (i - first) * 20,
-                458,
-                18,
-                command.label + (command.held ? "（可按住）" : "")
-                    + "："
-                    + (this.captureBinding == i ? "请按键（Esc取消）" : commands.shortcut(command.name)),
-                true,
-                mx,
-                my);
-        }
-        ui.canvas.button(115, 80, 267, 90, 18, "全部恢复默认", true, mx, my);
-        ui.canvas.button(BINDING_PREVIOUS, 328, 267, 66, 18, "上一页", bindingPage > 0, mx, my);
-        ui.canvas.text((bindingPage + 1) + " / " + pages, 405, 272, 45, 0xb9d5d4);
-        ui.canvas.button(BINDING_NEXT, 468, 267, 70, 18, "下一页", bindingPage + 1 < pages, mx, my);
-        ui.canvas.text("字段焦点优先 · 本编辑器按键不透传游戏 · 撤销不回滚世界", 80, 291, 458, 0xe4b85a);
+        // The stable native shortcut Dialog owns its bounded ListWidget.
     }
 
     boolean captureBindingControl(int id) {
@@ -162,8 +124,10 @@ final class HologramUiShortcuts {
             case 110:
                 this.shortcutsDrawer = true;
                 ui.tools.closeTransient();
+                ui.tools.openShortcuts();
                 return true;
             case 114:
+                ui.tools.closeShortcuts();
                 this.shortcutsDrawer = false;
                 this.captureBinding = -1;
                 return true;
@@ -205,6 +169,8 @@ final class HologramUiShortcuts {
         }
         return false;
     }
+
+    void cancelBindingCapture() { this.captureBinding = -1; }
 
     int captureBinding() {
         return this.captureBinding;

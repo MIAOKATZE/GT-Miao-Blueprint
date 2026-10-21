@@ -20,10 +20,10 @@ final class HologramEditorTheme {
     static final UITexture PAPER = pixel(
         UITexture.builder()
             .location("gtmb", "gui/editor/kraft/paper")
-            .tiled(32, 32)
+            .tiled(64, 64)
             .nonOpaque()
             .build());
-    static final UITexture PANEL_FRAME = texture("kraft/panel", 16, 16, 3);
+    static final UITexture PANEL_FRAME = texture("kraft/panel", 8, 8, 1);
     static final UITexture PANEL = new PaperSurface();
     static final UITexture CLOTH = PANEL;
     static final UITexture BUTTON = texture("kraft/button", 12, 12, 2);
@@ -31,7 +31,7 @@ final class HologramEditorTheme {
     static final UITexture PRESSED = texture("kraft/button-pressed", 12, 12, 2);
     static final UITexture SELECTED_HOVER = texture("kraft/button-selected-hover", 12, 12, 2);
     static final UITexture DISABLED = texture("kraft/button-disabled", 12, 12, 2);
-    static final UITexture INPUT = texture("kraft/input", 12, 12, 2);
+    static final UITexture INPUT = texture("kraft/input", 8, 8, 1);
     static final UITexture SLOT = texture("kraft/slot", 12, 12, 2);
     static final UITexture SCROLLBAR = texture("kraft/scrollbar", 12, 12, 2);
 

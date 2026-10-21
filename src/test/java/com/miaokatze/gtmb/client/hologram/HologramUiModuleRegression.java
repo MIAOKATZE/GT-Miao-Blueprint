@@ -14,6 +14,12 @@ public final class HologramUiModuleRegression {
 
     private HologramUiModuleRegression() {}
 
+    public static void main(String[] args) throws Exception {
+        if (!com.miaokatze.gtmb.testutil.MinecraftTestBootstrap.enter(HologramUiModuleRegression.class, args)) return;
+        run();
+        System.out.println("HologramUiModuleRegression PASS");
+    }
+
     public static void run() {
         localPlanConsumersWaitWithoutLockingEditing();
         outgoingSelectionScope();
@@ -370,13 +376,22 @@ public final class HologramUiModuleRegression {
             singleton.set(
                 null,
                 ((sun.misc.Unsafe) unsafeField.get(null)).allocateInstance(net.minecraft.client.Minecraft.class));
-            for (int action : new int[] { 139 }) {
+            for (int action : new int[] { 139, 14001 }) {
                 HologramUiModules ui = librarySwitchUi();
                 HologramState state = ui.session.state();
+                // The compatibility button may address a separately browsed item. Ordinary rows instead use
+                // the immutable identity captured when their native control was drawn.
+                if (action == 139) setUiField(ui.library, "browseServerPresetId", "chosen-target");
+                NBTTagCompound originalView = ui.preview.backgroundUiState();
                 ui.router.activate(action);
                 SimpleAssert.that(
                     ui.library.discardReview() && uiField(ui.diagnostics, "capturedRenderSmokeAction") == null,
                     "a dirty source waits for explicit confirmation before switching");
+                SimpleAssert.that(
+                    ui.session.state() == state && ui.session.sequence() == 0
+                        && "original".equals(state.data.getString("selectedPresetId"))
+                        && originalView.equals(ui.preview.backgroundUiState()),
+                    "the discard guard precedes any draft, row, selection or camera mutation");
                 // Save ACKs and catalog refreshes can reorder rows or restore another selected id while the modal is
                 // open.
                 NBTTagList reordered = new NBTTagList();
@@ -390,6 +405,7 @@ public final class HologramUiModuleRegression {
                         .copy());
                 state.data.setTag("presets", reordered);
                 state.data.setString("selectedPresetId", "original");
+                visibleLibraryRows(ui).put(14001, (NBTTagCompound) reordered.getCompoundTagAt(1).copy());
                 ui.router.activate(224);
                 NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
                 SimpleAssert
@@ -398,21 +414,71 @@ public final class HologramUiModuleRegression {
                 SimpleAssert.that(
                     confirmed.getBoolean("confirmDiscard") && ui.session.sequence() == 1 && !ui.library.discardReview(),
                     "one confirmation submits the switch through the existing discard gate without a separate discard command");
+                SimpleAssert.that(
+                    originalView.equals(ui.preview.backgroundUiState())
+                        && "chosen-target".equals(ui.library.libraryNavigation().targetId),
+                    "confirmed handoff keeps the camera and the originally captured navigation target");
             }
+
+            HologramUiModules clean = librarySwitchUi();
+            clean.session.state().data.setBoolean("blueprintDirty", false);
+            NBTTagCompound cleanView = clean.preview.backgroundUiState();
+            clean.router.activate(14001);
+            NBTTagCompound cleanRequest = (NBTTagCompound) uiField(clean.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                !clean.library.discardReview() && clean.session.sequence() == 1
+                    && "editPreset".equals(cleanRequest.getString("op"))
+                    && "chosen-target".equals(cleanRequest.getString("presetId"))
+                    && !cleanRequest.getBoolean("confirmDiscard"),
+                "a clean row directly enters the real editPreset chain without an extra edit or discard action");
+            SimpleAssert.that(
+                cleanView.equals(clean.preview.backgroundUiState()) && !clean.library.browsePreviewActive()
+                    && "blueprintEdit".equals(clean.library.libraryNavigation().purpose)
+                    && !clean.library.libraryNavigation().local,
+                "integrated-library row handoff is an editable server session and preserves the current camera");
+            NBTTagCompound nextData = (NBTTagCompound) clean.session.state().data.copy();
+            nextData.setString("session", "loaded-target");
+            nextData.setString("generation", "loaded-target");
+            nextData.setString("libraryLocalId", "");
+            nextData.setString("selectedPresetId", "chosen-target");
+            nextData.setBoolean("open", true);
+            HologramState next = new HologramState(nextData);
+            SimpleAssert.that(clean.library.acceptsLibraryNavigation(next),
+                "the real integrated-library response is accepted in the existing screen instead of reopening it");
+            clean.preview.resetSession(next);
+            NBTTagCompound nextView = clean.preview.backgroundUiState();
+            for (String field : new String[] { "yaw", "pitch", "zoom", "cameraX", "cameraZ" })
+                SimpleAssert.eq(cleanView.getDouble(field), nextView.getDouble(field),
+                    "same-screen row response preserves editor camera " + field);
+
+            for (boolean localIdentity : new boolean[] { false, true }) {
+                HologramUiModules same = librarySwitchUi();
+                if (!localIdentity) same.session.state().data.setString("libraryLocalId", "");
+                same.router.activate(14000);
+                same.router.activate(139);
+                SimpleAssert.that(
+                    !same.library.discardReview() && same.session.sequence() == 0
+                        && uiField(same.diagnostics, "capturedRenderSmokeAction") == null
+                        && same.library.libraryNavigation() == null,
+                    "the canonical current item neither reloads nor prompts, through a row or compatibility button");
+            }
+            HologramUiModules fresh = librarySwitchUi();
+            fresh.session.state().data.setBoolean("blueprintDirty", false);
+            fresh.session.state().data.setString("blueprintSource", "");
+            fresh.router.activate(14001);
+            SimpleAssert.that(fresh.library.discardReview() && fresh.session.sequence() == 0,
+                "an unsaved populated workspace is guarded even without an explicit dirty flag");
+
+            // Read-only display remains an explicit legacy path, independently of ordinary row loading.
             HologramUiModules browsing = librarySwitchUi();
             HologramState editing = browsing.session.state();
-            browsing.preview.selection()
-                .click(4, false);
-            SimpleAssert.that(
-                !browsing.library.prepareLibraryNavigation(14001) && !browsing.library.discardReview(),
-                "pure display row selection never replaces or discards the draft");
             SimpleAssert.that(
                 !browsing.library.prepareLibraryNavigation(141) && !browsing.library.discardReview()
                     && browsing.session.state() == editing
                     && browsing.session.sequence() == 0
                     && browsing.preview.selection()
                         .contains(4),
-                "local world positioning retains the unsaved draft without a source-switch confirmation");
+                "preparing world positioning is separate from row editing and retains the unsaved draft");
             setUiField(browsing.library, "browsePreview", true);
             SimpleAssert.that(browsing.library.browsePreviewActive(), "library display has an explicit read-only mode");
             browsing.preview.activateControl(11);
@@ -429,17 +495,28 @@ public final class HologramUiModuleRegression {
                     && browsing.preview.selection()
                         .contains(4),
                 "display layer controls and denied edits preserve the authoritative state and original selection");
-            HologramUiModules cancelled = librarySwitchUi();
-            cancelled.router.activate(139);
-            cancelled.router.activate(225);
-            SimpleAssert.that(
-                !cancelled.library.discardReview() && cancelled.session.sequence() == 0
-                    && uiField(cancelled.diagnostics, "capturedRenderSmokeAction") == null,
-                "cancel leaves the current blueprint and server state untouched");
-            SimpleAssert.eq(
-                "chosen-target",
-                cancelled.session.state().data.getString("selectedPresetId"),
-                "cancel does not change the existing library selection");
+            for (int action : new int[] { 139, 14001 }) {
+                HologramUiModules cancelled = librarySwitchUi();
+                if (action == 139) setUiField(cancelled.library, "browseServerPresetId", "chosen-target");
+                HologramState draft = cancelled.session.state();
+                NBTTagCompound originalView = cancelled.preview.backgroundUiState();
+                cancelled.router.activate(action);
+                SimpleAssert.that(cancelled.library.discardReview(), "switching a dirty draft asks once before cancel");
+                cancelled.router.activate(225);
+                SimpleAssert.that(
+                    !cancelled.library.discardReview() && cancelled.session.sequence() == 0
+                        && uiField(cancelled.diagnostics, "capturedRenderSmokeAction") == null
+                        && cancelled.session.state() == draft && draft.data.getBoolean("blueprintDirty")
+                        && originalView.equals(cancelled.preview.backgroundUiState())
+                        && cancelled.library.libraryNavigation() == null,
+                    "cancel keeps the original draft, selection and camera without starting a source handoff");
+                SimpleAssert.eq("original", draft.data.getString("selectedPresetId"),
+                    "cancel does not change the existing library row");
+                NBTTagCompound context = cancelled.library.backgroundUiState();
+                SimpleAssert.that(context.getInteger("deferredLibraryAction") == -1
+                    && context.getString("deferredLibraryTargetId").isEmpty(),
+                    "cancel clears the pending target so it cannot be submitted later");
+            }
 
             HologramUiModules rejected = librarySwitchUi();
             rejected.session.state().data.setBoolean("discardConfirmationRequired", true);
@@ -456,6 +533,7 @@ public final class HologramUiModuleRegression {
                     && retry.getBoolean("confirmDiscard")
                     && rejected.session.sequence() == 1,
                 "a server-requested confirmation retries its exact target and operation once");
+            libraryCatalogControlsPreservePreview();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot exercise library discard confirmation", failure);
         } finally {
@@ -473,18 +551,113 @@ public final class HologramUiModuleRegression {
         data.setString("session", "dirty-library-switch");
         data.setString("generation", "dirty-library-switch");
         data.setBoolean("blueprintDirty", true);
-        data.setString("selectedPresetId", "chosen-target");
+        data.setBoolean("virtual", true);
+        data.setString("openPurpose", "blueprintEdit");
+        data.setString("blueprintSource", "preset");
+        data.setString("libraryLocalId", "original");
+        data.setString("selectedPresetId", "original");
+        NBTTagList cells = new NBTTagList();
+        for (int i = 0; i < 5; i++) {
+            NBTTagCompound cell = new NBTTagCompound();
+            cell.setInteger("dx", i);
+            cells.appendTag(cell);
+        }
+        data.setTag("cells", cells);
         NBTTagList rows = new NBTTagList();
         for (String id : new String[] { "original", "chosen-target" }) {
             NBTTagCompound row = new NBTTagCompound();
             row.setString("id", id);
+            row.setString("name", id);
             rows.appendTag(row);
         }
         data.setTag("presets", rows);
         setUiField(ui.session, "state", new HologramState(data));
         setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
         ui.library.libraryDrawer(true);
+        for (int i = 0; i < rows.tagCount(); i++)
+            visibleLibraryRows(ui).put(14000 + i, (NBTTagCompound) rows.getCompoundTagAt(i).copy());
+        ui.preview.selection().click(4, false);
+        setUiField(ui.preview, "yaw", .87d);
+        setUiField(ui.preview, "pitch", .42d);
+        setUiField(ui.preview, "zoom", 1.75d);
+        HologramPreviewCamera camera = (HologramPreviewCamera) uiField(ui.preview, "camera");
+        camera.x = 2.25;
+        camera.z = -3.5;
         return ui;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<Integer, NBTTagCompound> visibleLibraryRows(HologramUiModules ui)
+        throws ReflectiveOperationException {
+        return (java.util.Map<Integer, NBTTagCompound>) uiField(ui.library, "visibleLibraryRows");
+    }
+
+    /** Catalog controls issue real dedicated-server RPCs. Inspect only their compiled branches here instead
+     * of creating a fake connected world or touching a player's client library on disk. */
+    private static void libraryCatalogControlsPreservePreview() {
+        final java.util.Set<Integer> seen = new java.util.HashSet<>(), refreshed = new java.util.HashSet<>();
+        try (java.io.InputStream input = HologramUiLibrary.class.getResourceAsStream("HologramUiLibrary.class")) {
+            if (input == null) throw new AssertionError("missing compiled library owner");
+            new org.objectweb.asm.ClassReader(input).accept(new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM5) {
+                @Override
+                public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String descriptor,
+                    String signature, String[] exceptions) {
+                    if (!"activateClientLibrary".equals(name)) return null;
+                    return new org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM5) {
+                        private final java.util.Map<org.objectweb.asm.Label, Integer> cases = new java.util.HashMap<>();
+                        private int current = -1;
+
+                        @Override
+                        public void visitTableSwitchInsn(int min, int max, org.objectweb.asm.Label fallback,
+                            org.objectweb.asm.Label... labels) {
+                            for (int i = 0; i < labels.length; i++) cases.put(labels[i], min + i);
+                        }
+
+                        @Override
+                        public void visitLookupSwitchInsn(org.objectweb.asm.Label fallback, int[] keys,
+                            org.objectweb.asm.Label[] labels) {
+                            for (int i = 0; i < labels.length; i++) cases.put(labels[i], keys[i]);
+                        }
+
+                        @Override
+                        public void visitLabel(org.objectweb.asm.Label label) {
+                            if (cases.containsKey(label)) current = cases.get(label);
+                            if (catalog()) seen.add(current);
+                        }
+
+                        private boolean catalog() { return current == 201 || current == 208 || current == 209; }
+
+                        @Override
+                        public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+                            if (catalog() && opcode == org.objectweb.asm.Opcodes.PUTFIELD)
+                                SimpleAssert.that(!"browsePreview".equals(name) && !"browseServerPresetId".equals(name),
+                                    "catalog source/page controls cannot replace the displayed preview: " + current);
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int opcode, String owner, String name, String descriptor,
+                            boolean isInterface) {
+                            if (!catalog()) return;
+                            SimpleAssert.that(!"clearBrowsePreview".equals(name) && !"resetCamera".equals(name)
+                                && !"resetSession".equals(name) && !"clearDraft".equals(name),
+                                "catalog source/page controls retain the draft and camera: " + current);
+                            if (owner.endsWith("/HologramLibraryClient") && "refreshServer".equals(name))
+                                refreshed.add(current);
+                        }
+
+                        @Override
+                        public void visitInsn(int opcode) {
+                            if (opcode == org.objectweb.asm.Opcodes.IRETURN) current = -1;
+                        }
+                    };
+                }
+            }, org.objectweb.asm.ClassReader.SKIP_DEBUG | org.objectweb.asm.ClassReader.SKIP_FRAMES);
+            SimpleAssert.eq(new java.util.HashSet<>(Arrays.asList(201, 208, 209)), seen,
+                "compiled dedicated source and both page controls remain reachable");
+            SimpleAssert.eq(seen, refreshed, "catalog controls retain their real server refresh entry points");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("cannot inspect dedicated library catalog controls", failure);
+        }
     }
 
     private static void movementHandleControl() {
@@ -563,15 +736,30 @@ public final class HologramUiModuleRegression {
             SimpleAssert.that(
                 ui.shortcuts.idleHintsVisible(HologramIdleHints.DELAY_NANOS),
                 "an idle editable preview presents its shortcut guidance");
-            ui.shortcuts.shortcutsDrawer(true);
+            Object nativeTools = uiField(ui.tools, "nativeTools");
+            Object previousShortcuts = uiField(nativeTools, "shortcuts");
+            com.cleanroommc.modularui.api.IPanelHandler openShortcuts =
+                (com.cleanroommc.modularui.api.IPanelHandler) java.lang.reflect.Proxy.newProxyInstance(
+                    com.cleanroommc.modularui.api.IPanelHandler.class.getClassLoader(),
+                    new Class<?>[] { com.cleanroommc.modularui.api.IPanelHandler.class },
+                    (proxy, method, arguments) -> {
+                        if ("isPanelOpen".equals(method.getName())) return true;
+                        throw new AssertionError("headless modal visibility test attempted " + method.getName());
+                    });
+            setUiField(nativeTools, "shortcuts", openShortcuts);
             SimpleAssert.that(
                 !ui.shortcuts.idleHintsVisible(HologramIdleHints.DELAY_NANOS),
                 "an open shortcut editor suppresses idle guidance instead of overlaying the modal");
-            ui.shortcuts.shortcutsDrawer(false);
+            setUiField(nativeTools, "shortcuts", previousShortcuts);
             ui.library.libraryDrawer(true);
             SimpleAssert.that(
+                ui.shortcuts.idleHintsVisible(HologramIdleHints.DELAY_NANOS),
+                "an expanded library dock leaves the editable scene and its idle guidance available");
+            setUiField(ui.library, "browsePreview", true);
+            SimpleAssert.that(
                 !ui.shortcuts.idleHintsVisible(HologramIdleHints.DELAY_NANOS),
-                "preview editing shortcuts never advertise themselves over the library page");
+                "explicit read-only library display still suppresses editing guidance");
+            setUiField(ui.library, "browsePreview", false);
             ui.library.libraryDrawer(false);
             ui.canvas.controls()
                 .clear();

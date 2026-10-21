@@ -24,6 +24,7 @@ final class HologramUiModules {
     final HologramEditorTools tools;
     final HologramEditorGuide guide;
     final HologramEditorTutorial tutorial;
+    final HologramEditorShell shell;
 
     HologramUiModules(HologramUiHost host) {
         this.host = host;
@@ -48,5 +49,6 @@ final class HologramUiModules {
         tools = new HologramEditorTools(this);
         guide = new HologramEditorGuide(this);
         tutorial = new HologramEditorTutorial(this);
+        shell = new HologramEditorShell(this);
     }
 }

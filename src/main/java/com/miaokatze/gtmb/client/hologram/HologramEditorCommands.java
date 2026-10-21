@@ -67,7 +67,7 @@ final class HologramEditorCommands {
         add("modeBuild", "规划模式：补建", "place", 70, Keyboard.KEY_1, 0, false, "切换原补建规划，不执行施工。");
         add("modeReplace", "规划模式：替换", "structure", 71, Keyboard.KEY_2, 0, false, "切换原替换规划，不执行施工。");
         add("modeRemove", "规划模式：拆除", "delete", 72, Keyboard.KEY_3, 0, false, "实体控制器规划专用；虚拟蓝图不开放拆除。");
-        add("resetView", "复位编辑视角", "reset-view", -1, Keyboard.KEY_HOME, 0, false, "复用编辑器相机复位，不改变玩家或世界。");
+        add("resetView", "复位编辑视角", "reset-view", 14, Keyboard.KEY_HOME, 0, false, "复用编辑器相机复位，不改变玩家或世界。");
         add("frontView", "正面正交视角", "world", -1, Keyboard.KEY_NUMPAD1, 0, false, "只改变编辑器镜头。");
         add("rightView", "侧面正交视角", "world", -1, Keyboard.KEY_NUMPAD3, 0, false, "只改变编辑器镜头。");
         add("topView", "顶部正交视角", "world", -1, Keyboard.KEY_NUMPAD7, 0, false, "只改变编辑器镜头。");
@@ -90,6 +90,20 @@ final class HologramEditorCommands {
         add("rotateTextVertical", "文字竖向转动", "rotate", -1, Keyboard.KEY_R, 4, false, "只对已有文字附件使用原竖向旋转操作。");
         add("floatingTools", "唤出 / 收起浮动工具", "detach", -1, Keyboard.KEY_SPACE, 0, false, "拖动标题移动工具条；收起后仍可从左侧或此快捷键唤回。");
         add("shortcuts", "编辑器快捷键", "help", 110, Keyboard.KEY_F1, 0, false, "编辑器命令独立于游戏键位；E / Esc 保留退出。");
+        add("viewWorkspace", "视图与工作区", "world", -1, Keyboard.KEY_NONE, 0, false,
+            "打开视图、切片、世界投影和现有工作区入口；不改变当前选择。");
+        add("viewCycle", "目标 / 现场 / 差分", "visible", 10, Keyboard.KEY_NONE, 0, false,
+            "切换目标结构、真实现场和施工差分。");
+        add("worldPreview", "世界投影显示", "world", 15, Keyboard.KEY_NONE, 0, false,
+            "显示或隐藏世界中的材质预览，不执行施工。");
+        add("areaSelection", "框选世界区域", "box-select", 178, Keyboard.KEY_NONE, 0, false,
+            "开始世界框选：左键第一角、右键第二角，Alt使用玩家位置，再次Shift+右击完成，Esc取消。");
+        add("clearWorkspace", "清空当前工作区", "clear", 330, Keyboard.KEY_NONE, 0, false,
+            "清空当前编辑工作区；这不是拆除世界方块。");
+        add("networkBindings", "已有量子类群绑定", "quantum", 196, Keyboard.KEY_NONE, 0, false,
+            "打开当前蓝图已登记量子类群的真实网络绑定，不创建虚构节点或网络。");
+        add("aeMarking", "AE 容器标记", "storage", 179, Keyboard.KEY_NONE, 0, false,
+            "打开自有AE标记容器；NEI拖入、背包样本仅修改蓝图标记。");
     }
 
     private void add(String name, String label, String icon, int control, int key, int modifiers, boolean held,
@@ -152,9 +166,11 @@ final class HologramEditorCommands {
         Command command = get(name);
         if (command == null || command.key == Keyboard.KEY_NONE
             || ui.host.minecraft().currentScreen != ui.host.parent()
-            || ui.router.textFieldFocused()
+            || ui.shell.fieldFocused()
             || ui.shortcuts.captureBinding() >= 0
-            || !ui.preview.previewInteractive()
+            || !sceneAvailable()
+            || ui.tools.modalOpen()
+            || ui.tools.pointerCaptured()
             || ui.preview.inventory()
             || HologramBackgroundTasks.busy()
             || ui.library.browsePreviewActive()
@@ -259,24 +275,57 @@ final class HologramEditorCommands {
     }
 
     boolean sceneAvailable() {
+        return commandContextAvailable() && !ui.shell.fieldFocused();
+    }
+
+    /** A deliberate native button press commits/removes field focus before its deferred command runs. */
+    boolean commandContextAvailable() {
         return !HologramBackgroundTasks.busy() && !ui.library.browsePreviewActive()
-            && !ui.library.libraryDrawer()
-            && ui.preview.previewInteractive()
-            && !ui.preview.inventory()
-            && !ui.router.textFieldFocused();
+            && ui.shell.sceneActive() && !ui.preview.inventory();
     }
 
     boolean available(String name) {
         return reason(name).isEmpty();
     }
 
+    private boolean viewContextAvailable() {
+        if (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending")
+            || ui.session.state().data.getBoolean("placementValidating")) return false;
+        // The old read-only browse header also exposed its ready mesh's layer controls.
+        if (!ui.library.browsePreviewActive()) return commandContextAvailable();
+        return !HologramBackgroundTasks.busy() && ui.preview.previewInteractive() && !ui.preview.inventory()
+            && !ui.bindings.networkDrawer() && !ui.library.libraryAdminDrawer()
+            && !ui.review.materialDialogOpen() && !ui.library.saveGuidanceOpen();
+    }
+
+    private boolean legacyViewCommand(String name) {
+        return "viewCycle".equals(name) || "allLayers".equals(name) || "layerDown".equals(name)
+            || "layerUp".equals(name) || "resetView".equals(name) || "worldPreview".equals(name);
+    }
+
     String reason(String name) {
         if (get(name) == null) return "未知编辑器命令";
-        if (!sceneAvailable()) return "先完成当前窗口或任务，再返回编辑画布";
+        if ("viewWorkspace".equals(name)) return viewContextAvailable() ? "" : "先完成当前窗口或任务，再查看视图与工作区";
+        if (legacyViewCommand(name)) {
+            if (!viewContextAvailable()) return "先完成当前窗口或任务，再调整视图";
+            int control = get(name).control;
+            if (ui.preview.viewControlEnabled(control)) return "";
+            if (ui.library.browsePreviewActive())
+                return control == 11 || control == 12 || control == 13
+                    ? "只读预览网格尚未就绪或已到图层边界" : "只读浏览仅开放已就绪网格的图层查看";
+            return ui.canvas.disabledReason(control);
+        }
+        if (ui.library.browsePreviewActive()) return "当前为只读蓝图库预览，此操作不开放";
+        if (!commandContextAvailable()) return "先完成当前窗口或任务，再返回编辑画布";
         HologramState.Cell cell = ui.session.selectedCell();
         boolean editable = ui.session.editable();
         return switch (name) {
-            case "resetView", "frontView", "rightView", "topView", "allLayers", "layerDown", "layerUp", "cameraLeft", "cameraRight", "cameraForward", "cameraBack", "air", "floatingTools", "shortcuts", "library" -> "";
+            case "frontView", "rightView", "topView", "cameraLeft", "cameraRight", "cameraForward", "cameraBack", "air", "floatingTools", "shortcuts", "library" -> "";
+            case "areaSelection", "clearWorkspace" -> editable ? "" : ui.session.editingReason();
+            case "networkBindings" -> !editable ? ui.session.editingReason()
+                : ui.bindings.networkGroups().tagCount() > 0 ? "" : "当前蓝图没有已登记的量子类群";
+            case "aeMarking" -> ui.ae.canOpenAePreview() && !ui.canvas.localPlanBlockedControl(179)
+                ? "" : ui.canvas.disabledReason(179);
             case "selectAll" -> ui.session.state().cells.isEmpty() ? "当前没有可选择的格" : "";
             case "sameType", "sameTypeAdd", "clearSelection" -> cell == null ? "先选择一个目标格" : "";
             case "moveHandles" -> ui.preview.canMoveSelection() ? "" : ui.preview.moveHandleReason();
@@ -343,7 +392,6 @@ final class HologramEditorCommands {
                     .selectRelated(ui.session.state(), "sameTypeAdd".equals(name));
                 syncSelection();
             }
-            case "resetView" -> ui.preview.resetCamera();
             case "frontView" -> {
                 ui.preview.yaw(ui.preview.frontCameraYaw() - Math.PI / 4);
                 ui.preview.pitch(0);
@@ -357,6 +405,7 @@ final class HologramEditorCommands {
                 ui.preview.pitch(Math.PI / 2);
             }
             case "floatingTools" -> ui.tools.toggleFloating();
+            case "viewWorkspace" -> ui.tools.openViewWorkspace();
             case "air", "cameraLeft", "cameraRight", "cameraForward", "cameraBack" -> { /* held gesture */ }
             default -> {
                 if (command.control >= 0) ui.router.activate(command.control);

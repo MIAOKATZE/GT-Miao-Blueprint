@@ -350,8 +350,100 @@ final class HologramUiLibrary {
             } else ui.canvas
                 .button(HologramEditorLibrarySidebar.TOGGLE_CONTROL, 452, 34, 18, 18, "▸", true, localX, localY);
         }
-        ui.library.drawBlueprintWorkbench(mx, my);
     }
+
+    // Presentation-only adapters for the persistent native dock. All actions
+    // still pass through the original router, discard proposal and RPC owners.
+    boolean nativeDedicated() { return dedicatedLibrary(); }
+
+    private void showNativeDockPage(int page) {
+        if (ui.shell.built()) ui.shell.selectDockPage(page);
+    }
+
+    NBTTagList nativeRows() {
+        return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.rows(publicLibrary)
+            : ui.session.state().data.getTagList("presets", 10);
+    }
+
+    void nativeBindRow(int slot, NBTTagCompound row) {
+        int id = 14000 + slot;
+        if (row == null || row.getString("id").isEmpty()) visibleLibraryRows.remove(id);
+        else visibleLibraryRows.put(id, (NBTTagCompound) row.copy());
+    }
+
+    boolean nativeIdle() {
+        return ui.session.editable() && !HologramBackgroundTasks.busy()
+            && (!dedicatedLibrary() || !HologramLibraryClient.INSTANCE.busy());
+    }
+
+    boolean nativeSelected(NBTTagCompound row) {
+        String selected = overwriteMode ? overwriteTarget : dedicatedLibrary()
+            ? HologramLibraryClient.INSTANCE.selected(publicLibrary) : selectedServerPresetId();
+        return !row.getString("id").isEmpty() && row.getString("id").equals(selected);
+    }
+
+    NBTTagCompound nativeSelectedRow() {
+        NBTTagList rows = nativeRows();
+        String selected = dedicatedLibrary() ? HologramLibraryClient.INSTANCE.selected(publicLibrary)
+            : selectedServerPresetId();
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            if (selected.equals(row.getString("id"))) return (NBTTagCompound) row.copy();
+        }
+        return new NBTTagCompound();
+    }
+
+    void nativeRefreshCatalog() {
+        if (ui.session.isTutorial() || !nativeIdle()) return;
+        if (dedicatedLibrary() && publicLibrary) HologramLibraryClient.INSTANCE.refreshServer(nativeServerPage());
+        else ui.router.activate(dedicatedLibrary() ? 202 : 303);
+    }
+
+    boolean nativeCanSave() {
+        return !ui.session.isTutorial() && !browsePreviewActive() && nativeIdle()
+            && ui.processing.processingReady() && !ui.session.state().data.getBoolean("settingsOnly")
+            && !ui.session.state().cells.isEmpty();
+    }
+
+    boolean nativeAdmin() {
+        return dedicatedLibrary() && HologramLibraryClient.INSTANCE.config().getBoolean("admin");
+    }
+
+    boolean nativeCanUpgrade() {
+        return !ui.session.isTutorial() && (!dedicatedLibrary() || !publicLibrary || nativeAdmin())
+            && upgradeStatus() > 0 && !HologramLibraryClient.INSTANCE.busy()
+            && !HologramBackgroundTasks.busy() && ui.session.pendingSequence() < 0;
+    }
+
+    int nativeServerPage() { return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.page() : 0; }
+    int nativeServerPages() { return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.pages() : 1; }
+
+    String nativeStatus() {
+        if (ui.session.isTutorial()) return "独立教学示例，不连接真实蓝图库";
+        String status = HologramLibraryClient.INSTANCE.status();
+        return status.isEmpty() ? blueprintSaveState() : status;
+    }
+
+    String nativeReviewTitle() {
+        return ui.processing.processingPresetSaveReview() ? "保存流程预设"
+            : overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动";
+    }
+
+    String nativeReviewBody() {
+        return overwriteReview ? "将以当前蓝图替换：" + overwriteName
+            : deferredLibraryAction == 299 ? "放弃当前草稿及未保存改动，返回蓝图库。已保存文件保留。"
+                : "继续将放弃未保存改动并切换蓝图；取消返回原稿。";
+    }
+
+    String nativeReviewTarget() {
+        if (overwriteReview) return "目标：" + overwriteTarget;
+        if (!deferredLibraryTargetName.isEmpty()) return "将切换到：" + deferredLibraryTargetName;
+        return sourceSwitchProposal == null ? "可先取消并保存当前稿。"
+            : "将导入：" + ("openController".equals(sourceSwitchProposal.getString("op")) ? "新控制器结构"
+                : "importArea".equals(sourceSwitchProposal.getString("op")) ? "新的框选区域" : "所选蓝图");
+    }
+
+    String nativeDeleteName() { return deletePresetName; }
 
     private void drawLibrarySource(int mx, int my) {
         if (ui.session.isTutorial()) {
@@ -1376,10 +1468,12 @@ final class HologramUiLibrary {
                 case 148, 131:
                     blueprintTab = libraryDrawer = false;
                     if (presetNameField != null) presetNameField.setFocused(false);
+                    showNativeDockPage(0);
                     return true;
                 case 149, 130:
                     blueprintTab = libraryDrawer = true;
                     sidebar.expanded(true);
+                    showNativeDockPage(2);
                     return true;
                 case 139:
                     sendPresetSwitch("editPreset", selectedServerPresetId(), false);
@@ -1427,6 +1521,7 @@ final class HologramUiLibrary {
                 ui.memory.rememberGuidance();
                 this.presetNameField.setFocused(false);
                 ui.memory.rememberUi();
+                showNativeDockPage(0);
                 return true;
             case 149:
                 this.blueprintTab = true;
@@ -1434,6 +1529,7 @@ final class HologramUiLibrary {
                 sidebar.expanded(true);
                 refreshLibrary();
                 ui.memory.rememberUi();
+                showNativeDockPage(2);
                 return true;
             case 159:
             case 161:
@@ -1455,12 +1551,14 @@ final class HologramUiLibrary {
                 ui.config.resetReview(false);
                 if (ui.session.state().data.getBoolean("virtual") && this.presetNameField.getText()
                     .isEmpty()) this.presetNameField.setText(ui.session.state().data.getString("virtualPresetName"));
+                showNativeDockPage(2);
                 return true;
             case 131:
                 if (ui.session.state().data.getBoolean("presetBrowseForPlacement"))
                     ui.session.send("dismissPresetBrowse", null, false);
                 this.libraryDrawer = ui.config.resetReview(false);
                 this.presetNameField.setFocused(false);
+                showNativeDockPage(0);
                 return true;
             case 175:
                 if (!ui.session.editable() || !ui.library.selectedPresetExists()) return true;

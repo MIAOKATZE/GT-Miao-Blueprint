@@ -444,6 +444,15 @@ final class HologramUiAnnotations {
         return this.annotationMarkers;
     }
 
+    /** Presentation cache shared by the native viewport overlay; collecting never changes session data. */
+    List<HologramAnnotationMarkers.Marker> currentMarkers() {
+        if (annotationState != ui.session.state()) {
+            annotationState = ui.session.state();
+            annotationMarkers = HologramAnnotationMarkers.collect(annotationState);
+        }
+        return annotationMarkers;
+    }
+
     String pinnedAnnotation() {
         return this.pinnedAnnotation;
     }

@@ -38,6 +38,8 @@ final class HologramUiPreview {
 
     private int hovered = -1;
 
+    int hoveredCellIndex() { return hovered; }
+
     private final HologramEditQueue editQueue = new HologramEditQueue();
 
     private final HologramSelection selection = new HologramSelection();
@@ -128,7 +130,7 @@ final class HologramUiPreview {
     private void applyViewportScissor() {
         ViewportCoordinates source = ui.canvas.viewport();
         double scale = ui.canvas.scale();
-        ViewportCoordinates gui = new ViewportCoordinates(
+        ViewportCoordinates gui = ui.canvas.nativeScene() ? ui.canvas.nativeGuiViewport() : new ViewportCoordinates(
             ui.canvas.originX() + source.x() * scale,
             ui.canvas.originY() + source.y() * scale,
             source.width() * scale,
@@ -139,6 +141,60 @@ final class HologramUiPreview {
             ui.host.minecraft().displayWidth,
             ui.host.minecraft().displayHeight);
         GL11.glScissor(framebuffer.left(), framebuffer.bottom(), framebuffer.width(), framebuffer.height());
+    }
+
+    /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
+    void drawNativeScene(int mx,int my) {
+        if(ui.library.browsePreviewActive()) { drawBrowsePreview(mx,my); return; }
+        HologramRenderer.selection=selection;
+        HologramRenderer.moveOffset=gizmo.offset();
+        HologramRenderer.showEmptyCells=inventory || ui.position.positionDrawer() || airSelectionHeld();
+        HologramRenderer.projectionLayer=allLayers ? Integer.MAX_VALUE : layer;
+        HologramRenderer.selectedStructureId=ui.config.selectedStructureId();
+        drawRect(0,0,viewportWidth(),previewHeight(),0xff0c1e28);
+        GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        applyViewportScissor();
+        try {
+            hovered=HologramRenderer.preview(ui.session.state(),0,0,viewportWidth(),previewHeight(),yaw,pitch,zoom,
+                camera.x,camera.z,allLayers?Integer.MAX_VALUE:layer,view,selected,mx,my,-1);
+            ui.textBoxes.draw();
+            drawEmptyVoxelPreview(mx,my);
+            if(moveHandles && canMoveSelection() && previewInteractive()) drawGizmo(mx,my);
+        } finally { GL11.glPopAttrib(); }
+    }
+
+    void scrollNativeScene(int wheel) {
+        if(ui.library.browsePreviewActive()) browseZoom=Math.max(.25,Math.min(4,browseZoom*(wheel>0?1.1:1/1.1)));
+        else if(ui.shell.sceneActive()) zoom=Math.max(.25,Math.min(4,zoom*(wheel>0?1.1:1/1.1)));
+    }
+
+    boolean viewControlEnabled(int id) {
+        if (ui.library.browsePreviewActive()) {
+            if (!browseMeshInteractive()) return false;
+            return id == 11 || id == 12 && browseLayer > browseState.minY
+                || id == 13 && browseLayer < browseState.maxY;
+        }
+        return switch (id) {
+            case 10, 11, 14, 15 -> true;
+            case 12 -> layer > ui.session.state().minY;
+            case 13 -> layer < ui.session.state().maxY;
+            default -> false;
+        };
+    }
+
+    String viewControlLabel(int id) {
+        boolean browse = ui.library.browsePreviewActive();
+        return switch (id) {
+            case 10 -> new String[] { "\u76ee\u6807", "\u73b0\u573a", "\u5dee\u5206" }[view];
+            case 11 -> (browse ? browseAllLayers : allLayers) ? "\u5168\u90e8\u5c42"
+                : "\u5c42 " + (browse ? browseLayer : layer);
+            case 12 -> "\u4e0a\u4e00\u5c42";
+            case 13 -> "\u4e0b\u4e00\u5c42";
+            case 14 -> "\u590d\u4f4d\u89c6\u89d2";
+            case 15 -> "\u4e16\u754c\u6295\u5f71 " + (HologramClient.worldPreview ? "\u2713" : "\u00d7");
+            default -> "";
+        };
     }
 
     void drawPreview(int mx, int my) {
@@ -390,7 +446,7 @@ final class HologramUiPreview {
 
     int[] emptyVoxelAt(int mx, int my) {
         if (!ui.canvas.inViewport(mx, my) || ui.preview.previewBlockedAt(mx, my)) return null;
-        for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) return null;
+        if(!ui.canvas.nativeScene()) for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) return null;
         HologramState.Cell cell = ui.session.selectedCell();
         int planeY = !this.allLayers ? ui.session.state().data.getInteger("y") + this.layer
             : cell == null
@@ -751,6 +807,7 @@ final class HologramUiPreview {
     }
 
     boolean previewBlockedAt(int x, int y) {
+        if(ui.canvas.nativeScene()) return !ui.shell.sceneActive() && !ui.library.browsePreviewActive();
         if (ui.tools.blocksViewport(x, y)) return true;
         if (ui.library.libraryDrawer()) return ui.library.sidebarContains(x, y);
         if (!ui.annotations.pinnedAnnotation()
@@ -1104,7 +1161,7 @@ final class HologramUiPreview {
                     return true;
                 }
             }
-            for (int i = ui.canvas.controls()
+            if(!ui.canvas.nativeScene()) for (int i = ui.canvas.controls()
                 .size() - 1; i >= 0; i--) {
                 Control c = ui.canvas.controls()
                     .get(i);

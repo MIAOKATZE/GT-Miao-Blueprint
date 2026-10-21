@@ -1,16 +1,21 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import net.minecraft.client.gui.Gui;
 import net.minecraft.nbt.NBTTagCompound;
 
-import org.lwjgl.opengl.GL11;
+import com.cleanroommc.modularui.api.drawable.IDrawable;
+import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.widgets.Dialog;
+import com.cleanroommc.modularui.widgets.ItemDisplayWidget;
+import com.cleanroommc.modularui.widgets.ListWidget;
+import com.cleanroommc.modularui.widgets.layout.Flow;
 
-/** Passive teaching view of the production material-review model and its 632 x 446 layout. */
+/** Passive native review of the same precise quote model used by the production material dialog. */
 final class HologramEditorMaterialLesson {
 
     private final HologramMaterialReview materials = new HologramMaterialReview();
     private NBTTagCompound data;
-    private double left, top, scale;
+    private ModularPanel panel;
 
     void show(HologramState source) {
         data = (NBTTagCompound) source.data.copy();
@@ -22,90 +27,91 @@ final class HologramEditorMaterialLesson {
         materials.update(data);
     }
 
-    boolean visible() {
-        return data != null;
-    }
+    boolean visible() { return data != null; }
 
     void close() {
         data = null;
+        if (panel != null) panel.closeIfOpen();
+        panel = null;
+    }
+
+    ModularPanel build(HologramUiModules ui) {
+        if (panel != null) return panel;
+        int width = Math.max(260, Math.min(600, ui.host.screenWidth() - 24));
+        int height = Math.max(180, Math.min(390, ui.host.screenHeight() - 140));
+        panel = new Dialog<Void>("gtmb_tutorial_materials").setDisablePanelsBelow(false)
+            .setCloseOnOutOfBoundsClick(false).size(width, height).background(HologramEditorNativeTheme.PANEL);
+        Flow column = Flow.col().sizeRel(1f).padding(8).childPadding(5).name("materials.content");
+        column.child(HologramEditorNativeTheme.label(() -> "蓝图放置预检 · 教学示例", HologramEditorNativeTheme.TITLE)
+            .widthRel(1f).height(17).name("materials.title"));
+        ListWidget<IWidget, ?> body = new ListWidget<>().widthRel(1f).expanded().name("materials.rows")
+            .background(IDrawable.NONE).disableThemeBackground(true);
+        body.child(HologramEditorNativeTheme.label(() -> data == null ? "" : "整图 · 示例锁定位置 "
+            + data.getInteger("x") + ", " + data.getInteger("y") + ", " + data.getInteger("z"))
+            .widthRel(1f).height(17).name("materials.position"));
+        body.child(HologramEditorNativeTheme.label(() -> "示例库存来自打开时快照；本课不执行实时库存校验。",
+            HologramEditorNativeTheme.MUTED).widthRel(1f).height(24));
+        Flow header = Flow.row().widthRel(1f).height(17).childPadding(5);
+        header.child(HologramEditorNativeTheme.label(() -> "材料 / 精确 NBT").expanded().height(17));
+        for (String name : new String[] { "需求", "已有", "缺失" })
+            header.child(HologramEditorNativeTheme.label(() -> name).width(54).height(17));
+        body.child(header);
+        for (int i = 0; i < Math.min(6, materials.size()); i++) body.child(materialRow(i));
+        if (materials.size() == 0)
+            body.child(HologramEditorNativeTheme.label(() -> "当前快照尚无精确清单；未回传数量不表示零库存。")
+                .widthRel(1f).height(34));
+        body.child(HologramEditorNativeTheme.label(() -> materials.size() > 6
+            ? "共 " + materials.size() + " 项，本示例展示前六项；生产窗口可查看全部。"
+            : materials.size() + " 项精确条目，配置材料与设备分别核算。", HologramEditorNativeTheme.MUTED)
+            .widthRel(1f).height(24));
+        body.child(HologramEditorNativeTheme.label(() -> {
+            String cache = data == null ? "" : HologramPlacementConfirmation.cacheSummary(data);
+            return cache.isEmpty() ? "设备缓存按其真实能力与清单核算。" : cache;
+        }, HologramEditorNativeTheme.MUTED).widthRel(1f).height(23));
+        body.child(options(new String[] { "本次 NBT", "量子网络", "AE 补齐缺料", "装饰抵用券" }, "materials.options.primary"));
+        body.child(options(new String[] { "去标识", "清障", "校验详情", "刷新材料" }, "materials.options.secondary"));
+        column.child(body);
+        column.child(Flow.row().widthRel(1f).height(20).childPadding(6)
+            .child(HologramEditorNativeTheme.button(() -> "取消放置", () -> {}).width(78).height(20).name("materials.cancel"))
+            .child(HologramEditorNativeTheme.primaryButton(() -> "最终确认 · 仅示范", () -> {})
+                .expanded().height(20).name("materials.confirm")));
+        panel.child(column);
+        ui.shell.registerTarget("materials", panel);
+        return panel;
+    }
+
+    private IWidget materialRow(int index) {
+        HologramMaterialReview.Row row = materials.row(index);
+        Flow result = Flow.row().widthRel(1f).height(34).childPadding(5).name("materials.row." + index);
+        result.child(new ItemDisplayWidget().item(row.item).size(18).name("materials.item." + index));
+        result.child(Flow.col().expanded().coverChildrenHeight().childPadding(1)
+            .child(HologramEditorNativeTheme.label(() -> row.name).widthRel(1f).height(16))
+            .child(HologramEditorNativeTheme.label(() -> row.identity() + (row.tagged ? " · 精确 NBT" : ""),
+                HologramEditorNativeTheme.MUTED).widthRel(1f).height(14)));
+        result.child(HologramEditorNativeTheme.label(() -> row.required).width(54).height(16));
+        result.child(HologramEditorNativeTheme.label(() -> row.available).width(54).height(16));
+        result.child(HologramEditorNativeTheme.label(() -> row.missing,
+            row.shortage ? HologramEditorTheme.ERROR : HologramEditorNativeTheme.TEXT).width(54).height(16));
+        result.tooltipBuilder(t -> {
+            t.addLine(row.name);
+            t.addLine(row.identity());
+            t.addLine("需求 " + row.required + " / 已有 " + row.available + " / 缺失 " + row.missing + " " + row.unit);
+        });
+        return result;
+    }
+
+    private static IWidget options(String[] labels, String name) {
+        Flow result = Flow.row().widthRel(1f).height(20).childPadding(4).name(name);
+        for (String label : labels)
+            result.child(HologramEditorNativeTheme.button(() -> label, () -> {}).expanded().height(20));
+        return result;
     }
 
     int[] bounds(int width, int height) {
-        scale = Math.max(.25, Math.min(1, Math.min((width - 30) / 632d, (height - 168) / 446d)));
-        left = (width - 632 * scale) / 2;
-        top = Math.max(42, (height - 138 - 446 * scale) / 2);
-        return new int[] { (int) left, (int) top, (int) Math.ceil(632 * scale), (int) Math.ceil(446 * scale) };
+        return panel == null || !panel.isValid() ? null : new int[] {
+            panel.getArea().x, panel.getArea().y, panel.getArea().width, panel.getArea().height };
     }
 
-    void draw(HologramUiModules ui) {
-        if (data == null) return;
-        bounds(
-            ui.canvas.layout()
-                .width(),
-            ui.canvas.layout()
-                .height());
-        GL11.glPushMatrix();
-        try {
-            GL11.glTranslated(left, top, 0);
-            GL11.glScaled(scale, scale, 1);
-            ui.canvas.skin("panel", 0, 0, 632, 446);
-            ui.canvas.text("蓝图放置预检 · 隔离教学示例", 14, 14, 604, HologramEditorTheme.TITLE);
-            ui.canvas.text(
-                "整图范围 · 示例锁定位置 " + data.getInteger("x") + ", " + data.getInteger("y") + ", " + data.getInteger("z"),
-                14,
-                38,
-                604,
-                HologramEditorTheme.TEXT);
-            ui.canvas.text("示例库存：进入教程时快照，仅用于说明；教程未校验背包、ME 或世界位置。", 14, 55, 604, HologramEditorTheme.MUTED);
-            ui.canvas.text("材料 / 精确 NBT 条目", 49, 77, 220, HologramEditorTheme.TITLE);
-            ui.canvas.text("需求", 277, 77, 90, HologramEditorTheme.TITLE);
-            ui.canvas.text("已有", 391, 77, 90, HologramEditorTheme.TITLE);
-            ui.canvas.text("缺失", 505, 77, 90, HologramEditorTheme.ERROR);
-            Gui.drawRect(14, 96, 618, 294, 0x492e2318);
-            for (int i = 0; i < Math.min(4, materials.size()); i++) {
-                HologramMaterialReview.Row row = materials.row(i);
-                int y = 101 + i * 44;
-                Gui.drawRect(21, y, 605, y + 41, (i & 1) == 0 ? 0x31f3d4a0 : 0x1d624326);
-                if (row.item != null) ui.canvas.drawItem(row.item, 28, y + 5);
-                ui.canvas.text(row.name, 49, y + 4, 212, HologramEditorTheme.TEXT);
-                ui.canvas
-                    .text(row.identity() + (row.tagged ? " · 精确 NBT" : ""), 49, y + 20, 212, HologramEditorTheme.MUTED);
-                ui.canvas.text(row.required, 277, y + 13, 107, HologramEditorTheme.TEXT);
-                ui.canvas.text(row.available, 391, y + 13, 107, HologramEditorTheme.TEXT);
-                ui.canvas.text(
-                    row.missing,
-                    505,
-                    y + 13,
-                    100,
-                    row.shortage ? HologramEditorTheme.ERROR : HologramEditorTheme.PAPER_NEXT);
-            }
-            if (materials.size() == 0) {
-                ui.canvas.text("当前示例快照尚无精确材料清单", 29, 121, 560, HologramEditorTheme.TEXT);
-                ui.canvas.text("真实材料清单由服务端提供；未回传数量不记作零库存。", 29, 145, 560, HologramEditorTheme.MUTED);
-            }
-            ui.canvas.text(materials.size() + " 项精确材料 · 生产窗口可滚动逐项查看身份与完整数量", 14, 299, 604, HologramEditorTheme.TEXT);
-            String cache = HologramPlacementConfirmation.cacheSummary(data);
-            ui.canvas.text(cache.isEmpty() ? "设备缓存与配置材料按真实清单分别核算" : cache, 14, 316, 604, HologramEditorTheme.MUTED);
-            button(ui, 14, 340, 92, "本次 NBT", false);
-            button(ui, 112, 340, 116, "量子网络绑定", false);
-            button(ui, 234, 340, 160, "AE 补齐本次缺料", false);
-            button(ui, 400, 340, 218, "猫猫装饰抵用券", false);
-            button(ui, 14, 369, 102, "去标识设置", false);
-            button(ui, 122, 369, 102, "移除阻塞物", false);
-            button(ui, 230, 369, 102, "数据校验详情", false);
-            button(ui, 338, 369, 132, "刷新材料", false);
-            button(ui, 476, 369, 142, "返回世界", false);
-            button(ui, 14, 402, 160, "取消放置", false);
-            button(ui, 184, 402, 434, "最终确认 · 此处仅演示，不执行施工", true);
-        } finally {
-            GL11.glPopMatrix();
-        }
-    }
-
-    private static void button(HologramUiModules ui, int x, int y, int width, String text, boolean emphasis) {
-        HologramEditorTheme.button(true, false, false)
-            .draw(x, y, width, 23);
-        ui.canvas.text(text, x + 5, y + 7, width - 10, HologramEditorTheme.BUTTON_TEXT);
-        if (emphasis) HologramEditorTheme.drawGuidanceFrame(x, y, width, 23, HologramUiAccent.NEXT, true);
-    }
+    /** The retired canvas no longer paints a second imitation of this native panel. */
+    void draw(HologramUiModules ui) {}
 }

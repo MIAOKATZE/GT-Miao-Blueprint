@@ -14,8 +14,8 @@ import org.lwjgl.opengl.GL14;
 final class HologramEditorTutorialBlur {
 
     private static int texture, textureWidth, textureHeight;
-    private static final float SAMPLE_ALPHA = .14f;
-    private static final float PHYSICAL_RADIUS = 2f;
+    private static final float SAMPLE_ALPHA = .035f;
+    private static final float PHYSICAL_RADIUS = .5f;
 
     private HologramEditorTutorialBlur() {}
 
@@ -64,8 +64,8 @@ final class HologramEditorTutorialBlur {
             GL14.glBlendEquation(GL14.GL_FUNC_ADD);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glColorMask(true, true, true, true);
-            // Keep more than half the original image: a small two-physical-pixel blur, with a quiet warm tint.
-            GL11.glColor4f(.96f, .95f, .93f, SAMPLE_ALPHA);
+            // Retain 86.7% of the original bitmap strokes; the guide adds its separate, light neutral scrim.
+            GL11.glColor4f(1, 1, 1, SAMPLE_ALPHA);
             float du = PHYSICAL_RADIUS / physicalWidth, dv = PHYSICAL_RADIUS / physicalHeight;
             sample(logicalWidth, logicalHeight, left, top, right, bottom, du, 0);
             sample(logicalWidth, logicalHeight, left, top, right, bottom, -du, 0);
@@ -112,7 +112,9 @@ final class HologramEditorTutorialBlur {
 
     /** Called when the active tutorial closes, on the render thread with its normal GL context current. */
     static void dispose() {
-        if (texture != 0) GL11.glDeleteTextures(texture);
+        int closingTexture = texture;
+        // Relinquish ownership first, so a failed GL delete never leaves a stale reusable handle.
         texture = textureWidth = textureHeight = 0;
+        if (closingTexture != 0) GL11.glDeleteTextures(closingTexture);
     }
 }

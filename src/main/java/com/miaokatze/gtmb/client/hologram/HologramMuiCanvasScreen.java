@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +27,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         .background(IDrawable.NONE);
     private final Map<Integer, NativeButton> buttons = new HashMap<>();
     private List<HologramMuiTextField> fields = new ArrayList<>();
+    private final Map<Object,List<HologramMuiTextField>> fieldGraphs = new IdentityHashMap<>();
+    private ParentWidget<?> fieldMount;
     private List<HologramMuiTextField> suspendedFields;
     private HologramMuiTextField suspendedFocus;
     private int canvasX, canvasY;
@@ -42,11 +45,14 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
 
     @Override
     protected final void buildPanel() {
+        if (buildNativePanel()) return;
         panel().child(
             new SceneWidget().sizeRel(1f)
                 .background(IDrawable.NONE));
         panel().child(controls);
     }
+
+    protected boolean buildNativePanel() { return false; }
 
     protected abstract void renderScene(int mouseX, int mouseY, float ticks);
 
@@ -106,13 +112,56 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     }
 
     final void registerField(HologramMuiTextField field) {
-        fields.removeIf(previous -> {
-            if (!previous.sameBounds(field)) return false;
-            controls.remove(previous.widget());
+        // Native editor graphs keep unclaimed adapters pending until their unique page/dialog is built.
+        if (!(this instanceof HologramScreen)) fields.removeIf(previous -> {
+            if (!previous.sameBounds(field) || previous.nativeOwned()) return false;
+            if (previous.widget().isValid()) controls.remove(previous.widget());
             return true;
         });
         fields.add(field);
-        controls.child(field.widget());
+        if (!(this instanceof HologramScreen)) controls.child(field.widget());
+    }
+
+    final com.cleanroommc.modularui.widgets.textfield.TextFieldWidget adoptNativeField(HologramMuiTextField field) {
+        return field.claimNative();
+    }
+
+    final FieldGraph fieldGraph(Object graph) { return new FieldGraph(graph); }
+
+    final void releaseFieldGraph(Object graph) {
+        List<HologramMuiTextField> released = fieldGraphs.remove(graph);
+        if (fields == released) fields = new ArrayList<>();
+    }
+
+    final class FieldGraph implements AutoCloseable {
+        private final List<HologramMuiTextField> previous;
+        FieldGraph(Object graph) {
+            previous=fields;
+            fields=fieldGraphs.computeIfAbsent(graph, ignored -> new ArrayList<>());
+        }
+        @Override public void close() { fields=previous; }
+    }
+
+    final LegacyFieldMount legacyFieldMount(ParentWidget<?> mount) { return new LegacyFieldMount(mount); }
+
+    final class LegacyFieldMount implements AutoCloseable {
+        private final ParentWidget<?> previous;
+        private final ParentWidget<?> mount;
+        private final long frame;
+        LegacyFieldMount(ParentWidget<?> mount) {
+            previous=fieldMount;
+            this.mount=mount;
+            fieldMount=mount;
+            frame=++nativeFrame;
+        }
+        @Override public void close() {
+            for(HologramMuiTextField field:fields) if(field.legacyParent()==mount) field.finishFrame(frame);
+            fieldMount=previous;
+        }
+    }
+
+    final void mountLegacyField(HologramMuiTextField field, ParentWidget<?> mount) {
+        field.claimLegacy(mount);
     }
 
     final void nativeVoucherRibbon(int id, boolean visible) {
@@ -134,22 +183,41 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     final void beginTutorialFields() {
         if (suspendedFields != null) return;
         suspendedFields = fields;
+        fields = new ArrayList<>();
         for (HologramMuiTextField field : suspendedFields) {
             if (field.isFocused()) suspendedFocus = field;
             field.setFocused(false);
             field.widget()
                 .setEnabled(false);
         }
-        fields = new ArrayList<>();
     }
 
     final void endTutorialFields() {
         if (suspendedFields == null) return;
-        for (HologramMuiTextField field : fields) controls.remove(field.widget());
+        List<HologramMuiTextField> tutorialFields = fields;
+        HologramMuiTextField restoreFocus = suspendedFocus;
+        // Restore namespace ownership before disposal callbacks can throw or reenter the screen.
         fields = suspendedFields;
         suspendedFields = null;
-        if (suspendedFocus != null) suspendedFocus.setFocused(true);
         suspendedFocus = null;
+        try {
+            for (HologramMuiTextField field : tutorialFields) {
+                try {
+                    field.setFocused(false);
+                    field.widget().setEnabled(false);
+                } catch (RuntimeException failure) {
+                    com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Could not deactivate a tutorial field", failure);
+                } finally {
+                    try {
+                        controls.remove(field.widget());
+                    } catch (RuntimeException failure) {
+                        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Could not dispose a tutorial field", failure);
+                    }
+                }
+            }
+        } finally {
+            if (restoreFocus != null) restoreFocus.setFocused(true);
+        }
     }
 
     final void paintTutorialFields() {
@@ -164,10 +232,12 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     }
 
     final void clearNativeFieldVisibility() {
-        for (HologramMuiTextField field : fields) field.hideForOverlay();
+        for (HologramMuiTextField field : fields) if (!field.nativeOwned()) field.hideForOverlay();
     }
 
     final void showField(HologramMuiTextField field) {
+        if (field.nativeOwned()) return;
+        if (fieldMount != null) mountLegacyField(field,fieldMount);
         field.show(nativeFrame, fieldTransform);
     }
 
