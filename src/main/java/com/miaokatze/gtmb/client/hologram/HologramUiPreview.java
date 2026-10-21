@@ -19,6 +19,7 @@ import org.lwjgl.opengl.GL11;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
+import com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates;
 
 /** Internal preview workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiPreview {
@@ -55,7 +56,7 @@ final class HologramUiPreview {
 
     private double yaw = Math.PI / 4;
 
-    private double pitch = Math.PI / 6;
+    private double pitch = Math.atan(1 / Math.sqrt(2));
 
     private double zoom = 1;
 
@@ -96,14 +97,48 @@ final class HologramUiPreview {
     private long pendingSelectionSequence = -1;
     private HologramState browseState;
     private long browseCameraEpoch = Long.MIN_VALUE;
-    private double browseYaw = Math.PI / 4, browsePitch = Math.PI / 6, browseZoom = 1;
+    private double browseYaw = Math.PI / 4, browsePitch = Math.atan(1 / Math.sqrt(2)), browseZoom = 1;
     private int browseLayer;
     private boolean browseAllLayers = true, browseDragging;
 
     int previewHeight() {
-        return HologramScreenLayout.previewHeight(
-            ui.library.libraryDrawer(),
-            !ui.library.browsePreviewActive() && HologramGuidance.authorWorkspace(ui.session.state()));
+        return (int) Math.floor(
+            ui.canvas.viewport()
+                .height());
+    }
+
+    private int viewportX() {
+        return (int) Math.floor(
+            ui.canvas.viewport()
+                .x());
+    }
+
+    private int viewportY() {
+        return (int) Math.floor(
+            ui.canvas.viewport()
+                .y());
+    }
+
+    private int viewportWidth() {
+        return (int) Math.floor(
+            ui.canvas.viewport()
+                .width());
+    }
+
+    private void applyViewportScissor() {
+        ViewportCoordinates source = ui.canvas.viewport();
+        double scale = ui.canvas.scale();
+        ViewportCoordinates gui = new ViewportCoordinates(
+            ui.canvas.originX() + source.x() * scale,
+            ui.canvas.originY() + source.y() * scale,
+            source.width() * scale,
+            source.height() * scale);
+        ViewportCoordinates.FramebufferRect framebuffer = gui.framebufferRect(
+            ui.host.screenWidth(),
+            ui.host.screenHeight(),
+            ui.host.minecraft().displayWidth,
+            ui.host.minecraft().displayHeight);
+        GL11.glScissor(framebuffer.left(), framebuffer.bottom(), framebuffer.width(), framebuffer.height());
     }
 
     void drawPreview(int mx, int my) {
@@ -118,30 +153,16 @@ final class HologramUiPreview {
             || ui.preview.airSelectionHeld();
         HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
         HologramRenderer.selectedStructureId = ui.config.selectedStructureId();
-        drawRect(
-            HologramUiCanvas.viewportX,
-            HologramUiCanvas.viewportY,
-            HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth,
-            HologramUiCanvas.viewportY + height,
-            0xff0c1e28);
-        int factor = new net.minecraft.client.gui.ScaledResolution(
-            ui.host.minecraft(),
-            ui.host.minecraft().displayWidth,
-            ui.host.minecraft().displayHeight).getScaleFactor();
+        drawRect(viewportX(), viewportY(), viewportX() + viewportWidth(), viewportY() + height, 0xff0c1e28);
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(
-            Math.round((ui.canvas.originX() + HologramUiCanvas.viewportX * ui.canvas.scale()) * factor),
-            ui.host.minecraft().displayHeight - Math
-                .round((ui.canvas.originY() + (HologramUiCanvas.viewportY + height) * ui.canvas.scale()) * factor),
-            Math.round(HologramUiCanvas.viewportWidth * ui.canvas.scale() * factor),
-            Math.round(height * ui.canvas.scale() * factor));
+        applyViewportScissor();
         try {
             this.hovered = HologramRenderer.preview(
                 ui.session.state(),
-                HologramUiCanvas.viewportX,
-                HologramUiCanvas.viewportY,
-                HologramUiCanvas.viewportWidth,
+                viewportX(),
+                viewportY(),
+                viewportWidth(),
                 height,
                 this.yaw,
                 this.pitch,
@@ -235,11 +256,13 @@ final class HologramUiPreview {
         HologramState display = library.browsePreviewState();
         if (browseCameraEpoch != library.browsePreviewEpoch()) {
             browseCameraEpoch = library.browsePreviewEpoch();
-            browseAllLayers = true;
-            browseLayer = display == null ? 0 : display.minY;
-            browseYaw = Math.PI / 4;
-            browsePitch = Math.PI / 6;
-            browseZoom = 1;
+            if (browseState == null) {
+                browseAllLayers = allLayers;
+                browseYaw = yaw;
+                browsePitch = pitch;
+                browseZoom = zoom;
+            }
+            browseLayer = display == null ? 0 : Math.max(display.minY, Math.min(display.maxY, browseLayer));
             browseDragging = false;
         }
         if (display != browseState) {
@@ -248,7 +271,7 @@ final class HologramUiPreview {
             browseState = display;
         }
         int height = previewHeight();
-        drawRect(viewportX, viewportY, viewportX + viewportWidth, viewportY + height, 0xff0c1e28);
+        drawRect(viewportX(), viewportY(), viewportX() + viewportWidth(), viewportY() + height, 0xff0c1e28);
         HologramRenderer.selection = null;
         HologramRenderer.showEmptyCells = false;
         HologramRenderer.selectedStructureId = "";
@@ -258,30 +281,21 @@ final class HologramUiPreview {
             String status = HologramLibraryClient.INSTANCE.browsePreviewStatus();
             ui.canvas.text(
                 status.isEmpty() ? "在右侧选择蓝图以预览" : status,
-                viewportX + 12,
-                viewportY + 35,
-                viewportWidth - 24,
+                viewportX() + 12,
+                viewportY() + 35,
+                viewportWidth() - 24,
                 0xb9d5d4);
             return;
         }
-        int factor = new net.minecraft.client.gui.ScaledResolution(
-            ui.host.minecraft(),
-            ui.host.minecraft().displayWidth,
-            ui.host.minecraft().displayHeight).getScaleFactor();
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(
-            Math.round((ui.canvas.originX() + viewportX * ui.canvas.scale()) * factor),
-            ui.host.minecraft().displayHeight
-                - Math.round((ui.canvas.originY() + (viewportY + height) * ui.canvas.scale()) * factor),
-            Math.round(viewportWidth * ui.canvas.scale() * factor),
-            Math.round(height * ui.canvas.scale() * factor));
+        applyViewportScissor();
         try {
             HologramRenderer.preview(
                 display,
-                viewportX,
-                viewportY,
-                viewportWidth,
+                viewportX(),
+                viewportY(),
+                viewportWidth(),
                 height,
                 browseYaw,
                 browsePitch,
@@ -315,9 +329,9 @@ final class HologramUiPreview {
         net.minecraft.util.ResourceLocation texture = library.browsePreviewTexture();
         java.awt.image.BufferedImage image = library.browsePreviewImage();
         if (texture == null || image == null) return false;
-        double scale = Math.min((viewportWidth - 16.0) / image.getWidth(), (height - 16.0) / image.getHeight());
+        double scale = Math.min((viewportWidth() - 16.0) / image.getWidth(), (height - 16.0) / image.getHeight());
         double width = image.getWidth() * scale, imageHeight = image.getHeight() * scale;
-        double left = viewportX + (viewportWidth - width) / 2, top = viewportY + (height - imageHeight) / 2;
+        double left = viewportX() + (viewportWidth() - width) / 2, top = viewportY() + (height - imageHeight) / 2;
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_CURRENT_BIT);
         try {
             ui.host.minecraft()
@@ -449,10 +463,10 @@ final class HologramUiPreview {
         GL11.glPopAttrib();
         ui.canvas.text(
             "空气 " + p[0] + "," + p[1] + "," + p[2] + " · 偏移 " + dx + "," + dy + "," + dz + " · Alt+点击选中",
-            HologramUiCanvas.viewportX + 8,
+            viewportX() + 8,
             ui.annotations.pinnedAnnotation()
                 .isEmpty() ? 263 : 80,
-            HologramUiCanvas.viewportWidth - 16,
+            viewportWidth() - 16,
             0x9eedc1);
     }
 
@@ -737,7 +751,8 @@ final class HologramUiPreview {
     }
 
     boolean previewBlockedAt(int x, int y) {
-        if (ui.library.browsePreviewActive()) return ui.canvas.inPanel(x, y);
+        if (ui.tools.blocksViewport(x, y)) return true;
+        if (ui.library.libraryDrawer()) return ui.library.sidebarContains(x, y);
         if (!ui.annotations.pinnedAnnotation()
             .isEmpty() && ui.canvas.inViewport(x, y)
             && y >= ui.annotations.pinnedAnnotationTop()
@@ -841,7 +856,7 @@ final class HologramUiPreview {
 
     void resetCamera() {
         this.yaw = ui.preview.frontCameraYaw();
-        this.pitch = Math.PI / 6;
+        this.pitch = Math.atan(1 / Math.sqrt(2));
         this.zoom = 1;
         this.camera.reset();
         this.cameraFrame = 0;
@@ -862,8 +877,14 @@ final class HologramUiPreview {
             || this.boxSelecting
             || this.gizmo.axis() >= 0
             || (HologramKeyBindings.modifiers() & 5) != 0) return;
-        int right = (Keyboard.isKeyDown(Keyboard.KEY_D) ? 1 : 0) - (Keyboard.isKeyDown(Keyboard.KEY_A) ? 1 : 0);
-        int forward = (Keyboard.isKeyDown(Keyboard.KEY_W) ? 1 : 0) - (Keyboard.isKeyDown(Keyboard.KEY_S) ? 1 : 0);
+        int right = (ui.tools.commands()
+            .held("cameraRight") ? 1 : 0)
+            - (ui.tools.commands()
+                .held("cameraLeft") ? 1 : 0);
+        int forward = (ui.tools.commands()
+            .held("cameraForward") ? 1 : 0)
+            - (ui.tools.commands()
+                .held("cameraBack") ? 1 : 0);
         double speed = Math.max(2, HologramRenderer.previewExtent() * .6) / this.zoom;
         this.camera.move(this.yaw, (now - previous) / 1_000_000_000.0, right, forward, speed);
     }
@@ -878,13 +899,15 @@ final class HologramUiPreview {
 
     boolean sameTypeSelectionHeld() {
         return ui.diagnostics.smokeSameTypeSelection() && ui.diagnostics.captureRenderSmokeAction()
-            || Keyboard.isKeyDown(Keyboard.KEY_T);
+            || ui.tools.commands()
+                .held("sameType")
+            || ui.tools.commands()
+                .held("sameTypeAdd");
     }
 
     boolean airSelectionHeld() {
-        return ui.diagnostics.smokeAltSelection() && ui.diagnostics.captureRenderSmokeAction()
-            || Keyboard.isKeyDown(Keyboard.KEY_LMENU)
-            || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+        return ui.diagnostics.smokeAltSelection() && ui.diagnostics.captureRenderSmokeAction() || ui.tools.commands()
+            .held("air");
     }
 
     boolean controlSelectionHeld() {
@@ -1027,7 +1050,8 @@ final class HologramUiPreview {
     }
 
     boolean consumeViewportRightMouse(int mx, int my, int button) {
-        if (ui.library.browsePreviewActive()) return button == 1 && ui.canvas.inViewport(mx, my);
+        if (ui.library.browsePreviewActive())
+            return button == 1 && ui.canvas.inViewport(mx, my) && !previewBlockedAt(mx, my);
         if (button == 1 && ui.preview.previewInteractive()
             && ui.canvas.inViewport(mx, my)
             && !ui.preview.previewBlockedAt(mx, my)) {
@@ -1160,7 +1184,14 @@ final class HologramUiPreview {
     boolean consumeCameraKey(char c, int key) {
         if (!ui.router.textFieldFocused() && ui.preview.previewInteractive()
             && HologramKeyBindings.modifiers() == 0
-            && (key == Keyboard.KEY_W || key == Keyboard.KEY_A || key == Keyboard.KEY_S || key == Keyboard.KEY_D))
+            && (ui.tools.commands()
+                .matches("cameraForward", key, HologramKeyBindings.modifiers())
+                || ui.tools.commands()
+                    .matches("cameraBack", key, HologramKeyBindings.modifiers())
+                || ui.tools.commands()
+                    .matches("cameraLeft", key, HologramKeyBindings.modifiers())
+                || ui.tools.commands()
+                    .matches("cameraRight", key, HologramKeyBindings.modifiers())))
             return true;
         return false;
     }
@@ -1300,6 +1331,11 @@ final class HologramUiPreview {
         editQueue.clear();
         queuedDispatchSequence = -1;
         dragging = boxSelecting = inventoryDragging = false;
+        gizmo.cancel();
+    }
+
+    void releasePointerCapture() {
+        dragging = browseDragging = boxSelecting = inventoryDragging = false;
         gizmo.cancel();
     }
 

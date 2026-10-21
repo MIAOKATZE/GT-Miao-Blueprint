@@ -287,7 +287,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             fontRendererObj.trimStringToWidth(text, width),
             x,
             y,
-            paper ? color == 0xff9292 ? HologramMuiTheme.ERROR : HologramMuiTheme.TEXT : color);
+            HologramEditorTheme.textColor(color, !paper));
     }
 
     private void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {

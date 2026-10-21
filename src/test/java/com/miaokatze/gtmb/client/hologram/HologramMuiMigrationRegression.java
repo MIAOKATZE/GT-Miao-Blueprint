@@ -27,37 +27,39 @@ public final class HologramMuiMigrationRegression {
     public static void run() {
         semanticNativeGuidance();
         SimpleAssert.eq(
-            "gtmb:textures/gui/pocket/POCKET_C2_panel.png",
+            "gtmb:textures/gui/editor/kraft/paper.png",
             HologramMuiTheme.PANEL.location.toString(),
-            "text fields retain the existing pocket panel resource");
+            "native panels bind the editor paper surface");
         SimpleAssert.eq(
-            "gtmb:textures/gui/pocket/POCKET_C2_cloth.png",
+            "gtmb:textures/gui/editor/kraft/paper.png",
             HologramMuiTheme.CLOTH.location.toString(),
-            "panel retains the existing pocket cloth resource");
+            "the shared panel surface uses the editor paper resource");
         SimpleAssert.eq(
-            "gtmb:textures/gui/pocket/POCKET_C2_btn.png",
+            "gtmb:textures/gui/editor/kraft/button.png",
             HologramMuiTheme.BUTTON.location.toString(),
-            "buttons retain the existing pocket button resource");
+            "native button policy uses the editor pixel texture");
         SimpleAssert.eq(
-            "gtmb:textures/gui/pocket/POCKET_C2_btn_pressed.png",
+            "gtmb:textures/gui/editor/kraft/button-hover.png",
             HologramMuiTheme.PRESSED.location.toString(),
-            "hover retains the existing pocket pressed resource");
+            "the compatibility hover token uses the actual editor hover texture");
         ButtonWidget<?> button = HologramMuiTheme.button(() -> "test", 0, 0, 100, 20, () -> {});
         TextFieldWidget field = HologramMuiTheme.textField(new StringValue("draft"), 0, 0, 100, 20, 64);
         SimpleAssert.that(
-            button.getBackground() == HologramMuiTheme.BUTTON
-                && button.getHoverBackground() == HologramMuiTheme.PRESSED,
-            "actual native button backgrounds bind the shared pocket textures");
+            button.getBackground() != null && button.getHoverBackground() != null
+                && button.getBackground() != button.getHoverBackground(),
+            "actual native buttons have separate normal and hover render policies");
         SimpleAssert.that(
-            field.getBackground() == HologramMuiTheme.PANEL,
-            "actual native text field binds the shared pocket texture");
+            field.getBackground() == HologramEditorTheme.INPUT,
+            "actual native text fields bind the paper input surface");
         SimpleAssert.that(
             HologramMuiTheme.panel("test", 100, 100)
                 .getBackground() == HologramMuiTheme.CLOTH,
-            "actual native panel binds the shared pocket cloth");
+            "actual native panels bind the shared editor surface");
+        nativeButtonStates();
         String[] screens = { "HologramScreen", "HologramSettingsScreen", "HologramQuantumGroupsScreen",
             "HologramCutModeScreen", "HologramCutStorageScreen", "HologramCutConfirmScreen",
-            "HologramCutTransformScreen", "HologramCutNameScreen", "HologramAeContainerScreen" };
+            "HologramCutTransformScreen", "HologramCutNameScreen", "HologramAeContainerScreen",
+            "HologramTextEditorScreen", "HologramPictureEditorScreen" };
         try {
             Set<String> inspected = new HashSet<>();
             for (String screen : screens) {
@@ -71,15 +73,61 @@ public final class HologramMuiMigrationRegression {
             for (String type : new String[] { "HologramMuiCanvasScreen", "HologramMuiTextField", "HologramUiCanvas",
                 "HologramUiConfiguration", "HologramUiLibrary", "HologramUiAnnotations", "HologramUiNetworkBindings",
                 "HologramUiPosition", "HologramUiProcessing", "HologramUiNbtEditor" }) inspect(BASE + type, inspected);
+            SimpleAssert.that(
+                inherits(
+                    BASE + "HologramMuiTextField$NativeField",
+                    "com/cleanroommc/modularui/widgets/textfield/TextFieldWidget"),
+                "workflow draft adapters retain the actual MUI2 text editing and focus implementation");
         } catch (IOException failure) {
             throw new AssertionError("Cannot inspect actual migration classes", failure);
         }
+    }
+
+    private static void nativeButtonStates() {
+        int[] actions = { 0 };
+        boolean[] available = { true };
+        ButtonWidget<?> action = HologramMuiTheme.button(() -> "action", 0, 0, 100, 20, () -> actions[0]++)
+            .playClickSound(false);
+        action.setEnabledIf(widget -> available[0]);
+        action.onUpdate();
+        action.onMousePressed(1);
+        SimpleAssert.eq(0, actions[0], "a secondary click cannot invoke a primary native action");
+        action.onMousePressed(0);
+        SimpleAssert.eq(1, actions[0], "the actual native button invokes its bound action once");
+        available[0] = false;
+        action.onUpdate();
+        action.onMousePressed(0);
+        SimpleAssert.eq(1, actions[0], "an unavailable native action consumes input without invoking its callback");
+        SimpleAssert.that(action.isEnabled(), "unavailable actions remain visible so their explanation can be read");
+        available[0] = true;
+        action.onUpdate();
+        action.onMousePressed(0);
+        SimpleAssert.eq(2, actions[0], "availability can recover without replacing the native widget");
+        SimpleAssert.that(
+            HologramEditorTheme.button(true, false, false) == HologramEditorTheme.BUTTON,
+            "an ordinary enabled action uses its normal surface");
+        SimpleAssert.that(
+            HologramEditorTheme.button(true, false, true) == HologramEditorTheme.HOVER,
+            "an enabled action has a distinct hover surface");
+        SimpleAssert.that(
+            HologramEditorTheme.button(true, true, false) == HologramEditorTheme.PRESSED,
+            "selection remains visible without hovering");
+        SimpleAssert.that(
+            HologramEditorTheme.button(true, true, true) == HologramEditorTheme.SELECTED_HOVER,
+            "selection remains distinguishable while hovering");
+        for (boolean selected : new boolean[] { false, true })
+            for (boolean hover : new boolean[] { false, true }) SimpleAssert.that(
+                HologramEditorTheme.button(false, selected, hover) == HologramEditorTheme.DISABLED,
+                "an unavailable action cannot acquire an enabled or selected surface");
     }
 
     private static void semanticNativeGuidance() {
         int[] oldAccents = { 0xef7b7b, 0x68dded, 0x86baff, 0x80efaa };
         int[] colors = { HologramUiAccent.WARNING, HologramUiAccent.SUGGESTION, HologramUiAccent.INFORMATION,
             HologramUiAccent.NEXT };
+        int[] paperColors = { HologramEditorTheme.PAPER_WARNING, HologramEditorTheme.PAPER_SUGGESTION,
+            HologramEditorTheme.PAPER_INFORMATION, HologramEditorTheme.PAPER_NEXT };
+        Set<Integer> paperSemantics = new HashSet<>();
         for (int i = 0; i < oldAccents.length; i++) {
             SimpleAssert.eq(
                 colors[i],
@@ -88,7 +136,12 @@ public final class HologramMuiMigrationRegression {
             SimpleAssert.eq(
                 colors[i],
                 HologramUiAccent.borderColor(oldAccents[i], true),
-                "the solid frame uses the same semantic color as its label " + i);
+                "the frame retains the same semantic color source as its label " + i);
+            SimpleAssert.eq(
+                paperColors[i],
+                HologramEditorTheme.textColor(oldAccents[i], false),
+                "paper labels retain a readable version of guidance semantic " + i);
+            paperSemantics.add(paperColors[i]);
             SimpleAssert.that(
                 colors[i] != HologramMuiTheme.TITLE,
                 "highlighted actions never collapse into the ordinary orange trim");
@@ -96,12 +149,15 @@ public final class HologramMuiMigrationRegression {
                 0,
                 HologramUiAccent.borderColor(oldAccents[i], false),
                 "an unavailable action cannot advertise itself as an active next step");
+            SimpleAssert.eq(
+                HologramMuiTheme.MUTED,
+                HologramUiAccent.textColor(oldAccents[i], false),
+                "an unavailable native label cannot retain an active guidance color");
         }
-        SimpleAssert.that(
-            HologramUiAccent.BORDER_WIDTH >= 2,
-            "semantic guidance covers both pixels of the existing orange button edge");
+        SimpleAssert.eq(4, paperSemantics.size(), "warning, suggestion, information and next remain distinct on paper");
+        SimpleAssert.that(HologramUiAccent.BORDER_WIDTH >= 2, "semantic guidance covers a visible two-pixel edge");
         try {
-            int[] calls = new int[3];
+            int[] calls = new int[6];
             reader(BASE + "HologramMuiCanvasScreen$NativeButton").accept(new ClassVisitor(9 << 16) {
 
                 @Override
@@ -121,20 +177,43 @@ public final class HologramMuiMigrationRegression {
 
                 @Override
                 public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
-                    if (!n.startsWith("lambda$guidanceBackground")) return null;
+                    boolean guidance = n.startsWith("lambda$guidanceBackground");
+                    boolean nativeButton = n.startsWith("lambda$button");
+                    if (!guidance && !nativeButton) return null;
+                    return new MethodVisitor(9 << 16) {
+
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String name, String desc, boolean itf) {
+                            if (owner.equals(BASE + "HologramEditorTheme") && name.equals("drawGuidanceFrame"))
+                                calls[2]++;
+                            if (owner.equals(BASE + "HologramEditorTheme") && name.equals("button"))
+                                calls[guidance ? 3 : 4]++;
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            reader(BASE + "HologramEditorTheme").accept(new ClassVisitor(9 << 16) {
+
+                @Override
+                public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                    if (!n.equals("drawGuidanceFrame")) return null;
                     return new MethodVisitor(9 << 16) {
 
                         @Override
                         public void visitMethodInsn(int op, String owner, String name, String desc, boolean itf) {
                             if (owner.equals("com/cleanroommc/modularui/drawable/GuiDraw") && name.equals("drawRect"))
-                                calls[2]++;
+                                calls[5]++;
                         }
                     };
                 }
             }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
             SimpleAssert.eq(2, calls[0], "actual native normal and hover backgrounds both bind the semantic frame");
             SimpleAssert.eq(1, calls[1], "actual native overlay reads the semantic text color");
-            SimpleAssert.eq(4, calls[2], "actual guidance background draws all four solid frame edges");
+            SimpleAssert.eq(1, calls[2], "actual guidance backgrounds delegate to the editor pixel frame renderer");
+            SimpleAssert.eq(1, calls[3], "guidance surfaces use the enabled and hover-aware editor button policy");
+            SimpleAssert.eq(2, calls[4], "actual native normal and hover renderers both use the editor button policy");
+            SimpleAssert
+                .that(calls[5] >= 4, "the actual pixel guidance renderer retains edge drawing for all four sides");
         } catch (IOException failure) {
             throw new AssertionError("Cannot inspect native guidance rendering", failure);
         }

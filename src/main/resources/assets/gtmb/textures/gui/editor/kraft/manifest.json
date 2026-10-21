@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "version": "R3-kraft-12",
+  "origin": "Original integer code-native textures; source/build_pixel_assets.py",
+  "license": "Project AGPL-3.0; LICENSE-PROJECT.txt",
+  "filter": "nearest",
+  "mipmaps": false,
+  "textures": [
+    {
+      "id": "paper",
+      "png": "kraft/paper.png",
+      "width": 32,
+      "height": 32,
+      "slice": null,
+      "tiled": true,
+      "sha256": "80c2b88097c2befb71f1f6a7c90baa61b9f79786f696682ce27bd4a78964c331"
+    },
+    {
+      "id": "panel",
+      "png": "kraft/panel.png",
+      "width": 16,
+      "height": 16,
+      "slice": 3,
+      "tiled": false,
+      "sha256": "dfcbb23a881b7abb2a74ac9111ee76204fa084153b4d5fb0322d722a97dbc413"
+    },
+    {
+      "id": "button",
+      "png": "kraft/button.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "1338ac1c22f0b54ab85e99c201a520aa6919cd8faf88dfbffc4f9672d32a7dbb"
+    },
+    {
+      "id": "button-hover",
+      "png": "kraft/button-hover.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "60e822e7c331e3086cc78df2855512520b709f0ce65e9eabb150a71aa644a880"
+    },
+    {
+      "id": "button-pressed",
+      "png": "kraft/button-pressed.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "b55b683130b1a3535d6ccf8e74d881dd9d112baab374562de425a4b6ec0d0110"
+    },
+    {
+      "id": "button-selected-hover",
+      "png": "kraft/button-selected-hover.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "e28f380d46fa2b9971db246a5c0601925d32f2993960949ae98023a25ed7839f"
+    },
+    {
+      "id": "button-disabled",
+      "png": "kraft/button-disabled.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "1e7399d413086ba9819eb3c8950294161467046b0b6a63e0c428ee68bf7e54a4"
+    },
+    {
+      "id": "input",
+      "png": "kraft/input.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "0c7035624212e48bdf7a27b9f3bcf5c89558010b5cea86365ad38c5d87003f8e"
+    },
+    {
+      "id": "slot",
+      "png": "kraft/slot.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "318c401d3bfa24ebac2718778d0706d1a8ca8a90af45c55c931b3c1d9f6204bc"
+    },
+    {
+      "id": "scrollbar",
+      "png": "kraft/scrollbar.png",
+      "width": 12,
+      "height": 12,
+      "slice": 2,
+      "tiled": false,
+      "sha256": "0195da38d9bb8f14d189f08994ec2e2398bbd20196ea6a3cc0bc51994922576c"
+    }
+  ]
+}

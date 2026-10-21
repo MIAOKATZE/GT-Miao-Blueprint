@@ -465,14 +465,21 @@ final class HologramUiDiagnostics {
 
     int[] smokeViewportBounds() {
         HologramUiDiagnostics.requireInteractionSmoke();
-        return new int[] { HologramUiCanvas.viewportX, HologramUiCanvas.viewportY, HologramUiCanvas.viewportWidth,
-            HologramUiCanvas.viewportHeight };
+        com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates viewport = ui.canvas.viewport();
+        return new int[] { (int) Math.floor(viewport.x()), (int) Math.floor(viewport.y()),
+            (int) Math.ceil(viewport.width()), (int) Math.ceil(viewport.height()) };
     }
 
     int[] smokePanelBounds() {
         HologramUiDiagnostics.requireInteractionSmoke();
-        return new int[] { HologramScreenLayout.COMPACT_PANEL_X, HologramUiCanvas.panelY,
-            HologramScreenLayout.COMPACT_PANEL_WIDTH, HologramScreenLayout.PANEL_HEIGHT };
+        HologramEditorLayout layout = ui.canvas.layout();
+        return new int[] { (int) Math.floor(
+            layout.configuration()
+                .toScreenX(280)),
+            (int) Math.floor(
+                layout.configuration()
+                    .toScreenY(60)),
+            232, layout.collapsed() ? 18 : 254 };
     }
 
     boolean smokeKey(int key, int modifiers) {
@@ -1555,22 +1562,29 @@ final class HologramUiDiagnostics {
     String smokeLayout() {
         if (ui.canvas.controls()
             .isEmpty()) throw new IllegalStateException("Screen has not rendered controls");
-        for (Control c : ui.canvas.controls())
-            if (c.x < 0 || c.y < 0 || c.x + c.w > HologramUiCanvas.DESIGN_W || c.y + c.h > HologramUiCanvas.DESIGN_H)
-                throw new IllegalStateException("Control outside design: " + c.id);
+        for (Control c : ui.canvas.controls()) if (c.x < 0 || c.y < 0
+            || c.x + c.w > ui.canvas.layout()
+                .width()
+            || c.y + c.h > ui.canvas.layout()
+                .height())
+            throw new IllegalStateException("Control outside editor canvas: " + c.id);
         return "gui=" + ui.host.screenWidth()
             + "x"
             + ui.host.screenHeight()
             + " design="
-            + HologramUiCanvas.DESIGN_W
+            + ui.canvas.layout()
+                .width()
             + "x"
-            + HologramUiCanvas.DESIGN_H
+            + ui.canvas.layout()
+                .height()
             + " scale="
             + ui.canvas.scale()
             + " viewport="
-            + HologramUiCanvas.viewportWidth
+            + ui.canvas.viewport()
+                .width()
             + "x"
-            + HologramUiCanvas.viewportHeight
+            + ui.canvas.viewport()
+                .height()
             + " cells="
             + ui.session.state().cells.size()
             + " controls="

@@ -129,6 +129,10 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         return false;
     }
 
+    protected boolean muiScrollBefore() {
+        return false;
+    }
+
     protected void muiActivity() {}
 
     private static final class ProjectorScreen extends ModularScreen {
@@ -193,7 +197,7 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         @Override
         public boolean onMouseScroll(UpOrDown direction, int amount) {
             owner.muiActivity();
-            return super.onMouseScroll(direction, amount);
+            return owner.muiScrollBefore() || super.onMouseScroll(direction, amount);
         }
 
     }

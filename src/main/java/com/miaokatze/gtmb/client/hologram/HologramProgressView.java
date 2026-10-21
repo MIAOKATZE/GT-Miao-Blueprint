@@ -75,13 +75,18 @@ final class HologramProgressView {
     }
 
     static void draw(FontRenderer font, HologramProgress value, int x, int y, int width, int barHeight) {
+        draw(font, value, x, y, width, barHeight, true);
+    }
+
+    static void draw(FontRenderer font, HologramProgress value, int x, int y, int width, int barHeight,
+        boolean darkSurface) {
         if (value == null || width < 40) return;
         long now = System.nanoTime();
         String metric = metric(value, now);
         int metricWidth = font.getStringWidth(metric);
         String label = font.trimStringToWidth(phaseLabel(value), Math.max(0, width - metricWidth - 8));
-        font.drawString(label, x, y, 0xb9d5d4);
-        font.drawString(metric, x + width - metricWidth, y, 0xf2dca5);
+        font.drawString(label, x, y, HologramEditorTheme.textColor(0xb9d5d4, darkSurface));
+        font.drawString(metric, x + width - metricWidth, y, HologramEditorTheme.textColor(0xf2dca5, darkSurface));
         if (rendered.size() < 16) rendered.add(
             new RenderWitness(
                 value,

@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.lwjgl.opengl.GL11;
+
 import com.cleanroommc.modularui.api.UpOrDown;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.drawable.IKey;
@@ -15,6 +17,7 @@ import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
+import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Native control layer above the projector's specialized scene renderer. */
 abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
@@ -22,10 +25,13 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     private final ControlLayer controls = new ControlLayer().sizeRel(1f)
         .background(IDrawable.NONE);
     private final Map<Integer, NativeButton> buttons = new HashMap<>();
-    private final List<HologramMuiTextField> fields = new ArrayList<>();
+    private List<HologramMuiTextField> fields = new ArrayList<>();
+    private List<HologramMuiTextField> suspendedFields;
+    private HologramMuiTextField suspendedFocus;
     private int canvasX, canvasY;
     private float canvasScale = 1;
     private long nativeFrame;
+    private CanvasTransform fieldTransform = CanvasTransform.identity();
 
     HologramMuiCanvasScreen(String name) {
         super(name, 1, 1);
@@ -52,6 +58,14 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         return "";
     }
 
+    protected String nativeIcon(int id, String label) {
+        return null;
+    }
+
+    protected boolean nativeIconOnly(int id) {
+        return false;
+    }
+
     final void canvasTransform(int x, int y, float scale) {
         canvasX = x;
         canvasY = y;
@@ -69,6 +83,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         entry.text = text;
         entry.enabled = enabled;
         entry.accent = accent;
+        entry.icon = nativeIcon(id, text);
+        entry.iconOnly = nativeIconOnly(id);
         int px = x, py = y;
         int w = Math.max(1, width), h = Math.max(1, height);
         if (entry.x != px || entry.y != py || entry.w != w || entry.h != h) {
@@ -108,12 +124,49 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         fields.clear();
     }
 
+    /** The tutorial has a distinct widget namespace; live drafts and cursor ownership remain in their objects. */
+    final void beginTutorialFields() {
+        if (suspendedFields != null) return;
+        suspendedFields = fields;
+        for (HologramMuiTextField field : suspendedFields) {
+            if (field.isFocused()) suspendedFocus = field;
+            field.setFocused(false);
+            field.widget()
+                .setEnabled(false);
+        }
+        fields = new ArrayList<>();
+    }
+
+    final void endTutorialFields() {
+        if (suspendedFields == null) return;
+        for (HologramMuiTextField field : fields) controls.remove(field.widget());
+        fields = suspendedFields;
+        suspendedFields = null;
+        if (suspendedFocus != null) suspendedFocus.setFocused(true);
+        suspendedFocus = null;
+    }
+
+    final void paintTutorialFields() {
+        GL11.glPushMatrix();
+        try {
+            GL11.glTranslatef(canvasX, canvasY, 0);
+            GL11.glScalef(canvasScale, canvasScale, 1);
+            for (HologramMuiTextField field : fields) field.drawPassive(nativeFrame);
+        } finally {
+            GL11.glPopMatrix();
+        }
+    }
+
     final void clearNativeFieldVisibility() {
         for (HologramMuiTextField field : fields) field.hideForOverlay();
     }
 
     final void showField(HologramMuiTextField field) {
-        field.show(nativeFrame, canvasX, canvasY, canvasScale);
+        field.show(nativeFrame, fieldTransform);
+    }
+
+    final void nativeFieldTransform(CanvasTransform transform) {
+        fieldTransform = transform;
     }
 
     private final class ControlLayer extends ParentWidget<ControlLayer> {
@@ -184,6 +237,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
 
         private long frame;
         private String text = "";
+        private String icon;
+        private boolean iconOnly;
         private boolean enabled;
         private boolean voucherRibbon, sceneTooltip;
         private int accent, x = -1, y = -1, w, h;
@@ -194,10 +249,22 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                 .background(HologramMuiTheme.guidanceBackground(false, () -> accent, () -> enabled))
                 .hoverBackground(HologramMuiTheme.guidanceBackground(true, () -> accent, () -> enabled))
                 .overlay(
-                    IKey.dynamic(() -> text)
+                    IKey.dynamic(() -> iconOnly ? "" : text)
                         .color(() -> HologramUiAccent.textColor(accent, enabled))
                         .shadow(false),
                     (context, x, y, width, height, theme) -> {
+                        if (icon != null && iconOnly) {
+                            int size = height >= 24 && width >= 24 ? 24 : 12;
+                            HologramEditorIcons.draw(
+                                icon,
+                                Math.round(x + (width - size) / 2),
+                                Math.round(y + (height - size) / 2),
+                                size,
+                                true,
+                                enabled,
+                                false,
+                                false);
+                        }
                         if (voucherRibbon) HologramVoucherRibbon.draw(x, y, width, height);
                     })
                 .tooltipBuilder(tooltip -> {

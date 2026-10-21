@@ -13,7 +13,15 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.8 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.8，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+
+### v0.1.37 原生编辑器体验 / Native editor experience
+
+以下说明对应 v0.1.37 本地候选，作为功能介绍，不代表原生验收或正式发布。新版编辑器提供纸张与像素风图标、悬浮提示、全屏等距结构快照、可伸缩蓝图库，以及点击库行直接切换蓝图并更新中央预览；有未保存修改时仅在切换前询问一次，取消会保留当前草稿。外层入口分为投影、蓝图与剪切，可自定义快捷键，并提供智能操作指引和 8 个独立动画课程；课程只演示操作，不会替你提交真实蓝图、世界放置或剪切。
+
+The following describes the v0.1.37 local candidate and is not a native acceptance or release notice. The editor adds paper and pixel-style icons, tooltips, a full-screen isometric structure snapshot, a collapsible library, and direct row selection that switches the blueprint and central preview. Unsaved work prompts once before switching; cancel keeps the current draft. The outer workspaces are Projection, Blueprint and Cut, with customizable shortcuts, smart guidance and eight isolated animated lessons. Lessons demonstrate actions without submitting a real blueprint, world placement or Cut operation.
+
+README 当前内嵌配图仍是此前提供的 UI 示例，原图与 [截图 manifest](README/screenshots/manifest.json) 保持不变；它们不是 v0.1.37 原生运行截图或验收证据。新原生截图后续放入版本专属目录。
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 
@@ -53,7 +61,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 | --- | --- |
 | **建一台机器 / Build a multiblock** | [对准真实控制器导入结构](#preview)，查看仓室、调整目标，再核对材料施工。 / Import from its real controller, adjust targets and review materials. |
 | **规划整片工厂 / Plan a factory** | [框选区域并识别成员结构](#regions)，在三维预览中编辑方块与结构参数。 / Capture a region, recognize its structures and edit the plan. |
-| **保存自己的设计 / Save a design** | [区分「结构调整」与「蓝图设置」](#editing)，按私用或分享需求处理，再命名保存。 / Edit geometry, review private/shared settings and save. |
+| **保存自己的设计 / Save a design** | [进入蓝图工作区](#editing)，在「结构调整」与「蓝图设置」子流程中编辑、处理并保存。 / Edit, process and save in the Blueprint workspace. |
 | **搬走已经建好的东西 / Move a build** | [切换剪切模式](#cut)，连续暂存多份结构，分别预览、转向与粘贴。 / Queue cuts, preview each entry and place it elsewhere. |
 | **准备施工物资 / Prepare supplies** | [查看精确材料与 NBT 需求](#materials)，按需提交 ME 补料订单或使用装饰抵用券。 / Inspect exact costs, request AE crafting or select a decoration voucher. |
 | **交流与复用设计 / Share and reuse** | [打开蓝图站](#sharing)浏览、下载与分享，或转交同名 JSON + PNG 文件对。 / Browse the blueprint site or share a JSON + PNG pair. |
@@ -106,11 +114,11 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 <a id="editing"></a>
 
-## 03 · 在三维蓝图库里选，在结构编辑器里改 / Browse, edit & save
+## 03 · 在蓝图库直接切换，在蓝图工作区调整与保存 / Switch designs, edit & save
 
-**蓝图库负责选设计，「结构调整」负责改结构。** 从列表选择蓝图，拖动三维预览检查整体，按层查看内部；需要修改时进入编辑，选择方块、调整材料与朝向、移动所选内容，或编辑 NBT 与提示词。规划修改不会立刻改动世界。
+**库行直接切换当前蓝图并更新中央预览。** 有未保存修改时，在切换前只提示一次是否放弃；取消会保留当前草稿。外层工作区分为投影、蓝图与剪切，投影和剪切各自独立；原有「结构调整」与「蓝图设置」作为蓝图工作区内的编辑子流程继续保留。你可以先旋转三维预览、分层检查，再在结构调整中编辑方块和结构，在蓝图设置中处理身份、坐标、资源与保存。规划修改不会立刻改动世界。
 
-*Select and inspect designs in the library; use Structure Adjustment to edit blocks, placement, NBT and annotations before construction.*
+*Select a blueprint directly in the library. Projection and Cut remain separate workspaces; the existing Structure Adjustment and Blueprint Settings flows remain available inside the Blueprint workspace.*
 
 <table>
   <tr>

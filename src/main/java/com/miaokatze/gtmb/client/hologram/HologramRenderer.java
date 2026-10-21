@@ -82,16 +82,16 @@ final class HologramRenderer {
 
     private static double[] moveScreen(HologramState.Cell cell) {
         if (!moving(cell)) return new double[] { 0, 0 };
-        double[] from = project(0, 0, 0), to = project(moveOffset[0], moveOffset[1], moveOffset[2]);
+        double[] from = projectedFrame.projectScreen(0, 0, 0),
+            to = projectedFrame.projectScreen(moveOffset[0], moveOffset[1], moveOffset[2]);
         return new double[] { to[0] - from[0], to[1] - from[1] };
     }
 
     static boolean showEmptyCells;
     static HologramSelection selection;
     static String selectedStructureId = "";
-    private static int projectedX, projectedY, projectedWidth, projectedHeight;
-    private static double projectedYaw, projectedPitch, projectedScale;
-    private static double projectedPanX, projectedPanZ;
+    private static HologramEditorCameraFrame projectedFrame, presentedFrame;
+    private static HologramState presentedState;
     private static final Map<String, double[][]> structureBoxes = new LinkedHashMap<>();
     private static final Set<String> missingStructures = new HashSet<>();
     private static final Map<String, double[][]> hintBoxes = new LinkedHashMap<>();
@@ -100,6 +100,8 @@ final class HologramRenderer {
     private static boolean visibleEmptyCells;
 
     static void release() {
+        projectedFrame = presentedFrame = null;
+        presentedState = null;
         worldRenderWitness = null;
         clearWorldGroups();
         worldState = previewState = null;
@@ -231,16 +233,13 @@ final class HologramRenderer {
 
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
         double panX, double panZ, int layer, int view, int selected, int mouseX, int mouseY, double rehearsal) {
+        if (width <= 0 || height <= 0 || !Double.isFinite(zoom) || zoom <= 0) {
+            presentedFrame = null;
+            presentedState = null;
+            return -1;
+        }
         HologramTextures.begin(state);
         HologramBlockRender.begin(state);
-        projectedX = x;
-        projectedY = y;
-        projectedWidth = width;
-        projectedHeight = height;
-        projectedYaw = yaw;
-        projectedPitch = pitch;
-        projectedPanX = panX;
-        projectedPanZ = panZ;
         String key = x + ":"
             + y
             + ":"
@@ -301,8 +300,6 @@ final class HologramRenderer {
             List<RoleMarker> markers = new ArrayList<>();
             List<Face> outlines = new ArrayList<>();
             nativePreviewCells.clear();
-            double sinYaw = Math.sin(yaw), cosYaw = Math.cos(yaw);
-            double sinPitch = Math.sin(pitch), cosPitch = Math.cos(pitch);
             if (!budgeted)
                 for (Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry : state.regions.regions
                     .entrySet()) {
@@ -317,12 +314,6 @@ final class HologramRenderer {
             for (PreviewRegion region : previewRegions.values()) {
                 visibleCells.addAll(region.visible);
                 linkedPreviewCells.addAll(region.linked);
-            }
-            int facing = 0;
-            for (int side = 0; side < 6; side++) {
-                int[] normal = NORMALS[side];
-                if (normal[1] * sinPitch + (normal[0] * sinYaw + normal[2] * cosYaw) * cosPitch > 1e-8)
-                    facing |= 1 << side;
             }
             lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
             if (boundsState != state) {
@@ -345,8 +336,13 @@ final class HologramRenderer {
                 }
             }
             double cx = boundsX + panX, cy = boundsY, cz = boundsZ + panZ, extent = boundsExtent;
-            double scale = Math.min(width, height) * .72 / extent * zoom;
-            projectedScale = scale;
+            projectedFrame = new HologramEditorCameraFrame(x, y, width, height, yaw, pitch, zoom, cx, cy, cz, extent);
+            int facing = 0;
+            for (int side = 0; side < 6; side++) {
+                int[] normal = NORMALS[side];
+                if (-(normal[0] * projectedFrame.basis.forwardX() + normal[1] * projectedFrame.basis.forwardY()
+                    + normal[2] * projectedFrame.basis.forwardZ()) > 1e-8) facing |= 1 << side;
+            }
             buildStructureBoxes(state);
             for (PreviewRegion region : previewRegions.values()) {
                 if (key.equals(region.projectedKey)) {
@@ -365,14 +361,8 @@ final class HologramRenderer {
                     if (exposed == 0 && role.isEmpty()) continue;
                     double[][] projected = new double[8][];
                     for (int v = 0; v < 8; v++) {
-                        double px = c.dx - cx + VERTICES[v][0], pz = c.dz - cz + VERTICES[v][2];
-                        double py = c.dy - cy + VERTICES[v][1];
-                        double rx = px * cosYaw - pz * sinYaw;
-                        double rz = px * sinYaw + pz * cosYaw;
-                        double ry = py * cosPitch - rz * sinPitch;
-                        double depth = py * sinPitch + rz * cosPitch;
-                        projected[v] = new double[] { x + width / 2.0 + rx * scale, y + height / 2.0 - ry * scale,
-                            depth };
+                        projected[v] = projectedFrame
+                            .project(c.dx + VERTICES[v][0], c.dy + VERTICES[v][1], c.dz + VERTICES[v][2]);
                     }
                     if (!HologramBlueprintPreview.cleanCapture() && !role.isEmpty()
                         && (c.anchor || markers.size() - firstMarker < 64))
@@ -499,11 +489,7 @@ final class HologramRenderer {
                     break;
                 }
                 GL11.glPushMatrix();
-                GL11.glTranslated(x + width / 2.0, y + height / 2.0, 0);
-                GL11.glScaled(projectedScale, -projectedScale, depthScale);
-                GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
-                GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
-                GL11.glTranslated(cell.dx - boundsX - panX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - panZ - .5);
+                applyPreviewTransform(cell, depthScale);
                 if (moving(cell)) GL11.glTranslated(moveOffset[0], moveOffset[1], moveOffset[2]);
                 GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
                 if (moving(cell)) {
@@ -522,11 +508,7 @@ final class HologramRenderer {
                 if (HologramLinkNodePreview.prepare(cell, current)
                     .isEmpty()) continue;
                 GL11.glPushMatrix();
-                GL11.glTranslated(x + width / 2.0, y + height / 2.0, 0);
-                GL11.glScaled(projectedScale, -projectedScale, depthScale);
-                GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
-                GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
-                GL11.glTranslated(cell.dx - boundsX - panX - .5, cell.dy - boundsY - .5, cell.dz - boundsZ - panZ - .5);
+                applyPreviewTransform(cell, depthScale);
                 HologramLinkNodePreview.draw(cell, current, .96f);
                 GL11.glPopMatrix();
             }
@@ -628,7 +610,22 @@ final class HologramRenderer {
             GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
             GL11.glPopAttrib();
         }
+        presentedFrame = projectedFrame;
+        presentedState = state;
         return hovered;
+    }
+
+    /** Native blocks and linked TE previews consume the exact camera used by face projection and picking. */
+    private static void applyPreviewTransform(HologramState.Cell cell, double depthScale) {
+        HologramEditorCameraFrame frame = projectedFrame;
+        GL11.glTranslated(frame.coordinates.screenX(0), frame.coordinates.screenY(0), 0);
+        GL11.glScaled(frame.scale, -frame.scale, depthScale);
+        GL11.glRotated(frame.pose.pitchDegrees(), 1, 0, 0);
+        GL11.glRotated(frame.pose.yawDegrees(), 0, 1, 0);
+        GL11.glTranslated(
+            cell.dx - frame.pose.anchorX() - .5,
+            cell.dy - frame.pose.anchorY() - .5,
+            cell.dz - frame.pose.anchorZ() - .5);
     }
 
     private static void drawHintLabels(Minecraft mc, int x, int y, int width, int height) {
@@ -656,16 +653,11 @@ final class HologramRenderer {
     }
 
     static double[] project(double dx, double dy, double dz) {
-        double px = dx - boundsX - projectedPanX, py = dy - boundsY, pz = dz - boundsZ - projectedPanZ;
-        double rx = px * Math.cos(projectedYaw) - pz * Math.sin(projectedYaw);
-        double rz = px * Math.sin(projectedYaw) + pz * Math.cos(projectedYaw);
-        double ry = py * Math.cos(projectedPitch) - rz * Math.sin(projectedPitch);
-        return new double[] { projectedX + projectedWidth / 2.0 + rx * projectedScale,
-            projectedY + projectedHeight / 2.0 - ry * projectedScale };
+        return presentedFrame == null ? new double[] { 0, 0 } : presentedFrame.projectScreen(dx, dy, dz);
     }
 
     static double gridScale() {
-        return projectedScale;
+        return presentedFrame == null ? 0 : presentedFrame.scale;
     }
 
     /** Use the same visible faces as selection, including the camera-facing placement side. */
@@ -683,20 +675,11 @@ final class HologramRenderer {
     }
 
     static int[] pickEmptyVoxel(HologramState state, int mx, int my, int planeY, boolean adjacentOnly) {
-        if (state == null || projectedScale <= 0
-            || mx < projectedX
-            || mx >= projectedX + projectedWidth
-            || my < projectedY
-            || my >= projectedY + projectedHeight
-            || Math.abs(Math.sin(projectedPitch)) < .05) return null;
-        double rx = (mx - projectedX - projectedWidth / 2.0) / projectedScale;
-        double ry = -(my - projectedY - projectedHeight / 2.0) / projectedScale;
-        double py = planeY - state.data.getInteger("y") - boundsY;
-        double rz = (py * Math.cos(projectedPitch) - ry) / Math.sin(projectedPitch);
-        int x = state.data.getInteger("x") + (int) Math
-            .floor(rx * Math.cos(projectedYaw) + rz * Math.sin(projectedYaw) + boundsX + projectedPanX + .5);
-        int z = state.data.getInteger("z") + (int) Math
-            .floor(-rx * Math.sin(projectedYaw) + rz * Math.cos(projectedYaw) + boundsZ + projectedPanZ + .5);
+        if (state == null || state != presentedState || presentedFrame == null) return null;
+        double[] hit = presentedFrame.horizontalPlane(mx, my, (double) planeY - state.data.getInteger("y"));
+        if (hit == null) return null;
+        int x = state.data.getInteger("x") + (int) Math.floor(hit[0] + .5);
+        int z = state.data.getInteger("z") + (int) Math.floor(hit[2] + .5);
         HologramState.Cell occupied = state.regions.at(x, planeY, z);
         if (occupied != null && !occupied.wantId.equals("minecraft:air")) return null;
         return !adjacentOnly || state.regions.withinMargin(x, planeY, z) ? new int[] { x, planeY, z } : null;
@@ -715,7 +698,7 @@ final class HologramRenderer {
         for (Map.Entry<String, int[]> entry : cachedStructureBounds.entrySet()) {
             int[] b = entry.getValue();
             double[][] box = new double[8][];
-            for (int i = 0; i < 8; i++) box[i] = project(
+            for (int i = 0; i < 8; i++) box[i] = projectedFrame.projectScreen(
                 VERTICES[i][0] < 0 ? b[0] - .55 : b[3] + .55,
                 VERTICES[i][1] < 0 ? b[1] - .55 : b[4] + .55,
                 VERTICES[i][2] < 0 ? b[2] - .55 : b[5] + .55);
@@ -728,7 +711,7 @@ final class HologramRenderer {
             int[] b = hint.getIntArray("bounds");
             if (b.length != 6) continue;
             double[][] box = new double[8][];
-            for (int v = 0; v < 8; v++) box[v] = project(
+            for (int v = 0; v < 8; v++) box[v] = projectedFrame.projectScreen(
                 VERTICES[v][0] < 0 ? Math.min(b[0], b[3]) - .6 : Math.max(b[0], b[3]) + .6,
                 VERTICES[v][1] < 0 ? Math.min(b[1], b[4]) - .6 : Math.max(b[1], b[4]) + .6,
                 VERTICES[v][2] < 0 ? Math.min(b[2], b[5]) - .6 : Math.max(b[2], b[5]) + .6);

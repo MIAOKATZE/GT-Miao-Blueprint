@@ -11,10 +11,33 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     final HologramUiModules ui = new HologramUiModules(this);
     private boolean websiteConfirmationResumePending;
+    private boolean detached, detachedStarted, detachedReturned, detachedReplay;
+    private String detachedTopic;
+    private Runnable detachedReturn;
 
     HologramScreen(HologramState state) {
         super("workstation");
         ui.session.initialize(state);
+    }
+
+    private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
+        super("detached_tutorial");
+        if (returnToStorage == null) throw new IllegalArgumentException("A detached tutorial requires a return target");
+        detached = true;
+        detachedTopic = topic;
+        detachedReplay = replay;
+        detachedReturn = returnToStorage;
+        ui.session.initializeIsolated(HologramEditorTutorial.detachedState(), (operation, request) -> {});
+    }
+
+    static HologramScreen detachedTutorial(String topic, boolean replay, Runnable returnToStorage) {
+        return new HologramScreen(topic, replay, returnToStorage);
+    }
+
+    private void returnFromDetached() {
+        if (detachedReturned) return;
+        detachedReturned = true;
+        detachedReturn.run();
     }
 
     boolean acceptsLibraryNavigation(HologramState next) {
@@ -22,11 +45,19 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void updateState(HologramState next) {
-        ui.session.updateState(next);
+        if (!detached) ui.session.updateState(next);
     }
 
     public void initGui() {
         super.initGui();
+        if (detached) {
+            ui.canvas.resize();
+            if (!detachedStarted) {
+                detachedStarted = true;
+                ui.tutorial.startDetached(detachedTopic, detachedReplay, this::returnFromDetached);
+            }
+            return;
+        }
         if (websiteConfirmationResumePending) {
             websiteConfirmationResumePending = false;
             return;
@@ -45,7 +76,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     protected void onMuiClose() {
-        ui.router.onGuiClosed();
+        if (detached) {
+            ui.tutorial.closeWithoutProgress();
+            endTutorialFields();
+        } else ui.router.onGuiClosed();
     }
 
     @Override
@@ -55,6 +89,16 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     public void onGuiClosed() {
+        ui.tutorial.closeWithoutProgress();
+        ui.tools.closeTransient();
+        ui.canvas.layout()
+            .release();
+        ui.preview.releasePointerCapture();
+        if (detached) {
+            detachedReturned = true;
+            endTutorialFields();
+            return;
+        }
         ui.memory.rememberUi();
         HologramBackgroundTasks.rememberUi(ui);
         if (ui.ae.aePreviewTransition()) ui.ae.aePreviewTransition(false);
@@ -69,13 +113,29 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     public void updateScreen() {
+        if (detached) {
+            if (detachedStarted && !ui.tutorial.active() && !detachedReturned) deferAction(this::returnFromDetached);
+            return;
+        }
         ui.router.updateScreen();
     }
 
     protected void renderScene(int mouseX, int mouseY, float ticks) {
+        if (detached && !ui.tutorial.active()) return;
+        ui.canvas.beginFrame(mouseX, mouseY);
         canvasTransform(ui.canvas.originX(), ui.canvas.originY(), ui.canvas.scale());
-        ui.router.drawScreen(mouseX, mouseY, ticks);
-        for (HologramUiCanvas.Control control : ui.canvas.controls()) {
+        try {
+            ui.router.drawScreen(mouseX, mouseY, ticks);
+        } catch (RuntimeException failure) {
+            if (!detached) throw failure;
+            ui.tutorial.closeWithoutProgress();
+            deferAction(this::returnFromDetached);
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                .warn("Detached tutorial closed after a presentation failure", failure);
+            return;
+        }
+        if (detached && !ui.tutorial.active()) return;
+        for (HologramUiCanvas.Control control : ui.tutorial.renderUi().canvas.controls()) {
             nativeButton(
                 control.id,
                 control.x,
@@ -119,28 +179,38 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     public void mouseClicked(int x, int y, int button) {
+        if (detached) return;
         ui.router.mouseClicked(x, y, button);
     }
 
     public void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (detached) return;
         ui.router.mouseClickMove(x, y, button, elapsed);
     }
 
     public void mouseMovedOrUp(int x, int y, int button) {
+        if (detached) return;
         ui.router.mouseMovedOrUp(x, y, button);
     }
 
     public void handleMouseInput() {
+        if (detached && !ui.tutorial.active()) return;
         super.handleMouseInput();
         ui.router.handleMouseInput();
     }
 
     public void keyTyped(char c, int key) {
+        if (detached) return;
         ui.router.keyTyped(c, key);
     }
 
     @Override
     protected void activateNative(int id) {
+        if (detached) {
+            ui.tutorial.activate(id);
+            return;
+        }
+        if (ui.tutorial.activate(id)) return;
         ui.shortcuts.activity();
         ui.memory.initialEditHint(ui.memory.savedEditHint(false));
         ui.memory.rememberGuidance();
@@ -154,13 +224,32 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected String nativeTooltip(int id, boolean enabled) {
+        if (id == HologramEditorControlIds.GUIDE) return "收纳 / 展开智能指引；此偏好会保留到下次打开。";
+        if (id == HologramEditorControlIds.GUIDE + 1) return "完整操作说明与八门独立教程。";
+        if (id == HologramEditorControlIds.TUTORIAL + 1) return "回到上一步的动画开头。";
+        if (id == HologramEditorControlIds.TUTORIAL + 2) return "继续下一步；当前动画会先完整播放。";
+        if (id == HologramEditorControlIds.TUTORIAL + 3) return "跳过教程并恢复原工作区。";
+        if (id == HologramEditorControlIds.TUTORIAL + 4) return "清空教学进度，从本课程第一步重新播放。";
+        String tool = ui.tools.tooltip(id);
+        if (tool != null) return tool;
         String help = ui.canvas.controlHelp(id);
         if (help == null) return "";
         return enabled ? help : help + "\n" + ui.canvas.disabledReason(id);
     }
 
     @Override
+    protected String nativeIcon(int id, String label) {
+        return id == HologramEditorControlIds.GUIDE + 1 ? "help-circle" : ui.tools.icon(id);
+    }
+
+    @Override
+    protected boolean nativeIconOnly(int id) {
+        return id == HologramEditorControlIds.GUIDE + 1 || ui.tools.iconOnly(id);
+    }
+
+    @Override
     protected boolean muiKeyBefore(char character, int key) {
+        if (detached || ui.tutorial.blockInput()) return true;
         if (key != org.lwjgl.input.Keyboard.KEY_ESCAPE && key != org.lwjgl.input.Keyboard.KEY_RETURN
             && key != org.lwjgl.input.Keyboard.KEY_NUMPADENTER) return false;
         ui.router.keyTyped(character, key);
@@ -168,8 +257,30 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     @Override
+    protected boolean muiMouseBefore(int button) {
+        if (!ui.tutorial.blockInput()) return detached;
+        if (button != 0) return true;
+        int x = ui.tutorial.renderUi().canvas.localX(
+            getScreen().getContext()
+                .getMouseX());
+        int y = ui.tutorial.renderUi().canvas.localY(
+            getScreen().getContext()
+                .getMouseY());
+        for (HologramUiCanvas.Control control : ui.tutorial.renderUi().canvas.controls())
+            if (control.id >= HologramEditorControlIds.TUTORIAL + 1
+                && control.id <= HologramEditorControlIds.TUTORIAL + 4
+                && control.contains(x, y)) return false;
+        return true;
+    }
+
+    @Override
+    protected boolean muiScrollBefore() {
+        return detached || ui.tutorial.blockInput();
+    }
+
+    @Override
     protected void muiActivity() {
-        ui.shortcuts.activity();
+        if (!detached) ui.shortcuts.activity();
     }
 
     @Override

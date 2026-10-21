@@ -475,7 +475,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
             net.minecraft.client.gui.FontRenderer font = Minecraft.getMinecraft().fontRenderer;
             String title = previewPicture == null ? "材料像素预览"
                 : "材料像素预览 · " + previewPicture.width + " × " + previewPicture.height;
-            font.drawString(title, 8, 6, HologramMuiTheme.TITLE);
+            font.drawString(title, 8, 6, HologramEditorTheme.TITLE);
             GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
             try {
                 GL11.glDisable(GL11.GL_TEXTURE_2D);

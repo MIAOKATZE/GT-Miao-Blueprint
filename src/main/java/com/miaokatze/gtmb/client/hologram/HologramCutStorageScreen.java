@@ -26,6 +26,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
     private final List<NBTTagCompound> directory = new ArrayList<>();
     private ListWidget<IWidget, ?> list;
     private HologramCutStoragePreviewWidget camera;
+    private boolean autoTutorialChecked, tutorialOpening;
 
     HologramCutStorageScreen() {
         this(Math.min(456, resolution().getScaledWidth() - 12), Math.min(292, resolution().getScaledHeight() - 12));
@@ -55,7 +56,12 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
         int leftWidth = (panelWidth - 34) * 34 / 100;
         int rightX = leftWidth + 22, rightWidth = panelWidth - rightX - 12;
         int bodyTop = 54, bodyHeight = panelHeight - 112;
-        HologramMuiTheme.header(panel(), () -> text("title") + " · " + directory.size(), panelWidth);
+        HologramMuiTheme
+            .header(panel(), () -> trim(text("title") + " · " + directory.size(), panelWidth - 124), panelWidth);
+        panel().child(
+            HologramMuiTheme
+                .button(() -> "剪切教程", panelWidth - 83, 8, 71, 20, () -> deferAction(() -> openTutorial(true)))
+                .name("cut_storage_tutorial"));
         panel().child(HologramMuiTheme.label(() -> text("hint"), 12, 35, panelWidth - 24, 15, HologramMuiTheme.MUTED));
         list = new HologramRecessedList().pos(12, bodyTop)
             .size(leftWidth, bodyHeight)
@@ -122,7 +128,29 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
         super.updateScreen();
         if (list == null) return;
         if (!directory.equals(client().entries())) refreshRows();
+        if (!autoTutorialChecked) {
+            autoTutorialChecked = true;
+            if (!HologramEditorPreferences.get(mc.mcDataDir)
+                .seen("cut")) deferAction(() -> openTutorial(false));
+        }
         preview.tick(!client().busy());
+    }
+
+    /** MUI's child-screen stack retains this list, its selection and the same camera widget. */
+    private void openTutorial(boolean replay) {
+        if (mc.currentScreen != this || tutorialOpening) return;
+        tutorialOpening = true;
+        try {
+            HologramScreen lesson = HologramScreen.detachedTutorial("cut", replay, () -> {
+                tutorialOpening = false;
+                mc.displayGuiScreen(this);
+            });
+            lesson.openFrom(this);
+            if (mc.currentScreen != lesson) tutorialOpening = false;
+        } catch (RuntimeException failure) {
+            tutorialOpening = false;
+            throw failure;
+        }
     }
 
     private void refreshRows() {
@@ -145,7 +173,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
         if (directory.isEmpty()) {
             list.child(
                 IKey.dynamic(() -> text("empty"))
-                    .color(HologramMuiTheme.MUTED)
+                    .color(HologramEditorTheme.MUTED)
                     .shadow(false)
                     .asWidget()
                     .widthRel(1f)
@@ -288,7 +316,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
                 Minecraft.getMinecraft().fontRenderer.trimStringToWidth(client().status(), getArea().w()),
                 0,
                 0,
-                HologramMuiTheme.MUTED);
+                HologramEditorTheme.MUTED);
         }
     }
 }

@@ -21,6 +21,9 @@ final class HologramUiModules {
     final HologramUiSession session;
     final HologramUiShortcuts shortcuts;
     final HologramUiTextBoxes textBoxes;
+    final HologramEditorTools tools;
+    final HologramEditorGuide guide;
+    final HologramEditorTutorial tutorial;
 
     HologramUiModules(HologramUiHost host) {
         this.host = host;
@@ -42,5 +45,8 @@ final class HologramUiModules {
         session = new HologramUiSession(this);
         shortcuts = new HologramUiShortcuts(this);
         textBoxes = new HologramUiTextBoxes(this);
+        tools = new HologramEditorTools(this);
+        guide = new HologramEditorGuide(this);
+        tutorial = new HologramEditorTutorial(this);
     }
 }

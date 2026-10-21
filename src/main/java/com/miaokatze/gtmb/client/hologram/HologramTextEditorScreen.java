@@ -55,8 +55,8 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
         panel().child(
             document.pos(14, 40)
                 .size(402, 82)
-                .background(HologramMuiTheme.PANEL)
-                .setTextColor(HologramMuiTheme.TEXT));
+                .background(HologramEditorTheme.INPUT)
+                .setTextColor(HologramEditorTheme.TEXT));
         panel().child(
             new FontPreview().pos(426, 40)
                 .size(150, 82)
@@ -491,9 +491,9 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 }
             }
             net.minecraft.client.gui.FontRenderer font = Minecraft.getMinecraft().fontRenderer;
-            font.drawString("字形预览", 6, 5, HologramMuiTheme.TITLE);
+            font.drawString("字形预览", 6, 5, HologramEditorTheme.TITLE);
             if (mask == null) {
-                font.drawString(font.trimStringToWidth(error, 138), 6, 26, HologramMuiTheme.MUTED);
+                font.drawString(font.trimStringToWidth(error, 138), 6, 26, HologramEditorTheme.MUTED);
                 return;
             }
             double pixelX = previewPixel("pixelX"), pixelY = previewPixel("pixelY");
@@ -502,11 +502,15 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
             double left = (150 - mask.width * sx) / 2, top = 20 + (57 - mask.height * sy) / 2;
             org.lwjgl.opengl.GL11.glPushAttrib(org.lwjgl.opengl.GL11.GL_ALL_ATTRIB_BITS);
             try {
+                int tint = previewColor();
+                int brightness = ((tint >> 16 & 255) * 299 + (tint >> 8 & 255) * 587 + (tint & 255) * 114) / 1000;
+                com.cleanroommc.modularui.drawable.GuiDraw
+                    .drawRect(4, 20, 142, 57, brightness >= 145 ? 0xff382b20 : 0xffe6d3a7);
                 org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_TEXTURE_2D);
                 org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
                 net.minecraft.client.renderer.Tessellator buffer = net.minecraft.client.renderer.Tessellator.instance;
                 buffer.startDrawingQuads();
-                buffer.setColorOpaque_I(previewColor());
+                buffer.setColorOpaque_I(tint);
                 for (int y = 0; y < mask.height; y++) for (int x = 0; x < mask.width; x++) if (mask.pixel(x, y)) {
                     double xx = left + x * sx, yy = top + y * sy;
                     buffer.addVertex(xx, yy + sy, 0);

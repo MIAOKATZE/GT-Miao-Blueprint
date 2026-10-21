@@ -14,6 +14,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import org.lwjgl.opengl.GL11;
 
 import com.miaokatze.gtmb.common.util.BlueprintWebsite;
+import com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates;
+import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Internal canvas workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiCanvas {
@@ -59,6 +61,10 @@ final class HologramUiCanvas {
     private int originY;
 
     private float scale = 1;
+    private final HologramEditorLayout layout = new HologramEditorLayout();
+    private CanvasTransform drawingSpace = CanvasTransform.identity(), pointerSpace = CanvasTransform.identity();
+    private int rootMouseX, rootMouseY;
+    private final List<double[]> paperHeaders = new ArrayList<>();
 
     private long renderGeneration;
 
@@ -72,6 +78,7 @@ final class HologramUiCanvas {
         int accent;
         boolean voucherRibbon;
         boolean sceneTooltip;
+        private HologramUiCanvas owner;
 
         Control(int id, int x, int y, int w, int h, boolean enabled) {
             this.id = id;
@@ -83,6 +90,10 @@ final class HologramUiCanvas {
         }
 
         boolean contains(int px, int py) {
+            if (owner != null) {
+                px = (int) Math.floor(owner.pointerSpace.toScreenX(px));
+                py = (int) Math.floor(owner.pointerSpace.toScreenY(py));
+            }
             return px >= x && px < x + w && py >= y && py < y + h;
         }
     }
@@ -93,6 +104,14 @@ final class HologramUiCanvas {
     }
 
     void text(String value, int x, int y, int w, int color) {
+        double rootX = drawingSpace.toScreenX(x), rootY = drawingSpace.toScreenY(y + 4);
+        for (int i = paperHeaders.size() - 1; i >= 0; i--) {
+            double[] header = paperHeaders.get(i);
+            if (rootX >= header[0] && rootX < header[2] && rootY >= header[1] && rootY < header[3]) {
+                color = HologramEditorTheme.textColor(color, false);
+                break;
+            }
+        }
         if (this.compactControls) {
             GL11.glPushMatrix();
             GL11.glTranslatef(x, 0, 0);
@@ -115,6 +134,9 @@ final class HologramUiCanvas {
     }
 
     void skin(String name, int x, int y, int w, int h) {
+        if ("panel".equals(name) && h <= 32) paperHeaders.add(
+            new double[] { drawingSpace.toScreenX(x), drawingSpace.toScreenY(y), drawingSpace.toScreenX(x + w),
+                drawingSpace.toScreenY(y + h) });
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glColor4f(1, 1, 1, 1);
@@ -146,7 +168,7 @@ final class HologramUiCanvas {
             Math.round(w * HologramScreenLayout.CONTROL_WIDTH_SCALE),
             h,
             enabled);
-        this.controls.add(drawn);
+        drawn = addControl(drawn);
         int accent = ui.ae.aeReview() != null ? HologramGuidance.modalAccent(id, 181, 182)
             : !ui.library.deletePresetId()
                 .isEmpty()
@@ -529,24 +551,20 @@ final class HologramUiCanvas {
     }
 
     int localX(int x) {
-        return (int) ((x - this.originX) / this.scale);
+        return (int) Math.floor(pointerSpace.toLocalX((x - this.originX) / this.scale));
     }
 
     int localY(int y) {
-        return (int) ((y - this.originY) / this.scale);
+        return (int) Math.floor(pointerSpace.toLocalY((y - this.originY) / this.scale));
     }
 
     boolean inViewport(int x, int y) {
-        return x >= HologramUiCanvas.viewportX && x < HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth
-            && y >= HologramUiCanvas.viewportY
-            && y < HologramUiCanvas.viewportY + ui.preview.previewHeight();
+        return layout.viewport()
+            .contains(x, y);
     }
 
     boolean inPanel(int x, int y) {
-        return x >= HologramScreenLayout.COMPACT_PANEL_X
-            && x < HologramScreenLayout.COMPACT_PANEL_X + HologramScreenLayout.COMPACT_PANEL_WIDTH
-            && y >= HologramUiCanvas.panelY
-            && y < HologramUiCanvas.panelY + HologramScreenLayout.PANEL_HEIGHT;
+        return layout.panelContains(x, y);
     }
 
     boolean compactControls(boolean value) {
@@ -556,6 +574,23 @@ final class HologramUiCanvas {
 
     List<Control> controls() {
         return this.controls;
+    }
+
+    Control addControl(Control source) {
+        Control mapped = new Control(
+            source.id,
+            (int) Math.round(drawingSpace.toScreenX(source.x)),
+            (int) Math.round(drawingSpace.toScreenY(source.y)),
+            Math.max(1, (int) Math.round(source.w * drawingSpace.scale())),
+            Math.max(1, (int) Math.round(source.h * drawingSpace.scale())),
+            source.enabled);
+        mapped.label = source.label;
+        mapped.accent = source.accent;
+        mapped.voucherRibbon = source.voucherRibbon;
+        mapped.sceneTooltip = source.sceneTooltip;
+        mapped.owner = this;
+        controls.add(mapped);
+        return mapped;
     }
 
     int originX() {
@@ -605,9 +640,106 @@ final class HologramUiCanvas {
     }
 
     void resize() {
-        HologramScreenLayout layout = HologramScreenLayout.fit(ui.host.screenWidth(), ui.host.screenHeight());
-        ui.canvas.scale(layout.scale);
-        ui.canvas.originX(layout.originX);
-        ui.canvas.originY(layout.originY);
+        layout.resize(ui.host.screenWidth(), ui.host.screenHeight());
+        scale = layout.scale();
+        originX = originY = 0;
+    }
+
+    HologramEditorLayout layout() {
+        return layout;
+    }
+
+    ViewportCoordinates viewport() {
+        return layout.viewport();
+    }
+
+    void beginFrame(int mouseX, int mouseY) {
+        resize();
+        drawingSpace = pointerSpace = CanvasTransform.identity();
+        paperHeaders.clear();
+        rootMouseX = localX(mouseX);
+        rootMouseY = localY(mouseY);
+        ui.host.parent()
+            .nativeFieldTransform(drawingSpace);
+    }
+
+    int rootMouseX() {
+        return rootMouseX;
+    }
+
+    int rootMouseY() {
+        return rootMouseY;
+    }
+
+    int screenMouseX() {
+        return rootMouseX;
+    }
+
+    int screenMouseY() {
+        return rootMouseY;
+    }
+
+    int localMouseX(CanvasTransform space) {
+        return (int) Math.floor(space.toLocalX(rootMouseX));
+    }
+
+    int localMouseY(CanvasTransform space) {
+        return (int) Math.floor(space.toLocalY(rootMouseY));
+    }
+
+    Space space(CanvasTransform transform) {
+        return new Space(transform);
+    }
+
+    PointerSpace pointerSpace(CanvasTransform transform) {
+        return new PointerSpace(transform);
+    }
+
+    final class PointerSpace implements AutoCloseable {
+
+        private final CanvasTransform previous;
+        private boolean closed;
+
+        PointerSpace(CanvasTransform transform) {
+            previous = pointerSpace;
+            pointerSpace = transform;
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            pointerSpace = previous;
+        }
+    }
+
+    final class Space implements AutoCloseable {
+
+        private final CanvasTransform previous;
+        private final PointerSpace pointer;
+        private boolean closed;
+
+        Space(CanvasTransform transform) {
+            previous = drawingSpace;
+            pointer = new PointerSpace(transform);
+            GL11.glPushMatrix();
+            GL11.glTranslated(previous.toLocalX(transform.toScreenX(0)), previous.toLocalY(transform.toScreenY(0)), 0);
+            double relativeScale = transform.scale() / previous.scale();
+            GL11.glScaled(relativeScale, relativeScale, 1);
+            drawingSpace = transform;
+            ui.host.parent()
+                .nativeFieldTransform(transform);
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            GL11.glPopMatrix();
+            drawingSpace = previous;
+            pointer.close();
+            ui.host.parent()
+                .nativeFieldTransform(previous);
+        }
     }
 }
