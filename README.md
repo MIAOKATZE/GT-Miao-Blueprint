@@ -65,7 +65,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 | --- | --- |
 | **建一台机器 / Build a multiblock** | [对准真实控制器导入结构](#preview)，查看仓室、调整目标，再核对材料施工。 / Import from its real controller, adjust targets and review materials. |
 | **规划整片工厂 / Plan a factory** | [框选区域并识别成员结构](#regions)，在三维预览中编辑方块与结构参数。 / Capture a region, recognize its structures and edit the plan. |
-| **保存自己的设计 / Save a design** | [进入蓝图工作区](#editing)，在「结构调整」与「蓝图设置」子流程中编辑、处理并保存。 / Edit, process and save in the Blueprint workspace. |
+| **保存自己的设计 / Save a design** | [进入蓝图工作区](#editing)，用属性侧栏调整结构，在蓝图设置中处理，再到蓝图库命名保存。 / Edit with the Properties sidebar, process in Blueprint Settings, then save in the library. |
 | **搬走已经建好的东西 / Move a build** | [切换剪切模式](#cut)，连续暂存多份结构，分别预览、转向与粘贴。 / Queue cuts, preview each entry and place it elsewhere. |
 | **准备施工物资 / Prepare supplies** | [查看精确材料与 NBT 需求](#materials)，按需提交 ME 补料订单或使用装饰抵用券。 / Inspect exact costs, request AE crafting or select a decoration voucher. |
 | **交流与复用设计 / Share and reuse** | [打开蓝图站](#sharing)浏览、下载与分享，或转交同名 JSON + PNG 文件对。 / Browse the blueprint site or share a JSON + PNG pair. |
@@ -84,7 +84,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
   <em>Inspect structure targets and construction controls together.</em>
 </p>
 
-**操作要点：**用「结构调整」修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
+**操作要点：**选中模型后用「属性」侧栏修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
 
 *Use Structure Adjustment for planning changes. Check the displayed construction scope; the idle top HUD shows available actions and shortcuts.*
 
@@ -120,9 +120,9 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 ## 03 · 在蓝图库直接切换，在蓝图工作区调整与保存 / Switch designs, edit & save
 
-**库行直接切换当前蓝图并更新中央预览。** 有未保存修改时，在切换前只提示一次是否放弃；取消会保留当前草稿。外层工作区分为投影、蓝图与剪切，投影和剪切各自独立；原有「结构调整」与「蓝图设置」作为蓝图工作区内的编辑子流程继续保留。你可以先旋转三维预览、分层检查，再在结构调整中编辑方块和结构，在蓝图设置中处理身份、坐标、资源与保存。规划修改不会立刻改动世界。
+**库行直接切换当前蓝图并更新中央预览。** 有未保存修改时，在切换前只提示一次是否放弃；取消会保留当前草稿。外层工作区分为投影、蓝图与剪切。右侧「属性」用于编辑方块、结构参数与仓室，「蓝图设置」用于处理身份、坐标和资源，「蓝图库」用于文件管理与保存；三页共用中央画布。规划修改不会立刻改动世界。
 
-*Select a blueprint directly in the library. Projection and Cut remain separate workspaces; the existing Structure Adjustment and Blueprint Settings flows remain available inside the Blueprint workspace.*
+*Select a blueprint directly in the library. Projection, Blueprint and Cut have separate entries; Properties, Blueprint Settings and Library share the central editing canvas.*
 
 <table>
   <tr>
@@ -137,17 +137,17 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 **结构参数也能继续调整。** 蓝图成员的主信号、等级、高度等子信道可重新设置，重新生成所选成员时保留其他成员及其编辑；请核对预览中的实际尺寸。旧蓝图归属不完整时先恢复可确认的范围，无法可靠确定时保留原图并提示重新导入。
 
-结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后出现操作帮助，任何动作都会收起帮助并继续响应输入。
+蓝图编辑中默认 **G 显示或隐藏移动轴**；拖动彩色轴可实时单轴移动，拖动 XY、XZ、YZ 平面可同时移动两轴。底部指引按当前选择与操作更新，按 ^ 收起后会记住状态；F1 可查看与改绑编辑器快捷键。
 
 与机器等级关联的线圈、分级外壳、框架和玻璃可单独选中；相关外壳显示紫色框及持续的「全选 T」提示，按 **T** 才扩选同一结构的相关外壳，已设置的仓室保持独立。
 
 *Tier-related casings can be selected individually. Purple outlines and the T hint identify related cells in the same structure; press T to select them together while keeping configured hatches independent.*
 
-*Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles movement axes, and idle help dismisses on input.*
+*Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles axis and plane handles; F1 opens editor key bindings.*
 
 ### 让文字与图片成为蓝图的一部分 / Add text & picture art
 
-在空白工作区、结构调整或放置前的蓝图编辑中，点击顶部的「文字转蓝图」或「添加图片」，用 **LittleTiles 小瓷砖**制作标牌、立体字与像素画。文字可调整字体、颜色、材料和三维形态；图片从 `.minecraft/MiaoBlueprintPicture` 读取，支持固定材料组合、滤镜与边缘背景抠除。文字和图片都能保存处理预设，并按同色实体体积合并瓷砖及完整方块。
+在空白工作区或蓝图编辑中，从左侧工具栏选择文字或图片工具（默认 F7 / F8），用 **LittleTiles 小瓷砖**制作标牌、立体字与像素画。文字可调整字体、颜色、材料和三维形态；图片从 `.minecraft/MiaoBlueprintPicture` 读取，支持固定材料组合、滤镜与边缘背景抠除。文字和图片都能保存处理预设，并按同色实体体积合并瓷砖及完整方块。
 
 *Create signs, 3D lettering and pixel art with LittleTiles. Choose text fonts and materials, or convert local pictures with fixed palettes, filters and background removal; reuse processing presets and merge solid geometry.*
 
@@ -174,7 +174,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 ### 私用还是分享，由你逐步确认 / Review for private use or sharing
 
-「蓝图设置」负责处理与保存：按私用或分享倾向核对身份、坐标、网络和资源等选项，再命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导会说明「蓝图设置」和「结构调整」的区别，也支持不再显示。
+在「蓝图设置」中按「倾向自用」或「倾向分享」核对身份、坐标、网络和资源等处理选项，完成后到「蓝图库」命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导说明处理、保存与属性编辑的入口，也支持不再显示。
 
 自动提示词在私用和分享倾向下均默认轻度。木匠方块的来源所有者不会阻塞蓝图，新放置方块按原生规则归当前放置者，无需为此去标识；形状、饰面、染色与其他配置保留，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
 
@@ -344,7 +344,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | 第一次使用 / First use | 操作 / Action |
 | --- | --- |
 | **1 · 导入 / Import** | 手持投影仪右键打开工作台，对准控制器导入结构，或框选区域。 / Open the workspace and import a controller structure or region. |
-| **2 · 编辑 / Edit** | 「结构调整」修改结构；「蓝图设置」核对私用／分享处理并命名保存。 / Adjust the structure, review processing and save. |
+| **2 · 编辑 / Edit** | 在「属性」修改结构，「蓝图设置」核对自用／分享处理，再从「蓝图库」保存。 / Adjust properties, review processing and save in the library. |
 | **3 · 定位 / Position** | 从蓝图库选择蓝图并放置预览，调整朝向；普通视角右键锁定位置，等距视角用左键。 / Select a blueprint, preview it in the world and adjust its pose; right-click to lock in ordinary view, or left-click in isometric view. |
 | **4 · 施工 / Build** | 普通视角再右键核对材料，等距视角用左键；处理缺料或绑定要求后确认，Esc 取消。 / In ordinary view, right-click again to review materials; use left-click in isometric view. Resolve missing materials or binding requirements, then confirm; Esc cancels. |
 
@@ -376,7 +376,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 New servers default to shared upload/download limits of **128 KiB/s** and **512 KiB/s**. Operators can adjust both in server library settings. Unversioned legacy 16/16 limits migrate once to these defaults; other custom values and later explicit 16/16 choices are preserved. Updated clients and servers pipeline uploads; older servers retain compatible single-chunk transfer.
 
-等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置与结构调整的区别，并支持不再显示。
+等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置、蓝图库与属性编辑的入口，并支持不再显示。
 
 Waiting views show measured progress and percentages when totals are known, or activity and elapsed time otherwise. Long tasks continue after closing the workspace; reopening restores the business page, selection and view. Save guidance explains Blueprint Settings and Structure Adjustment and can be dismissed persistently.
 

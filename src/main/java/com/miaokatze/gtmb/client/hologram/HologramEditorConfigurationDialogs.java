@@ -91,7 +91,7 @@ final class HologramEditorConfigurationDialogs {
             }
         };
         panel.width(() -> Math.min(346, Math.max(160, ui.host.screenWidth() - 24)), Unit.Measure.PIXEL)
-            .height(() -> Math.min(height, Math.max(160, ui.host.screenHeight() - 24)), Unit.Measure.PIXEL)
+            .height(() -> dialogHeight(height), Unit.Measure.PIXEL)
             .background(HologramEditorNativeTheme.PANEL)
             .onCloseAction(() -> {
                 if ("inventory".equals(name) && panel.getContext()
@@ -100,6 +100,13 @@ final class HologramEditorConfigurationDialogs {
                         .dropDraggable(true);
                 close.run();
             });
+        if (ui.session.isTutorial())
+            panel.top(
+                () -> Math.max(
+                    6,
+                    (ui.host.screenHeight() - HologramEditorTutorialOverlay.RESERVED_HEIGHT - dialogHeight(height))
+                        / 2d),
+                Unit.Measure.PIXEL);
         Flow heading = row();
         heading.child(
             HologramEditorNativeTheme.label(title, HologramEditorNativeTheme.TITLE)
@@ -120,7 +127,7 @@ final class HologramEditorConfigurationDialogs {
         ui.shell.registerTarget("config." + name, panel);
         ui.shell.registerTarget("config." + name + ".close", closeButton);
         // The entire form can scroll on short screens; its inner bounded row list keeps its normal allocation.
-        ListWidget<IWidget, ?> viewport = list();
+        ListWidget<IWidget, ?> viewport = list().name("config." + name + ".viewport");
         viewport.child(
             content.widthRel(1f)
                 .height(height - 48));
@@ -132,6 +139,12 @@ final class HologramEditorConfigurationDialogs {
                 .child(heading)
                 .child(viewport));
         return panel;
+    }
+
+    private int dialogHeight(int preferred) {
+        int reserve = ui.session.isTutorial() ? HologramEditorTutorialOverlay.RESERVED_HEIGHT : 0;
+        // Tutorial subtitles and navigation own the footer. The existing form viewport scrolls inside the remainder.
+        return Math.min(preferred, Math.max(ui.session.isTutorial() ? 56 : 160, ui.host.screenHeight() - reserve - 24));
     }
 
     private Flow column() {
@@ -171,9 +184,11 @@ final class HologramEditorConfigurationDialogs {
             .height(22);
     }
 
-    private ButtonWidget<?> dynamicAction(IntSupplier id, Supplier<String> label, BooleanSupplier enabled,
-        Supplier<String> tooltip) {
-        return local(label, () -> ui.router.activate(id.getAsInt()), enabled, tooltip);
+    private ButtonWidget<?> dynamicAction(String target, IntSupplier id, Supplier<String> label,
+        BooleanSupplier enabled, Supplier<String> tooltip) {
+        ButtonWidget<?> widget = local(label, () -> ui.router.activate(id.getAsInt()), enabled, tooltip);
+        ui.shell.registerTarget(target, widget);
+        return widget;
     }
 
     private ButtonWidget<?> local(Supplier<String> label, Runnable pressed, BooleanSupplier enabled,
@@ -237,20 +252,27 @@ final class HologramEditorConfigurationDialogs {
             note(
                 () -> "来源：" + HologramEditorPropertiesPane
                     .sourceLabel(ui, ui.session.state().data.getString("activeStructure"))));
-        ListWidget<IWidget, ?> rows = list();
+        ListWidget<IWidget, ?> rows = list().name("config.channels.rows");
         for (int row = 0; row < 4; row++) {
             final int slot = row;
-            rows.child(visibleRow(dynamicAction(() -> 2000 + ui.config.drawerOffset() + slot, () -> {
-                NBTTagCompound cap = capabilityRow(slot);
-                if (cap == null) return "";
-                String source = "main".equals(cap.getString("id")) ? "主值"
-                    : cap.getBoolean("explicit") ? "指定" : "presence".equals(cap.getString("kind")) ? "默认" : "继承";
-                return cap.getString("label") + "：" + ui.config.optionLabel(cap) + "（" + source + "）";
-            }, () -> editable() && capabilityRow(slot) != null && capabilityRow(slot).getBoolean("editable"), () -> {
-                NBTTagCompound cap = capabilityRow(slot);
-                return cap == null ? "本页无此项"
-                    : cap.getString("id") + " · 原始值 " + cap.getInteger("current") + "；" + reason();
-            }).height(28), 28, () -> capabilityRow(slot) != null));
+            rows.child(
+                visibleRow(
+                    dynamicAction("config.capability.row." + slot, () -> 2000 + ui.config.drawerOffset() + slot, () -> {
+                        NBTTagCompound cap = capabilityRow(slot);
+                        if (cap == null) return "";
+                        String source = "main".equals(cap.getString("id")) ? "主值"
+                            : cap.getBoolean("explicit") ? "指定"
+                                : "presence".equals(cap.getString("kind")) ? "默认" : "继承";
+                        return cap.getString("label") + "：" + ui.config.optionLabel(cap) + "（" + source + "）";
+                    },
+                        () -> editable() && capabilityRow(slot) != null && capabilityRow(slot).getBoolean("editable"),
+                        () -> {
+                            NBTTagCompound cap = capabilityRow(slot);
+                            return cap == null ? "本页无此项"
+                                : cap.getString("id") + " · 原始值 " + cap.getInteger("current") + "；" + reason();
+                        }).height(28),
+                    28,
+                    () -> capabilityRow(slot) != null));
         }
         content.child(rows);
         content.child(
@@ -311,22 +333,27 @@ final class HologramEditorConfigurationDialogs {
 
     private ModularPanel options() {
         Flow content = column();
-        ListWidget<IWidget, ?> rows = list();
+        ListWidget<IWidget, ?> rows = list().name("config.options.rows");
         for (int row = 0; row < 7; row++) {
             final int slot = row;
-            rows.child(visibleRow(dynamicAction(() -> 4000 + ui.config.drawerOffset() + slot, () -> {
-                NBTTagCompound option = optionRow(slot), cap = optionCapability();
-                if (option == null || cap == null) return "";
-                boolean selected = option.getBoolean("present")
-                    ? cap.getBoolean("explicit") && option.getInteger("value") == cap.getInteger("current")
-                    : !cap.getBoolean("explicit");
-                return (selected ? "✓ " : "") + option.getString("label");
-            }, () -> editable() && optionRow(slot) != null, () -> {
-                NBTTagCompound option = optionRow(slot);
-                return option == null ? "本页无此项"
-                    : (option.getBoolean("present") ? "显式目标；原始值 " + option.getInteger("value") : "恢复默认 / 继承") + "；"
-                        + reason();
-            }), 22, () -> optionRow(slot) != null));
+            rows.child(
+                visibleRow(
+                    dynamicAction("config.option.row." + slot, () -> 4000 + ui.config.drawerOffset() + slot, () -> {
+                        NBTTagCompound option = optionRow(slot), cap = optionCapability();
+                        if (option == null || cap == null) return "";
+                        boolean selected = option.getBoolean("present")
+                            ? cap.getBoolean("explicit") && option.getInteger("value") == cap.getInteger("current")
+                            : !cap.getBoolean("explicit");
+                        return (selected ? "✓ " : "") + option.getString("label");
+                    }, () -> editable() && optionRow(slot) != null, () -> {
+                        NBTTagCompound option = optionRow(slot);
+                        return option == null ? "本页无此项"
+                            : (option.getBoolean("present") ? "显式目标；原始值 " + option.getInteger("value") : "恢复默认 / 继承")
+                                + "；"
+                                + reason();
+                    }),
+                    22,
+                    () -> optionRow(slot) != null));
         }
         content.child(rows);
         content.child(
@@ -344,7 +371,9 @@ final class HologramEditorConfigurationDialogs {
         raw.setEnabledIf(w -> !"_hatch_candidate".equals(ui.config.optionChannel()));
         raw.child(note(() -> "原始正整数（允许列表之外的值）"));
         Flow input = row();
-        input.child(field(ui.config.optionValueField()).expanded());
+        TextFieldWidget value = field(ui.config.optionValueField()).expanded();
+        ui.shell.registerTarget("config.option.value", value);
+        input.child(value);
         input.child(action(68, () -> "应用原始值", this::editable, this::reason).width(100));
         raw.child(input);
         content.child(raw);
@@ -418,7 +447,7 @@ final class HologramEditorConfigurationDialogs {
                 () -> ui.session.selectedCell() != null,
                 () -> ui.config.candidateNote()));
         content.child(tierSelector());
-        ListWidget<IWidget, ?> rows = list();
+        ListWidget<IWidget, ?> rows = list().name("config.candidates.rows");
         for (int row = 0; row < 5; row++) {
             final int slot = row;
             Flow line = row();
@@ -428,7 +457,7 @@ final class HologramEditorConfigurationDialogs {
                 item.asWidget()
                     .size(18)
                     .onUpdateListener(w -> item.setItem(candidate(slot))));
-            line.child(dynamicAction(() -> 10000 + candidateIndex(slot), () -> {
+            line.child(dynamicAction("config.candidate.row." + slot, () -> 10000 + candidateIndex(slot), () -> {
                 ItemStack stack = candidate(slot);
                 return stack == null ? ""
                     : (ui.session.selectedCell().chosenChoice == candidateIndex(slot) ? "✓ " : "")
@@ -486,20 +515,22 @@ final class HologramEditorConfigurationDialogs {
         ListWidget<IWidget, ?> rows = list();
         for (int row = 0; row < 7; row++) {
             final int slot = row;
-            rows.child(visibleRow(dynamicAction(() -> 15000 + ui.config.nativeRoleOffset() + slot, () -> {
-                int index = ui.config.nativeRoleOffset() + slot;
-                return index < ui.config.hatchRoles()
-                    .size() ? HologramUiConfiguration.roleLabel(
-                        ui.config.hatchRoles()
-                            .get(index))
-                        : "";
-            },
-                () -> ui.config.nativeRoleOffset() + slot < ui.config.hatchRoles()
-                    .size(),
-                () -> "类型仅来自当前格实际结构声明，不是全局设备类型表。"),
-                22,
-                () -> ui.config.nativeRoleOffset() + slot < ui.config.hatchRoles()
-                    .size()));
+            rows.child(
+                visibleRow(
+                    dynamicAction("config.role.row." + slot, () -> 15000 + ui.config.nativeRoleOffset() + slot, () -> {
+                        int index = ui.config.nativeRoleOffset() + slot;
+                        return index < ui.config.hatchRoles()
+                            .size() ? HologramUiConfiguration.roleLabel(
+                                ui.config.hatchRoles()
+                                    .get(index))
+                                : "";
+                    },
+                        () -> ui.config.nativeRoleOffset() + slot < ui.config.hatchRoles()
+                            .size(),
+                        () -> "类型仅来自当前格实际结构声明，不是全局设备类型表。"),
+                    22,
+                    () -> ui.config.nativeRoleOffset() + slot < ui.config.hatchRoles()
+                        .size()));
         }
         content.child(rows);
         content.child(

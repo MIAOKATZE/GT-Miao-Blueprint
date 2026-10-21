@@ -11,6 +11,7 @@ import net.minecraft.nbt.NBTTagList;
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
+import com.cleanroommc.modularui.widgets.ListWidget;
 
 /**
  * Two explicit in-memory raw examples. Never instantiates the live browser transport or touches its static active
@@ -22,6 +23,7 @@ final class HologramEditorCutListLesson
     private final List<NBTTagCompound> directory = new ArrayList<>();
     private final Map<String, NBTTagCompound> examples = new LinkedHashMap<>();
     private HologramCutStorageBrowserView browser;
+    private ListWidget<IWidget, ?> frameScroll;
     private HologramCutRawPreviewSession renderer;
     private NBTTagCompound raw, dragCamera;
     private String selected = "", notice = "只读教学内存示例 · 未读取真实剪切目录";
@@ -37,15 +39,23 @@ final class HologramEditorCutListLesson
     ParentWidget<?> build(HologramUiModules ui) {
         int width = Math.min(456, Math.max(220, ui.host.screenWidth() - 16));
         int availableHeight = ui.host.screenHeight() - HologramEditorTutorialOverlay.RESERVED_HEIGHT;
-        int height = Math.min(292, Math.max(146, availableHeight - 12));
+        int height = Math.min(292, Math.max(220, availableHeight - 12));
         ParentWidget<?> body = new ParentWidget<>().sizeRel(1f)
             .expanded()
             .name("tutorial.cut.container");
         browser = new HologramCutStorageBrowserView(width, height, this, this, ui.shell::registerTarget);
-        browser.pos(Math.max(0, (ui.host.screenWidth() - width) / 2), Math.max(0, (availableHeight - height) / 2))
+        browser.pos(Math.max(0, (ui.host.screenWidth() - width) / 2), Math.max(6, (availableHeight - height) / 2))
             .background(HologramEditorNativeTheme.PANEL)
             .name("tutorial.cut.browser");
-        body.child(browser);
+        // Keep the shared browser's camera/details readable; short teaching surfaces scroll the complete form.
+        frameScroll = new ListWidget<>().sizeRel(1f)
+            .name("tutorial.cut.viewport");
+        frameScroll.child(
+            new ParentWidget<>().widthRel(1f)
+                .height(Math.max(availableHeight, height + 12))
+                .child(browser));
+        body.child(frameScroll);
+        ui.shell.registerTarget("cut.browser", browser);
         browser.child(
             HologramEditorNativeTheme.label(() -> "私有剪切列表 · 教学内存示例", HologramEditorNativeTheme.TITLE)
                 .pos(12, 10)
@@ -176,6 +186,10 @@ final class HologramEditorCutListLesson
                     .tagCount());
         if (browser != null) {
             state.setTag("camera", browser.camera.cameraState());
+            if (frameScroll.isValid() && frameScroll.getScrollData() != null) state.setInteger(
+                "outerScroll",
+                frameScroll.getScrollData()
+                    .getScroll());
             if (browser.list.isValid() && browser.list.getScrollData() != null) state.setInteger(
                 "scroll",
                 browser.list.getScrollData()
@@ -192,6 +206,8 @@ final class HologramEditorCutListLesson
         dragCamera = null;
         browser.setEnabled(!closed);
         browser.camera.restoreCamera(state.getCompoundTag("camera"));
+        if (frameScroll.isValid() && frameScroll.getScrollData() != null) frameScroll.getScrollData()
+            .scrollTo(frameScroll.getScrollArea(), state.getInteger("outerScroll"));
         if (browser.list.isValid() && browser.list.getScrollData() != null) browser.list.getScrollData()
             .scrollTo(browser.list.getScrollArea(), state.getInteger("scroll"));
     }

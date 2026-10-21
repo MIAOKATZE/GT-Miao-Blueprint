@@ -45,8 +45,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private int[] actionBounds;
     private NBTTagCompound dragStart;
     private NBTTagCompound pendingNativeScroll;
+    private boolean pendingMaterialRestore;
     private static final String[] CHECKPOINT_SCROLLS = { "editor_native_tool_rail_list",
-        "editor_native_properties_list", "native_blueprint_settings", "library_content", "library_rows" };
+        "editor_native_properties_list", "native_blueprint_settings", "library_content", "library_rows",
+        "editor_native_view_workspace_list", "config.channels.viewport", "config.options.viewport",
+        "config.candidates.viewport", "config.presets.viewport", "config.sources.viewport", "config.channels.rows",
+        "config.options.rows", "config.candidates.rows" };
     private int cornerCount, cutStage, worldOffsetX, worldOffsetZ;
     private boolean cutStored, cutConsumed;
     private long isolatedCommands;
@@ -239,6 +243,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         actionStarted = targetWaitingSince = 0;
         dragStart = null;
         pendingNativeScroll = null;
+        pendingMaterialRestore = false;
         actionBounds = null;
         unavailable = "";
         pressed = queuedNext = actionApplied = actionPending = false;
@@ -419,10 +424,31 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     public void frame(long now) {
         if (!active()) return;
         try {
+            if (pendingMaterialRestore) {
+                if (scenePanel.getContext()
+                    .getScreen()
+                    .getPanelManager()
+                    .isPanelOpen(sandbox.panelName(HologramEditorMaterialLesson.PANEL_NAME))) return;
+                if (!actionPending) {
+                    final long version = playbackVersion;
+                    actionPending = ui.host.parent()
+                        .tryDeferAction(() -> {
+                            if (!active() || playbackVersion != version) return;
+                            try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
+                                .fieldGraph(sandbox)) {
+                                apply(newMaterialAction());
+                                pendingMaterialRestore = false;
+                                actionPending = false;
+                            } catch (RuntimeException failure) {
+                                abort(failure);
+                            }
+                        });
+                }
+                return;
+            }
             // The native graph has now laid out its restored page/groups; clamp against its actual current scroll area.
             if (pendingNativeScroll != null) {
-                restoreNativeScroll(pendingNativeScroll);
-                pendingNativeScroll = null;
+                if (restoreNativeScroll(pendingNativeScroll)) pendingNativeScroll = null;
                 return;
             }
             if (actionIndex >= actions.size()) {
@@ -483,7 +509,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         double p = Math.min(1, elapsed / (double) MOVE_NS), smooth = p * p * (3 - 2 * p);
         pointerX = fromX + (targetX - fromX) * smooth;
         pointerY = fromY + (targetY - fromY) * smooth;
-        boolean hover = action.operation == Operation.HOVER;
+        boolean hover = action.hover();
         pressed = !hover && elapsed >= MOVE_NS && elapsed < MOVE_NS + PRESS_NS + (action.drag() ? MOVE_NS : 0);
         if (hover && elapsed >= MOVE_NS) actionApplied = true;
         if (!hover && elapsed >= MOVE_NS && !actionApplied && !actionPending) {
@@ -521,7 +547,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         long hold = hover ? HOVER_NS : PRESS_NS + REST_NS + (action.drag() ? MOVE_NS : 0);
         if (actionApplied && elapsed >= MOVE_NS + hold) {
             if (action.drag() && action.operation != Operation.CUT_LIST_ORBIT && !worldCourse()) commitDrag();
-            actionIndex++;
+            if (action.operation != Operation.CLOSE_PANEL || sandbox.shell.targetBounds("modal") == null) actionIndex++;
             actionStarted = 0;
             pressed = false;
             dragStart = null;
@@ -538,8 +564,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             }
             if (action.operation == Operation.HOVER) return sandbox.shell.targetBounds(action.target);
         }
-        if (action.operation == Operation.HOVER) return hoverToolBounds(action.target);
-        String nativeTarget = action.control >= 0 ? "control." + resolvedControlId(action) : action.target;
+        if (action.operation == Operation.HOVER || action.operation == Operation.OPEN_TOOL)
+            return hoverToolBounds(action.target);
+        if (action.operation == Operation.HANDLES) return hoverToolBounds("moveHandles");
+        String nativeTarget = action.operation == Operation.OPEN_CAPABILITY ? capabilityTarget()
+            : action.control >= 0 ? "control." + resolvedControlId(action) : action.target;
+        if (nativeTarget.isEmpty()) return null;
         if (sandbox.shell.tutorialTargetClipped(nativeTarget)) {
             final long version = playbackVersion;
             ui.host.parent()
@@ -549,19 +579,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     });
             return null;
         }
+        if (action.operation == Operation.HOVER_NATIVE) return sandbox.shell.presentationBounds(nativeTarget);
+        if (action.operation == Operation.OPEN_CAPABILITY || action.operation == Operation.TYPE_CAPABILITY
+            || action.operation == Operation.SELECT_CANDIDATE) return sandbox.shell.targetBounds(nativeTarget);
         if (action.control >= 0) return sandbox.shell.controlBounds(resolvedControlId(action));
-        if (action.operation == Operation.TYPE_CAPABILITY) {
-            NBTTagList caps = sandbox.config.capabilities();
-            for (int i = 0; i < caps.tagCount(); i++) if (caps.getCompoundTagAt(i)
-                .getBoolean("editable")
-                && !"_hatch_candidate".equals(
-                    caps.getCompoundTagAt(i)
-                        .getString("id"))) {
-                            int[] bounds = sandbox.shell.controlBounds(2000 + i);
-                            if (bounds != null) return bounds;
-                        }
-            return null;
-        }
         if (action.operation == Operation.APPLY_CAPABILITY) return sandbox.shell.controlBounds(68);
         if (worldCourse() && (action.operation == Operation.FIRST_CORNER || action.operation == Operation.SECOND_CORNER
             || action.operation == Operation.WORLD_MOVE_XZ)) {
@@ -631,6 +652,44 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                             .getScroll() + delta);
             });
         return null;
+    }
+
+    private String capabilityTarget() {
+        NBTTagList caps = sandbox.config.capabilities();
+        int offset = sandbox.config.drawerOffset();
+        for (int slot = 0; slot < 4 && offset + slot < caps.tagCount(); slot++) {
+            NBTTagCompound cap = caps.getCompoundTagAt(offset + slot);
+            if (cap.getBoolean("editable") && !"_hatch_candidate".equals(cap.getString("id")))
+                return "config.capability.row." + slot;
+        }
+        return "";
+    }
+
+    private void typeCapabilityValue() {
+        HologramMuiTextField field = sandbox.config.optionValueField();
+        if (field == null || !sandbox.shell.activateTarget("config.option.value")
+            || !field.widget()
+                .isFocused()) {
+            unavailable = "原生输入框尚未取得焦点，未修改参数。";
+            return;
+        }
+        NBTTagCompound cap = sandbox.config.capability(sandbox.config.optionChannel());
+        if (cap == null || !cap.getBoolean("editable")) {
+            unavailable = "此能力当前不可编辑，保留原值。";
+            return;
+        }
+        String value = Long.toString(Math.max(1, Math.min(Integer.MAX_VALUE, (long) cap.getInteger("current") + 1)));
+        field.setCursorPositionEnd();
+        field.setSelectionPos(0);
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            field.widget()
+                .onKeyPressed(character, org.lwjgl.input.Keyboard.KEY_NONE);
+            // lwjgl3ify delivers printable characters through its separate native text event.
+            if (com.cleanroommc.modularui.ModularUI.Mods.LWJGL3IFY.isLoaded()) field.widget()
+                .onTextInput(new me.eigenraven.lwjgl3ify.api.InputEvents.TextEvent(String.valueOf(character)));
+        }
+        if (!value.equals(field.getText())) unavailable = "输入框未接受该值，保留原生校验结果。";
     }
 
     /** A clipped or unavailable tool is omitted rather than pointed at an unrelated viewport region. */
@@ -805,12 +864,18 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 break;
             case CONTROL:
                 int id = resolvedControlId(action);
-                if (!sandbox.shell.controlEnabled(id)) return;
-                if (id == 220 || id == 297 || id == 232 || id == 233 || id == 234)
-                    sandbox.processing.activateProcessing(id);
-                else if (id >= 10000 && id < 14000) sandbox.preview.pinCandidateControl(id);
-                else if (id >= 14000 && id < 15000) sandbox.library.selectServerPresetRow(id);
-                else sandbox.config.activateControl(id);
+                if (sandbox.shell.controlEnabled(id)) sandbox.shell.activateTarget("control." + id);
+                break;
+            case OPEN_TOOL:
+                sandbox.shell.activateTarget(
+                    "control." + (HologramEditorControlIds.TOOLS + sandbox.tools.commands()
+                        .index(action.target)));
+                break;
+            case OPEN_CAPABILITY:
+                sandbox.shell.activateTarget(capabilityTarget());
+                break;
+            case SELECT_CANDIDATE:
+                sandbox.shell.activateTarget(action.target);
                 break;
             case SELECT_CELL:
                 int index = preferredCell();
@@ -832,10 +897,15 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                         .first());
                 break;
             case HANDLES:
-                sandbox.preview.moveHandles(true);
+                sandbox.shell.activateTarget(
+                    "control." + (HologramEditorControlIds.TOOLS + sandbox.tools.commands()
+                        .index("moveHandles")));
                 break;
             case CLOSE_PANEL:
-                closePanels();
+                sandbox.shell.activateTarget("modal.close");
+                break;
+            case CLOSE_MATERIAL:
+                sandbox.shell.activateTarget(action.target);
                 break;
             case LIBRARY:
                 sandbox.shell.activateTarget(action.target);
@@ -858,39 +928,19 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 if (!groupSatisfied(action)) sandbox.shell.activateTarget(action.target);
                 break;
             case TYPE_CAPABILITY:
-                NBTTagList caps = sandbox.config.capabilities();
-                for (int i = 0; i < caps.tagCount(); i++) if (sandbox.shell.controlEnabled(2000 + i)) {
-                    sandbox.config.openOptionControl(2000 + i);
-                    sandbox.config.optionValueField()
-                        .setText(
-                            Integer.toString(
-                                Math.max(
-                                    1,
-                                    caps.getCompoundTagAt(i)
-                                        .getInteger("current") + 1)));
-                    break;
-                }
+                typeCapabilityValue();
                 break;
             case APPLY_CAPABILITY:
                 if (!sandbox.config.optionChannel()
-                    .isEmpty()) sandbox.config.activateControl(68);
+                    .isEmpty()) sandbox.shell.activateTarget("control.68");
                 break;
             case PROMPT:
-                closePanels();
-                sandbox.annotations.activateControl(146);
-                break;
-            case NBT:
-                closePanels();
-                sandbox.nbt.openNbtEditor(false);
-                break;
-            case NETWORK:
-                closePanels();
-                sandbox.bindings.networkDrawer(true);
+                sandbox.shell.activateTarget(action.target);
                 break;
             case MATERIALS:
-                closePanels();
+                closeMaterialLesson();
                 materialLesson.show(sandbox.session.state());
-                materialHandler = IPanelHandler
+                if (materialHandler == null) materialHandler = IPanelHandler
                     .simple(scenePanel, (parent, player) -> materialLesson.build(sandbox), true);
                 materialHandler.openPanel();
                 break;
@@ -933,13 +983,16 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         }
     }
 
-    private void closePanels() {
+    private void closeMaterialLesson() {
         materialLesson.close();
         if (materialHandler != null) {
             materialHandler.closePanel();
             materialHandler.deleteCachedPanel();
-            materialHandler = null;
         }
+    }
+
+    private void closePanels() {
+        closeMaterialLesson();
         sandbox.config.drawer(false);
         sandbox.config.hatchDrawer(false);
         sandbox.config.presetDrawer(false);
@@ -961,11 +1014,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setTag("config", sandbox.config.backgroundUiState());
         result.setTag("library", sandbox.library.backgroundUiState());
         result.setTag("processing", sandbox.processing.backgroundUiState());
+        result.setBoolean("viewWorkspace", sandbox.tools.viewWorkspaceOpen());
         NBTTagCompound presentation = new NBTTagCompound();
         presentation.setInteger("dockPage", sandbox.shell.dockPage());
         presentation.setBoolean("dockExpanded", sandbox.shell.dockExpanded());
         for (String name : CHECKPOINT_SCROLLS) {
-            ListWidget<?, ?> list = WidgetTree.findFirstWithNameNullable(sandbox.shell.root(), name, ListWidget.class);
+            ListWidget<?, ?> list = checkpointList(name);
             if (list != null && list.isValid() && list.getScrollData() != null) presentation.setInteger(
                 name,
                 list.getScrollData()
@@ -1005,7 +1059,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             sandbox.annotations.promptDrawer(checkpoint.getBoolean("prompt"));
             if (checkpoint.getBoolean("nbt")) sandbox.nbt.openNbtEditor(false);
             sandbox.bindings.networkDrawer(checkpoint.getBoolean("network"));
-            if (checkpoint.getBoolean("material")) apply(newMaterialAction());
+            pendingMaterialRestore = checkpoint.getBoolean("material");
         }
         cornerCount = checkpoint.getInteger("corners");
         cutStage = checkpoint.getInteger("cutStage");
@@ -1026,19 +1080,53 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             checkpoint.getBoolean("targetExpanded"),
             checkpoint.getBoolean("sourceExpanded"),
             checkpoint.getBoolean("materialExpanded"));
+        sandbox.tools.restoreViewWorkspace(checkpoint.getBoolean("viewWorkspace"));
         pendingNativeScroll = checkpoint.hasKey("nativePresentation", 10) ? (NBTTagCompound) presentation.copy() : null;
+        if (pendingNativeScroll != null)
+            pendingNativeScroll.setBoolean("viewWorkspace", checkpoint.getBoolean("viewWorkspace"));
     }
 
-    private void restoreNativeScroll(NBTTagCompound presentation) {
+    private ListWidget<?, ?> checkpointList(String name) {
+        if (name.startsWith("config.channels.") && !sandbox.config.drawer()
+            || name.startsWith("config.options.") && sandbox.config.optionChannel()
+                .isEmpty()
+            || name.startsWith("config.candidates.") && !sandbox.config.hatchDrawer()
+            || name.startsWith("config.presets.") && !sandbox.config.presetDrawer()
+            || name.startsWith("config.sources.") && !sandbox.config.sourceDrawer()
+            || name.equals("editor_native_view_workspace_list") && !sandbox.tools.viewWorkspaceOpen()) return null;
+        ListWidget<?, ?> found = WidgetTree.findFirstWithNameNullable(sandbox.shell.root(), name, ListWidget.class);
+        if (found != null) return found;
+        if (scenePanel == null || !scenePanel.isValid()) return null;
+        com.cleanroommc.modularui.screen.PanelManager manager = scenePanel.getContext()
+            .getScreen()
+            .getPanelManager();
+        for (ModularPanel panel : manager.getOpenPanels()) if (manager.isSubPanelOf(panel, scenePanel)) {
+            found = WidgetTree.findFirstWithNameNullable(panel, name, ListWidget.class);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private boolean restoreNativeScroll(NBTTagCompound presentation) {
+        if (!sandbox.tools.restoreViewWorkspace(presentation.getBoolean("viewWorkspace"))) return false;
+        boolean ready = true;
         for (String name : CHECKPOINT_SCROLLS) if (presentation.hasKey(name, 3)) {
-            ListWidget<?, ?> list = WidgetTree.findFirstWithNameNullable(sandbox.shell.root(), name, ListWidget.class);
+            ListWidget<?, ?> list = checkpointList(name);
             if (list != null && list.isValid() && list.getScrollData() != null) list.getScrollData()
                 .scrollTo(list.getScrollArea(), presentation.getInteger(name));
+            else ready = false;
         }
+        return ready;
     }
 
     private boolean groupSatisfied(Action action) {
         switch (action.operation) {
+            case CLOSE_PANEL:
+                return sandbox.shell.targetBounds("modal") == null;
+            case CLOSE_MATERIAL:
+                return !materialLesson.visible();
+            case HANDLES:
+                return sandbox.preview.moveHandles();
             case CLOSE_TARGET:
                 return !sandbox.shell.propertiesGroupExpanded("target");
             case OPEN_TARGET:
@@ -1071,9 +1159,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (materialLesson.visible()) focus = materialLesson.bounds(width, height);
         int[] footer = overlay.footerBounds();
         if (focus != null) {
-            focus = focus.clone();
-            if (footer != null && focus[1] < footer[1] && focus[1] + focus[3] >= footer[1])
-                focus[3] = Math.max(1, footer[1] - focus[1] - 6);
+            // Keep the actual widget boundary. Dialog layout reserves the footer instead of truncating its focus.
             HologramEditorTutorialBlur.drawOutside(width, height, focus[0], focus[1], focus[2], focus[3]);
             int x = focus[0], y = focus[1], right = x + focus[2], bottom = y + focus[3];
             Gui.drawRect(0, 0, width, y, 0x1b606264);
@@ -1086,13 +1172,27 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             int maxLabelWidth = viewport == null ? 0 : Math.max(0, viewport[2] - 16);
             String visibleTitle = ui.host.font()
                 .trimStringToWidth(title, Math.max(0, maxLabelWidth - 10));
+            int[] surface = cutListLesson != null ? sandbox.shell.targetBounds("cut.browser")
+                : materialLesson.visible() ? focus : sandbox.shell.targetBounds("modal");
             int[] label = focusLabelBounds(
                 focus,
                 viewport,
                 footer,
+                surface,
+                new int[] { (int) Math.round(pointerX) - 5, (int) Math.round(pointerY) - 5, 17, 22 },
                 ui.host.font()
                     .getStringWidth(visibleTitle) + 10,
                 13);
+            if (label == null) {
+                int[] slot = overlay.captionBounds();
+                if (slot != null) {
+                    visibleTitle = ui.host.font()
+                        .trimStringToWidth(title, Math.max(0, slot[2] - 24));
+                    int labelWidth = ui.host.font()
+                        .getStringWidth(visibleTitle) + 10;
+                    label = new int[] { slot[0] + (slot[2] - labelWidth) / 2, slot[1], labelWidth, 13 };
+                }
+            }
             if (label != null && !visibleTitle.isEmpty()) {
                 Gui.drawRect(label[0], label[1], label[0] + label[2], label[1] + label[3], 0xe65b412a);
                 ui.host.font()
@@ -1103,22 +1203,31 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     /** Keep the caption in the real scene margin, outside the target and above the independent footer controls. */
-    private static int[] focusLabelBounds(int[] focus, int[] viewport, int[] footer, int labelWidth, int labelHeight) {
+    private static int[] focusLabelBounds(int[] focus, int[] viewport, int[] footer, int[] surface, int[] pointer,
+        int labelWidth, int labelHeight) {
         if (viewport == null) return null;
         int left = viewport[0] + 6, top = viewport[1] + 6;
         int right = viewport[0] + viewport[2] - 6, bottom = viewport[1] + viewport[3] - 6;
         if (footer != null) bottom = Math.min(bottom, footer[1] - 6);
         if (right - left < labelWidth || bottom - top < labelHeight) return null;
         int fx = focus[0], fy = focus[1], fr = fx + focus[2], fb = fy + focus[3];
-        int[][] candidates = { { fx - labelWidth - 8, fy + (focus[3] - labelHeight) / 2 },
-            { fr + 8, fy + (focus[3] - labelHeight) / 2 }, { fx, fy - labelHeight - 5 }, { fx, fb + 5 }, { left, top },
-            { right - labelWidth, top }, { left, bottom - labelHeight }, { right - labelWidth, bottom - labelHeight } };
+        int[] outside = surface == null ? focus : surface;
+        int ox = outside[0], oy = outside[1], or = ox + outside[2], ob = oy + outside[3];
+        int[][] candidates = { { ox - labelWidth - 8, oy + (outside[3] - labelHeight) / 2 },
+            { or + 8, oy + (outside[3] - labelHeight) / 2 }, { ox, oy - labelHeight - 5 }, { ox, ob + 5 },
+            { left, top }, { right - labelWidth, top }, { left, bottom - labelHeight },
+            { right - labelWidth, bottom - labelHeight } };
         int[] best = null;
         long bestDistance = Long.MAX_VALUE;
         for (int[] candidate : candidates) {
             int x = Math.max(left, Math.min(right - labelWidth, candidate[0]));
             int y = Math.max(top, Math.min(bottom - labelHeight, candidate[1]));
             if (x < fr + 3 && x + labelWidth > fx - 3 && y < fb + 3 && y + labelHeight > fy - 3) continue;
+            if (surface != null && x < or + 3 && x + labelWidth > ox - 3 && y < ob + 3 && y + labelHeight > oy - 3)
+                continue;
+            if (x < pointer[0] + pointer[2] && x + labelWidth > pointer[0]
+                && y < pointer[1] + pointer[3]
+                && y + labelHeight > pointer[1]) continue;
             int dx = Math.max(0, Math.max(fx - x - labelWidth, x - fr));
             int dy = Math.max(0, Math.max(fy - y - labelHeight, y - fb));
             long distance = (long) dx * dx + (long) dy * dy;

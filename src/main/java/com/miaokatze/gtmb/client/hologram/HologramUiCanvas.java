@@ -359,7 +359,7 @@ final class HologramUiCanvas {
             case 146:
                 return "编辑当前所选格的提示词；支持 Ctrl 多选、Shift 框选，可切换全局、方块或提示区范围。";
             case 148:
-                return ui.library.savedStructureAccent(id) != 0 ? "蓝图已保存。进入结构调整，继续设置结构等级、信道、方块目标与仓室。"
+                return ui.library.savedStructureAccent(id) != 0 ? "蓝图已保存。选中模型并打开右侧属性，继续设置结构等级、信道、方块目标与仓室。"
                     : "调整结构等级、信道、方块目标与仓室；施工前核对材料。";
             case 149:
                 return "处理、保存和分享蓝图，并编辑蓝图 NBT 与提示词。";

@@ -11,6 +11,10 @@ final class HologramEditorLessons {
     enum Operation {
         CONTROL,
         HOVER,
+        HOVER_NATIVE,
+        OPEN_TOOL,
+        OPEN_CAPABILITY,
+        SELECT_CANDIDATE,
         SELECT_CELL,
         SELECT_STRUCTURE,
         HANDLES,
@@ -18,6 +22,7 @@ final class HologramEditorLessons {
         MOVE_XZ,
         COPY_X,
         CLOSE_PANEL,
+        CLOSE_MATERIAL,
         LIBRARY,
         EDITOR,
         SETTINGS,
@@ -29,8 +34,6 @@ final class HologramEditorLessons {
         TYPE_CAPABILITY,
         APPLY_CAPABILITY,
         PROMPT,
-        NBT,
-        NETWORK,
         MATERIALS,
         WORLD_MODE,
         FIRST_CORNER,
@@ -64,6 +67,10 @@ final class HologramEditorLessons {
                 || operation == Operation.COPY_X
                 || operation == Operation.WORLD_MOVE_XZ
                 || operation == Operation.CUT_LIST_ORBIT;
+        }
+
+        boolean hover() {
+            return operation == Operation.HOVER || operation == Operation.HOVER_NATIVE;
         }
     }
 
@@ -134,7 +141,8 @@ final class HologramEditorLessons {
                 int candidateStep = topic.equals("projection") ? 3 : 2;
                 Step old = steps.get(candidateStep);
                 List<Action> actions = new ArrayList<>();
-                for (Action action : old.actions) if (action.control != 10000) actions.add(action);
+                for (Action action : old.actions)
+                    if (action.operation != Operation.SELECT_CANDIDATE) actions.add(action);
                 steps.set(
                     candidateStep,
                     new Step(
@@ -144,17 +152,34 @@ final class HologramEditorLessons {
                         actions.toArray(new Action[0])));
             }
         }
-        if (topic.equals("blueprint") && observed.data.getTagList("quantumGroups", 10)
-            .tagCount() == 0) {
-            for (int i = 0; i < steps.size(); i++) {
-                Step old = steps.get(i);
-                for (Action action : old.actions) if (action.operation == Operation.NETWORK) steps.set(
-                    i,
+        if (topic.equals("blueprint")) {
+            if (observed.data.getCompoundTag("networkBindings")
+                .getTagList("groups", 10)
+                .tagCount() > 0) {
+                Step old = steps.get(16);
+                steps.set(
+                    16,
                     new Step(
                         old.title,
-                        "这份真实样例没有量子组；这里只展示网络入口，不虚构绑定或连接真实网络。",
-                        old.focus,
-                        old.actions.toArray(new Action[0])));
+                        "从视图与工作区打开真实网络绑定入口，查看本例已有的网络组；演示不会修改真实网络。",
+                        "modal",
+                        action(Operation.CLOSE_PANEL, "modal.close"),
+                        action(Operation.OPEN_TOOL, "viewWorkspace"),
+                        control(HologramEditorControlIds.TOOLS + 400 + commands.index("networkBindings"))));
+            }
+            boolean canNbt = !observed.data.getBoolean("blueprintProcessingRequired")
+                || observed.data.getBoolean("blueprintProcessingComplete")
+                || observed.data.getBoolean("blueprintSaved");
+            if (canNbt) {
+                Step old = steps.get(15);
+                steps.set(
+                    15,
+                    new Step(
+                        old.title,
+                        "处理条件已满足，可以从设置页打开实际 NBT 工具；此处仅展示窗口，不写入方块数据。",
+                        "modal",
+                        action(Operation.CLOSE_PANEL, "modal.close"),
+                        control(166)));
             }
         }
         return Collections.unmodifiableList(steps);
@@ -189,7 +214,8 @@ final class HologramEditorLessons {
             "只编辑机器实际声明的能力；仓室电压与结构主值分开。",
             "modal",
             control(60),
-            action(Operation.TYPE_CAPABILITY, "capability"),
+            action(Operation.OPEN_CAPABILITY, "config.capability"),
+            action(Operation.TYPE_CAPABILITY, "config.option.value"),
             action(Operation.APPLY_CAPABILITY, "control.68"));
         add(
             s,
@@ -201,7 +227,7 @@ final class HologramEditorLessons {
             action(Operation.CLOSE_SOURCE, "properties.source"),
             action(Operation.OPEN_TARGET, "properties.target"),
             control(95),
-            control(10000));
+            action(Operation.SELECT_CANDIDATE, "config.candidate.row.0"));
         add(
             s,
             "实体仓室预设",
@@ -220,8 +246,9 @@ final class HologramEditorLessons {
             action(Operation.CLOSE_TARGET, "properties.target"),
             action(Operation.OPEN_MATERIAL, "properties.material"),
             control(78),
+            action(Operation.CLOSE_PANEL, "modal.close"),
             action(Operation.MATERIALS, "viewport"));
-        add(s, "返回工作区", "结束后恢复原控件树、草稿、相机与选区。", "viewport", action(Operation.CLOSE_PANEL, "modal.close"));
+        add(s, "返回工作区", "结束后恢复原控件树、草稿、相机与选区。", "viewport", action(Operation.CLOSE_MATERIAL, "materials.cancel"));
     }
 
     private static void blueprint(List<Step> s, HologramEditorCommands commands) {
@@ -263,7 +290,8 @@ final class HologramEditorLessons {
             "输入与应用",
             "字段是本地输入；点击应用才交给隔离会话处理。",
             "modal",
-            action(Operation.TYPE_CAPABILITY, "capability"),
+            action(Operation.OPEN_CAPABILITY, "config.capability"),
+            action(Operation.TYPE_CAPABILITY, "config.option.value"),
             action(Operation.APPLY_CAPABILITY, "control.68"));
         add(
             s,
@@ -275,7 +303,7 @@ final class HologramEditorLessons {
             action(Operation.CLOSE_SOURCE, "properties.source"),
             action(Operation.OPEN_TARGET, "properties.target"),
             control(95),
-            control(10000));
+            action(Operation.SELECT_CANDIDATE, "config.candidate.row.0"));
         add(
             s,
             "作者蓝图的边界",
@@ -315,17 +343,18 @@ final class HologramEditorLessons {
         add(
             s,
             "NBT 审阅",
-            "字段可解析不等于设备配置有效；配置材料与设备本体分别计费。",
-            "modal",
+            "逐格 NBT 在处理后开放；本例尚未完成处理，先查看真实入口与禁用说明。",
+            "control.166",
             action(Operation.CLOSE_PANEL, "modal.close"),
-            action(Operation.NBT, "control.166"));
+            action(Operation.HOVER_NATIVE, "control.166"));
         add(
             s,
             "量子组与网络",
-            "单独审阅类群、信道和绑定策略；示例不连接真实网络。",
-            "modal",
+            "在视图与工作区查看真实网络入口。本例没有已登记量子类群，因此绑定入口不开放。",
+            "tools.network.unavailable",
             action(Operation.CLOSE_PANEL, "modal.close"),
-            action(Operation.NETWORK, "viewport"));
+            action(Operation.OPEN_TOOL, "viewWorkspace"),
+            action(Operation.HOVER_NATIVE, "tools.network.unavailable"));
         add(
             s,
             "倾向自用",
@@ -339,10 +368,13 @@ final class HologramEditorLessons {
         add(
             s,
             "保存与覆盖",
-            "普通另存填写名称；覆盖需明确所选目标。示例不会创建蓝图库文件。",
+            "名称与保存按钮在蓝图库。本例尚未完成处理，保存和覆盖均不执行；教程不写文件。",
             "library",
             control(234),
-            action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)));
+            action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)),
+            action(Operation.HOVER_NATIVE, "library.name"),
+            action(Operation.HOVER_NATIVE, "control.140"),
+            action(Operation.HOVER_NATIVE, "control.222"));
         add(s, "世界位置先锁定", "真实放置先在世界移动并锁定 ghost；这里从已锁定位置解释预检。", "materials", action(Operation.MATERIALS, "viewport"));
         add(s, "唯一最终确认", "逐项核对需求、已有与缺失；本次 NBT、缓存和补料各有原有门禁。", "materials");
         add(
@@ -350,7 +382,7 @@ final class HologramEditorLessons {
             "返回蓝图库",
             "完成或跳过都恢复原窗口、字段、布局与选区。",
             "library",
-            action(Operation.CLOSE_PANEL, "modal.close"),
+            action(Operation.CLOSE_MATERIAL, "materials.cancel"),
             action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)));
     }
 
@@ -371,7 +403,8 @@ final class HologramEditorLessons {
             "沿用实际能力项；未声明的能力不伪造为通用等级。",
             "modal",
             control(60),
-            action(Operation.TYPE_CAPABILITY, "capability"),
+            action(Operation.OPEN_CAPABILITY, "config.capability"),
+            action(Operation.TYPE_CAPABILITY, "config.option.value"),
             action(Operation.APPLY_CAPABILITY, "control.68"));
         add(
             s,
@@ -383,7 +416,7 @@ final class HologramEditorLessons {
             action(Operation.CLOSE_SOURCE, "properties.source"),
             action(Operation.OPEN_TARGET, "properties.target"),
             control(95),
-            control(10000));
+            action(Operation.SELECT_CANDIDATE, "config.candidate.row.0"));
         add(
             s,
             "基础与命名搭配",

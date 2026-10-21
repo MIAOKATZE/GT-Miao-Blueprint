@@ -255,11 +255,14 @@ final class HologramEditorLegacyDialogs {
 
         void fit() {
             int width = Math.max(32, Math.min(domain.width + 16, ui.host.screenWidth() - 12));
-            int height = Math.max(48, Math.min(domain.height + 38, ui.host.screenHeight() - 12));
+            int availableHeight = ui.host.screenHeight()
+                - (ui.session.isTutorial() ? HologramEditorTutorialOverlay.RESERVED_HEIGHT : 0);
+            int height = Math.max(48, Math.min(domain.height + 38, availableHeight - 12));
             if (width == fittedWidth && height == fittedHeight) return;
             fittedWidth = width;
             fittedHeight = height;
             size(width, height).center();
+            if (ui.session.isTutorial()) top(Math.max(6, (availableHeight - height) / 2));
             heading.size(Math.max(1, width - 20), 16);
             viewport.size(Math.max(1, width - 16), Math.max(1, height - 38));
             scheduleResize();

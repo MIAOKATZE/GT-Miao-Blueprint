@@ -96,11 +96,12 @@ final class HologramEditorLibraryPane {
                         ui.library::nativeRefreshCatalog).widthRel(1f)
                             .expanded()
                             .height(20)));
-        page.child(
-            ui.shell.adoptField(ui.library.presetNameField())
-                .name("library_name")
-                .widthRel(1f)
-                .height(20));
+        IWidget nameField = ui.shell.adoptField(ui.library.presetNameField())
+            .name("library_name")
+            .widthRel(1f)
+            .height(20);
+        ui.shell.registerTarget("library.name", nameField);
+        page.child(nameField);
         page.child(
             Flow.row()
                 .widthRel(1f)

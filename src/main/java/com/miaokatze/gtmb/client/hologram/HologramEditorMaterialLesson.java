@@ -5,6 +5,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.Dialog;
 import com.cleanroommc.modularui.widgets.ItemDisplayWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
@@ -12,6 +13,8 @@ import com.cleanroommc.modularui.widgets.layout.Flow;
 
 /** Passive native review of the same precise quote model used by the production material dialog. */
 final class HologramEditorMaterialLesson {
+
+    static final String PANEL_NAME = "gtmb_tutorial_materials";
 
     private final HologramMaterialReview materials = new HologramMaterialReview();
     private NBTTagCompound data;
@@ -40,10 +43,12 @@ final class HologramEditorMaterialLesson {
     ModularPanel build(HologramUiModules ui) {
         if (panel != null) return panel;
         int width = Math.max(260, Math.min(600, ui.host.screenWidth() - 24));
-        int height = Math.max(180, Math.min(390, ui.host.screenHeight() - 140));
-        panel = new Dialog<Void>(ui.panelName("gtmb_tutorial_materials")).setDisablePanelsBelow(false)
+        int availableHeight = ui.host.screenHeight() - HologramEditorTutorialOverlay.RESERVED_HEIGHT;
+        int height = Math.max(80, Math.min(390, availableHeight - 24));
+        panel = new Dialog<Void>(ui.panelName(PANEL_NAME)).setDisablePanelsBelow(false)
             .setCloseOnOutOfBoundsClick(false)
             .size(width, height)
+            .top(Math.max(6, (availableHeight - height) / 2))
             .background(HologramEditorNativeTheme.PANEL);
         Flow column = Flow.col()
             .sizeRel(1f)
@@ -109,16 +114,17 @@ final class HologramEditorMaterialLesson {
         body.child(options(new String[] { "本次 NBT", "量子网络", "AE 补齐缺料", "装饰抵用券" }, "materials.options.primary"));
         body.child(options(new String[] { "去标识", "清障", "校验详情", "刷新材料" }, "materials.options.secondary"));
         column.child(body);
+        ButtonWidget<?> cancel = HologramEditorNativeTheme.button(() -> "取消放置", this::close)
+            .width(78)
+            .height(20)
+            .name("materials.cancel");
+        ui.shell.registerTarget("materials.cancel", cancel);
         column.child(
             Flow.row()
                 .widthRel(1f)
                 .height(20)
                 .childPadding(6)
-                .child(
-                    HologramEditorNativeTheme.button(() -> "取消放置", () -> {})
-                        .width(78)
-                        .height(20)
-                        .name("materials.cancel"))
+                .child(cancel)
                 .child(
                     HologramEditorNativeTheme.primaryButton(() -> "最终确认 · 仅示范", () -> {})
                         .widthRel(1f)

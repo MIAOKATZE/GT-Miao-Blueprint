@@ -17,8 +17,13 @@ import com.cleanroommc.modularui.widgets.layout.Flow;
 /** Transparent native input shield. The four small navigation widgets are its only actionable children. */
 final class HologramEditorTutorialOverlay {
 
-    private static final int EXPLANATION_HEIGHT = 28, FOOTER_GAP = 7, NAVIGATION_HEIGHT = 20, BOTTOM_GAP = 10;
-    static final int RESERVED_HEIGHT = EXPLANATION_HEIGHT + FOOTER_GAP + NAVIGATION_HEIGHT + BOTTOM_GAP + 6;
+    private static final int CAPTION_HEIGHT = 13, EXPLANATION_HEIGHT = 28, FOOTER_GAP = 7, NAVIGATION_HEIGHT = 20,
+        BOTTOM_GAP = 10;
+    static final int RESERVED_HEIGHT = CAPTION_HEIGHT + EXPLANATION_HEIGHT
+        + FOOTER_GAP * 2
+        + NAVIGATION_HEIGHT
+        + BOTTOM_GAP
+        + 6;
 
     interface View {
 
@@ -45,6 +50,7 @@ final class HologramEditorTutorialOverlay {
     private final ButtonWidget<?>[] navigation = new ButtonWidget<?>[4];
     private ModularPanel panel;
     private Flow navigationRow;
+    private Widget<?> captionSlot;
 
     HologramEditorTutorialOverlay(HologramUiModules ui, View view) {
         this.ui = ui;
@@ -103,6 +109,11 @@ final class HologramEditorTutorialOverlay {
             navigation[i] = button;
             row.child(button);
         }
+        captionSlot = new Widget<>().widthRel(1f)
+            .height(CAPTION_HEIGHT)
+            .name("tutorial.caption.slot")
+            .background(IDrawable.NONE)
+            .disableThemeBackground(true);
         panel.child(
             Flow.col()
                 .widthRel(1f)
@@ -112,6 +123,7 @@ final class HologramEditorTutorialOverlay {
                 .background(IDrawable.NONE)
                 .disableThemeBackground(true)
                 .name("tutorial.footer")
+                .child(captionSlot)
                 .child(
                     new Explanation().widthRel(1f)
                         .height(EXPLANATION_HEIGHT)
@@ -135,6 +147,10 @@ final class HologramEditorTutorialOverlay {
 
     int[] navigationBounds() {
         return navigationRow == null ? null : ui.shell.nativeWidgetBounds(navigationRow);
+    }
+
+    int[] captionBounds() {
+        return captionSlot == null ? null : ui.shell.nativeWidgetBounds(captionSlot);
     }
 
     int[] footerBounds() {

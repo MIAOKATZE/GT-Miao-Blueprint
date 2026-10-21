@@ -101,6 +101,14 @@ final class HologramEditorTools {
         nativeTools.openViewWorkspace();
     }
 
+    boolean viewWorkspaceOpen() {
+        return nativeTools.viewWorkspaceOpen();
+    }
+
+    boolean restoreViewWorkspace(boolean open) {
+        return nativeTools.restoreViewWorkspace(open);
+    }
+
     void closeTransient() {
         nativeTools.closeContext();
         nativeTools.closeViewWorkspace();

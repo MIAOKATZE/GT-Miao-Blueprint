@@ -968,7 +968,7 @@ final class HologramUiLibrary {
             ui.canvas.button(146, 167, 282, 129, 17, "所选格提示词", ui.session.editable(), mx, my);
         ui.config.drawResetButton(302, 282, 134, mx, my);
         if (SAVE_GUIDANCE.pending(ui.session.state().session))
-            ui.canvas.text("蓝图已保存 · 点击左上青色“结构调整”继续设置结构", 41, 301, 395, HologramUiAccent.SUGGESTION);
+            ui.canvas.text("蓝图已保存 · 选中模型后，从右侧“属性”继续编辑", 41, 301, 395, HologramUiAccent.SUGGESTION);
     }
 
     void drawBlueprintSwitchReview(int mx, int my) {

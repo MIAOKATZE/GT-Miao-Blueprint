@@ -33,6 +33,7 @@ final class HologramEditorNativeTools {
     private final HologramUiModules ui;
     private ModularPanel host;
     private IPanelHandler floating, context, shortcuts, viewWorkspace;
+    private ModularPanel viewWorkspacePanel;
     private int contextX, contextY;
 
     HologramEditorNativeTools(HologramUiModules ui) {
@@ -458,6 +459,9 @@ final class HologramEditorNativeTools {
         panel.setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
             .setDraggable(true);
+        int availableHeight = ui.host.screenHeight()
+            - (ui.session.isTutorial() ? HologramEditorTutorialOverlay.RESERVED_HEIGHT : 0);
+        int height = Math.min(306, Math.max(ui.session.isTutorial() ? 80 : 170, availableHeight - 20));
         panel.size(
             Math.min(
                 324,
@@ -465,14 +469,10 @@ final class HologramEditorNativeTools {
                     220,
                     host.getScreen()
                         .getScreenArea().width - 20)),
-            Math.min(
-                306,
-                Math.max(
-                    170,
-                    host.getScreen()
-                        .getScreenArea().height - 20)))
+            height)
             .center()
             .background(HologramEditorNativeTheme.PANEL);
+        if (ui.session.isTutorial()) panel.top(Math.max(6, (availableHeight - height) / 2));
         Flow body = Flow.column()
             .sizeRel(1f)
             .padding(8)
@@ -516,13 +516,14 @@ final class HologramEditorNativeTools {
             command(4, "networkBindings", false).widthRel(1f)
                 .height(27));
         rows.child(networks);
-        rows.child(
-            HologramEditorNativeTheme.label(() -> "当前蓝图没有已登记的量子类群")
-                .widthRel(1f)
-                .height(21)
-                .setEnabledIf(
-                    ignored -> ui.bindings.networkGroups()
-                        .tagCount() == 0));
+        IWidget noNetworks = HologramEditorNativeTheme.label(() -> "当前蓝图没有已登记的量子类群")
+            .widthRel(1f)
+            .height(21)
+            .setEnabledIf(
+                ignored -> ui.bindings.networkGroups()
+                    .tagCount() == 0);
+        ui.shell.registerTarget("tools.network.unavailable", noNetworks);
+        rows.child(noNetworks);
         rows.child(
             command(4, "aeMarking", false).widthRel(1f)
                 .height(27));
@@ -530,19 +531,21 @@ final class HologramEditorNativeTools {
             command(4, "shortcuts", false).widthRel(1f)
                 .height(27));
         body.child(rows);
-        body.child(
-            action(
-                BASE + 962,
-                () -> "返回编辑",
-                "close",
-                () -> true,
-                () -> false,
-                () -> "关闭窗口，保持当前选择。",
-                false,
-                this::closeViewWorkspace).widthRel(1f)
-                    .height(24));
+        IWidget closeView = action(
+            BASE + 962,
+            () -> "返回编辑",
+            "close",
+            () -> true,
+            () -> false,
+            () -> "关闭窗口，保持当前选择。",
+            false,
+            this::closeViewWorkspace).widthRel(1f)
+                .height(24);
+        ui.shell.registerTarget("modal.close", closeView);
+        body.child(closeView);
         panel.child(body);
         ui.shell.registerControl(VIEW_PANEL, panel, () -> "视图与工作区", this::viewWorkspaceOpen);
+        viewWorkspacePanel = panel;
         return panel;
     }
 
@@ -637,8 +640,17 @@ final class HologramEditorNativeTools {
         return shortcuts != null && shortcuts.isPanelOpen();
     }
 
-    private boolean viewWorkspaceOpen() {
+    boolean viewWorkspaceOpen() {
         return viewWorkspace != null && viewWorkspace.isPanelOpen();
+    }
+
+    /** Checkpoint restoration already runs outside native input dispatch. */
+    boolean restoreViewWorkspace(boolean open) {
+        if (viewWorkspace == null) return !open;
+        if (open && !viewWorkspace.isPanelOpen()) viewWorkspace.openPanel();
+        else if (!open && viewWorkspace.isPanelOpen()) viewWorkspace.closePanel();
+        return open ? viewWorkspace.isPanelOpen() && viewWorkspacePanel != null && !viewWorkspacePanel.isClosing()
+            : !viewWorkspace.isPanelOpen();
     }
 
     boolean modalOpen() {

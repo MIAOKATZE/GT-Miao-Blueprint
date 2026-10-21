@@ -458,8 +458,7 @@ final class HologramEditorShell {
             } catch (NumberFormatException invalid) {
                 return null;
             }
-            if (entries != null) for (Entry entry : entries)
-                if (entry.enabled.getAsBoolean() && visible(entry.widget)) return entry.widget;
+            if (entries != null) for (Entry entry : entries) if (visible(entry.widget)) return entry.widget;
         } else {
             List<IWidget> entries = targets.get(key);
             if (entries != null)
@@ -475,6 +474,11 @@ final class HologramEditorShell {
         return clipped == null || clipped[2] < full[2] || clipped[3] < full[3];
     }
 
+    /** Read-only presentation also includes visible disabled buttons whose restriction a lesson explains. */
+    int[] presentationBounds(String key) {
+        return bounds(tutorialTarget(key));
+    }
+
     /** Called only as a deferred sandbox action, using the same native scrolling as the player. */
     void revealTutorialTarget(String key) {
         IWidget widget = tutorialTarget(key);
@@ -485,15 +489,21 @@ final class HologramEditorShell {
             if (parent instanceof com.cleanroommc.modularui.widgets.ListWidget) {
                 com.cleanroommc.modularui.widgets.ListWidget<?, ?> list = (com.cleanroommc.modularui.widgets.ListWidget<?, ?>) parent;
                 int[] viewport = bounds(parent), full = absoluteBounds(widget);
-                if (viewport == null || list.getScrollData() == null) return;
+                if (viewport == null || list.getScrollData() == null) continue;
                 int delta = full[1] < viewport[1] ? full[1] - viewport[1]
                     : Math.max(0, full[1] + full[3] - viewport[1] - viewport[3]);
-                if (delta != 0) list.getScrollData()
-                    .scrollTo(
-                        list.getScrollArea(),
-                        list.getScrollData()
-                            .getScroll() + delta);
-                return;
+                if (delta != 0) {
+                    int before = list.getScrollData()
+                        .getScroll();
+                    list.getScrollData()
+                        .scrollTo(
+                            list.getScrollArea(),
+                            list.getScrollData()
+                                .getScroll() + delta);
+                    // Re-measure after native scrolling/layout, before considering another ancestor.
+                    if (list.getScrollData()
+                        .getScroll() != before) return;
+                }
             }
         }
     }
@@ -520,6 +530,10 @@ final class HologramEditorShell {
     }
 
     private int[] modalCloseBounds() {
+        return bounds(modalCloseWidget());
+    }
+
+    private IWidget modalCloseWidget() {
         ModularPanel panel = topModal();
         if (panel == null) return null;
         List<IWidget> named = targets.get("modal.close");
@@ -527,7 +541,7 @@ final class HologramEditorShell {
             IWidget widget = named.get(i);
             if (widget.isValid() && widget.getPanel() == panel) {
                 int[] area = bounds(widget);
-                if (area != null) return area;
+                if (area != null) return widget;
             }
         }
         int[] ids = { 62, 96, 79, 234, 68, 77, 143, 171, 177, 211, 225, 300 };
@@ -537,7 +551,7 @@ final class HologramEditorShell {
             for (Entry entry : entries)
                 if (entry.widget.isValid() && entry.widget.getPanel() == panel && entry.enabled.getAsBoolean()) {
                     int[] area = bounds(entry.widget);
-                    if (area != null) return area;
+                    if (area != null) return entry.widget;
                 }
         }
         return null;
@@ -547,6 +561,10 @@ final class HologramEditorShell {
     boolean activateTarget(String key) {
         if (!ui.session.isTutorial()) return false;
         List<IWidget> list = targets.get(key);
+        if ("modal.close".equals(key)) {
+            IWidget close = modalCloseWidget();
+            list = close == null ? null : java.util.Collections.singletonList(close);
+        }
         if (list == null) return false;
         for (int i = list.size() - 1; i >= 0; i--) {
             IWidget widget = list.get(i);
@@ -554,6 +572,8 @@ final class HologramEditorShell {
             if (bounds(widget) == null || !(widget instanceof com.cleanroommc.modularui.api.widget.Interactable))
                 continue;
             LocatedWidget located = LocatedWidget.of(widget);
+            if (widget instanceof IFocusedWidget) host.getContext()
+                .focus(located);
             located.applyMatrix(host.getContext());
             try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                 .fieldGraph(ui)) {
