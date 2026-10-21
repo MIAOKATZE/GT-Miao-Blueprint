@@ -7,6 +7,7 @@ import com.cleanroommc.modularui.screen.ModularPanel;
 
 /** Single tool facade. MUI widgets/panels own all presentation, hit areas and pointer capture. */
 final class HologramEditorTools {
+
     static final int BASE = HologramEditorControlIds.TOOLS;
     static final int TOGGLE_FLOATING = BASE + 900, COLLAPSE_FLOATING = BASE + 901;
     static final int MENU_CLOSE = BASE + 902, MENU_PREVIOUS = BASE + 903, MENU_NEXT = BASE + 904;
@@ -21,11 +22,27 @@ final class HologramEditorTools {
         commands = new HologramEditorCommands(ui);
         nativeTools = new HologramEditorNativeTools(ui);
     }
-    HologramEditorCommands commands() { return commands; }
-    void attach(ModularPanel host) { nativeTools.attach(host); }
-    IWidget buildModeBar() { return nativeTools.buildModeBar(); }
-    IWidget buildToolRail() { return nativeTools.buildToolRail(); }
-    IWidget buildSelectedBar() { return nativeTools.buildSelectedBar(); }
+
+    HologramEditorCommands commands() {
+        return commands;
+    }
+
+    void attach(ModularPanel host) {
+        nativeTools.attach(host);
+    }
+
+    IWidget buildModeBar() {
+        return nativeTools.buildModeBar();
+    }
+
+    IWidget buildToolRail() {
+        return nativeTools.buildToolRail();
+    }
+
+    IWidget buildSelectedBar() {
+        return nativeTools.buildSelectedBar();
+    }
+
     /** Compatibility only; no tools or mirrored canvas controls are painted. */
     void draw(int x, int y) {}
 
@@ -53,22 +70,50 @@ final class HologramEditorTools {
         }
         return true;
     }
+
     private void openCutStorage() {
-        if (!ui.session.editable()) { ui.session.notice(ui.session.editingReason()); return; }
+        if (!ui.session.editable()) {
+            ui.session.notice(ui.session.editingReason());
+            return;
+        }
         ui.memory.rememberUi();
-        ui.host.parent().deferAction(() -> {
-            if (ui.host.minecraft().currentScreen != ui.host.parent() || !ui.session.editable()) return;
-            HologramCutClient.INSTANCE.refreshDirectory();
-            new HologramCutStorageScreen().openFrom(ui.host.parent());
-        });
+        ui.host.parent()
+            .deferAction(() -> {
+                if (ui.host.minecraft().currentScreen != ui.host.parent() || !ui.session.editable()) return;
+                HologramCutClient.INSTANCE.refreshDirectory();
+                new HologramCutStorageScreen().openFrom(ui.host.parent());
+            });
     }
-    void toggleFloating() { nativeTools.toggleFloating(); }
-    void openShortcuts() { nativeTools.openShortcuts(); }
-    void closeShortcuts() { nativeTools.closeShortcuts(); }
-    void openViewWorkspace() { nativeTools.openViewWorkspace(); }
-    void closeTransient() { nativeTools.closeContext(); nativeTools.closeViewWorkspace(); }
-    boolean modalOpen() { return nativeTools.modalOpen(); }
-    boolean pointerCaptured() { return nativeTools.pointerCaptured(); }
+
+    void toggleFloating() {
+        nativeTools.toggleFloating();
+    }
+
+    void openShortcuts() {
+        nativeTools.openShortcuts();
+    }
+
+    void closeShortcuts() {
+        nativeTools.closeShortcuts();
+    }
+
+    void openViewWorkspace() {
+        nativeTools.openViewWorkspace();
+    }
+
+    void closeTransient() {
+        nativeTools.closeContext();
+        nativeTools.closeViewWorkspace();
+    }
+
+    boolean modalOpen() {
+        return nativeTools.modalOpen();
+    }
+
+    boolean pointerCaptured() {
+        return nativeTools.pointerCaptured();
+    }
+
     /** Called only from an unconsumed scene press after native widgets and panels. */
     boolean consumeMouse(int x, int y, int button) {
         if (nativeTools.modalOpen()) return true;
@@ -80,10 +125,23 @@ final class HologramEditorTools {
         ui.preview.dragging(false);
         return true;
     }
-    boolean consumeDrag(int x, int y, int button) { return nativeTools.modalOpen() || pointerCaptured(); }
-    boolean consumeRelease(int x, int y, int button) { return nativeTools.modalOpen() || pointerCaptured(); }
-    boolean consumeWheel(int x, int y, int wheel) { return nativeTools.modalOpen() || pointerCaptured(); }
-    boolean blocksViewport(int guiX, int guiY) { return nativeTools.blocksGuiPoint(guiX, guiY); }
+
+    boolean consumeDrag(int x, int y, int button) {
+        return nativeTools.modalOpen() || pointerCaptured();
+    }
+
+    boolean consumeRelease(int x, int y, int button) {
+        return nativeTools.modalOpen() || pointerCaptured();
+    }
+
+    boolean consumeWheel(int x, int y, int wheel) {
+        return nativeTools.modalOpen() || pointerCaptured();
+    }
+
+    boolean blocksViewport(int guiX, int guiY) {
+        return nativeTools.blocksGuiPoint(guiX, guiY);
+    }
+
     boolean consumeKey(char character, int key) {
         if (ui.shell.fieldFocused() || ui.shortcuts.captureBinding() >= 0) return false;
         if (nativeTools.consumeDialogKey(character, key)) return true;
@@ -92,6 +150,7 @@ final class HologramEditorTools {
         String command = commands.match(key, HologramKeyBindings.modifiers());
         return !command.isEmpty() && commands.execute(command);
     }
+
     String tooltip(int id) {
         String binding = ui.shortcuts.bindingTooltip(id);
         if (binding != null) return binding;
@@ -103,6 +162,12 @@ final class HologramEditorTools {
         }
         return null;
     }
-    String icon(int id) { return null; }
-    boolean iconOnly(int id) { return false; }
+
+    String icon(int id) {
+        return null;
+    }
+
+    boolean iconOnly(int id) {
+        return false;
+    }
 }

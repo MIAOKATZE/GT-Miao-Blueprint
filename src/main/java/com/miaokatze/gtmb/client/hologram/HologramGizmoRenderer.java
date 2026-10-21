@@ -58,7 +58,12 @@ final class HologramGizmoRenderer {
         }
         for (int axis = 0; axis < 3; axis++) {
             double[] end = gizmo.end(axis);
-            canvas.sceneText(HologramGizmo.label(axis), (int) end[0] + 5, (int) end[1] - 4, 14, HologramGizmo.COLORS[axis]);
+            canvas.sceneText(
+                HologramGizmo.label(axis),
+                (int) end[0] + 5,
+                (int) end[1] - 4,
+                14,
+                HologramGizmo.COLORS[axis]);
         }
     }
 }

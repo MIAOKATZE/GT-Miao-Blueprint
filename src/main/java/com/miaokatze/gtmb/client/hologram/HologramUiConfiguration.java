@@ -678,8 +678,7 @@ final class HologramUiConfiguration {
         ui.canvas.button(1710, 165, 85, 95, 18, customPresets ? "基础预设" : "✓ 基础预设", true, mx, my);
         ui.canvas.button(1711, 264, 85, 94, 18, customPresets ? "✓ 自定义" : "自定义搭配", true, mx, my);
         ui.canvas.button(1717, 362, 85, 16, 18, "‹", presetOffset > 0, mx, my);
-        int count = customPresets ? hatchPresetNames()
-            .size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+        int count = customPresets ? hatchPresetNames().size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
         presetOffset = Math.max(0, Math.min(presetOffset, Math.max(0, count - 4)));
         ui.canvas.button(1718, 380, 85, 16, 18, "›", presetOffset + 4 < count, mx, my);
         List<String> names = hatchPresetNames();
@@ -694,8 +693,16 @@ final class HologramUiConfiguration {
             if (names.isEmpty()) ui.canvas.text("尚无搭配；可命名保存当前仓室目标", 165, 124, 231, 0x94afb4);
             ui.canvas.text("名称", 165, 191, 34, 0x94afb4);
             hatchPresetNameField.drawTextBox();
-            ui.canvas.button(1712, 165, 208, 75, 19, ui.session.isTutorial() ? "演示不保存" : "命名保存",
-                ui.session.editable() && !ui.session.isTutorial(), mx, my);
+            ui.canvas.button(
+                1712,
+                165,
+                208,
+                75,
+                19,
+                ui.session.isTutorial() ? "演示不保存" : "命名保存",
+                ui.session.editable() && !ui.session.isTutorial(),
+                mx,
+                my);
             ui.canvas.button(
                 1713,
                 244,
@@ -711,8 +718,7 @@ final class HologramUiConfiguration {
             ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
             ui.canvas.text("保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
         }
-        ui.canvas
-            .button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && lastPreset(true) != null, mx, my);
+        ui.canvas.button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && lastPreset(true) != null, mx, my);
         ui.canvas.button(
             106,
             165,
@@ -768,10 +774,7 @@ final class HologramUiConfiguration {
             presetStore.save(name, ui.session.state().data.getCompoundTag("hatchProfile"), id == 1713);
             selectedHatchPreset = name;
             customPresets = true;
-            presetOffset = Math.max(
-                0,
-                hatchPresetNames()
-                    .indexOf(name) - 3);
+            presetOffset = Math.max(0, hatchPresetNames().indexOf(name) - 3);
             ui.session.notice("已保存当前服务端仓室搭配到本机：" + name);
         } catch (java.io.IOException invalid) {
             ui.session.notice(invalid.getMessage());
@@ -812,16 +815,7 @@ final class HologramUiConfiguration {
             203,
             230,
             0xb9d5d4);
-        ui.canvas.button(
-            1716,
-            166,
-            220,
-            230,
-            19,
-            "使用上次预设",
-            ui.session.editable() && lastPreset(false) != null,
-            mx,
-            my);
+        ui.canvas.button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPreset(false) != null, mx, my);
         ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 
@@ -1516,8 +1510,8 @@ final class HologramUiConfiguration {
 
     boolean consumeHatchWheel(int wheel) {
         if (presetDrawer) {
-            int count = customPresets ? hatchPresetNames()
-                .size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+            int count = customPresets ? hatchPresetNames().size()
+                : ui.session.state().data.getInteger("hatchTierMax") + 1;
             presetOffset = Math.max(0, Math.min(Math.max(0, count - 4), presetOffset + (wheel > 0 ? -1 : 1)));
             return true;
         }

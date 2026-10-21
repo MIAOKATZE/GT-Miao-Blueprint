@@ -90,20 +90,29 @@ final class HologramEditorCommands {
         add("rotateTextVertical", "文字竖向转动", "rotate", -1, Keyboard.KEY_R, 4, false, "只对已有文字附件使用原竖向旋转操作。");
         add("floatingTools", "唤出 / 收起浮动工具", "detach", -1, Keyboard.KEY_SPACE, 0, false, "拖动标题移动工具条；收起后仍可从左侧或此快捷键唤回。");
         add("shortcuts", "编辑器快捷键", "help", 110, Keyboard.KEY_F1, 0, false, "编辑器命令独立于游戏键位；E / Esc 保留退出。");
-        add("viewWorkspace", "视图与工作区", "world", -1, Keyboard.KEY_NONE, 0, false,
-            "打开视图、切片、世界投影和现有工作区入口；不改变当前选择。");
-        add("viewCycle", "目标 / 现场 / 差分", "visible", 10, Keyboard.KEY_NONE, 0, false,
-            "切换目标结构、真实现场和施工差分。");
-        add("worldPreview", "世界投影显示", "world", 15, Keyboard.KEY_NONE, 0, false,
-            "显示或隐藏世界中的材质预览，不执行施工。");
-        add("areaSelection", "框选世界区域", "box-select", 178, Keyboard.KEY_NONE, 0, false,
+        add("viewWorkspace", "视图与工作区", "world", -1, Keyboard.KEY_NONE, 0, false, "打开视图、切片、世界投影和现有工作区入口；不改变当前选择。");
+        add("viewCycle", "目标 / 现场 / 差分", "visible", 10, Keyboard.KEY_NONE, 0, false, "切换目标结构、真实现场和施工差分。");
+        add("worldPreview", "世界投影显示", "world", 15, Keyboard.KEY_NONE, 0, false, "显示或隐藏世界中的材质预览，不执行施工。");
+        add(
+            "areaSelection",
+            "框选世界区域",
+            "box-select",
+            178,
+            Keyboard.KEY_NONE,
+            0,
+            false,
             "开始世界框选：左键第一角、右键第二角，Alt使用玩家位置，再次Shift+右击完成，Esc取消。");
-        add("clearWorkspace", "清空当前工作区", "clear", 330, Keyboard.KEY_NONE, 0, false,
-            "清空当前编辑工作区；这不是拆除世界方块。");
-        add("networkBindings", "已有量子类群绑定", "quantum", 196, Keyboard.KEY_NONE, 0, false,
+        add("clearWorkspace", "清空当前工作区", "clear", 330, Keyboard.KEY_NONE, 0, false, "清空当前编辑工作区；这不是拆除世界方块。");
+        add(
+            "networkBindings",
+            "已有量子类群绑定",
+            "quantum",
+            196,
+            Keyboard.KEY_NONE,
+            0,
+            false,
             "打开当前蓝图已登记量子类群的真实网络绑定，不创建虚构节点或网络。");
-        add("aeMarking", "AE 容器标记", "storage", 179, Keyboard.KEY_NONE, 0, false,
-            "打开自有AE标记容器；NEI拖入、背包样本仅修改蓝图标记。");
+        add("aeMarking", "AE 容器标记", "storage", 179, Keyboard.KEY_NONE, 0, false, "打开自有AE标记容器；NEI拖入、背包样本仅修改蓝图标记。");
     }
 
     private void add(String name, String label, String icon, int control, int key, int modifiers, boolean held,
@@ -281,7 +290,8 @@ final class HologramEditorCommands {
     /** A deliberate native button press commits/removes field focus before its deferred command runs. */
     boolean commandContextAvailable() {
         return !HologramBackgroundTasks.busy() && !ui.library.browsePreviewActive()
-            && ui.shell.sceneActive() && !ui.preview.inventory();
+            && ui.shell.sceneActive()
+            && !ui.preview.inventory();
     }
 
     boolean available(String name) {
@@ -293,14 +303,20 @@ final class HologramEditorCommands {
             || ui.session.state().data.getBoolean("placementValidating")) return false;
         // The old read-only browse header also exposed its ready mesh's layer controls.
         if (!ui.library.browsePreviewActive()) return commandContextAvailable();
-        return !HologramBackgroundTasks.busy() && ui.preview.previewInteractive() && !ui.preview.inventory()
-            && !ui.bindings.networkDrawer() && !ui.library.libraryAdminDrawer()
-            && !ui.review.materialDialogOpen() && !ui.library.saveGuidanceOpen();
+        return !HologramBackgroundTasks.busy() && ui.preview.previewInteractive()
+            && !ui.preview.inventory()
+            && !ui.bindings.networkDrawer()
+            && !ui.library.libraryAdminDrawer()
+            && !ui.review.materialDialogOpen()
+            && !ui.library.saveGuidanceOpen();
     }
 
     private boolean legacyViewCommand(String name) {
-        return "viewCycle".equals(name) || "allLayers".equals(name) || "layerDown".equals(name)
-            || "layerUp".equals(name) || "resetView".equals(name) || "worldPreview".equals(name);
+        return "viewCycle".equals(name) || "allLayers".equals(name)
+            || "layerDown".equals(name)
+            || "layerUp".equals(name)
+            || "resetView".equals(name)
+            || "worldPreview".equals(name);
     }
 
     String reason(String name) {
@@ -311,8 +327,7 @@ final class HologramEditorCommands {
             int control = get(name).control;
             if (ui.preview.viewControlEnabled(control)) return "";
             if (ui.library.browsePreviewActive())
-                return control == 11 || control == 12 || control == 13
-                    ? "只读预览网格尚未就绪或已到图层边界" : "只读浏览仅开放已就绪网格的图层查看";
+                return control == 11 || control == 12 || control == 13 ? "只读预览网格尚未就绪或已到图层边界" : "只读浏览仅开放已就绪网格的图层查看";
             return ui.canvas.disabledReason(control);
         }
         if (ui.library.browsePreviewActive()) return "当前为只读蓝图库预览，此操作不开放";
@@ -323,9 +338,10 @@ final class HologramEditorCommands {
             case "frontView", "rightView", "topView", "cameraLeft", "cameraRight", "cameraForward", "cameraBack", "air", "floatingTools", "shortcuts", "library" -> "";
             case "areaSelection", "clearWorkspace" -> editable ? "" : ui.session.editingReason();
             case "networkBindings" -> !editable ? ui.session.editingReason()
-                : ui.bindings.networkGroups().tagCount() > 0 ? "" : "当前蓝图没有已登记的量子类群";
-            case "aeMarking" -> ui.ae.canOpenAePreview() && !ui.canvas.localPlanBlockedControl(179)
-                ? "" : ui.canvas.disabledReason(179);
+                : ui.bindings.networkGroups()
+                    .tagCount() > 0 ? "" : "当前蓝图没有已登记的量子类群";
+            case "aeMarking" -> ui.ae.canOpenAePreview() && !ui.canvas.localPlanBlockedControl(179) ? ""
+                : ui.canvas.disabledReason(179);
             case "selectAll" -> ui.session.state().cells.isEmpty() ? "当前没有可选择的格" : "";
             case "sameType", "sameTypeAdd", "clearSelection" -> cell == null ? "先选择一个目标格" : "";
             case "moveHandles" -> ui.preview.canMoveSelection() ? "" : ui.preview.moveHandleReason();

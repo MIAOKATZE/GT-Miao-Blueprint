@@ -46,15 +46,19 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void updateState(HologramState next) {
-        if (!detached) try(FieldGraph ignored=fieldGraph(ui)) { ui.session.updateState(next); }
+        if (!detached) try (FieldGraph ignored = fieldGraph(ui)) {
+            ui.session.updateState(next);
+        }
     }
 
     @Override
     protected boolean buildNativePanel() {
-        if(detached) return true;
-        if(!domainInitialized) {
-            try(FieldGraph ignored=fieldGraph(ui)) { ui.router.initGui(); }
-            domainInitialized=true;
+        if (detached) return true;
+        if (!domainInitialized) {
+            try (FieldGraph ignored = fieldGraph(ui)) {
+                ui.router.initGui();
+            }
+            domainInitialized = true;
         }
         panel().child(ui.shell.build(panel()));
         return true;
@@ -62,14 +66,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     public void initGui() {
         super.initGui();
-        if(detached) {
-            if(!detachedStarted) {
-                detachedStarted=true;
-                ui.tutorial.startDetached(detachedTopic,detachedReplay,this::returnFromDetached);
+        if (detached) {
+            if (!detachedStarted) {
+                detachedStarted = true;
+                ui.tutorial.startDetached(detachedTopic, detachedReplay, this::returnFromDetached);
             }
             return;
         }
-        if(websiteConfirmationResumePending) websiteConfirmationResumePending=false;
+        if (websiteConfirmationResumePending) websiteConfirmationResumePending = false;
         ui.canvas.resize();
         HologramBackgroundTasks.restoreUi(ui);
     }
@@ -125,7 +129,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             if (detachedStarted && !ui.tutorial.active() && !detachedReturned) deferAction(this::returnFromDetached);
             return;
         }
-        try(FieldGraph ignored=fieldGraph(ui)) {
+        try (FieldGraph ignored = fieldGraph(ui)) {
             ui.router.updateScreen();
             ui.shell.tick();
         }
@@ -226,7 +230,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         ui.shortcuts.activity();
         ui.memory.initialEditHint(ui.memory.savedEditHint(false));
         ui.memory.rememberGuidance();
-        try(FieldGraph ignored=fieldGraph(ui)) { ui.router.activate(id); }
+        try (FieldGraph ignored = fieldGraph(ui)) {
+            ui.router.activate(id);
+        }
     }
 
     @Override
@@ -261,8 +267,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiKeyBefore(char character, int key) {
-        if(ui.tutorial.blockInput()) return true;
-        if(detached) return true;
+        if (ui.tutorial.blockInput()) return true;
+        if (detached) return true;
         // Modal key handlers and focused native editors receive Escape/Return before global commands.
         return false;
     }
@@ -270,7 +276,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     @Override
     protected boolean muiMouseBefore(int button) {
         if (ui.tutorial.blockInput()) return button != 0 || !ui.tutorial.navigationContains(
-            getScreen().getContext().getAbsMouseX(), getScreen().getContext().getAbsMouseY(), button);
+            getScreen().getContext()
+                .getAbsMouseX(),
+            getScreen().getContext()
+                .getAbsMouseY(),
+            button);
         return detached && !ui.tutorial.active();
     }
 
@@ -286,8 +296,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiKey(char character, int key) {
-        if(detached || ui.tutorial.blockInput()) return true;
-        if(ui.shell.hasModalPanel()) return false;
+        if (detached || ui.tutorial.blockInput()) return true;
+        if (ui.shell.hasModalPanel()) return false;
         ui.router.keyTyped(character, key);
         return true;
     }
@@ -428,7 +438,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     public void renderCenteredText(net.minecraft.client.gui.FontRenderer font, String text, int x, int y, int color) {
-        font.drawString(text, x-font.getStringWidth(text)/2, y, color);
+        font.drawString(text, x - font.getStringWidth(text) / 2, y, color);
     }
 
     @Override

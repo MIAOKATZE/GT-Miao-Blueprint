@@ -19,14 +19,21 @@ final class HologramMuiTextField {
     private boolean nativeOwned;
     private com.cleanroommc.modularui.widget.ParentWidget<?> legacyParent;
 
-    boolean nativeOwned() { return nativeOwned; }
-    com.cleanroommc.modularui.widget.ParentWidget<?> legacyParent() { return legacyParent; }
+    boolean nativeOwned() {
+        return nativeOwned;
+    }
+
+    com.cleanroommc.modularui.widget.ParentWidget<?> legacyParent() {
+        return legacyParent;
+    }
 
     TextFieldWidget claimNative() {
         if (nativeOwned) return field;
-        if (legacyParent != null || field.isValid()) throw new IllegalStateException("Text field already belongs to a legacy panel");
-        nativeOwned=true;
-        field.widthRel(1f).height(Math.max(18,height));
+        if (legacyParent != null || field.isValid())
+            throw new IllegalStateException("Text field already belongs to a legacy panel");
+        nativeOwned = true;
+        field.widthRel(1f)
+            .height(Math.max(18, height));
         field.setEnabled(true);
         return field;
     }
@@ -35,7 +42,7 @@ final class HologramMuiTextField {
         if (nativeOwned) throw new IllegalStateException("Native dock field cannot be reparented");
         if (legacyParent == mount) return;
         if (legacyParent != null || field.isValid()) throw new IllegalStateException("Text field already has a parent");
-        legacyParent=mount;
+        legacyParent = mount;
         mount.child(field);
     }
 
@@ -56,10 +63,15 @@ final class HologramMuiTextField {
             .autoUpdateOnChange(true);
         field.setEnabled(false);
         field.onUpdateListener(widget -> {
-            if (nativeOwned && requestFocus && editable && field.isValid() && field.areAncestorsEnabled()
-                && field.getPanel().isEnabled()) {
+            if (nativeOwned && requestFocus
+                && editable
+                && field.isValid()
+                && field.areAncestorsEnabled()
+                && field.getPanel()
+                    .isEnabled()) {
                 requestFocus = false;
-                field.getContext().focus(field);
+                field.getContext()
+                    .focus(field);
             }
         });
         owner.registerField(this);
@@ -86,7 +98,7 @@ final class HologramMuiTextField {
     }
 
     void show(long frame, CanvasTransform transform) {
-        if(nativeOwned) return;
+        if (nativeOwned) return;
         this.frame = frame;
         field.setTextColor(
             editable && !HologramBackgroundTasks.busy() ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED);
@@ -111,7 +123,7 @@ final class HologramMuiTextField {
     }
 
     void finishFrame(long frame) {
-        if(nativeOwned) return;
+        if (nativeOwned) return;
         if (this.frame == frame) return;
         if (field.isValid() && field.isFocused()) field.getContext()
             .removeFocus();
@@ -130,7 +142,7 @@ final class HologramMuiTextField {
     }
 
     void hideForOverlay() {
-        if(nativeOwned) return;
+        if (nativeOwned) return;
         frame = -1;
     }
 

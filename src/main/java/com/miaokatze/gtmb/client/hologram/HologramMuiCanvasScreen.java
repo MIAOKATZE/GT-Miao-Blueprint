@@ -27,7 +27,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         .background(IDrawable.NONE);
     private final Map<Integer, NativeButton> buttons = new HashMap<>();
     private List<HologramMuiTextField> fields = new ArrayList<>();
-    private final Map<Object,List<HologramMuiTextField>> fieldGraphs = new IdentityHashMap<>();
+    private final Map<Object, List<HologramMuiTextField>> fieldGraphs = new IdentityHashMap<>();
     private ParentWidget<?> fieldMount;
     private List<HologramMuiTextField> suspendedFields;
     private HologramMuiTextField suspendedFocus;
@@ -52,7 +52,9 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         panel().child(controls);
     }
 
-    protected boolean buildNativePanel() { return false; }
+    protected boolean buildNativePanel() {
+        return false;
+    }
 
     protected abstract void renderScene(int mouseX, int mouseY, float ticks);
 
@@ -115,7 +117,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         // Native editor graphs keep unclaimed adapters pending until their unique page/dialog is built.
         if (!(this instanceof HologramScreen)) fields.removeIf(previous -> {
             if (!previous.sameBounds(field) || previous.nativeOwned()) return false;
-            if (previous.widget().isValid()) controls.remove(previous.widget());
+            if (previous.widget()
+                .isValid()) controls.remove(previous.widget());
             return true;
         });
         fields.add(field);
@@ -126,7 +129,9 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         return field.claimNative();
     }
 
-    final FieldGraph fieldGraph(Object graph) { return new FieldGraph(graph); }
+    final FieldGraph fieldGraph(Object graph) {
+        return new FieldGraph(graph);
+    }
 
     final void releaseFieldGraph(Object graph) {
         List<HologramMuiTextField> released = fieldGraphs.remove(graph);
@@ -134,29 +139,41 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     }
 
     final class FieldGraph implements AutoCloseable {
+
         private final List<HologramMuiTextField> previous;
+
         FieldGraph(Object graph) {
-            previous=fields;
-            fields=fieldGraphs.computeIfAbsent(graph, ignored -> new ArrayList<>());
+            previous = fields;
+            fields = fieldGraphs.computeIfAbsent(graph, ignored -> new ArrayList<>());
         }
-        @Override public void close() { fields=previous; }
+
+        @Override
+        public void close() {
+            fields = previous;
+        }
     }
 
-    final LegacyFieldMount legacyFieldMount(ParentWidget<?> mount) { return new LegacyFieldMount(mount); }
+    final LegacyFieldMount legacyFieldMount(ParentWidget<?> mount) {
+        return new LegacyFieldMount(mount);
+    }
 
     final class LegacyFieldMount implements AutoCloseable {
+
         private final ParentWidget<?> previous;
         private final ParentWidget<?> mount;
         private final long frame;
+
         LegacyFieldMount(ParentWidget<?> mount) {
-            previous=fieldMount;
-            this.mount=mount;
-            fieldMount=mount;
-            frame=++nativeFrame;
+            previous = fieldMount;
+            this.mount = mount;
+            fieldMount = mount;
+            frame = ++nativeFrame;
         }
-        @Override public void close() {
-            for(HologramMuiTextField field:fields) if(field.legacyParent()==mount) field.finishFrame(frame);
-            fieldMount=previous;
+
+        @Override
+        public void close() {
+            for (HologramMuiTextField field : fields) if (field.legacyParent() == mount) field.finishFrame(frame);
+            fieldMount = previous;
         }
     }
 
@@ -204,7 +221,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
             for (HologramMuiTextField field : tutorialFields) {
                 try {
                     field.setFocused(false);
-                    field.widget().setEnabled(false);
+                    field.widget()
+                        .setEnabled(false);
                 } catch (RuntimeException failure) {
                     com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Could not deactivate a tutorial field", failure);
                 } finally {
@@ -237,7 +255,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
 
     final void showField(HologramMuiTextField field) {
         if (field.nativeOwned()) return;
-        if (fieldMount != null) mountLegacyField(field,fieldMount);
+        if (fieldMount != null) mountLegacyField(field, fieldMount);
         field.show(nativeFrame, fieldTransform);
     }
 

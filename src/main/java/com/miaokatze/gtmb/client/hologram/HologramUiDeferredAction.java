@@ -6,7 +6,14 @@ final class HologramUiDeferredAction {
     private Runnable pending;
 
     void offer(Runnable action) {
-        if (pending == null) pending = action;
+        tryOffer(action);
+    }
+
+    /** A playback producer must keep retrying when a player's input already owns this tick. */
+    boolean tryOffer(Runnable action) {
+        if (pending != null) return false;
+        pending = action;
+        return true;
     }
 
     void run(boolean active) {

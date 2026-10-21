@@ -29,7 +29,9 @@ final class HologramEditorAnnotationOverlay {
     private NoteDialog note;
     private HologramState drawnState;
 
-    HologramEditorAnnotationOverlay(HologramUiModules ui) { this.ui = ui; }
+    HologramEditorAnnotationOverlay(HologramUiModules ui) {
+        this.ui = ui;
+    }
 
     void attach(ModularPanel host) {
         if (handler != null) return;
@@ -41,8 +43,10 @@ final class HologramEditorAnnotationOverlay {
     void refresh() {
         if (handler == null) return;
         HologramAnnotationMarkers.Marker pinned = pinned();
-        if (!ui.annotations.pinnedAnnotation().isEmpty() && pinned == null) ui.annotations.pinnedAnnotation("");
-        boolean show = pinned != null && !ui.library.browsePreviewActive() && ui.annotations.annotationInteractive()
+        if (!ui.annotations.pinnedAnnotation()
+            .isEmpty() && pinned == null) ui.annotations.pinnedAnnotation("");
+        boolean show = pinned != null && !ui.library.browsePreviewActive()
+            && ui.annotations.annotationInteractive()
             && !ui.shell.hasModalPanel();
         if (show) {
             note.refresh(pinned);
@@ -64,7 +68,10 @@ final class HologramEditorAnnotationOverlay {
         shown.clear();
         drawnState = ui.session.state();
         if (ui.library.browsePreviewActive()) return;
-        int width = (int) ui.canvas.viewport().width(), height = (int) ui.canvas.viewport().height();
+        int width = (int) ui.canvas.viewport()
+            .width(),
+            height = (int) ui.canvas.viewport()
+                .height();
         boolean inside = mx >= 0 && my >= 0 && mx < width && my < height;
         if (inside && ui.canvas.tooltip() != null) tooltip.addAll(ui.canvas.tooltip());
         if (inside) collectSceneTooltip(mx, my);
@@ -81,8 +88,10 @@ final class HologramEditorAnnotationOverlay {
                     int[] bounds = marker.bounds;
                     if (!ui.preview.allLayers() && (ui.preview.layer() < bounds[1] || ui.preview.layer() > bounds[4]))
                         continue;
-                    double[] point = HologramRenderer.project((bounds[0] + (double) bounds[3]) / 2,
-                        (bounds[1] + (double) bounds[4]) / 2, (bounds[2] + (double) bounds[5]) / 2);
+                    double[] point = HologramRenderer.project(
+                        (bounds[0] + (double) bounds[3]) / 2,
+                        (bounds[1] + (double) bounds[4]) / 2,
+                        (bounds[2] + (double) bounds[5]) / 2);
                     marker.x = (int) point[0];
                     marker.y = (int) point[1];
                 }
@@ -91,7 +100,9 @@ final class HologramEditorAnnotationOverlay {
                 paintMarker(marker);
                 if (inside && marker.contains(mx, my)) {
                     tooltip.add(marker.title + " · 点击固定 / 再次点击收起");
-                    tooltip.addAll(ui.host.font().listFormattedStringToWidth(marker.prompt, 250));
+                    tooltip.addAll(
+                        ui.host.font()
+                            .listFormattedStringToWidth(marker.prompt, 250));
                 }
                 if (shown.size() >= 64) break;
             }
@@ -119,8 +130,9 @@ final class HologramEditorAnnotationOverlay {
 
     private void paintMarker(HologramAnnotationMarkers.Marker marker) {
         int x = marker.x, y = marker.y;
-        int color = marker.blocker ? 0xffff3b35 : marker.key.equals(ui.annotations.pinnedAnnotation()) ? 0xff7ce1ec
-            : marker.key.startsWith("ae:") ? 0xffffb65e : 0xffe6c980;
+        int color = marker.blocker ? 0xffff3b35
+            : marker.key.equals(ui.annotations.pinnedAnnotation()) ? 0xff7ce1ec
+                : marker.key.startsWith("ae:") ? 0xffffb65e : 0xffe6c980;
         Gui.drawRect(x - 6, y - 5, x + 5, y + 6, 0xff514634);
         Gui.drawRect(x - 4, y - 7, x + 7, y + 4, color);
         Gui.drawRect(x + 5, y - 5, x + 8, y + 6, 0xff9e8353);
@@ -129,12 +141,15 @@ final class HologramEditorAnnotationOverlay {
                 Gui.drawRect(x - 2 + stroke, y - 5 + stroke, x + stroke, y - 3 + stroke, 0xff000000);
                 Gui.drawRect(x + 4 - stroke, y - 5 + stroke, x + 6 - stroke, y - 3 + stroke, 0xff000000);
             }
-        } else ui.host.font().drawString(marker.key.startsWith("ae:") ? "!" : "?", x - 1, y - 5, 0xff172f36);
+        } else ui.host.font()
+            .drawString(marker.key.startsWith("ae:") ? "!" : "?", x - 1, y - 5, 0xff172f36);
     }
 
     boolean consumeSceneMouse(int mx, int my, int button) {
-        if (button != 0 || drawnState != ui.session.state() || ui.library.browsePreviewActive()
-            || !ui.annotations.annotationInteractive() || ui.shell.hasModalPanel()) return false;
+        if (button != 0 || drawnState != ui.session.state()
+            || ui.library.browsePreviewActive()
+            || !ui.annotations.annotationInteractive()
+            || ui.shell.hasModalPanel()) return false;
         List<HologramAnnotationMarkers.Marker> shown = ui.annotations.visibleMarkers();
         for (int i = shown.size() - 1; i >= 0; i--) {
             HologramAnnotationMarkers.Marker marker = shown.get(i);
@@ -146,7 +161,9 @@ final class HologramEditorAnnotationOverlay {
     }
 
     /** Read by SceneWidget's native tooltip builder; MUI positions/clamps it using the real located widget. */
-    List<String> tooltipLines() { return Collections.unmodifiableList(tooltip); }
+    List<String> tooltipLines() {
+        return Collections.unmodifiableList(tooltip);
+    }
 
     private void collectSceneTooltip(int mx, int my) {
         HologramState state = ui.session.state();
@@ -155,13 +172,19 @@ final class HologramEditorAnnotationOverlay {
             HologramState.Cell cell = state.cells.get(hovered);
             if (cell.missingBlock) tooltip.add("缺失方块：" + cell.wantId + "（点击查看来源版本）");
             if (cell.sourceMissing) {
-                tooltip.addAll(ui.host.font().listFormattedStringToWidth("来源结构缺失：" + cell.sourceWarning, 260));
-                if (!cell.sourceClass.isEmpty()) tooltip.addAll(ui.host.font().listFormattedStringToWidth(cell.sourceClass, 260));
+                tooltip.addAll(
+                    ui.host.font()
+                        .listFormattedStringToWidth("来源结构缺失：" + cell.sourceWarning, 260));
+                if (!cell.sourceClass.isEmpty()) tooltip.addAll(
+                    ui.host.font()
+                        .listFormattedStringToWidth(cell.sourceClass, 260));
             }
             if (cell.excluded) tooltip.add("已排除施工");
         }
         String hint = HologramRenderer.hintAt(mx, my);
-        if (!hint.isEmpty()) tooltip.addAll(ui.host.font().listFormattedStringToWidth("提示区 " + hint, 260));
+        if (!hint.isEmpty()) tooltip.addAll(
+            ui.host.font()
+                .listFormattedStringToWidth("提示区 " + hint, 260));
         String structure = HologramRenderer.pickStructure(mx, my);
         if (structure.isEmpty()) return;
         NBTTagList structures = state.data.getTagList("structures", 10);
@@ -170,8 +193,12 @@ final class HologramEditorAnnotationOverlay {
             if (!structure.equals(row.getString("id"))) continue;
             tooltip.add(row.getString("name") + " · 点击边缘整选");
             if (row.getBoolean("sourceMissing")) {
-                tooltip.addAll(ui.host.font().listFormattedStringToWidth("来源结构缺失：" + row.getString("sourceWarning"), 260));
-                tooltip.addAll(ui.host.font().listFormattedStringToWidth(row.getString("sourceClass"), 260));
+                tooltip.addAll(
+                    ui.host.font()
+                        .listFormattedStringToWidth("来源结构缺失：" + row.getString("sourceWarning"), 260));
+                tooltip.addAll(
+                    ui.host.font()
+                        .listFormattedStringToWidth(row.getString("sourceClass"), 260));
             }
             break;
         }
@@ -191,26 +218,53 @@ final class HologramEditorAnnotationOverlay {
             setCloseOnOutOfBoundsClick(false);
             setDraggable(true);
             background(HologramEditorNativeTheme.PANEL);
-            Flow heading = Flow.row().pos(8, 6).height(22).widthRelOffset(1f, -16).childPadding(3);
-            heading.child(HologramEditorNativeTheme.label(() -> marker == null ? "提示" : marker.title,
-                HologramEditorNativeTheme.TITLE).expanded().height(22));
-            heading.child(HologramEditorNativeTheme.button(() -> "×", () -> ui.annotations.pinnedAnnotation(""))
-                .size(22));
+            Flow heading = Flow.row()
+                .pos(8, 6)
+                .height(22)
+                .widthRelOffset(1f, -16)
+                .childPadding(3);
+            heading.child(
+                HologramEditorNativeTheme
+                    .label(() -> marker == null ? "提示" : marker.title, HologramEditorNativeTheme.TITLE)
+                    .expanded()
+                    .height(22));
+            heading.child(
+                HologramEditorNativeTheme.button(() -> "×", () -> ui.annotations.pinnedAnnotation(""))
+                    .size(22));
             child(heading);
-            lines.pos(8, 32).background(IDrawable.NONE);
+            lines.pos(8, 32)
+                .background(IDrawable.NONE);
             child(lines);
-            Flow actions = Flow.row().left(8).bottom(8).height(22).widthRelOffset(1f, -16).childPadding(3);
-            actions.child(ui.shell.nativeAction(146, () -> "所选提示", ui.session::editable,
-                () -> "编辑当前选择的提示词；未选择方块时编辑全局提示。").expanded().height(22));
-            actions.child(ui.shell.nativeAction(150, () -> "来源版本", () -> true, () -> "查看蓝图来源与 Mod 版本。")
-                .expanded().height(22));
-            details = ui.shell.nativeAction(184, () -> "AE 全部详情",
-                () -> marker != null && marker.key.startsWith("ae:"), () -> "查看全部 AE 提示与材料信息。");
-            actions.child(details.expanded().height(22));
-            processing = ui.shell.nativeAction(297, () -> "处理阻塞",
+            Flow actions = Flow.row()
+                .left(8)
+                .bottom(8)
+                .height(22)
+                .widthRelOffset(1f, -16)
+                .childPadding(3);
+            actions.child(
+                ui.shell.nativeAction(146, () -> "所选提示", ui.session::editable, () -> "编辑当前选择的提示词；未选择方块时编辑全局提示。")
+                    .expanded()
+                    .height(22));
+            actions.child(
+                ui.shell.nativeAction(150, () -> "来源版本", () -> true, () -> "查看蓝图来源与 Mod 版本。")
+                    .expanded()
+                    .height(22));
+            details = ui.shell.nativeAction(
+                184,
+                () -> "AE 全部详情",
+                () -> marker != null && marker.key.startsWith("ae:"),
+                () -> "查看全部 AE 提示与材料信息。");
+            actions.child(
+                details.expanded()
+                    .height(22));
+            processing = ui.shell.nativeAction(
+                297,
+                () -> "处理阻塞",
                 () -> marker != null && marker.key.startsWith("resource:") && ui.session.editable(),
                 () -> "通过原蓝图处理流程修正资源阻塞。");
-            actions.child(processing.expanded().height(22));
+            actions.child(
+                processing.expanded()
+                    .height(22));
             actions.collapseDisabledChild(true);
             child(actions);
         }
@@ -229,7 +283,8 @@ final class HologramEditorAnnotationOverlay {
                 int[] viewport = ui.shell.targetBounds("viewport");
                 int x = viewport == null ? 8 : viewport[0] + 8;
                 int y = viewport == null ? 8 : viewport[1] + viewport[3] - height - 8;
-                pos(Math.max(0, Math.min(ui.host.screenWidth() - width, x)),
+                pos(
+                    Math.max(0, Math.min(ui.host.screenWidth() - width, x)),
                     Math.max(0, Math.min(ui.host.screenHeight() - height, y)));
                 lines.size(width - 16, height - 70);
                 scheduleResize();
@@ -238,8 +293,12 @@ final class HologramEditorAnnotationOverlay {
             lastKey = marker.key;
             lastPrompt = marker.prompt;
             lines.removeAll();
-            for (String line : ui.host.font().listFormattedStringToWidth(marker.prompt, Math.max(1, width - 28)))
-                lines.child(HologramEditorNativeTheme.label(() -> line).widthRel(1f).height(12));
+            for (String line : ui.host.font()
+                .listFormattedStringToWidth(marker.prompt, Math.max(1, width - 28)))
+                lines.child(
+                    HologramEditorNativeTheme.label(() -> line)
+                        .widthRel(1f)
+                        .height(12));
         }
 
         @Override

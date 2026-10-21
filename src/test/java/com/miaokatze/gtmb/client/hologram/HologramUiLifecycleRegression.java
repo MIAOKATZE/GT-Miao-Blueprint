@@ -54,6 +54,19 @@ public final class HologramUiLifecycleRegression {
         queue.offer(() -> calls.add("retry"));
         queue.run(true);
         SimpleAssert.eq(Arrays.asList("confirm", "retry"), calls, "failure retires its intent and permits a retry");
+        queue.offer(() -> calls.add("player navigation"));
+        SimpleAssert.that(
+            !queue.tryOffer(() -> calls.add("lost animation")),
+            "playback learns that a player's navigation already owns the pending tick");
+        queue.run(true);
+        SimpleAssert.that(
+            queue.tryOffer(() -> calls.add("animation retry")),
+            "a rejected animation can retry after player navigation completes");
+        queue.run(true);
+        SimpleAssert.eq(
+            Arrays.asList("confirm", "retry", "player navigation", "animation retry"),
+            calls,
+            "rejected playback neither replaces player input nor falsely claims to be queued");
     }
 
     @SuppressWarnings("unchecked")

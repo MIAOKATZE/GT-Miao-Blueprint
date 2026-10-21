@@ -76,6 +76,11 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         deferredAction.offer(action);
     }
 
+    /** Return whether this tick accepted the intent, so a playback producer can retry without getting stuck. */
+    final boolean tryDeferAction(Runnable action) {
+        return deferredAction.tryOffer(action);
+    }
+
     final void openDialog(String name, SecondaryPanel.IPanelBuilder builder) {
         deferAction(
             () -> dialogs.computeIfAbsent(name, ignored -> new LocalDialog(panel()))

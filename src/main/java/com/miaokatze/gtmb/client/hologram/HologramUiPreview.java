@@ -38,7 +38,9 @@ final class HologramUiPreview {
 
     private int hovered = -1;
 
-    int hoveredCellIndex() { return hovered; }
+    int hoveredCellIndex() {
+        return hovered;
+    }
 
     private final HologramEditQueue editQueue = new HologramEditQueue();
 
@@ -130,11 +132,12 @@ final class HologramUiPreview {
     private void applyViewportScissor() {
         ViewportCoordinates source = ui.canvas.viewport();
         double scale = ui.canvas.scale();
-        ViewportCoordinates gui = ui.canvas.nativeScene() ? ui.canvas.nativeGuiViewport() : new ViewportCoordinates(
-            ui.canvas.originX() + source.x() * scale,
-            ui.canvas.originY() + source.y() * scale,
-            source.width() * scale,
-            source.height() * scale);
+        ViewportCoordinates gui = ui.canvas.nativeScene() ? ui.canvas.nativeGuiViewport()
+            : new ViewportCoordinates(
+                ui.canvas.originX() + source.x() * scale,
+                ui.canvas.originY() + source.y() * scale,
+                source.width() * scale,
+                source.height() * scale);
         ViewportCoordinates.FramebufferRect framebuffer = gui.framebufferRect(
             ui.host.screenWidth(),
             ui.host.screenHeight(),
@@ -144,36 +147,56 @@ final class HologramUiPreview {
     }
 
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
-    void drawNativeScene(int mx,int my) {
-        if(ui.library.browsePreviewActive()) { drawBrowsePreview(mx,my); return; }
-        HologramRenderer.selection=selection;
-        HologramRenderer.moveOffset=gizmo.offset();
-        HologramRenderer.showEmptyCells=inventory || ui.position.positionDrawer() || airSelectionHeld();
-        HologramRenderer.projectionLayer=allLayers ? Integer.MAX_VALUE : layer;
-        HologramRenderer.selectedStructureId=ui.config.selectedStructureId();
-        drawRect(0,0,viewportWidth(),previewHeight(),0xff0c1e28);
+    void drawNativeScene(int mx, int my) {
+        if (ui.library.browsePreviewActive()) {
+            drawBrowsePreview(mx, my);
+            return;
+        }
+        HologramRenderer.selection = selection;
+        HologramRenderer.moveOffset = gizmo.offset();
+        HologramRenderer.showEmptyCells = inventory || ui.position.positionDrawer() || airSelectionHeld();
+        HologramRenderer.projectionLayer = allLayers ? Integer.MAX_VALUE : layer;
+        HologramRenderer.selectedStructureId = ui.config.selectedStructureId();
+        drawRect(0, 0, viewportWidth(), previewHeight(), 0xff0c1e28);
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
-            hovered=HologramRenderer.preview(ui.session.state(),0,0,viewportWidth(),previewHeight(),yaw,pitch,zoom,
-                camera.x,camera.z,allLayers?Integer.MAX_VALUE:layer,view,selected,mx,my,-1);
+            hovered = HologramRenderer.preview(
+                ui.session.state(),
+                0,
+                0,
+                viewportWidth(),
+                previewHeight(),
+                yaw,
+                pitch,
+                zoom,
+                camera.x,
+                camera.z,
+                allLayers ? Integer.MAX_VALUE : layer,
+                view,
+                selected,
+                mx,
+                my,
+                -1);
             ui.textBoxes.draw();
-            drawEmptyVoxelPreview(mx,my);
-            if(moveHandles && canMoveSelection() && previewInteractive()) drawGizmo(mx,my);
-        } finally { GL11.glPopAttrib(); }
+            drawEmptyVoxelPreview(mx, my);
+            if (moveHandles && canMoveSelection() && previewInteractive()) drawGizmo(mx, my);
+        } finally {
+            GL11.glPopAttrib();
+        }
     }
 
     void scrollNativeScene(int wheel) {
-        if(ui.library.browsePreviewActive()) browseZoom=Math.max(.25,Math.min(4,browseZoom*(wheel>0?1.1:1/1.1)));
-        else if(ui.shell.sceneActive()) zoom=Math.max(.25,Math.min(4,zoom*(wheel>0?1.1:1/1.1)));
+        if (ui.library.browsePreviewActive())
+            browseZoom = Math.max(.25, Math.min(4, browseZoom * (wheel > 0 ? 1.1 : 1 / 1.1)));
+        else if (ui.shell.sceneActive()) zoom = Math.max(.25, Math.min(4, zoom * (wheel > 0 ? 1.1 : 1 / 1.1)));
     }
 
     boolean viewControlEnabled(int id) {
         if (ui.library.browsePreviewActive()) {
             if (!browseMeshInteractive()) return false;
-            return id == 11 || id == 12 && browseLayer > browseState.minY
-                || id == 13 && browseLayer < browseState.maxY;
+            return id == 11 || id == 12 && browseLayer > browseState.minY || id == 13 && browseLayer < browseState.maxY;
         }
         return switch (id) {
             case 10, 11, 14, 15 -> true;
@@ -446,7 +469,8 @@ final class HologramUiPreview {
 
     int[] emptyVoxelAt(int mx, int my) {
         if (!ui.canvas.inViewport(mx, my) || ui.preview.previewBlockedAt(mx, my)) return null;
-        if(!ui.canvas.nativeScene()) for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) return null;
+        if (!ui.canvas.nativeScene())
+            for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) return null;
         HologramState.Cell cell = ui.session.selectedCell();
         int planeY = !this.allLayers ? ui.session.state().data.getInteger("y") + this.layer
             : cell == null
@@ -807,7 +831,7 @@ final class HologramUiPreview {
     }
 
     boolean previewBlockedAt(int x, int y) {
-        if(ui.canvas.nativeScene()) return !ui.shell.sceneActive() && !ui.library.browsePreviewActive();
+        if (ui.canvas.nativeScene()) return !ui.shell.sceneActive() && !ui.library.browsePreviewActive();
         if (ui.tools.blocksViewport(x, y)) return true;
         if (ui.library.libraryDrawer()) return ui.library.sidebarContains(x, y);
         if (!ui.annotations.pinnedAnnotation()
@@ -1161,43 +1185,43 @@ final class HologramUiPreview {
                     return true;
                 }
             }
-            if(!ui.canvas.nativeScene()) for (int i = ui.canvas.controls()
+            if (!ui.canvas.nativeScene()) for (int i = ui.canvas.controls()
                 .size() - 1; i >= 0; i--) {
-                Control c = ui.canvas.controls()
-                    .get(i);
-                if (c.contains(mx, my)) {
-                    if (ui.config.sourceDrawer() && (c.id < 84 || c.id > 88)) return true;
-                    if (ui.position.positionDrawer() && c.id != 76 && c.id != 77) return true;
-                    if (ui.review.confirmation() && c.id != 54
-                        && c.id != 55
-                        && c.id != 162
-                        && c.id != 168
-                        && c.id != 169) return true;
-                    if (!ui.config.optionChannel()
-                        .isEmpty() && c.id != 63 && c.id != 68 && c.id < 4000) return true;
-                    if (this.inventory && c.id != 64
-                        && c.id != 65
-                        && c.id != 66
-                        && c.id != 16
-                        && c.id != 17
-                        && c.id != 18
-                        && c.id != 95
-                        && !ui.canvas.inViewport(mx, my)) return true;
-                    if (ui.config.drawer() && !ui.review.confirmation()
-                        && ui.config.optionChannel()
-                            .isEmpty()
-                        && c.id < 1000
-                        && c.id != 62
-                        && c.id != 30
-                        && c.id != 23
-                        && c.id != 33
-                        && c.id != 83
-                        && c.id != 67
-                        && c.id != 68) return true;
-                    if (c.enabled) ui.router.activate(c.id);
-                    return true;
+                    Control c = ui.canvas.controls()
+                        .get(i);
+                    if (c.contains(mx, my)) {
+                        if (ui.config.sourceDrawer() && (c.id < 84 || c.id > 88)) return true;
+                        if (ui.position.positionDrawer() && c.id != 76 && c.id != 77) return true;
+                        if (ui.review.confirmation() && c.id != 54
+                            && c.id != 55
+                            && c.id != 162
+                            && c.id != 168
+                            && c.id != 169) return true;
+                        if (!ui.config.optionChannel()
+                            .isEmpty() && c.id != 63 && c.id != 68 && c.id < 4000) return true;
+                        if (this.inventory && c.id != 64
+                            && c.id != 65
+                            && c.id != 66
+                            && c.id != 16
+                            && c.id != 17
+                            && c.id != 18
+                            && c.id != 95
+                            && !ui.canvas.inViewport(mx, my)) return true;
+                        if (ui.config.drawer() && !ui.review.confirmation()
+                            && ui.config.optionChannel()
+                                .isEmpty()
+                            && c.id < 1000
+                            && c.id != 62
+                            && c.id != 30
+                            && c.id != 23
+                            && c.id != 33
+                            && c.id != 83
+                            && c.id != 67
+                            && c.id != 68) return true;
+                        if (c.enabled) ui.router.activate(c.id);
+                        return true;
+                    }
                 }
-            }
             if (ui.preview.previewBlockedAt(mx, my)) return true;
             if (ui.preview.previewInteractive() && ui.canvas.inViewport(mx, my)) {
                 if (!this.inventory && ui.preview.airSelectionHeld() && ui.session.editable()) {

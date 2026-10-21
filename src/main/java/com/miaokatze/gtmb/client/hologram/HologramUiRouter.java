@@ -1026,7 +1026,7 @@ final class HologramUiRouter {
     }
 
     boolean textFieldFocused() {
-        if(ui.shell.built()) return ui.shell.fieldFocused();
+        if (ui.shell.built()) return ui.shell.fieldFocused();
         return ui.nbt.nbtDrawer() && ui.nbt.nbtValueField() != null
             && ui.nbt.nbtValueField()
                 .isFocused()

@@ -11,7 +11,6 @@ import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
-
 import com.miaokatze.miaokatzecore.api.camera.CameraBasis;
 import com.miaokatze.miaokatzecore.api.camera.CameraPose;
 import com.miaokatze.miaokatzecore.api.camera.OrthographicProjection;
@@ -22,8 +21,20 @@ import com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates;
 final class HologramEditorLessonStage {
 
     interface State {
-        boolean isometric(); boolean handles(); boolean cut();
-        int corners(); int cutStage(); int offsetX(); int offsetZ();
+
+        boolean isometric();
+
+        boolean handles();
+
+        boolean cut();
+
+        int corners();
+
+        int cutStage();
+
+        int offsetX();
+
+        int offsetZ();
     }
 
     private ViewportCoordinates viewport;
@@ -33,14 +44,20 @@ final class HologramEditorLessonStage {
     private static final double DEPTH = 14, HALF_HEIGHT = 4.2;
 
     IWidget nativeWidget(HologramUiModules ui, State state) {
-        return new Scene(ui, state).expanded().heightRel(1f).name("tutorial.world.scene");
+        return new Scene(ui, state).expanded()
+            .heightRel(1f)
+            .name("tutorial.world.scene");
     }
 
     private final class Scene extends Widget<Scene> {
+
         private final HologramUiModules ui;
         private final State state;
 
-        Scene(HologramUiModules ui, State state) { this.ui = ui; this.state = state; }
+        Scene(HologramUiModules ui, State state) {
+            this.ui = ui;
+            this.state = state;
+        }
 
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
@@ -49,14 +66,24 @@ final class HologramEditorLessonStage {
             GL11.glPushMatrix();
             try {
                 GL11.glTranslatef(-region[0], -region[1], 0);
-                HologramEditorLessonStage.this.draw(ui, state.isometric(), state.corners(), state.handles(),
-                    state.cut(), state.cutStage(), state.offsetX(), state.offsetZ(), region);
-            } finally { GL11.glPopMatrix(); }
+                HologramEditorLessonStage.this.draw(
+                    ui,
+                    state.isometric(),
+                    state.corners(),
+                    state.handles(),
+                    state.cut(),
+                    state.cutStage(),
+                    state.offsetX(),
+                    state.offsetZ(),
+                    region);
+            } finally {
+                GL11.glPopMatrix();
+            }
         }
     }
 
-    private void draw(HologramUiModules ui, boolean iso, int corners, boolean handles, boolean cut, int cutStage, int offsetX,
-        int offsetZ, int[] region) {
+    private void draw(HologramUiModules ui, boolean iso, int corners, boolean handles, boolean cut, int cutStage,
+        int offsetX, int offsetZ, int[] region) {
         isometric = iso;
         int x = region[0], y = region[1], w = region[2], h = region[3];
         viewport = new ViewportCoordinates(x, y, w, h);
@@ -65,11 +92,8 @@ final class HologramEditorLessonStage {
         basis = new CameraBasis(pose);
         Gui.drawRect(x, y, x + w, y + h, 0xff263c42);
         Minecraft mc = ui.host.minecraft();
-        ViewportCoordinates.FramebufferRect physical = viewport.framebufferRect(
-            ui.host.screenWidth(),
-            ui.host.screenHeight(),
-            mc.displayWidth,
-            mc.displayHeight);
+        ViewportCoordinates.FramebufferRect physical = viewport
+            .framebufferRect(ui.host.screenWidth(), ui.host.screenHeight(), mc.displayWidth, mc.displayHeight);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         GL11.glMatrixMode(GL11.GL_PROJECTION);
         GL11.glPushMatrix();

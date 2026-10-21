@@ -19,13 +19,21 @@ import com.cleanroommc.modularui.widgets.layout.Flow;
 final class HologramEditorTutorialOverlay {
 
     interface View {
+
         boolean active();
+
         boolean canPrevious();
+
         boolean queuedNext();
+
         String nextLabel();
+
         String explanation();
+
         void navigate(int offset);
+
         void frame(long now);
+
         void drawFocus(ModularGuiContext context, int width, int height);
     }
 
@@ -54,17 +62,28 @@ final class HologramEditorTutorialOverlay {
             .disableThemeBackground(true);
         panel.onUpdateListener(ignored -> {
             if (panel.getArea().width != host.screenWidth() || panel.getArea().height != host.screenHeight())
-                panel.size(host.screenWidth(), host.screenHeight()).scheduleResize();
+                panel.size(host.screenWidth(), host.screenHeight())
+                    .scheduleResize();
             navigation[0].setEnabled(view.canPrevious());
         });
-        panel.child(new Shield().sizeRel(1f).name("tutorial.shield").background(IDrawable.NONE).disableThemeBackground(true));
-        Flow row = Flow.row().coverChildren().childPadding(7).mainAxisAlignment(Alignment.MainAxis.CENTER)
-            .background(IDrawable.NONE).disableThemeBackground(true).name("tutorial.navigation");
+        panel.child(
+            new Shield().sizeRel(1f)
+                .name("tutorial.shield")
+                .background(IDrawable.NONE)
+                .disableThemeBackground(true));
+        Flow row = Flow.row()
+            .coverChildren()
+            .childPadding(7)
+            .mainAxisAlignment(Alignment.MainAxis.CENTER)
+            .background(IDrawable.NONE)
+            .disableThemeBackground(true)
+            .name("tutorial.navigation");
         navigationRow = row;
         String[] names = { "previous", "next", "skip", "restart" };
         for (int i = 0; i < navigation.length; i++) {
             final int index = i;
-            ButtonWidget<?> button = new ButtonWidget<>().size(78, 20).name("tutorial." + names[i])
+            ButtonWidget<?> button = new ButtonWidget<>().size(78, 20)
+                .name("tutorial." + names[i])
                 .disableThemeBackground(true)
                 .background((context, x, y, width, height, theme) -> {
                     HologramEditorNativeTheme.background(index != 0 || view.canPrevious(), false, false, index == 1)
@@ -76,20 +95,32 @@ final class HologramEditorTutorialOverlay {
                         .draw(x, y, width, height);
                     if (index == 1) drawClickCue(x, y, width, height);
                 })
-                .overlay(IKey.dynamic(() -> label(index)).color(index == 1 ? HologramEditorNativeTheme.DARK_TEXT
-                    : HologramEditorNativeTheme.TEXT).shadow(false))
+                .overlay(
+                    IKey.dynamic(() -> label(index))
+                        .color(index == 1 ? HologramEditorNativeTheme.DARK_TEXT : HologramEditorNativeTheme.TEXT)
+                        .shadow(false))
                 .onMousePressed(buttonIndex -> {
-                    if (buttonIndex == 0 && view.active() && (index != 0 || view.canPrevious()))
-                        host.parent().deferAction(() -> view.navigate(index + 1));
+                    if (buttonIndex == 0 && view.active() && (index != 0 || view.canPrevious())) host.parent()
+                        .deferAction(() -> view.navigate(index + 1));
                     return true;
                 });
             navigation[i] = button;
             row.child(button);
         }
-        panel.child(Flow.col().widthRel(1f).coverChildrenHeight().bottom(10).childPadding(7)
-            .background(IDrawable.NONE).disableThemeBackground(true).name("tutorial.footer")
-            .child(new Explanation().widthRel(1f).height(28).name("tutorial.explanation"))
-            .child(row));
+        panel.child(
+            Flow.col()
+                .widthRel(1f)
+                .coverChildrenHeight()
+                .bottom(10)
+                .childPadding(7)
+                .background(IDrawable.NONE)
+                .disableThemeBackground(true)
+                .name("tutorial.footer")
+                .child(
+                    new Explanation().widthRel(1f)
+                        .height(28)
+                        .name("tutorial.explanation"))
+                .child(row));
         return panel;
     }
 
@@ -97,8 +128,11 @@ final class HologramEditorTutorialOverlay {
         if (button != 0 || !view.active()) return false;
         for (ButtonWidget<?> entry : navigation) {
             int[] area = entry == null ? null : ui.shell.nativeWidgetBounds(entry);
-            if (area != null && entry.isEnabled() && x >= area[0] && y >= area[1]
-                && x < area[0] + area[2] && y < area[1] + area[3]) return true;
+            if (area != null && entry.isEnabled()
+                && x >= area[0]
+                && y >= area[1]
+                && x < area[0] + area[2]
+                && y < area[1] + area[3]) return true;
         }
         return false;
     }
@@ -129,32 +163,66 @@ final class HologramEditorTutorialOverlay {
     }
 
     private final class Shield extends Widget<Shield> implements Interactable {
+
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
             view.frame(System.nanoTime());
             if (view.active()) view.drawFocus(context, getArea().width, getArea().height);
         }
 
-        @Override public Result onMousePressed(int button) { return Result.STOP; }
-        @Override public Result onMouseTapped(int button) { return Result.STOP; }
-        @Override public Result onKeyPressed(char character, int key) { return Result.STOP; }
-        @Override public boolean onMouseScroll(UpOrDown direction, int amount) { return true; }
-        @Override public boolean canClickThrough() { return false; }
+        @Override
+        public Result onMousePressed(int button) {
+            return Result.STOP;
+        }
+
+        @Override
+        public Result onMouseTapped(int button) {
+            return Result.STOP;
+        }
+
+        @Override
+        public Result onKeyPressed(char character, int key) {
+            return Result.STOP;
+        }
+
+        @Override
+        public boolean onMouseScroll(UpOrDown direction, int amount) {
+            return true;
+        }
+
+        @Override
+        public boolean canClickThrough() {
+            return false;
+        }
     }
 
     private final class Explanation extends Widget<Explanation> {
+
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
             int width = Math.min(620, Math.max(1, getArea().width - 24));
-            List<String> lines = host.font().listFormattedStringToWidth(view.explanation(), width);
+            List<String> lines = host.font()
+                .listFormattedStringToWidth(view.explanation(), width);
             for (int i = 0; i < Math.min(2, lines.size()); i++) {
                 String line = lines.get(i);
-                host.font().drawString(line, (getArea().width - host.font().getStringWidth(line)) / 2,
-                    2 + i * 11, 0xffe2c39c);
+                host.font()
+                    .drawString(
+                        line,
+                        (getArea().width - host.font()
+                            .getStringWidth(line)) / 2,
+                        2 + i * 11,
+                        0xffe2c39c);
             }
         }
 
-        @Override public boolean canHover() { return false; }
-        @Override public boolean canClickThrough() { return true; }
+        @Override
+        public boolean canHover() {
+            return false;
+        }
+
+        @Override
+        public boolean canClickThrough() {
+            return true;
+        }
     }
 }

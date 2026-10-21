@@ -41,33 +41,120 @@ final class HologramEditorLegacyDialogs {
 
     HologramEditorLegacyDialogs(HologramUiModules ui) {
         this.ui = ui;
-        domain("position", "添加位置", 157, 59, 248, 198, ui.position::positionDrawer, ui.position::drawPosition,
+        domain(
+            "position",
+            "添加位置",
+            157,
+            59,
+            248,
+            198,
+            ui.position::positionDrawer,
+            ui.position::drawPosition,
             (c, key) -> {
                 if (key == Keyboard.KEY_ESCAPE) ui.router.activate(77);
                 else if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) ui.router.activate(76);
-            }, null);
-        domain("prompt", "提示词与施工排除", 50, 77, 378, 191, ui.annotations::promptDrawer,
-            ui.annotations::drawPromptEditor, ui.annotations::consumeAnnotationModalKey, null);
-        domain("versions", "来源与版本", 50, 58, 378, 221, ui.annotations::versionsDrawer,
-            ui.annotations::drawVersions, ui.annotations::consumeAnnotationModalKey, ui.annotations::consumeVersionsWheel);
-        domain("nbt", "NBT 条目", 50, 58, 498, 246, ui.nbt::nbtDrawer, ui.nbt::drawNbtEditor,
-            ui.nbt::consumeEditorKey, ui.nbt::consumeEditorWheel);
-        domain("ae", "蓝图综合告知", 30, 42, 620, 260, () -> ui.ae.aeReview() != null, ui.ae::drawAeReview,
-            ui.ae::consumeReviewKey, ui.ae::consumeReviewWheel);
-        domain("ae-navigation", "定位相关结构", 90, 96, 500, 152, () -> ui.ae.aeReviewNavigation() != null,
-            ui.ae::drawAeReviewNavigation, ui.ae::consumeNavigationKey, null);
-        domain("network", "量子网络类群", 35, 50, 610, 249, ui.bindings::networkDrawer,
-            ui.bindings::drawNetworkBindings, ui.bindings::consumeBindingsKey, null);
-        domain("identity", "校验与去标识", 40, 47, 610, 263, ui.identity::deidentificationDrawer,
-            ui.identity::drawDeidentification, ui.identity::consumeIdentityKey, null);
-        domain("processing", "蓝图处理", 28, 48, 622, 256, () -> ui.processing.processingFlow() != null,
-            ui.processing::drawProcessingFlow, ui.processing::consumeProcessingKey, ui.processing::consumeProcessingWheel);
-        domain("preparing", "蓝图准备", 30, 62, 620, 220,
+            },
+            null);
+        domain(
+            "prompt",
+            "提示词与施工排除",
+            50,
+            77,
+            378,
+            191,
+            ui.annotations::promptDrawer,
+            ui.annotations::drawPromptEditor,
+            ui.annotations::consumeAnnotationModalKey,
+            null);
+        domain(
+            "versions",
+            "来源与版本",
+            50,
+            58,
+            378,
+            221,
+            ui.annotations::versionsDrawer,
+            ui.annotations::drawVersions,
+            ui.annotations::consumeAnnotationModalKey,
+            ui.annotations::consumeVersionsWheel);
+        domain(
+            "nbt",
+            "NBT 条目",
+            50,
+            58,
+            498,
+            246,
+            ui.nbt::nbtDrawer,
+            ui.nbt::drawNbtEditor,
+            ui.nbt::consumeEditorKey,
+            ui.nbt::consumeEditorWheel);
+        domain(
+            "ae",
+            "蓝图综合告知",
+            30,
+            42,
+            620,
+            260,
+            () -> ui.ae.aeReview() != null,
+            ui.ae::drawAeReview,
+            ui.ae::consumeReviewKey,
+            ui.ae::consumeReviewWheel);
+        domain(
+            "ae-navigation",
+            "定位相关结构",
+            90,
+            96,
+            500,
+            152,
+            () -> ui.ae.aeReviewNavigation() != null,
+            ui.ae::drawAeReviewNavigation,
+            ui.ae::consumeNavigationKey,
+            null);
+        domain(
+            "network",
+            "量子网络类群",
+            35,
+            50,
+            610,
+            249,
+            ui.bindings::networkDrawer,
+            ui.bindings::drawNetworkBindings,
+            ui.bindings::consumeBindingsKey,
+            null);
+        domain(
+            "identity",
+            "校验与去标识",
+            40,
+            47,
+            610,
+            263,
+            ui.identity::deidentificationDrawer,
+            ui.identity::drawDeidentification,
+            ui.identity::consumeIdentityKey,
+            null);
+        domain(
+            "processing",
+            "蓝图处理",
+            28,
+            48,
+            622,
+            256,
+            () -> ui.processing.processingFlow() != null,
+            ui.processing::drawProcessingFlow,
+            ui.processing::consumeProcessingKey,
+            ui.processing::consumeProcessingWheel);
+        domain(
+            "preparing",
+            "蓝图准备",
+            30,
+            62,
+            620,
+            220,
             () -> ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending")
                 || ui.session.state().data.getBoolean("placementValidating"),
-            ui.router::drawImportBusy, (c, key) -> {
-                if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) ui.router.activate(193);
-            }, null);
+            ui.router::drawImportBusy,
+            (c, key) -> { if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) ui.router.activate(193); },
+            null);
     }
 
     private void domain(String id, String title, int x, int y, int width, int height, BooleanSupplier visible,
@@ -142,12 +229,21 @@ final class HologramEditorLegacyDialogs {
             background(HologramEditorTheme.PANEL);
             heading = HologramMuiTheme.label(() -> domain.title, 10, 8, domain.width, 16, HologramEditorTheme.TITLE);
             child(heading);
-            content.size(domain.width, domain.height).background(IDrawable.NONE);
-            content.child(new LegacyPaint().size(domain.width, domain.height).background(IDrawable.NONE));
-            content.child(buttons.size(domain.width, domain.height).background(IDrawable.NONE));
-            content.child(fields.size(domain.width, domain.height).background(IDrawable.NONE));
+            content.size(domain.width, domain.height)
+                .background(IDrawable.NONE);
+            content.child(
+                new LegacyPaint().size(domain.width, domain.height)
+                    .background(IDrawable.NONE));
+            content.child(
+                buttons.size(domain.width, domain.height)
+                    .background(IDrawable.NONE));
+            content.child(
+                fields.size(domain.width, domain.height)
+                    .background(IDrawable.NONE));
             viewport = new LegacyViewport();
-            viewport.pos(8, 30).child(content).background(IDrawable.NONE);
+            viewport.pos(8, 30)
+                .child(content)
+                .background(IDrawable.NONE);
             child(viewport);
             fit();
         }
@@ -167,10 +263,14 @@ final class HologramEditorLegacyDialogs {
         private final class NativeLayer extends ParentWidget<NativeLayer> {
 
             @Override
-            public boolean canHover() { return false; }
+            public boolean canHover() {
+                return false;
+            }
 
             @Override
-            public boolean canClickThrough() { return true; }
+            public boolean canClickThrough() {
+                return true;
+            }
         }
 
         @Override
@@ -197,8 +297,7 @@ final class HologramEditorLegacyDialogs {
             }
 
             private boolean overflow() {
-                return domain.width > Math.max(1, fittedWidth - 16)
-                    || domain.height > Math.max(1, fittedHeight - 38);
+                return domain.width > Math.max(1, fittedWidth - 16) || domain.height > Math.max(1, fittedHeight - 38);
             }
 
             @Override
@@ -220,10 +319,14 @@ final class HologramEditorLegacyDialogs {
         private final class LegacyPaint extends Widget<LegacyPaint> {
 
             @Override
-            public boolean canHover() { return false; }
+            public boolean canHover() {
+                return false;
+            }
 
             @Override
-            public boolean canClickThrough() { return true; }
+            public boolean canClickThrough() {
+                return true;
+            }
 
             @Override
             public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
@@ -233,9 +336,11 @@ final class HologramEditorLegacyDialogs {
                 CanvasTransform space = new CanvasTransform(domain.x, domain.y, 0, 0, 1);
                 int mx = context.getMouseX() + domain.x, my = context.getMouseY() + domain.y;
                 GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-                try (var graph = owner.fieldGraph(ui); var mount = owner.legacyFieldMount(fields);
+                try (var graph = owner.fieldGraph(ui);
+                    var mount = owner.legacyFieldMount(fields);
                     HologramUiCanvas.Space ignored = ui.canvas.space(space)) {
-                    ui.canvas.controls().clear();
+                    ui.canvas.controls()
+                        .clear();
                     ui.canvas.tooltip(null);
                     for (NativeControl control : controls.values()) control.visible = false;
                     GL11.glDisable(GL11.GL_DEPTH_TEST);
@@ -244,14 +349,21 @@ final class HologramEditorLegacyDialogs {
                         NativeControl control = controls.computeIfAbsent(source.id, NativeControl::new);
                         control.update(source);
                         if (mx - domain.x >= source.x && mx - domain.x < source.x + source.w
-                            && my - domain.y >= source.y && my - domain.y < source.y + source.h
+                            && my - domain.y >= source.y
+                            && my - domain.y < source.y + source.h
                             && ui.canvas.tooltip() != null) control.help = String.join("\n", ui.canvas.tooltip());
                     }
                     for (NativeControl control : controls.values()) control.widget.setEnabled(control.visible);
                 } finally {
                     // Restore the descriptor buffer without invoking its legacy clear-field side effect.
-                    ui.canvas.controls().subList(0, ui.canvas.controls().size()).clear();
-                    ui.canvas.controls().addAll(previous);
+                    ui.canvas.controls()
+                        .subList(
+                            0,
+                            ui.canvas.controls()
+                                .size())
+                        .clear();
+                    ui.canvas.controls()
+                        .addAll(previous);
                     ui.canvas.tooltip(previousTooltip);
                     GL11.glPopAttrib();
                 }
@@ -303,7 +415,9 @@ final class HologramEditorLegacyDialogs {
                 y = source.y;
                 width = source.w;
                 height = source.h;
-                widget.pos(x, y).size(width, height).scheduleResize();
+                widget.pos(x, y)
+                    .size(width, height)
+                    .scheduleResize();
             }
         }
     }

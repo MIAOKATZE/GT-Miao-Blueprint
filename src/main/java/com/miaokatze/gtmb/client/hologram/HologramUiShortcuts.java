@@ -1,6 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-
 import org.lwjgl.input.Keyboard;
 
 /** Internal shortcuts workflow; composed by the workstation, never part of the mod extension API. */
@@ -39,7 +38,8 @@ final class HologramUiShortcuts {
         return idleHints.visible(now) && !HologramBackgroundTasks.busy()
             && !ui.library.saveGuidanceOpen()
             && !ui.preview.inventory()
-            && ui.tools.commands().sceneAvailable()
+            && ui.tools.commands()
+                .sceneAvailable()
             && !ui.tools.modalOpen()
             && !ui.preview.boxSelecting()
             && ui.preview.gizmo()
@@ -170,7 +170,9 @@ final class HologramUiShortcuts {
         return false;
     }
 
-    void cancelBindingCapture() { this.captureBinding = -1; }
+    void cancelBindingCapture() {
+        this.captureBinding = -1;
+    }
 
     int captureBinding() {
         return this.captureBinding;

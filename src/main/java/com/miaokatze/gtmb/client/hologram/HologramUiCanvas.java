@@ -69,27 +69,45 @@ final class HologramUiCanvas {
     private boolean nativeScene, sceneLabel;
     private ViewportCoordinates nativeViewport, nativeGuiViewport;
 
-    boolean nativeScene() { return nativeScene; }
-    ViewportCoordinates nativeGuiViewport() { return nativeGuiViewport; }
-    NativeSceneSpace nativeSceneSpace(int width,int height,ViewportCoordinates gui) {
-        return new NativeSceneSpace(width,height,gui);
+    boolean nativeScene() {
+        return nativeScene;
     }
+
+    ViewportCoordinates nativeGuiViewport() {
+        return nativeGuiViewport;
+    }
+
+    NativeSceneSpace nativeSceneSpace(int width, int height, ViewportCoordinates gui) {
+        return new NativeSceneSpace(width, height, gui);
+    }
+
     final class NativeSceneSpace implements AutoCloseable {
-        private final boolean oldNative=nativeScene;
-        private final ViewportCoordinates oldViewport=nativeViewport, oldGui=nativeGuiViewport;
-        private final int oldX=originX,oldY=originY;
-        private final float oldScale=scale;
-        private final CanvasTransform oldPointer=pointerSpace,oldDrawing=drawingSpace;
-        NativeSceneSpace(int width,int height,ViewportCoordinates gui) {
-            nativeScene=true;
-            nativeViewport=new ViewportCoordinates(0,0,width,height);
-            nativeGuiViewport=gui;
-            originX=originY=0;scale=1;
-            pointerSpace=drawingSpace=CanvasTransform.identity();
+
+        private final boolean oldNative = nativeScene;
+        private final ViewportCoordinates oldViewport = nativeViewport, oldGui = nativeGuiViewport;
+        private final int oldX = originX, oldY = originY;
+        private final float oldScale = scale;
+        private final CanvasTransform oldPointer = pointerSpace, oldDrawing = drawingSpace;
+
+        NativeSceneSpace(int width, int height, ViewportCoordinates gui) {
+            nativeScene = true;
+            nativeViewport = new ViewportCoordinates(0, 0, width, height);
+            nativeGuiViewport = gui;
+            originX = originY = 0;
+            scale = 1;
+            pointerSpace = drawingSpace = CanvasTransform.identity();
         }
-        @Override public void close() {
-            nativeScene=oldNative;nativeViewport=oldViewport;nativeGuiViewport=oldGui;
-            originX=oldX;originY=oldY;scale=oldScale;pointerSpace=oldPointer;drawingSpace=oldDrawing;
+
+        @Override
+        public void close() {
+            nativeScene = oldNative;
+            nativeViewport = oldViewport;
+            nativeGuiViewport = oldGui;
+            originX = oldX;
+            originY = oldY;
+            scale = oldScale;
+            pointerSpace = oldPointer;
+            drawingSpace = oldDrawing;
         }
     }
 
@@ -132,7 +150,7 @@ final class HologramUiCanvas {
     }
 
     void text(String value, int x, int y, int w, int color) {
-        if(nativeScene && !sceneLabel) return;
+        if (nativeScene && !sceneLabel) return;
         double rootX = drawingSpace.toScreenX(x), rootY = drawingSpace.toScreenY(y + 4);
         for (int i = paperHeaders.size() - 1; i >= 0; i--) {
             double[] header = paperHeaders.get(i);
@@ -166,8 +184,11 @@ final class HologramUiCanvas {
     void sceneText(String value, int x, int y, int width, int color) {
         boolean previous = sceneLabel;
         sceneLabel = true;
-        try { text(value, x, y, width, color); }
-        finally { sceneLabel = previous; }
+        try {
+            text(value, x, y, width, color);
+        } finally {
+            sceneLabel = previous;
+        }
     }
 
     void skin(String name, int x, int y, int w, int h) {
@@ -189,7 +210,7 @@ final class HologramUiCanvas {
     }
 
     void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
-        if(nativeScene) return;
+        if (nativeScene) return;
         if (localPlanBlockedControl(id)) enabled = false;
         if (HologramBackgroundTasks.busy() && id != 990
             && id != 991

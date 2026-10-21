@@ -354,7 +354,9 @@ final class HologramUiLibrary {
 
     // Presentation-only adapters for the persistent native dock. All actions
     // still pass through the original router, discard proposal and RPC owners.
-    boolean nativeDedicated() { return dedicatedLibrary(); }
+    boolean nativeDedicated() {
+        return dedicatedLibrary();
+    }
 
     private void showNativeDockPage(int page) {
         if (ui.shell.built()) ui.shell.selectDockPage(page);
@@ -367,7 +369,8 @@ final class HologramUiLibrary {
 
     void nativeBindRow(int slot, NBTTagCompound row) {
         int id = 14000 + slot;
-        if (row == null || row.getString("id").isEmpty()) visibleLibraryRows.remove(id);
+        if (row == null || row.getString("id")
+            .isEmpty()) visibleLibraryRows.remove(id);
         else visibleLibraryRows.put(id, (NBTTagCompound) row.copy());
     }
 
@@ -377,9 +380,11 @@ final class HologramUiLibrary {
     }
 
     boolean nativeSelected(NBTTagCompound row) {
-        String selected = overwriteMode ? overwriteTarget : dedicatedLibrary()
-            ? HologramLibraryClient.INSTANCE.selected(publicLibrary) : selectedServerPresetId();
-        return !row.getString("id").isEmpty() && row.getString("id").equals(selected);
+        String selected = overwriteMode ? overwriteTarget
+            : dedicatedLibrary() ? HologramLibraryClient.INSTANCE.selected(publicLibrary) : selectedServerPresetId();
+        return !row.getString("id")
+            .isEmpty() && row.getString("id")
+                .equals(selected);
     }
 
     NBTTagCompound nativeSelectedRow() {
@@ -400,23 +405,33 @@ final class HologramUiLibrary {
     }
 
     boolean nativeCanSave() {
-        return !ui.session.isTutorial() && !browsePreviewActive() && nativeIdle()
-            && ui.processing.processingReady() && !ui.session.state().data.getBoolean("settingsOnly")
+        return !ui.session.isTutorial() && !browsePreviewActive()
+            && nativeIdle()
+            && ui.processing.processingReady()
+            && !ui.session.state().data.getBoolean("settingsOnly")
             && !ui.session.state().cells.isEmpty();
     }
 
     boolean nativeAdmin() {
-        return dedicatedLibrary() && HologramLibraryClient.INSTANCE.config().getBoolean("admin");
+        return dedicatedLibrary() && HologramLibraryClient.INSTANCE.config()
+            .getBoolean("admin");
     }
 
     boolean nativeCanUpgrade() {
         return !ui.session.isTutorial() && (!dedicatedLibrary() || !publicLibrary || nativeAdmin())
-            && upgradeStatus() > 0 && !HologramLibraryClient.INSTANCE.busy()
-            && !HologramBackgroundTasks.busy() && ui.session.pendingSequence() < 0;
+            && upgradeStatus() > 0
+            && !HologramLibraryClient.INSTANCE.busy()
+            && !HologramBackgroundTasks.busy()
+            && ui.session.pendingSequence() < 0;
     }
 
-    int nativeServerPage() { return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.page() : 0; }
-    int nativeServerPages() { return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.pages() : 1; }
+    int nativeServerPage() {
+        return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.page() : 0;
+    }
+
+    int nativeServerPages() {
+        return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.pages() : 1;
+    }
 
     String nativeStatus() {
         if (ui.session.isTutorial()) return "独立教学示例，不连接真实蓝图库";
@@ -425,14 +440,12 @@ final class HologramUiLibrary {
     }
 
     String nativeReviewTitle() {
-        return ui.processing.processingPresetSaveReview() ? "保存流程预设"
-            : overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动";
+        return ui.processing.processingPresetSaveReview() ? "保存流程预设" : overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动";
     }
 
     String nativeReviewBody() {
         return overwriteReview ? "将以当前蓝图替换：" + overwriteName
-            : deferredLibraryAction == 299 ? "放弃当前草稿及未保存改动，返回蓝图库。已保存文件保留。"
-                : "继续将放弃未保存改动并切换蓝图；取消返回原稿。";
+            : deferredLibraryAction == 299 ? "放弃当前草稿及未保存改动，返回蓝图库。已保存文件保留。" : "继续将放弃未保存改动并切换蓝图；取消返回原稿。";
     }
 
     String nativeReviewTarget() {
@@ -443,7 +456,9 @@ final class HologramUiLibrary {
                 : "importArea".equals(sourceSwitchProposal.getString("op")) ? "新的框选区域" : "所选蓝图");
     }
 
-    String nativeDeleteName() { return deletePresetName; }
+    String nativeDeleteName() {
+        return deletePresetName;
+    }
 
     private void drawLibrarySource(int mx, int my) {
         if (ui.session.isTutorial()) {
