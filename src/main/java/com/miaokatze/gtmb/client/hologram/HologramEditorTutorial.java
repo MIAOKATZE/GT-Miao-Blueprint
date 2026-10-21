@@ -466,6 +466,13 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     void drawScreen(int mouseX, int mouseY, float ticks) {}
 
     private void animate(long now) {
+        if (!worldCourse() && !unavailable.isEmpty()) {
+            // An unavailable prerequisite must not demonstrate dependent controls behind its still-open window.
+            actionIndex = actions.size();
+            actionBounds = null;
+            pressed = queuedNext = false;
+            return;
+        }
         Action action = actions.get(actionIndex);
         if (actionStarted == 0) {
             if (groupSatisfied(action)) {

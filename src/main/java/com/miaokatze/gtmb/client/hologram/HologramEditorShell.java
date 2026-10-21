@@ -451,6 +451,7 @@ final class HologramEditorShell {
 
     private IWidget tutorialTarget(String key) {
         if (!ui.session.isTutorial()) return null;
+        if ("modal.close".equals(key)) return modalCloseWidget();
         if (key.startsWith("control.")) {
             List<Entry> entries;
             try {
@@ -486,23 +487,19 @@ final class HologramEditorShell {
         IWidget parent = widget;
         while (parent.hasParent()) {
             parent = parent.getParent();
-            if (parent instanceof com.cleanroommc.modularui.widgets.ListWidget) {
-                com.cleanroommc.modularui.widgets.ListWidget<?, ?> list = (com.cleanroommc.modularui.widgets.ListWidget<?, ?>) parent;
+            if (parent instanceof com.cleanroommc.modularui.widget.AbstractScrollWidget) {
+                com.cleanroommc.modularui.widget.AbstractScrollWidget<?, ?> list = (com.cleanroommc.modularui.widget.AbstractScrollWidget<?, ?>) parent;
+                com.cleanroommc.modularui.widget.scroll.VerticalScrollData vertical = list.getScrollArea()
+                    .getScrollY();
                 int[] viewport = bounds(parent), full = absoluteBounds(widget);
-                if (viewport == null || list.getScrollData() == null) continue;
+                if (viewport == null || vertical == null) continue;
                 int delta = full[1] < viewport[1] ? full[1] - viewport[1]
                     : Math.max(0, full[1] + full[3] - viewport[1] - viewport[3]);
                 if (delta != 0) {
-                    int before = list.getScrollData()
-                        .getScroll();
-                    list.getScrollData()
-                        .scrollTo(
-                            list.getScrollArea(),
-                            list.getScrollData()
-                                .getScroll() + delta);
+                    int before = vertical.getScroll();
+                    vertical.scrollTo(list.getScrollArea(), vertical.getScroll() + delta);
                     // Re-measure after native scrolling/layout, before considering another ancestor.
-                    if (list.getScrollData()
-                        .getScroll() != before) return;
+                    if (vertical.getScroll() != before) return;
                 }
             }
         }
@@ -539,20 +536,7 @@ final class HologramEditorShell {
         List<IWidget> named = targets.get("modal.close");
         if (named != null) for (int i = named.size() - 1; i >= 0; i--) {
             IWidget widget = named.get(i);
-            if (widget.isValid() && widget.getPanel() == panel) {
-                int[] area = bounds(widget);
-                if (area != null) return widget;
-            }
-        }
-        int[] ids = { 62, 96, 79, 234, 68, 77, 143, 171, 177, 211, 225, 300 };
-        for (int id : ids) {
-            List<Entry> entries = controls.get(id);
-            if (entries == null) continue;
-            for (Entry entry : entries)
-                if (entry.widget.isValid() && entry.widget.getPanel() == panel && entry.enabled.getAsBoolean()) {
-                    int[] area = bounds(entry.widget);
-                    if (area != null) return entry.widget;
-                }
+            if (visible(widget) && widget.getPanel() == panel) return widget;
         }
         return null;
     }

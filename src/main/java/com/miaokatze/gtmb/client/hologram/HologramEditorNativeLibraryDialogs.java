@@ -147,16 +147,13 @@ final class HologramEditorNativeLibraryDialogs {
             .widthRel(1f)
             .height(24)
             .childPadding(8);
-        footer.child(
-            ui.shell
-                .nativeAction(
-                    cancelId(kind),
-                    () -> kind == Kind.ADMIN ? "关闭" : "取消",
-                    () -> true,
-                    () -> "返回原上下文，保留未提交内容。")
-                .widthRel(1f)
-                .expanded()
-                .height(24));
+        ButtonWidget<?> cancel = ui.shell
+            .nativeAction(cancelId(kind), () -> kind == Kind.ADMIN ? "关闭" : "取消", () -> true, () -> "返回原上下文，保留未提交内容。")
+            .widthRel(1f)
+            .expanded()
+            .height(24);
+        ui.shell.registerTarget("modal.close", cancel);
+        footer.child(cancel);
         footer.child(
             confirm(kind).widthRel(1f)
                 .expanded()

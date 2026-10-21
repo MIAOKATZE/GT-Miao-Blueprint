@@ -44,6 +44,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "position",
             "添加位置",
+            77,
             157,
             59,
             248,
@@ -58,6 +59,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "prompt",
             "提示词与施工排除",
+            151,
             50,
             77,
             378,
@@ -69,6 +71,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "versions",
             "来源与版本",
+            151,
             50,
             58,
             378,
@@ -80,6 +83,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "nbt",
             "NBT 条目",
+            172,
             50,
             58,
             498,
@@ -91,6 +95,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "ae",
             "蓝图综合告知",
+            182,
             30,
             42,
             620,
@@ -102,6 +107,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "ae-navigation",
             "定位相关结构",
+            194,
             90,
             96,
             500,
@@ -113,6 +119,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "network",
             "量子网络类群",
+            201,
             35,
             50,
             610,
@@ -124,6 +131,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "identity",
             "校验与去标识",
+            212,
             40,
             47,
             610,
@@ -135,6 +143,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "processing",
             "蓝图处理",
+            234,
             28,
             48,
             622,
@@ -146,6 +155,7 @@ final class HologramEditorLegacyDialogs {
         domain(
             "preparing",
             "蓝图准备",
+            193,
             30,
             62,
             620,
@@ -157,9 +167,10 @@ final class HologramEditorLegacyDialogs {
             null);
     }
 
-    private void domain(String id, String title, int x, int y, int width, int height, BooleanSupplier visible,
-        BiConsumer<Integer, Integer> paint, BiConsumer<Character, Integer> key, IntPredicate wheel) {
-        domains.add(new Domain(id, title, x, y, width, height, visible, paint, key, wheel));
+    private void domain(String id, String title, int cancelControl, int x, int y, int width, int height,
+        BooleanSupplier visible, BiConsumer<Integer, Integer> paint, BiConsumer<Character, Integer> key,
+        IntPredicate wheel) {
+        domains.add(new Domain(id, title, cancelControl, x, y, width, height, visible, paint, key, wheel));
     }
 
     void attach(ModularPanel host) {
@@ -187,7 +198,7 @@ final class HologramEditorLegacyDialogs {
     private final class Domain {
 
         final String id, title;
-        final int x, y, width, height;
+        final int cancelControl, x, y, width, height;
         final BooleanSupplier visible;
         final BiConsumer<Integer, Integer> paint;
         final BiConsumer<Character, Integer> key;
@@ -195,10 +206,11 @@ final class HologramEditorLegacyDialogs {
         IPanelHandler handler;
         LegacyDialog panel;
 
-        Domain(String id, String title, int x, int y, int width, int height, BooleanSupplier visible,
+        Domain(String id, String title, int cancelControl, int x, int y, int width, int height, BooleanSupplier visible,
             BiConsumer<Integer, Integer> paint, BiConsumer<Character, Integer> key, IntPredicate wheel) {
             this.id = id;
             this.title = title;
+            this.cancelControl = cancelControl;
             this.x = x;
             this.y = y;
             this.width = width;
@@ -442,6 +454,13 @@ final class HologramEditorLegacyDialogs {
                 // The native action is deferred; recheck the business at execution, not just the last painted frame.
                 widget = ui.shell
                     .nativeAction(id, () -> label, () -> domain.active() && enabled && visible, () -> help);
+                if (id == domain.cancelControl) {
+                    ui.shell.registerTarget(domain.id + ".cancel", widget);
+                    // These exits may leave the editor, cancel a save review, or apply a placement strategy.
+                    // Keep their original buttons, but never reuse them as an automatic tutorial modal close.
+                    if (!"preparing".equals(domain.id) && !"ae".equals(domain.id) && !"identity".equals(domain.id))
+                        ui.shell.registerTarget("modal.close", widget);
+                }
                 normalBackground = widget.getBackground();
                 hoverBackground = widget.getHoverBackground();
                 // Item slots are painted by their domain body. Their native hit target must not cover the item.

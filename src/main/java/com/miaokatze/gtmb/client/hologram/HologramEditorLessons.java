@@ -370,7 +370,7 @@ final class HologramEditorLessons {
             "保存与覆盖",
             "名称与保存按钮在蓝图库。本例尚未完成处理，保存和覆盖均不执行；教程不写文件。",
             "library",
-            control(234),
+            action(Operation.CLOSE_PANEL, "modal.close"),
             action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)),
             action(Operation.HOVER_NATIVE, "library.name"),
             action(Operation.HOVER_NATIVE, "control.140"),
