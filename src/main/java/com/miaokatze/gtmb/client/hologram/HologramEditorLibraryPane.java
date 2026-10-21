@@ -117,7 +117,8 @@ final class HologramEditorLibraryPane {
                         () -> "覆盖模式中点行仅指定目标，保存前再核对名称与身份。").widthRel(1f)
                             .expanded()
                             .height(22)));
-        HologramRecessedList list = new HologramRecessedList().name("library_rows")
+        HologramRecessedList list = new HologramRecessedList().paperEdges()
+            .name("library_rows")
             .widthRel(1f)
             .height(132);
         for (int i = 0; i < ROWS; i++) {
@@ -211,7 +212,8 @@ final class HologramEditorLibraryPane {
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
                 .height(30));
-        return new HologramRecessedList().name("library_content")
+        return new HologramRecessedList().paperEdges()
+            .name("library_content")
             .sizeRel(1f)
             .child(page);
     }
@@ -234,7 +236,8 @@ final class HologramEditorLibraryPane {
                     local(HologramEditorControlIds.LIBRARY + 5, () -> "返回", () -> true, () -> pages.setPage(0))
                         .width(48)
                         .height(20)));
-        HologramRecessedList list = new HologramRecessedList().sizeRel(1f)
+        HologramRecessedList list = new HologramRecessedList().paperEdges()
+            .sizeRel(1f)
             .expanded();
         list.child(
             action(

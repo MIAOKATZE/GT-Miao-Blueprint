@@ -4,7 +4,6 @@ import java.util.List;
 
 import com.cleanroommc.modularui.api.UpOrDown;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
-import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.api.widget.Interactable;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
@@ -64,7 +63,6 @@ final class HologramEditorTutorialOverlay {
             if (panel.getArea().width != host.screenWidth() || panel.getArea().height != host.screenHeight())
                 panel.size(host.screenWidth(), host.screenHeight())
                     .scheduleResize();
-            navigation[0].setEnabled(view.canPrevious());
         });
         panel.child(
             new Shield().sizeRel(1f)
@@ -82,28 +80,23 @@ final class HologramEditorTutorialOverlay {
         String[] names = { "previous", "next", "skip", "restart" };
         for (int i = 0; i < navigation.length; i++) {
             final int index = i;
-            ButtonWidget<?> button = new ButtonWidget<>().size(78, 20)
+            ButtonWidget<?> button = HologramEditorNativeTheme
+                .button(
+                    () -> label(index),
+                    null,
+                    () -> {
+                        if (view.active() && (index != 0 || view.canPrevious())) host.parent()
+                            .deferAction(() -> view.navigate(index + 1));
+                    },
+                    () -> index != 0 || view.canPrevious(),
+                    () -> false,
+                    index == 1)
+                .size(78, 20)
                 .name("tutorial." + names[i])
-                .disableThemeBackground(true)
-                .background((context, x, y, width, height, theme) -> {
-                    HologramEditorNativeTheme.background(index != 0 || view.canPrevious(), false, false, index == 1)
-                        .draw(x, y, width, height);
-                    if (index == 1) drawClickCue(x, y, width, height);
-                })
-                .hoverBackground((context, x, y, width, height, theme) -> {
-                    HologramEditorNativeTheme.background(index != 0 || view.canPrevious(), false, true, index == 1)
-                        .draw(x, y, width, height);
-                    if (index == 1) drawClickCue(x, y, width, height);
-                })
-                .overlay(
-                    IKey.dynamic(() -> label(index))
-                        .color(index == 1 ? HologramEditorNativeTheme.DARK_TEXT : HologramEditorNativeTheme.TEXT)
-                        .shadow(false))
-                .onMousePressed(buttonIndex -> {
-                    if (buttonIndex == 0 && view.active() && (index != 0 || view.canPrevious())) host.parent()
-                        .deferAction(() -> view.navigate(index + 1));
-                    return true;
-                });
+                .disableThemeBackground(true);
+            if (index == 1) button.overlay(
+                button.getOverlay(),
+                (context, x, y, width, height, theme) -> drawClickCue(x, y, width, height));
             navigation[i] = button;
             row.child(button);
         }
@@ -200,7 +193,13 @@ final class HologramEditorTutorialOverlay {
 
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
-            int width = Math.min(620, Math.max(1, getArea().width - 24));
+            int left = 12, right = getArea().width - 12;
+            int[] own = ui.shell.nativeWidgetBounds(this), viewport = ui.shell.targetBounds("viewport");
+            if (own != null && viewport != null) {
+                left = Math.max(left, viewport[0] + 10 - own[0]);
+                right = Math.min(right, viewport[0] + viewport[2] - 10 - own[0]);
+            }
+            int width = Math.min(620, Math.max(1, right - left)), center = left + Math.max(1, right - left) / 2;
             List<String> lines = host.font()
                 .listFormattedStringToWidth(view.explanation(), width);
             for (int i = 0; i < Math.min(2, lines.size()); i++) {
@@ -208,8 +207,8 @@ final class HologramEditorTutorialOverlay {
                 host.font()
                     .drawString(
                         line,
-                        (getArea().width - host.font()
-                            .getStringWidth(line)) / 2,
+                        center - host.font()
+                            .getStringWidth(line) / 2,
                         2 + i * 11,
                         0xffe2c39c);
             }

@@ -10,6 +10,7 @@ import java.util.function.Supplier;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.widget.IFocusedWidget;
 import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.drawable.Rectangle;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
@@ -22,6 +23,8 @@ import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
 
 /** One persistent native widget graph per editing session. No domain state is copied into the shell. */
 final class HologramEditorShell {
+
+    private static final IDrawable EDITOR_BACKDROP = new Rectangle().color(0xff0c1e28);
 
     private final HologramUiModules ui;
     private ModularPanel host;
@@ -67,7 +70,7 @@ final class HologramEditorShell {
         root = Flow.column()
             .sizeRel(1f)
             .childPadding(0)
-            .background(IDrawable.NONE);
+            .background(EDITOR_BACKDROP);
         Flow presentation = Flow.column()
             .sizeRel(1f)
             .childPadding(0)
@@ -300,6 +303,10 @@ final class HologramEditorShell {
 
     boolean built() {
         return root != null;
+    }
+
+    boolean libraryPageSelected() {
+        return pages != null && pages.getCurrentPageIndex() == 2;
     }
 
     void selectDockPage(int page) {

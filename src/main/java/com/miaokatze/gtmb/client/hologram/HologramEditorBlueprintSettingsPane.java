@@ -91,7 +91,8 @@ final class HologramEditorBlueprintSettingsPane {
             HologramEditorNativeTheme.label(() -> "结构等级、具名信道、候选设备、仓室与材料来源仍在属性页按当前来源结构设置。")
                 .widthRel(1f)
                 .height(40));
-        built = new HologramRecessedList().name("native_blueprint_settings")
+        built = new HologramRecessedList().paperEdges()
+            .name("native_blueprint_settings")
             .sizeRel(1f)
             .child(content);
         return built;

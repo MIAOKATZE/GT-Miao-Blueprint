@@ -257,6 +257,7 @@ final class HologramEditorPropertiesPane {
                 content.setEnabled(expanded.getAsBoolean());
                 group.scheduleResize();
             })
+            .name("properties." + key)
             .widthRel(1f)
             .height(23);
         ui.shell.registerTarget("properties." + key, heading);

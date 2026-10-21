@@ -112,6 +112,7 @@ final class HologramStructureIsolationRegression {
             SimpleAssert.that(
                 !(Boolean) accepts.invoke(null, furnaceSession, furnaceCell, inertCasing),
                 "server rejects foreign inventory/source casing");
+            attachmentProjection(player, furnace, furnaceElement, hotCasing);
 
             HologramArea area = new HologramArea();
             area.structures.put("furnace", new HologramArea.Structure(0, 64, 0, furnace));
@@ -205,7 +206,7 @@ final class HologramStructureIsolationRegression {
                 1,
                 options(candidates, virtual, virtualCell).size(),
                 "legacy structure blueprint stays within its own target identity");
-        } catch (ReflectiveOperationException failure) {
+        } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("structure isolation fixture", failure);
         } finally {
             GregTechAPI.sBlockCasings1 = oldCasings1;
@@ -213,6 +214,188 @@ final class HologramStructureIsolationRegression {
             GregTechAPI.sBlockCasings8 = oldCasings8;
             Thread.currentThread()
                 .setName(threadName);
+        }
+    }
+
+    private static void attachmentProjection(EntityPlayerMP player, MTEElectricBlastFurnace furnace,
+        IStructureElement<?> element, ItemStack target) throws java.io.IOException {
+        HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+        session.machine = furnace;
+        session.capture = new HologramCapture(furnace, new ItemStack(Blocks.stone));
+        NBTTagCompound triggerData = new NBTTagCompound();
+        triggerData.setString("sourceTrigger", "unchanged");
+        session.capture.trigger.setTagCompound(triggerData);
+        NBTTagCompound originalTriggerData = (NBTTagCompound) triggerData.copy();
+        HologramCapture.Cell physical = new HologramCapture.Cell(element, 1, 64, 0);
+        physical.block = Block.getBlockFromItem(target.getItem());
+        physical.meta = target.getItemDamage();
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setString("attachmentRegression", "retained source");
+        physical.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        String originalTileNbt = physical.tileNbt;
+        session.capture.cells.add(physical);
+        session.capture.positions.put(HologramValues.position(physical), physical);
+        session.pins.put(0, target.copy());
+        session.coordinatePins.put(HologramValues.position(physical), target.copy());
+        session.planTargets.add(target.copy());
+        for (int x = 2; x <= 36; x++) {
+            HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(physical, x, 64, 0);
+            session.capture.cells.add(cell);
+            session.capture.positions.put(HologramValues.position(cell), cell);
+            session.planTargets.add(target.copy());
+        }
+        HologramCapture sourceCapture = session.capture;
+
+        HologramPresets.Preset projection = new HologramPresets.Preset();
+        projection.schema = 2;
+        HologramPresets.Structure declared = structure("physical-source", 1, "", 0);
+        declared.sourceClass = furnace.getClass()
+            .getName();
+        projection.structures.add(declared);
+        java.util.Set<String> palette = new java.util.HashSet<>();
+        for (int index = 0; index < sourceCapture.cells.size(); index++)
+            projection.cells.add(HologramBlueprintProjection.projectedCell(session, index, projection, palette));
+        SimpleAssert.that(
+            !projection.cells.get(0).allowedTargets.isEmpty(),
+            "actual EBF declaration supplies saved alternatives");
+        HologramPresets.Cell saved = projection.cells.get(0);
+        List<HologramPresets.Cell> savedCells = new ArrayList<>(projection.cells);
+        projection.cells.add(saved);
+        rejectProjection(session, projection, sourceCapture, physical, "duplicate projected positions");
+        projection.cells.clear();
+        rejectProjection(session, projection, sourceCapture, physical, "missing projected source cell");
+        projection.cells.addAll(savedCells);
+
+        HologramBlueprintData.setMemberships(physical, Arrays.asList("physical-left", "physical-right"));
+        HologramCapture detached = HologramBlueprintData.projectedCapture(sourceCapture, projection, 0, 64, 0);
+        SimpleAssert.eq(
+            Arrays.asList("physical-left", "physical-right"),
+            physical.memberships(),
+            "detaching never rewrites multiple memberships on the original physical object");
+        SimpleAssert.that(
+            detached != sourceCapture && detached.cells.get(0) != physical,
+            "projection metadata is installed only on independently owned capture cells");
+        SimpleAssert
+            .that(sourceCapture.trigger == session.capture.trigger, "detaching preserves the original trigger object");
+        SimpleAssert.eq(
+            originalTriggerData,
+            sourceCapture.trigger.getTagCompound(),
+            "detaching preserves exact original trigger NBT");
+        HologramBlueprintData.setMemberships(physical, java.util.Collections.emptyList());
+
+        HologramCapture.Cell conflict = HologramBlueprintData
+            .blueprintCell(physical, physical.x, physical.y, physical.z);
+        try {
+            HologramTextWorkflow.stageAttachment(
+                session,
+                projection,
+                java.util.Collections.singletonList(conflict),
+                java.util.Collections.emptySet(),
+                null);
+            throw new AssertionError("overlapping attachment must be rejected");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                session.capture == sourceCapture && session.virtualPreset == null && !session.virtual,
+                "failed physical-to-author conversion restores the exact original capture, preset and mode");
+            SimpleAssert.that(
+                physical.memberships()
+                    .isEmpty(),
+                "rejection cannot mutate original physical membership");
+            SimpleAssert
+                .that(HologramValues.same(target, session.pins.get(0)), "rejection retains original pin identity");
+            SimpleAssert
+                .eq(originalTileNbt, sourceCapture.cells.get(0).tileNbt, "rejection retains original device NBT");
+            SimpleAssert.that(session.undoEdits.isEmpty(), "rejected staging creates no partial geometry undo entry");
+        }
+
+        HologramCapture.Cell added = new HologramCapture.Cell(null, 1, 64, 4);
+        added.block = Blocks.stone;
+        added.actualStack = new ItemStack(Blocks.stone);
+        HologramBlueprintData.setMemberships(added, java.util.Collections.singletonList("attachment"));
+        HologramTextWorkflow.stageAttachment(
+            session,
+            projection,
+            java.util.Collections.singletonList(added),
+            java.util.Collections.emptySet(),
+            null);
+        HologramCapture.Cell converted = session.capture.cells.get(0);
+        SimpleAssert.that(session.virtual && converted != physical, "successful attachment owns detached source cells");
+        SimpleAssert.eq(
+            java.util.Collections.singletonList(declared.id),
+            converted.memberships(),
+            "the existing physical cell acquires its actual schema2 projected member");
+        for (int index = 0; index < 36; index++) {
+            SimpleAssert.eq(
+                java.util.Collections.singletonList(declared.id),
+                session.capture.cells.get(index)
+                    .memberships(),
+                "every retained source position acquires the projected member, not only the selected cell");
+            SimpleAssert.that(
+                sourceCapture.cells.get(index)
+                    .memberships()
+                    .isEmpty(),
+                "all original physical cells remain unchanged after commit");
+        }
+        SimpleAssert.that(
+            physical.memberships()
+                .isEmpty(),
+            "conversion leaves the physical source available unchanged");
+        SimpleAssert
+            .eq(projection.cells.get(0).tileNbt, converted.tileNbt, "conversion preserves projected source NBT");
+        SimpleAssert.that(
+            contains(HologramCellPolicy.candidates(session, converted), target),
+            "virtual editing retains candidates from the actual EBF declaration");
+        SimpleAssert
+            .that(HologramValues.same(target, session.pins.get(0)), "conversion retains the original pinned target");
+        SimpleAssert.eq(
+            java.util.Collections.singletonList(declared.id),
+            session.undoEdits.get(session.undoEdits.size() - 1).geometry.get(0)
+                .memberships(),
+            "undo of the attachment retains a valid projected source member");
+
+        HologramBlueprintData.setMemberships(converted, Arrays.asList(declared.id, "shared-source"));
+        List<ItemStack> alternatives = converted.structureTargets;
+        HologramCapture.Cell replacement = HologramBlueprintData.blueprintCell(added, added.x, added.y, added.z);
+        HologramTextWorkflow.stageAttachment(
+            session,
+            projection,
+            java.util.Collections.singletonList(replacement),
+            java.util.Collections.singleton(HologramValues.position(added)),
+            null);
+        SimpleAssert.eq(
+            Arrays.asList(declared.id, "shared-source"),
+            session.capture.cells.get(0)
+                .memberships(),
+            "existing virtual re-edit retains all shared-wall memberships");
+        SimpleAssert.that(
+            session.capture.cells.get(0).structureTargets == alternatives,
+            "existing virtual re-edit retains the exact source candidate boundary");
+        SimpleAssert.that(
+            session.capture.cells.get(0) == converted,
+            "existing virtual content is not detached or converted a second time");
+    }
+
+    private static void rejectProjection(HologramSession session, HologramPresets.Preset projection,
+        HologramCapture original, HologramCapture.Cell physical, String label) {
+        try {
+            HologramTextWorkflow.stageAttachment(
+                session,
+                projection,
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptySet(),
+                null);
+            throw new AssertionError(label + " must fail before session mutation");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                session.capture == original && !session.virtual && session.virtualPreset == null,
+                label + " keeps the original capture, mode and preset");
+            SimpleAssert.that(
+                original.cells.get(0) == physical && physical.memberships()
+                    .isEmpty(),
+                label + " leaves source cells and memberships unchanged");
+            SimpleAssert.that(
+                session.pins.size() == 1 && session.coordinatePins.size() == 1 && session.undoEdits.isEmpty(),
+                label + " leaves pins and undo untouched");
         }
     }
 

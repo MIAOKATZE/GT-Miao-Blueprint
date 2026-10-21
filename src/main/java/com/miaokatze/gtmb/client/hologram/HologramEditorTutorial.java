@@ -943,17 +943,52 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             Gui.drawRect(0, bottom, width, height, 0x1b606264);
             HologramEditorTheme.drawGuidanceFrame(x, y, focus[2], focus[3], HologramUiAccent.INFORMATION, true);
             String title = (step + 1) + "/" + steps.size() + " " + steps.get(step).title;
-            int labelWidth = ui.host.font()
-                .getStringWidth(title) + 10;
-            int labelY = y >= 19 ? y - 17 : bottom + 4;
-            if (footer == null || labelY + 14 < footer[1]) {
-                int labelX = Math.max(4, Math.min(width - labelWidth - 4, x));
-                Gui.drawRect(labelX, labelY, labelX + labelWidth, labelY + 13, 0xe65b412a);
+            int[] viewport = sandbox.shell.targetBounds("viewport");
+            int maxLabelWidth = viewport == null ? 0 : Math.max(0, viewport[2] - 16);
+            String visibleTitle = ui.host.font()
+                .trimStringToWidth(title, Math.max(0, maxLabelWidth - 10));
+            int[] label = focusLabelBounds(
+                focus,
+                viewport,
+                footer,
                 ui.host.font()
-                    .drawString(title, labelX + 5, labelY + 2, 0xfff1d3a5);
+                    .getStringWidth(visibleTitle) + 10,
+                13);
+            if (label != null && !visibleTitle.isEmpty()) {
+                Gui.drawRect(label[0], label[1], label[0] + label[2], label[1] + label[3], 0xe65b412a);
+                ui.host.font()
+                    .drawString(visibleTitle, label[0] + 5, label[1] + 2, 0xfff1d3a5);
             }
         }
         drawPointer();
+    }
+
+    /** Keep the caption in the real scene margin, outside the target and above the independent footer controls. */
+    private static int[] focusLabelBounds(int[] focus, int[] viewport, int[] footer, int labelWidth, int labelHeight) {
+        if (viewport == null) return null;
+        int left = viewport[0] + 6, top = viewport[1] + 6;
+        int right = viewport[0] + viewport[2] - 6, bottom = viewport[1] + viewport[3] - 6;
+        if (footer != null) bottom = Math.min(bottom, footer[1] - 6);
+        if (right - left < labelWidth || bottom - top < labelHeight) return null;
+        int fx = focus[0], fy = focus[1], fr = fx + focus[2], fb = fy + focus[3];
+        int[][] candidates = { { fx - labelWidth - 8, fy + (focus[3] - labelHeight) / 2 },
+            { fr + 8, fy + (focus[3] - labelHeight) / 2 }, { fx, fy - labelHeight - 5 }, { fx, fb + 5 }, { left, top },
+            { right - labelWidth, top }, { left, bottom - labelHeight }, { right - labelWidth, bottom - labelHeight } };
+        int[] best = null;
+        long bestDistance = Long.MAX_VALUE;
+        for (int[] candidate : candidates) {
+            int x = Math.max(left, Math.min(right - labelWidth, candidate[0]));
+            int y = Math.max(top, Math.min(bottom - labelHeight, candidate[1]));
+            if (x < fr + 3 && x + labelWidth > fx - 3 && y < fb + 3 && y + labelHeight > fy - 3) continue;
+            int dx = Math.max(0, Math.max(fx - x - labelWidth, x - fr));
+            int dy = Math.max(0, Math.max(fy - y - labelHeight, y - fb));
+            long distance = (long) dx * dx + (long) dy * dy;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = new int[] { x, y, labelWidth, labelHeight };
+            }
+        }
+        return best;
     }
 
     private void drawPointer() {

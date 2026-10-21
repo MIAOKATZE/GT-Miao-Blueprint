@@ -32,6 +32,7 @@ final class HologramEditorGuide {
             .name("guide.bar")
             .widthRel(1f)
             .height(26)
+            .padding(6, 0)
             .childPadding(6)
             .background(HologramEditorNativeTheme.PAPER)
             .disableThemeBackground(true);
@@ -200,7 +201,8 @@ final class HologramEditorGuide {
         if (ui.config.hatchDrawer()) return "从本格合法候选选择具体设备。";
         if (ui.config.drawer()) return "编辑当前来源结构的声明参数，再应用。";
         if (ui.preview.inventory()) return "选择真实背包或已启用来源中的具体物品。";
-        if (ui.library.libraryDrawer()) return "单击库行更新中央草稿；放置与保存使用库内入口。";
+        if (ui.shell.built() ? ui.shell.libraryPageSelected() : ui.library.libraryDrawer())
+            return "单击库行更新中央草稿；放置与保存使用库内入口。";
         if (ui.preview.selected() >= 0) return ui.preview.moveHandles() ? "拖轴改单轴，拖平面同时改两轴。" : "查看所选格目标，或点轮廓整选结构。";
         return ui.session.state().data.getBoolean("virtual") ? "点击对象选择，从蓝图库载入或开始空白稿。" : "控制器锚定结构，先调目标再核对材料。";
     }
