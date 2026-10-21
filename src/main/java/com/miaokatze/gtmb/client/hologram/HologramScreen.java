@@ -66,13 +66,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     public void initGui() {
         super.initGui();
-        if (detached) {
-            if (!detachedStarted) {
-                detachedStarted = true;
-                ui.tutorial.startDetached(detachedTopic, detachedReplay, this::returnFromDetached);
-            }
-            return;
-        }
+        // openFrom builds this graph before displayGuiScreen attaches its main panel to MUI.
+        // Secondary tutorial panels therefore start from the first valid native tick, never construction.
+        if (detached) return;
         if (websiteConfirmationResumePending) websiteConfirmationResumePending = false;
         ui.canvas.resize();
         HologramBackgroundTasks.restoreUi(ui);
@@ -125,6 +121,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     public void updateScreen() {
         if (detached) {
+            if (!detachedStarted) {
+                if (detachedHostReady()) tryDeferAction(() -> {
+                    if (!detachedHostReady() || detachedStarted) return;
+                    detachedStarted = true;
+                    ui.tutorial.startDetached(detachedTopic, detachedReplay, this::returnFromDetached);
+                });
+                return;
+            }
             ui.tutorial.tick();
             if (detachedStarted && !ui.tutorial.active() && !detachedReturned) deferAction(this::returnFromDetached);
             return;
@@ -133,6 +137,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             ui.router.updateScreen();
             ui.shell.tick();
         }
+    }
+
+    private boolean detachedHostReady() {
+        return !detachedReturned && minecraft().currentScreen == this
+            && panel().isValid()
+            && getScreen().getPanelManager()
+                .isOpen();
     }
 
     protected void renderScene(int mouseX, int mouseY, float ticks) {

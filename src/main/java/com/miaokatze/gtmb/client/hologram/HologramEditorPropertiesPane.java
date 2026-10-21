@@ -1,5 +1,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -19,6 +21,8 @@ final class HologramEditorPropertiesPane {
     private final HologramEditorConfigurationDialogs dialogs;
     private boolean selectedContext;
     private boolean targetExpanded, sourceExpanded, materialExpanded;
+    private final List<Flow> sizingSections = new ArrayList<>();
+    private int sizingVisibility = -1;
     private Flow root;
 
     HologramEditorPropertiesPane(HologramUiModules ui) {
@@ -30,6 +34,8 @@ final class HologramEditorPropertiesPane {
     }
 
     IWidget build() {
+        sizingSections.clear();
+        sizingVisibility = -1;
         dialogs.prepare();
         ListWidget<IWidget, ?> list = new ListWidget<>().name("editor_native_properties_list")
             .sizeRel(1f);
@@ -65,6 +71,7 @@ final class HologramEditorPropertiesPane {
         structure.setEnabledIf(
             w -> !ui.config.selectedStructureId()
                 .isEmpty());
+        sizingSections.add(structure);
         structure.child(
             action(
                 163,
@@ -85,6 +92,7 @@ final class HologramEditorPropertiesPane {
         back.setEnabledIf(
             w -> !ui.session.state().data.getString("activeStructure")
                 .isEmpty());
+        sizingSections.add(back);
         back.child(
             action(
                 165,
@@ -113,6 +121,7 @@ final class HologramEditorPropertiesPane {
         }));
         Flow grade = row();
         grade.setEnabledIf(w -> ui.config.primaryCapability() != null);
+        sizingSections.add(grade);
         grade.child(action(80, () -> "−", () -> canStep(-1), () -> "连续降低本结构声明的等级。").width(24));
         grade.child(action(81, () -> {
             NBTTagCompound cap = ui.config.primaryCapability();
@@ -131,6 +140,7 @@ final class HologramEditorPropertiesPane {
         facing.setEnabledIf(
             w -> ui.session.cellTag()
                 .getIntArray("hatchFacings").length > 0);
+        sizingSections.add(facing);
         facing.child(action(99, () -> {
             int[] legal = ui.session.cellTag()
                 .getIntArray("hatchFacings");
@@ -209,6 +219,7 @@ final class HologramEditorPropertiesPane {
             () -> targetExpanded = !targetExpanded,
             target);
         targetGroup.setEnabledIf(w -> ui.session.selectedCell() != null);
+        sizingSections.add(targetGroup);
         list.child(targetGroup);
         list.child(group("source", "来源与信道", () -> sourceExpanded, () -> sourceExpanded = !sourceExpanded, source));
         list.child(
@@ -230,6 +241,14 @@ final class HologramEditorPropertiesPane {
             materialExpanded = false;
         }
         dialogs.refresh();
+        int visibility = 0;
+        for (int i = 0; i < sizingSections.size(); i++) if (sizingSections.get(i)
+            .isEnabled()) visibility |= 1 << i;
+        if (root != null && visibility != sizingVisibility) {
+            sizingVisibility = visibility;
+            // MUI2 enabled changes reposition children without recalculating nested coverChildrenHeight bounds.
+            root.scheduleResize();
+        }
     }
 
     boolean groupExpanded(String key) {
@@ -263,6 +282,7 @@ final class HologramEditorPropertiesPane {
             .height(23);
         ui.shell.registerTarget("properties." + key, heading);
         content.setEnabledIf(w -> expanded.getAsBoolean());
+        sizingSections.add(content);
         return group.child(heading)
             .child(content);
     }
