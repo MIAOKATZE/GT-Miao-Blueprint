@@ -193,7 +193,7 @@ final class HologramEditorCutListLesson
         browser.setEnabled(!closed);
         browser.camera.restoreCamera(state.getCompoundTag("camera"));
         if (browser.list.isValid() && browser.list.getScrollData() != null) browser.list.getScrollData()
-            .setScroll(state.getInteger("scroll"));
+            .scrollTo(browser.list.getScrollArea(), state.getInteger("scroll"));
     }
 
     void close() {
