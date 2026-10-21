@@ -320,12 +320,14 @@ final class HologramBlueprintEditor {
             return;
         }
         int x = s.x + dx, y = s.y + dy, z = s.z + dz;
-        if (!s.player.worldObj.blockExists(x, y, z) || y < 0 || y >= s.player.worldObj.getHeight()) {
+        if ((!HologramSessionPolicy.authoring(s) && !s.player.worldObj.blockExists(x, y, z)) || y < 0
+            || y >= s.player.worldObj.getHeight()) {
             s.status = "该位置未加载或超出世界范围";
             return;
         }
         if (action.getBoolean("airOnly")
-            && (!s.player.worldObj.isAirBlock(x, y, z) || !withinAirEditBounds(s, action, x, y, z))) {
+            && ((!HologramSessionPolicy.authoring(s) && !s.player.worldObj.isAirBlock(x, y, z))
+                || !withinAirEditBounds(s, action, x, y, z))) {
             s.status = "请选择当前蓝图或结构边界内的空气位置";
             return;
         }
@@ -549,6 +551,11 @@ final class HologramBlueprintEditor {
         int[] indices = geometryIndices(s, action);
         if (indices.length == 0) throw new java.io.IOException("请先选择蓝图格");
         java.util.Set<String> complete = completeGeometrySelection(s, indices);
+        // A rejected geometry request must acknowledge this valid selection, not the previous tool's selection.
+        s.selectedIndices.clear();
+        for (int index : indices) s.selectedIndices.add(index);
+        int selected = action.hasKey("selected", 3) ? action.getInteger("selected") : s.selected;
+        s.selected = s.selectedIndices.contains(selected) ? selected : indices[0];
         if (action.getInteger("dx") == 0 && action.getInteger("dy") == 0 && action.getInteger("dz") == 0) return;
         java.util.Set<String> remove = new java.util.HashSet<>();
         Map<String, HologramCapture.Cell> retained = new HashMap<>();
@@ -558,8 +565,8 @@ final class HologramBlueprintEditor {
             long x = (long) source.x + action.getInteger("dx"), y = (long) source.y + action.getInteger("dy"),
                 z = (long) source.z + action.getInteger("dz");
             validateBlueprintCoordinate(s, x, y, z);
-            if (!s.player.worldObj.blockExists((int) x, (int) y, (int) z)
-                || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z))
+            if (!HologramSessionPolicy.authoring(s) && (!s.player.worldObj.blockExists((int) x, (int) y, (int) z)
+                || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z)))
                 throw new java.io.IOException("移动目标必须是已加载的空气方块；原选区保留");
             HologramCapture.Cell copy = HologramBlueprintData.blueprintCell(source, (int) x, (int) y, (int) z);
             HologramBlueprintData.setMemberships(

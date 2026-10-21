@@ -23,6 +23,8 @@ final class HologramEditorLibraryPane {
     private final PagedWidget.Controller pages = new PagedWidget.Controller();
     private final HologramEditorNativeLibraryDialogs dialogs;
     private IWidget built;
+    private HologramRecessedList rowList;
+    private int rowHeight = -1;
     private int total;
 
     HologramEditorLibraryPane(HologramUiModules ui) {
@@ -121,6 +123,7 @@ final class HologramEditorLibraryPane {
             .name("library_rows")
             .widthRel(1f)
             .height(132);
+        rowList = list;
         for (int i = 0; i < ROWS; i++) {
             final int slot = i;
             ButtonWidget<?> row = action(
@@ -314,6 +317,12 @@ final class HologramEditorLibraryPane {
         total = source.tagCount();
         int offset = Math.max(0, Math.min(ui.library.libraryOffset(), Math.max(0, total - ROWS)));
         ui.library.libraryOffset(offset);
+        int height = total == 0 ? 40 : 22 * Math.min(ROWS, total - offset);
+        if (rowList != null && rowHeight != height) {
+            rowHeight = height;
+            rowList.height(height);
+            if (rowList.isValid()) rowList.scheduleResize();
+        }
         for (int slot = 0; slot < ROWS; slot++) {
             rows[slot] = offset + slot < total ? (NBTTagCompound) source.getCompoundTagAt(offset + slot)
                 .copy() : new NBTTagCompound();
