@@ -20,6 +20,32 @@ final class HologramUiSession {
 
     private HologramState state;
 
+    private java.util.function.BiConsumer<String, NBTTagCompound> tutorialSink;
+
+    /** Detached teaching sessions never enter production command preparation, ACKs or transport. */
+    boolean isTutorial() {
+        return tutorialSink != null;
+    }
+
+    void initializeIsolated(HologramState snapshot, java.util.function.BiConsumer<String, NBTTagCompound> sink) {
+        if (sink == null) throw new IllegalArgumentException("A tutorial requires an isolated command sink");
+        tutorialSink = sink;
+        state = snapshot;
+        ui.bindings.initializeSnapshot(snapshot);
+        ui.processing.initializeSnapshot(snapshot);
+        ui.library.initializeBrowsing(snapshot);
+        ui.preview.initializeSelection(snapshot);
+        ui.preview.initializeLayer(snapshot);
+        ui.preview.resetCamera();
+        ui.config.syncTargetSelectors();
+    }
+
+    void isolatedSnapshot(HologramState snapshot) {
+        if (!isTutorial()) throw new IllegalStateException("Production snapshots require the normal ACK workflow");
+        state = snapshot;
+        ui.config.syncTargetSelectors();
+    }
+
     private boolean awaitingScan;
 
     private String notice = "";
@@ -273,6 +299,10 @@ final class HologramUiSession {
     }
 
     void send(String op, NBTTagCompound request, boolean pending) {
+        if (tutorialSink != null) {
+            tutorialSink.accept(op, request == null ? new NBTTagCompound() : (NBTTagCompound) request.copy());
+            return;
+        }
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
         sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));
         sequence = Math

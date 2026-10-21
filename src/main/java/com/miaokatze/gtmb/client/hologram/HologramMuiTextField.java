@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
+import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Workflow-facing draft adapter; editing, selection, clipboard and focus belong to MUI2. */
 final class HologramMuiTextField {
@@ -15,6 +16,35 @@ final class HologramMuiTextField {
     private long frame;
     private int maxLength = 32;
     private boolean editable = true, requestFocus;
+    private boolean nativeOwned;
+    private com.cleanroommc.modularui.widget.ParentWidget<?> legacyParent;
+
+    boolean nativeOwned() {
+        return nativeOwned;
+    }
+
+    com.cleanroommc.modularui.widget.ParentWidget<?> legacyParent() {
+        return legacyParent;
+    }
+
+    TextFieldWidget claimNative() {
+        if (nativeOwned) return field;
+        if (legacyParent != null || field.isValid())
+            throw new IllegalStateException("Text field already belongs to a legacy panel");
+        nativeOwned = true;
+        field.widthRel(1f)
+            .height(Math.max(18, height));
+        field.setEnabled(true);
+        return field;
+    }
+
+    void claimLegacy(com.cleanroommc.modularui.widget.ParentWidget<?> mount) {
+        if (nativeOwned) throw new IllegalStateException("Native dock field cannot be reparented");
+        if (legacyParent == mount) return;
+        if (legacyParent != null || field.isValid()) throw new IllegalStateException("Text field already has a parent");
+        legacyParent = mount;
+        mount.child(field);
+    }
 
     HologramMuiTextField(HologramMuiCanvasScreen owner, int x, int y, int width, int height) {
         this.owner = owner;
@@ -24,14 +54,26 @@ final class HologramMuiTextField {
         this.height = height;
         xPosition = x;
         yPosition = y;
-        field.background(HologramMuiTheme.PANEL)
-            .setTextColor(HologramMuiTheme.TEXT)
-            .hintColor(HologramMuiTheme.MUTED)
+        field.background(HologramEditorTheme.INPUT)
+            .setTextColor(HologramEditorTheme.TEXT)
+            .hintColor(HologramEditorTheme.MUTED)
             .setMarkedColor(0xffc4a36b)
             .value(value)
             .setMaxLength(maxLength)
             .autoUpdateOnChange(true);
         field.setEnabled(false);
+        field.onUpdateListener(widget -> {
+            if (nativeOwned && requestFocus
+                && editable
+                && field.isValid()
+                && field.areAncestorsEnabled()
+                && field.getPanel()
+                    .isEnabled()) {
+                requestFocus = false;
+                field.getContext()
+                    .focus(field);
+            }
+        });
         owner.registerField(this);
     }
 
@@ -55,12 +97,14 @@ final class HologramMuiTextField {
         owner.showField(this);
     }
 
-    void show(long frame, int originX, int originY, float scale) {
+    void show(long frame, CanvasTransform transform) {
+        if (nativeOwned) return;
         this.frame = frame;
-        field
-            .setTextColor(editable && !HologramBackgroundTasks.busy() ? HologramMuiTheme.TEXT : HologramMuiTheme.MUTED);
-        int px = x, py = y;
-        int w = Math.max(1, width), h = Math.max(1, height);
+        field.setTextColor(
+            editable && !HologramBackgroundTasks.busy() ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED);
+        int px = (int) Math.round(transform.toScreenX(x)), py = (int) Math.round(transform.toScreenY(y));
+        int w = Math.max(1, (int) Math.round(width * transform.scale()));
+        int h = Math.max(1, (int) Math.round(height * transform.scale()));
         if (actualX != px || actualY != py || actualW != w || actualH != h) {
             actualX = px;
             actualY = py;
@@ -79,12 +123,26 @@ final class HologramMuiTextField {
     }
 
     void finishFrame(long frame) {
+        if (nativeOwned) return;
         if (this.frame == frame) return;
-        setFocused(false);
+        if (field.isValid() && field.isFocused()) field.getContext()
+            .removeFocus();
         field.setEnabled(false);
     }
 
+    void drawPassive(long frame) {
+        if (this.frame != frame || actualW <= 0 || actualH <= 0) return;
+        HologramEditorTheme.INPUT.draw((float) actualX, actualY, actualW, actualH);
+        net.minecraft.client.gui.FontRenderer font = net.minecraft.client.Minecraft.getMinecraft().fontRenderer;
+        font.drawString(
+            font.trimStringToWidth(getText(), Math.max(1, actualW - 6)),
+            actualX + 3,
+            actualY + Math.max(1, (actualH - font.FONT_HEIGHT) / 2),
+            HologramEditorTheme.TEXT);
+    }
+
     void hideForOverlay() {
+        if (nativeOwned) return;
         frame = -1;
     }
 
@@ -111,7 +169,7 @@ final class HologramMuiTextField {
 
     void setEnabled(boolean enabled) {
         editable = enabled;
-        field.setTextColor(enabled ? HologramMuiTheme.TEXT : HologramMuiTheme.MUTED);
+        field.setTextColor(enabled ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED);
         if (!enabled) setFocused(false);
     }
 

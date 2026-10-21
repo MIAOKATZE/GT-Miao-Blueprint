@@ -1,0 +1,3 @@
+# These captured observations are bound to SHA-256 values in the tutorial manifest.
+src/main/resources/assets/gtmb/tutorial/*.nbt.gz binary
+src/main/resources/assets/gtmb/tutorial/*.provenance.properties binary

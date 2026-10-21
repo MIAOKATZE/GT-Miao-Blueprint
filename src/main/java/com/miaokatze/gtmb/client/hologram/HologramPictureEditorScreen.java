@@ -216,8 +216,9 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 430,
                 160,
                 20,
-                () -> Minecraft.getMinecraft()
-                    .displayGuiScreen(ui.host.parent())));
+                () -> deferAction(
+                    () -> Minecraft.getMinecraft()
+                        .displayGuiScreen(ui.host.parent()))));
         panel().child(
             HologramMuiTheme.primaryButton(
                 () -> loading ? "正在转换…" : ui.session.state().cells.isEmpty() ? "确认图片 · 生成像素画" : "确认图片 · 选择放置位置",
@@ -418,6 +419,11 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         return failure.getMessage() == null ? "图片参数无效，请检查后重试" : failure.getMessage();
     }
 
+    @Override
+    protected void onMuiActionFailure(RuntimeException failure) {
+        notice = message(failure);
+    }
+
     private static void main(Runnable callback) {
         Minecraft.getMinecraft()
             .func_152344_a(callback);
@@ -469,7 +475,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
             net.minecraft.client.gui.FontRenderer font = Minecraft.getMinecraft().fontRenderer;
             String title = previewPicture == null ? "材料像素预览"
                 : "材料像素预览 · " + previewPicture.width + " × " + previewPicture.height;
-            font.drawString(title, 8, 6, HologramMuiTheme.TITLE);
+            font.drawString(title, 8, 6, HologramEditorTheme.TITLE);
             GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
             try {
                 GL11.glDisable(GL11.GL_TEXTURE_2D);

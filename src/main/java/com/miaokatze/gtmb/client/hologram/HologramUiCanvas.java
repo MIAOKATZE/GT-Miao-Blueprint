@@ -14,6 +14,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import org.lwjgl.opengl.GL11;
 
 import com.miaokatze.gtmb.common.util.BlueprintWebsite;
+import com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates;
+import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Internal canvas workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiCanvas {
@@ -59,6 +61,55 @@ final class HologramUiCanvas {
     private int originY;
 
     private float scale = 1;
+    private final HologramEditorLayout layout = new HologramEditorLayout();
+    private CanvasTransform drawingSpace = CanvasTransform.identity(), pointerSpace = CanvasTransform.identity();
+    private int rootMouseX, rootMouseY;
+    private final List<double[]> paperHeaders = new ArrayList<>();
+
+    private boolean nativeScene, sceneLabel;
+    private ViewportCoordinates nativeViewport, nativeGuiViewport;
+
+    boolean nativeScene() {
+        return nativeScene;
+    }
+
+    ViewportCoordinates nativeGuiViewport() {
+        return nativeGuiViewport;
+    }
+
+    NativeSceneSpace nativeSceneSpace(int width, int height, ViewportCoordinates gui) {
+        return new NativeSceneSpace(width, height, gui);
+    }
+
+    final class NativeSceneSpace implements AutoCloseable {
+
+        private final boolean oldNative = nativeScene;
+        private final ViewportCoordinates oldViewport = nativeViewport, oldGui = nativeGuiViewport;
+        private final int oldX = originX, oldY = originY;
+        private final float oldScale = scale;
+        private final CanvasTransform oldPointer = pointerSpace, oldDrawing = drawingSpace;
+
+        NativeSceneSpace(int width, int height, ViewportCoordinates gui) {
+            nativeScene = true;
+            nativeViewport = new ViewportCoordinates(0, 0, width, height);
+            nativeGuiViewport = gui;
+            originX = originY = 0;
+            scale = 1;
+            pointerSpace = drawingSpace = CanvasTransform.identity();
+        }
+
+        @Override
+        public void close() {
+            nativeScene = oldNative;
+            nativeViewport = oldViewport;
+            nativeGuiViewport = oldGui;
+            originX = oldX;
+            originY = oldY;
+            scale = oldScale;
+            pointerSpace = oldPointer;
+            drawingSpace = oldDrawing;
+        }
+    }
 
     private long renderGeneration;
 
@@ -72,6 +123,8 @@ final class HologramUiCanvas {
         int accent;
         boolean voucherRibbon;
         boolean sceneTooltip;
+        boolean selected;
+        private HologramUiCanvas owner;
 
         Control(int id, int x, int y, int w, int h, boolean enabled) {
             this.id = id;
@@ -83,6 +136,10 @@ final class HologramUiCanvas {
         }
 
         boolean contains(int px, int py) {
+            if (owner != null) {
+                px = (int) Math.floor(owner.pointerSpace.toScreenX(px));
+                py = (int) Math.floor(owner.pointerSpace.toScreenY(py));
+            }
             return px >= x && px < x + w && py >= y && py < y + h;
         }
     }
@@ -93,6 +150,15 @@ final class HologramUiCanvas {
     }
 
     void text(String value, int x, int y, int w, int color) {
+        if (nativeScene && !sceneLabel) return;
+        double rootX = drawingSpace.toScreenX(x), rootY = drawingSpace.toScreenY(y + 4);
+        for (int i = paperHeaders.size() - 1; i >= 0; i--) {
+            double[] header = paperHeaders.get(i);
+            if (rootX >= header[0] && rootX < header[2] && rootY >= header[1] && rootY < header[3]) {
+                color = HologramEditorTheme.textColor(color, false);
+                break;
+            }
+        }
         if (this.compactControls) {
             GL11.glPushMatrix();
             GL11.glTranslatef(x, 0, 0);
@@ -114,7 +180,21 @@ final class HologramUiCanvas {
         }
     }
 
+    /** Labels anchored to projected geometry, as opposed to retired canvas chrome. */
+    void sceneText(String value, int x, int y, int width, int color) {
+        boolean previous = sceneLabel;
+        sceneLabel = true;
+        try {
+            text(value, x, y, width, color);
+        } finally {
+            sceneLabel = previous;
+        }
+    }
+
     void skin(String name, int x, int y, int w, int h) {
+        if ("panel".equals(name) && h <= 32) paperHeaders.add(
+            new double[] { drawingSpace.toScreenX(x), drawingSpace.toScreenY(y), drawingSpace.toScreenX(x + w),
+                drawingSpace.toScreenY(y + h) });
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glColor4f(1, 1, 1, 1);
@@ -130,6 +210,7 @@ final class HologramUiCanvas {
     }
 
     void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
+        if (nativeScene) return;
         if (localPlanBlockedControl(id)) enabled = false;
         if (HologramBackgroundTasks.busy() && id != 990
             && id != 991
@@ -146,7 +227,22 @@ final class HologramUiCanvas {
             Math.round(w * HologramScreenLayout.CONTROL_WIDTH_SCALE),
             h,
             enabled);
-        this.controls.add(drawn);
+        drawn = addControl(drawn);
+        drawn.label = label;
+        drawn.accent = enabled ? controlAccent(id) : 0;
+        if (c.contains(mx, my)) {
+            String help = ui.canvas.controlHelp(id);
+            if (help != null) {
+                this.tooltip = new ArrayList<>(
+                    ui.host.font()
+                        .listFormattedStringToWidth(help, 230));
+                if (!enabled) this.tooltip.add(ui.canvas.disabledReason(id));
+            }
+        }
+    }
+
+    /** Sample the existing workflow semantics without registering controls or changing the workflow. */
+    int controlAccent(int id) {
         int accent = ui.ae.aeReview() != null ? HologramGuidance.modalAccent(id, 181, 182)
             : !ui.library.deletePresetId()
                 .isEmpty()
@@ -199,17 +295,7 @@ final class HologramUiCanvas {
             accent = ui.textBoxes.choosingPosition() ? HologramUiAccent.SPECTRUM : HologramUiAccent.NEXT;
         if (ui.identity.deidentificationDrawer() && id == 212) accent = HologramUiAccent.SUGGESTION;
         if (ui.identity.deidentificationDrawer() && id == 214) accent = HologramUiAccent.INFORMATION;
-        drawn.label = label;
-        drawn.accent = enabled ? accent : 0;
-        if (c.contains(mx, my)) {
-            String help = ui.canvas.controlHelp(id);
-            if (help != null) {
-                this.tooltip = new ArrayList<>(
-                    ui.host.font()
-                        .listFormattedStringToWidth(help, 230));
-                if (!enabled) this.tooltip.add(ui.canvas.disabledReason(id));
-            }
-        }
+        return accent;
     }
 
     String disabledReason(int id) {
@@ -273,7 +359,7 @@ final class HologramUiCanvas {
             case 146:
                 return "编辑当前所选格的提示词；支持 Ctrl 多选、Shift 框选，可切换全局、方块或提示区范围。";
             case 148:
-                return ui.library.savedStructureAccent(id) != 0 ? "蓝图已保存。进入结构调整，继续设置结构等级、信道、方块目标与仓室。"
+                return ui.library.savedStructureAccent(id) != 0 ? "蓝图已保存。选中模型并打开右侧属性，继续设置结构等级、信道、方块目标与仓室。"
                     : "调整结构等级、信道、方块目标与仓室；施工前核对材料。";
             case 149:
                 return "处理、保存和分享蓝图，并编辑蓝图 NBT 与提示词。";
@@ -529,24 +615,19 @@ final class HologramUiCanvas {
     }
 
     int localX(int x) {
-        return (int) ((x - this.originX) / this.scale);
+        return (int) Math.floor(pointerSpace.toLocalX((x - this.originX) / this.scale));
     }
 
     int localY(int y) {
-        return (int) ((y - this.originY) / this.scale);
+        return (int) Math.floor(pointerSpace.toLocalY((y - this.originY) / this.scale));
     }
 
     boolean inViewport(int x, int y) {
-        return x >= HologramUiCanvas.viewportX && x < HologramUiCanvas.viewportX + HologramUiCanvas.viewportWidth
-            && y >= HologramUiCanvas.viewportY
-            && y < HologramUiCanvas.viewportY + ui.preview.previewHeight();
+        return viewport().contains(x, y);
     }
 
     boolean inPanel(int x, int y) {
-        return x >= HologramScreenLayout.COMPACT_PANEL_X
-            && x < HologramScreenLayout.COMPACT_PANEL_X + HologramScreenLayout.COMPACT_PANEL_WIDTH
-            && y >= HologramUiCanvas.panelY
-            && y < HologramUiCanvas.panelY + HologramScreenLayout.PANEL_HEIGHT;
+        return !nativeScene && layout.panelContains(x, y);
     }
 
     boolean compactControls(boolean value) {
@@ -556,6 +637,24 @@ final class HologramUiCanvas {
 
     List<Control> controls() {
         return this.controls;
+    }
+
+    Control addControl(Control source) {
+        Control mapped = new Control(
+            source.id,
+            (int) Math.round(drawingSpace.toScreenX(source.x)),
+            (int) Math.round(drawingSpace.toScreenY(source.y)),
+            Math.max(1, (int) Math.round(source.w * drawingSpace.scale())),
+            Math.max(1, (int) Math.round(source.h * drawingSpace.scale())),
+            source.enabled);
+        mapped.label = source.label;
+        mapped.accent = source.accent;
+        mapped.voucherRibbon = source.voucherRibbon;
+        mapped.sceneTooltip = source.sceneTooltip;
+        mapped.selected = source.selected;
+        mapped.owner = this;
+        controls.add(mapped);
+        return mapped;
     }
 
     int originX() {
@@ -605,9 +704,106 @@ final class HologramUiCanvas {
     }
 
     void resize() {
-        HologramScreenLayout layout = HologramScreenLayout.fit(ui.host.screenWidth(), ui.host.screenHeight());
-        ui.canvas.scale(layout.scale);
-        ui.canvas.originX(layout.originX);
-        ui.canvas.originY(layout.originY);
+        layout.resize(ui.host.screenWidth(), ui.host.screenHeight());
+        scale = layout.scale();
+        originX = originY = 0;
+    }
+
+    HologramEditorLayout layout() {
+        return layout;
+    }
+
+    ViewportCoordinates viewport() {
+        return nativeScene ? nativeViewport : layout.viewport();
+    }
+
+    void beginFrame(int mouseX, int mouseY) {
+        resize();
+        drawingSpace = pointerSpace = CanvasTransform.identity();
+        paperHeaders.clear();
+        rootMouseX = localX(mouseX);
+        rootMouseY = localY(mouseY);
+        ui.host.parent()
+            .nativeFieldTransform(drawingSpace);
+    }
+
+    int rootMouseX() {
+        return rootMouseX;
+    }
+
+    int rootMouseY() {
+        return rootMouseY;
+    }
+
+    int screenMouseX() {
+        return rootMouseX;
+    }
+
+    int screenMouseY() {
+        return rootMouseY;
+    }
+
+    int localMouseX(CanvasTransform space) {
+        return (int) Math.floor(space.toLocalX(rootMouseX));
+    }
+
+    int localMouseY(CanvasTransform space) {
+        return (int) Math.floor(space.toLocalY(rootMouseY));
+    }
+
+    Space space(CanvasTransform transform) {
+        return new Space(transform);
+    }
+
+    PointerSpace pointerSpace(CanvasTransform transform) {
+        return new PointerSpace(transform);
+    }
+
+    final class PointerSpace implements AutoCloseable {
+
+        private final CanvasTransform previous;
+        private boolean closed;
+
+        PointerSpace(CanvasTransform transform) {
+            previous = pointerSpace;
+            pointerSpace = transform;
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            pointerSpace = previous;
+        }
+    }
+
+    final class Space implements AutoCloseable {
+
+        private final CanvasTransform previous;
+        private final PointerSpace pointer;
+        private boolean closed;
+
+        Space(CanvasTransform transform) {
+            previous = drawingSpace;
+            pointer = new PointerSpace(transform);
+            GL11.glPushMatrix();
+            GL11.glTranslated(previous.toLocalX(transform.toScreenX(0)), previous.toLocalY(transform.toScreenY(0)), 0);
+            double relativeScale = transform.scale() / previous.scale();
+            GL11.glScaled(relativeScale, relativeScale, 1);
+            drawingSpace = transform;
+            ui.host.parent()
+                .nativeFieldTransform(transform);
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            GL11.glPopMatrix();
+            drawingSpace = previous;
+            pointer.close();
+            ui.host.parent()
+                .nativeFieldTransform(previous);
+        }
     }
 }

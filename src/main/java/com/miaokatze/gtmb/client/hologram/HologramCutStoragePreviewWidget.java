@@ -17,13 +17,13 @@ import com.cleanroommc.modularui.widget.Widget;
 /** An isolated GUI camera over the same native raw ghost used in the world. Never ticks tile entities. */
 final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePreviewWidget> implements Interactable {
 
-    private final HologramCutStoragePreview preview;
+    private final HologramCutStoragePreviewView preview;
     private Framebuffer target;
     private float yaw = -35, pitch = 24, zoom = 1;
     private int dragX, dragY;
     private String failure = "";
 
-    HologramCutStoragePreviewWidget(HologramCutStoragePreview preview) {
+    HologramCutStoragePreviewWidget(HologramCutStoragePreviewView preview) {
         this.preview = preview;
         background(HologramMuiTheme.PANEL);
     }
@@ -33,6 +33,29 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
         pitch = 24;
         zoom = 1;
         failure = "";
+    }
+
+    NBTTagCompound cameraState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setFloat("yaw", yaw);
+        state.setFloat("pitch", pitch);
+        state.setFloat("zoom", zoom);
+        return state;
+    }
+
+    void restoreCamera(NBTTagCompound state) {
+        yaw = state.getFloat("yaw");
+        pitch = Math.max(-89, Math.min(89, state.getFloat("pitch")));
+        zoom = Math.max(.35f, Math.min(4f, state.getFloat("zoom")));
+    }
+
+    void orbitBy(float x, float y) {
+        yaw += x * .7f;
+        pitch = Math.max(-89, Math.min(89, pitch + y * .7f));
+    }
+
+    void zoomBy(float factor) {
+        zoom = Math.max(.35f, Math.min(4f, zoom * factor));
     }
 
     @Override
@@ -154,15 +177,14 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
     public void onMouseDrag(int button, long timeSinceClick) {
         if (button != 0) return;
         int x = getContext().getAbsMouseX(), y = getContext().getAbsMouseY();
-        yaw += (x - dragX) * .7f;
-        pitch = Math.max(-89, Math.min(89, pitch + (y - dragY) * .7f));
+        orbitBy(x - dragX, y - dragY);
         dragX = x;
         dragY = y;
     }
 
     @Override
     public boolean onMouseScroll(UpOrDown direction, int amount) {
-        zoom = Math.max(.35f, Math.min(4f, zoom * (direction.isUp() ? 1.12f : 1 / 1.12f)));
+        zoomBy(direction.isUp() ? 1.12f : 1 / 1.12f);
         return true;
     }
 
@@ -174,13 +196,17 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
 
     @Override
     public void dispose() {
+        releaseTarget();
+        super.dispose();
+    }
+
+    void releaseTarget() {
         HologramCutRawPreviewScope.RenderState state = new HologramCutRawPreviewScope.RenderState();
         state.push();
         try {
             deleteTarget();
         } finally {
             state.restore();
-            super.dispose();
         }
     }
 }

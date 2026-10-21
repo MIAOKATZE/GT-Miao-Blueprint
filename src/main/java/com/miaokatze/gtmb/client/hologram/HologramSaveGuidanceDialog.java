@@ -49,17 +49,17 @@ final class HologramSaveGuidanceDialog {
             .background(HologramMuiTheme.CLOTH);
         HologramMuiTheme.header(panel, () -> text("title", "蓝图已保存 · 接下来设置结构"), 428);
         panel.child(
-            HologramMuiTheme.label(() -> text("blueprint", "蓝图设置"), 18, 46, 392, 16, HologramUiAccent.INFORMATION));
+            HologramMuiTheme.label(() -> text("blueprint", "蓝图设置与蓝图库"), 18, 46, 392, 16, HologramUiAccent.INFORMATION));
         panel.child(
             HologramMuiTheme.label(
-                () -> text("blueprint_help", "处理与保存蓝图，编辑 NBT、提示词及分享文件。"),
+                () -> text("blueprint_help", "在蓝图设置处理方案，在蓝图库保存与管理分享文件。"),
                 18,
                 65,
                 392,
                 28,
                 HologramMuiTheme.TEXT));
         panel.child(
-            HologramMuiTheme.label(() -> text("structure", "结构调整"), 18, 101, 392, 16, HologramUiAccent.SUGGESTION));
+            HologramMuiTheme.label(() -> text("structure", "属性侧栏"), 18, 101, 392, 16, HologramUiAccent.SUGGESTION));
         panel.child(
             HologramMuiTheme.label(
                 () -> text("structure_help", "设置结构等级、信道、方块目标和仓室；施工前再核对材料。"),
@@ -70,7 +70,7 @@ final class HologramSaveGuidanceDialog {
                 HologramMuiTheme.TEXT));
         panel.child(
             HologramMuiTheme
-                .label(() -> text("next", "点击左上青色“结构调整”继续设置。"), 18, 157, 392, 18, HologramUiAccent.SUGGESTION));
+                .label(() -> text("next", "选中模型后，打开右侧“属性”继续编辑。"), 18, 157, 392, 18, HologramUiAccent.SUGGESTION));
         panel.child(
             HologramMuiTheme.button(
                 () -> HologramUiText.localized("gtmb.hologram.website.share", "前往蓝图站浏览与分享 ↗"),

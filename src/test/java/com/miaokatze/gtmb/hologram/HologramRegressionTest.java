@@ -107,11 +107,26 @@ public final class HologramRegressionTest {
             "projector_family_uses_native_mui2_controls_and_shared_pocket_textures",
             com.miaokatze.gtmb.client.hologram.HologramMuiMigrationRegression::run);
         cases.put(
+            "attachment_dialog_reopen_refreshes_closures_and_retires_stale_input",
+            com.miaokatze.gtmb.client.hologram.HologramUiLifecycleRegression::run);
+        cases.put(
             "cut_storage_preview_fences_selection_lifecycle_and_late_raw_replies",
             com.miaokatze.gtmb.client.hologram.HologramCutStoragePreviewRegression::run);
         cases.put(
             "preview_camera_wasd_follows_orientation_and_normalizes_motion",
             com.miaokatze.gtmb.client.hologram.HologramPreviewCameraRegression::run);
+        cases.put(
+            "editor_camera_frame_matches_native_geometry_and_presented_picking",
+            com.miaokatze.gtmb.client.hologram.HologramEditorCameraFrameRegression::run);
+        cases.put(
+            "native_annotation_markers_keep_collision_and_viewport_hit_bounds",
+            com.miaokatze.gtmb.client.hologram.HologramEditorAnnotationOverlayRegression::run);
+        cases.put(
+            "native_editor_theme_serialization_keeps_registered_tiled_and_nine_slice_textures",
+            com.miaokatze.gtmb.client.hologram.HologramEditorNativeThemeRegression::run);
+        cases.put(
+            "native_editor_expanded_layout_waits_for_parent_and_preserves_both_axes",
+            com.miaokatze.gtmb.client.hologram.HologramEditorNativeLayoutRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);

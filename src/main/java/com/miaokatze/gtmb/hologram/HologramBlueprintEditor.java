@@ -320,12 +320,14 @@ final class HologramBlueprintEditor {
             return;
         }
         int x = s.x + dx, y = s.y + dy, z = s.z + dz;
-        if (!s.player.worldObj.blockExists(x, y, z) || y < 0 || y >= s.player.worldObj.getHeight()) {
+        if ((!HologramSessionPolicy.authoring(s) && !s.player.worldObj.blockExists(x, y, z)) || y < 0
+            || y >= s.player.worldObj.getHeight()) {
             s.status = "该位置未加载或超出世界范围";
             return;
         }
         if (action.getBoolean("airOnly")
-            && (!s.player.worldObj.isAirBlock(x, y, z) || !withinAirEditBounds(s, action, x, y, z))) {
+            && ((!HologramSessionPolicy.authoring(s) && !s.player.worldObj.isAirBlock(x, y, z))
+                || !withinAirEditBounds(s, action, x, y, z))) {
             s.status = "请选择当前蓝图或结构边界内的空气位置";
             return;
         }
@@ -549,6 +551,11 @@ final class HologramBlueprintEditor {
         int[] indices = geometryIndices(s, action);
         if (indices.length == 0) throw new java.io.IOException("请先选择蓝图格");
         java.util.Set<String> complete = completeGeometrySelection(s, indices);
+        // A rejected geometry request must acknowledge this valid selection, not the previous tool's selection.
+        s.selectedIndices.clear();
+        for (int index : indices) s.selectedIndices.add(index);
+        int selected = action.hasKey("selected", 3) ? action.getInteger("selected") : s.selected;
+        s.selected = s.selectedIndices.contains(selected) ? selected : indices[0];
         if (action.getInteger("dx") == 0 && action.getInteger("dy") == 0 && action.getInteger("dz") == 0) return;
         java.util.Set<String> remove = new java.util.HashSet<>();
         Map<String, HologramCapture.Cell> retained = new HashMap<>();
@@ -558,8 +565,8 @@ final class HologramBlueprintEditor {
             long x = (long) source.x + action.getInteger("dx"), y = (long) source.y + action.getInteger("dy"),
                 z = (long) source.z + action.getInteger("dz");
             validateBlueprintCoordinate(s, x, y, z);
-            if (!s.player.worldObj.blockExists((int) x, (int) y, (int) z)
-                || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z))
+            if (!HologramSessionPolicy.authoring(s) && (!s.player.worldObj.blockExists((int) x, (int) y, (int) z)
+                || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z)))
                 throw new java.io.IOException("移动目标必须是已加载的空气方块；原选区保留");
             HologramCapture.Cell copy = HologramBlueprintData.blueprintCell(source, (int) x, (int) y, (int) z);
             HologramBlueprintData.setMemberships(
@@ -615,6 +622,12 @@ final class HologramBlueprintEditor {
     static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
         boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups,
         Map<String, Integer> preparedSizes) throws java.io.IOException {
+        stageGeometry(s, copies, remove, overlay, retained, copyGroups, preparedSizes, null);
+    }
+
+    static void stageGeometry(HologramSession s, List<HologramCapture.Cell> copies, java.util.Set<String> remove,
+        boolean overlay, Map<String, HologramCapture.Cell> retained, boolean copyGroups,
+        Map<String, Integer> preparedSizes, Map<String, ItemStack> projectedTargets) throws java.io.IOException {
         Map<String, HologramCapture.Cell> staged = new LinkedHashMap<>();
         Map<String, ItemStack> targets = new HashMap<>();
         Map<String, Integer> facings = new HashMap<>(s.facingPins);
@@ -622,7 +635,8 @@ final class HologramBlueprintEditor {
             HologramCapture.Cell cell = s.capture.cells.get(index);
             if (remove.contains(HologramValues.position(cell))) continue;
             staged.put(HologramValues.position(cell), retained.getOrDefault(HologramValues.position(cell), cell));
-            ItemStack target = HologramCellPolicy.targetFor(s, cell, index);
+            ItemStack target = projectedTargets == null ? HologramCellPolicy.targetFor(s, cell, index)
+                : projectedTargets.get(HologramValues.position(cell));
             if (target != null) targets.put(HologramValues.position(cell), target.copy());
         }
         List<HologramPresets.Structure> copiedStructures = new ArrayList<>();
@@ -692,7 +706,8 @@ final class HologramBlueprintEditor {
             if (value == null || value.isEmpty()) continue;
             Integer size = sizes.get(value);
             if (size == null) {
-                size = preparedSizes == null ? HologramBlueprintNbt.expandedBytes(value) : preparedSizes.get(value);
+                if (preparedSizes == null) size = HologramBlueprintNbt.expandedBytes(value);
+                else size = preparedSizes.get(value);
                 if (size == null) throw new java.io.IOException("附加对象数据预算已变化，请重新确认");
                 sizes.put(value, size);
             }

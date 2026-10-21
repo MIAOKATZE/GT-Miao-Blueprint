@@ -8,7 +8,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 
 /** Read-only storage browser, deliberately separate from placement pose, locks and request accounting. */
-final class HologramCutStoragePreview {
+final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
 
     private static HologramCutStoragePreview active;
     final HologramCutStoragePreviewState state = new HologramCutStoragePreviewState();
@@ -105,11 +105,11 @@ final class HologramCutStoragePreview {
         clearRaw();
     }
 
-    HologramCutRawPreviewSession renderer() {
+    public HologramCutRawPreviewSession renderer() {
         return renderer;
     }
 
-    NBTTagCompound raw() {
+    public NBTTagCompound raw() {
         return raw;
     }
 
@@ -123,7 +123,7 @@ final class HologramCutStoragePreview {
         return progress.view(System.nanoTime());
     }
 
-    String notice() {
+    public String notice() {
         if (renderer != null && !renderer.diagnostics()
             .isEmpty()) return renderer.diagnostics()
                 .get(0);

@@ -71,6 +71,10 @@ final class HologramCutNameScreen extends HologramMuiScreen {
     }
 
     private void finish(boolean accepted, boolean skipPrompt) {
+        deferAction(() -> finishDeferred(accepted, skipPrompt));
+    }
+
+    private void finishDeferred(boolean accepted, boolean skipPrompt) {
         if (finished) return;
         accepted = accepted && validContext();
         String name = "";

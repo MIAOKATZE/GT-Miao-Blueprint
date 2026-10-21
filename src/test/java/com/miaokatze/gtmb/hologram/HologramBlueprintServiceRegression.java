@@ -200,6 +200,7 @@ final class HologramBlueprintServiceRegression {
             HologramCapture capture = (HologramCapture) get(session, "capture");
             SimpleAssert
                 .that(!capture.incomplete, "schema2 item-only factory cells infer their block: " + capture.failure);
+            authoringGeometryIsolation((HologramSession) session, unsafe);
             deletion((HologramSession) session);
             spatialWorkOrder((HologramSession) session);
             HologramBlueprintSourceMaterialRegression.run((HologramSession) session);
@@ -1599,6 +1600,166 @@ final class HologramBlueprintServiceRegression {
             session.processingPresetOperation = operation;
             session.processingPresetOperationSuccess = success;
             session.status = status;
+        }
+    }
+
+    private static void authoringGeometryIsolation(HologramSession source, sun.misc.Unsafe unsafe)
+        throws ReflectiveOperationException, java.io.IOException {
+        net.minecraft.world.World originalWorld = source.player.worldObj;
+        SnapshotGeometryWorld world = (SnapshotGeometryWorld) unsafe.allocateInstance(SnapshotGeometryWorld.class);
+        source.player.worldObj = world;
+        try {
+            HologramSession session = new HologramSession(source.player, 0, 64, 0, false, 2);
+            session.virtual = true;
+            session.virtualPreset = HologramPresets.copy(source.virtualPreset);
+            session.materialSettings.main = session.materialSettings.containers = session.materialSettings.me = false;
+            HologramBlueprintProjection.populateVirtual(session);
+            world.loadedChecks = world.airChecks = 0;
+            NBTTagCompound action = new NBTTagCompound();
+            action.setIntArray("indices", new int[] { 0, 1 });
+            action.setInteger("dx", 1);
+            HologramBlueprintEditor.moveBlueprintCells(session, action);
+            SimpleAssert.that(
+                session.capture.positions.containsKey("2,64,0") && session.capture.positions.containsKey("5,64,0"),
+                "author axis movement uses snapshot geometry despite unloaded occupied world coordinates");
+            action.setInteger("dy", 1);
+            HologramBlueprintEditor.moveBlueprintCells(session, action);
+            SimpleAssert.that(
+                session.capture.positions.containsKey("3,65,0") && session.capture.positions.containsKey("6,65,0"),
+                "author plane movement moves the whole selection without colliding with its former coordinates");
+            SimpleAssert.eq(0, world.loadedChecks, "author moves never query live chunk availability");
+            SimpleAssert.eq(0, world.airChecks, "author moves never query live world emptiness");
+
+            session.selectedIndices.clear();
+            session.selectedIndices.add(1);
+            session.selected = 1;
+            action.setIntArray("indices", new int[] { 0 });
+            action.setInteger("dx", 3);
+            action.setInteger("dy", 0);
+            rejectGeometryMove(session, action, "unselected snapshot occupancy remains a real collision");
+            SimpleAssert.that(
+                session.selectedIndices.size() == 1 && session.selectedIndices.contains(0) && session.selected == 0,
+                "rejection ACK retains the current valid request selection instead of an older text selection");
+
+            action.setIntArray("indices", new int[] { 0, 1 });
+            action.setInteger("dx", 1);
+            session.virtualPlacement = true;
+            rejectGeometryMove(session, action, "placement still rejects unloaded target coordinates");
+            SimpleAssert.that(
+                session.selectedIndices.size() == 2 && session.selectedIndices.contains(0)
+                    && session.selectedIndices.contains(1),
+                "even a rejected placement acknowledges all requested selected cells");
+            world.loaded = true;
+            rejectGeometryMove(session, action, "placement still rejects loaded occupied target coordinates");
+            SimpleAssert
+                .that(world.loadedChecks > 0 && world.airChecks > 0, "placement retains both live world checks");
+            session.virtualPlacement = false;
+            action.setInteger("dx", Integer.MAX_VALUE);
+            rejectGeometryMove(session, action, "snapshot editing still validates world coordinate bounds");
+
+            world.loaded = false;
+            world.loadedChecks = world.airChecks = 0;
+            NBTTagCompound added = new NBTTagCompound();
+            added.setInteger("dx", 4);
+            added.setInteger("dy", 1);
+            added.setInteger("dz", 0);
+            added.setBoolean("airOnly", true);
+            HologramBlueprintEditor.addPosition(session, added);
+            SimpleAssert.that(
+                session.capture.positions.containsKey("4,65,0"),
+                "author air-position editing uses snapshot bounds despite occupied unloaded real world");
+            int count = session.capture.cells.size();
+            added.setInteger("dx", 30);
+            HologramBlueprintEditor.addPosition(session, added);
+            SimpleAssert
+                .eq(count, session.capture.cells.size(), "air-only author addition still respects snapshot bounds");
+
+            NBTTagCompound copy = new NBTTagCompound();
+            copy.setIntArray(
+                "indices",
+                new int[] { session.capture.cells.indexOf(session.capture.positions.get("3,65,0")) });
+            HologramBlueprintEditor.blueprintClipboard(session, copy, "editCopy");
+            NBTTagCompound paste = new NBTTagCompound();
+            paste.setInteger("selected", session.capture.cells.indexOf(session.capture.positions.get("4,65,0")));
+            HologramBlueprintEditor.blueprintClipboard(session, paste, "editPaste");
+            SimpleAssert.that(
+                HologramValues.same(new ItemStack(Blocks.stone), session.pins.get(session.selected)),
+                "author paste retains its original costed target without consulting real world air");
+            SimpleAssert.eq(0, world.loadedChecks, "author add and paste never query live chunk availability");
+            SimpleAssert.eq(0, world.airChecks, "author add and paste never query live world emptiness");
+        } finally {
+            source.player.worldObj = originalWorld;
+        }
+    }
+
+    private static void rejectGeometryMove(HologramSession session, NBTTagCompound action, String label) {
+        HologramCapture capture = session.capture;
+        long revision = session.planRevision;
+        int history = session.undoEdits.size();
+        try {
+            HologramBlueprintEditor.moveBlueprintCells(session, action);
+            throw new AssertionError(label);
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                session.capture == capture && session.planRevision == revision && session.undoEdits.size() == history,
+                label + "; capture, revision and geometry history remain atomic");
+        }
+    }
+
+    private static final class SnapshotGeometryWorld extends net.minecraft.world.WorldServer {
+
+        boolean loaded;
+        int loadedChecks, airChecks;
+
+        private SnapshotGeometryWorld() {
+            super(null, null, "snapshot geometry fixture", 0, null, null);
+        }
+
+        @Override
+        public boolean blockExists(int x, int y, int z) {
+            loadedChecks++;
+            return loaded;
+        }
+
+        @Override
+        public boolean isAirBlock(int x, int y, int z) {
+            airChecks++;
+            return false;
+        }
+
+        @Override
+        public net.minecraft.block.Block getBlock(int x, int y, int z) {
+            return Blocks.stone;
+        }
+
+        @Override
+        public int getBlockMetadata(int x, int y, int z) {
+            return 0;
+        }
+
+        @Override
+        public net.minecraft.tileentity.TileEntity getTileEntity(int x, int y, int z) {
+            return null;
+        }
+
+        @Override
+        public int getHeight() {
+            return 256;
+        }
+
+        @Override
+        public long getTotalWorldTime() {
+            return 0;
+        }
+
+        @Override
+        public boolean setBlock(int x, int y, int z, net.minecraft.block.Block block, int meta, int flags) {
+            throw new AssertionError("snapshot geometry must never write real world blocks");
+        }
+
+        @Override
+        public void setTileEntity(int x, int y, int z, net.minecraft.tileentity.TileEntity tile) {
+            throw new AssertionError("snapshot geometry must never write real world tiles");
         }
     }
 

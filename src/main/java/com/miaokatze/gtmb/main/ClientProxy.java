@@ -18,6 +18,7 @@ public final class ClientProxy extends CommonProxy {
     @Override
     public void preInit() {
         super.preInit();
+        com.miaokatze.gtmb.client.hologram.HologramEditorNativeTheme.install();
         com.miaokatze.gtmb.hologram.HologramLibraryFacade
             .configureClientGameDirectory(net.minecraft.client.Minecraft.getMinecraft().mcDataDir.toPath());
     }

@@ -24,7 +24,6 @@ final class HologramUiTextBoxes {
     private int originalX, originalY, originalZ;
     private int[] dragOrigin;
     private boolean chosen, pending;
-    private int requestedEditor = -1;
     private long request;
     private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job localJob;
     private byte[] picturePixels;
@@ -55,7 +54,6 @@ final class HologramUiTextBoxes {
     }
 
     void reset() {
-        requestedEditor = -1;
         if (pending) com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
         if (localJob != null) localJob.cancel();
         localJob = null;
@@ -98,7 +96,7 @@ final class HologramUiTextBoxes {
     }
 
     void activate(boolean picture) {
-        if (!allowed(picture) || pending || localJob != null || requestedEditor >= 0) return;
+        if (!allowed(picture) || pending || localJob != null) return;
         if (draft != null && chosen) {
             NBTTagCompound action = new NBTTagCompound();
             action.setLong("planRevision", ui.session.revision());
@@ -109,13 +107,11 @@ final class HologramUiTextBoxes {
             return;
         }
         // Finish the current MUI mouse dispatch before replacing its active screen and viewport tree.
-        requestedEditor = picture ? 1 : 0;
+        ui.host.parent()
+            .deferAction(() -> openEditor(picture));
     }
 
-    void tickEditor() {
-        if (requestedEditor < 0) return;
-        boolean picture = requestedEditor == 1;
-        requestedEditor = -1;
+    private void openEditor(boolean picture) {
         if (Minecraft.getMinecraft().currentScreen != ui.host.parent() || !allowed(picture)
             || pending
             || localJob != null) return;

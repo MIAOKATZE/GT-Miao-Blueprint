@@ -13,7 +13,29 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.8 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.8，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+
+### v0.1.37 原生编辑器体验 / Native editor experience
+
+编辑器采用纸张风格面板、低分辨率像素图标和悬浮提示。全屏等距快照保留中央操作空间，属性、蓝图设置和蓝图库收进可伸缩侧栏；点击库行直接切换蓝图并更新中央预览，有未保存修改时只在切换前询问一次，取消会保留当前草稿。外层入口分为投影、蓝图与剪切，可自定义快捷键，并提供按当前操作变化、可持久收纳的智能指引。
+
+The editor uses paper panels, low-resolution pixel icons and tooltips. A full-screen isometric snapshot leaves room for editing, with properties, blueprint settings and the library in a collapsible sidebar. Select a library row to switch the blueprint and central preview; unsaved work prompts once before switching, and cancel keeps the draft. Projection, Blueprint and Cut have separate entries, customizable shortcuts and contextual guidance with a saved collapse preference.
+
+八门动画教程分别介绍投影、蓝图、剪切列表、结构操作，以及普通/等距框选和普通/等距剪切。教程鼠标连续演示操作，只允许使用底部「上一步、下一步、跳过、从头开始」四个按钮；上一步回到该步动画开头，退出恢复原工作区。教程使用独立教学状态，不提交真实蓝图或世界操作；可从教程入口再次播放。
+
+Eight animated lessons cover Projection, Blueprint, the Cut list, structure controls, and normal/isometric selection and Cut. The demonstration cursor shows each action; only Previous, Next, Skip and Restart are interactive. Previous replays a step from its beginning, and leaving restores the original workspace. Lessons use isolated teaching state and can be replayed without submitting real blueprints or world operations.
+
+以下两张为 v0.1.37 原生客户端实机截图；右图展示客户端库为空时的侧栏。原图、采集版本及范围见[原生截图记录](README/native-v0137/manifest.json)。
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/native-v0137/editor-workspace.png"><img src="README/native-v0137/editor-workspace.png" alt="原生等距编辑器：中央快照、左侧工具与可收纳属性侧栏" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0137/library-sidebar-empty.png"><img src="README/native-v0137/library-sidebar-empty.png" alt="原生蓝图库侧栏：空客户端库、蓝图站和管理入口" width="480"></a></td>
+  </tr>
+  <tr><td align="center">等距快照与属性侧栏 / Native workspace</td><td align="center">蓝图库侧栏（空库）/ Library sidebar (empty)</td></tr>
+</table>
+
+其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；旧材质与布局不代表 v0.1.37，也不作为本版原生验收证据。
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 
@@ -53,7 +75,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 | --- | --- |
 | **建一台机器 / Build a multiblock** | [对准真实控制器导入结构](#preview)，查看仓室、调整目标，再核对材料施工。 / Import from its real controller, adjust targets and review materials. |
 | **规划整片工厂 / Plan a factory** | [框选区域并识别成员结构](#regions)，在三维预览中编辑方块与结构参数。 / Capture a region, recognize its structures and edit the plan. |
-| **保存自己的设计 / Save a design** | [区分「结构调整」与「蓝图设置」](#editing)，按私用或分享需求处理，再命名保存。 / Edit geometry, review private/shared settings and save. |
+| **保存自己的设计 / Save a design** | [进入蓝图工作区](#editing)，用属性侧栏调整结构，在蓝图设置中处理，再到蓝图库命名保存。 / Edit with the Properties sidebar, process in Blueprint Settings, then save in the library. |
 | **搬走已经建好的东西 / Move a build** | [切换剪切模式](#cut)，连续暂存多份结构，分别预览、转向与粘贴。 / Queue cuts, preview each entry and place it elsewhere. |
 | **准备施工物资 / Prepare supplies** | [查看精确材料与 NBT 需求](#materials)，按需提交 ME 补料订单或使用装饰抵用券。 / Inspect exact costs, request AE crafting or select a decoration voucher. |
 | **交流与复用设计 / Share and reuse** | [打开蓝图站](#sharing)浏览、下载与分享，或转交同名 JSON + PNG 文件对。 / Browse the blueprint site or share a JSON + PNG pair. |
@@ -72,9 +94,9 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
   <em>Inspect structure targets and construction controls together.</em>
 </p>
 
-**操作要点：**用「结构调整」修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
+**操作要点：**选中模型后用「属性」侧栏修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
 
-*Use Structure Adjustment for planning changes. Check the displayed construction scope; the idle top HUD shows available actions and shortcuts.*
+*Use the Properties sidebar for planning changes. Check the displayed construction scope; the idle top HUD shows available actions and shortcuts.*
 
 <a id="regions"></a>
 
@@ -106,11 +128,11 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 <a id="editing"></a>
 
-## 03 · 在三维蓝图库里选，在结构编辑器里改 / Browse, edit & save
+## 03 · 在蓝图库直接切换，在蓝图工作区调整与保存 / Switch designs, edit & save
 
-**蓝图库负责选设计，「结构调整」负责改结构。** 从列表选择蓝图，拖动三维预览检查整体，按层查看内部；需要修改时进入编辑，选择方块、调整材料与朝向、移动所选内容，或编辑 NBT 与提示词。规划修改不会立刻改动世界。
+**库行直接切换当前蓝图并更新中央预览。** 有未保存修改时，在切换前只提示一次是否放弃；取消会保留当前草稿。外层工作区分为投影、蓝图与剪切。右侧「属性」用于编辑方块、结构参数与仓室，「蓝图设置」用于处理身份、坐标和资源，「蓝图库」用于文件管理与保存；三页共用中央画布。规划修改不会立刻改动世界。
 
-*Select and inspect designs in the library; use Structure Adjustment to edit blocks, placement, NBT and annotations before construction.*
+*Select a blueprint directly in the library. Projection, Blueprint and Cut have separate entries; Properties, Blueprint Settings and Library share the central editing canvas.*
 
 <table>
   <tr>
@@ -125,17 +147,17 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 **结构参数也能继续调整。** 蓝图成员的主信号、等级、高度等子信道可重新设置，重新生成所选成员时保留其他成员及其编辑；请核对预览中的实际尺寸。旧蓝图归属不完整时先恢复可确认的范围，无法可靠确定时保留原图并提示重新导入。
 
-结构调整中，**G 切换移动轴开／关**，按钮显示「移动轴(G) ✓／×」。空闲 2 秒后出现操作帮助，任何动作都会收起帮助并继续响应输入。
+蓝图编辑中默认 **G 显示或隐藏移动轴**；拖动彩色轴可实时单轴移动，拖动 XY、XZ、YZ 平面可同时移动两轴。底部指引按当前选择与操作更新，按 ^ 收起后会记住状态；F1 可查看与改绑编辑器快捷键。
 
 与机器等级关联的线圈、分级外壳、框架和玻璃可单独选中；相关外壳显示紫色框及持续的「全选 T」提示，按 **T** 才扩选同一结构的相关外壳，已设置的仓室保持独立。
 
 *Tier-related casings can be selected individually. Purple outlines and the T hint identify related cells in the same structure; press T to select them together while keeping configured hatches independent.*
 
-*Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles movement axes, and idle help dismisses on input.*
+*Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles axis and plane handles; F1 opens editor key bindings.*
 
 ### 让文字与图片成为蓝图的一部分 / Add text & picture art
 
-在空白工作区、结构调整或放置前的蓝图编辑中，点击顶部的「文字转蓝图」或「添加图片」，用 **LittleTiles 小瓷砖**制作标牌、立体字与像素画。文字可调整字体、颜色、材料和三维形态；图片从 `.minecraft/MiaoBlueprintPicture` 读取，支持固定材料组合、滤镜与边缘背景抠除。文字和图片都能保存处理预设，并按同色实体体积合并瓷砖及完整方块。
+在空白工作区或蓝图编辑中，从左侧工具栏选择文字或图片工具（默认 F7 / F8），用 **LittleTiles 小瓷砖**制作标牌、立体字与像素画。文字可调整字体、颜色、材料和三维形态；图片从 `.minecraft/MiaoBlueprintPicture` 读取，支持固定材料组合、滤镜与边缘背景抠除。文字和图片都能保存处理预设，并按同色实体体积合并瓷砖及完整方块。
 
 *Create signs, 3D lettering and pixel art with LittleTiles. Choose text fonts and materials, or convert local pictures with fixed palettes, filters and background removal; reuse processing presets and merge solid geometry.*
 
@@ -162,7 +184,7 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 ### 私用还是分享，由你逐步确认 / Review for private use or sharing
 
-「蓝图设置」负责处理与保存：按私用或分享倾向核对身份、坐标、网络和资源等选项，再命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导会说明「蓝图设置」和「结构调整」的区别，也支持不再显示。
+在「蓝图设置」中按「倾向自用」或「倾向分享」核对身份、坐标、网络和资源等处理选项，完成后到「蓝图库」命名保存。倾向自用时可尽量保留原配置；与坐标或去标识选择冲突时，先解决冲突。保存成功后的引导说明处理、保存与属性编辑的入口，也支持不再显示。
 
 自动提示词在私用和分享倾向下均默认轻度。木匠方块的来源所有者不会阻塞蓝图，新放置方块按原生规则归当前放置者，无需为此去标识；形状、饰面、染色与其他配置保留，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
 
@@ -332,7 +354,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | 第一次使用 / First use | 操作 / Action |
 | --- | --- |
 | **1 · 导入 / Import** | 手持投影仪右键打开工作台，对准控制器导入结构，或框选区域。 / Open the workspace and import a controller structure or region. |
-| **2 · 编辑 / Edit** | 「结构调整」修改结构；「蓝图设置」核对私用／分享处理并命名保存。 / Adjust the structure, review processing and save. |
+| **2 · 编辑 / Edit** | 在「属性」修改结构，「蓝图设置」核对自用／分享处理，再从「蓝图库」保存。 / Adjust properties, review processing and save in the library. |
 | **3 · 定位 / Position** | 从蓝图库选择蓝图并放置预览，调整朝向；普通视角右键锁定位置，等距视角用左键。 / Select a blueprint, preview it in the world and adjust its pose; right-click to lock in ordinary view, or left-click in isometric view. |
 | **4 · 施工 / Build** | 普通视角再右键核对材料，等距视角用左键；处理缺料或绑定要求后确认，Esc 取消。 / In ordinary view, right-click again to review materials; use left-click in isometric view. Resolve missing materials or binding requirements, then confirm; Esc cancels. |
 
@@ -364,9 +386,9 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 New servers default to shared upload/download limits of **128 KiB/s** and **512 KiB/s**. Operators can adjust both in server library settings. Unversioned legacy 16/16 limits migrate once to these defaults; other custom values and later explicit 16/16 choices are preserved. Updated clients and servers pipeline uploads; older servers retain compatible single-chunk transfer.
 
-等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置与结构调整的区别，并支持不再显示。
+等待界面在总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。长任务关闭界面后继续，再次打开恢复原业务页面、选区与视角。保存成功的引导说明蓝图设置、蓝图库与属性编辑的入口，并支持不再显示。
 
-Waiting views show measured progress and percentages when totals are known, or activity and elapsed time otherwise. Long tasks continue after closing the workspace; reopening restores the business page, selection and view. Save guidance explains Blueprint Settings and Structure Adjustment and can be dismissed persistently.
+Waiting views show measured progress and percentages when totals are known, or activity and elapsed time otherwise. Long tasks continue after closing the workspace; reopening restores the business page, selection and view. Save guidance explains Blueprint Settings and the Properties sidebar and can be dismissed persistently.
 
 已确认的蓝图施工可在大图范围内继续，走离预览锚点不会单独终止任务；仍须保持原工具槽中的同一把投影仪、当前世界与维度，实际区块、现场权限和放置事件继续检查。停止、部分完成与全部成功分别显示，进度走完不代表机器成型。保存准备按实际快照与序列化工作显示进度，匹配本次任务的有效活动会延长等待；传输结束后仍须等待原生预览、配对文件与最终保存确认。
 An admitted blueprint construction job can continue while you inspect a large build, including beyond the preview anchor's admission range. Keep the same projector in its original slot and remain in the same world and dimension; chunk, permission and placement checks still apply. Stopped, partial and successful outcomes remain distinct. Save preparation reports actual snapshot and serialization work, and correlated activity extends the wait; transfer completion still requires preview validation, paired files and final save confirmation.

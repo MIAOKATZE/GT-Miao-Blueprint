@@ -287,7 +287,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             fontRendererObj.trimStringToWidth(text, width),
             x,
             y,
-            paper ? color == 0xff9292 ? HologramMuiTheme.ERROR : HologramMuiTheme.TEXT : color);
+            HologramEditorTheme.textColor(color, !paper));
     }
 
     private void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
@@ -379,9 +379,14 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
         activate(id);
     }
 
+    @Override
+    protected void onMuiActionFailure(RuntimeException failure) {
+        notice = failure.getMessage() == null ? "返回工作区失败，请重试" : failure.getMessage();
+    }
+
     private void activate(int id) {
         if (id == 2 && pending < 0) {
-            mc.displayGuiScreen(editor);
+            deferAction(() -> mc.displayGuiScreen(editor));
             return;
         }
         if (id == 11) {

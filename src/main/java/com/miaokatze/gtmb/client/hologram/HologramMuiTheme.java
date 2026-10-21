@@ -13,30 +13,21 @@ import com.cleanroommc.modularui.drawable.GuiDraw;
 import com.cleanroommc.modularui.drawable.Rectangle;
 import com.cleanroommc.modularui.drawable.UITexture;
 import com.cleanroommc.modularui.screen.ModularPanel;
-import com.cleanroommc.modularui.screen.viewport.GuiContext;
-import com.cleanroommc.modularui.theme.WidgetTheme;
 import com.cleanroommc.modularui.utils.Alignment;
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
 
-/** The projector family shares one set of pocket textures, including native MUI controls. */
+/** Paper controls use dark ink; legacy custom dark rows keep the original light text tokens. */
 final class HologramMuiTheme {
 
     static final int TEXT = 0xffedf1eb, TITLE = 0xffefcb8a, MUTED = 0xff9bacb3, ERROR = 0xffff9891;
 
-    private static final UITexture POCKET_PANEL = texture("panel", 64, 64, 5, 5);
-    private static final UITexture POCKET_CLOTH = texture("cloth", 32, 32, 3, 3);
-    private static final UITexture POCKET_BUTTON = texture("btn", 88, 18, 4, 3);
-    private static final UITexture POCKET_PRESSED = texture("btn_pressed", 88, 18, 4, 3);
-    // The original four series textures remain real, visible trim; quiet interiors carry the content.
-    static final UITexture PANEL = new PocketSurface(POCKET_PANEL, 2, 0xff121c22, 0xff18242b);
-    static final UITexture CLOTH = new PocketSurface(POCKET_CLOTH, 3, 0xff263238, 0xff192329);
-    static final UITexture BUTTON = new PocketSurface(POCKET_BUTTON, 2, 0xff35434b, 0xff29363e);
-    static final UITexture PRESSED = new PocketSurface(POCKET_PRESSED, 2, 0xff4c5e63, 0xff35484f);
-    private static final UITexture PRIMARY = new PocketSurface(POCKET_BUTTON, 2, 0xff725b3e, 0xff56442f);
-    private static final UITexture PRIMARY_HOVER = new PocketSurface(POCKET_PRESSED, 2, 0xff8a704d, 0xff665139);
+    static final UITexture PANEL = HologramEditorTheme.PANEL;
+    static final UITexture CLOTH = HologramEditorTheme.CLOTH;
+    static final UITexture BUTTON = HologramEditorTheme.BUTTON;
+    static final UITexture PRESSED = HologramEditorTheme.HOVER;
     private static final UITexture CAT = UITexture.builder()
         .location("gtmb", "textures/items/neko_hologram_projector.png")
         .imageSize(16, 96)
@@ -47,29 +38,14 @@ final class HologramMuiTheme {
 
     private HologramMuiTheme() {}
 
-    private static UITexture texture(String name, int width, int height, int borderX, int borderY) {
-        return UITexture.builder()
-            .location("gtmb", "textures/gui/pocket/POCKET_C2_" + name + ".png")
-            .imageSize(width, height)
-            .adaptable(borderX, borderY)
-            .build()
-            .withColorOverride(0xffffffff);
-    }
-
     static ModularPanel panel(String name, int width, int height) {
         return new ModularPanel("gtmb_" + name).size(width, height)
             .background(CLOTH);
     }
 
     static TextWidget<?> label(Supplier<String> text, int x, int y, int width, int height, int color) {
-        int readable = switch (color & 0xffffff) {
-            case 0xff9292, 0xef8585, 0xff9696 -> ERROR;
-            case 0xffdb83, 0x9ceaf3, 0xf0ddb3 -> TITLE;
-            case 0xd4c5a8, 0xb5c2cc, 0xb9ced8, 0xbacbd1 -> MUTED;
-            default -> color;
-        };
         return IKey.dynamic(text)
-            .color(readable)
+            .color(HologramEditorTheme.textColor(color, false))
             .shadow(false)
             .asWidget()
             .textAlign(Alignment.CenterLeft)
@@ -81,8 +57,12 @@ final class HologramMuiTheme {
         ProjectorButton result = new ProjectorButton();
         return result.pos(x, y)
             .size(width, height)
-            .background(BUTTON)
-            .hoverBackground(PRESSED)
+            .background(
+                (context, px, py, pw, ph, theme) -> HologramEditorTheme.button(result.active, result.primary, false)
+                    .draw(context, px, py, pw, ph, theme))
+            .hoverBackground(
+                (context, px, py, pw, ph, theme) -> HologramEditorTheme.button(result.active, result.primary, true)
+                    .draw(context, px, py, pw, ph, theme))
             .overlay(
                 IKey.dynamic(text)
                     .color(() -> result.active ? TEXT : MUTED)
@@ -95,45 +75,29 @@ final class HologramMuiTheme {
     }
 
     static ButtonWidget<?> primaryButton(Supplier<String> text, int x, int y, int width, int height, Runnable action) {
-        return button(text, x, y, width, height, action).background(PRIMARY)
-            .hoverBackground(PRIMARY_HOVER);
+        ProjectorButton result = (ProjectorButton) button(text, x, y, width, height, action);
+        result.primary = true;
+        return result;
     }
 
-    /** Keep the projector trim, then cover its orange edge with a semantic frame. */
+    /** Sample render time only, preserving each action's semantic color as a pixel breathing edge. */
     static IDrawable guidanceBackground(boolean hover, IntSupplier accent, BooleanSupplier enabled) {
+        return guidanceBackground(hover, accent, enabled, () -> false);
+    }
+
+    static IDrawable guidanceBackground(boolean hover, IntSupplier accent, BooleanSupplier enabled,
+        BooleanSupplier selected) {
         return (context, x, y, width, height, theme) -> {
             GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
             try {
-                (hover ? PRESSED : BUTTON).draw(context, x, y, width, height, theme);
-                int sampledAccent = accent.getAsInt();
                 boolean active = enabled.getAsBoolean();
-                if (active && sampledAccent == HologramUiAccent.SPECTRUM) {
-                    spectrumFrame(x, y, width, height);
-                    return;
-                }
-                int color = HologramUiAccent.borderColor(sampledAccent, active);
-                if (color == 0) return;
-                int edge = HologramUiAccent.BORDER_WIDTH;
-                GuiDraw.drawRect(x, y, width, edge, color);
-                GuiDraw.drawRect(x, y + height - edge, width, edge, color);
-                GuiDraw.drawRect(x, y + edge, edge, height - edge * 2, color);
-                GuiDraw.drawRect(x + width - edge, y + edge, edge, height - edge * 2, color);
+                HologramEditorTheme.button(active, selected.getAsBoolean(), hover)
+                    .draw(context, x, y, width, height, theme);
+                HologramEditorTheme.drawGuidanceFrame(x, y, width, height, accent.getAsInt(), active);
             } finally {
                 GL11.glPopAttrib();
             }
         };
-    }
-
-    /** Four gradients preserve the cloth interior while their shared corner colors slowly circulate. */
-    private static void spectrumFrame(int x, int y, int width, int height) {
-        long now = System.nanoTime();
-        int tl = HologramUiSpectrum.color(now, 0), tr = HologramUiSpectrum.color(now, .25);
-        int br = HologramUiSpectrum.color(now, .5), bl = HologramUiSpectrum.color(now, .75);
-        int edge = HologramUiAccent.BORDER_WIDTH;
-        GuiDraw.drawHorizontalGradientRect(x, y, width, edge, tl, tr);
-        GuiDraw.drawHorizontalGradientRect(x, y + height - edge, width, edge, bl, br);
-        GuiDraw.drawVerticalGradientRect(x, y + edge, edge, height - edge * 2, tl, bl);
-        GuiDraw.drawVerticalGradientRect(x + width - edge, y + edge, edge, height - edge * 2, tr, br);
     }
 
     static void header(ModularPanel panel, Supplier<String> title, int width) {
@@ -143,7 +107,7 @@ final class HologramMuiTheme {
                 .size(16));
         panel.child(label(title, 36, 9, width - 48, 18, TITLE));
         panel.child(
-            new Rectangle().color(0xff596269)
+            new Rectangle().color(0xffa1845b)
                 .asWidget()
                 .pos(12, 31)
                 .size(width - 24, 1));
@@ -152,46 +116,19 @@ final class HologramMuiTheme {
     static IDrawable row(BooleanSupplier selected, boolean hover) {
         return (context, x, y, width, height, theme) -> {
             boolean active = selected.getAsBoolean();
-            GuiDraw.drawRect(x, y, width, height, active ? 0xff465047 : hover ? 0xff35444d : 0xff24323a);
-            GuiDraw.drawRect(x, y + height - 1, width, 1, active ? 0xffa98a59 : 0xff384850);
+            GuiDraw.drawRect(x, y, width, height, active ? 0xff665335 : hover ? 0xff65503a : 0xff4c3c2b);
+            GuiDraw.drawRect(x, y + height - 1, width, 1, active ? 0xffd2b17d : 0xff846747);
             if (active) GuiDraw.drawRect(x, y, 2, height, TITLE);
         };
-    }
-
-    /** UITexture compatibility also keeps legacy canvas hosts on the exact same visible skin. */
-    private static final class PocketSurface extends UITexture {
-
-        private final UITexture trim;
-        private final int inset, top, bottom;
-
-        PocketSurface(UITexture trim, int inset, int top, int bottom) {
-            super(trim.location, 0, 0, 1, 1, null);
-            this.trim = trim;
-            this.inset = inset;
-            this.top = top;
-            this.bottom = bottom;
-        }
-
-        @Override
-        public void draw(GuiContext context, int x, int y, int width, int height, WidgetTheme theme) {
-            draw((float) x, y, width, height);
-        }
-
-        @Override
-        public void draw(float x, float y, float width, float height) {
-            trim.draw(x, y, width, height);
-            if (width > inset * 2 && height > inset * 2) GuiDraw
-                .drawVerticalGradientRect(x + inset, y + inset, width - inset * 2, height - inset * 2, top, bottom);
-        }
     }
 
     static TextFieldWidget textField(StringValue value, int x, int y, int width, int height, int maxLength) {
         return new TextFieldWidget().pos(x, y)
             .size(width, height)
-            .background(PANEL)
+            .background(HologramEditorTheme.INPUT)
             .value(value)
-            .setTextColor(TEXT)
-            .hintColor(MUTED)
+            .setTextColor(HologramEditorTheme.TEXT)
+            .hintColor(HologramEditorTheme.MUTED)
             .setMarkedColor(0xffc4a36b)
             .setMaxLength(maxLength)
             .autoUpdateOnChange(true);
@@ -200,7 +137,7 @@ final class HologramMuiTheme {
     /** MUI's enabled flag also hides a widget; unavailable actions remain visible in this theme. */
     private static final class ProjectorButton extends ButtonWidget<ProjectorButton> {
 
-        private boolean active = true;
+        private boolean active = true, primary;
 
         @Override
         public ProjectorButton setEnabledIf(Predicate<ProjectorButton> condition) {

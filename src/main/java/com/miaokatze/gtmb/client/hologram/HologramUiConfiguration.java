@@ -678,11 +678,10 @@ final class HologramUiConfiguration {
         ui.canvas.button(1710, 165, 85, 95, 18, customPresets ? "基础预设" : "✓ 基础预设", true, mx, my);
         ui.canvas.button(1711, 264, 85, 94, 18, customPresets ? "✓ 自定义" : "自定义搭配", true, mx, my);
         ui.canvas.button(1717, 362, 85, 16, 18, "‹", presetOffset > 0, mx, my);
-        int count = customPresets ? presetStore.names()
-            .size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+        int count = customPresets ? hatchPresetNames().size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
         presetOffset = Math.max(0, Math.min(presetOffset, Math.max(0, count - 4)));
         ui.canvas.button(1718, 380, 85, 16, 18, "›", presetOffset + 4 < count, mx, my);
-        List<String> names = presetStore.names();
+        List<String> names = hatchPresetNames();
         for (int row = 0; row < 4 && presetOffset + row < count; row++) {
             int index = presetOffset + row;
             String name = customPresets ? names.get(index) : tierName(index) + " · 按结构声明配额";
@@ -694,7 +693,16 @@ final class HologramUiConfiguration {
             if (names.isEmpty()) ui.canvas.text("尚无搭配；可命名保存当前仓室目标", 165, 124, 231, 0x94afb4);
             ui.canvas.text("名称", 165, 191, 34, 0x94afb4);
             hatchPresetNameField.drawTextBox();
-            ui.canvas.button(1712, 165, 208, 75, 19, "命名保存", ui.session.editable(), mx, my);
+            ui.canvas.button(
+                1712,
+                165,
+                208,
+                75,
+                19,
+                ui.session.isTutorial() ? "演示不保存" : "命名保存",
+                ui.session.editable() && !ui.session.isTutorial(),
+                mx,
+                my);
             ui.canvas.button(
                 1713,
                 244,
@@ -702,16 +710,15 @@ final class HologramUiConfiguration {
                 74,
                 19,
                 "覆盖所选",
-                ui.session.editable() && presetStore.get(selectedHatchPreset) != null,
+                ui.session.editable() && hatchPreset(selectedHatchPreset) != null,
                 mx,
                 my);
-            ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", presetStore.get(selectedHatchPreset) != null, mx, my);
+            ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", hatchPreset(selectedHatchPreset) != null, mx, my);
         } else {
             ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
             ui.canvas.text("保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
         }
-        ui.canvas
-            .button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && presetStore.last(true) != null, mx, my);
+        ui.canvas.button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && lastPreset(true) != null, mx, my);
         ui.canvas.button(
             106,
             165,
@@ -720,7 +727,7 @@ final class HologramUiConfiguration {
             20,
             customPresets ? "应用所选搭配" : "生成预设目标",
             ui.session.editable() && ui.session.state().data.getBoolean("supported")
-                && (customPresets ? presetStore.get(selectedHatchPreset) != null
+                && (customPresets ? hatchPreset(selectedHatchPreset) != null
                     : ui.session.state().data.getBoolean("presetAvailable")),
             mx,
             my);
@@ -748,6 +755,10 @@ final class HologramUiConfiguration {
     }
 
     private void manageHatchPreset(int id) {
+        if (ui.session.isTutorial()) {
+            ui.session.notice("演示隔离：不读取或修改本机仓室搭配文件");
+            return;
+        }
         try {
             if (id == 1714) {
                 presetStore.delete(selectedHatchPreset);
@@ -763,10 +774,7 @@ final class HologramUiConfiguration {
             presetStore.save(name, ui.session.state().data.getCompoundTag("hatchProfile"), id == 1713);
             selectedHatchPreset = name;
             customPresets = true;
-            presetOffset = Math.max(
-                0,
-                presetStore.names()
-                    .indexOf(name) - 3);
+            presetOffset = Math.max(0, hatchPresetNames().indexOf(name) - 3);
             ui.session.notice("已保存当前服务端仓室搭配到本机：" + name);
         } catch (java.io.IOException invalid) {
             ui.session.notice(invalid.getMessage());
@@ -807,16 +815,7 @@ final class HologramUiConfiguration {
             203,
             230,
             0xb9d5d4);
-        ui.canvas.button(
-            1716,
-            166,
-            220,
-            230,
-            19,
-            "使用上次预设",
-            ui.session.editable() && presetStore.last(false) != null,
-            mx,
-            my);
+        ui.canvas.button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPreset(false) != null, mx, my);
         ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 
@@ -1214,10 +1213,14 @@ final class HologramUiConfiguration {
     }
 
     boolean activateControl(int id) {
+        if (ui.session.isTutorial() && id >= 1712 && id <= 1716) {
+            ui.session.notice("演示隔离：本机命名搭配与上次配置不可用，不会读取或保存用户预设");
+            return true;
+        }
         if (id >= 1700 && id < 1704) {
             int index = presetOffset + id - 1700;
             if (customPresets) {
-                List<String> names = presetStore.names();
+                List<String> names = hatchPresetNames();
                 if (index < names.size()) {
                     selectedHatchPreset = names.get(index);
                     hatchPresetNameField.setText(selectedHatchPreset);
@@ -1349,7 +1352,7 @@ final class HologramUiConfiguration {
                 this.presetDowngrade = !this.presetDowngrade;
                 return true;
             case 106:
-                if (customPresets) applyHatchProfile(presetStore.get(selectedHatchPreset), false);
+                if (customPresets) applyHatchProfile(hatchPreset(selectedHatchPreset), false);
                 else {
                     NBTTagCompound profile = new NBTTagCompound();
                     profile.setInteger("tier", presetTier);
@@ -1368,12 +1371,12 @@ final class HologramUiConfiguration {
                 manageHatchPreset(id);
                 return true;
             case 1715:
-                NBTTagCompound previous = presetStore.last(true);
+                NBTTagCompound previous = lastPreset(true);
                 if (previous != null) applyHatchProfile(previous, previous.getBoolean("basic"));
                 return true;
             case 1716:
                 if (ui.session.editable()) {
-                    NBTTagCompound previousSources = presetStore.last(false);
+                    NBTTagCompound previousSources = lastPreset(false);
                     if (previousSources != null) {
                         NBTTagCompound sources = configuration();
                         for (String key : new String[] { "materialMain", "materialContainers", "materialMe" })
@@ -1507,8 +1510,8 @@ final class HologramUiConfiguration {
 
     boolean consumeHatchWheel(int wheel) {
         if (presetDrawer) {
-            int count = customPresets ? presetStore.names()
-                .size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+            int count = customPresets ? hatchPresetNames().size()
+                : ui.session.state().data.getInteger("hatchTierMax") + 1;
             presetOffset = Math.max(0, Math.min(Math.max(0, count - 4), presetOffset + (wheel > 0 ? -1 : 1)));
             return true;
         }
@@ -1527,7 +1530,7 @@ final class HologramUiConfiguration {
     }
 
     void acknowledgeConfiguration(HologramState next) {
-        observePresetSnapshot(next);
+        if (!ui.session.isTutorial()) observePresetSnapshot(next);
         if (basicConfigurationSequence >= 0 && next.data.getLong("uiSequence") >= basicConfigurationSequence) {
             basicConfigurationSequence = -1;
             if (next.data.getLong("planRevision") != basicConfigurationRevision
@@ -1549,7 +1552,7 @@ final class HologramUiConfiguration {
     }
 
     void rejectCommand(long sequence) {
-        presetPending.reject(sequence);
+        if (!ui.session.isTutorial()) presetPending.reject(sequence);
         if (basicConfigurationSequence == sequence) basicConfigurationSequence = -1;
     }
 
@@ -1701,8 +1704,86 @@ final class HologramUiConfiguration {
         return value;
     }
 
+    // Tutorial catalogs stay empty in memory; they never initialize or consult the shared user store.
+    private List<String> hatchPresetNames() {
+        return ui.session.isTutorial() || presetStore == null ? Collections.emptyList() : presetStore.names();
+    }
+
+    private NBTTagCompound hatchPreset(String name) {
+        return ui.session.isTutorial() || presetStore == null ? null : presetStore.get(name);
+    }
+
+    private NBTTagCompound lastPreset(boolean hatch) {
+        return ui.session.isTutorial() || presetStore == null ? null : presetStore.last(hatch);
+    }
+
+    // Native presentation adapters. Configuration, legality and command dispatch stay above.
+    int nativeHatchRole() {
+        return Math.floorMod(hatchRole, hatchRoles().size());
+    }
+
+    int nativeHatchTier() {
+        return hatchFilterTier;
+    }
+
+    int nativeRoleOffset() {
+        return roleOffset;
+    }
+
+    void nativeRoleOffset(int value) {
+        roleOffset = Math.max(0, Math.min(value, Math.max(0, hatchRoles().size() - 7)));
+    }
+
+    boolean nativeCustomPresets() {
+        return customPresets;
+    }
+
+    int nativePresetOffset() {
+        return presetOffset;
+    }
+
+    int nativePresetCount() {
+        return customPresets ? hatchPresetNames().size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
+    }
+
+    String nativePresetRow(int row) {
+        int index = presetOffset + row;
+        if (index < 0 || index >= nativePresetCount()) return "";
+        String name = customPresets ? hatchPresetNames().get(index) : tierName(index) + " · 按结构声明配额";
+        boolean chosen = customPresets ? name.equals(selectedHatchPreset) : index == presetTier;
+        return (chosen ? "✓ " : "") + name;
+    }
+
+    boolean nativeSelectedPreset() {
+        return hatchPreset(selectedHatchPreset) != null;
+    }
+
+    boolean nativeLastPreset(boolean hatch) {
+        return lastPreset(hatch) != null;
+    }
+
+    boolean nativePresetDowngrade() {
+        return presetDowngrade;
+    }
+
+    HologramMuiTextField nativePresetNameField() {
+        return hatchPresetNameField;
+    }
+
+    void normalizeNativeViewState() {
+        // These were view-only clamps/guards in drawConfig/drawHatches/drawPreset/drawOptions.
+        hatchRole = nativeHatchRole();
+        hatchOffset = Math.max(0, Math.min(hatchOffset, Math.max(0, filteredHatches().size() - 5)));
+        nativeRoleOffset(roleOffset);
+        presetOffset = Math.max(0, Math.min(presetOffset, Math.max(0, nativePresetCount() - 4)));
+        if (!optionChannel.isEmpty() && capability(optionChannel) == null) {
+            optionChannel = "";
+            if (optionValueField != null) optionValueField.setFocused(false);
+        }
+    }
+
     void initializeFields() {
-        if (presetStore == null) presetStore = new HologramConfigurationPresets(
+        if (!ui.session.isTutorial() && presetStore == null) presetStore = new HologramConfigurationPresets(
             new java.io.File(ui.host.minecraft().mcDataDir, "config/gtmb-hologram-presets.nbt"));
         hatchPresetNameField = new HologramMuiTextField(ui.host.parent(), 203, 186, 193, 17);
         hatchPresetNameField.setMaxStringLength(32);
@@ -1740,7 +1821,7 @@ final class HologramUiConfiguration {
     }
 
     void prepareCommand(String op, NBTTagCompound request, long sequence) {
-        if ("configure".equals(op)) {
+        if (!ui.session.isTutorial() && "configure".equals(op)) {
             if (request.getBoolean("applyHatchPreset")) {
                 boolean basic = !request.hasKey("hatchProfile", 10);
                 NBTTagCompound profile = basic ? new NBTTagCompound()

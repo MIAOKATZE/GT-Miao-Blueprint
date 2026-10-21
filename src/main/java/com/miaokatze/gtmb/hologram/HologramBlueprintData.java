@@ -71,6 +71,54 @@ final class HologramBlueprintData {
         return cell;
     }
 
+    /** Detach a physical capture using the metadata produced by its actual schema2 projection. */
+    static HologramCapture projectedCapture(HologramCapture original, HologramPresets.Preset projected, int originX,
+        int originY, int originZ) throws java.io.IOException {
+        java.util.Map<String, HologramPresets.Cell> saved = new java.util.HashMap<>();
+        for (HologramPresets.Cell cell : projected.cells) {
+            String key = (originX + cell.x) + "," + (originY + cell.y) + "," + (originZ + cell.z);
+            if (saved.put(key, cell) != null) throw new java.io.IOException("投影来源存在重复坐标");
+        }
+        HologramCapture detached = new HologramCapture(null, original.trigger);
+        detached.extensionReports = (NBTTagCompound) original.extensionReports.copy();
+        for (HologramCapture.Cell old : original.cells) {
+            String position = HologramValues.position(old);
+            HologramPresets.Cell source = saved.remove(position);
+            if (source == null) throw new java.io.IOException("投影来源未包含原结构格：" + position);
+            HologramCapture.Cell copy = blueprintCell(old, old.x, old.y, old.z);
+            copy.block = source.block();
+            copy.meta = source.metadata;
+            copy.unknown = source.missing();
+            setMemberships(copy, source.memberships());
+            copy.blueprintBlock = source.block == null ? "" : source.block;
+            copy.blueprintItem = source.item == null ? "" : source.item;
+            copy.blueprintDamage = source.damage;
+            copy.tileNbt = source.tileNbt == null ? "" : source.tileNbt;
+            copy.itemNbt = source.itemNbt == null ? "" : source.itemNbt;
+            copy.sourceClass = blueprintSourceClass(projected, copy.structureId);
+            copy.sourceWarning = blueprintSourceWarning(projected, copy.structureId);
+            copy.actualDisplay = (NBTTagCompound) old.actualDisplay.copy();
+            copy.targetDisplay = (NBTTagCompound) old.targetDisplay.copy();
+            copy.status = old.status;
+            copy.resourceTile = old.resourceTile;
+            copy.resourceItem = old.resourceItem;
+            // Schema2 controllers belong to their saved member and move only with that complete member.
+            copy.anchor = false;
+            if (source.controller) copy.role = "templateController";
+            if (source.allowedTargets != null) {
+                copy.structureTargets = new ArrayList<>();
+                for (HologramPresets.Target target : source.allowedTargets) {
+                    ItemStack stack = target.stack();
+                    if (stack != null) copy.structureTargets.add(stack);
+                }
+            }
+            detached.cells.add(copy);
+            detached.positions.put(position, copy);
+        }
+        if (!saved.isEmpty()) throw new java.io.IOException("投影来源包含不属于原结构的格");
+        return detached;
+    }
+
     static void updateHintArea(List<HologramPresets.HintArea> hints, HologramPresets.HintArea hint)
         throws java.io.IOException {
         hints.removeIf(

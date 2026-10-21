@@ -126,7 +126,7 @@ final class HologramCellPolicy {
         if (s.localPlanPending) return HologramEssentia.shellMaterial(draftTarget(s, c, index));
         if (index >= 0 && index < s.planTargets.size()) {
             ItemStack target = s.planTargets.get(index);
-            return target == null ? null : HologramEssentia.shellMaterial(target);
+            if (!hintMaterial(target)) return target == null ? null : HologramEssentia.shellMaterial(target);
         }
         return HologramEssentia.shellMaterial(draftTarget(s, c, index));
     }
@@ -157,14 +157,22 @@ final class HologramCellPolicy {
                 ((IGregTechTileEntity) actual).getMetaTileID());
             if (hatchElement(s, c, existing, true) != null) return existing;
         }
-        if (c.block != null && c.block != Blocks.air) {
+        if (c.block != null && c.block != Blocks.air && c.block != StructureLibAPI.getBlockHint()) {
             ItemStack block = HologramBlockIdentity.materialStack(c.block, c.meta);
             if (block != null) return block;
         }
         List<ItemStack> options = candidates(s, c);
-        return options.isEmpty() ? null
-            : options.get(0)
-                .copy();
+        for (ItemStack option : options)
+            if (!hintMaterial(option) && placeableSample(s, c, option)) return option.copy();
+        return null;
+    }
+
+    /** StructureLib's visual marker is never a payable construction material. */
+    static boolean hintMaterial(ItemStack sample) {
+        Block hint = StructureLibAPI.getBlockHint();
+        return hint != null && sample != null
+            && sample.getItem() != null
+            && Block.getBlockFromItem(sample.getItem()) == hint;
     }
 
     static boolean explicitTarget(HologramSession s, HologramCapture.Cell c, int index) {
@@ -940,8 +948,10 @@ final class HologramCellPolicy {
         List<ItemStack> result = new ArrayList<>();
         for (ItemStack stack : declaration.stacks) {
             Block block = Block.getBlockFromItem(stack.getItem());
-            if (!s.noHatches || (block != Blocks.air && (!block.hasTileEntity(stack.getItemDamage())
-                || HologramFrameSupport.inertFrameBlock(block, stack.getItemDamage())))) result.add(stack);
+            if (!s.noHatches || cell.block == StructureLibAPI.getBlockHint() && "hatch".equals(cell.role)
+                || (block != Blocks.air && (!block.hasTileEntity(stack.getItemDamage())
+                    || HologramFrameSupport.inertFrameBlock(block, stack.getItemDamage()))))
+                result.add(stack);
         }
         cell.candidateComplete = declaration.complete;
         cell.candidateBoundary = declaration.complete ? "" : "仅列出已识别的结构声明；自定义校验或动态条件未完整解析";
@@ -1116,6 +1126,7 @@ final class HologramCellPolicy {
 
     static boolean placeableSample(HologramSession s, HologramCapture.Cell cell, ItemStack sample) {
         if (cell.anchor || sample == null || sample.getItem() == null || sample.stackSize < 1) return false;
+        if (hintMaterial(sample)) return false;
         if (sample.getItemDamage() < 0) return false;
         if (s.virtual && (s.virtualPreset == null || (s.virtualPreset.schema < 2 && !s.virtualPreset.allows(sample))))
             return false;

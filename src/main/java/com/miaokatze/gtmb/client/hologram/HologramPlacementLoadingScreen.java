@@ -21,7 +21,7 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
                 .label(() -> HologramLibraryClient.INSTANCE.status(), 14, 42, 402, 32, HologramMuiTheme.TEXT));
         panel().child(
             new Progress().pos(14, 82)
-                .size(402, 30));
+                .size(402, 38));
         panel().child(
             HologramMuiTheme.button(
                 () -> "返回世界，后台继续",
@@ -39,9 +39,9 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
             HologramProgress progress = HologramBackgroundTasks.progress();
             if (progress == null) return;
-            HologramProgressView.draw(Minecraft.getMinecraft().fontRenderer, progress, 0, 0, 402, 7);
+            HologramProgressView.draw(Minecraft.getMinecraft().fontRenderer, progress, 0, 0, 402, 7, false);
             Minecraft.getMinecraft().fontRenderer
-                .drawString(HologramProgressView.detail(progress), 0, 16, HologramMuiTheme.MUTED);
+                .drawString(HologramProgressView.detail(progress), 0, 26, HologramEditorTheme.MUTED);
         }
     }
 }

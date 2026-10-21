@@ -75,6 +75,52 @@ final class HologramTextWorkflow {
         s.textPlacementAck = ack;
     }
 
+    /** Stage the actual projection before geometry edits; rejected additions retain the physical source unchanged. */
+    static void stageAttachment(HologramSession s, HologramPresets.Preset preset, List<HologramCapture.Cell> additions,
+        Set<String> remove, java.util.Map<String, Integer> payloadSizes) throws IOException {
+        HologramCapture previousCapture = s.capture;
+        HologramPresets.Preset previousPreset = s.virtualPreset;
+        boolean previousVirtual = s.virtual;
+        int previousSchema = preset.schema;
+        String previousName = preset.name;
+        java.util.Map<String, ItemStack> projectedTargets = null;
+        if (!previousVirtual && previousPreset == null) {
+            projectedTargets = new java.util.HashMap<>();
+            for (HologramPresets.Cell cell : preset.cells)
+                projectedTargets.put((s.x + cell.x) + "," + (s.y + cell.y) + "," + (s.z + cell.z), cell.stack());
+        }
+        HologramCapture stagingCapture = previousCapture == null
+            ? new HologramCapture(null, HologramSessionPolicy.trigger(s))
+            : !previousVirtual && previousPreset == null
+                ? HologramBlueprintData.projectedCapture(previousCapture, preset, s.x, s.y, s.z)
+                : previousCapture;
+        s.capture = stagingCapture;
+        s.virtual = true;
+        s.virtualPreset = preset;
+        preset.schema = 2;
+        if (preset.name == null) preset.name = "附加蓝图";
+        try {
+            HologramBlueprintEditor.stageGeometry(
+                s,
+                additions,
+                remove,
+                false,
+                java.util.Collections.emptyMap(),
+                false,
+                payloadSizes,
+                projectedTargets);
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            if (s.capture == stagingCapture) {
+                s.capture = previousCapture;
+                s.virtualPreset = previousPreset;
+                s.virtual = previousVirtual;
+                preset.schema = previousSchema;
+                preset.name = previousName;
+            }
+            throw failure;
+        }
+    }
+
     /** A private draft is staged over ticks; only the final validated batch changes the workspace. */
     static final class Task {
 
@@ -114,15 +160,23 @@ final class HologramTextWorkflow {
                 throw new IOException("目标不是附加对象");
             if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与附加对象数量超过上限");
             List<String> retained = new ArrayList<>();
+            boolean projectsPhysical = !s.virtual && s.virtualPreset == null && capture != null;
             if (capture != null) for (int i = 0; i < capture.cells.size(); i++) {
                 HologramCapture.Cell cell = capture.cells.get(i);
                 if (cell.belongsTo(text.id)) remove.add(HologramValues.position(cell));
                 else {
                     if (occupiesBlueprintPosition(cell, HologramCellPolicy.targetFor(s, cell, i)))
                         occupiedPositions.add(HologramValues.position(cell));
-                    retained.add(cell.tileNbt);
-                    retained.add(cell.itemNbt);
+                    if (!projectsPhysical) {
+                        retained.add(cell.tileNbt);
+                        retained.add(cell.itemNbt);
+                    }
                 }
+            }
+            // Initial physical conversion commits the projection's refreshed payload, not the old capture payload.
+            if (projectsPhysical) for (HologramPresets.Cell cell : preset.cells) {
+                retained.add(cell.tileNbt);
+                retained.add(cell.itemNbt);
             }
             for (HologramPresets.Cell cell : preset.palette) {
                 retained.add(cell.tileNbt);
@@ -226,32 +280,7 @@ final class HologramTextWorkflow {
                 if (!HologramSessionPolicy.previewReach(s.player, cell.x, cell.y, cell.z))
                     throw new IOException("附加对象位置超出编辑距离，请移动后重新确认");
             }
-            HologramCapture previousCapture = s.capture;
-            HologramPresets.Preset previousPreset = s.virtualPreset;
-            boolean previousVirtual = s.virtual;
-            if (s.capture == null) s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
-            HologramCapture stagingCapture = s.capture;
-            s.virtual = true;
-            s.virtualPreset = preset;
-            preset.schema = 2;
-            if (preset.name == null) preset.name = "附加蓝图";
-            try {
-                HologramBlueprintEditor.stageGeometry(
-                    s,
-                    additions,
-                    remove,
-                    false,
-                    java.util.Collections.emptyMap(),
-                    false,
-                    geometry.payloadSizes);
-            } catch (IOException | RuntimeException | LinkageError failure) {
-                if (s.capture == stagingCapture) {
-                    s.capture = previousCapture;
-                    s.virtualPreset = previousPreset;
-                    s.virtual = previousVirtual;
-                }
-                throw failure;
-            }
+            stageAttachment(s, preset, additions, remove, geometry.payloadSizes);
             HologramPresets.Structure group = existing == null ? new HologramPresets.Structure() : existing;
             group.id = text.id;
             String title = text.picture == null ? text.text : text.picture.filename;
