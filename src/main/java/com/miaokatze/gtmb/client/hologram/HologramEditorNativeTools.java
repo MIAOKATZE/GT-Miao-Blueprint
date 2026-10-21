@@ -65,7 +65,7 @@ final class HologramEditorNativeTools {
                 () -> "投影",
                 null,
                 () -> !ui.session.state().data.getBoolean("virtual"),
-                () -> !ui.library.libraryDrawer() && !ui.session.state().data.getBoolean("virtual"),
+                () -> !ui.session.state().data.getBoolean("virtual"),
                 () -> "返回当前真实控制器规划；没有真实会话时不可切入。",
                 false).size(42, 24));
         row.child(
@@ -74,7 +74,7 @@ final class HologramEditorNativeTools {
                 () -> "蓝图",
                 null,
                 () -> true,
-                () -> !ui.library.libraryDrawer() && ui.session.state().data.getBoolean("virtual"),
+                () -> ui.session.state().data.getBoolean("virtual"),
                 () -> "沿原作者编辑 / 蓝图库入口，不创建世界或新会话。",
                 false).size(42, 24));
         row.child(
@@ -92,7 +92,8 @@ final class HologramEditorNativeTools {
                 () -> "蓝图库",
                 "library",
                 () -> true,
-                () -> ui.library.libraryDrawer(),
+                () -> ui.shell.built() ? ui.shell.libraryPageSelected() && ui.shell.dockExpanded()
+                    : ui.library.libraryDrawer(),
                 () -> "打开真实蓝图库。",
                 true).size(28, 24));
         row.child(

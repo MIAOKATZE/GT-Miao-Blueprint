@@ -176,8 +176,9 @@ final class HologramEditorLegacyDialogs {
     void refresh() {
         if (!attached) return;
         for (Domain domain : domains) {
-            boolean visible = !ui.tutorial.active() && domain.visible.getAsBoolean();
+            boolean visible = domain.active();
             domain.panel.fit();
+            if (!visible) domain.panel.retireContent();
             if (visible && !domain.handler.isPanelOpen()) domain.handler.openPanel();
             else if (!visible && domain.handler.isPanelOpen()) domain.panel.closeIfOpen();
         }
@@ -206,6 +207,10 @@ final class HologramEditorLegacyDialogs {
             this.paint = paint;
             this.key = key;
             this.wheel = wheel;
+        }
+
+        boolean active() {
+            return !ui.tutorial.active() && visible.getAsBoolean();
         }
     }
 
@@ -260,7 +265,33 @@ final class HologramEditorLegacyDialogs {
             scheduleResize();
         }
 
+        /** MUI2 retains a closing panel through animation and safe input dispatch. Its business may already be gone. */
+        private void retireContent() {
+            for (NativeControl control : controls.values()) {
+                control.visible = false;
+                control.widget.setEnabled(false);
+            }
+            buttons.setEnabled(false);
+            fields.setEnabled(false);
+            if (isValid()) {
+                var located = getContext().getFocusedWidget();
+                var focused = located == null ? null : located.getElement();
+                if (focused != null && focused.isValid() && focused.getPanel() == this) getContext().removeFocus();
+            }
+        }
+
+        private boolean retireIfInactive() {
+            if (domain.active()) return false;
+            retireContent();
+            return true;
+        }
+
         private final class NativeLayer extends ParentWidget<NativeLayer> {
+
+            @Override
+            public boolean isEnabled() {
+                return super.isEnabled() && domain.active();
+            }
 
             @Override
             public boolean canHover() {
@@ -275,6 +306,7 @@ final class HologramEditorLegacyDialogs {
 
         @Override
         public boolean onKeyPressed(char character, int key) {
+            if (retireIfInactive()) return true;
             // Enter/Escape keep the domain's existing intent and RPC gates; ordinary text stays native.
             if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) {
                 domain.key.accept(character, key);
@@ -283,6 +315,26 @@ final class HologramEditorLegacyDialogs {
             if (super.onKeyPressed(character, key)) return true;
             if (key == Keyboard.KEY_E) domain.key.accept(character, key);
             return true;
+        }
+
+        @Override
+        public boolean onMousePressed(int button) {
+            return retireIfInactive() || super.onMousePressed(button);
+        }
+
+        @Override
+        public boolean onMouseRelease(int button) {
+            return retireIfInactive() || super.onMouseRelease(button);
+        }
+
+        @Override
+        public boolean onMouseDrag(int button, long timeSinceClick) {
+            return retireIfInactive() || super.onMouseDrag(button, timeSinceClick);
+        }
+
+        @Override
+        public boolean onMouseScroll(UpOrDown direction, int amount) {
+            return retireIfInactive() || super.onMouseScroll(direction, amount);
         }
 
         private final class LegacyViewport extends ScrollWidget<LegacyViewport> {
@@ -309,6 +361,7 @@ final class HologramEditorLegacyDialogs {
 
             @Override
             public boolean onMouseScroll(UpOrDown direction, int amount) {
+                if (retireIfInactive()) return true;
                 boolean page = !overflow() || Keyboard.isKeyDown(Keyboard.KEY_LCONTROL)
                     || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
                 if (page && domain.wheel != null && domain.wheel.test(direction.isUp() ? 1 : -1)) return true;
@@ -330,6 +383,9 @@ final class HologramEditorLegacyDialogs {
 
             @Override
             public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
+                if (retireIfInactive()) return;
+                buttons.setEnabled(true);
+                fields.setEnabled(true);
                 HologramMuiCanvasScreen owner = ui.host.parent();
                 List<HologramUiCanvas.Control> previous = new ArrayList<>(ui.canvas.controls());
                 List<String> previousTooltip = ui.canvas.tooltip();
@@ -380,7 +436,9 @@ final class HologramEditorLegacyDialogs {
             int x = Integer.MIN_VALUE, y, width, height;
 
             NativeControl(int id) {
-                widget = ui.shell.nativeAction(id, () -> label, () -> enabled && visible, () -> help);
+                // The native action is deferred; recheck the business at execution, not just the last painted frame.
+                widget = ui.shell
+                    .nativeAction(id, () -> label, () -> domain.active() && enabled && visible, () -> help);
                 normalBackground = widget.getBackground();
                 hoverBackground = widget.getHoverBackground();
                 // Item slots are painted by their domain body. Their native hit target must not cover the item.

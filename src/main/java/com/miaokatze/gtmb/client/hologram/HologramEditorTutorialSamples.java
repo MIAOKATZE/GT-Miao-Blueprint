@@ -63,11 +63,16 @@ final class HologramEditorTutorialSamples {
         for (String axis : new String[] { "x", "y", "z" }) require(
             physical.data.getInteger(axis) == declared.getInteger(axis),
             "Recorded controller positions differ");
+        // Physical targetStack may still encode world metadata; actualStack identifies the controller device.
         NBTTagCompound before = controller(physical.data, true), after = controller(author.data, false);
         require(
             before != null && after != null
-                && before.hasKey("targetStack", 10)
-                && before.getCompoundTag("targetStack")
+                && before.hasKey("actualStack", 10)
+                && after.hasKey("actualStack", 10)
+                && after.hasKey("targetStack", 10)
+                && before.getCompoundTag("actualStack")
+                    .equals(after.getCompoundTag("actualStack"))
+                && before.getCompoundTag("actualStack")
                     .equals(after.getCompoundTag("targetStack")),
             "Recorded controller device identities differ");
         for (String axis : new String[] { "x", "y", "z" }) require(

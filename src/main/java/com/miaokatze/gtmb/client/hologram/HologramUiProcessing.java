@@ -60,7 +60,7 @@ final class HologramUiProcessing {
     }
 
     boolean processingChoiceReady() {
-        return this.processingFlow.chosen()
+        return this.processingFlow != null && this.processingFlow.chosen()
             && (this.processingFlow.stage != 4 || this.processingFlow.resourceChoicesReady(resourceReview()));
     }
 
@@ -130,6 +130,7 @@ final class HologramUiProcessing {
     }
 
     void drawProcessingFlow(int mx, int my) {
+        if (this.processingFlow == null) return;
         drawRect(28, 48, 650, 304, 0xff172f36);
         int stage = this.processingFlow.stage;
         NBTTagCompound policy = this.processingFlow.values();

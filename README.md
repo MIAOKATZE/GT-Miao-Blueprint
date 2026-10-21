@@ -17,9 +17,13 @@
 
 ### v0.1.37 原生编辑器体验 / Native editor experience
 
-以下说明对应 v0.1.37 本地候选，作为功能介绍，不代表原生验收或正式发布。新版编辑器提供纸张与像素风图标、悬浮提示、全屏等距结构快照、可伸缩蓝图库，以及点击库行直接切换蓝图并更新中央预览；有未保存修改时仅在切换前询问一次，取消会保留当前草稿。外层入口分为投影、蓝图与剪切，可自定义快捷键，并提供智能操作指引和 8 个独立动画课程；课程只演示操作，不会替你提交真实蓝图、世界放置或剪切。
+编辑器采用纸张风格面板、低分辨率像素图标和悬浮提示。全屏等距快照保留中央操作空间，属性、蓝图设置和蓝图库收进可伸缩侧栏；点击库行直接切换蓝图并更新中央预览，有未保存修改时只在切换前询问一次，取消会保留当前草稿。外层入口分为投影、蓝图与剪切，可自定义快捷键，并提供按当前操作变化、可持久收纳的智能指引。
 
-The following describes the v0.1.37 local candidate and is not a native acceptance or release notice. The editor adds paper and pixel-style icons, tooltips, a full-screen isometric structure snapshot, a collapsible library, and direct row selection that switches the blueprint and central preview. Unsaved work prompts once before switching; cancel keeps the current draft. The outer workspaces are Projection, Blueprint and Cut, with customizable shortcuts, smart guidance and eight isolated animated lessons. Lessons demonstrate actions without submitting a real blueprint, world placement or Cut operation.
+The editor uses paper panels, low-resolution pixel icons and tooltips. A full-screen isometric snapshot leaves room for editing, with properties, blueprint settings and the library in a collapsible sidebar. Select a library row to switch the blueprint and central preview; unsaved work prompts once before switching, and cancel keeps the draft. Projection, Blueprint and Cut have separate entries, customizable shortcuts and contextual guidance with a saved collapse preference.
+
+八门动画教程分别介绍投影、蓝图、剪切列表、结构操作，以及普通/等距框选和普通/等距剪切。教程鼠标连续演示操作，只允许使用底部「上一步、下一步、跳过、从头开始」四个按钮；上一步回到该步动画开头，退出恢复原工作区。教程使用独立教学状态，不提交真实蓝图或世界操作；可从教程入口再次播放。
+
+Eight animated lessons cover Projection, Blueprint, the Cut list, structure controls, and normal/isometric selection and Cut. The demonstration cursor shows each action; only Previous, Next, Skip and Restart are interactive. Previous replays a step from its beginning, and leaving restores the original workspace. Lessons use isolated teaching state and can be replayed without submitting real blueprints or world operations.
 
 README 当前内嵌配图仍是此前提供的 UI 示例，原图与 [截图 manifest](README/screenshots/manifest.json) 保持不变；它们不是 v0.1.37 原生运行截图或验收证据。新原生截图后续放入版本专属目录。
 
