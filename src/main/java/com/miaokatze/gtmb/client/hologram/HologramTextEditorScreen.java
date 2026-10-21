@@ -6,7 +6,6 @@ import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
 
-import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.api.widget.Interactable;
 import com.cleanroommc.modularui.drawable.GuiTextures;
 import com.cleanroommc.modularui.value.ObjectValue;
@@ -118,8 +117,9 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 368,
                 160,
                 20,
-                () -> Minecraft.getMinecraft()
-                    .displayGuiScreen(ui.host.parent())));
+                () -> deferAction(
+                    () -> Minecraft.getMinecraft()
+                        .displayGuiScreen(ui.host.parent()))));
         panel().child(HologramMuiTheme.button(() -> "字体预设", 180, 368, 124, 20, this::openPresets));
         panel().child(
             HologramMuiTheme.primaryButton(
@@ -294,21 +294,23 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     }
 
     private void openColorPicker() {
-        IPanelHandler
-            .simple(
-                panel(),
-                (parent, player) -> new ColorPickerDialog(
-                    "gtmb_text_color",
-                    color -> values.get("color")
-                        .setStringValue(String.format(java.util.Locale.ROOT, "%06X", color & 0xffffff)),
-                    0xff000000 | tint(),
-                    false).background(HologramMuiTheme.CLOTH),
-                true)
-            .openPanel();
+        openDialog(
+            "gtmb_text_color",
+            (parent, player) -> new ColorPickerDialog(
+                "gtmb_text_color",
+                color -> values.get("color")
+                    .setStringValue(String.format(java.util.Locale.ROOT, "%06X", color & 0xffffff)),
+                0xff000000 | tint(),
+                false).background(HologramMuiTheme.CLOTH));
+    }
+
+    @Override
+    protected void onMuiActionFailure(RuntimeException failure) {
+        notice = failure.getMessage() == null ? "文字编辑操作失败，请重试" : failure.getMessage();
     }
 
     private void openInventory() {
-        IPanelHandler.simple(panel(), (parent, player) -> {
+        openDialog("gtmb_text_material_inventory", (parent, player) -> {
             Dialog<ItemStack> inventory = new Dialog<>("gtmb_text_material_inventory", this::sample);
             inventory.size(202, 166)
                 .background(HologramMuiTheme.CLOTH);
@@ -326,8 +328,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
             }
             inventory.child(HologramMuiTheme.button(() -> "返回材质设置", 20, 136, 162, 20, inventory::closeIfOpen));
             return inventory;
-        }, true)
-            .openPanel();
+        });
     }
 
     /** Native item rendering and slot backgrounds; sampling never moves or edits the real inventory. */

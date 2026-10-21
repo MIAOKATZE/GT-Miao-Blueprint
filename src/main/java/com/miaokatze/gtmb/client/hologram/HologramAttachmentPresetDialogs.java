@@ -6,7 +6,6 @@ import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
 
-import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widgets.Dialog;
@@ -27,10 +26,10 @@ final class HologramAttachmentPresetDialogs {
         try {
             HologramAttachmentPresets store = store();
             if (store.matches(picture, settings)) {
-                proceed.run();
+                screen.deferAction(proceed);
                 return;
             }
-            IPanelHandler.simple(screen.panel(), (parent, player) -> {
+            screen.openDialog("gtmb_attachment_save_preset", (parent, player) -> {
                 Dialog<?> dialog = new Dialog<>("gtmb_attachment_save_preset", null);
                 dialog.size(350, 164)
                     .background(HologramMuiTheme.CLOTH);
@@ -48,18 +47,17 @@ final class HologramAttachmentPresetDialogs {
                     try {
                         store.save(picture, name.getStringValue(), settings);
                         dialog.closeIfOpen();
-                        proceed.run();
+                        screen.deferAction(proceed);
                     } catch (IOException failure) {
                         error[0] = failure.getMessage();
                     }
                 }));
                 dialog.child(HologramMuiTheme.button(() -> "不保存", 184, 126, 150, 22, () -> {
                     dialog.closeIfOpen();
-                    proceed.run();
+                    screen.deferAction(proceed);
                 }));
                 return dialog;
-            }, true)
-                .openPanel();
+            });
         } catch (IOException failure) {
             error(screen, failure.getMessage());
         }
@@ -68,7 +66,7 @@ final class HologramAttachmentPresetDialogs {
     static void open(HologramMuiScreen screen, boolean picture, Consumer<NBTTagCompound> apply) {
         try {
             HologramAttachmentPresets store = store();
-            IPanelHandler.simple(screen.panel(), (parent, player) -> {
+            screen.openDialog("gtmb_attachment_preset_list", (parent, player) -> {
                 Dialog<?> dialog = new Dialog<>("gtmb_attachment_preset_list", null);
                 dialog.size(400, 310)
                     .background(HologramMuiTheme.CLOTH);
@@ -118,8 +116,7 @@ final class HologramAttachmentPresetDialogs {
                         HologramMuiTheme.TITLE));
                 dialog.child(HologramMuiTheme.button(() -> "返回编辑", 110, 280, 180, 22, dialog::closeIfOpen));
                 return dialog;
-            }, true)
-                .openPanel();
+            });
         } catch (IOException failure) {
             error(screen, failure.getMessage());
         }
@@ -127,7 +124,7 @@ final class HologramAttachmentPresetDialogs {
 
     private static void rename(HologramMuiScreen screen, HologramAttachmentPresets store,
         HologramAttachmentPresets.Entry entry) {
-        IPanelHandler.simple(screen.panel(), (parent, player) -> {
+        screen.openDialog("gtmb_attachment_rename_preset", (parent, player) -> {
             Dialog<?> dialog = new Dialog<>("gtmb_attachment_rename_preset", null);
             dialog.size(320, 144)
                 .background(HologramMuiTheme.CLOTH);
@@ -146,12 +143,11 @@ final class HologramAttachmentPresetDialogs {
             }));
             dialog.child(HologramMuiTheme.button(() -> "返回列表", 168, 104, 136, 22, dialog::closeIfOpen));
             return dialog;
-        }, true)
-            .openPanel();
+        });
     }
 
     private static void error(HologramMuiScreen screen, String reason) {
-        IPanelHandler.simple(screen.panel(), (parent, player) -> {
+        screen.openDialog("gtmb_attachment_preset_error", (parent, player) -> {
             Dialog<?> dialog = new Dialog<>("gtmb_attachment_preset_error", null);
             dialog.size(350, 130)
                 .background(HologramMuiTheme.CLOTH);
@@ -159,7 +155,6 @@ final class HologramAttachmentPresetDialogs {
             dialog.child(HologramMuiTheme.label(() -> reason, 16, 36, 318, 46, HologramMuiTheme.TITLE));
             dialog.child(HologramMuiTheme.button(() -> "返回编辑", 90, 94, 170, 22, dialog::closeIfOpen));
             return dialog;
-        }, true)
-            .openPanel();
+        });
     }
 }

@@ -216,8 +216,9 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 430,
                 160,
                 20,
-                () -> Minecraft.getMinecraft()
-                    .displayGuiScreen(ui.host.parent())));
+                () -> deferAction(
+                    () -> Minecraft.getMinecraft()
+                        .displayGuiScreen(ui.host.parent()))));
         panel().child(
             HologramMuiTheme.primaryButton(
                 () -> loading ? "正在转换…" : ui.session.state().cells.isEmpty() ? "确认图片 · 生成像素画" : "确认图片 · 选择放置位置",
@@ -416,6 +417,11 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
 
     private static String message(Exception failure) {
         return failure.getMessage() == null ? "图片参数无效，请检查后重试" : failure.getMessage();
+    }
+
+    @Override
+    protected void onMuiActionFailure(RuntimeException failure) {
+        notice = message(failure);
     }
 
     private static void main(Runnable callback) {

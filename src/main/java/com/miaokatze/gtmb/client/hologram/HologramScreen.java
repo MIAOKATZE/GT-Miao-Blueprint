@@ -49,6 +49,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     @Override
+    protected void onMuiActionFailure(RuntimeException failure) {
+        ui.session.notice(failure.getMessage() == null ? "界面操作失败，请重试" : failure.getMessage());
+    }
+
+    @Override
     public void onGuiClosed() {
         ui.memory.rememberUi();
         HologramBackgroundTasks.rememberUi(ui);

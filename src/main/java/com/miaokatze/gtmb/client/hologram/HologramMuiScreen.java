@@ -1,21 +1,28 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 
 import org.lwjgl.input.Keyboard;
 
+import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.api.UpOrDown;
 import com.cleanroommc.modularui.api.layout.IViewportStack;
 import com.cleanroommc.modularui.screen.GuiScreenWrapper;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.ModularScreen;
+import com.cleanroommc.modularui.screen.SecondaryPanel;
 import com.cleanroommc.modularui.screen.UISettings;
 
 /** Client-only MUI2 screen. Business packets stay with their existing authenticated handlers. */
 abstract class HologramMuiScreen extends GuiScreenWrapper {
 
     private boolean built;
+    private final HologramUiDeferredAction deferredAction = new HologramUiDeferredAction();
+    private final Map<String, LocalDialog> dialogs = new HashMap<>();
 
     HologramMuiScreen(String name, int width, int height) {
         super(createScreen(name, width, height));
@@ -64,11 +71,51 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
 
     protected abstract void buildPanel();
 
+    /** The next MUI tick runs after input's panel/manager doSafe scopes have returned. */
+    final void deferAction(Runnable action) {
+        deferredAction.offer(action);
+    }
+
+    final void openDialog(String name, SecondaryPanel.IPanelBuilder builder) {
+        deferAction(
+            () -> dialogs.computeIfAbsent(name, ignored -> new LocalDialog(panel()))
+                .open(builder));
+    }
+
+    /** PanelManager retains the first handler for a name for the entire screen lifetime. */
+    static final class LocalDialog {
+
+        private SecondaryPanel.IPanelBuilder builder;
+        private final IPanelHandler handler;
+
+        LocalDialog(ModularPanel parent) {
+            handler = IPanelHandler.simple(parent, (panel, player) -> builder.build(panel, player), true);
+        }
+
+        void open(SecondaryPanel.IPanelBuilder next) {
+            if (prepare(next)) handler.openPanel();
+        }
+
+        boolean prepare(SecondaryPanel.IPanelBuilder next) {
+            if (handler.isPanelOpen()) return false;
+            builder = next;
+            // Local dialogs contain draft values/closures, not server inventory slots.
+            handler.deleteCachedPanel();
+            return true;
+        }
+    }
+
     boolean retainAttachmentEditor(HologramState next) {
         return false;
     }
 
     protected void onMuiClose() {}
+
+    protected void onMuiActionFailure(RuntimeException failure) {
+        if (Minecraft.getMinecraft().thePlayer != null) Minecraft.getMinecraft().thePlayer.addChatMessage(
+            new net.minecraft.util.ChatComponentText(
+                "GTMB 界面操作失败，请重试：" + (failure.getMessage() == null ? "窗口初始化失败" : failure.getMessage())));
+    }
 
     protected boolean muiKey(char character, int key) {
         return false;
@@ -90,6 +137,24 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
 
         ProjectorScreen(ModularPanel panel) {
             super("gtmb", panel);
+        }
+
+        @Override
+        public void onUpdate() {
+            super.onUpdate();
+            try {
+                owner.deferredAction.run(Minecraft.getMinecraft().currentScreen == owner && getPanelManager().isOpen());
+            } catch (RuntimeException failure) {
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Deferred UI action failed", failure);
+                owner.onMuiActionFailure(failure);
+            }
+        }
+
+        @Override
+        public void onClose() {
+            // Suspension (including NEI), replacement and final close retire queued input intent.
+            owner.deferredAction.clear();
+            super.onClose();
         }
 
         @Override
@@ -164,6 +229,7 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
             super.dispose();
             if (!notified) {
                 notified = true;
+                owner.deferredAction.clear();
                 owner.onMuiClose();
             }
         }

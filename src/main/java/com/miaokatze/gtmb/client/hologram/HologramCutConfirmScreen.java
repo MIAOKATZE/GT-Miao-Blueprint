@@ -76,6 +76,10 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
     }
 
     private void finish(boolean accepted, boolean skipPrompt) {
+        deferAction(() -> finishDeferred(accepted, skipPrompt));
+    }
+
+    private void finishDeferred(boolean accepted, boolean skipPrompt) {
         if (finished) return;
         accepted = accepted && mc.theWorld == world
             && mc.getNetHandler() == connection

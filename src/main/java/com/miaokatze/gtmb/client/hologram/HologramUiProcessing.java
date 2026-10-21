@@ -602,8 +602,10 @@ final class HologramUiProcessing {
         } else if (id == 263) {
             if (ui.session.editable() && ui.processing.processingState()
                 .getTagList("quantumNodes", 10)
-                .tagCount() > 0) ui.host.minecraft()
-                    .displayGuiScreen(new HologramQuantumGroupsScreen(ui.host.parent(), ui.session.state()));
+                .tagCount() > 0) ui.host.parent()
+                    .deferAction(
+                        () -> ui.host.minecraft()
+                            .displayGuiScreen(new HologramQuantumGroupsScreen(ui.host.parent(), ui.session.state())));
         } else if (id >= 270 && id <= 273) {
             values.setString("coordinateDefault", new String[] { "auto", "clear", "absolute", "relative" }[id - 270]);
             this.processingFlow.choose();

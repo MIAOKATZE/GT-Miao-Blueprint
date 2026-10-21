@@ -107,6 +107,9 @@ public final class HologramRegressionTest {
             "projector_family_uses_native_mui2_controls_and_shared_pocket_textures",
             com.miaokatze.gtmb.client.hologram.HologramMuiMigrationRegression::run);
         cases.put(
+            "attachment_dialog_reopen_refreshes_closures_and_retires_stale_input",
+            com.miaokatze.gtmb.client.hologram.HologramUiLifecycleRegression::run);
+        cases.put(
             "cut_storage_preview_fences_selection_lifecycle_and_late_raw_replies",
             com.miaokatze.gtmb.client.hologram.HologramCutStoragePreviewRegression::run);
         cases.put(
