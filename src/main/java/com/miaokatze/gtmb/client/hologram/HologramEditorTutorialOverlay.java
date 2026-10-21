@@ -53,7 +53,7 @@ final class HologramEditorTutorialOverlay {
     ModularPanel build() {
         if (panel != null) return panel;
         // A full-screen native shield consumes input. Avoid MUI's unrelated 49% modal scrim over the focus.
-        panel = new Dialog<Void>("gtmb_tutorial_overlay").setDisablePanelsBelow(false)
+        panel = new Dialog<Void>(ui.panelName("gtmb_tutorial_overlay")).setDisablePanelsBelow(false)
             .setCloseOnOutOfBoundsClick(false)
             .setDraggable(false)
             .size(host.screenWidth(), host.screenHeight())

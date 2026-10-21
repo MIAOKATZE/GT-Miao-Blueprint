@@ -31,8 +31,7 @@ final class HologramEditorPropertiesPane {
 
     IWidget build() {
         dialogs.prepare();
-        ListWidget<IWidget, ?> list = new ListWidget<>().widthRel(1f)
-            .expanded();
+        ListWidget<IWidget, ?> list = new ListWidget<>().sizeRel(1f);
         list.child(label(() -> "目标属性"));
         list.child(
             label(

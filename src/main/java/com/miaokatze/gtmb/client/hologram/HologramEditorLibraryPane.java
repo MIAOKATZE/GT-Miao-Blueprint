@@ -40,7 +40,7 @@ final class HologramEditorLibraryPane {
             .childPadding(4);
         root.child(
             new PagedWidget<>().name("library_pages")
-                .widthRel(1f)
+                .sizeRel(1f)
                 .expanded()
                 .controller(pages)
                 .addPage(library())
@@ -62,6 +62,7 @@ final class HologramEditorLibraryPane {
                 .childPadding(4)
                 .child(
                     HologramEditorNativeTheme.label(() -> "蓝图库 · " + total + " 项")
+                        .widthRel(1f)
                         .expanded()
                         .height(18))
                 .child(
@@ -78,17 +79,20 @@ final class HologramEditorLibraryPane {
                         201,
                         () -> ui.library.publicLibrary() ? "服务器" : "客户端",
                         () -> !ui.session.isTutorial() && ui.library.nativeDedicated() && ui.library.nativeIdle(),
-                        () -> "切换客户端与服务器目录，保留当前工作区。").expanded()
+                        () -> "切换客户端与服务器目录，保留当前工作区。").widthRel(1f)
+                            .expanded()
                             .height(20))
                 .child(
-                    action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站，遵循客户端外链确认。").expanded()
+                    action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站，遵循客户端外链确认。").widthRel(1f)
+                        .expanded()
                         .height(20))
                 .child(
                     local(
                         HologramEditorControlIds.LIBRARY + 4,
                         () -> "刷新",
                         this::idle,
-                        ui.library::nativeRefreshCatalog).expanded()
+                        ui.library::nativeRefreshCatalog).widthRel(1f)
+                            .expanded()
                             .height(20)));
         page.child(
             ui.shell.adoptField(ui.library.presetNameField())
@@ -101,14 +105,17 @@ final class HologramEditorLibraryPane {
                 .height(22)
                 .childPadding(4)
                 .child(
-                    action(140, () -> "保存蓝图", ui.library::nativeCanSave, () -> "沿用作者处理、原生预览和最终保存回执；保存不会施工。").expanded()
+                    action(140, () -> "保存蓝图", ui.library::nativeCanSave, () -> "沿用作者处理、原生预览和最终保存回执；保存不会施工。")
+                        .widthRel(1f)
+                        .expanded()
                         .height(22))
                 .child(
                     action(
                         222,
                         () -> "覆盖保存 " + (ui.library.overwriteMode() ? "✓" : "×"),
                         () -> !ui.session.isTutorial() && !ui.library.browsePreviewActive(),
-                        () -> "覆盖模式中点行仅指定目标，保存前再核对名称与身份。").expanded()
+                        () -> "覆盖模式中点行仅指定目标，保存前再核对名称与身份。").widthRel(1f)
+                            .expanded()
                             .height(22)));
         HologramRecessedList list = new HologramRecessedList().name("library_rows")
             .widthRel(1f)
@@ -160,6 +167,7 @@ final class HologramEditorLibraryPane {
                                     + Math.min(total, ui.library.libraryOffset() + ROWS)
                                     + " / "
                                     + total)
+                        .widthRel(1f)
                         .expanded()
                         .height(18))
                 .child(
@@ -182,6 +190,7 @@ final class HologramEditorLibraryPane {
                 .child(
                     HologramEditorNativeTheme
                         .label(() -> (ui.library.nativeServerPage() + 1) + " / " + ui.library.nativeServerPages())
+                        .widthRel(1f)
                         .expanded()
                         .height(18))
                 .child(
@@ -218,13 +227,14 @@ final class HologramEditorLibraryPane {
                 .childPadding(4)
                 .child(
                     HologramEditorNativeTheme.label(() -> "蓝图库管理")
+                        .widthRel(1f)
                         .expanded()
                         .height(18))
                 .child(
                     local(HologramEditorControlIds.LIBRARY + 5, () -> "返回", () -> true, () -> pages.setPage(0))
                         .width(48)
                         .height(20)));
-        HologramRecessedList list = new HologramRecessedList().widthRel(1f)
+        HologramRecessedList list = new HologramRecessedList().sizeRel(1f)
             .expanded();
         list.child(
             action(

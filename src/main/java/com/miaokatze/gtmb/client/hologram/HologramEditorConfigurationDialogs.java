@@ -74,7 +74,7 @@ final class HologramEditorConfigurationDialogs {
     }
 
     private ModularPanel dialog(String name, Supplier<String> title, Flow content, Runnable close, int height) {
-        Dialog<?> panel = new Dialog<Object>("gtmb_editor_configuration_" + name) {
+        Dialog<?> panel = new Dialog<Object>(ui.panelName("gtmb_editor_configuration_" + name)) {
 
             @Override
             public boolean onKeyPressed(char character, int key) {
@@ -103,6 +103,7 @@ final class HologramEditorConfigurationDialogs {
         Flow heading = row();
         heading.child(
             HologramEditorNativeTheme.label(title, HologramEditorNativeTheme.TITLE)
+                .widthRel(1f)
                 .expanded()
                 .height(20));
         ButtonWidget<?> closeButton = local(() -> "×", () -> {
@@ -146,7 +147,7 @@ final class HologramEditorConfigurationDialogs {
     }
 
     private ListWidget<IWidget, ?> list() {
-        return new ListWidget<>().widthRel(1f)
+        return new ListWidget<>().sizeRel(1f)
             .expanded();
     }
 
@@ -218,6 +219,7 @@ final class HologramEditorConfigurationDialogs {
                             + Math.min(count.getAsInt(), offset.getAsInt() + page)
                             + " / "
                             + count.getAsInt())
+                .widthRel(1f)
                 .expanded()
                 .height(20));
         row.child(
@@ -678,7 +680,8 @@ final class HologramEditorConfigurationDialogs {
                 .childPadding(4);
             for (int col = 0; col < 9; col++) {
                 final int slot = row * 9 + col;
-                SampleButton button = new SampleButton(slot).expanded()
+                SampleButton button = new SampleButton(slot).widthRel(1f)
+                    .expanded()
                     .height(30);
                 ui.shell.registerTarget("config.inventory.sample." + slot, button);
                 line.child(button);

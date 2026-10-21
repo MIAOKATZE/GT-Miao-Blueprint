@@ -6,6 +6,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import net.minecraft.nbt.NBTTagCompound;
+
 import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.PanelManager;
@@ -23,6 +25,7 @@ public final class HologramUiLifecycleRegression {
         try {
             libraryKeepsTheFirstHandler();
             freshDialogClosures();
+            isolatedGraphsKeepSeparateHandlers();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Cannot inspect MUI2 2.3.92 local dialog state", failure);
         }
@@ -82,8 +85,72 @@ public final class HologramUiLifecycleRegression {
         handlers.put("same_name", first);
         manager.openPanel(new Dialog<>("same_name"), replacement);
         SimpleAssert.that(handlers.get("same_name") == first, "real MUI manager keeps the first named handler");
+        first.deleteCachedPanel();
+        SimpleAssert
+            .that(handlers.get("same_name") == first, "deleting the panel cache does not unregister its named handler");
         SimpleAssert
             .that(!replacement.isPanelOpen(), "a newly supplied handler cannot replace the registered provider");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void isolatedGraphsKeepSeparateHandlers() throws ReflectiveOperationException {
+        HologramUiModules live = new HologramUiModules(null);
+        HologramUiModules firstLesson = new HologramUiModules(null);
+        HologramUiModules replay = new HologramUiModules(null);
+        HologramState sample = new HologramState(new NBTTagCompound());
+        firstLesson.session.initializeIsolated(sample, (operation, request) -> {});
+        replay.session.initializeIsolated(sample, (operation, request) -> {});
+        String[] bases = { "gtmb_tutorial_scene", "gtmb_tutorial_overlay", "gtmb_tutorial_materials",
+            "gtmb_editor_configuration_channels", "gtmb_native_library_discard", "gtmb_editor_context_tools",
+            "gtmb_editor_reference", "gtmb_editor_pinned_annotation", "gtmb_editor_advanced_processing" };
+        for (String base : bases) {
+            SimpleAssert.eq(base, live.panelName(base), "live panel identities stay compatible");
+            SimpleAssert.that(
+                !live.panelName(base)
+                    .equals(firstLesson.panelName(base)),
+                "lesson never reuses a live panel name");
+            SimpleAssert.that(
+                !firstLesson.panelName(base)
+                    .equals(replay.panelName(base)),
+                "a replay owns a new panel graph");
+            SimpleAssert.eq(
+                firstLesson.panelName(base),
+                firstLesson.panelName(base),
+                "one graph reuses its cached panel identity");
+        }
+
+        ModularPanel parent = new ModularPanel("graph_regression_parent");
+        PanelManager manager = new PanelManager(null, parent);
+        Map<String, IPanelHandler> handlers = (Map<String, IPanelHandler>) field(PanelManager.class, "panelHandlerMap")
+            .get(manager);
+        List<String> closures = new ArrayList<>();
+        HologramUiModules[] graphs = { live, firstLesson, replay };
+        for (int i = 0; i < graphs.length; i++) {
+            String graph = "graph-" + i;
+            String name = graphs[i].panelName("gtmb_editor_configuration_channels");
+            SecondaryPanel registered = new SecondaryPanel(
+                parent,
+                (p, player) -> new Dialog<String>(name, ignored -> closures.add(graph)),
+                true);
+            field(SecondaryPanel.class, "open").setBoolean(registered, true);
+            handlers.put(name, registered);
+            registered.deleteCachedPanel();
+            SecondaryPanel replacement = new SecondaryPanel(parent, (p, player) -> new Dialog<>(name), true);
+            // Exercise the actual first-handler branch without initializing an unrelated Minecraft window.
+            manager.openPanel(new Dialog<>(name), replacement);
+            SimpleAssert.that(
+                handlers.get(name) == registered && !replacement.isPanelOpen(),
+                "MUI resolves only this graph's original provider after a cache deletion");
+            SecondaryPanel.IPanelBuilder provider = (SecondaryPanel.IPanelBuilder) field(
+                SecondaryPanel.class,
+                "provider").get(handlers.get(name));
+            ((Dialog<String>) provider.build(parent, null)).closeWith("confirmed");
+        }
+        SimpleAssert.eq(3, handlers.size(), "live, first lesson and replay coexist in the real named-handler map");
+        SimpleAssert.eq(
+            Arrays.asList("graph-0", "graph-1", "graph-2"),
+            closures,
+            "each cached provider keeps its own graph callback instead of reopening live or previous lesson fields");
     }
 
     private static void freshDialogClosures() throws ReflectiveOperationException {

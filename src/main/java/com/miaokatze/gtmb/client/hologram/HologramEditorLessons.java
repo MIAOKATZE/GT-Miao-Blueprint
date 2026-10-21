@@ -10,6 +10,7 @@ final class HologramEditorLessons {
 
     enum Operation {
         CONTROL,
+        HOVER,
         SELECT_CELL,
         SELECT_STRUCTURE,
         HANDLES,
@@ -225,11 +226,17 @@ final class HologramEditorLessons {
             control(78));
         add(
             s,
-            "图文与选位",
-            "空稿生成可直接提交；非空稿新增先以 ghost 选位，同 ID 可重编辑。",
-            "viewport",
-            action(Operation.CLOSE_PANEL, "modal.close"));
-        add(s, "图文确认", "轴线和平面只调整待确认预览；确认前保持原稿。", "viewport", action(Operation.HANDLES, "viewport"));
+            "文字工具入口",
+            "文字工具另开独立编辑窗口。本课只悬停说明入口，不创建文字；继续演示结构与蓝图处理。",
+            "control." + (HologramEditorControlIds.TOOLS + commands.index("text")),
+            action(Operation.CLOSE_PANEL, "modal.close"),
+            action(Operation.HOVER, "text"));
+        add(
+            s,
+            "图片工具入口",
+            "图片工具另开独立编辑窗口。本课只悬停说明入口，不生成图片，也不模拟选位或确认。",
+            "control." + (HologramEditorControlIds.TOOLS + commands.index("image")),
+            action(Operation.HOVER, "image"));
         add(
             s,
             "注释与区域",

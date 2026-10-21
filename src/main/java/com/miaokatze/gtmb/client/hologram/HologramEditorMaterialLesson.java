@@ -41,7 +41,7 @@ final class HologramEditorMaterialLesson {
         if (panel != null) return panel;
         int width = Math.max(260, Math.min(600, ui.host.screenWidth() - 24));
         int height = Math.max(180, Math.min(390, ui.host.screenHeight() - 140));
-        panel = new Dialog<Void>("gtmb_tutorial_materials").setDisablePanelsBelow(false)
+        panel = new Dialog<Void>(ui.panelName("gtmb_tutorial_materials")).setDisablePanelsBelow(false)
             .setCloseOnOutOfBoundsClick(false)
             .size(width, height)
             .background(HologramEditorNativeTheme.PANEL);
@@ -55,7 +55,7 @@ final class HologramEditorMaterialLesson {
                 .widthRel(1f)
                 .height(17)
                 .name("materials.title"));
-        ListWidget<IWidget, ?> body = new ListWidget<>().widthRel(1f)
+        ListWidget<IWidget, ?> body = new ListWidget<>().sizeRel(1f)
             .expanded()
             .name("materials.rows")
             .background(IDrawable.NONE)
@@ -79,6 +79,7 @@ final class HologramEditorMaterialLesson {
             .childPadding(5);
         header.child(
             HologramEditorNativeTheme.label(() -> "材料 / 精确 NBT")
+                .widthRel(1f)
                 .expanded()
                 .height(17));
         for (String name : new String[] { "需求", "已有", "缺失" }) header.child(
@@ -120,6 +121,7 @@ final class HologramEditorMaterialLesson {
                         .name("materials.cancel"))
                 .child(
                     HologramEditorNativeTheme.primaryButton(() -> "最终确认 · 仅示范", () -> {})
+                        .widthRel(1f)
                         .expanded()
                         .height(20)
                         .name("materials.confirm")));
@@ -182,6 +184,7 @@ final class HologramEditorMaterialLesson {
             .name(name);
         for (String label : labels) result.child(
             HologramEditorNativeTheme.button(() -> label, () -> {})
+                .widthRel(1f)
                 .expanded()
                 .height(20));
         return result;

@@ -213,7 +213,7 @@ final class HologramEditorAnnotationOverlay {
         private int width = -1, height = -1;
 
         NoteDialog() {
-            super("gtmb_editor_pinned_annotation");
+            super(ui.panelName("gtmb_editor_pinned_annotation"));
             setDisablePanelsBelow(false);
             setCloseOnOutOfBoundsClick(false);
             setDraggable(true);
@@ -226,6 +226,7 @@ final class HologramEditorAnnotationOverlay {
             heading.child(
                 HologramEditorNativeTheme
                     .label(() -> marker == null ? "提示" : marker.title, HologramEditorNativeTheme.TITLE)
+                    .widthRel(1f)
                     .expanded()
                     .height(22));
             heading.child(
@@ -243,10 +244,12 @@ final class HologramEditorAnnotationOverlay {
                 .childPadding(3);
             actions.child(
                 ui.shell.nativeAction(146, () -> "所选提示", ui.session::editable, () -> "编辑当前选择的提示词；未选择方块时编辑全局提示。")
+                    .widthRel(1f)
                     .expanded()
                     .height(22));
             actions.child(
                 ui.shell.nativeAction(150, () -> "来源版本", () -> true, () -> "查看蓝图来源与 Mod 版本。")
+                    .widthRel(1f)
                     .expanded()
                     .height(22));
             details = ui.shell.nativeAction(
@@ -255,7 +258,8 @@ final class HologramEditorAnnotationOverlay {
                 () -> marker != null && marker.key.startsWith("ae:"),
                 () -> "查看全部 AE 提示与材料信息。");
             actions.child(
-                details.expanded()
+                details.widthRel(1f)
+                    .expanded()
                     .height(22));
             processing = ui.shell.nativeAction(
                 297,
@@ -263,7 +267,8 @@ final class HologramEditorAnnotationOverlay {
                 () -> marker != null && marker.key.startsWith("resource:") && ui.session.editable(),
                 () -> "通过原蓝图处理流程修正资源阻塞。");
             actions.child(
-                processing.expanded()
+                processing.widthRel(1f)
+                    .expanded()
                     .height(22));
             actions.collapseDisabledChild(true);
             child(actions);

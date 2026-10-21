@@ -79,17 +79,18 @@ final class HologramEditorShell {
             .background(HologramEditorNativeTheme.PANEL);
         top.child(((Flow) ui.tools.buildModeBar()).width(225));
         top.child(
-            new com.cleanroommc.modularui.widget.Widget<>().expanded()
+            new com.cleanroommc.modularui.widget.Widget<>().widthRel(1f)
+                .expanded()
                 .height(20)
                 .background(IDrawable.NONE));
         top.child(ui.guide.buildChip());
         Flow body = Flow.row()
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded()
             .childPadding(4)
             .padding(4);
-        scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).expanded()
-            .widthRel(1f) : sceneOverride;
+        scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).sizeRel(1f)
+            .expanded() : sceneOverride;
         body.child(ui.tools.buildToolRail());
         Flow sceneColumn = Flow.column()
             .expanded()
@@ -106,6 +107,7 @@ final class HologramEditorShell {
                 return com.cleanroommc.modularui.api.widget.Interactable.Result.STOP;
             }
         }.coverChildrenWidth()
+            .disableCoverChildrenHeight()
             .heightRel(1f)
             .animationDuration(0)
             .expanded(true);
@@ -129,7 +131,7 @@ final class HologramEditorShell {
             .height(24)
             .childPadding(2);
         PagedWidget.Controller controller = new PagedWidget.Controller();
-        pages = new PagedWidget<>().widthRel(1f)
+        pages = new PagedWidget<>().sizeRel(1f)
             .expanded()
             .controller(controller)
             .initialPage(ui.library.libraryDrawer() ? 2 : 0)
@@ -144,6 +146,7 @@ final class HologramEditorShell {
         for (int i = 0; i < names.length; i++) {
             final int index = i;
             IWidget tab = HologramEditorNativeTheme.pageButton(i, controller, () -> names[index])
+                .widthRel(1f)
                 .expanded()
                 .height(24);
             tabs.child(tab);
@@ -161,7 +164,7 @@ final class HologramEditorShell {
         body.child(dock);
         presentation.child(top)
             .child(body);
-        content = new ParentWidget<>().widthRel(1f)
+        content = new ParentWidget<>().sizeRel(1f)
             .expanded()
             .background(IDrawable.NONE);
         content.child(presentation);

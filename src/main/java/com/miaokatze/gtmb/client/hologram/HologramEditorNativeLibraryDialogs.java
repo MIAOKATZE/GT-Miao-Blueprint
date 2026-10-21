@@ -92,8 +92,9 @@ final class HologramEditorNativeLibraryDialogs {
 
     private ModularPanel build(Kind kind) {
         Dialog<?> dialog = new Dialog<>(
-            "gtmb_native_library_" + kind.name()
-                .toLowerCase(java.util.Locale.ROOT),
+            ui.panelName(
+                "gtmb_native_library_" + kind.name()
+                    .toLowerCase(java.util.Locale.ROOT)),
             null);
         dialog.setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
@@ -126,7 +127,7 @@ final class HologramEditorNativeLibraryDialogs {
                     .height(22));
             content.child(
                 HologramEditorNativeTheme.label(() -> "只保存全局策略，不复制本图设备数据。")
-                    .widthRel(1f)
+                    .sizeRel(1f)
                     .expanded());
         } else {
             content.child(
@@ -139,7 +140,7 @@ final class HologramEditorNativeLibraryDialogs {
             content.child(
                 HologramEditorNativeTheme
                     .label(() -> kind == Kind.DELETE ? "只删除所选库中的文件对。" : ui.library.nativeReviewTarget())
-                    .widthRel(1f)
+                    .sizeRel(1f)
                     .expanded());
         }
         Flow footer = Flow.row()
@@ -153,10 +154,12 @@ final class HologramEditorNativeLibraryDialogs {
                     () -> kind == Kind.ADMIN ? "关闭" : "取消",
                     () -> true,
                     () -> "返回原上下文，保留未提交内容。")
+                .widthRel(1f)
                 .expanded()
                 .height(24));
         footer.child(
-            confirm(kind).expanded()
+            confirm(kind).widthRel(1f)
+                .expanded()
                 .height(24));
         content.child(footer);
         dialog.child(content);
@@ -173,7 +176,7 @@ final class HologramEditorNativeLibraryDialogs {
         content.child(adminField("每位玩家上传配额", quota));
         content.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
-                .widthRel(1f)
+                .sizeRel(1f)
                 .expanded());
     }
 
@@ -184,6 +187,7 @@ final class HologramEditorNativeLibraryDialogs {
             .childPadding(8)
             .child(
                 HologramEditorNativeTheme.label(() -> label)
+                    .widthRel(1f)
                     .expanded()
                     .height(20))
             .child(

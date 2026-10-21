@@ -11,10 +11,15 @@ import net.minecraft.nbt.NBTTagString;
 
 import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
+import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
+import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
 import com.cleanroommc.modularui.widget.Widget;
+import com.cleanroommc.modularui.widget.WidgetTree;
 import com.cleanroommc.modularui.widgets.Dialog;
+import com.cleanroommc.modularui.widgets.ListWidget;
 import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Action;
 import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Operation;
 import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Step;
@@ -24,6 +29,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private static final int BASE = HologramEditorControlIds.TUTORIAL;
     private static final long MOVE_NS = 850_000_000L, PRESS_NS = 180_000_000L, REST_NS = 360_000_000L;
+    private static final long HOVER_NS = 1_200_000_000L;
     private final HologramUiModules ui;
     private HologramUiModules sandbox;
     private List<Step> steps = Collections.emptyList();
@@ -181,7 +187,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private ModularPanel buildScenePanel() {
-        scenePanel = new Dialog<Void>("gtmb_tutorial_scene").setDisablePanelsBelow(false)
+        scenePanel = new Dialog<Void>(sandbox.panelName("gtmb_tutorial_scene")).setDisablePanelsBelow(false)
             .setCloseOnOutOfBoundsClick(false)
             .size(ui.host.screenWidth(), ui.host.screenHeight())
             .pos(0, 0)
@@ -416,6 +422,15 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             if (region == null || action.drag() && !worldCourse() && !sandbox.preview.canMoveSelection()) {
                 if (targetWaitingSince == 0) targetWaitingSince = now;
                 if (now - targetWaitingSince < 650_000_000L) return;
+                if (action.operation == Operation.HOVER) {
+                    if (!actionPending) {
+                        final long version = playbackVersion;
+                        actionPending = ui.host.parent()
+                            .tryDeferAction(
+                                () -> { if (active() && playbackVersion == version) omitUnavailableHoverStep(); });
+                    }
+                    return;
+                }
                 unavailable = "本例没有该可用能力或完整选区；保留原状态，跳过此动作。";
                 actionIndex++;
                 targetWaitingSince = 0;
@@ -437,8 +452,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         double p = Math.min(1, elapsed / (double) MOVE_NS), smooth = p * p * (3 - 2 * p);
         pointerX = fromX + (targetX - fromX) * smooth;
         pointerY = fromY + (targetY - fromY) * smooth;
-        pressed = elapsed >= MOVE_NS && elapsed < MOVE_NS + PRESS_NS + (action.drag() ? MOVE_NS : 0);
-        if (elapsed >= MOVE_NS && !actionApplied && !actionPending) {
+        boolean hover = action.operation == Operation.HOVER;
+        pressed = !hover && elapsed >= MOVE_NS && elapsed < MOVE_NS + PRESS_NS + (action.drag() ? MOVE_NS : 0);
+        if (hover && elapsed >= MOVE_NS) actionApplied = true;
+        if (!hover && elapsed >= MOVE_NS && !actionApplied && !actionPending) {
             final long version = playbackVersion;
             final int index = actionIndex;
             actionPending = ui.host.parent()
@@ -468,7 +485,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     .update(local[0], local[1]);
             }
         }
-        if (actionApplied && elapsed >= MOVE_NS + PRESS_NS + REST_NS + (action.drag() ? MOVE_NS : 0)) {
+        long hold = hover ? HOVER_NS : PRESS_NS + REST_NS + (action.drag() ? MOVE_NS : 0);
+        if (actionApplied && elapsed >= MOVE_NS + hold) {
             if (action.drag() && !worldCourse()) commitDrag();
             actionIndex++;
             actionStarted = 0;
@@ -479,6 +497,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private int[] target(Action action) {
+        if (action.operation == Operation.HOVER) return hoverToolBounds(action.target);
         if (action.control >= 0) return sandbox.shell.controlBounds(resolvedControlId(action));
         if (action.operation == Operation.TYPE_CAPABILITY) {
             NBTTagList caps = sandbox.config.capabilities();
@@ -523,6 +542,58 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             return around(sandbox.shell.sceneToScreen((int) Math.round(point[0]), (int) Math.round(point[1])));
         }
         return sandbox.shell.targetBounds(action.target);
+    }
+
+    private int[] hoverToolBounds(String command) {
+        int index = sandbox.tools.commands()
+            .index(command);
+        if (index < 0) return null;
+        IWidget button = WidgetTree.findFirstWithNameNullable(
+            sandbox.shell.root(),
+            "editor_native_tool_" + (HologramEditorControlIds.TOOLS + index));
+        ListWidget<?, ?> rail = WidgetTree
+            .findFirstWithNameNullable(sandbox.shell.root(), "editor_native_tool_rail_list", ListWidget.class);
+        if (button == null || rail == null || !button.isValid() || !rail.isValid()) return null;
+        int[] bounds = sandbox.shell.nativeWidgetBounds(button);
+        int[] footer = overlay.footerBounds();
+        if (bounds != null && bounds[3] >= button.getArea().height
+            && (footer == null || bounds[1] + bounds[3] < footer[1])) return bounds;
+        if (targetWaitingSince != 0 && System.nanoTime() - targetWaitingSince >= 650_000_000L) return null;
+        final long version = playbackVersion;
+        ui.host.parent()
+            .tryDeferAction(() -> {
+                if (!active() || playbackVersion != version || !button.isValid() || !rail.isValid()) return;
+                int[] viewport = sandbox.shell.nativeWidgetBounds(rail);
+                if (viewport == null) return;
+                TransformationMatrix matrix = LocatedWidget.of(button)
+                    .getTransformationMatrix();
+                int top = Math.round(matrix.transformY(0, 0));
+                int bottom = Math.round(matrix.transformY(button.getArea().width, button.getArea().height));
+                int visibleBottom = viewport[1] + viewport[3];
+                int[] currentFooter = overlay.footerBounds();
+                if (currentFooter != null) visibleBottom = Math.min(visibleBottom, currentFooter[1] - 6);
+                int delta = top < viewport[1] ? top - viewport[1] : Math.max(0, bottom - visibleBottom);
+                if (delta != 0 && rail.getScrollData() != null) rail.getScrollData()
+                    .scrollTo(
+                        rail.getScrollArea(),
+                        rail.getScrollData()
+                            .getScroll() + delta);
+            });
+        return null;
+    }
+
+    /** A clipped or unavailable tool is omitted rather than pointed at an unrelated viewport region. */
+    private void omitUnavailableHoverStep() {
+        List<Step> visibleSteps = new ArrayList<>(steps);
+        visibleSteps.remove(step);
+        steps = Collections.unmodifiableList(visibleSteps);
+        while (checkpoints.size() > step) checkpoints.remove(checkpoints.size() - 1);
+        if (step >= steps.size()) {
+            finish(true);
+            return;
+        }
+        checkpoints.add(capture());
+        playStep();
     }
 
     private static int[] around(double[] point) {

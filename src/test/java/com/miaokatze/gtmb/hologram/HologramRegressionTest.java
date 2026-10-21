@@ -124,6 +124,9 @@ public final class HologramRegressionTest {
         cases.put(
             "native_editor_theme_serialization_keeps_registered_tiled_and_nine_slice_textures",
             com.miaokatze.gtmb.client.hologram.HologramEditorNativeThemeRegression::run);
+        cases.put(
+            "native_editor_expanded_layout_waits_for_parent_and_preserves_both_axes",
+            com.miaokatze.gtmb.client.hologram.HologramEditorNativeLayoutRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);

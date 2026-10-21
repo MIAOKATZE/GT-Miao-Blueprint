@@ -135,7 +135,7 @@ final class HologramEditorNativeTools {
                 () -> commands().help("floatingTools"),
                 true).size(28));
         ListWidget<IWidget, ?> list = new ListWidget<>().name("editor_native_tool_rail_list")
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded();
         for (String name : RAIL) list.child(command(0, name, true).size(28));
         return rail.child(list);
@@ -272,7 +272,7 @@ final class HologramEditorNativeTools {
                 .widthRel(1f)
                 .height(18));
         ListWidget<IWidget, ?> rows = new ListWidget<>().name("editor_native_floating_actions")
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded();
         for (String name : FLOATING) rows.child(
             command(1, name, false).widthRel(1f)
@@ -334,7 +334,7 @@ final class HologramEditorNativeTools {
                 .widthRel(1f)
                 .height(16));
         ListWidget<IWidget, ?> entries = new ListWidget<>().name("editor_native_context_actions")
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded();
         for (String name : CONTEXT) {
             Flow item = Flow.row()
@@ -392,7 +392,7 @@ final class HologramEditorNativeTools {
                 .widthRel(1f)
                 .height(18));
         ListWidget<IWidget, ?> rows = new ListWidget<>().name("editor_native_shortcut_list")
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded();
         for (int i = 0; i < commands().size(); i++) {
             final int index = i;
@@ -481,7 +481,7 @@ final class HologramEditorNativeTools {
                 .widthRel(1f)
                 .height(18));
         ListWidget<IWidget, ?> rows = new ListWidget<>().name("editor_native_view_workspace_list")
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded();
         rows.child(
             HologramEditorNativeTheme.label(() -> "显示与切片")
@@ -550,7 +550,7 @@ final class HologramEditorNativeTools {
         private final boolean modal;
 
         ToolDialog(String name, boolean modal) {
-            super(name);
+            super(ui.panelName(name));
             this.modal = modal;
         }
 

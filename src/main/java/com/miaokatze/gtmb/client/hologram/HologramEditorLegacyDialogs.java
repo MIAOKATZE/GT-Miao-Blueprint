@@ -221,7 +221,7 @@ final class HologramEditorLegacyDialogs {
         private int fittedWidth = -1, fittedHeight = -1;
 
         LegacyDialog(Domain domain) {
-            super("gtmb_editor_advanced_" + domain.id);
+            super(ui.panelName("gtmb_editor_advanced_" + domain.id));
             this.domain = domain;
             setDisablePanelsBelow(true);
             setCloseOnOutOfBoundsClick(false);

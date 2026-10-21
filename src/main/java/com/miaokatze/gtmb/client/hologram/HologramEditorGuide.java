@@ -122,7 +122,7 @@ final class HologramEditorGuide {
     }
 
     private ModularPanel buildReference() {
-        ModularPanel panel = new Dialog<Void>("gtmb_editor_reference").setDisablePanelsBelow(true)
+        ModularPanel panel = new Dialog<Void>(ui.panelName("gtmb_editor_reference")).setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
             .size(Math.min(520, ui.host.screenWidth() - 16), Math.min(330, ui.host.screenHeight() - 16))
             .background(HologramEditorNativeTheme.PANEL);
@@ -135,7 +135,7 @@ final class HologramEditorGuide {
             HologramEditorNativeTheme.label(() -> "操作说明与独立课程", HologramEditorNativeTheme.TITLE)
                 .widthRel(1f)
                 .height(17));
-        ListWidget<IWidget, ?> details = new ListWidget<>().widthRel(1f)
+        ListWidget<IWidget, ?> details = new ListWidget<>().sizeRel(1f)
             .expanded()
             .name("guide.reference.details")
             .background(IDrawable.NONE)
@@ -173,6 +173,7 @@ final class HologramEditorGuide {
                                 reference.closePanel();
                                 ui.tutorial.start(topics[index], true);
                             }))
+                        .widthRel(1f)
                         .expanded()
                         .height(20)
                         .name("guide.lesson." + topics[index]));

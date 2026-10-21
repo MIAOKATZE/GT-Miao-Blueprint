@@ -44,8 +44,8 @@ final class HologramEditorLessonStage {
     private static final double DEPTH = 14, HALF_HEIGHT = 4.2;
 
     IWidget nativeWidget(HologramUiModules ui, State state) {
-        return new Scene(ui, state).expanded()
-            .widthRel(1f)
+        return new Scene(ui, state).sizeRel(1f)
+            .expanded()
             .name("tutorial.world.scene");
     }
 

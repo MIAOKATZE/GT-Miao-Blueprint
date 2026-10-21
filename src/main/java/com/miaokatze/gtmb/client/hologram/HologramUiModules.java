@@ -1,6 +1,11 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 final class HologramUiModules {
+
+    private static final AtomicLong NEXT_PANEL_GRAPH = new AtomicLong();
+    private final String panelGraphSuffix = "__tutorial_graph_" + NEXT_PANEL_GRAPH.incrementAndGet();
 
     final HologramUiHost host;
     final HologramUiAeReview ae;
@@ -25,6 +30,12 @@ final class HologramUiModules {
     final HologramEditorGuide guide;
     final HologramEditorTutorial tutorial;
     final HologramEditorShell shell;
+
+    /** MUI retains the first handler for a panel name until the entire screen is disposed. */
+    String panelName(String base) {
+        if (base == null || base.isEmpty()) throw new IllegalArgumentException("Panel names require a base identity");
+        return session != null && session.isTutorial() ? base + panelGraphSuffix : base;
+    }
 
     HologramUiModules(HologramUiHost host) {
         this.host = host;
