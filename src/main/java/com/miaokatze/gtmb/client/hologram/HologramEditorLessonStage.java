@@ -45,7 +45,7 @@ final class HologramEditorLessonStage {
 
     IWidget nativeWidget(HologramUiModules ui, State state) {
         return new Scene(ui, state).expanded()
-            .heightRel(1f)
+            .widthRel(1f)
             .name("tutorial.world.scene");
     }
 

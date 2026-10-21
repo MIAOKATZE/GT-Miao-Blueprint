@@ -89,7 +89,7 @@ final class HologramEditorShell {
             .childPadding(4)
             .padding(4);
         scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).expanded()
-            .heightRel(1f) : sceneOverride;
+            .widthRel(1f) : sceneOverride;
         body.child(ui.tools.buildToolRail());
         Flow sceneColumn = Flow.column()
             .expanded()
@@ -99,7 +99,13 @@ final class HologramEditorShell {
         sceneColumn.child(scene);
         sceneColumn.child(ui.tools.buildSelectedBar());
         body.child(sceneColumn);
-        dock = new Expandable().coverChildrenWidth()
+        dock = new Expandable() {
+
+            @Override
+            public com.cleanroommc.modularui.api.widget.Interactable.Result onMousePressed(int button) {
+                return com.cleanroommc.modularui.api.widget.Interactable.Result.STOP;
+            }
+        }.coverChildrenWidth()
             .heightRel(1f)
             .animationDuration(0)
             .expanded(true);
@@ -109,12 +115,7 @@ final class HologramEditorShell {
             .background(HologramEditorNativeTheme.PANEL);
         rail.child(
             HologramEditorNativeTheme
-                .iconButton(
-                    "collapse-left",
-                    () -> "Expand inspector",
-                    () -> setDockExpanded(true),
-                    () -> true,
-                    () -> false)
+                .iconButton("collapse-left", () -> "展开侧栏", () -> setDockExpanded(true), () -> true, () -> false)
                 .size(20, 26)
                 .name("editor_inspector_expand"));
         Flow expanded = Flow.column()
@@ -150,12 +151,7 @@ final class HologramEditorShell {
         }
         tabs.child(
             HologramEditorNativeTheme
-                .iconButton(
-                    "collapse-right",
-                    () -> "Collapse inspector",
-                    () -> setDockExpanded(false),
-                    () -> true,
-                    () -> false)
+                .iconButton("collapse-right", () -> "收起侧栏", () -> setDockExpanded(false), () -> true, () -> false)
                 .size(20, 24)
                 .name("editor_inspector_collapse"));
         expanded.child(tabs)
