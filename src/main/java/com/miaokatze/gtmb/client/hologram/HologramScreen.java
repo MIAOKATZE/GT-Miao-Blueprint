@@ -144,7 +144,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 control.h,
                 control.label,
                 control.enabled,
-                control.accent);
+                control.accent,
+                control.selected);
             nativeVoucherRibbon(control.id, control.voucherRibbon);
             nativeSceneTooltip(control.id, control.sceneTooltip);
         }

@@ -78,6 +78,7 @@ final class HologramUiCanvas {
         int accent;
         boolean voucherRibbon;
         boolean sceneTooltip;
+        boolean selected;
         private HologramUiCanvas owner;
 
         Control(int id, int x, int y, int w, int h, boolean enabled) {
@@ -588,6 +589,7 @@ final class HologramUiCanvas {
         mapped.accent = source.accent;
         mapped.voucherRibbon = source.voucherRibbon;
         mapped.sceneTooltip = source.sceneTooltip;
+        mapped.selected = source.selected;
         mapped.owner = this;
         controls.add(mapped);
         return mapped;

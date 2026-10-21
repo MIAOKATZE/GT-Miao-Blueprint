@@ -82,11 +82,16 @@ final class HologramMuiTheme {
 
     /** Sample render time only, preserving each action's semantic color as a pixel breathing edge. */
     static IDrawable guidanceBackground(boolean hover, IntSupplier accent, BooleanSupplier enabled) {
+        return guidanceBackground(hover, accent, enabled, () -> false);
+    }
+
+    static IDrawable guidanceBackground(boolean hover, IntSupplier accent, BooleanSupplier enabled,
+        BooleanSupplier selected) {
         return (context, x, y, width, height, theme) -> {
             GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
             try {
                 boolean active = enabled.getAsBoolean();
-                HologramEditorTheme.button(active, false, hover)
+                HologramEditorTheme.button(active, selected.getAsBoolean(), hover)
                     .draw(context, x, y, width, height, theme);
                 HologramEditorTheme.drawGuidanceFrame(x, y, width, height, accent.getAsInt(), active);
             } finally {

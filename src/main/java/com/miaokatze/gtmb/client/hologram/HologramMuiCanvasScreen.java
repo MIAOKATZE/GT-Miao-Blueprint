@@ -73,6 +73,11 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     }
 
     final void nativeButton(int id, int x, int y, int width, int height, String text, boolean enabled, int accent) {
+        nativeButton(id, x, y, width, height, text, enabled, accent, false);
+    }
+
+    final void nativeButton(int id, int x, int y, int width, int height, String text, boolean enabled, int accent,
+        boolean selected) {
         NativeButton entry = buttons.get(id);
         if (entry == null) {
             entry = new NativeButton(id);
@@ -82,6 +87,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         entry.frame = nativeFrame;
         entry.text = text;
         entry.enabled = enabled;
+        entry.selected = selected;
         entry.accent = accent;
         entry.icon = nativeIcon(id, text);
         entry.iconOnly = nativeIconOnly(id);
@@ -240,14 +246,15 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         private String icon;
         private boolean iconOnly;
         private boolean enabled;
+        private boolean selected;
         private boolean voucherRibbon, sceneTooltip;
         private int accent, x = -1, y = -1, w, h;
         private final ButtonWidget<?> widget;
 
         NativeButton(int id) {
             widget = new ButtonWidget<>().name("projector_control_" + id)
-                .background(HologramMuiTheme.guidanceBackground(false, () -> accent, () -> enabled))
-                .hoverBackground(HologramMuiTheme.guidanceBackground(true, () -> accent, () -> enabled))
+                .background(HologramMuiTheme.guidanceBackground(false, () -> accent, () -> enabled, () -> selected))
+                .hoverBackground(HologramMuiTheme.guidanceBackground(true, () -> accent, () -> enabled, () -> selected))
                 .overlay(
                     IKey.dynamic(() -> iconOnly ? "" : text)
                         .color(() -> HologramUiAccent.textColor(accent, enabled))
@@ -262,8 +269,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                                 size,
                                 true,
                                 enabled,
-                                false,
-                                false);
+                                selected,
+                                hovering());
                         }
                         if (voucherRibbon) HologramVoucherRibbon.draw(x, y, width, height);
                     })
@@ -278,6 +285,10 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                     if (enabled) activateNative(id);
                     return true;
                 });
+        }
+
+        private boolean hovering() {
+            return widget.isHovering();
         }
     }
 }

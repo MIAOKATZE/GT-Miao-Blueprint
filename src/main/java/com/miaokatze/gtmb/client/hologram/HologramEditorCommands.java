@@ -213,6 +213,11 @@ final class HologramEditorCommands {
                 if (pair.length != 2) throw new IllegalArgumentException("Invalid editor key binding");
                 keys[i] = Integer.parseInt(pair[0]);
                 modifiers[i] = normalizedModifiers(keys[i], Integer.parseInt(pair[1]));
+                if (legacy && keys[i] == Keyboard.KEY_E) {
+                    // E now exits the editor. Retire this one legacy binding without losing the player's other keys.
+                    keys[i] = Keyboard.KEY_NONE;
+                    modifiers[i] = 0;
+                }
                 if (keys[i] < 0 || keys[i] >= Keyboard.KEYBOARD_SIZE
                     || keys[i] == Keyboard.KEY_E
                     || keys[i] == Keyboard.KEY_ESCAPE

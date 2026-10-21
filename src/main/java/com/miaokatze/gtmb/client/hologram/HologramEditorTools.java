@@ -425,6 +425,7 @@ final class HologramEditorTools {
             enabled);
         control.label = button.label;
         control.sceneTooltip = false;
+        control.selected = selected;
         ui.canvas.addControl(control);
         if (button.iconOnly) HologramEditorIcons.draw(
             button.icon,

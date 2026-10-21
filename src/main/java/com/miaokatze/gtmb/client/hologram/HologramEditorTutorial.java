@@ -424,7 +424,7 @@ final class HologramEditorTutorial {
     }
 
     private void paintControl(HologramUiCanvas.Control control) {
-        HologramEditorTheme.button(control.enabled, false, false)
+        HologramEditorTheme.button(control.enabled, control.selected, false)
             .draw(control.x, control.y, control.w, control.h);
         sandbox.canvas.text(
             control.label,

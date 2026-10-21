@@ -545,8 +545,14 @@ public final class HologramUiModuleRegression {
                     .get(1)
                     .contains("当前关"),
                 "idle guidance exposes the actual hidden-axis state");
-            ui.shortcuts.keyBindings()
-                .bind(5, org.lwjgl.input.Keyboard.KEY_F6, 0);
+            SimpleAssert.that(
+                ui.tools.commands()
+                    .bind(
+                        ui.tools.commands()
+                            .index("editUndo"),
+                        org.lwjgl.input.Keyboard.KEY_F6,
+                        0),
+                "the active editor command registry accepts the player's rebound undo shortcut");
             SimpleAssert.that(
                 ui.shortcuts.idleHintLines()
                     .get(2)
