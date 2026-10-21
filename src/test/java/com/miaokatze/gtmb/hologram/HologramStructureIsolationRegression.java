@@ -265,6 +265,9 @@ final class HologramStructureIsolationRegression {
         projection.cells.clear();
         rejectProjection(session, projection, sourceCapture, physical, "missing projected source cell");
         projection.cells.addAll(savedCells);
+        NBTTagCompound projectedPayload = new NBTTagCompound();
+        projectedPayload.setString("attachmentRegression", "fresh payload from the actual projection boundary");
+        saved.tileNbt = HologramBlueprintNbt.encodeCaptured(projectedPayload);
 
         HologramBlueprintData.setMemberships(physical, Arrays.asList("physical-left", "physical-right"));
         HologramCapture detached = HologramBlueprintData.projectedCapture(sourceCapture, projection, 0, 64, 0);
@@ -312,12 +315,47 @@ final class HologramStructureIsolationRegression {
         added.block = Blocks.stone;
         added.actualStack = new ItemStack(Blocks.stone);
         HologramBlueprintData.setMemberships(added, java.util.Collections.singletonList("attachment"));
+        Map<String, Integer> preparedSizes = new HashMap<>();
+        List<HologramPresets.Cell> budgetCells = new ArrayList<>(projection.cells);
+        budgetCells.addAll(projection.palette);
+        for (HologramPresets.Cell cell : budgetCells) for (String value : new String[] { cell.tileNbt, cell.itemNbt })
+            if (value != null && !value.isEmpty()) preparedSizes.put(value, HologramBlueprintNbt.expandedBytes(value));
+        Map<String, Integer> missingProjectedPayload = new HashMap<>(preparedSizes);
+        missingProjectedPayload.remove(saved.tileNbt);
+        try {
+            HologramTextWorkflow.stageAttachment(
+                session,
+                projection,
+                java.util.Collections.singletonList(added),
+                java.util.Collections.emptySet(),
+                missingProjectedPayload);
+            throw new AssertionError("a missing prepared projection payload must be rejected");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("预算"),
+                "a nullable prepared-map entry follows the budget-change IOException path, never unboxing NPE");
+            SimpleAssert.that(
+                session.capture == sourceCapture && session.virtualPreset == null && !session.virtual,
+                "a rejected nonnull budget restores the exact physical source capture, preset and mode");
+            SimpleAssert.eq(originalTileNbt, physical.tileNbt, "budget rejection retains original source NBT");
+            SimpleAssert.eq(
+                originalTriggerData,
+                sourceCapture.trigger.getTagCompound(),
+                "budget rejection retains original trigger NBT");
+            SimpleAssert.that(
+                physical.memberships()
+                    .isEmpty() && session.undoEdits.isEmpty()
+                    && session.pins.size() == 1
+                    && session.coordinatePins.size() == 1,
+                "budget rejection leaves physical memberships, pins and undo untouched");
+        }
         HologramTextWorkflow.stageAttachment(
             session,
             projection,
             java.util.Collections.singletonList(added),
             java.util.Collections.emptySet(),
-            null);
+            preparedSizes);
         HologramCapture.Cell converted = session.capture.cells.get(0);
         SimpleAssert.that(session.virtual && converted != physical, "successful attachment owns detached source cells");
         SimpleAssert.eq(

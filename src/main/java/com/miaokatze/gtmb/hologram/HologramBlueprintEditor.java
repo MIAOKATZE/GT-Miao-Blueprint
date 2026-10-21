@@ -692,7 +692,8 @@ final class HologramBlueprintEditor {
             if (value == null || value.isEmpty()) continue;
             Integer size = sizes.get(value);
             if (size == null) {
-                size = preparedSizes == null ? HologramBlueprintNbt.expandedBytes(value) : preparedSizes.get(value);
+                if (preparedSizes == null) size = HologramBlueprintNbt.expandedBytes(value);
+                else size = preparedSizes.get(value);
                 if (size == null) throw new java.io.IOException("附加对象数据预算已变化，请重新确认");
                 sizes.put(value, size);
             }

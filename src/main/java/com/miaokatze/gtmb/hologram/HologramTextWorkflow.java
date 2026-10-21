@@ -147,15 +147,23 @@ final class HologramTextWorkflow {
                 throw new IOException("目标不是附加对象");
             if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与附加对象数量超过上限");
             List<String> retained = new ArrayList<>();
+            boolean projectsPhysical = !s.virtual && s.virtualPreset == null && capture != null;
             if (capture != null) for (int i = 0; i < capture.cells.size(); i++) {
                 HologramCapture.Cell cell = capture.cells.get(i);
                 if (cell.belongsTo(text.id)) remove.add(HologramValues.position(cell));
                 else {
                     if (occupiesBlueprintPosition(cell, HologramCellPolicy.targetFor(s, cell, i)))
                         occupiedPositions.add(HologramValues.position(cell));
-                    retained.add(cell.tileNbt);
-                    retained.add(cell.itemNbt);
+                    if (!projectsPhysical) {
+                        retained.add(cell.tileNbt);
+                        retained.add(cell.itemNbt);
+                    }
                 }
+            }
+            // Initial physical conversion commits the projection's refreshed payload, not the old capture payload.
+            if (projectsPhysical) for (HologramPresets.Cell cell : preset.cells) {
+                retained.add(cell.tileNbt);
+                retained.add(cell.itemNbt);
             }
             for (HologramPresets.Cell cell : preset.palette) {
                 retained.add(cell.tileNbt);
