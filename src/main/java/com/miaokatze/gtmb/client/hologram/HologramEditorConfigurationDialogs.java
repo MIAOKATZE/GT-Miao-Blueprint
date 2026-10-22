@@ -608,7 +608,7 @@ final class HologramEditorConfigurationDialogs {
         manage.child(
             action(1714, () -> "删除所选", () -> ui.config.nativeSelectedPreset(), this::presetFileReason).expanded());
         custom.child(manage);
-        custom.child(note(() -> ui.session.isTutorial() ? "演示不读写本机搭配；保存与上次配置不可用。" : "精确设备 / NBT / 数量来自当前规划；本机跨世界保存。"));
+        if (!ui.session.isTutorial()) custom.child(note(() -> "精确设备 / NBT / 数量来自当前规划；本机跨世界保存。"));
         pages.addPage(basic)
             .addPage(custom)
             .onUpdateListener(w -> {

@@ -221,10 +221,10 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
                 .child(
                     IKey.dynamic(() -> rowText(entry))
                         .color(
-                            () -> selection.selected()
-                                .equals(id) ? embedded ? HologramEditorNativeTheme.TITLE : HologramMuiTheme.TITLE
-                                    : embedded ? HologramEditorNativeTheme.TEXT : HologramMuiTheme.TEXT)
-                        .shadow(false)
+                            () -> embedded ? HologramEditorTheme.BUTTON_TEXT
+                                : selection.selected()
+                                    .equals(id) ? HologramMuiTheme.TITLE : HologramMuiTheme.TEXT)
+                        .shadow(embedded)
                         .asWidget()
                         .textAlign(Alignment.CenterLeft)
                         .sizeRel(1f)

@@ -103,6 +103,7 @@ public final class HologramEditorTutorialLessonsRegression {
             // Headless course assertions need no physical keyboard/native library.
             for (int i = 0; i < commands.size(); i++) commands.get(i).key = 0;
             List<Step> blueprint = HologramEditorLessons.course("blueprint", commands, author);
+            completeCourseOrdering(commands, blueprint);
             SimpleAssert.that(
                 hasOperation(blueprint, Operation.SELECT_STRUCTURE) && hasControl(blueprint, 163),
                 "the actual author blueprint course retains group selection and source editing");
@@ -115,6 +116,89 @@ public final class HologramEditorTutorialLessonsRegression {
         } catch (IOException failure) {
             throw new AssertionError("The shipped EBF tutorial observations must load and validate", failure);
         }
+    }
+
+    private static void completeCourseOrdering(HologramEditorCommands commands, List<Step> blueprint) {
+        SimpleAssert
+            .eq(14000, blueprint.get(1).actions.get(0).control, "the first load selects the first in-memory row");
+        SimpleAssert.that(
+            !hasControl(blueprint, 94) && hasAction(blueprint, Operation.HOVER_NATIVE, "control.94"),
+            "author teaching observes the disabled whole-machine preset without dispatching its physical-only action");
+        SimpleAssert.that(
+            !hasControl(blueprint, 166) && hasAction(blueprint, Operation.HOVER_NATIVE, "control.166"),
+            "author teaching only observes the NBT gate and does not invent unrecorded per-cell values");
+        SimpleAssert.that(
+            hasAction(blueprint, Operation.HOVER_NATIVE, "library.save.overwrite")
+                && !hasAction(blueprint, Operation.HOVER_NATIVE, "control.222")
+                && !hasTarget(blueprint, "library.save.asNew"),
+            "overwrite teaching addresses its distinct target rather than the shared ID's first save-as button");
+        SimpleAssert.that(
+            hasOperation(blueprint, Operation.CANCEL_DISCARD) && hasOperation(blueprint, Operation.CONFIRM_DISCARD),
+            "dirty source switching demonstrates both explicit modal choices");
+        int copy = operationStep(blueprint, Operation.COPY_X),
+            cancel = operationStep(blueprint, Operation.CANCEL_DISCARD),
+            confirm = operationStep(blueprint, Operation.CONFIRM_DISCARD);
+        SimpleAssert
+            .that(copy < cancel && cancel < confirm, "a real edit precedes discard cancellation and confirmation");
+        for (String topic : new String[] { "box-fps", "box-iso", "cut-fps", "cut-iso" }) {
+            List<Step> world = HologramEditorLessons.course(topic, commands);
+            SimpleAssert.that(
+                !hasOperation(world, Operation.WORLD_MOVE_XZ),
+                "world lessons do not invent an editor gizmo: " + topic);
+            SimpleAssert.that(
+                operationStep(world, Operation.FIRST_CORNER) < operationStep(world, Operation.SECOND_CORNER)
+                    && operationStep(world, Operation.SECOND_CORNER)
+                        < operationStep(world, Operation.WORLD_ADJUST_CORNER),
+                "both corners exist before a second-corner correction: " + topic);
+            if (topic.startsWith("cut-")) {
+                SimpleAssert.that(
+                    operationStep(world, Operation.WORLD_ADJUST_CORNER)
+                        < operationStep(world, Operation.CUT_SOURCE_REVIEW)
+                        && operationStep(world, Operation.CUT_SOURCE_REVIEW)
+                            < operationStep(world, Operation.CUT_STORE),
+                    "source naming remains visible for a separate save step: " + topic);
+                SimpleAssert.that(
+                    operationOrdinal(world, Operation.CUT_LOCK) < operationOrdinal(world, Operation.CUT_PLACE_REVIEW)
+                        && operationOrdinal(world, Operation.CUT_PLACE_REVIEW)
+                            < operationOrdinal(world, Operation.CUT_CANCEL)
+                        && operationOrdinal(world, Operation.CUT_CANCEL) < operationOrdinal(world, Operation.CUT_PLACE),
+                    "placement lock, modal review, cancellation and explicit confirmation have distinct boundaries: "
+                        + topic);
+                SimpleAssert.that(
+                    operationStep(world, Operation.CUT_OPEN_STORAGE) < operationStep(world, Operation.CUT_TAKE)
+                        && hasTarget(world, "cut.place"),
+                    "the retained entry is taken only through the visible storage place button: " + topic);
+                Step last = world.get(world.size() - 1);
+                SimpleAssert.that(
+                    last.actions.size() == 1 && last.actions.get(0).operation == Operation.CUT_PLACE
+                        && "cut.lesson.placement.confirm".equals(last.actions.get(0).target),
+                    "only a separate confirm-button action consumes the teaching entry: " + topic);
+            } else SimpleAssert.that(
+                operationStep(world, Operation.WORLD_ADJUST_CORNER) < operationStep(world, Operation.BOX_SUBMIT),
+                "box submission follows an actual complete selection: " + topic);
+        }
+        List<Step> cutList = HologramEditorLessons.course("cut", commands);
+        SimpleAssert.that(
+            !hasOperation(cutList, Operation.CUT_STORE) && !hasOperation(cutList, Operation.CUT_PLACE),
+            "the read-only cut-list lesson never pretends to place or consume an entry");
+        SimpleAssert.that(
+            cutList.get(1).description.contains("左侧"),
+            "the cut preview description matches the retained left viewport");
+    }
+
+    private static int operationStep(List<Step> steps, Operation operation) {
+        for (int i = 0; i < steps.size(); i++)
+            for (Action action : steps.get(i).actions) if (action.operation == operation) return i;
+        throw new AssertionError("Missing course action " + operation);
+    }
+
+    private static int operationOrdinal(List<Step> steps, Operation operation) {
+        int ordinal = 0;
+        for (Step step : steps) for (Action action : step.actions) {
+            if (action.operation == operation) return ordinal;
+            ordinal++;
+        }
+        throw new AssertionError("Missing course action " + operation);
     }
 
     private static void portableIdentityWinsOverNumericId() throws IOException {
@@ -148,6 +232,12 @@ public final class HologramEditorTutorialLessonsRegression {
 
     private static boolean hasOperation(List<Step> steps, Operation operation) {
         for (Step step : steps) for (Action action : step.actions) if (action.operation == operation) return true;
+        return false;
+    }
+
+    private static boolean hasAction(List<Step> steps, Operation operation, String target) {
+        for (Step step : steps) for (Action action : step.actions)
+            if (action.operation == operation && target.equals(action.target)) return true;
         return false;
     }
 

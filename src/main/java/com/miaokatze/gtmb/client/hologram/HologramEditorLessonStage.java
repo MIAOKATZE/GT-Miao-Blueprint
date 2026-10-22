@@ -8,10 +8,18 @@ import net.minecraft.nbt.NBTTagCompound;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.util.glu.GLU;
 
+import com.cleanroommc.modularui.api.IPanelHandler;
+import com.cleanroommc.modularui.api.layout.IViewportStack;
 import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
+import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widget.Widget;
+import com.cleanroommc.modularui.widget.WidgetTree;
+import com.cleanroommc.modularui.widgets.Dialog;
+import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Operation;
+import com.miaokatze.gtmb.hologram.HologramCutNaming;
 import com.miaokatze.miaokatzecore.api.camera.CameraBasis;
 import com.miaokatze.miaokatzecore.api.camera.CameraPose;
 import com.miaokatze.miaokatzecore.api.camera.OrthographicProjection;
@@ -46,15 +54,282 @@ final class HologramEditorLessonStage {
     final HologramEditorTutorialGeometry geometry = new HologramEditorTutorialGeometry();
     private final HologramCutRawPreviewSession renderer = new HologramCutRawPreviewSession();
     private NBTTagCompound rendered;
+    private HologramUiModules ui;
+    private IPanelHandler sourceHandler, placementHandler, storageHandler;
+    private HologramEditorCutListLesson storageLesson;
+    private final StringValue name = new StringValue("");
+    private String nameError = "";
+    private long generation;
+    private final HologramTutorialGeneration presentationGeneration = new HologramTutorialGeneration();
 
     void initialize(HologramState state) {
+        generation++;
+        presentationGeneration.invalidate();
         geometry.initialize(state);
         rendered = null;
     }
 
     void close() {
+        generation++;
+        presentationGeneration.invalidate();
+        retire(sourceHandler);
+        retire(placementHandler);
+        retire(storageHandler);
+        sourceHandler = placementHandler = storageHandler = null;
+        if (storageLesson != null) storageLesson.close();
+        storageLesson = null;
+        ui = null;
         renderer.release();
         rendered = null;
+    }
+
+    private static void retire(IPanelHandler handler) {
+        if (handler == null) return;
+        handler.closePanel();
+        handler.deleteCachedPanel();
+    }
+
+    void prepare(HologramUiModules ui, ModularPanel parent) {
+        this.ui = ui;
+        sourceHandler = IPanelHandler.simple(parent, (panel, player) -> sourceDialog(), true);
+        placementHandler = IPanelHandler.simple(parent, (panel, player) -> placementDialog(), true);
+        storageHandler = IPanelHandler.simple(parent, (panel, player) -> storageDialog(), true);
+        restorePresentation();
+    }
+
+    void restorePresentation() {
+        NBTTagCompound storageState = geometry.storageView();
+        name.setStringValue(
+            geometry.name()
+                .isEmpty() ? HologramCutClient.text("name.default") : geometry.name());
+        nameError = "";
+        refresh();
+        if (storageLesson != null && !storageState.hasNoTags()) {
+            storageLesson.restore(storageState);
+            geometry.storageView(storageState);
+        }
+    }
+
+    void refresh() {
+        if (sourceHandler == null) return;
+        geometry.name(name.getStringValue());
+        present(sourceHandler, geometry.sourceReview());
+        present(placementHandler, geometry.placementReview());
+        present(storageHandler, geometry.storageOpen());
+        if (storageLesson != null && geometry.storageOpen()) geometry.storageView(storageLesson.snapshot());
+    }
+
+    private static void present(IPanelHandler handler, boolean visible) {
+        if (visible && !handler.isPanelOpen()) handler.openPanel();
+        else if (!visible && handler.isPanelOpen()) handler.closePanel();
+    }
+
+    private ModularPanel dialog(String id, int height) {
+        // MUI2 keeps a closing panel in its render list during the close animation. Its transform owns
+        // the host it was built for, independently of the Stage's retired mutable session reference.
+        final HologramUiModules owner = ui;
+        return new Dialog<Void>(owner.panelName(id)) {
+
+            @Override
+            public void transform(IViewportStack stack) {
+                int available = Math.max(1, owner.host.screenHeight() - HologramEditorTutorialOverlay.RESERVED_HEIGHT);
+                float scale = Math.min(1f, Math.min(owner.host.screenWidth() / 306f, available / (float) height));
+                stack.translate((owner.host.screenWidth() - 306 * scale) / 2f, (available - height * scale) / 2f);
+                stack.scale(scale, scale);
+            }
+        }.setDisablePanelsBelow(true)
+            .setCloseOnOutOfBoundsClick(false)
+            .size(306, height)
+            .background(HologramMuiTheme.CLOTH);
+    }
+
+    private ModularPanel sourceDialog() {
+        final long version = generation;
+        HologramUiModules owner = ui;
+        ModularPanel panel = dialog("tutorial_cut_source", 202);
+        HologramCutDialogContent.name(
+            panel,
+            name,
+            () -> HologramCutClient.text("confirmCutDetail") + " " + selectionCoordinates(),
+            () -> nameError,
+            (accepted, skip) -> owner.host.parent()
+                .deferAction(() -> {
+                    if (ui != owner || generation != version || !geometry.sourceReview()) return;
+                    if (accepted) try {
+                        geometry.name(HologramCutNaming.checkedName(name.getStringValue()));
+                        geometry.store();
+                    } catch (java.io.IOException invalid) {
+                        nameError = HologramCutClient.text("name.invalid");
+                        return;
+                    }
+                    else geometry.cancelSourceReview();
+                    refresh();
+                }));
+        ui.shell.registerTarget("cut.lesson.source", panel);
+        register(panel, "cut.lesson.source.save", "cut_name_save");
+        register(panel, "cut.lesson.source.cancel", "cut_name_cancel");
+        register(panel, "cut.lesson.source.name", "cut_name_draft");
+        return panel;
+    }
+
+    private ModularPanel placementDialog() {
+        final long version = generation;
+        HologramUiModules owner = ui;
+        ModularPanel panel = dialog("tutorial_cut_placement", 154);
+        HologramCutDialogContent.confirmation(
+            panel,
+            () -> HologramCutClient.text("confirmPaste"),
+            () -> HologramCutClient.text("confirmPasteDetail") + " " + placementCoordinates(),
+            true,
+            (accepted, skip) -> owner.host.parent()
+                .deferAction(() -> {
+                    if (ui != owner || generation != version || !geometry.placementReview()) return;
+                    if (accepted) geometry.place();
+                    else geometry.cancel();
+                    refresh();
+                }));
+        ui.shell.registerTarget("cut.lesson.placement", panel);
+        register(panel, "cut.lesson.placement.confirm", "cut_confirm");
+        register(panel, "cut.lesson.placement.cancel", "cut_cancel");
+        return panel;
+    }
+
+    private ModularPanel storageDialog() {
+        final long version = generation;
+        HologramUiModules owner = ui;
+        storageLesson = new HologramEditorCutListLesson(
+            geometry.retained(),
+            () -> owner.host.parent()
+                .deferAction(() -> {
+                    if (ui != owner || generation != version || !geometry.storageOpen()) return;
+                    geometry.storageView(storageLesson.snapshot());
+                    geometry.take();
+                    refresh();
+                }),
+            () -> geometry.storageOpen() && geometry.stored());
+        HologramEditorCutWorkspace workspace = storageLesson.prepareWorkspace(ui);
+        workspace.activate(true);
+        ModularPanel panel = new Dialog<Void>(ui.panelName("tutorial_cut_storage")).setDisablePanelsBelow(true)
+            .setCloseOnOutOfBoundsClick(false)
+            .size(Math.max(260, ui.host.screenWidth() - 24), storageDialogHeight(ui.host.screenHeight()))
+            .pos(12, 12)
+            .background(HologramEditorNativeTheme.PANEL);
+        panel.child(workspace.build());
+        return panel;
+    }
+
+    private void register(ModularPanel panel, String target, String widget) {
+        ui.shell.registerTarget(target, WidgetTree.findFirstWithNameNullable(panel, widget));
+    }
+
+    static int storageDialogHeight(int screenHeight) {
+        // Leave separate room for the focus caption, the underlying footer and the four navigation buttons.
+        return Math.max(120, screenHeight - 24 - 60);
+    }
+
+    private String selectionCoordinates() {
+        return coordinates(geometry.first()) + " → " + coordinates(geometry.second());
+    }
+
+    private String placementCoordinates() {
+        NBTTagCompound scene = geometry.scene();
+        return coordinates(new int[] { scene.getInteger("x"), scene.getInteger("y"), scene.getInteger("z") }) + " · "
+            + scene.getInteger("sizeX")
+            + " × "
+            + scene.getInteger("sizeY")
+            + " × "
+            + scene.getInteger("sizeZ");
+    }
+
+    private static String coordinates(int[] point) {
+        return point == null ? "" : point[0] + ", " + point[1] + ", " + point[2];
+    }
+
+    boolean apply(Operation operation) {
+        switch (operation) {
+            case WORLD_MODE:
+                break;
+            case FIRST_CORNER:
+                geometry.choose(false);
+                break;
+            case SECOND_CORNER:
+                geometry.choose(true);
+                break;
+            case WORLD_ADJUST_CORNER:
+                geometry.expand(3, 2);
+                break;
+            case BOX_SUBMIT:
+                geometry.submit();
+                break;
+            case CUT_SOURCE_REVIEW:
+                geometry.reviewSource();
+                break;
+            case CUT_STORE:
+                return ui.shell.activateTarget("cut.lesson.source.save");
+            case CUT_OPEN_STORAGE:
+                geometry.openStorage();
+                break;
+            case CUT_TAKE:
+                return ui.shell.activateTarget("cut.place");
+            case CUT_LOCK:
+                geometry.lock();
+                break;
+            case CUT_PLACE_REVIEW:
+                geometry.reviewPlacement();
+                break;
+            case CUT_CANCEL:
+                return ui.shell.activateTarget("cut.lesson.placement.cancel");
+            case CUT_PLACE:
+                return ui.shell.activateTarget("cut.lesson.placement.confirm");
+            default:
+                return false;
+        }
+        refresh();
+        return true;
+    }
+
+    boolean satisfied(Operation operation) {
+        switch (operation) {
+            case WORLD_MODE:
+                return rendered != null;
+            case FIRST_CORNER:
+                return geometry.corners() == 1;
+            case SECOND_CORNER:
+                return geometry.corners() == 2;
+            case WORLD_ADJUST_CORNER:
+                int[] end = geometry.corner(true), second = geometry.second();
+                return second != null && second[0] == end[0] + 3 && second[2] == end[2] + 2;
+            case BOX_SUBMIT:
+                return geometry.snapshot()
+                    .hasKey("capturedSelection", 10);
+            case CUT_SOURCE_REVIEW:
+                return geometry.sourceReview() && sourceHandler != null && sourceHandler.isPanelOpen();
+            case CUT_STORE:
+                return geometry.stored() && !geometry.sourceReview() && !sourceHandler.isPanelOpen();
+            case CUT_OPEN_STORAGE:
+                return geometry.storageOpen() && storageHandler != null && storageHandler.isPanelOpen();
+            case CUT_TAKE:
+                return geometry.placing() && !geometry.locked() && !storageHandler.isPanelOpen();
+            case CUT_LOCK:
+                return geometry.locked();
+            case CUT_PLACE_REVIEW:
+                return geometry.placementReview() && placementHandler != null && placementHandler.isPanelOpen();
+            case CUT_CANCEL:
+                return geometry.stored() && !geometry.placing()
+                    && !geometry.placementReview()
+                    && !placementHandler.isPanelOpen();
+            case CUT_PLACE:
+                return geometry.consumed() && !geometry.stored()
+                    && !geometry.placementReview()
+                    && !placementHandler.isPanelOpen();
+            default:
+                return false;
+        }
+    }
+
+    double[] adjustedCornerPoint() {
+        int[] end = geometry.corner(true);
+        return point(end[0] + 3.5, end[1] + .5, end[2] + 2.5);
     }
 
     NBTTagCompound inspection() {
@@ -81,14 +356,18 @@ final class HologramEditorLessonStage {
 
         private final HologramUiModules ui;
         private final State state;
+        private final long presentationVersion;
 
         Scene(HologramUiModules ui, State state) {
             this.ui = ui;
             this.state = state;
+            presentationVersion = presentationGeneration.current();
         }
 
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
+            // A retired native tree must not recreate the raw renderer after close() released it.
+            if (!presentationGeneration.isCurrent(presentationVersion)) return;
             int[] region = ui.shell.nativeWidgetBounds(this);
             if (region == null) return;
             GL11.glPushMatrix();
@@ -123,6 +402,11 @@ final class HologramEditorLessonStage {
             rendered = scene;
         }
         int[] bounds = geometry.bounds();
+        if (geometry.corners() == 2) {
+            int[] end = geometry.corner(true);
+            bounds[3] = Math.max(bounds[3], end[0] + 4);
+            bounds[5] = Math.max(bounds[5], end[2] + 3);
+        }
         CameraPose pose = new CameraPose(
             (bounds[0] + bounds[3]) / 2d,
             (bounds[1] + bounds[4]) / 2d,
@@ -175,7 +459,14 @@ final class HologramEditorLessonStage {
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             renderer.renderLocal(0);
             GL11.glDisable(GL11.GL_TEXTURE_2D);
-            wire(0, 0, 0, scene.getInteger("sizeX"), scene.getInteger("sizeY"), scene.getInteger("sizeZ"), 0x8d978d);
+            wire(
+                scene.getInteger("x"),
+                scene.getInteger("y"),
+                scene.getInteger("z"),
+                scene.getInteger("sizeX"),
+                scene.getInteger("sizeY"),
+                scene.getInteger("sizeZ"),
+                0x8d978d);
             int[] first = geometry.first(), second = geometry.second();
             if (first != null) wire(first[0], first[1], first[2], 1, 1, 1, 0xe7bf58);
             if (second != null) {
@@ -203,7 +494,7 @@ final class HologramEditorLessonStage {
             Gui.drawRect(cx, cy - 5, cx + 1, cy + 6, 0xfff1dfb2);
         }
         ui.canvas.text(
-            (iso ? "等距" : "透视") + " · 电力高炉采集规划 · "
+            (iso ? "等距" : "透视") + (scene.hasKey("selectedCells") ? " · 教学选区（含空气） · " : " · 电力高炉采集规划 · ")
                 + scene.getTagList("cells", 10)
                     .tagCount()
                 + " 格 · 仅教学内存",

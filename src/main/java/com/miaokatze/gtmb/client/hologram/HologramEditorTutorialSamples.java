@@ -43,6 +43,66 @@ final class HologramEditorTutorialSamples {
 
     private HologramEditorTutorialSamples() {}
 
+    /** Library documents and the initially empty editor have independent ownership in teaching memory. */
+    static NBTTagCompound blueprintDocument(String id, String name) throws IOException {
+        NBTTagCompound data = planning(true);
+        data.setString("selectedPresetId", id);
+        data.setString("virtualPresetId", id);
+        data.setString("blueprintSavedId", id);
+        data.setString("virtualPresetName", name);
+        data.setString("blueprintSource", "saved");
+        data.setString("openPurpose", "blueprintEdit");
+        data.setString("editorWorkspace", "blueprint");
+        data.setBoolean("blueprintSaved", true);
+        data.setBoolean("blueprintDirty", false);
+        return data;
+    }
+
+    static NBTTagCompound openBlueprintDocument(NBTTagCompound document, NBTTagCompound previous) {
+        NBTTagCompound data = (NBTTagCompound) document.copy();
+        data.setString("session", previous.getString("session"));
+        data.setTag(
+            "presets",
+            previous.getTagList("presets", 10)
+                .copy());
+        data.setLong("planRevision", previous.getLong("planRevision") + 1);
+        data.setString(
+            "tutorialStructureId",
+            data.getTagList("structures", 10)
+                .getCompoundTagAt(0)
+                .getString("id"));
+        data.setString("activeStructure", "");
+        data.setBoolean("discardConfirmationRequired", false);
+        data.removeTag("discardTargetAction");
+        data.setString("status", "教学蓝图已载入；仅在隔离内存中编辑。");
+        return data;
+    }
+
+    /** Clear captured workflow identity as well as geometry; an empty author workspace has no loaded document. */
+    static NBTTagCompound emptyBlueprint(NBTTagCompound source) {
+        NBTTagCompound data = (NBTTagCompound) source.copy();
+        for (String key : new String[] { "cells", "structures", "capabilities", "processingNbtKeys",
+            "processingNbtPaths", "processingRelations", "blueprintResources", "cellNbtEntries" })
+            data.setTag(key, new NBTTagList());
+        for (String key : new String[] { "selectedPresetId", "virtualPresetId", "blueprintSavedId", "libraryLocalId",
+            "virtualPresetName", "activeStructure", "tutorialStructureId", "openPurpose" }) data.setString(key, "");
+        for (String key : new String[] { "processing", "processingPolicy", "tutorialMemberMetadata",
+            "tutorialOverviewMetadata", "networkBindings", "materialQuote", "cellNbtOverrides" }) data.removeTag(key);
+        for (String key : new String[] { "blueprintDirty", "blueprintSaved", "blueprintProcessingRequired",
+            "blueprintProcessingComplete", "blueprintSavePending", "blueprintAwaitingConfirmation",
+            "discardConfirmationRequired", "presetActive", "virtualPlacement", "blueprintPreview", "virtualLocked",
+            "wholeBlueprintPlacement", "target" }) data.setBoolean(key, false);
+        data.setBoolean("virtual", true);
+        data.setString("editorWorkspace", "blueprint");
+        data.setString("workspaceTab", "blueprint");
+        data.setString("blueprintSource", "author");
+        data.setInteger("cellCount", 0);
+        data.setInteger("selected", -1);
+        data.setIntArray("selectedIndices", new int[0]);
+        data.setLong("planRevision", 0);
+        return data;
+    }
+
     static synchronized NBTTagCompound snapshot(Kind kind) throws IOException {
         return HologramObservedItemBindings.restore(sample(kind).data);
     }

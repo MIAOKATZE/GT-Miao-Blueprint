@@ -40,23 +40,7 @@ final class HologramCutNameScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> text("title"), 306);
-        panel().child(HologramMuiTheme.label(() -> detail, 14, 39, 278, 35, HologramMuiTheme.TEXT))
-            .child(HologramMuiTheme.label(() -> text("label"), 14, 80, 278, 12, HologramMuiTheme.MUTED))
-            .child(
-                HologramMuiTheme.textField(draft, 12, 96, 282, 22, HologramCutNaming.MAX_LENGTH)
-                    .name("cut_name_draft"))
-            .child(HologramMuiTheme.label(() -> text("hint"), 14, 124, 278, 20, HologramMuiTheme.MUTED))
-            .child(HologramMuiTheme.label(() -> error, 14, 147, 278, 18, HologramMuiTheme.ERROR))
-            .child(
-                HologramMuiTheme.button(() -> text("cancel"), 12, 168, 56, 22, () -> finish(false, false))
-                    .name("cut_name_cancel"))
-            .child(
-                HologramMuiTheme.primaryButton(() -> text("save"), 74, 168, 56, 22, () -> finish(true, false))
-                    .name("cut_name_save"))
-            .child(
-                HologramMuiTheme.button(() -> text("saveWithoutPrompt"), 136, 168, 158, 22, () -> finish(true, true))
-                    .name("cut_name_skip"));
+        HologramCutDialogContent.name(panel(), draft, () -> detail, () -> error, this::finish);
     }
 
     private boolean validContext() {

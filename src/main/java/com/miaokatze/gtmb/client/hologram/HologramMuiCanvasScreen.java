@@ -27,6 +27,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         .background(IDrawable.NONE);
     private final Map<Integer, NativeButton> buttons = new HashMap<>();
     private List<HologramMuiTextField> fields = new ArrayList<>();
+    private Object activeFieldGraph;
     private final Map<Object, List<HologramMuiTextField>> fieldGraphs = new IdentityHashMap<>();
     private ParentWidget<?> fieldMount;
     private List<HologramMuiTextField> suspendedFields;
@@ -133,6 +134,13 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         return new FieldGraph(graph);
     }
 
+    @Override
+    protected Runnable guardDeferredAction(Runnable action) {
+        return activeFieldGraph instanceof HologramUiModules
+            ? ((HologramUiModules) activeFieldGraph).session.guardTutorialAction(action)
+            : action;
+    }
+
     final void releaseFieldGraph(Object graph) {
         List<HologramMuiTextField> released = fieldGraphs.remove(graph);
         if (fields == released) fields = new ArrayList<>();
@@ -141,15 +149,19 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     final class FieldGraph implements AutoCloseable {
 
         private final List<HologramMuiTextField> previous;
+        private final Object previousGraph;
 
         FieldGraph(Object graph) {
             previous = fields;
+            previousGraph = activeFieldGraph;
+            activeFieldGraph = graph;
             fields = fieldGraphs.computeIfAbsent(graph, ignored -> new ArrayList<>());
         }
 
         @Override
         public void close() {
             fields = previous;
+            activeFieldGraph = previousGraph;
         }
     }
 

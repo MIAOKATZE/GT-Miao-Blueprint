@@ -21,6 +21,15 @@ final class HologramUiSession {
     private HologramState state;
 
     private java.util.function.BiConsumer<String, NBTTagCompound> tutorialSink;
+    private final HologramTutorialGeneration tutorialGeneration = new HologramTutorialGeneration();
+
+    Runnable guardTutorialAction(Runnable action) {
+        return isTutorial() ? tutorialGeneration.guard(action) : action;
+    }
+
+    void invalidateTutorialActions() {
+        if (isTutorial()) tutorialGeneration.invalidate();
+    }
 
     /** Detached teaching sessions never enter production command preparation, ACKs or transport. */
     boolean isTutorial() {

@@ -1,5 +1,8 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -9,6 +12,9 @@ final class HologramEditorTutorialGeometry {
     private NBTTagCompound source, clipboard, scene, captured;
     private int[] first, second;
     private boolean locked, placing, consumed;
+    private boolean sourceReview, placementReview, storageOpen;
+    private NBTTagCompound storageView = new NBTTagCompound();
+    private String name = "";
 
     static NBTTagCompound raw(HologramState state) {
         NBTTagCompound entry = new NBTTagCompound();
@@ -56,6 +62,10 @@ final class HologramEditorTutorialGeometry {
         clipboard = captured = null;
         first = second = null;
         locked = placing = consumed = false;
+        sourceReview = placementReview = false;
+        storageOpen = false;
+        storageView = new NBTTagCompound();
+        name = "";
     }
 
     NBTTagCompound scene() {
@@ -68,6 +78,13 @@ final class HologramEditorTutorialGeometry {
 
     int count() {
         return selected().tagCount();
+    }
+
+    int selectionVolume() {
+        if (first == null || second == null) return 0;
+        return Math.toIntExact(
+            (Math.abs((long) second[0] - first[0]) + 1) * (Math.abs((long) second[1] - first[1]) + 1)
+                * (Math.abs((long) second[2] - first[2]) + 1));
     }
 
     boolean stored() {
@@ -121,31 +138,144 @@ final class HologramEditorTutorialGeometry {
 
     void submit() {
         requireSelection();
-        captured = copy(source);
-        captured.setTag("cells", selected());
-        if (captured.getTagList("cells", 10)
-            .tagCount() != count())
-            throw new IllegalStateException("Teaching selection capture differs from its geometry");
+        captured = captureSelection();
+    }
+
+    /**
+     * Like HologramCutEntry.capture, selected air occupies a row and coordinates are relative to the selected bounds.
+     */
+    private NBTTagCompound captureSelection() {
+        requireSelection();
+        int minX = Math.min(first[0], second[0]), minY = Math.min(first[1], second[1]),
+            minZ = Math.min(first[2], second[2]);
+        int sizeX = Math.abs(second[0] - first[0]) + 1, sizeY = Math.abs(second[1] - first[1]) + 1,
+            sizeZ = Math.abs(second[2] - first[2]) + 1;
+        Map<String, NBTTagCompound> observed = new HashMap<>();
+        NBTTagList original = source.getTagList("cells", 10);
+        for (int i = 0; i < original.tagCount(); i++) {
+            NBTTagCompound row = original.getCompoundTagAt(i);
+            observed.put(key(row.getInteger("x"), row.getInteger("y"), row.getInteger("z")), row);
+        }
+        NBTTagList cells = new NBTTagList();
+        int blocks = 0;
+        for (int y = 0; y < sizeY; y++) for (int z = 0; z < sizeZ; z++) for (int x = 0; x < sizeX; x++) {
+            NBTTagCompound recorded = observed.get(key(minX + x, minY + y, minZ + z));
+            NBTTagCompound row = recorded == null ? new NBTTagCompound() : copy(recorded);
+            row.setInteger("x", x);
+            row.setInteger("y", y);
+            row.setInteger("z", z);
+            if (recorded == null) {
+                row.setString("block", "minecraft:air");
+                row.setInteger("meta", 0);
+            }
+            if (!"minecraft:air".equals(row.getString("block"))) blocks++;
+            cells.appendTag(row);
+        }
+        NBTTagCompound entry = copy(source);
+        entry.setInteger("x", minX);
+        entry.setInteger("y", minY);
+        entry.setInteger("z", minZ);
+        entry.setInteger("sizeX", sizeX);
+        entry.setInteger("sizeY", sizeY);
+        entry.setInteger("sizeZ", sizeZ);
+        entry.setInteger("selectionVersion", 1);
+        entry.setInteger("selectedCells", selectionVolume());
+        entry.setInteger("sourceSelectedCells", count());
+        entry.setInteger("blocks", blocks);
+        entry.setTag("cells", cells);
+        return entry;
+    }
+
+    private static String key(int x, int y, int z) {
+        return x + ":" + y + ":" + z;
+    }
+
+    boolean sourceReview() {
+        return sourceReview;
+    }
+
+    boolean placementReview() {
+        return placementReview;
+    }
+
+    boolean locked() {
+        return locked;
+    }
+
+    boolean placing() {
+        return placing;
+    }
+
+    boolean storageOpen() {
+        return storageOpen;
+    }
+
+    void openStorage() {
+        if (clipboard == null || placing) throw new IllegalStateException("No retained teaching entry to select");
+        storageOpen = true;
+    }
+
+    NBTTagCompound retained() {
+        if (clipboard == null) throw new IllegalStateException("No retained teaching cut");
+        NBTTagCompound entry = copy(clipboard);
+        entry.setString("name", name);
+        return entry;
+    }
+
+    void storageView(NBTTagCompound view) {
+        storageView = copy(view);
+    }
+
+    NBTTagCompound storageView() {
+        return copy(storageView);
+    }
+
+    String name() {
+        return name;
+    }
+
+    void name(String value) {
+        name = value;
+    }
+
+    void reviewSource() {
+        requireSelection();
+        if (clipboard != null || consumed) throw new IllegalStateException("Teaching source already stored");
+        sourceReview = true;
+    }
+
+    void cancelSourceReview() {
+        sourceReview = false;
+    }
+
+    void reviewPlacement() {
+        if (!placing || !locked || clipboard == null)
+            throw new IllegalStateException("Lock the teaching preview before reviewing placement");
+        placementReview = true;
     }
 
     void store() {
         requireSelection();
+        if (!sourceReview) throw new IllegalStateException("Review and explicitly save the teaching source first");
         if (clipboard != null || consumed) throw new IllegalStateException("Teaching cut already stored or consumed");
-        clipboard = copy(source);
-        clipboard.setTag("cells", selected());
         // This course selects the complete declared footprint. Refuse an accidentally partial cut.
         if (count() != source.getTagList("cells", 10)
             .tagCount()) throw new IllegalStateException("Incomplete teaching EBF selection");
+        clipboard = captureSelection();
         scene = copy(source);
         scene.setTag("cells", new NBTTagList());
         first = second = null;
+        sourceReview = false;
     }
 
     void take() {
-        if (clipboard == null) throw new IllegalStateException("No teaching cut entry");
+        if (clipboard == null || !storageOpen)
+            throw new IllegalStateException("Open the retained teaching entry in storage first");
         scene = translated(clipboard, source.getInteger("sizeX") + 2, 0, 2);
         placing = true;
         locked = false;
+        placementReview = false;
+        storageOpen = false;
     }
 
     void lock() {
@@ -158,17 +288,19 @@ final class HologramEditorTutorialGeometry {
         scene = copy(source);
         scene.setTag("cells", new NBTTagList());
         placing = locked = false;
+        placementReview = false;
     }
 
     void place() {
-        if (!placing || !locked || clipboard == null)
-            throw new IllegalStateException("Lock the teaching preview first");
+        if (!placing || !locked || clipboard == null || !placementReview)
+            throw new IllegalStateException("Lock and explicitly confirm the teaching preview first");
         NBTTagCompound expected = translated(clipboard, source.getInteger("sizeX") + 2, 0, 2);
         if (!expected.equals(scene))
             throw new IllegalStateException("Teaching placement geometry differs from the retained entry");
         clipboard = null;
         placing = locked = false;
         consumed = true;
+        placementReview = false;
     }
 
     int[] first() {
@@ -206,6 +338,11 @@ final class HologramEditorTutorialGeometry {
         n.setBoolean("locked", locked);
         n.setBoolean("placing", placing);
         n.setBoolean("consumed", consumed);
+        n.setBoolean("sourceReview", sourceReview);
+        n.setBoolean("placementReview", placementReview);
+        n.setString("name", name);
+        n.setBoolean("storageOpen", storageOpen);
+        n.setTag("storageView", copy(storageView));
         return n;
     }
 
@@ -219,10 +356,18 @@ final class HologramEditorTutorialGeometry {
         locked = n.getBoolean("locked");
         placing = n.getBoolean("placing");
         consumed = n.getBoolean("consumed");
+        sourceReview = n.getBoolean("sourceReview");
+        placementReview = n.getBoolean("placementReview");
+        name = n.getString("name");
+        storageOpen = n.getBoolean("storageOpen");
+        storageView = copy(n.getCompoundTag("storageView"));
     }
 
     private static NBTTagCompound translated(NBTTagCompound original, int dx, int dy, int dz) {
         NBTTagCompound result = copy(original);
+        result.setInteger("x", dx);
+        result.setInteger("y", dy);
+        result.setInteger("z", dz);
         NBTTagList cells = result.getTagList("cells", 10);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound row = cells.getCompoundTagAt(i);

@@ -27,6 +27,8 @@ final class HologramEditorCutWorkspace {
     private final HologramCutStorageBrowserView.Selection selection;
     private final HologramCutStoragePreviewView preview;
     private final Runnable lessonRefresh;
+    private final Runnable lessonPlace;
+    private final BooleanSupplier lessonCanPlace;
     private final boolean isolated;
     private HologramCutStoragePreview live;
     private HologramCutStorageBrowserView browser;
@@ -38,6 +40,8 @@ final class HologramEditorCutWorkspace {
         this.ui = ui;
         isolated = ui.session.isTutorial();
         lessonRefresh = () -> {};
+        lessonPlace = null;
+        lessonCanPlace = () -> false;
         selection = new HologramCutStorageBrowserView.Selection() {
 
             public List<NBTTagCompound> entries() {
@@ -83,10 +87,17 @@ final class HologramEditorCutWorkspace {
 
     HologramEditorCutWorkspace(HologramUiModules ui, HologramCutStorageBrowserView.Selection selection,
         HologramCutStoragePreviewView preview, Runnable refresh) {
+        this(ui, selection, preview, refresh, null, () -> false);
+    }
+
+    HologramEditorCutWorkspace(HologramUiModules ui, HologramCutStorageBrowserView.Selection selection,
+        HologramCutStoragePreviewView preview, Runnable refresh, Runnable place, BooleanSupplier canPlace) {
         this.ui = ui;
         this.selection = selection;
         this.preview = preview;
         lessonRefresh = refresh;
+        lessonPlace = place;
+        lessonCanPlace = canPlace;
         isolated = true;
     }
 
@@ -106,13 +117,7 @@ final class HologramEditorCutWorkspace {
             .widthRel(1f)
             .height(44)
             .childPadding(4);
-        actions.child(
-            button(
-                "place",
-                "放置所选",
-                "world",
-                this::canAct,
-                () -> { if (canAct()) client().beginStoragePlacement(selection.selected()); }).widthRel(1f));
+        actions.child(button("place", "放置所选", "world", this::canPlace, this::place).widthRel(1f));
         Flow secondary = Flow.row()
             .widthRel(1f)
             .height(18)
@@ -190,6 +195,16 @@ final class HologramEditorCutWorkspace {
             && !isolated
             && !ui.session.isTutorial()
             && client().canUseStorageEntry(selection.selected());
+    }
+
+    private boolean canPlace() {
+        return isolated ? active && !closed && lessonPlace != null && lessonCanPlace.getAsBoolean() : canAct();
+    }
+
+    private void place() {
+        if (!canPlace()) return;
+        if (isolated) lessonPlace.run();
+        else client().beginStoragePlacement(selection.selected());
     }
 
     void activate(boolean value) {

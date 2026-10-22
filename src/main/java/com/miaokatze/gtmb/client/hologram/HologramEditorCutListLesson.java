@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -23,17 +24,31 @@ final class HologramEditorCutListLesson
     private String selected = "", notice = "只读教学内存示例 · 未读取真实剪切目录";
     private int refreshes;
     private boolean closed;
+    private final Runnable place;
+    private final BooleanSupplier canPlace;
 
     HologramEditorCutListLesson() {
+        place = null;
+        canPlace = () -> false;
         try {
-            HologramState sample = new HologramState(
-                HologramEditorTutorialSamples.snapshot(HologramEditorTutorialSamples.Kind.PHYSICAL));
+            HologramState sample = new HologramState(HologramEditorTutorialSamples.planning(false));
             observedExample("tutorial-cut-a", "电力高炉 · 采集规划", 1, sample);
             observedExample("tutorial-cut-b", "电力高炉 · 同一规划副本", 2, sample);
         } catch (java.io.IOException error) {
             throw new IllegalStateException("电力高炉教学样例不可用", error);
         }
         select("tutorial-cut-a");
+    }
+
+    HologramEditorCutListLesson(NBTTagCompound retained, Runnable place, BooleanSupplier canPlace) {
+        this.place = place;
+        this.canPlace = canPlace;
+        NBTTagCompound entry = (NBTTagCompound) retained.copy();
+        entry.setString("id", "tutorial-retained-cut");
+        entry.setLong("sequence", 1);
+        directory.add((NBTTagCompound) entry.copy());
+        examples.put("tutorial-retained-cut", entry);
+        select("tutorial-retained-cut");
     }
 
     private void observedExample(String id, String name, long sequence, HologramState state) {
@@ -46,8 +61,9 @@ final class HologramEditorCutListLesson
     }
 
     HologramEditorCutWorkspace prepareWorkspace(HologramUiModules ui) {
+        if (closed) throw new IllegalStateException("A retired teaching cut list cannot reopen");
         if (workspace != null) return workspace;
-        workspace = new HologramEditorCutWorkspace(ui, this, this, this::refresh);
+        workspace = new HologramEditorCutWorkspace(ui, this, this, this::refresh, place, canPlace);
         workspace.build();
         browser = workspace.browser();
         return workspace;
@@ -62,7 +78,7 @@ final class HologramEditorCutListLesson
     }
 
     public void select(String id) {
-        if (selected.equals(id) || !examples.containsKey(id)) return;
+        if (closed || selected.equals(id) || !examples.containsKey(id)) return;
         if (renderer != null) renderer.release();
         selected = id;
         raw = (NBTTagCompound) examples.get(id)
@@ -87,16 +103,18 @@ final class HologramEditorCutListLesson
     }
 
     private void refresh() {
+        if (closed) return;
         refreshes++;
         notice = "已刷新教学内存目录 · 未向服务器发送请求";
     }
 
     void beginOrbit() {
+        if (closed || browser == null) return;
         dragCamera = browser.camera.cameraState();
     }
 
     void orbit(float x, float y) {
-        if (dragCamera == null) return;
+        if (closed || dragCamera == null) return;
         browser.camera.restoreCamera(dragCamera);
         browser.camera.orbitBy(x, y);
     }
@@ -124,6 +142,7 @@ final class HologramEditorCutListLesson
     }
 
     void restore(NBTTagCompound state) {
+        if (closed) throw new IllegalStateException("A retired teaching cut list cannot restore");
         select(state.getString("selected"));
         refreshes = state.getInteger("refreshes");
         closed = state.getBoolean("closed");
@@ -136,6 +155,9 @@ final class HologramEditorCutListLesson
     }
 
     void close() {
+        if (closed) return;
+        closed = true;
+        if (browser != null) browser.setEnabled(false);
         if (workspace != null) workspace.close();
         workspace = null;
         if (renderer != null) renderer.release();
