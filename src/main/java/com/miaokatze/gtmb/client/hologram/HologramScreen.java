@@ -329,9 +329,24 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiKeyBefore(char character, int key) {
+        boolean back = key == org.lwjgl.input.Keyboard.KEY_ESCAPE
+            || key == org.lwjgl.input.Keyboard.KEY_E && !ui.router.textFieldFocused();
+        if (back && ui.tutorial.active()) {
+            deferAction(ui.tutorial::closeWithoutProgress);
+            return true;
+        }
         if (ui.tutorial.blockInput()) return true;
         if (detached) return true;
-        // Modal key handlers and focused native editors receive Escape/Return before global commands.
+        if (key == org.lwjgl.input.Keyboard.KEY_ESCAPE && ui.router.textFieldFocused()) {
+            // Keep the current draft. MUI's late Escape closes every panel when a world is loaded.
+            getScreen().getContext()
+                .removeFocus();
+            return true;
+        }
+        if (back) {
+            deferAction(ui.router::back);
+            return true;
+        }
         return false;
     }
 

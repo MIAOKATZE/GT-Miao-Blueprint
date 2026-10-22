@@ -56,8 +56,17 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if (s.emptyProjection && !("switchEditorWorkspace".equals(op) || "close".equals(op))) {
+            s.status = "右击控制器开启投影模式";
+            HologramSnapshots.send(s);
+            return;
+        }
         if ("switchEditorWorkspace".equals(op)) {
             HologramEditorWorkspaceRegistry.switchWorkspace(s, action);
+            return;
+        }
+        if ("confirmProjectionSource".equals(op)) {
+            HologramEditorWorkspaceRegistry.confirmProjectionSource(s, action);
             return;
         }
         if ("placeTextBox".equals(op)) {
@@ -68,6 +77,32 @@ final class HologramActionDispatcher {
             && s.job != 1
             && s.job != 2
             && !HologramAeCraftingOrders.active(player)) {
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+                if (!HologramEditorWorkspaceRegistry.allowProjectionSource(s, action, "clearWorkspace", "")) {
+                    HologramSnapshots.send(s);
+                    return;
+                }
+                HologramSession empty = new HologramSession(player, s.x, s.y, s.z, false, s.side);
+                empty.virtual = true;
+                empty.emptyProjection = true;
+                empty.open = true;
+                empty.openPurpose = "workspaceClear";
+                empty.workspaceTab = "structure";
+                empty.status = "右击控制器开启投影模式";
+                HologramWorkspace.PresentationTransition transition = HologramWorkspace.preparePresentation(s, empty);
+                if (transition == null) return;
+                transition.discardProjection = true;
+                if (HologramWorkspace.activatePresentation(transition)) HologramSnapshots.send(empty);
+                return;
+            }
+            if (HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s)
+                && !HologramAuthoringWorkflow.sourceSwitchConfirmed(s, action)) {
+                NBTTagCompound clear = (NBTTagCompound) action.copy();
+                clear.setString("op", "clearWorkspace");
+                HologramAuthoringWorkflow.requestSourceSwitch(s, clear, null, null, null);
+                HologramSnapshots.send(s);
+                return;
+            }
             HologramDeferredPlanRefresh.cancel(s);
             HologramSession.cancelCaptureRetry(s);
             HologramWorkspace.clearAreaSelection(s);
@@ -103,7 +138,12 @@ final class HologramActionDispatcher {
             return;
         }
         if ("cancelSourceSwitch".equals(op)) {
-            if (HologramWorkspace.areaSessionOwned(s)) HologramAuthoringWorkflow.cancelSourceSwitch(s, action);
+            if (HologramWorkspace.areaSessionOwned(s)
+                || "switchEditorWorkspace".equals(s.pendingSourceAction.getString("op"))
+                || "confirmProjectionSource".equals(s.pendingSourceAction.getString("op"))
+                || HologramEditorWorkspaceRegistry.physicalProjection(s)
+                    && "importArea".equals(s.pendingSourceAction.getString("op")))
+                HologramAuthoringWorkflow.cancelSourceSwitch(s, action);
             HologramSnapshots.send(s);
             return;
         }
@@ -295,6 +335,22 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if ("importBlueprint".equals(op) && HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+            HologramSession imported = HologramWorkspace.create(player, s.x, s.y, s.z, false, s.side);
+            imported.virtual = true;
+            HologramWorkspace.PresentationTransition transition = HologramWorkspace.preparePresentation(s, imported);
+            if (transition != null && HologramAuthoringWorkflow.blueprintAction(imported, action, op)
+                && imported.virtualPreset != null
+                && imported.capture != null
+                && HologramWorkspace.activatePresentation(transition)) {
+                imported.open = true;
+                HologramSnapshots.send(imported);
+            } else {
+                s.status = imported.status;
+                HologramSnapshots.send(s);
+            }
+            return;
+        }
         if (s.job != 1 && s.job != 2 && HologramAuthoringWorkflow.blueprintAction(s, action, op)) {
             HologramDraftPersistence.persist(s);
             HologramSnapshots.send(s);
@@ -307,6 +363,14 @@ final class HologramActionDispatcher {
         } else if ("loadPreset".equals(op) && s.job != 1 && s.job != 2) {
             HologramPresetWorkflow.loadPreset(s, action.getString("presetId"));
         } else if ("choosePlacementPreset".equals(op) && s.job != 1 && s.job != 2) {
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+                HologramSession source = s;
+                s = HologramPresetWorkflow.editPreset(source, action.getString("presetId"));
+                if (s == source) {
+                    HologramSnapshots.send(source);
+                    return;
+                }
+            }
             s.virtual = true;
             HologramSessionPolicy.clearPlacementSelection(s);
             HologramPresetWorkflow.loadPreset(s, action.getString("presetId"), false);

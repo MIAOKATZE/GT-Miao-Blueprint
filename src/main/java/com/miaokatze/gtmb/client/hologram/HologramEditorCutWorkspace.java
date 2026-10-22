@@ -149,9 +149,6 @@ final class HologramEditorCutWorkspace {
         confirmationActions.child(button("undo.cancel", "取消", "cancel", () -> true, () -> confirmUndo = "").expanded());
         confirmation.child(confirmationActions);
         browser.addFooter(confirmation);
-        browser.addFooter(
-            new Progress().widthRel(1f)
-                .height(24));
         if (!isolated) refreshDirectory();
         return root;
     }
@@ -270,5 +267,11 @@ final class HologramEditorCutWorkspace {
                 Math.max(20, getArea().w() - 4),
                 HologramEditorNativeTheme.MUTED);
         }
+    }
+
+    HologramProgress progress() {
+        if (isolated || !active || closed) return null;
+        HologramProgress progress = client().progress(true);
+        return live != null && live.progress() != null && !client().busy() ? live.progress() : progress;
     }
 }

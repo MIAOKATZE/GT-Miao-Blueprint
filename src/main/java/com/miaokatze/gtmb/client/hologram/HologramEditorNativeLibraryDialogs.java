@@ -204,7 +204,10 @@ final class HologramEditorNativeLibraryDialogs {
                         || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0;
         Supplier<String> label = () -> kind == Kind.PRESET ? "确认保存流程预设"
             : kind == Kind.DELETE ? "确认删除"
-                : kind == Kind.ADMIN ? "保存并等待服务器确认" : kind == Kind.OVERWRITE ? "确认覆盖保存" : "放弃改动并继续";
+                : kind == Kind.ADMIN ? "保存并等待服务器确认"
+                    : kind == Kind.OVERWRITE ? "确认覆盖保存"
+                        : ui.library.clearWorkspaceReview() ? "确认清空"
+                            : ui.library.projectionDiscardReview() ? "丢弃投影并打开蓝图" : "放弃改动并继续";
         return ui.shell.nativeAction(id, label, enabled, () -> "仍由原业务门禁和服务器核对本次请求。")
             .onMousePressed(button -> {
                 if (button != 0 || !enabled.getAsBoolean() || desired() != kind) return true;

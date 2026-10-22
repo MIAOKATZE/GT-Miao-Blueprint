@@ -850,6 +850,16 @@ final class HologramUiRouter {
         }
     }
 
+    /** The host consumes the physical return key before MUI's world-wide Escape fallback. */
+    void back() {
+        if (ui.tutorial.active()) {
+            ui.tutorial.closeWithoutProgress();
+            return;
+        }
+        if (ui.shell.hasModalPanel() && ui.shell.consumeBackLayer()) return;
+        keyTyped('\0', Keyboard.KEY_ESCAPE);
+    }
+
     void keyTyped(char c, int key) {
         if (ui.tutorial.blockInput()) return;
         ui.shortcuts.activity();
@@ -882,11 +892,25 @@ final class HologramUiRouter {
                 ui.annotations.pinnedAnnotation("");
                 return;
             }
-            ui.preview.cancelQueuedEdits("已取消等待中的编辑");
             if (ui.preview.gizmo()
                 .axis() >= 0) {
                 ui.preview.gizmo()
                     .cancel();
+                return;
+            }
+            if (!ui.preview.editQueue()
+                .isEmpty()) {
+                ui.preview.cancelQueuedEdits("已取消等待中的编辑");
+                return;
+            }
+            if (ui.host.parent()
+                .getScreen()
+                .getContext()
+                .hasDraggable()) {
+                ui.host.parent()
+                    .getScreen()
+                    .getContext()
+                    .dropDraggable(true);
                 return;
             }
             if (ui.config.roleDropdown()) {
@@ -901,6 +925,7 @@ final class HologramUiRouter {
                 ui.shortcuts.shortcutsDrawer(false);
                 return;
             }
+            if (ui.shell.consumeBackLayer()) return;
             if (ui.preview.inventoryDragging() || ui.preview.inventorySlot() >= 0 || ui.preview.sourceChoice() >= 0) {
                 ui.preview.inventoryDragging(false);
                 ui.preview.inventorySlot(ui.preview.sourceChoice(-1));

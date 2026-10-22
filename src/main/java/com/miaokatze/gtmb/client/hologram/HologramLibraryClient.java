@@ -2386,6 +2386,15 @@ final class HologramLibraryClient {
             ready = inFlight = false;
             status = uploaded ? "已上传至服务器蓝图库" : "蓝图已传输，服务器正在打开预览";
             progressCompleted();
+            if ("projectionDiscardPending".equals(reply.getString("id"))) {
+                status = "蓝图已准备好，请确认是否丢弃当前投影";
+                outgoingQuick = false;
+                preparing = false;
+                quick.committed();
+                quickFallback = null;
+                finishBackgroundTask(completedTask, true, status);
+                return;
+            }
             if (uploaded) {
                 selectedServer = reply.getString("id");
                 String serverKey = connection, localId = outgoingLocal, publicId = selectedServer;

@@ -163,7 +163,7 @@ final class HologramUiShortcuts {
                         ui.session.notice(
                             ui.tools.commands()
                                 .save() ? "编辑器快捷键已保存" : "快捷键保存失败");
-                    } else ui.session.notice("该组合已使用；E/Esc保留退出，请选择其他按键");
+                    } else ui.session.notice("该组合已使用；E/Esc保留逐级返回与退出，请选择其他按键");
                 }
             return true;
         }

@@ -32,13 +32,15 @@ public final class HologramEditorWorkspacesRegression {
     public static void run() {
         try {
             creationAndRoundTrip();
+            discardConsentAndAttachmentGate();
+            projectionAreaImportConsent();
             importedControllerKeepsAuthorOwnership();
             sequenceFloorRetainsExactAcknowledgement();
             epochFencesReactivatedSession();
             admissionAndOwnership();
             provisionalFailureAndCommit();
             lateRollbackFences();
-        } catch (ReflectiveOperationException failure) {
+        } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("workspace fixture", failure);
         } finally {
             HologramWorkspace.clear();
@@ -76,7 +78,7 @@ public final class HologramEditorWorkspacesRegression {
             long firstEpoch = projection.editorWorkspaceEpoch;
             HologramSession blueprint = switchTo(projection, "blueprint", 61);
             commit(blueprint);
-            switchTo(blueprint, "projection", 62);
+            projection = switchTo(blueprint, "projection", 62);
             commit(projection);
             for (String invalid : new String[] { "old", "future", "wrongType" }) {
                 NBTTagCompound action = request(projection, "blueprint", 1);
@@ -109,8 +111,9 @@ public final class HologramEditorWorkspacesRegression {
             HologramSession projection = fixture.projection();
             HologramSession blueprint = switchTo(projection, "blueprint", 41);
             commit(blueprint);
+            projection = switchTo(blueprint, "projection", 42);
+            commit(projection);
             blueprint.uiSequence = 9001;
-            HologramWorkspace.activate(fixture.id, projection);
             SimpleAssert.eq(
                 9001L,
                 HologramEditorWorkspaceRegistry.sequenceFloor(projection),
@@ -157,11 +160,14 @@ public final class HologramEditorWorkspacesRegression {
             blueprint.selected = 7;
             long secondEpoch = blueprint.editorWorkspaceEpoch;
             HologramSession restored = switchTo(blueprint, "projection", 32);
-            SimpleAssert.that(restored == projection, "return restores exact projection owner");
-            SimpleAssert.that(restored.target == fixture.world.occupant, "projection retains its controller identity");
-            SimpleAssert.eq(11L, restored.planRevision, "projection revision survives independently");
-            SimpleAssert.eq(4, restored.selected, "projection selection survives independently");
-            SimpleAssert.eq(17, restored.channels.getInteger("projection"), "projection channels survive");
+            SimpleAssert
+                .that(restored != projection && restored.emptyProjection, "return opens a new empty projection owner");
+            SimpleAssert.that(projection.cancelled, "committed blueprint opening retires the discarded projection");
+            SimpleAssert.that(
+                restored.target == null && restored.capture == null,
+                "discarded controller content never revives");
+            SimpleAssert.eq(-1, restored.selected, "empty projection has no retained selection");
+            SimpleAssert.that(!restored.channels.hasKey("projection"), "discarded projection channels never revive");
             SimpleAssert.that(!restored.channels.hasKey("blueprint"), "blueprint channels never leak into projection");
             SimpleAssert.that(restored.editorWorkspaceEpoch > secondEpoch, "return cannot reuse the old epoch");
             commit(restored);
@@ -171,6 +177,136 @@ public final class HologramEditorWorkspacesRegression {
             SimpleAssert.eq(7, again.selected, "blueprint selection survives independently");
             SimpleAssert.eq(29, again.channels.getInteger("blueprint"), "blueprint channels survive");
             SimpleAssert.that(!again.channels.hasKey("projection"), "projection channels never leak into blueprint");
+        }
+    }
+
+    private static void discardConsentAndAttachmentGate() throws ReflectiveOperationException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession source = fixture.projection();
+            source.planRevision = 17;
+            source.channels.setInteger("kept", 9);
+            long epoch = source.editorWorkspaceEpoch;
+            NBTTagCompound draft = new NBTTagCompound();
+            draft.setInteger("dimension", source.dimension);
+            draft.setInteger("x", source.x);
+            draft.setInteger("y", source.y);
+            draft.setInteger("z", source.z);
+            draft.setString("controllerType", HologramSessionPolicy.controllerType(source));
+            fixture.player.getHeldItem()
+                .getTagCompound()
+                .setTag(HologramSessionKeys.DRAFT, draft);
+            HologramActionDispatcher.handle(fixture.player, request(source, "blueprint", 21));
+            SimpleAssert.that(source.discardConfirmationRequired, "physical projection always requires consent");
+            SimpleAssert.eq(epoch, source.editorWorkspaceEpoch, "proposal does not advance the activation epoch");
+            NBTTagCompound proposal = (NBTTagCompound) source.pendingSourceAction.copy();
+            NBTTagCompound stale = (NBTTagCompound) proposal.copy();
+            stale.setBoolean("confirmDiscard", true);
+            stale.setString("sourceSwitchNonce", "stale");
+            stale.setLong("uiSequence", 22);
+            HologramActionDispatcher.handle(fixture.player, stale);
+            SimpleAssert
+                .that(HologramWorkspace.find(fixture.id) == source, "wrong consent nonce cannot switch domains");
+            proposal.setString("op", "cancelSourceSwitch");
+            proposal.setLong("uiSequence", 23);
+            HologramActionDispatcher.handle(fixture.player, proposal);
+            SimpleAssert
+                .that(!source.discardConfirmationRequired && !source.cancelled, "cancel retains the active projection");
+            SimpleAssert.eq(9, source.channels.getInteger("kept"), "cancel retains projection settings");
+            SimpleAssert.that(
+                fixture.player.getHeldItem()
+                    .getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
+                "cancel retains the item projection memory");
+            NBTTagCompound attachment = request(source, "blueprint", 24);
+            attachment.setString("op", "placeTextBox");
+            attachment.setLong("textRequest", 81);
+            HologramActionDispatcher.handle(fixture.player, attachment);
+            SimpleAssert.that(
+                source.attachmentTask == null && !source.textPlacementAck.getBoolean("accepted"),
+                "server rejects physical text and picture before creating geometry tasks");
+            SimpleAssert.that(
+                source.target == fixture.world.occupant && !source.virtual,
+                "rejected attachment never converts physical projection to a blueprint");
+            HologramSession author = switchTo(source, "blueprint", 25);
+            SimpleAssert.that(
+                !source.cancelled && fixture.player.getHeldItem()
+                    .getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
+                "provisional target preserves source and item memory for rollback");
+            commit(author);
+            SimpleAssert.that(
+                source.cancelled && !fixture.player.getHeldItem()
+                    .getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
+                "full baseline commit retires source and clears the item projection memory");
+            HologramSession empty = switchTo(author, "projection", 26);
+            commit(empty);
+            NBTTagCompound forbidden = request(empty, "blueprint", 27);
+            forbidden.setString("op", "main");
+            forbidden.setInteger("value", 7);
+            HologramActionDispatcher.handle(fixture.player, forbidden);
+            SimpleAssert.eq(1, empty.main, "empty projection rejects editor mutations at the server");
+            SimpleAssert.that(
+                empty.target == null && empty.capture == null,
+                "empty mutation cannot resurrect discarded geometry");
+            SimpleAssert.that(
+                HologramDraftPersistence.storedDraft(source, fixture.player.getHeldItem())
+                    .hasNoTags(),
+                "a discarded controller cannot recover a historical server draft without the current item marker");
+        }
+    }
+
+    private static void projectionAreaImportConsent() throws ReflectiveOperationException, java.io.IOException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession source = fixture.projection();
+            source.planRevision = 43;
+            source.channels.setInteger("retained", 6);
+            long epoch = source.editorWorkspaceEpoch;
+            HologramArea area = new HologramArea();
+            area.point(1, 1, 64, 0, "replace");
+            area.point(2, 2, 64, 0, "replace");
+            HologramWorkspace.AREAS.put(fixture.id, area);
+            NBTTagList selection = (NBTTagList) area.regionSnapshot()
+                .copy();
+            SimpleAssert.that(
+                !HologramAreaWorkflow.startAreaImport(source, area) && source.discardConfirmationRequired,
+                "world selection completion asks consent before replacing a physical projection");
+            SimpleAssert.that(
+                !area.importing && HologramWorkspace.find(fixture.id) == source,
+                "area proposal retains the source route and defers import work");
+            NBTTagCompound cancel = (NBTTagCompound) source.pendingSourceAction.copy();
+            cancel.setString("op", "cancelSourceSwitch");
+            cancel.setLong("uiSequence", 31);
+            HologramActionDispatcher.handle(fixture.player, cancel);
+            SimpleAssert.that(selection.equals(area.regionSnapshot()), "cancel retains the completed world selection");
+            SimpleAssert.eq(43L, source.planRevision, "cancel never changes the projection revision");
+            SimpleAssert.eq(epoch, source.editorWorkspaceEpoch, "cancel never changes the projection activation");
+            SimpleAssert
+                .that(!HologramAreaWorkflow.startAreaImport(source, area), "a fresh area attempt asks consent again");
+            NBTTagCompound confirm = (NBTTagCompound) source.pendingSourceAction.copy();
+            confirm.setBoolean("confirmDiscard", true);
+            confirm.setLong("uiSequence", 32);
+            HologramActionDispatcher.handle(fixture.player, confirm);
+            SimpleAssert.that(
+                area.importing && source.projectionAreaImportDiscard,
+                "the confirmed original selection continues through the real segmented importer");
+            SimpleAssert.that(
+                HologramWorkspace.find(fixture.id) == source && source.target == fixture.world.occupant,
+                "unfinished import preserves the exact physical session for failure or cancellation");
+            SimpleAssert.eq(43L, source.planRevision, "segmented import does not mutate the physical source revision");
+            HologramSession staged = HologramAreaWorkflow.importStaging(source, area);
+            SimpleAssert.that(
+                !staged.id.equals(source.id) && staged.virtual,
+                "projection area import stages an independent author session nonce");
+            SimpleAssert.eq(44L, staged.planRevision, "only the staged author plan receives the new revision");
+            HologramAreaWorkflow.cancelAreaImport(source);
+            SimpleAssert.that(
+                !area.importing && !source.projectionAreaImportDiscard && !source.cancelled,
+                "canceled area work revokes its discard authority and retains projection memory");
+            SimpleAssert.eq(
+                6,
+                source.channels.getInteger("retained"),
+                "area cancellation preserves original projection policy");
         }
     }
 
@@ -205,16 +341,15 @@ public final class HologramEditorWorkspacesRegression {
             HologramSession blueprint = switchTo(projection, "blueprint", 12);
             commit(blueprint);
             fixture.world.occupant = new TileEntity();
-            HologramActionDispatcher.handle(fixture.player, request(blueprint, "projection", 13));
+            HologramSession empty = switchTo(blueprint, "projection", 13);
+            commit(empty);
             SimpleAssert.that(
-                HologramWorkspace.find(fixture.id) == blueprint,
-                "replaced real controller cannot regain projection capability");
-            fixture.world.occupant = projection.target;
+                empty.emptyProjection && empty.target == null,
+                "replaced or discarded real controller opens only the empty projection page");
             HologramEditorWorkspaceRegistry.forget(fixture.id);
-            HologramActionDispatcher.handle(fixture.player, request(blueprint, "projection", 14));
-            SimpleAssert.that(
-                HologramWorkspace.find(fixture.id) == blueprint,
-                "forgotten projection cannot be resurrected from a stale owner");
+            HologramSession author = switchTo(empty, "blueprint", 14);
+            commit(author);
+            blueprint = author;
             EntityPlayerMP reconnect = fixture.newPlayer(fixture.id);
             HologramActionDispatcher.handle(reconnect, request(blueprint, "projection", 15));
             SimpleAssert.that(
@@ -275,6 +410,8 @@ public final class HologramEditorWorkspacesRegression {
             SimpleAssert.eq(41L, origin.uiSequence, "failed target epoch cannot advance the source ACK sequence");
             NBTTagCompound retry = request(origin, "blueprint", 42);
             retry.setLong("editorWorkspaceEpoch", oldEpoch);
+            retry.setBoolean("confirmDiscard", true);
+            retry.setString("sourceSwitchNonce", origin.pendingSourceAction.getString("sourceSwitchNonce"));
             HologramActionDispatcher.handle(fixture.player, retry);
             target = HologramWorkspace.find(fixture.id);
             SimpleAssert.that(
@@ -339,12 +476,25 @@ public final class HologramEditorWorkspacesRegression {
         request.setString("op", "switchEditorWorkspace");
         request.setString("editorWorkspace", mode);
         request.setLong("planRevision", source.planRevision);
+        request.setLong("editorWorkspaceEpoch", source.editorWorkspaceEpoch);
         request.setLong("uiSequence", sequence);
         return request;
     }
 
     private static HologramSession switchTo(HologramSession source, String mode, long sequence) {
-        HologramActionDispatcher.handle(source.player, request(source, mode, sequence));
+        NBTTagCompound action = request(source, mode, sequence);
+        if ("projection".equals(HologramEditorWorkspaceRegistry.mode(source)) && !source.emptyProjection
+            && "blueprint".equals(mode)) {
+            HologramActionDispatcher.handle(source.player, action);
+            SimpleAssert.that(
+                HologramWorkspace.find(source.player.getUniqueID()) == source,
+                "projection departure first asks consent without changing the active owner");
+            action = (NBTTagCompound) source.pendingSourceAction.copy();
+            action.setBoolean("confirmDiscard", true);
+            action.setLong("uiSequence", sequence);
+            source.actionCount = 0;
+        }
+        HologramActionDispatcher.handle(source.player, action);
         HologramSession target = HologramWorkspace.find(source.player.getUniqueID());
         SimpleAssert.that(
             target != source && mode.equals(HologramEditorWorkspaceRegistry.mode(target)),

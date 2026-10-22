@@ -300,7 +300,7 @@ public final class HologramClient {
             || HologramCutClient.INSTANCE.continuousActive();
     }
 
-    /** V belongs to continuous selection until that local operation has been finished. */
+    /** Explicit local polygon confirmation; the camera toggle remains independent. */
     static boolean confirmContinuous() {
         if (!continuousActive()) return false;
         if (HologramCutClient.INSTANCE.continuousActive()) return HologramCutClient.INSTANCE.confirmContinuous();
@@ -367,6 +367,7 @@ public final class HologramClient {
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!projectorWorld()) return;
+        if (HologramIsometricCamera.INSTANCE.active() && cameraPositioning() && !controlHeld()) return;
         if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
             invalidCameraTarget();
             return;
@@ -492,6 +493,7 @@ public final class HologramClient {
     /** Core invokes this only for a short click after releasing its optional rotation capture. */
     static void cameraRotationClick(int button) {
         if (button != 0 || !HologramIsometricCamera.INSTANCE.active() || HologramBackgroundTasks.busy()) return;
+        if (cameraPositioning() && !controlHeld()) return;
         if (HologramCutClient.INSTANCE.cameraClick(button)) return;
         if (!projectorWorld()) return;
         if (HologramLocalPlacement.INSTANCE.active() && !HologramLocalPlacement.INSTANCE.submitting()) {
@@ -553,6 +555,13 @@ public final class HologramClient {
             areaSelectionMode(controlHeld(), shiftHeld()));
     }
 
+    private static boolean cameraPositioning() {
+        return HologramLocalPlacement.INSTANCE.active() ? !HologramLocalPlacement.INSTANCE.locked()
+            : HologramCutClient.INSTANCE.cameraContext()
+                ? HologramCutClient.INSTANCE.aiming() && !HologramCutClient.INSTANCE.selecting()
+                : worldStage() == HologramWorldFlow.Stage.MOVING;
+    }
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void cutMouse(MouseEvent event) {
         if (HologramIsometricCamera.INSTANCE.active() && (event.button == 1
@@ -582,7 +591,8 @@ public final class HologramClient {
         }
         if (HologramBackgroundTasks.busy()) return;
         if (event.dwheel != 0 && projectorWorld() && HologramIsometricCamera.INSTANCE.active() && altHeld()) {
-            cameraOffset = Math.max(-64, Math.min(64, cameraOffset + Integer.signum(event.dwheel)));
+            if (!cameraPositioning() || controlHeld())
+                cameraOffset = Math.max(-64, Math.min(64, cameraOffset + Integer.signum(event.dwheel)));
             event.setCanceled(true);
             return;
         }
@@ -849,7 +859,7 @@ public final class HologramClient {
             : progress == null ? "" : HologramProgressView.summary(progress, System.nanoTime());
         if (!status.isEmpty()) lines.add(status);
         else if (selection != null || worldStage() == HologramWorldFlow.Stage.MOVING) {
-            int[] target = worldTarget(false).anchor;
+            int[] target = cameraPositioning() ? movingAnchor(state) : worldTarget(false).anchor;
             lines.add(
                 target == null ? text("camera.noTarget", "No visible loaded target / camera updating")
                     : String.format(
@@ -1350,8 +1360,11 @@ public final class HologramClient {
     private static HologramWorldTarget.Target worldTarget(boolean adjacent) {
         Minecraft mc = Minecraft.getMinecraft();
         syncPreviewDistance();
-        if (HologramIsometricCamera.INSTANCE.active())
-            return HologramIsometricCamera.INSTANCE.target(altHeld(), adjacent, cameraOffset, playerAnchor(mc));
+        if (HologramIsometricCamera.INSTANCE.active()) {
+            if (adjacent)
+                return HologramIsometricCamera.INSTANCE.placementTarget(altHeld(), cameraOffset, playerAnchor(mc));
+            return HologramIsometricCamera.INSTANCE.target(altHeld(), false, cameraOffset, playerAnchor(mc));
+        }
         if (HologramIsometricCamera.INSTANCE.blocksVanillaTarget()) return new HologramWorldTarget.Target(null, false);
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
         return HologramWorldTarget.resolve(

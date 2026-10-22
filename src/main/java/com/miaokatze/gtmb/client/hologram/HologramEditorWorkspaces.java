@@ -54,6 +54,14 @@ final class HologramEditorWorkspaces {
         return mode() == Mode.PROJECTION;
     }
 
+    boolean emptyProjection() {
+        return projection() && !ui.session.state().data.getBoolean("target");
+    }
+
+    boolean hasProjectionContent() {
+        return projection() && !emptyProjection();
+    }
+
     boolean blueprint() {
         return mode() == Mode.BLUEPRINT;
     }

@@ -434,6 +434,21 @@ public final class HologramBackgroundTasks {
         if (context != null && context.session.equals(next.session)) context = next;
         if (libraryTask() && HologramLibraryClient.INSTANCE.snapshot(next)) reviewSubmitted = false;
         NBTTagCompound data = next.data;
+        if ("server".equals(OWNER.kind()) && "area".equals(operation)
+            && context != null
+            && !session.equals(next.session)
+            && session.equals(data.getString("editorWorkspacePreviousSession"))
+            && "projection".equals(context.data.getString("editorWorkspace"))
+            && "blueprint".equals(data.getString("editorWorkspace"))
+            && data.getLong("editorWorkspaceEpoch") > context.data.getLong("editorWorkspaceEpoch")
+            && data.getLong("uiSequence") == command
+            && data.hasKey("cells", 9)
+            && !data.getBoolean("partial")
+            && "area".equals(data.getString("blueprintSource"))
+            && OWNER.advance("server", session + ":" + command, next.session + ":" + command)) {
+            session = next.session;
+            context = next;
+        }
         NBTTagCompound materialOrder = data.getCompoundTag("materialOrder");
         if (!busy() && materialOrder.getBoolean("active")
             && !materialOrders.id()

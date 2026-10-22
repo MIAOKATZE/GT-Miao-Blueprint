@@ -543,7 +543,7 @@ final class HologramEditorLessons {
         add(
             s,
             "锁定与取消",
-            iso ? "左键锁定，再次左键打开确认。Esc 保留未消费条目。" : "右键锁定，再次右键打开确认。Esc 保留未消费条目。",
+            iso ? "按住 Ctrl 定位，Ctrl+左键锁定，再次左键打开确认。松开 Ctrl 操作镜头，Esc 保留未消费条目。" : "右键锁定，再次右键打开确认。Esc 保留未消费条目。",
             "viewport",
             action(Operation.CUT_TAKE, "viewport"),
             action(Operation.CUT_LOCK, "viewport"),

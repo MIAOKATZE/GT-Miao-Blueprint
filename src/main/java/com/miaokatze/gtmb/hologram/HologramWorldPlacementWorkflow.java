@@ -63,6 +63,8 @@ final class HologramWorldPlacementWorkflow {
             return;
         }
         String id = HologramSessionPolicy.selectedPreset(previous);
+        if (previous.projectionDiscardApproved && "projectionQuickPlace".equals(request.getString("op")))
+            id = request.getString("presetId");
         if (HologramLibraryFacade.enabled() && !request.getString("publicPresetId")
             .isEmpty()) {
             try {
@@ -103,7 +105,12 @@ final class HologramWorldPlacementWorkflow {
             HologramSnapshots.send(previous);
             return;
         }
-        if (!HologramAuthoringWorkflow.allowBlueprintDiscard(previous, request, "choosePlacementPreset", id)) {
+        if (!HologramAuthoringWorkflow.allowBlueprintDiscard(
+            previous,
+            request,
+            HologramEditorWorkspaceRegistry.physicalProjection(previous) ? "projectionQuickPlace"
+                : "choosePlacementPreset",
+            id)) {
             previous.open = true;
             HologramSnapshots.send(previous);
             return;
@@ -123,7 +130,11 @@ final class HologramWorldPlacementWorkflow {
         }
         HologramWorkspace.clearAreaSelection(previous);
         placement.openPurpose = "blueprintPlacement";
-        HologramWorkspace.activate(player.getUniqueID(), placement);
+        if (HologramEditorWorkspaceRegistry.physicalProjection(previous)) {
+            HologramWorkspace.PresentationTransition transition = HologramWorkspace
+                .preparePresentation(previous, placement);
+            if (transition == null || !HologramWorkspace.activatePresentation(transition)) return;
+        } else HologramWorkspace.activate(player.getUniqueID(), placement);
         HologramSnapshots.send(placement);
     }
 

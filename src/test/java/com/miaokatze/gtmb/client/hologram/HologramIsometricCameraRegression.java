@@ -16,6 +16,7 @@ public final class HologramIsometricCameraRegression {
     private HologramIsometricCameraRegression() {}
 
     public static void main(String[] args) {
+        placementPointer();
         selectionGestures();
         HologramSelectionOutlineRegression.run();
         HologramWorldTargetRegression.run();
@@ -157,6 +158,25 @@ public final class HologramIsometricCameraRegression {
         camera.close();
         SimpleAssert.that(!camera.active(), "closing an inactive camera is safe");
         System.out.println("HologramIsometricCameraRegression passed");
+    }
+
+    private static void placementPointer() {
+        HologramPlacementPointer pointer = new HologramPlacementPointer();
+        java.util.function.Supplier<int[]> navigation = () -> {
+            throw new AssertionError("Camera navigation must not query or replace the world placement target");
+        };
+        SimpleAssert.that(pointer.sample(false, navigation) == null, "positioning starts only with Ctrl");
+        int[] target = { 4, 65, -8 };
+        int[] first = pointer.sample(true, () -> target);
+        target[0] = first[0] = 99;
+        SimpleAssert
+            .eq(4, pointer.sample(false, navigation)[0], "releasing Ctrl freezes an owned copy of the placement");
+        SimpleAssert.eq(70, pointer.sample(true, () -> new int[] { 5, 70, -9 })[1], "Ctrl resumes live positioning");
+        SimpleAssert
+            .that(pointer.sample(true, () -> null) == null, "an invalid Ctrl target cannot lock a stale position");
+        pointer.sample(true, () -> new int[] { 1, 2, 3 });
+        pointer.clear();
+        SimpleAssert.that(pointer.sample(false, navigation) == null, "closing the camera retires its placement target");
     }
 
     private static void selectionGestures() {

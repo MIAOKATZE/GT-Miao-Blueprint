@@ -6,15 +6,19 @@ import java.util.Locale;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
+import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.cleanroommc.modularui.api.GuiAxis;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.drawable.text.TextRenderer;
 import com.cleanroommc.modularui.utils.Alignment;
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widget.ParentWidget;
+import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.PagedWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
@@ -42,10 +46,17 @@ final class HologramEditorLibraryPane {
         dialogs = new HologramEditorNativeLibraryDialogs(ui);
     }
 
+    boolean consumeBackLayer() {
+        if (built == null || pages.getActivePageIndex() != 1) return false;
+        pages.setPage(0);
+        return true;
+    }
+
     IWidget build() {
         if (built != null) return built;
-        built = Flow.col()
-            .name("native_library")
+        // This layer only insets one page container. A plain parent gives both axes to PagedWidget directly;
+        // using a Flow with a height-less expanded PagedWidget can finalize MUI2's 18px default height.
+        built = new ParentWidget<>().name("native_library")
             .sizeRel(1f)
             .padding(4)
             .child(
@@ -139,25 +150,15 @@ final class HologramEditorLibraryPane {
                 .height(20)
                 .childPadding(3)
                 .child(
+                    new Widget<>().size(HologramEditorNativeTheme.ICON_SIZE)
+                        .overlay(
+                            (context, x, y, width, height, theme) -> HologramEditorIcons
+                                .draw("library", x, y, width, false, true, false, false)))
+                .child(
                     HologramEditorNativeTheme.label(() -> "蓝图库", HologramEditorNativeTheme.TITLE)
+                        .name("library_title")
                         .expanded()
                         .height(20))
-                .child(
-                    ui.shell.nativeIconAction(309, "library", () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站。")
-                        .size(HologramEditorNativeTheme.ICON_BUTTON))
-                .child(
-                    ui.shell
-                        .nativeIconAction(
-                            HologramEditorControlIds.LIBRARY + 3,
-                            "settings",
-                            () -> "管理",
-                            () -> true,
-                            () -> "蓝图库管理，保留工作区。")
-                        .size(HologramEditorNativeTheme.ICON_BUTTON)
-                        .onMousePressed(button -> {
-                            if (button == 0) pages.setPage(1);
-                            return true;
-                        }))
                 .child(
                     HologramEditorNativeTheme
                         .flatIconButton(
@@ -167,6 +168,28 @@ final class HologramEditorLibraryPane {
                             () -> true,
                             () -> false)
                         .size(HologramEditorNativeTheme.ICON_BUTTON)));
+        ButtonWidget<?> website = action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站。")
+            .name("library_website")
+            .expanded()
+            .height(20);
+        ButtonWidget<?> manage = localIcon(
+            HologramEditorControlIds.LIBRARY + 3,
+            "settings",
+            () -> "管理",
+            () -> true,
+            () -> pages.setPage(1),
+            () -> "蓝图库管理，保留工作区。").name("library_manage")
+                .expanded()
+                .height(20);
+        page.child(
+            Flow.row()
+                .widthRel(1f)
+                .height(20)
+                .childPadding(3)
+                .child(website)
+                .child(manage));
+        ui.shell.registerTarget("library.website", website);
+        ui.shell.registerTarget("library.manage", manage);
         page.child(
             Flow.row()
                 .widthRel(1f)
@@ -187,7 +210,9 @@ final class HologramEditorLibraryPane {
         page.child(filter);
         rowList = new HologramRecessedList().paperEdges()
             .name("library_rows")
-            .widthRel(1f)
+            // Retain an explicit Y size when MUI relays out an enabled/disabled list child.
+            // expanded still assigns the column's remainder; a missing Y unit falls back to the 18px default.
+            .sizeRel(1f)
             .expanded();
         rowList.child(
             HologramEditorNativeTheme.label(() -> catalogTotal == 0 ? "暂无保存蓝图\n可从蓝图站获取，或编辑后保存。" : "没有匹配的蓝图")
@@ -195,7 +220,14 @@ final class HologramEditorLibraryPane {
                 .height(44)
                 .setEnabledIf(widget -> total == 0));
         page.child(rowList);
-        page.child(
+        ui.shell.registerTarget("library.rows", rowList);
+        Flow footer = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
+            .name("library_footer")
+            .widthRel(1f)
+            .coverChildrenHeight()
+            .childPadding(3)
+            .collapseDisabledChild(true);
+        footer.child(
             Flow.row()
                 .widthRel(1f)
                 .height(18)
@@ -221,7 +253,7 @@ final class HologramEditorLibraryPane {
                         () -> ui.library.libraryOffset() + ROW_WINDOW < total,
                         () -> offset(ROW_WINDOW)).width(25)
                             .height(18)));
-        page.child(
+        footer.child(
             Flow.row()
                 .widthRel(1f)
                 .height(18)
@@ -248,29 +280,32 @@ final class HologramEditorLibraryPane {
                         () -> idle() && ui.library.nativeServerPage() + 1 < ui.library.nativeServerPages(),
                         () -> "读取服务器下一页，保留当前工作区。").width(40)
                             .height(18)));
-        page.child(
+        footer.child(
             action(
                 141,
                 () -> "放置所选蓝图",
                 () -> idle() && ui.library.selectedPresetExists(),
                 () -> "进入真实世界定位，锁定后校验材料并确认施工。").widthRel(1f)
                     .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
-        Flow secondary = Flow.row()
+        Flow secondary = Flow.col()
             .widthRel(1f)
-            .height(18)
+            .coverChildrenHeight()
             .childPadding(3);
         secondary.child(
-            action(
+            actionIcon(
                 203,
+                "network",
                 () -> ui.library.publicLibrary() ? "下载至客户端" : "上传 / 更新公库",
                 () -> idle() && ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
-                () -> "沿用原 JSON / PNG 传输、权限与配额。").expanded()
-                    .height(18));
+                () -> "沿用原 JSON / PNG 传输、权限与配额。").widthRel(1f)
+                    .height(20));
         secondary.child(
             action(299, () -> "放弃当前草稿", () -> idle() && !ui.session.state().cells.isEmpty(), () -> "确认后放弃当前草稿；已保存文件保留。")
-                .expanded()
-                .height(18));
-        page.child(secondary);
+                .widthRel(1f)
+                .height(20));
+        footer.child(secondary);
+        page.child(footer);
+        ui.shell.registerTarget("library.footer", footer);
         return page;
     }
 
@@ -288,9 +323,14 @@ final class HologramEditorLibraryPane {
                         .expanded()
                         .height(20))
                 .child(
-                    local(HologramEditorControlIds.LIBRARY + 5, () -> "返回", () -> true, () -> pages.setPage(0))
-                        .width(44)
-                        .height(18))
+                    localIcon(
+                        HologramEditorControlIds.LIBRARY + 5,
+                        "back",
+                        () -> "返回",
+                        () -> true,
+                        () -> pages.setPage(0),
+                        () -> "返回蓝图库，保留搜索与滚动位置。").width(60)
+                            .height(18))
                 .child(
                     HologramEditorNativeTheme
                         .flatIconButton(
@@ -301,16 +341,21 @@ final class HologramEditorLibraryPane {
                             () -> false)
                         .size(HologramEditorNativeTheme.ICON_BUTTON)));
         HologramRecessedList list = new HologramRecessedList().paperEdges()
-            .widthRel(1f)
+            .sizeRel(1f)
             .expanded();
         Flow catalog = Flow.row()
             .widthRel(1f)
             .height(18)
             .childPadding(3);
         catalog.child(
-            local(HologramEditorControlIds.LIBRARY + 4, () -> "刷新目录", this::idle, ui.library::nativeRefreshCatalog)
-                .expanded()
-                .height(18));
+            localIcon(
+                HologramEditorControlIds.LIBRARY + 4,
+                "reset-view",
+                () -> "刷新目录",
+                this::idle,
+                ui.library::nativeRefreshCatalog,
+                () -> "刷新真实目录，保留当前工作区。").expanded()
+                    .height(18));
         catalog.child(
             action(139, () -> "编辑所选", () -> idle() && ui.library.selectedPresetExists(), () -> "编辑库中所选蓝图。").expanded()
                 .height(18));
@@ -320,11 +365,13 @@ final class HologramEditorLibraryPane {
             .height(18)
             .childPadding(3);
         maintenance.child(
-            local(
+            localIcon(
                 HologramEditorControlIds.LIBRARY + 6,
+                "delete",
                 () -> "删除所选蓝图",
                 this::canDelete,
-                () -> ui.router.activate(ui.library.nativeDedicated() ? 205 : 175)).expanded()
+                () -> ui.router.activate(ui.library.nativeDedicated() ? 205 : 175),
+                () -> "沿用原删除确认与权限校验。").expanded()
                     .height(18));
         maintenance.child(
             action(226, () -> "升级旧蓝图", ui.library::nativeCanUpgrade, () -> "保留原文件版本门禁；服务器公库仅管理员可操作。").expanded()
@@ -424,16 +471,21 @@ final class HologramEditorLibraryPane {
             .sizeRel(1f)
             .tooltipBuilder(t -> t.addLine(rowTooltip(slot)))
             .tooltipAutoUpdate(true);
-        IDrawable lettering = button.getOverlay();
-        IDrawable count = IKey.dynamic(() -> row(slot).getInteger("cells") + " 格")
+        IDrawable count = IKey
+            .dynamic(() -> row(slot).getInteger("cells") + " 格 · " + row(slot).getInteger("structures") + " 结构")
             .color(HologramEditorNativeTheme.MUTED)
             .shadow(false)
-            .alignment(Alignment.CenterRight);
+            .alignment(Alignment.CenterLeft);
         button.overlay((context, x, y, width, height, theme) -> {
             boolean voucher = row(slot).getBoolean("fullyVoucherCovered");
-            int ribbon = voucher ? 18 : 0;
-            if (lettering != null) lettering.draw(context, x, y, Math.max(1, width - 42 - ribbon), height, theme);
-            count.draw(context, x + Math.max(0, width - 42 - ribbon), y, 37, height, theme);
+            int ribbon = voucher ? HologramVoucherRibbon.PIXELS : 0;
+            int textWidth = Math.max(10, width - 10 - ribbon);
+            IKey.str(rowTitle(slot, textWidth))
+                .color(available.getAsBoolean() ? HologramEditorNativeTheme.TEXT : HologramEditorNativeTheme.MUTED)
+                .shadow(false)
+                .alignment(Alignment.CenterLeft)
+                .draw(context, x + 5, y + 2, textWidth, 24, theme);
+            count.draw(context, x + 5, y + 26, Math.max(1, width - 10 - ribbon), 10, theme);
             if (voucher) HologramVoucherRibbon.draw(x, y, width, height);
         });
         HologramEditorNativeTheme.guided(button, () -> ui.canvas.controlAccent(14000 + slot), available);
@@ -441,7 +493,7 @@ final class HologramEditorLibraryPane {
         ui.shell.registerTarget("library.row." + slot, button);
         rowList.child(
             new ParentWidget<>().widthRel(1f)
-                .height(20)
+                .height(38)
                 .setEnabledIf(
                     widget -> !row(slot).getString("id")
                         .isEmpty())
@@ -525,6 +577,16 @@ final class HologramEditorLibraryPane {
         return (ui.library.nativeSelected(row) ? "▸ " : "") + row.getString("name");
     }
 
+    /** Font measurement is only called from the row's client draw callback; the tooltip retains the complete name. */
+    private String rowTitle(int slot, int width) {
+        FontRenderer font = TextRenderer.getFontRenderer();
+        List<String> lines = font.listFormattedStringToWidth(rowLabel(slot), width);
+        if (lines.size() <= 2) return String.join("\n", lines);
+        return lines.get(0) + "\n"
+            + font.trimStringToWidth(lines.get(1), Math.max(1, width - font.getStringWidth("...")))
+            + "...";
+    }
+
     private String rowTooltip(int slot) {
         NBTTagCompound row = row(slot);
         return row.getString("name") + "\n"
@@ -565,6 +627,27 @@ final class HologramEditorLibraryPane {
 
     private ButtonWidget<?> action(int id, Supplier<String> label, BooleanSupplier enabled, Supplier<String> help) {
         return ui.shell.nativeAction(id, label, enabled, help);
+    }
+
+    private ButtonWidget<?> actionIcon(int id, String icon, Supplier<String> label, BooleanSupplier enabled,
+        Supplier<String> help) {
+        return localIcon(
+            id,
+            icon,
+            label,
+            enabled,
+            () -> defer(() -> { if (enabled.getAsBoolean()) ui.router.activate(id); }),
+            help);
+    }
+
+    private ButtonWidget<?> localIcon(int id, String icon, Supplier<String> label, BooleanSupplier enabled,
+        Runnable action, Supplier<String> help) {
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(label, icon, action, enabled, () -> false, false)
+            .tooltipBuilder(t -> t.addLine(help.get()))
+            .tooltipAutoUpdate(true);
+        HologramEditorNativeTheme.guided(button, () -> ui.canvas.controlAccent(id), enabled);
+        ui.shell.registerControl(id, button, label, enabled);
+        return button;
     }
 
     private void defer(Runnable action) {

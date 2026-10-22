@@ -412,7 +412,7 @@ final class HologramUiSession {
             || pendingTicket.sequence() != event.getLong("uiSequence")
             || event.hasKey("planRevision", 4) && event.getLong("planRevision") != revision()) return false;
         int presentation = switch (pendingOperation) {
-            case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset", "switchEditorWorkspace" -> 1;
+            case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset", "switchEditorWorkspace", "confirmProjectionSource" -> 1;
             case "lockVirtual", "unlockVirtual" -> 2;
             case "placeTextBox" -> 3;
             default -> 0;

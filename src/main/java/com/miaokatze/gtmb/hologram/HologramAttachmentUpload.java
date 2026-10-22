@@ -60,6 +60,22 @@ public final class HologramAttachmentUpload {
         return clientProgress;
     }
 
+    /** Read-only transport observation for the editor's shared task strip. */
+    public static NBTTagCompound clientProgressState() {
+        NBTTagCompound state = new NBTTagCompound();
+        Outgoing current = outgoing;
+        if (current != null && current.generation == GENERATION.get()) {
+            state.setBoolean("pending", true);
+            state.setString("phase", "attachment.upload");
+            state.setLong("done", Math.min(current.bytes.length, (long) current.acknowledged * CHUNK_BYTES));
+            state.setLong("total", current.bytes.length);
+        } else if (!clientProgress.isEmpty()) {
+            state.setBoolean("pending", true);
+            state.setString("phase", "attachment.encode");
+        }
+        return state;
+    }
+
     static void send(NBTTagCompound action) {
         long generation = GENERATION.incrementAndGet();
         NBTTagCompound frozen = (NBTTagCompound) action.copy();
@@ -159,6 +175,10 @@ public final class HologramAttachmentUpload {
         if (player.worldObj != world || !HologramNetwork.progressConnected(player)) return;
         HologramSession session = HologramWorkspace.find(player.getUniqueID());
         if (session == null || !session.id.equals(fragment.session) || fragment.ui < session.uiSequence) return;
+        if ("projection".equals(HologramEditorWorkspaceRegistry.mode(session))) {
+            fail(player, fragment, new IOException("投影模式不支持文字和图片；请先切换到蓝图模式"));
+            return;
+        }
         Incoming previous = INCOMING.get(player.getUniqueID());
         try {
             if (previous == null || previous.first.sequence != fragment.sequence) {

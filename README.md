@@ -15,36 +15,41 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
-### v0.1.39 三工作区 / Three editor workspaces
+### v0.1.40 编辑器与教程 / Editor & tutorial
 
-**v0.1.39 为用户测试构建，未发布 Release。 / v0.1.39 is a test build; no Release has been published.**
+**v0.1.40 用户测试构建，未发布 Release。 / v0.1.40 is a user-testing build; no Release has been published.** 本轮仅接受所列有限视觉范围，不代表用户验收或完整八课。 / The reviewed screenshots cover a bounded visual scope, not user acceptance or all eight lessons.
 
-教程与实际工作台共用相同布局比例，底部只悬浮四个导航按钮；聚焦区域保持清晰，周边轻度虚化灰化。普通像素图标保持 12 GUI，工具按钮为 16 GUI；蓝图库默认加宽至 220 GUI，窄屏下按可用空间调整。
+投影只记住最近一次状态。从有内容的投影进入蓝图时会询问是否丢弃；取消保留投影记忆，确认后清除。空投影可切入投影页：顶部模式栏仍可用，正文置灰，中央提示“右击控制器开启投影模式”。
 
-投影和蓝图分别保留自己的规划、选区、相机与界面，切换工作区不会把控制器投影变成作者草稿。蓝图库是蓝图专属的可收纳侧边列表，点选条目更新中央预览；有未保存修改时沿用一次放弃提示。属性、结构配置、材料和处理入口位于可收纳或浮出的功能侧栏，仓室候选、信道、预设以及材料预检仍使用原有业务链。剪切列表和原始方块预览也在同一工作台，世界定位与最终确认沿用真实流程。
+*Projection remembers only its most recent state. Entering Blueprint from a non-empty projection asks whether to discard it: cancel keeps the remembered projection, while confirm clears it. An empty projection can open the Projection page; the mode bar remains usable, the body is dimmed, and the center says “Right-click the controller to enable projection mode.”*
 
-Projection and Blueprint keep independent plans, selection, cameras and UI state. The blueprint library has its own collapsible list; selecting a row updates the central preview, with one discard prompt for unsaved work. Functional panels can collapse or float. Cut storage and native block previews share the same workbench, while world positioning and final confirmation retain their existing workflows. The original HTML kraft textures, pixel icons, tooltips and contextual guidance are used throughout.
+左右工具栏默认展开，顶部显示进度；Ctrl+Shift+Delete 快捷清空，Esc / E 每次退回一级。等距放置使用 Ctrl。教程使用 portable 注册名和真实材料窗口，样例包括 3 台高炉（2 台在地面、1 台在平台上）及 151 格建筑材料；初始蓝图不含文字或图片附件。
 
-八门动画教程分别介绍投影、蓝图、剪切列表、结构操作，以及普通/等距框选和普通/等距剪切。教程使用已采集的电力高炉规划和原生方块渲染引擎，在独立教学状态中演示操作；规划示例不代表已经成型的真实机器。只允许使用底部「上一步、下一步、跳过、从头开始」四个按钮，上一步回到该步动画开头，退出恢复原工作区。教学不提交真实蓝图、扣材料或写入玩家世界，可从教程入口再次播放。
+*Both tool rails start expanded, with progress at the top. Ctrl+Shift+Delete clears quickly; Esc / E goes back one level at a time. Hold Ctrl for isometric placement. Lessons use portable registry names and the real materials window, with 3 blast furnaces—2 on the ground and 1 on a platform—and 151 building-material cells. The initial blueprint has no text or picture attachments.*
 
-Eight animated lessons use a captured electric blast furnace plan and native block rendering. The sample is a planning snapshot, not a formed machine. Only Previous, Next, Skip and Restart are interactive. Previous replays a step from its beginning; leaving restores the original workspace without submitting real blueprints, spending materials or changing the player's world.
+下列为本轮已复核的有限原生观察画面。root 查看了 00–05 与 progress 共七张原图，并接受此处所列的限定视觉范围；这不代表用户验收或完整八课。顶部进度见 05 图，00 投影图中没有进度条。蓝图库使用两份合法的 8 格 QA 原生 JSON/PNG 夹具，不是真实玩家存档；截图不代表真实库存施工或专服用户验收。原图与范围说明见[本轮截图 manifest](README/native-v0140/manifest.json)。v0.1.39 gallery 文件保留归档，不作为本版证据。
 
-以下为本轮原生客户端实机截图：投影、独立蓝图草稿、同屏剪切和真实高炉规划教程。蓝图库和剪切列表在该隔离实例中均为空；图片不代表已验收真实存库、施工或完整教程。原图、候选版本和有限核验范围见[原生截图记录](README/native-v0139/manifest.json)。
+*The gallery below shows selected native observations reviewed by root: seven original images covering views 00–05 and progress. Root accepted this bounded visual scope; it is not user acceptance or evidence for all eight lessons. Progress appears in image 05, not projection image 00. The library uses two valid eight-slot QA JSON/PNG fixtures, not a real player's save. These images do not represent construction from real inventory or dedicated-server user acceptance. The v0.1.39 gallery remains archived and is not current evidence.*
 
 <table>
   <tr>
-    <td width="50%"><a href="README/native-v0139/projection-properties.png"><img src="README/native-v0139/projection-properties.png" alt="投影工作区：高炉规划与牛皮纸属性侧栏" width="480"></a></td>
-    <td width="50%"><a href="README/native-v0139/blueprint-library.png"><img src="README/native-v0139/blueprint-library.png" alt="独立蓝图草稿：轴面移动手柄与可收纳蓝图库" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0140/projection-properties.png"><img src="README/native-v0140/projection-properties.png" alt="投影属性 / Projection properties" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0140/blueprint-library.png"><img src="README/native-v0140/blueprint-library.png" alt="双侧工具栏与撑满高度的 QA 蓝图库 / Tool rails and full-height QA library" width="480"></a></td>
   </tr>
-  <tr><td align="center">控制器投影 / Projection</td><td align="center">蓝图与侧边库（空库）/ Blueprint library (empty)</td></tr>
+  <tr><td align="center">投影与属性 / Projection & properties</td><td align="center">双侧栏与满高 QA 库 / Tool rails & full-height QA library</td></tr>
   <tr>
-    <td><a href="README/native-v0139/cut-workspace-empty.png"><img src="README/native-v0139/cut-workspace-empty.png" alt="同屏剪切工作区：完整高度预览与私有列表" width="480"></a></td>
-    <td><a href="README/native-v0139/tutorial-structure.png"><img src="README/native-v0139/tutorial-structure.png" alt="真实高炉规划教程：聚焦结构面板与四个导航按钮" width="480"></a></td>
+    <td><a href="README/native-v0140/tutorial-blueprint.png"><img src="README/native-v0140/tutorial-blueprint.png" alt="蓝图教程样例 / Tutorial blueprint sample" width="480"></a></td>
+    <td><a href="README/native-v0140/material-review.png"><img src="README/native-v0140/material-review.png" alt="真实材料确认窗口与焦点同步 / Actual material confirmation and focus sync" width="480"></a></td>
   </tr>
-  <tr><td align="center">剪切列表（空列表）/ Cut (empty)</td><td align="center">原生样例教学 / Native sample lesson</td></tr>
+  <tr><td align="center">蓝图教程 / Blueprint lesson</td><td align="center">材料复核 / Material review</td></tr>
+  <tr>
+    <td><a href="README/native-v0140/projection-empty.png"><img src="README/native-v0140/projection-empty.png" alt="确认丢弃后空投影页与顶部进度 / Empty projection after discard with top progress" width="480"></a></td>
+    <td></td>
+  </tr>
+  <tr><td align="center">确认丢弃后的空投影页（05）/ Empty Projection after discard (05)</td><td></td></tr>
 </table>
 
-其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；旧材质与布局不代表 v0.1.39，也不作为本版原生验收证据。
+其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；它们不作为 v0.1.40 原生验收证据。
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 

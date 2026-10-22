@@ -15,9 +15,17 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+import net.minecraft.init.Blocks;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.nbt.NBTTagString;
+
+import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
+import com.miaokatze.gtmb.hologram.HologramObservedItemBindings;
+
+import gregtech.api.enums.ItemList;
 
 /** Version-bound, read-only observations from the owned native editor fixture. Never reads the player's library. */
 final class HologramEditorTutorialSamples {
@@ -36,7 +44,303 @@ final class HologramEditorTutorialSamples {
     private HologramEditorTutorialSamples() {}
 
     static synchronized NBTTagCompound snapshot(Kind kind) throws IOException {
+        return HologramObservedItemBindings.restore(sample(kind).data);
+    }
+
+    /** Encoded observation for schema-only regression inspection; never a live UI state. */
+    static synchronized NBTTagCompound portableObservation(Kind kind) throws IOException {
         return (NBTTagCompound) sample(kind).data.copy();
+    }
+
+    /** Authored arrangement derived from one observed 36-cell EBF, never represented as a three-machine capture. */
+    static NBTTagCompound planning(boolean blueprint) throws IOException {
+        NBTTagCompound data = snapshot(blueprint ? Kind.AUTHOR : Kind.PHYSICAL);
+        String primary = primaryStructure(Kind.AUTHOR);
+        NBTTagList original = data.getTagList("cells", 10), machine = new NBTTagList();
+        for (int i = 0; i < original.tagCount(); i++) {
+            NBTTagCompound cell = original.getCompoundTagAt(i);
+            if (blueprint && !primary.equals(cell.getString("structureId"))) continue;
+            NBTTagCompound copy = (NBTTagCompound) cell.copy();
+            copy.setBoolean("hasPin", false);
+            copy.setInteger("chosenChoice", -1);
+            if ("hatch".equals(copy.getString("role"))) copy.setInteger(
+                "targetFacing",
+                copy.getInteger("hintIndex") == 1 ? 1
+                    : copy.getInteger("dz") == 0 ? 2
+                        : copy.getInteger("dz") == 2 ? 3 : copy.getInteger("dx") > 0 ? 5 : 4);
+            // The physical legacy target is block metadata; actualStack is the observed controller device.
+            if (copy.getBoolean("anchor") && copy.hasKey("actualStack", 10)) {
+                copy.setTag(
+                    "targetStack",
+                    copy.getCompoundTag("actualStack")
+                        .copy());
+                copy.setString(
+                    "exactIdentity",
+                    "gregtech:gt.blockmachines@" + copy.getCompoundTag("actualStack")
+                        .getShort("Damage"));
+            }
+            if ("hatch".equals(copy.getString("role"))) HologramObservedItemBindings.ebfCandidates(copy);
+            if (copy.hasKey("targetStack", 10))
+                target(copy, ItemStack.loadItemStackFromNBT(copy.getCompoundTag("targetStack")));
+            machine.appendTag(copy);
+        }
+        require(machine.tagCount() == 36, "The observed EBF footprint changed");
+        // Use registered native devices, keeping all item metadata and tags supplied by GT itself.
+        ItemStack[] devices = { ItemList.Hatch_Input_Bus_LV.get(1), ItemList.Hatch_Output_Bus_LV.get(1),
+            ItemList.Hatch_Energy_LV.get(1), ItemList.Hatch_Maintenance.get(1), ItemList.Hatch_Input_LV.get(1),
+            ItemList.Hatch_Output_LV.get(1) };
+        int assigned = 0;
+        for (int i = 0; i < machine.tagCount(); i++) {
+            NBTTagCompound cell = machine.getCompoundTagAt(i);
+            if (cell.getInteger("dy") == 0 && "hatch".equals(cell.getString("role")) && assigned < devices.length)
+                target(cell, devices[assigned++]);
+        }
+        require(assigned == devices.length, "The EBF has insufficient bottom hatch positions");
+        NBTTagList cells = new NBTTagList(), structures = new NBTTagList();
+        int[][] offsets = blueprint ? new int[][] { { 0, 0, 0 }, { 5, 0, 0 }, { 0, 4, 6 } }
+            : new int[][] { { 0, 0, 0 } };
+        NBTTagCompound declared = blueprint ? data.getTagList("structures", 10)
+            .getCompoundTagAt(0) : null;
+        for (int m = 0; m < offsets.length; m++) {
+            int[] offset = offsets[m];
+            String member = m == 0 ? primary : "tutorial-ebf-" + m;
+            if (blueprint) {
+                NBTTagCompound declaration = (NBTTagCompound) declared.copy();
+                declaration.setString("id", member);
+                declaration.setString("name", "电力高炉 " + (m + 1) + (m == 2 ? " · 平台" : " · 地面"));
+                declaration.setString("tutorialObservedSourceId", primary);
+                for (int axis = 0; axis < 3; axis++) {
+                    String key = new String[] { "x", "y", "z" }[axis];
+                    declaration.setInteger(key, data.getInteger(key) + offset[axis]);
+                }
+                structures.appendTag(declaration);
+            }
+            for (int i = 0; i < machine.tagCount(); i++) {
+                NBTTagCompound cell = (NBTTagCompound) machine.getCompoundTagAt(i)
+                    .copy();
+                for (int axis = 0; axis < 3; axis++) {
+                    String key = new String[] { "x", "y", "z" }[axis];
+                    cell.setInteger(key, cell.getInteger(key) + offset[axis]);
+                    cell.setInteger("d" + key, cell.getInteger("d" + key) + offset[axis]);
+                }
+                if (blueprint) {
+                    cell.setString("structureId", member);
+                    NBTTagList memberships = new NBTTagList();
+                    memberships.appendTag(new NBTTagString(member));
+                    cell.setTag("structureIds", memberships);
+                }
+                cells.appendTag(cell);
+            }
+        }
+        if (blueprint) {
+            // A real block platform, four supporting pillars and an access stair; no decorative stand-ins for machines.
+            for (int x = -2; x <= 2; x++) for (int z = 5; z <= 9; z++)
+                cells.appendTag(buildingCell(data, x, 3, z, new ItemStack(Blocks.stonebrick)));
+            for (int x : new int[] { -2, 2 }) for (int z : new int[] { 5, 9 }) for (int y = 0; y < 3; y++)
+                cells.appendTag(buildingCell(data, x, y, z, new ItemStack(Blocks.stonebrick)));
+            for (int y = 0; y < 4; y++)
+                cells.appendTag(buildingCell(data, 3 + y, y, 7, new ItemStack(Blocks.stone_brick_stairs)));
+            for (int x = -2; x <= 7; x++) for (int z = -1; z <= 9; z++)
+                cells.appendTag(buildingCell(data, x, -1, z, new ItemStack(Blocks.stonebrick)));
+        }
+        data.setTag("cells", cells);
+        data.setTag("structures", structures);
+        data.setIntArray("selectedIndices", new int[0]);
+        data.setInteger("selected", -1);
+        for (String key : new String[] { "textPlacementAck", "cellNbtOverrides", "cellNbtEntries", "materialQuote",
+            "processingRelations" }) data.removeTag(key);
+        data.setString(
+            "tutorialDerivation",
+            "one observed 36-cell EBF; native GT hatch plan; translated copies and native building blocks");
+        data.setInteger("cellCount", cells.tagCount());
+        updateMaterials(data);
+        return data;
+    }
+
+    static boolean applyHatchPreset(NBTTagCompound data, int tier, boolean downgrade) {
+        String[] roles = { "InputBus", "OutputBus", "Energy", "Maintenance", "InputHatch", "OutputHatch" };
+        java.util.List<String> remaining = new java.util.ArrayList<>(java.util.Arrays.asList(roles));
+        NBTTagList cells = data.getTagList("cells", 10);
+        java.util.List<NBTTagCompound> positions = new java.util.ArrayList<>();
+        java.util.List<ItemStack> targets = new java.util.ArrayList<>();
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            if (!cell.getBoolean("hasPin")) continue;
+            ItemStack pinned = ItemStack.loadItemStackFromNBT(cell.getCompoundTag("targetStack"));
+            if (pinned == null) return false;
+            NBTTagList candidates = cell.getTagList("candidates", 10), names = cell.getTagList("candidateRoles", 8);
+            for (int c = 0; c < candidates.tagCount() && c < names.tagCount(); c++) {
+                ItemStack candidate = ItemStack.loadItemStackFromNBT(candidates.getCompoundTagAt(c));
+                if (candidate != null && pinned.isItemEqual(candidate)
+                    && ItemStack.areItemStackTagsEqual(pinned, candidate)) {
+                    remaining.remove(names.getStringTagAt(c));
+                    break;
+                }
+            }
+        }
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            if (!"hatch".equals(cell.getString("role")) || cell.getBoolean("hasPin")) continue;
+            String role = cell.getInteger("hintIndex") == 1 ? "Muffler"
+                : cell.getInteger("dy") == 0 && !remaining.isEmpty() ? remaining.remove(0) : "";
+            if (role.isEmpty()) continue;
+            ItemStack stack = HologramObservedItemBindings.chooseObservedHatch(cell, role, tier, downgrade);
+            if (stack == null) return false;
+            positions.add(cell);
+            targets.add(stack);
+        }
+        if (!remaining.isEmpty()) return false;
+        for (int i = 0; i < positions.size(); i++) target(positions.get(i), targets.get(i));
+        data.setBoolean("presetActive", true);
+        data.setBoolean("presetSupported", true);
+        data.setString("presetReason", "教学空库存 · 按 EBF 声明配额与原生候选生成；实际施工仍需服务端校验");
+        return true;
+    }
+
+    private static NBTTagCompound buildingCell(NBTTagCompound data, int x, int y, int z, ItemStack stack) {
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setInteger("dx", x);
+        cell.setInteger("dy", y);
+        cell.setInteger("dz", z);
+        cell.setInteger("x", data.getInteger("x") + x);
+        cell.setInteger("y", data.getInteger("y") + y);
+        cell.setInteger("z", data.getInteger("z") + z);
+        cell.setString("id", "minecraft:air");
+        cell.setString("role", "block");
+        cell.setString("status", "preview");
+        cell.setString("operation", "EDIT");
+        cell.setBoolean("inScope", true);
+        cell.setInteger("chosenChoice", -1);
+        target(cell, stack);
+        return cell;
+    }
+
+    static void target(NBTTagCompound cell, ItemStack stack) throws IllegalStateException {
+        if (stack == null || stack.getItem() == null)
+            throw new IllegalStateException("The native tutorial device is unavailable");
+        String registry = String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(stack.getItem()));
+        cell.setTag("targetStack", stack.writeToNBT(new NBTTagCompound()));
+        cell.setString(
+            "wantId",
+            String.valueOf(
+                net.minecraft.block.Block.blockRegistry
+                    .getNameForObject(net.minecraft.block.Block.getBlockFromItem(stack.getItem()))));
+        cell.setInteger(
+            "wantMeta",
+            stack.getItem()
+                .getMetadata(stack.getItemDamage()));
+        cell.setString("exactIdentity", registry + "@" + stack.getItemDamage());
+        cell.setBoolean("explicitTarget", true);
+        cell.setBoolean("hasTargetOverride", true);
+        int hint = "hatch".equals(cell.getString("role")) ? cell.getInteger("hintIndex") : -1;
+        NBTTagCompound display = HologramObservedItemBindings
+            .ebfTargetDisplay(stack, cell.getInteger("targetFacing"), hint);
+        cell.setTag("targetDisplay", display);
+        int chosen = -1;
+        NBTTagList candidates = cell.getTagList("candidates", 10);
+        for (int i = 0; i < candidates.tagCount(); i++) {
+            ItemStack candidate = ItemStack.loadItemStackFromNBT(candidates.getCompoundTagAt(i));
+            if (candidate != null && stack.isItemEqual(candidate)
+                && ItemStack.areItemStackTagsEqual(stack, candidate)) {
+                chosen = i;
+                break;
+            }
+        }
+        cell.setInteger("chosenChoice", chosen);
+    }
+
+    /** Same exact-identity row converter as the server quote; isolated stock is explicitly empty. */
+    static void updateMaterials(NBTTagCompound data) {
+        NBTTagList demands = new NBTTagList(), cells = data.getTagList("cells", 10);
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            if (cell.getBoolean("excluded") || !cell.hasKey("targetStack", 10)) continue;
+            if (cell.getString("structureId")
+                .startsWith("gtmb_text_")
+                || cell.getString("structureId")
+                    .startsWith("gtmb_picture_")) {
+                try {
+                    for (ItemStack material : com.miaokatze.gtmb.hologram.HologramNativePlacement.materials(
+                        net.minecraft.block.Block.getBlockFromName(cell.getString("wantId")),
+                        cell.getInteger("wantMeta"),
+                        cell.getCompoundTag("targetDisplay")
+                            .getCompoundTag("nativeTile")))
+                        addDemand(demands, material, material.stackSize);
+                } catch (IOException invalid) {
+                    throw new IllegalStateException("Cannot quote the native attachment materials", invalid);
+                }
+            } else addDemand(demands, ItemStack.loadItemStackFromNBT(cell.getCompoundTag("targetStack")), 1);
+        }
+        NBTTagCompound quote = HologramMaterialQuote.fromRows(demands, new NBTTagList());
+        quote.setString("session", data.getString("session"));
+        quote.setLong("planRevision", data.getLong("planRevision"));
+        quote.setLong("placementReviewNonce", data.getLong("placementReviewNonce"));
+        quote.setString("validation", "Isolated tutorial plan; empty teaching stock; no player inventory observation");
+        data.setTag("materialQuote", quote);
+    }
+
+    private static void addDemand(NBTTagList demands, ItemStack stack, int amount) {
+        if (stack == null) throw new IllegalStateException("Cannot quote an unresolved tutorial item");
+        NBTTagCompound row = stack.writeToNBT(new NBTTagCompound());
+        row.setLong("required", amount);
+        row.setLong("available", 0);
+        demands.appendTag(row);
+    }
+
+    static void placeAttachment(NBTTagCompound data, NBTTagCompound request) throws IOException {
+        if (!"blueprint".equals(data.getString("editorWorkspace"))) throw new IOException("投影模式不支持文字图片");
+        com.miaokatze.gtmb.hologram.HologramTextBox definition = com.miaokatze.gtmb.hologram.HologramTextBox
+            .read(request.getCompoundTag("textBox"));
+        NBTTagList before = data.getTagList("cells", 10), after = new NBTTagList();
+        java.util.Set<String> occupied = new java.util.HashSet<>();
+        for (int i = 0; i < before.tagCount(); i++) {
+            NBTTagCompound cell = before.getCompoundTagAt(i);
+            if (definition.id.equals(cell.getString("structureId"))) continue;
+            after.appendTag(cell.copy());
+            occupied.add(cell.getInteger("dx") + "," + cell.getInteger("dy") + "," + cell.getInteger("dz"));
+        }
+        net.minecraft.block.Block host = net.minecraft.block.Block.getBlockFromName("littletiles:BlockLittleTiles");
+        if (host == null) throw new IOException("LittleTiles host is unavailable");
+        for (com.miaokatze.gtmb.hologram.HologramTextBox.Cell generated : definition.generate()) {
+            if (occupied.contains(generated.x + "," + generated.y + "," + generated.z))
+                throw new IOException("附加对象与教学规划冲突");
+            NBTTagCompound payload = generated.tile();
+            ItemStack stack = com.miaokatze.gtmb.hologram.HologramNativePlacement.sample(host, 0, payload);
+            NBTTagCompound cell = buildingCell(data, generated.x, generated.y, generated.z, stack);
+            cell.setString("wantId", "littletiles:BlockLittleTiles");
+            cell.setString("structureId", definition.id);
+            NBTTagList membership = new NBTTagList();
+            membership.appendTag(new NBTTagString(definition.id));
+            cell.setTag("structureIds", membership);
+            cell.getCompoundTag("targetDisplay")
+                .setTag("nativeTile", payload);
+            after.appendTag(cell);
+        }
+        NBTTagList structures = new NBTTagList(), old = data.getTagList("structures", 10);
+        for (int i = 0; i < old.tagCount(); i++) if (!definition.id.equals(
+            old.getCompoundTagAt(i)
+                .getString("id")))
+            structures.appendTag(
+                old.getCompoundTagAt(i)
+                    .copy());
+        NBTTagCompound declaration = new NBTTagCompound();
+        declaration.setString("id", definition.id);
+        declaration.setString(
+            "name",
+            definition.picture == null ? "文字 · " + definition.text : "图片 · " + definition.picture.filename);
+        declaration.setBoolean("enabled", true);
+        declaration.setBoolean("declared", true);
+        declaration.setTag("textBox", definition.write());
+        structures.appendTag(declaration);
+        data.setTag("structures", structures);
+        data.setTag("cells", after);
+        data.setInteger("cellCount", after.tagCount());
+        NBTTagCompound ack = new NBTTagCompound();
+        ack.setLong("request", request.getLong("textRequest"));
+        ack.setBoolean("accepted", true);
+        ack.setString("id", definition.id);
+        ack.setString("message", "已加入教学规划");
+        data.setTag("textPlacementAck", ack);
     }
 
     static synchronized String primaryStructure(Kind kind) throws IOException {
@@ -90,7 +394,7 @@ final class HologramEditorTutorialSamples {
         require(
             required(manifest, "author.sourceClass").equals(required(manifest, "member.sourceClass")),
             "Recorded member source declaration differs");
-        return (NBTTagCompound) member.data.copy();
+        return HologramObservedItemBindings.restore(member.data);
     }
 
     static synchronized NBTTagCompound overviewMetadata() throws IOException {
@@ -108,7 +412,7 @@ final class HologramEditorTutorialSamples {
         for (String axis : new String[] { "x", "y", "z" }) require(
             before.getInteger(axis) == after.getInteger(axis),
             "Recorded overview controller coordinates differ");
-        return (NBTTagCompound) overview.data.copy();
+        return HologramObservedItemBindings.restore(overview.data);
     }
 
     private static NBTTagCompound controller(NBTTagCompound data, boolean physical) {
@@ -257,7 +561,15 @@ final class HologramEditorTutorialSamples {
             data.getCompoundTag("processing")
                 .getInteger("requiredStages") == number(manifest, prefix + "requiredStages"),
             "Tutorial recorded processing stages differ");
-        Sample loaded = new Sample(data, primary);
+        // Keep the original capture and provenance immutable. Only the derived portable observation enters UI code.
+        String portableFile = file.replace(".nbt.gz", ".portable.nbt.gz");
+        Properties bindings = properties(read("portable.properties", 16 * 1024));
+        byte[] portable = read(portableFile, number(bindings, portableFile + ".bytes"));
+        require(
+            required(bindings, portableFile + ".sha256").equals(sha256(portable)),
+            "Portable observation digest changed");
+        NBTTagCompound rebound = CompressedStreamTools.readCompressed(new ByteArrayInputStream(portable));
+        Sample loaded = new Sample(rebound, primary);
         CACHE.put(kind, loaded);
         return loaded;
     }
