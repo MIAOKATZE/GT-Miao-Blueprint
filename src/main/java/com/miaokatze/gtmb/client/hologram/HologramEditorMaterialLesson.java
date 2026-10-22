@@ -92,17 +92,14 @@ final class HologramEditorMaterialLesson {
                 .width(54)
                 .height(17));
         body.child(header);
-        for (int i = 0; i < Math.min(6, materials.size()); i++) body.child(materialRow(i));
+        for (int i = 0; i < materials.size(); i++) body.child(materialRow(i));
         if (materials.size() == 0) body.child(
             HologramEditorNativeTheme.label(() -> "当前快照尚无精确清单；未回传数量不表示零库存。")
                 .widthRel(1f)
                 .height(34));
         body.child(
             HologramEditorNativeTheme
-                .label(
-                    () -> materials.size() > 6 ? "共 " + materials.size() + " 项，本示例展示前六项；生产窗口可查看全部。"
-                        : materials.size() + " 项精确条目，配置材料与设备分别核算。",
-                    HologramEditorNativeTheme.MUTED)
+                .label(() -> materials.size() + " 项采集清单；教学内不重新核验玩家库存或执行付款。", HologramEditorNativeTheme.MUTED)
                 .widthRel(1f)
                 .height(24));
         body.child(HologramEditorNativeTheme.label(() -> {
@@ -119,18 +116,19 @@ final class HologramEditorMaterialLesson {
             .height(20)
             .name("materials.cancel");
         ui.shell.registerTarget("materials.cancel", cancel);
+        ButtonWidget<?> confirm = HologramEditorNativeTheme.primaryButton(() -> "最终确认 · 仅示范", () -> {})
+            .widthRel(1f)
+            .expanded()
+            .height(20)
+            .name("materials.confirm");
+        confirm.setEnabled(false);
         column.child(
             Flow.row()
                 .widthRel(1f)
                 .height(20)
                 .childPadding(6)
                 .child(cancel)
-                .child(
-                    HologramEditorNativeTheme.primaryButton(() -> "最终确认 · 仅示范", () -> {})
-                        .widthRel(1f)
-                        .expanded()
-                        .height(20)
-                        .name("materials.confirm")));
+                .child(confirm));
         panel.child(column);
         ui.shell.registerTarget("materials", panel);
         return panel;
@@ -188,11 +186,14 @@ final class HologramEditorMaterialLesson {
             .height(20)
             .childPadding(4)
             .name(name);
-        for (String label : labels) result.child(
-            HologramEditorNativeTheme.button(() -> label, () -> {})
+        for (String label : labels) {
+            ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> label, () -> {})
                 .widthRel(1f)
                 .expanded()
-                .height(20));
+                .height(20);
+            button.setEnabled(false);
+            result.child(button);
+        }
         return result;
     }
 

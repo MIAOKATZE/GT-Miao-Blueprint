@@ -231,6 +231,23 @@ final class HologramRenderer {
         return state == null ? 0 : state.cells.size();
     }
 
+    /** Detached counters from the frame actually presented for this exact snapshot. No native factory or draw. */
+    static net.minecraft.nbt.NBTTagCompound lessonInspection(HologramState state) {
+        net.minecraft.nbt.NBTTagCompound result = new net.minecraft.nbt.NBTTagCompound();
+        boolean presented = state != null && presentedState == state && presentedFrame != null;
+        result.setBoolean("snapshotPresented", presented);
+        java.util.Set<Integer> geometryCells = new java.util.HashSet<>();
+        if (presented) for (Face face : cachedFaces) geometryCells.add(face.cell.index);
+        result.setInteger("renderedCellCount", geometryCells.size());
+        result.setInteger("presentedVisibleCellCount", presented ? visibleCells.size() : 0);
+        result.setInteger("nativeModelCellCount", presented ? nativePreviewCells.size() : 0);
+        result.setInteger("roleMarkerCount", presented ? lastPreviewRoleMarkers : 0);
+        result.setInteger("anchorMarkerCount", presented ? lastPreviewAnchorMarkers : 0);
+        result.setBoolean("worldMutation", false);
+        result.setBoolean("playerMutation", false);
+        return result;
+    }
+
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
         double panX, double panZ, int layer, int view, int selected, int mouseX, int mouseY, double rehearsal) {
         if (width <= 0 || height <= 0 || !Double.isFinite(zoom) || zoom <= 0) {

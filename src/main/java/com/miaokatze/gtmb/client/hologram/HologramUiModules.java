@@ -30,11 +30,12 @@ final class HologramUiModules {
     final HologramEditorGuide guide;
     final HologramEditorTutorial tutorial;
     final HologramEditorShell shell;
+    final HologramEditorWorkspaces workspaces;
 
     /** MUI retains the first handler for a panel name until the entire screen is disposed. */
     String panelName(String base) {
         if (base == null || base.isEmpty()) throw new IllegalArgumentException("Panel names require a base identity");
-        return session != null && session.isTutorial() ? base + panelGraphSuffix : base;
+        return base + panelGraphSuffix;
     }
 
     HologramUiModules(HologramUiHost host) {
@@ -55,6 +56,7 @@ final class HologramUiModules {
         review = new HologramUiBuildReview(this);
         router = new HologramUiRouter(this);
         session = new HologramUiSession(this);
+        workspaces = new HologramEditorWorkspaces(this);
         shortcuts = new HologramUiShortcuts(this);
         textBoxes = new HologramUiTextBoxes(this);
         tools = new HologramEditorTools(this);

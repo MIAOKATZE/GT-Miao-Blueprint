@@ -1,3 +1,5 @@
 # These captured observations are bound to SHA-256 values in the tutorial manifest.
 src/main/resources/assets/gtmb/tutorial/*.nbt.gz binary
 src/main/resources/assets/gtmb/tutorial/*.provenance.properties binary
+# Preserve the exact bytes of the native v0.1.38 capture manifest and PNG evidence.
+README/native-v0138/** -text whitespace=cr-at-eol

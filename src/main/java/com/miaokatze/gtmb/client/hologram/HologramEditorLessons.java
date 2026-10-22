@@ -26,6 +26,7 @@ final class HologramEditorLessons {
         LIBRARY,
         EDITOR,
         SETTINGS,
+        OPEN_DOCK,
         CLOSE_TARGET,
         OPEN_TARGET,
         CLOSE_SOURCE,
@@ -105,7 +106,7 @@ final class HologramEditorLessons {
     static List<Step> course(String topic, HologramEditorCommands commands, HologramState observed) {
         List<Step> steps = new ArrayList<>(course(topic, commands));
         if (topic.equals("projection") || topic.equals("structure")) {
-            boolean direct = observed.structureMembers.isEmpty();
+            boolean direct = !hasDeclaredStructure(observed);
             if (direct) {
                 for (int i = 0; i < steps.size(); i++) {
                     Step old = steps.get(i);
@@ -185,6 +186,18 @@ final class HologramEditorLessons {
         return Collections.unmodifiableList(steps);
     }
 
+    /** The empty membership bucket contains loose/controller cells, and is never a declared area member. */
+    static boolean hasDeclaredStructure(HologramState observed) {
+        net.minecraft.nbt.NBTTagList declarations = observed.data.getTagList("structures", 10);
+        for (int i = 0; i < declarations.tagCount(); i++) {
+            String id = declarations.getCompoundTagAt(i)
+                .getString("id");
+            if (!id.isEmpty() && !observed.structureMembers.getOrDefault(id, Collections.emptyList())
+                .isEmpty()) return true;
+        }
+        return false;
+    }
+
     private static Action control(int id) {
         return new Action(Operation.CONTROL, id, "control." + id);
     }
@@ -194,7 +207,28 @@ final class HologramEditorLessons {
     }
 
     private static void add(List<Step> list, String title, String text, String focus, Action... actions) {
-        list.add(new Step(title, text, focus, actions));
+        List<Action> routed = new ArrayList<>();
+        for (Action action : actions) {
+            String page = null;
+            switch (action.operation) {
+                case CLOSE_TARGET:
+                case OPEN_TARGET:
+                    page = "launcher.0";
+                    break;
+                case CLOSE_SOURCE:
+                case OPEN_SOURCE:
+                    page = "launcher.3";
+                    break;
+                case OPEN_MATERIAL:
+                    page = "launcher.4";
+                    break;
+                default:
+                    break;
+            }
+            if (page != null) routed.add(action(Operation.OPEN_DOCK, page));
+            routed.add(action);
+        }
+        list.add(new Step(title, text, focus, routed.toArray(new Action[0])));
     }
 
     private static void projection(List<Step> s) {
@@ -252,19 +286,14 @@ final class HologramEditorLessons {
     }
 
     private static void blueprint(List<Step> s, HologramEditorCommands commands) {
-        add(
-            s,
-            "草稿与蓝图库",
-            "右侧库与中央画布共用工作区。客户端和服务器来源分别保留。",
-            "library",
-            action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)));
+        add(s, "草稿与蓝图库", "右侧库与中央画布共用工作区。客户端和服务器来源分别保留。", "library", action(Operation.LIBRARY, "header.library"));
         add(s, "点行切换", "单击库行即时更新中央草稿；未保存内容沿用原有提示。", "library", control(14001));
         add(
             s,
             "精确选格",
             "Ctrl 增减选格；" + commands.shortcut("sameType") + " 扩展同类。点结构轮廓可整选成员。",
             "viewport",
-            action(Operation.EDITOR, "control." + (HologramEditorControlIds.SHELL + 20)),
+            action(Operation.EDITOR, "launcher.0"),
             action(Operation.SELECT_CELL, "viewport"));
         add(
             s,
@@ -338,7 +367,7 @@ final class HologramEditorLessons {
             "注释与区域",
             "提示词、提示区和排除区按对象保存，不代替世界过滤执行。",
             "modal",
-            action(Operation.SETTINGS, "control." + (HologramEditorControlIds.SHELL + 21)),
+            action(Operation.SETTINGS, "launcher.1"),
             action(Operation.PROMPT, "control.146"));
         add(
             s,
@@ -361,17 +390,17 @@ final class HologramEditorLessons {
             "从实际处理入口选择自用倾向；这是处理策略，不是仓室搭配。",
             "processing",
             action(Operation.CLOSE_PANEL, "modal.close"),
-            action(Operation.SETTINGS, "control." + (HologramEditorControlIds.SHELL + 21)),
+            action(Operation.SETTINGS, "launcher.1"),
             control(220),
             control(232));
         add(s, "倾向分享", "切换分享倾向，查看去标识、量子重绑与外部关系策略。", "processing", control(233));
         add(
             s,
             "保存与覆盖",
-            "名称与保存按钮在蓝图库。本例尚未完成处理，保存和覆盖均不执行；教程不写文件。",
-            "library",
+            "名称与保存按钮在独立保存侧栏。本例尚未完成处理，保存和覆盖均不执行；教程不写文件。",
+            "library.save",
             action(Operation.CLOSE_PANEL, "modal.close"),
-            action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)),
+            action(Operation.OPEN_DOCK, "header.save"),
             action(Operation.HOVER_NATIVE, "library.name"),
             action(Operation.HOVER_NATIVE, "control.140"),
             action(Operation.HOVER_NATIVE, "control.222"));
@@ -383,7 +412,7 @@ final class HologramEditorLessons {
             "完成或跳过都恢复原窗口、字段、布局与选区。",
             "library",
             action(Operation.CLOSE_MATERIAL, "materials.cancel"),
-            action(Operation.LIBRARY, "control." + (HologramEditorControlIds.SHELL + 22)));
+            action(Operation.LIBRARY, "header.library"));
     }
 
     private static void structure(List<Step> s) {
@@ -437,7 +466,12 @@ final class HologramEditorLessons {
     }
 
     private static void cut(List<Step> s) {
-        add(s, "独立私有列表", "这是与原剪切窗口共用的列表和原样预览视图；两个教学条目仅在内存中。", "cut.list", action(Operation.HOVER, "cut.list"));
+        add(
+            s,
+            "电力高炉教学列表",
+            "共用工作台剪切列表和原样渲染引擎；两行来自同一份电力高炉采集规划，仅在教学内存中。",
+            "cut.list",
+            action(Operation.HOVER, "cut.list"));
         add(
             s,
             "切换条目预览",
@@ -459,9 +493,9 @@ final class HologramEditorLessons {
         add(
             s,
             "返回原列表",
-            "关闭教学示例后，点击完成回到原列表对象；真实选择、滚动与预览相机保留。",
-            "cut.closed",
-            action(Operation.CUT_LIST_CLICK, "cut.close"));
+            "点击完成回到原工作台；真实选择、滚动与预览相机保留。教学预览显示规划，不证明机器已经成型。",
+            "cut.browser",
+            action(Operation.HOVER, "cut.list"));
     }
 
     private static void world(List<Step> s, String topic) {
@@ -469,7 +503,7 @@ final class HologramEditorLessons {
         add(
             s,
             iso ? "进入等距上下文" : "选择操作模式",
-            iso ? "从已启动的框选或剪切上下文按默认 V 进入等距。" : "Shift + 右键选模式；松 Shift 只完成模式选择。",
+            (iso ? "使用等距相机查看" : "使用透视相机查看") + "真实采集的电力高炉规划。以下选区与暂存事务只改变教学内存，未证明实体机器成型。",
             "viewport",
             action(Operation.WORLD_MODE, "viewport"));
         add(
@@ -487,15 +521,14 @@ final class HologramEditorLessons {
         add(
             s,
             "调整选区",
-            "六面手柄与 XZ 平面调整隔离选区，指针连续移动、世界格整格吸附。",
+            "拖动选区第二角沿 XZ 扩展；边框按整数格跟随，每帧重新计算框内实际采集格。",
             "viewport",
-            action(Operation.HANDLES, "viewport"),
             action(Operation.WORLD_MOVE_XZ, "world.handle.xz"));
         if (!cut) {
             add(
                 s,
                 "提交框选",
-                iso ? "松 Ctrl 后 Shift + 左键提交；预演不会导入真实蓝图。" : "另按 Shift + 右键提交；预演不会覆盖真实蓝图。",
+                "读取框内电力高炉采集格，验证选区非空；结果仅保留于教学内存。真实操作按当前模式提交选区。",
                 "viewport",
                 action(Operation.BOX_SUBMIT, "viewport"));
             return;
@@ -503,7 +536,7 @@ final class HologramEditorLessons {
         add(
             s,
             "来源确认与命名",
-            "确认前来源保持原状；命名确认后才进入独立暂存。",
+            "将完整电力高炉规划复制到独立教学暂存，再从教学场景移除原格；真实世界与真实剪切目录不变。",
             "viewport",
             action(Operation.CUT_SOURCE_REVIEW, "viewport"),
             action(Operation.CUT_STORE, "viewport"));
@@ -518,7 +551,7 @@ final class HologramEditorLessons {
         add(
             s,
             "放置与消费",
-            "重新取出并锁定，在确认窗点击确认；成功后原条目才消费。",
+            "重新取出并锁定教学几何；逐格核对移动后的坐标与完整数据相等，才消费教学暂存。真实世界不执行放置。",
             "viewport",
             action(Operation.CUT_TAKE, "viewport"),
             action(Operation.CUT_LOCK, "viewport"),

@@ -1,5 +1,8 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -7,195 +10,217 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.cleanroommc.modularui.api.drawable.IDrawable;
+import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.utils.Alignment;
+import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.PagedWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
 
-/** Persistent native library dock. Six controls reuse captured row identities, never row indices at confirmation. */
+/** Independent library sidebar and save dock, sharing the original library action owners. */
 final class HologramEditorLibraryPane {
 
-    private static final int ROWS = 6, LOCAL_PREVIOUS = HologramEditorControlIds.LIBRARY + 1,
+    // The router reserves 14000..14999 for captured library identities. Ordinary catalogs scroll without paging.
+    private static final int ROW_WINDOW = 15000 - 14000;
+    private static final int LOCAL_PREVIOUS = HologramEditorControlIds.LIBRARY + 1,
         LOCAL_NEXT = HologramEditorControlIds.LIBRARY + 2;
     private final HologramUiModules ui;
-    private final NBTTagCompound[] rows = new NBTTagCompound[ROWS];
+    private final StringValue search = new StringValue("");
+    private final List<NBTTagCompound> matches = new ArrayList<>(), rows = new ArrayList<>();
     private final PagedWidget.Controller pages = new PagedWidget.Controller();
     private final HologramEditorNativeLibraryDialogs dialogs;
-    private IWidget built;
+    private IWidget built, save;
     private HologramRecessedList rowList;
-    private int rowHeight = -1;
-    private int total;
+    private String previousQuery = "";
+    private boolean previousPublic;
+    private int total, catalogTotal;
 
     HologramEditorLibraryPane(HologramUiModules ui) {
         this.ui = ui;
         dialogs = new HologramEditorNativeLibraryDialogs(ui);
-        for (int i = 0; i < ROWS; i++) rows[i] = new NBTTagCompound();
     }
 
     IWidget build() {
         if (built != null) return built;
-        Flow root = Flow.col()
+        built = Flow.col()
             .name("native_library")
             .sizeRel(1f)
-            .padding(6)
-            .childPadding(4);
-        root.child(
-            new PagedWidget<>().name("library_pages")
-                .sizeRel(1f)
-                .expanded()
-                .controller(pages)
-                .addPage(library())
-                .addPage(management()));
-        built = root;
+            .padding(4)
+            .child(
+                new PagedWidget<>().name("library_pages")
+                    .sizeRel(1f)
+                    .controller(pages)
+                    .addPage(library())
+                    .addPage(management()));
         refresh();
-        return root;
+        return built;
     }
 
-    private IWidget library() {
+    /** The original name field has exactly one native parent, in the functional dock's save page. */
+    IWidget buildSave() {
+        if (save != null) return save;
         Flow page = Flow.col()
+            .name("native_blueprint_save")
             .widthRel(1f)
             .coverChildrenHeight()
-            .childPadding(4);
+            .childPadding(5)
+            .collapseDisabledChild(true);
         page.child(
-            Flow.row()
+            HologramEditorNativeTheme.label(() -> "填写名称另存；更新已有蓝图时，明确选择覆盖目标。")
                 .widthRel(1f)
-                .height(20)
-                .childPadding(4)
-                .child(
-                    HologramEditorNativeTheme.label(() -> "蓝图库 · " + total + " 项")
-                        .widthRel(1f)
-                        .expanded()
-                        .height(18))
-                .child(
-                    local(HologramEditorControlIds.LIBRARY + 3, () -> "管理", () -> true, () -> pages.setPage(1))
-                        .width(48)
-                        .height(20)));
-        page.child(
-            Flow.row()
-                .widthRel(1f)
-                .height(20)
-                .childPadding(3)
-                .child(
-                    action(
-                        201,
-                        () -> ui.library.publicLibrary() ? "服务器" : "客户端",
-                        () -> !ui.session.isTutorial() && ui.library.nativeDedicated() && ui.library.nativeIdle(),
-                        () -> "切换客户端与服务器目录，保留当前工作区。").widthRel(1f)
-                            .expanded()
-                            .height(20))
-                .child(
-                    action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站，遵循客户端外链确认。").widthRel(1f)
-                        .expanded()
-                        .height(20))
-                .child(
-                    local(
-                        HologramEditorControlIds.LIBRARY + 4,
-                        () -> "刷新",
-                        this::idle,
-                        ui.library::nativeRefreshCatalog).widthRel(1f)
-                            .expanded()
-                            .height(20)));
-        IWidget nameField = ui.shell.adoptField(ui.library.presetNameField())
+                .height(30));
+        IWidget name = ui.shell.adoptField(ui.library.presetNameField())
             .name("library_name")
             .widthRel(1f)
             .height(20);
-        ui.shell.registerTarget("library.name", nameField);
-        page.child(nameField);
+        ui.shell.registerTarget("library.name", name);
+        page.child(name);
         page.child(
             Flow.row()
                 .widthRel(1f)
                 .height(22)
                 .childPadding(4)
                 .child(
-                    action(140, () -> "保存蓝图", ui.library::nativeCanSave, () -> "沿用作者处理、原生预览和最终保存回执；保存不会施工。")
-                        .widthRel(1f)
-                        .expanded()
+                    saveMode(false).expanded()
                         .height(22))
                 .child(
-                    action(
-                        222,
-                        () -> "覆盖保存 " + (ui.library.overwriteMode() ? "✓" : "×"),
-                        () -> !ui.session.isTutorial() && !ui.library.browsePreviewActive(),
-                        () -> "覆盖模式中点行仅指定目标，保存前再核对名称与身份。").widthRel(1f)
-                            .expanded()
-                            .height(22)));
-        HologramRecessedList list = new HologramRecessedList().paperEdges()
+                    saveMode(true).expanded()
+                        .height(22)));
+        page.child(
+            HologramEditorNativeTheme.label(this::overwriteTargetLabel)
+                .widthRel(1f)
+                .height(30)
+                .setEnabledIf(widget -> ui.library.overwriteMode()));
+        page.child(
+            action(
+                140,
+                () -> ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
+                ui.library::nativeCanSave,
+                () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
+                    .height(25));
+        page.child(
+            HologramEditorNativeTheme.label(ui.library::nativeStatus)
+                .widthRel(1f)
+                .height(36));
+        page.child(
+            HologramEditorNativeTheme.label(() -> "封面与文件", HologramEditorNativeTheme.TITLE)
+                .widthRel(1f)
+                .height(20));
+        page.child(
+            HologramEditorNativeTheme.label(() -> "保存时沿用现有结构预览与 PNG 封面流程。")
+                .widthRel(1f)
+                .height(30));
+        page.child(
+            action(
+                159,
+                () -> "导出 JSON / PNG",
+                () -> idle() && !ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
+                () -> "导出所选已保存蓝图及其原有 PNG 文件。").widthRel(1f)
+                    .height(22));
+        save = new HologramRecessedList().paperEdges()
+            .name("blueprint_save_content")
+            .sizeRel(1f)
+            .child(page);
+        ui.shell.registerTarget("library.save", save);
+        return save;
+    }
+
+    private IWidget library() {
+        Flow page = Flow.col()
+            .name("library_content")
+            .sizeRel(1f)
+            .childPadding(4)
+            .collapseDisabledChild(true);
+        page.child(
+            Flow.row()
+                .widthRel(1f)
+                .height(20)
+                .childPadding(3)
+                .child(
+                    HologramEditorNativeTheme.label(() -> "蓝图库", HologramEditorNativeTheme.TITLE)
+                        .expanded()
+                        .height(20))
+                .child(
+                    action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站。").width(54)
+                        .height(20))
+                .child(
+                    local(HologramEditorControlIds.LIBRARY + 3, () -> "管理", () -> true, () -> pages.setPage(1))
+                        .width(28)
+                        .height(20)));
+        page.child(
+            Flow.row()
+                .widthRel(1f)
+                .height(22)
+                .childPadding(4)
+                .child(
+                    source(false).expanded()
+                        .height(22))
+                .child(
+                    source(true).expanded()
+                        .height(22)));
+        IWidget filter = HologramEditorNativeTheme.textField(search, 120)
+            .name("library_search")
+            .hintText("搜索蓝图")
+            .widthRel(1f)
+            .height(20);
+        ui.shell.registerTarget("library.search", filter);
+        page.child(filter);
+        rowList = new HologramRecessedList().paperEdges()
             .name("library_rows")
             .widthRel(1f)
-            .height(132);
-        rowList = list;
-        for (int i = 0; i < ROWS; i++) {
-            final int slot = i;
-            ButtonWidget<?> row = action(
-                14000 + slot,
-                () -> rowLabel(slot),
-                () -> ui.library.nativeIdle() && !rows[slot].getString("id")
-                    .isEmpty(),
-                () -> rowTooltip(slot)).name("library_row_" + slot)
-                    .sizeRel(1f);
-            IDrawable lettering = row.getOverlay();
-            row.overlay((context, x, y, width, height, theme) -> {
-                boolean voucher = rows[slot].getBoolean("fullyVoucherCovered");
-                if (lettering != null)
-                    lettering.draw(context, x, y, Math.max(1, width - (voucher ? 22 : 0)), height, theme);
-                if (voucher) HologramVoucherRibbon.draw(x, y, width, height);
-            });
-            list.child(
-                new ParentWidget<>().widthRel(1f)
-                    .height(22)
-                    .setEnabledIf(
-                        widget -> !rows[slot].getString("id")
-                            .isEmpty())
-                    .child(row));
-        }
-        list.child(
-            HologramEditorNativeTheme.label(() -> "暂无保存蓝图\n可从蓝图站获取文件，或框选后保存。")
+            .expanded();
+        rowList.child(
+            HologramEditorNativeTheme.label(() -> catalogTotal == 0 ? "暂无保存蓝图\n可从蓝图站获取，或编辑后保存。" : "没有匹配的蓝图")
                 .widthRel(1f)
-                .height(40)
+                .height(44)
                 .setEnabledIf(widget -> total == 0));
-        page.child(list);
+        page.child(rowList);
         page.child(
             Flow.row()
                 .widthRel(1f)
                 .height(18)
                 .childPadding(3)
+                .setEnabledIf(widget -> total > ROW_WINDOW)
                 .child(
-                    local(LOCAL_PREVIOUS, () -> "◂", () -> ui.library.libraryOffset() > 0, () -> offset(-ROWS))
-                        .width(30)
+                    local(LOCAL_PREVIOUS, () -> "◂", () -> ui.library.libraryOffset() > 0, () -> offset(-ROW_WINDOW))
+                        .width(25)
                         .height(18))
                 .child(
                     HologramEditorNativeTheme
                         .label(
-                            () -> total == 0 ? "暂无蓝图"
-                                : (ui.library.libraryOffset() + 1) + "–"
-                                    + Math.min(total, ui.library.libraryOffset() + ROWS)
-                                    + " / "
-                                    + total)
-                        .widthRel(1f)
+                            () -> (ui.library.libraryOffset() + 1) + "–"
+                                + Math.min(total, ui.library.libraryOffset() + ROW_WINDOW)
+                                + " / "
+                                + total)
                         .expanded()
                         .height(18))
                 .child(
-                    local(LOCAL_NEXT, () -> "▸", () -> ui.library.libraryOffset() + ROWS < total, () -> offset(ROWS))
-                        .width(30)
-                        .height(18)));
+                    local(
+                        LOCAL_NEXT,
+                        () -> "▸",
+                        () -> ui.library.libraryOffset() + ROW_WINDOW < total,
+                        () -> offset(ROW_WINDOW)).width(25)
+                            .height(18)));
         page.child(
             Flow.row()
                 .widthRel(1f)
                 .height(18)
                 .childPadding(3)
-                .setEnabledIf(widget -> ui.library.nativeDedicated() && ui.library.publicLibrary())
+                .setEnabledIf(
+                    widget -> ui.library.nativeDedicated() && ui.library.publicLibrary()
+                        && ui.library.nativeServerPages() > 1)
                 .child(
                     action(
                         208,
                         () -> "上页",
                         () -> idle() && ui.library.nativeServerPage() > 0,
-                        () -> "读取服务器上一页；不会替换当前草稿。").width(48)
+                        () -> "读取服务器上一页，保留当前工作区。").width(40)
                             .height(18))
                 .child(
                     HologramEditorNativeTheme
                         .label(() -> (ui.library.nativeServerPage() + 1) + " / " + ui.library.nativeServerPages())
-                        .widthRel(1f)
                         .expanded()
                         .height(18))
                 .child(
@@ -203,23 +228,27 @@ final class HologramEditorLibraryPane {
                         209,
                         () -> "下页",
                         () -> idle() && ui.library.nativeServerPage() + 1 < ui.library.nativeServerPages(),
-                        () -> "读取服务器下一页；不会清除预览。").width(48)
+                        () -> "读取服务器下一页，保留当前工作区。").width(40)
                             .height(18)));
         page.child(
             action(
                 141,
                 () -> "放置所选蓝图",
                 () -> idle() && ui.library.selectedPresetExists(),
-                () -> "进入真实世界 ghost 定位；锁定后核验材料，明确确认一次施工。").widthRel(1f)
+                () -> "进入真实世界定位，锁定后校验材料并确认施工。").widthRel(1f)
                     .height(24));
         page.child(
-            HologramEditorNativeTheme.label(ui.library::nativeStatus)
+            action(
+                203,
+                () -> ui.library.publicLibrary() ? "下载至客户端" : "上传 / 更新公库",
+                () -> idle() && ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
+                () -> "沿用原 JSON / PNG 传输、权限与配额。").widthRel(1f)
+                    .height(22));
+        page.child(
+            action(299, () -> "放弃当前草稿", () -> idle() && !ui.session.state().cells.isEmpty(), () -> "确认后放弃当前草稿；已保存文件保留。")
                 .widthRel(1f)
-                .height(30));
-        return new HologramRecessedList().paperEdges()
-            .name("library_content")
-            .sizeRel(1f)
-            .child(page);
+                .height(22));
+        return page;
     }
 
     private IWidget management() {
@@ -233,34 +262,22 @@ final class HologramEditorLibraryPane {
                 .childPadding(4)
                 .child(
                     HologramEditorNativeTheme.label(() -> "蓝图库管理")
-                        .widthRel(1f)
                         .expanded()
-                        .height(18))
+                        .height(20))
                 .child(
                     local(HologramEditorControlIds.LIBRARY + 5, () -> "返回", () -> true, () -> pages.setPage(0))
-                        .width(48)
+                        .width(44)
                         .height(20)));
         HologramRecessedList list = new HologramRecessedList().paperEdges()
-            .sizeRel(1f)
+            .widthRel(1f)
             .expanded();
         list.child(
-            action(
-                203,
-                () -> ui.library.publicLibrary() ? "下载至客户端" : "上传 / 更新公库",
-                () -> idle() && ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
-                () -> "完整 JSON / PNG 沿用原传输、权限与配额。").widthRel(1f)
-                    .height(22));
-        list.child(
-            action(139, () -> "编辑所选", () -> idle() && ui.library.selectedPresetExists(), () -> "兼容编辑入口；普通点行已直接载入工作区。")
+            local(HologramEditorControlIds.LIBRARY + 4, () -> "刷新目录", this::idle, ui.library::nativeRefreshCatalog)
                 .widthRel(1f)
                 .height(22));
         list.child(
-            action(
-                299,
-                () -> "放弃蓝图预设",
-                () -> idle() && !ui.session.state().cells.isEmpty(),
-                () -> "独立放弃当前草稿；需明确确认，已保存文件保留。").widthRel(1f)
-                    .height(22));
+            action(139, () -> "编辑所选", () -> idle() && ui.library.selectedPresetExists(), () -> "编辑库中所选蓝图。").widthRel(1f)
+                .height(22));
         list.child(
             local(
                 HologramEditorControlIds.LIBRARY + 6,
@@ -269,82 +286,205 @@ final class HologramEditorLibraryPane {
                 () -> ui.router.activate(ui.library.nativeDedicated() ? 205 : 175)).widthRel(1f)
                     .height(22));
         list.child(
-            action(226, () -> "升级旧蓝图", ui.library::nativeCanUpgrade, () -> "按原文件版本门禁升级；服务器公库仅管理员可操作。").widthRel(1f)
+            action(226, () -> "升级旧蓝图", ui.library::nativeCanUpgrade, () -> "保留原文件版本门禁；服务器公库仅管理员可操作。").widthRel(1f)
                 .height(22));
         list.child(
             action(
                 207,
                 () -> "服务器库设置 · OP 4",
                 () -> !ui.session.isTutorial() && ui.library.nativeAdmin(),
-                () -> "查看和设置原服务器上传、下载与每人配额。").widthRel(1f)
+                () -> "设置服务器上传、下载与每人配额。").widthRel(1f)
                     .height(22));
         list.child(
             action(
                 142,
                 () -> "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"),
                 this::editing,
-                () -> "沿用本次蓝图的 NBT 保留选择与资源审核。").widthRel(1f)
+                () -> "本次蓝图的 NBT 保留选择与资源审核。").widthRel(1f)
                     .height(22));
         list.child(
             action(
                 143,
                 () -> "保留覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"),
                 this::editing,
-                () -> "覆盖板与内部资源仍分别审核、付料。").widthRel(1f)
+                () -> "覆盖板与内部资源分别审核、付款。").widthRel(1f)
                     .height(22));
         list.child(
-            action(227, () -> "全局提示词", this::editing, () -> "编辑整份方案提示，不改变所选结构的配置。").widthRel(1f)
+            action(227, () -> "全局提示词", this::editing, () -> "编辑整份蓝图的提示。").widthRel(1f)
                 .height(22));
         list.child(
             action(
-                159,
-                () -> "导出 JSON / PNG",
-                () -> idle() && !ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
-                () -> "沿用原命名分享文件导出入口。").widthRel(1f)
+                161,
+                () -> "导入命名文件",
+                () -> idle() && !ui.library.nativeDedicated(),
+                () -> "在保存页名称框填写文件名，沿用原文件准入与换稿确认。").widthRel(1f)
                     .height(22));
         list.child(
-            action(161, () -> "导入命名文件", () -> idle() && !ui.library.nativeDedicated(), () -> "名称框填写文件名；沿用原文件准入与换稿确认。")
-                .widthRel(1f)
+            action(150, () -> "来源版本", () -> true, () -> "查看来源与依赖。").widthRel(1f)
                 .height(22));
         list.child(
-            action(150, () -> "来源版本", () -> true, () -> "查看来源与依赖；不代替材料或原生机器成型检查。").widthRel(1f)
-                .height(22));
+            HologramEditorNativeTheme.label(ui.library::nativeStatus)
+                .widthRel(1f)
+                .height(40));
         page.child(list);
         return page;
     }
 
     void refresh() {
+        String query = search.getStringValue()
+            .trim()
+            .toLowerCase(Locale.ROOT);
+        boolean changed = !previousQuery.equals(query) || previousPublic != ui.library.publicLibrary();
+        if (changed) ui.library.libraryOffset(0);
+        previousQuery = query;
+        previousPublic = ui.library.publicLibrary();
+        matches.clear();
         NBTTagList source = ui.library.nativeRows();
-        total = source.tagCount();
-        int offset = Math.max(0, Math.min(ui.library.libraryOffset(), Math.max(0, total - ROWS)));
+        catalogTotal = source.tagCount();
+        for (int i = 0; i < source.tagCount(); i++) {
+            NBTTagCompound row = source.getCompoundTagAt(i);
+            if (query.isEmpty()
+                || (row.getString("name") + " " + row.getString("id") + " " + row.getString("authorName"))
+                    .toLowerCase(Locale.ROOT)
+                    .contains(query))
+                matches.add(row);
+        }
+        total = matches.size();
+        int offset = Math
+            .max(0, Math.min(ui.library.libraryOffset(), Math.max(0, (total - 1) / ROW_WINDOW * ROW_WINDOW)));
         ui.library.libraryOffset(offset);
-        int height = total == 0 ? 40 : 22 * Math.min(ROWS, total - offset);
-        if (rowList != null && rowHeight != height) {
-            rowHeight = height;
-            rowList.height(height);
-            if (rowList.isValid()) rowList.scheduleResize();
-        }
-        for (int slot = 0; slot < ROWS; slot++) {
-            rows[slot] = offset + slot < total ? (NBTTagCompound) source.getCompoundTagAt(offset + slot)
+        int count = Math.min(ROW_WINDOW, total - offset);
+        if (rowList != null) while (rows.size() < count) addRow();
+        for (int slot = 0; slot < rows.size(); slot++) {
+            NBTTagCompound row = slot < count ? (NBTTagCompound) matches.get(offset + slot)
                 .copy() : new NBTTagCompound();
-            ui.library.nativeBindRow(slot, rows[slot]);
+            rows.set(slot, row);
+            ui.library.nativeBindRow(slot, row);
         }
+        if (changed && rowList != null && rowList.isValid()) rowList.getScrollData()
+            .scrollTo(rowList.getScrollArea(), 0);
         dialogs.refresh();
     }
 
+    private void addRow() {
+        final int slot = rows.size();
+        rows.add(new NBTTagCompound());
+        BooleanSupplier available = () -> ui.library.nativeIdle() && !row(slot).getString("id")
+            .isEmpty();
+        ButtonWidget<?> button = HologramEditorNativeTheme
+            .rowButton(
+                () -> rowLabel(slot),
+                null,
+                () -> selectRow(slot),
+                available,
+                () -> ui.library.nativeSelected(row(slot)))
+            .name("library_row_" + slot)
+            .sizeRel(1f)
+            .tooltipBuilder(t -> t.addLine(rowTooltip(slot)))
+            .tooltipAutoUpdate(true);
+        IDrawable lettering = button.getOverlay();
+        IDrawable count = IKey.dynamic(() -> row(slot).getInteger("cells") + " 格")
+            .color(HologramEditorNativeTheme.MUTED)
+            .shadow(false)
+            .alignment(Alignment.CenterRight);
+        button.overlay((context, x, y, width, height, theme) -> {
+            boolean voucher = row(slot).getBoolean("fullyVoucherCovered");
+            int ribbon = voucher ? 18 : 0;
+            if (lettering != null) lettering.draw(context, x, y, Math.max(1, width - 42 - ribbon), height, theme);
+            count.draw(context, x + Math.max(0, width - 42 - ribbon), y, 37, height, theme);
+            if (voucher) HologramVoucherRibbon.draw(x, y, width, height);
+        });
+        HologramEditorNativeTheme.guided(button, () -> ui.canvas.controlAccent(14000 + slot), available);
+        ui.shell.registerControl(14000 + slot, button, () -> rowLabel(slot), available);
+        ui.shell.registerTarget("library.row." + slot, button);
+        rowList.child(
+            new ParentWidget<>().widthRel(1f)
+                .height(25)
+                .setEnabledIf(
+                    widget -> !row(slot).getString("id")
+                        .isEmpty())
+                .child(button));
+    }
+
+    private void selectRow(int slot) {
+        NBTTagCompound captured = (NBTTagCompound) row(slot).copy();
+        if (captured.getString("id")
+            .isEmpty()) return;
+        defer(() -> {
+            if (!ui.library.nativeIdle()) return;
+            // Capture before deferral: an async refresh or a search cannot redirect this click to another row.
+            ui.library.nativeBindRow(slot, captured);
+            ui.router.activate(14000 + slot);
+        });
+    }
+
+    private ButtonWidget<?> source(boolean server) {
+        BooleanSupplier available = () -> idle() && (ui.library.nativeDedicated() || !server);
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> server ? "服务器" : "客户端", null, () -> {
+            if (ui.library.publicLibrary() != server) defer(
+                () -> {
+                    if (available.getAsBoolean() && ui.library.publicLibrary() != server) ui.router.activate(201);
+                });
+        }, available, () -> ui.library.publicLibrary() == server, false);
+        button.tooltipBuilder(t -> t.addLine(server ? "浏览真实服务器目录，保留当前工作区。" : "浏览真实客户端目录，保留当前工作区。"));
+        ui.shell.registerControl(
+            201,
+            button,
+            () -> server ? "服务器" : "客户端",
+            () -> available.getAsBoolean() && ui.library.publicLibrary() != server);
+        ui.shell.registerTarget(server ? "library.source.server" : "library.source.client", button);
+        return button;
+    }
+
+    private ButtonWidget<?> saveMode(boolean overwrite) {
+        BooleanSupplier available = () -> !ui.session.isTutorial() && !ui.library.browsePreviewActive();
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> overwrite ? "更新已有蓝图" : "另存新蓝图", null, () -> {
+            if (ui.library.overwriteMode() != overwrite) defer(() -> {
+                if (!available.getAsBoolean() || ui.library.overwriteMode() == overwrite) return;
+                ui.router.activate(222);
+                if (overwrite) ui.shell.selectDockPage(2);
+            });
+        }, available, () -> ui.library.overwriteMode() == overwrite, false);
+        ui.shell.registerControl(
+            222,
+            button,
+            () -> overwrite ? "更新已有蓝图" : "另存新蓝图",
+            () -> available.getAsBoolean() && ui.library.overwriteMode() != overwrite);
+        return button;
+    }
+
+    private String overwriteTargetLabel() {
+        String target = ui.library.overwriteTarget();
+        if (target.isEmpty()) return "在右侧蓝图库点击要覆盖的目标；当前草稿保持。";
+        NBTTagList source = ui.library.nativeRows();
+        for (int i = 0; i < source.tagCount(); i++) {
+            NBTTagCompound row = source.getCompoundTagAt(i);
+            if (target.equals(row.getString("id"))) return "覆盖目标：" + row.getString("name");
+        }
+        return "覆盖目标：" + target;
+    }
+
     private void offset(int delta) {
-        ui.library.libraryOffset(Math.max(0, Math.min(ui.library.libraryOffset() + delta, Math.max(0, total - ROWS))));
+        ui.library.libraryOffset(
+            Math.max(
+                0,
+                Math.min(ui.library.libraryOffset() + delta, Math.max(0, (total - 1) / ROW_WINDOW * ROW_WINDOW))));
+        if (rowList != null && rowList.isValid()) rowList.getScrollData()
+            .scrollTo(rowList.getScrollArea(), 0);
         refresh();
     }
 
+    private NBTTagCompound row(int slot) {
+        return rows.get(slot);
+    }
+
     private String rowLabel(int slot) {
-        NBTTagCompound row = rows[slot];
-        return row.getString("id")
-            .isEmpty() ? "—" : (ui.library.nativeSelected(row) ? "▸ " : "") + row.getString("name");
+        NBTTagCompound row = row(slot);
+        return (ui.library.nativeSelected(row) ? "▸ " : "") + row.getString("name");
     }
 
     private String rowTooltip(int slot) {
-        NBTTagCompound row = rows[slot];
+        NBTTagCompound row = row(slot);
         return row.getString("name") + "\n"
             + row.getInteger("cells")
             + " 格 · "
@@ -357,7 +497,7 @@ final class HologramEditorLibraryPane {
                 ? "\n上传者（服务器验证）：" + row.getString("uploadedBy")
                 : "")
             + (row.getBoolean("fullyVoucherCovered") ? "\n" + HologramVoucherRibbon.HELP : "")
-            + (ui.library.overwriteMode() ? "\n仅选择覆盖目标，保存时确认。" : "\n点击载入工作区；未保存时先确认放弃。");
+            + (ui.library.overwriteMode() ? "\n仅选择覆盖目标；保存时确认。" : "\n点击切换主场景；未保存内容先确认一次。");
     }
 
     private boolean idle() {
@@ -385,8 +525,18 @@ final class HologramEditorLibraryPane {
         return ui.shell.nativeAction(id, label, enabled, help);
     }
 
+    private void defer(Runnable action) {
+        ui.host.parent()
+            .deferAction(() -> {
+                try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
+                    .fieldGraph(ui)) {
+                    action.run();
+                }
+            });
+    }
+
     private ButtonWidget<?> local(int id, Supplier<String> label, BooleanSupplier enabled, Runnable action) {
-        return ui.shell.nativeAction(id, label, enabled, () -> "仅改变本地目录视图，不替换工作区。")
+        return ui.shell.nativeAction(id, label, enabled, () -> "管理当前目录视图，保留工作区。")
             .onMousePressed(button -> {
                 if (button == 0 && enabled.getAsBoolean()) action.run();
                 return true;

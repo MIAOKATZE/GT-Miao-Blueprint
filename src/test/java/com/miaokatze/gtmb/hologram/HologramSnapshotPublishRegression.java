@@ -295,6 +295,7 @@ public final class HologramSnapshotPublishRegression {
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
             consecutivePlacementSnapshots(player, work);
+            declarationGenerationRestartsPreparation(player, work);
             provisionalPresetFailureRestoresRoute(player, work, unsafe);
             areaStagingHandoff(player, work);
             lightweightAreaSelection(player, work);
@@ -1000,6 +1001,64 @@ public final class HologramSnapshotPublishRegression {
             HologramLibraryFacade.get(player, origin.libraryPrivatePreset.id) != null,
             "real library facade resolves the server-owned private upload before dispatcher admission");
         return origin;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void declarationGenerationRestartsPreparation(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        Field tasksField = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
+        tasksField.setAccessible(true);
+        java.util.Map<HologramSession, ?> tasks = (java.util.Map<HologramSession, ?>) tasksField.get(null);
+        HologramSession source = null;
+        try {
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            source = presentationOrigin(player);
+            source.open = true;
+            source.openPurpose = "editorWorkspaceSwitch";
+            HologramSnapshotPreparation.start(source);
+            Object oldTask = tasks.get(source);
+            // Run the real bounded preparation before an unrelated native factory registers.
+            HologramSnapshotPreparation.tick(source);
+            com.gtnewhorizon.structurelib.structure.IStructureElement<Object> declared = com.gtnewhorizon.structurelib.structure.StructureUtility
+                .ofBlock(net.minecraft.init.Blocks.stone, 0);
+            HologramDeclarationAdapters.register(declared, new HologramDeclarationAdapters.Declaration(declared));
+            java.lang.reflect.Method valid = oldTask.getClass()
+                .getDeclaredMethod("valid");
+            valid.setAccessible(true);
+            SimpleAssert.eq(false, valid.invoke(oldTask), "adapter generation invalidates an in-flight full snapshot");
+            HologramSnapshotPreparation.tick(source);
+            SimpleAssert.that(
+                tasks.get(source) != null && tasks.get(source) != oldTask,
+                "the existing tick replaces stale preparation instead of recursively rebuilding a cell row");
+            drainPublication(source, work);
+            NBTTagCompound full = latestFull();
+            SimpleAssert.eq(
+                source.id,
+                full.getString("session"),
+                "stable generation eventually publishes the same real workspace");
+            SimpleAssert.eq(
+                "editorWorkspaceSwitch",
+                full.getString("openPurpose"),
+                "restarting generation preserves the pending workspace opening intent");
+            SimpleAssert.eq(
+                source.capture.cells.size(),
+                full.getTagList("cells", 10)
+                    .tagCount(),
+                "generation recovery publishes complete geometry through the existing work budget");
+        } finally {
+            if (source != null) HologramSnapshotPreparation.cancel(source);
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
+        }
     }
 
     private static HologramSession dispatchPresentation(HologramSession origin, String operation, long sequence) {

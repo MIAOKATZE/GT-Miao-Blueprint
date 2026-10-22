@@ -156,7 +156,10 @@ final class HologramCutClient {
                 status.show(text("checkingResult"));
                 request("list", expired.id);
             } else if ("preview".equals(expired.action)) status.show(text("requestTimeout"));
-            else if ("list".equals(expired.action)) {
+            else if ("openWorkspace".equals(expired.action)) {
+                HologramClient.cutWorkspaceOpeningRejected(expired.id);
+                status.show(text("requestTimeout"));
+            } else if ("list".equals(expired.action)) {
                 directoryUnavailable = true;
                 status.directoryFailed(text("syncTimeout"));
             }
@@ -299,7 +302,7 @@ final class HologramCutClient {
                 break;
             case STORAGE:
                 refreshDirectory();
-                mc().displayGuiScreen(new HologramCutStorageScreen());
+                openStorageWorkspace();
                 break;
             case PREVIEW:
                 beginPreview();
@@ -396,7 +399,7 @@ final class HologramCutClient {
             if (selection.regionSnapshot()
                 .tagCount() == 0) {
                 refreshDirectory();
-                mc().displayGuiScreen(new HologramCutStorageScreen());
+                openStorageWorkspace();
                 return;
             }
             bounds = selection.bounds();
@@ -493,6 +496,11 @@ final class HologramCutClient {
         return HologramBackgroundTasks.busy() || cutUnavailable() || requests.busy();
     }
 
+    /** A read-only manager may open before directory sync; world transactions still own their boundary. */
+    boolean workspaceSwitchBusy() {
+        return HologramBackgroundTasks.busy() || requests.writing() || requests.active("preview");
+    }
+
     private boolean cutUnavailable() {
         return !loaded || directoryUnavailable || requests.writing();
     }
@@ -510,7 +518,24 @@ final class HologramCutClient {
         // An in-flight write keeps its original timeout and identity; never resend it.
         if (!requests.busy() || !requests.unresolvedWrite()
             .isEmpty()) refreshDirectory();
-        mc().displayGuiScreen(new HologramCutStorageScreen());
+        openStorageWorkspace();
+    }
+
+    /** Every ordinary cut-management entry shares the real editor root and server session route. */
+    private void openStorageWorkspace() {
+        if (!held()) return;
+        if (mc().currentScreen instanceof HologramScreen screen) {
+            screen.ui.workspaces.tryActivateCut();
+            return;
+        }
+        if (workspaceSwitchBusy()) {
+            status.show(text("waiting"));
+            return;
+        }
+        if (requests.active("openWorkspace")) return;
+        NBTTagCompound request = action("openWorkspace", "");
+        HologramClient.cutWorkspaceOpening(request.getString("requestId"));
+        send(request);
     }
 
     void select(String id) {
@@ -583,6 +608,23 @@ final class HologramCutClient {
             if (busy()) retryCutStorage();
             else request("undo", id);
         }, () -> {}));
+    }
+
+    /** Editor controls share the tool's held-item, directory and unresolved-write gates. */
+    boolean canUseStorageEntry(String id) {
+        return held() && !busy() && containsEntry(id);
+    }
+
+    /** Called only after the embedded workbench's explicit confirmation; never reopens a storage screen. */
+    void requestStorageUndo(String id) {
+        if (!held() || !containsEntry(id)) return;
+        if (busy()) {
+            status.directoryFailed(text("syncRequired"));
+            if (!requests.busy() || !requests.unresolvedWrite()
+                .isEmpty()) refreshDirectory();
+            return;
+        }
+        request("undo", id);
     }
 
     private void confirmPaste() {
@@ -752,6 +794,8 @@ final class HologramCutClient {
         if (HologramCutStoragePreview.receive(n)) return;
         HologramCutRequests.Request reply = requests.acknowledge(n.getString("requestId"));
         if (reply == null) return; // old world/connection ACK cannot revive a preview
+        if ("openWorkspace".equals(reply.action) && !n.getBoolean("success"))
+            HologramClient.cutWorkspaceOpeningRejected(reply.id);
         String op = reply.action;
         boolean recoveryPending = "recovery_pending".equals(n.getString("code"));
         boolean acceptedDirectory = n.getBoolean("success") && n.hasKey("entries", 9) && !recoveryPending;

@@ -83,6 +83,9 @@ final class HologramEditorCommands {
         add("overview", "返回区域总览", "back", 165, Keyboard.KEY_BACK, 0, false, "保留各来源成员的当前配置并返回总览。");
         add("sources", "材料来源设置", "material", 78, Keyboard.KEY_M, 0, false, "主背包、容器与 ME 开关和优先级沿用现有配置链。");
         add("library", "蓝图库", "library", 149, Keyboard.KEY_L, 0, false, "进入已有蓝图库，不制造新的世界或会话。");
+        add("projectionWorkspace", "投影工作区", "world", -1, Keyboard.KEY_1, 1, false, "返回独立控制器投影；保留蓝图草稿。");
+        add("blueprintWorkspace", "蓝图工作区", "library", -1, Keyboard.KEY_2, 1, false, "切换独立作者蓝图；保留投影规划。");
+        add("cutWorkspace", "剪切工作区", "cut", -1, Keyboard.KEY_3, 1, false, "在当前工作台打开剪切列表与预览。");
         add("process", "蓝图处理", "process", 220, Keyboard.KEY_F4, 0, false, "沿已有作者处理门禁打开六步流程。");
         add("save", "保存当前蓝图", "save", 140, Keyboard.KEY_S, 1, false, "复用现有保存与审核流程。");
         add("text", "文字蓝图", "text", 331, Keyboard.KEY_F7, 0, false, "复用文字编辑与附件选位流程。");
@@ -321,6 +324,7 @@ final class HologramEditorCommands {
 
     String reason(String name) {
         if (get(name) == null) return "未知编辑器命令";
+        if (workspaceCommand(name)) return ui.workspaces.switching() ? "正在切换工作区，请等待回执" : "";
         if ("viewWorkspace".equals(name)) return viewContextAvailable() ? "" : "先完成当前窗口或任务，再查看视图与工作区";
         if (legacyViewCommand(name)) {
             if (!viewContextAvailable()) return "先完成当前窗口或任务，再调整视图";
@@ -388,6 +392,10 @@ final class HologramEditorCommands {
         };
     }
 
+    boolean workspaceCommand(String name) {
+        return "projectionWorkspace".equals(name) || "blueprintWorkspace".equals(name) || "cutWorkspace".equals(name);
+    }
+
     boolean execute(String name) {
         Command command = get(name);
         if (command == null) return false;
@@ -397,6 +405,14 @@ final class HologramEditorCommands {
             return true;
         }
         switch (name) {
+            case "projectionWorkspace" -> ui.workspaces.activateProjection();
+            case "blueprintWorkspace" -> ui.workspaces.activateBlueprint();
+            case "cutWorkspace" -> ui.workspaces.activateCut();
+            case "library" -> {
+                if (ui.workspaces.blueprint()) ui.shell.toggleLibrary();
+                else ui.workspaces.activateBlueprint();
+            }
+            case "save" -> ui.shell.selectDockPage(7);
             case "editCut", "editPaste", "rotateTextVertical" -> ui.preview.editAction(name);
             case "selectAll" -> {
                 ui.preview.selection()

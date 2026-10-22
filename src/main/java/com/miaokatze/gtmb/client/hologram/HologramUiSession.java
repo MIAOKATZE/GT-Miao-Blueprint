@@ -90,6 +90,7 @@ final class HologramUiSession {
     }
 
     void updateState(HologramState next) {
+        ui.workspaces.acknowledged();
         HologramUiNetworkBindings.SnapshotTransition bindings = ui.bindings.captureSnapshotTransition();
         HologramUiLibrary.SnapshotTransition library = ui.library.prepareSnapshot(next);
         HologramState.Cell previousTarget = selectedCell();
@@ -305,6 +306,7 @@ final class HologramUiSession {
         }
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
         sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));
+        if ("switchEditorWorkspace".equals(op)) sequence = Math.max(sequence, HologramClient.editorWorkspaceSequence());
         sequence = Math
             .max(sequence, Math.max(state.data.getLong("uiSequence"), state.data.getLong("materialQuoteSequence")));
         if (areaImporting() && !"close".equals(op) && !"cancelAeSave".equals(op) && !"aePreviewClose".equals(op))
@@ -329,6 +331,7 @@ final class HologramUiSession {
             || "exportDraft".equals(op)
             || "confirmAeSave".equals(op))) n.setLong("clientTaskToken", HologramBackgroundTasks.token());
         n.setLong("uiSequence", ++sequence);
+        n.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
         ui.preview.recordSelectionCommand(op, sequence);
         if (pending) {
             notice = "";
@@ -409,7 +412,7 @@ final class HologramUiSession {
             || pendingTicket.sequence() != event.getLong("uiSequence")
             || event.hasKey("planRevision", 4) && event.getLong("planRevision") != revision()) return false;
         int presentation = switch (pendingOperation) {
-            case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset" -> 1;
+            case "previewPreset", "editPreset", "choosePlacementPreset", "loadPreset", "switchEditorWorkspace" -> 1;
             case "lockVirtual", "unlockVirtual" -> 2;
             case "placeTextBox" -> 3;
             default -> 0;
@@ -460,6 +463,7 @@ final class HologramUiSession {
             return;
         }
         if (!pendingTicket.rejectExact(event.getString("session"), rejected)) return;
+        if ("switchEditorWorkspace".equals(pendingOperation)) ui.workspaces.acknowledged();
         commandProgress.clear();
         ui.preview.rejectCommand(rejected, message);
         ui.config.rejectCommand(rejected);

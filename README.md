@@ -15,27 +15,34 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
-### v0.1.37 原生编辑器体验 / Native editor experience
+### v0.1.38 三工作区 / Three editor workspaces
 
-编辑器采用纸张风格面板、低分辨率像素图标和悬浮提示。全屏等距快照保留中央操作空间，属性、蓝图设置和蓝图库收进可伸缩侧栏；点击库行直接切换蓝图并更新中央预览，有未保存修改时只在切换前询问一次，取消会保留当前草稿。外层入口分为投影、蓝图与剪切，可自定义快捷键，并提供按当前操作变化、可持久收纳的智能指引。
+**v0.1.38 为用户测试构建，未发布 Release。 / v0.1.38 is a test build; no Release has been published.**
 
-The editor uses paper panels, low-resolution pixel icons and tooltips. A full-screen isometric snapshot leaves room for editing, with properties, blueprint settings and the library in a collapsible sidebar. Select a library row to switch the blueprint and central preview; unsaved work prompts once before switching, and cancel keeps the draft. Projection, Blueprint and Cut have separate entries, customizable shortcuts and contextual guidance with a saved collapse preference.
+投影和蓝图分别保留自己的规划、选区、相机与界面，切换工作区不会把控制器投影变成作者草稿。蓝图库是蓝图专属的可收纳侧边列表，点选条目更新中央预览；有未保存修改时沿用一次放弃提示。属性、结构配置、材料和处理入口位于可收纳或浮出的功能侧栏，仓室候选、信道、预设以及材料预检仍使用原有业务链。剪切列表和原始方块预览也在同一工作台，世界定位与最终确认沿用真实流程。
 
-八门动画教程分别介绍投影、蓝图、剪切列表、结构操作，以及普通/等距框选和普通/等距剪切。教程鼠标连续演示操作，只允许使用底部「上一步、下一步、跳过、从头开始」四个按钮；上一步回到该步动画开头，退出恢复原工作区。教程使用独立教学状态，不提交真实蓝图或世界操作；可从教程入口再次播放。
+Projection and Blueprint keep independent plans, selection, cameras and UI state. The blueprint library has its own collapsible list; selecting a row updates the central preview, with one discard prompt for unsaved work. Functional panels can collapse or float. Cut storage and native block previews share the same workbench, while world positioning and final confirmation retain their existing workflows. The original HTML kraft textures, pixel icons, tooltips and contextual guidance are used throughout.
 
-Eight animated lessons cover Projection, Blueprint, the Cut list, structure controls, and normal/isometric selection and Cut. The demonstration cursor shows each action; only Previous, Next, Skip and Restart are interactive. Previous replays a step from its beginning, and leaving restores the original workspace. Lessons use isolated teaching state and can be replayed without submitting real blueprints or world operations.
+八门动画教程分别介绍投影、蓝图、剪切列表、结构操作，以及普通/等距框选和普通/等距剪切。教程使用已采集的电力高炉规划和原生方块渲染引擎，在独立教学状态中演示操作；规划示例不代表已经成型的真实机器。只允许使用底部「上一步、下一步、跳过、从头开始」四个按钮，上一步回到该步动画开头，退出恢复原工作区。教学不提交真实蓝图、扣材料或写入玩家世界，可从教程入口再次播放。
 
-以下两张为 v0.1.37 原生客户端实机截图；右图展示客户端库为空时的侧栏。原图、采集版本及范围见[原生截图记录](README/native-v0137/manifest.json)。
+Eight animated lessons use a captured electric blast furnace plan and native block rendering. The sample is a planning snapshot, not a formed machine. Only Previous, Next, Skip and Restart are interactive. Previous replays a step from its beginning; leaving restores the original workspace without submitting real blueprints, spending materials or changing the player's world.
+
+以下为本轮原生客户端实机截图：投影、独立蓝图草稿、同屏剪切和真实高炉规划教程。蓝图库和剪切列表在该隔离实例中均为空；图片不代表已验收真实存库、施工或完整教程。原图、候选版本和有限核验范围见[原生截图记录](README/native-v0138/manifest.json)。
 
 <table>
   <tr>
-    <td width="50%"><a href="README/native-v0137/editor-workspace.png"><img src="README/native-v0137/editor-workspace.png" alt="原生等距编辑器：中央快照、左侧工具与可收纳属性侧栏" width="480"></a></td>
-    <td width="50%"><a href="README/native-v0137/library-sidebar-empty.png"><img src="README/native-v0137/library-sidebar-empty.png" alt="原生蓝图库侧栏：空客户端库、蓝图站和管理入口" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0138/projection-properties.png"><img src="README/native-v0138/projection-properties.png" alt="投影工作区：高炉规划与牛皮纸属性侧栏" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0138/blueprint-library.png"><img src="README/native-v0138/blueprint-library.png" alt="独立蓝图草稿：轴面移动手柄与可收纳蓝图库" width="480"></a></td>
   </tr>
-  <tr><td align="center">等距快照与属性侧栏 / Native workspace</td><td align="center">蓝图库侧栏（空库）/ Library sidebar (empty)</td></tr>
+  <tr><td align="center">控制器投影 / Projection</td><td align="center">蓝图与侧边库（空库）/ Blueprint library (empty)</td></tr>
+  <tr>
+    <td><a href="README/native-v0138/cut-workspace-empty.png"><img src="README/native-v0138/cut-workspace-empty.png" alt="同屏剪切工作区：完整高度预览与私有列表" width="480"></a></td>
+    <td><a href="README/native-v0138/tutorial-structure.png"><img src="README/native-v0138/tutorial-structure.png" alt="真实高炉规划教程：聚焦结构面板与四个导航按钮" width="480"></a></td>
+  </tr>
+  <tr><td align="center">剪切列表（空列表）/ Cut (empty)</td><td align="center">原生样例教学 / Native sample lesson</td></tr>
 </table>
 
-其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；旧材质与布局不代表 v0.1.37，也不作为本版原生验收证据。
+其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；旧材质与布局不代表 v0.1.38，也不作为本版原生验收证据。
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 

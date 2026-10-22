@@ -32,6 +32,8 @@ final class HologramSession {
     final World libraryWorld;
     String id = UUID.randomUUID()
         .toString();
+    long editorWorkspaceEpoch;
+    String cutWorkspaceRequestId = "";
     int x, y, z, side;
     final int dimension, slot;
     final Item tool;

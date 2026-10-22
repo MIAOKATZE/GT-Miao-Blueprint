@@ -39,6 +39,14 @@ final class HologramEditorTools {
         return nativeTools.buildToolRail();
     }
 
+    IWidget buildTopTools() {
+        return nativeTools.buildTopTools();
+    }
+
+    com.cleanroommc.modularui.widgets.layout.Flow buildViewPresets() {
+        return nativeTools.buildViewPresets();
+    }
+
     IWidget buildSelectedBar() {
         return nativeTools.buildSelectedBar();
     }
@@ -53,13 +61,13 @@ final class HologramEditorTools {
             case TOGGLE_FLOATING -> toggleFloating();
             case COLLAPSE_FLOATING -> nativeTools.closeFloating();
             case MENU_CLOSE -> nativeTools.closeContext();
-            case PROJECTION_MODE -> {
-                if (!ui.session.state().data.getBoolean("virtual")) ui.router.activate(148);
-                else ui.session.notice("当前没有真实控制器会话；请在世界中打开控制器投影仪");
+            case PROJECTION_MODE -> ui.workspaces.activateProjection();
+            case BLUEPRINT_MODE -> ui.workspaces.activateBlueprint();
+            case LIBRARY_BUTTON -> {
+                if (!ui.workspaces.blueprint()) ui.workspaces.activateBlueprint();
+                else ui.shell.toggleLibrary();
             }
-            case BLUEPRINT_MODE -> ui.router.activate(ui.session.state().data.getBoolean("virtual") ? 148 : 149);
-            case LIBRARY_BUTTON -> ui.router.activate(149);
-            case CUT_MODE -> openCutStorage();
+            case CUT_MODE -> ui.workspaces.activateCut();
             default -> {
                 int offset = id - BASE;
                 if (offset >= 0 && offset < 500) {
@@ -69,20 +77,6 @@ final class HologramEditorTools {
             }
         }
         return true;
-    }
-
-    private void openCutStorage() {
-        if (!ui.session.editable()) {
-            ui.session.notice(ui.session.editingReason());
-            return;
-        }
-        ui.memory.rememberUi();
-        ui.host.parent()
-            .deferAction(() -> {
-                if (ui.host.minecraft().currentScreen != ui.host.parent() || !ui.session.editable()) return;
-                HologramCutClient.INSTANCE.refreshDirectory();
-                new HologramCutStorageScreen().openFrom(ui.host.parent());
-            });
     }
 
     void toggleFloating() {
@@ -154,8 +148,10 @@ final class HologramEditorTools {
         if (ui.shell.fieldFocused() || ui.shortcuts.captureBinding() >= 0) return false;
         if (nativeTools.consumeDialogKey(character, key)) return true;
         if (pointerCaptured()) return true;
-        if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E || !commands.sceneAvailable()) return false;
         String command = commands.match(key, HologramKeyBindings.modifiers());
+        if (commands.workspaceCommand(command)) return commands.execute(command);
+        if (ui.workspaces.isCut()) return key != Keyboard.KEY_ESCAPE && key != Keyboard.KEY_E;
+        if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E || !commands.sceneAvailable()) return false;
         return !command.isEmpty() && commands.execute(command);
     }
 

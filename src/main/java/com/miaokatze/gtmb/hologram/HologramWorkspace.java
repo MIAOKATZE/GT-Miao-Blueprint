@@ -26,11 +26,13 @@ final class HologramWorkspace {
     static void activate(UUID player, HologramSession session) {
         if (!player.equals(session.player.getUniqueID())) throw new IllegalArgumentException("Session owner mismatch");
         HologramSession previous = SESSIONS.get(player);
+        if (previous != null) HologramEditorWorkspaceRegistry.remember(previous);
         if (previous != null && previous != session) {
             previous.presentationTransition = null;
             HologramDeferredPlanRefresh.cancel(previous);
         }
         SESSIONS.put(player, session);
+        HologramEditorWorkspaceRegistry.activated(session);
     }
 
     /** A preset preview is provisional until its first complete baseline is accepted by the encoder. */
@@ -39,6 +41,7 @@ final class HologramWorkspace {
         final HologramSession origin, target;
         final String originId, targetId, selected;
         final long sequence, sourceTask, targetTask;
+        final long originEditorEpoch;
         final boolean hadSelection;
 
         PresentationTransition(HologramSession origin, HologramSession target) {
@@ -47,6 +50,7 @@ final class HologramWorkspace {
             originId = origin.id;
             targetId = target.id;
             sequence = origin.uiSequence;
+            originEditorEpoch = origin.editorWorkspaceEpoch;
             sourceTask = origin.blueprintClientTaskToken;
             targetTask = target.blueprintClientTaskToken;
             ItemStack held = HologramSessionPolicy.currentTool(origin);
@@ -109,6 +113,8 @@ final class HologramWorkspace {
         target.uiSequence = transition.sequence;
         target.presentationTransition = transition;
         SESSIONS.put(origin.player.getUniqueID(), target);
+        HologramEditorWorkspaceRegistry.remember(origin);
+        HologramEditorWorkspaceRegistry.activated(target);
         return true;
     }
 
@@ -133,6 +139,9 @@ final class HologramWorkspace {
         target.presentationTransition = null;
         HologramSession origin = transition.origin;
         activate(player.getUniqueID(), origin);
+        // The target never published a baseline. The client still owns the exact
+        // origin snapshot and its action epoch, so rollback restores that capability.
+        origin.editorWorkspaceEpoch = transition.originEditorEpoch;
         ItemStack held = HologramSessionPolicy.currentTool(origin);
         if (transition.hadSelection) held.getTagCompound()
             .setString(HologramSessionKeys.SELECTED_PRESET, transition.selected);
@@ -211,6 +220,7 @@ final class HologramWorkspace {
     }
 
     static void clear() {
+        HologramEditorWorkspaceRegistry.clear();
         HologramNetwork.clearServerQueues();
         for (HologramSession s : SESSIONS.values()) {
             HologramDeferredPlanRefresh.cancel(s);
@@ -224,6 +234,7 @@ final class HologramWorkspace {
 
     /** Main-thread runtime reset. Completed transactions and durable cut/material journals are not undone. */
     static int restartRuntime(String reason) {
+        HologramEditorWorkspaceRegistry.clear();
         // Retire old full snapshots before publishing terminal receipts; otherwise a stale DTO could
         // arrive after the cancellation and resurrect its editing/placement context.
         HologramNetwork.clearServerQueues();
@@ -279,6 +290,9 @@ final class HologramWorkspace {
             .iterator();
         while (sessions.hasNext()) {
             HologramSession session = sessions.next();
+            if (session.player.worldObj != session.libraryWorld || session.player.dimension != session.dimension
+                || session.player.isDead
+                || !areaSessionOwned(session)) HologramEditorWorkspaceRegistry.forget(session.player.getUniqueID());
             if (session.player.playerNetServerHandler == null
                 || session.player.playerNetServerHandler.netManager == null
                 || !session.player.playerNetServerHandler.netManager.isChannelOpen()) {
@@ -286,6 +300,7 @@ final class HologramWorkspace {
                 HologramSession.cancelCaptureRetry(session);
                 HologramDeferredPlanRefresh.cancel(session);
                 clearAreaSelection(session);
+                HologramEditorWorkspaceRegistry.forget(session.player.getUniqueID());
                 sessions.remove();
             } else tick.accept(session);
         }

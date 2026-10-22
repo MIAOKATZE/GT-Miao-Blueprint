@@ -11,6 +11,7 @@ import java.util.Properties;
 /** Small, client-only presentation preferences; no world, draft, library or inventory data. */
 final class HologramEditorPreferences {
 
+    private static final String LESSON_PREFIX = "tutorial.v2.";
     private static HologramEditorPreferences instance;
     private final File file;
     private final Properties values = new Properties();
@@ -37,15 +38,15 @@ final class HologramEditorPreferences {
     }
 
     boolean seen(String topic) {
-        return values.containsKey("tutorial.v1." + topic);
+        return values.containsKey(LESSON_PREFIX + topic);
     }
 
     String outcome(String topic) {
-        return values.getProperty("tutorial.v1." + topic, "");
+        return values.getProperty(LESSON_PREFIX + topic, "");
     }
 
     void finish(String topic, boolean completed) {
-        put("tutorial.v1." + topic, completed ? "completed" : "skipped");
+        put(LESSON_PREFIX + topic, completed ? "completed" : "skipped");
     }
 
     private void put(String key, String value) {

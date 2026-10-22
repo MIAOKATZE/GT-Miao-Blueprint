@@ -659,7 +659,7 @@ final class HologramSnapshots {
 
     /** An explicit library refresh can attach its already-read labels without rebuilding the structure snapshot. */
     static void sendUi(HologramSession s, NBTTagList presets) {
-        if (s.cancelled) {
+        if (s.cancelled || "cutWorkspace".equals(s.openPurpose)) {
             send(s);
             return;
         }
@@ -677,6 +677,9 @@ final class HologramSnapshots {
             || "blueprintPlacement".equals(s.openPurpose)
             || "placementReview".equals(s.openPurpose)) s.workspaceTab = "blueprint";
         state.setString("workspaceTab", s.workspaceTab);
+        state.setString("editorWorkspace", HologramEditorWorkspaceRegistry.mode(s));
+        state.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
+        state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
         state.setBoolean("settingsOnly", s.settingsOnly);
         state.setBoolean("blueprintPreview", s.blueprintPreview);
         state.setBoolean("presetBrowseForPlacement", s.presetBrowseForPlacement);
@@ -761,6 +764,9 @@ final class HologramSnapshots {
         state.setBoolean("settingsOnly", false);
         state.setBoolean("libraryInitialSnapshot", false);
         state.setBoolean("virtual", s.virtual);
+        state.setString("editorWorkspace", HologramEditorWorkspaceRegistry.mode(s));
+        state.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
+        state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
         state.setBoolean("virtualPlacement", s.virtualPlacement);
         state.setBoolean("virtualLocked", s.virtualLocked);
         state.setBoolean("blueprintAwaitingConfirmation", s.blueprintAwaitingConfirmation);
@@ -849,11 +855,16 @@ final class HologramSnapshots {
         state.setString("quickToken", s.libraryQuickToken);
         state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
         state.setString("openPurpose", s.openPurpose);
+        state.setString("cutWorkspaceRequestId", s.cutWorkspaceRequestId);
+        s.cutWorkspaceRequestId = "";
         if ("controllerStructure".equals(s.openPurpose)) s.workspaceTab = "structure";
         else if ("blueprintEdit".equals(s.openPurpose) || "blueprintBrowse".equals(s.openPurpose)
             || "blueprintPlacement".equals(s.openPurpose)
             || "placementReview".equals(s.openPurpose)) s.workspaceTab = "blueprint";
         state.setString("workspaceTab", s.workspaceTab);
+        state.setString("editorWorkspace", HologramEditorWorkspaceRegistry.mode(s));
+        state.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
+        state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
         state.setLong("placementReviewNonce", s.placementReviewNonce);
         s.openPurpose = "";
         state.setInteger("hatchTier", s.hatchTier);
@@ -928,6 +939,9 @@ final class HologramSnapshots {
         state.setTag("capabilities", s.capabilities == null ? new NBTTagList() : s.capabilities.toNBT());
         state.setBoolean("target", s.target != null || s.virtual && s.capture != null);
         state.setBoolean("virtual", s.virtual);
+        state.setString("editorWorkspace", HologramEditorWorkspaceRegistry.mode(s));
+        state.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
+        state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
         state.setBoolean("virtualPlacement", s.virtualPlacement);
         state.setBoolean("wholeBlueprintPlacement", HologramSessionPolicy.wholeBlueprintPlacement(s));
         state.setBoolean("presetBrowseForPlacement", s.presetBrowseForPlacement);
@@ -1303,7 +1317,7 @@ final class HologramSnapshots {
                                         : loaded && HologramCellPolicy.trivial(world, c.x, c.y, c.z) ? "PLACE"
                                             : "REPLACE");
         NBTTagList choices = new NBTTagList();
-        List<ItemStack> options = index == s.selected ? HologramCellPolicy.candidates(s, c) : Collections.emptyList();
+        List<ItemStack> options = HologramCellPolicy.snapshotCandidates(s, c, index == s.selected);
         int chosenChoice = -1;
         for (int choice = 0; choice < options.size(); choice++) if (HologramValues.same(pinned, options.get(choice))) {
             chosenChoice = choice;

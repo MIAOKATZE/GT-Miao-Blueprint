@@ -26,6 +26,7 @@ public final class HologramUiLifecycleRegression {
             libraryKeepsTheFirstHandler();
             freshDialogClosures();
             isolatedGraphsKeepSeparateHandlers();
+            boundedWorkspaceGraphs();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Cannot inspect MUI2 2.3.92 local dialog state", failure);
         }
@@ -95,6 +96,7 @@ public final class HologramUiLifecycleRegression {
     @SuppressWarnings("unchecked")
     private static void isolatedGraphsKeepSeparateHandlers() throws ReflectiveOperationException {
         HologramUiModules live = new HologramUiModules(null);
+        HologramUiModules otherLive = new HologramUiModules(null);
         HologramUiModules firstLesson = new HologramUiModules(null);
         HologramUiModules replay = new HologramUiModules(null);
         HologramState sample = new HologramState(new NBTTagCompound());
@@ -104,7 +106,14 @@ public final class HologramUiLifecycleRegression {
             "gtmb_editor_configuration_channels", "gtmb_native_library_discard", "gtmb_editor_context_tools",
             "gtmb_editor_reference", "gtmb_editor_pinned_annotation", "gtmb_editor_advanced_processing" };
         for (String base : bases) {
-            SimpleAssert.eq(base, live.panelName(base), "live panel identities stay compatible");
+            SimpleAssert.that(
+                !live.panelName(base)
+                    .equals(otherLive.panelName(base)),
+                "two retained live workspace graphs never share a named panel handler");
+            SimpleAssert.eq(
+                live.panelName(base),
+                live.panelName(base),
+                "one live workspace graph keeps its stable panel identity");
             SimpleAssert.that(
                 !live.panelName(base)
                     .equals(firstLesson.panelName(base)),
@@ -124,7 +133,7 @@ public final class HologramUiLifecycleRegression {
         Map<String, IPanelHandler> handlers = (Map<String, IPanelHandler>) field(PanelManager.class, "panelHandlerMap")
             .get(manager);
         List<String> closures = new ArrayList<>();
-        HologramUiModules[] graphs = { live, firstLesson, replay };
+        HologramUiModules[] graphs = { live, otherLive, firstLesson, replay };
         for (int i = 0; i < graphs.length; i++) {
             String graph = "graph-" + i;
             String name = graphs[i].panelName("gtmb_editor_configuration_channels");
@@ -146,9 +155,12 @@ public final class HologramUiLifecycleRegression {
                 "provider").get(handlers.get(name));
             ((Dialog<String>) provider.build(parent, null)).closeWith("confirmed");
         }
-        SimpleAssert.eq(3, handlers.size(), "live, first lesson and replay coexist in the real named-handler map");
         SimpleAssert.eq(
-            Arrays.asList("graph-0", "graph-1", "graph-2"),
+            4,
+            handlers.size(),
+            "both live workspace graphs, first lesson and replay coexist in the real named-handler map");
+        SimpleAssert.eq(
+            Arrays.asList("graph-0", "graph-1", "graph-2", "graph-3"),
             closures,
             "each cached provider keeps its own graph callback instead of reopening live or previous lesson fields");
     }
@@ -195,5 +207,71 @@ public final class HologramUiLifecycleRegression {
         Field field = owner.getDeclaredField(name);
         field.setAccessible(true);
         return field;
+    }
+
+    private static void boundedWorkspaceGraphs() throws ReflectiveOperationException {
+        HologramEditorWorkspaces.Graphs graphs = new HologramEditorWorkspaces.Graphs();
+        java.util.concurrent.atomic.AtomicInteger created = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Supplier<HologramUiModules> factory = () -> {
+            created.incrementAndGet();
+            return new HologramUiModules(null);
+        };
+        HologramState projectionState = workspaceState("controller-owner", "projection", 1);
+        HologramUiModules projection = graphs.retain(projectionState, factory);
+        HologramUiModules blueprint = graphs.retain(workspaceState("row-0", "blueprint", 2), factory);
+        field(HologramUiSession.class, "state").set(blueprint.session, workspaceState("row-0", "blueprint", 2));
+        field(HologramUiPreview.class, "yaw").setDouble(projection.preview, .75);
+        field(HologramUiPreview.class, "yaw").setDouble(blueprint.preview, 1.25);
+        field(HologramUiLibrary.class, "libraryOffset").setInt(blueprint.library, 317);
+        Object nativeTree = blueprint.shell;
+        for (int row = 1; row <= 1000; row++) {
+            HologramState incoming = workspaceState("library-row-" + row, "blueprint", row + 2);
+            SimpleAssert.that(
+                graphs.retain(incoming, factory) == blueprint,
+                "new library session/epoch keeps its domain graph and native tree");
+        }
+        SimpleAssert.eq(2, created.get(), "a thousand library documents allocate only two domain graphs");
+        SimpleAssert.eq(
+            2,
+            graphs.values()
+                .size(),
+            "retained graphs have a fixed two-domain bound");
+        SimpleAssert.that(blueprint.shell == nativeTree, "library navigation keeps the mounted native widget tree");
+        SimpleAssert.eq(
+            317,
+            field(HologramUiLibrary.class, "libraryOffset").getInt(blueprint.library),
+            "retaining a blueprint graph does not reset its library viewport");
+        SimpleAssert.eq(
+            1.25,
+            field(HologramUiPreview.class, "yaw").getDouble(blueprint.preview),
+            "retaining a blueprint graph does not reset its camera");
+        field(HologramEditorWorkspaces.class, "cut").setBoolean(blueprint.workspaces, true);
+        SimpleAssert.that(
+            graphs.retain(workspaceState("author-member", "blueprint", 1003), factory) == blueprint,
+            "Cut presentation never becomes a third underlying editing domain");
+        SimpleAssert.that(
+            graphs.retain(projectionState, factory) == projection,
+            "returning from library navigation restores the original controller graph");
+        blueprint.workspaces.domainActivated();
+        SimpleAssert.that(
+            !blueprint.workspaces.isCut(),
+            "Cut to Projection to Blueprint activates the requested blueprint page instead of stale Cut presentation");
+        SimpleAssert.eq(
+            .75,
+            field(HologramUiPreview.class, "yaw").getDouble(projection.preview),
+            "the controller camera remains independent from blueprint navigation");
+        graphs.clear();
+        SimpleAssert.that(
+            graphs.values()
+                .isEmpty(),
+            "final screen disposal releases all retained graph references");
+    }
+
+    private static HologramState workspaceState(String session, String domain, long epoch) {
+        NBTTagCompound snapshot = new NBTTagCompound();
+        snapshot.setString("session", session);
+        snapshot.setString("editorWorkspace", domain);
+        snapshot.setLong("editorWorkspaceEpoch", epoch);
+        return new HologramState(snapshot);
     }
 }
