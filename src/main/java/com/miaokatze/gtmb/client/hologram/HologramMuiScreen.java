@@ -73,12 +73,16 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
 
     /** The next MUI tick runs after input's panel/manager doSafe scopes have returned. */
     final void deferAction(Runnable action) {
-        deferredAction.offer(action);
+        deferredAction.offer(guardDeferredAction(action));
     }
 
     /** Return whether this tick accepted the intent, so a playback producer can retry without getting stuck. */
     final boolean tryDeferAction(Runnable action) {
-        return deferredAction.tryOffer(action);
+        return deferredAction.tryOffer(guardDeferredAction(action));
+    }
+
+    protected Runnable guardDeferredAction(Runnable action) {
+        return action;
     }
 
     final void openDialog(String name, SecondaryPanel.IPanelBuilder builder) {

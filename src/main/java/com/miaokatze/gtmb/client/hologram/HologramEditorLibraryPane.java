@@ -544,6 +544,7 @@ final class HologramEditorLibraryPane {
             button,
             () -> overwrite ? "更新已有蓝图" : "另存新蓝图",
             () -> available.getAsBoolean() && ui.library.overwriteMode() != overwrite);
+        ui.shell.registerTarget(overwrite ? "library.save.overwrite" : "library.save.asNew", button);
         return button;
     }
 

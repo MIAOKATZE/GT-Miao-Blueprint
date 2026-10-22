@@ -15,6 +15,41 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
+### v0.1.41 教程流程修正 / Tutorial flow fixes
+
+蓝图教程从**空白工作区**开始，点击侧边蓝图库的记录后才载入三台电力高炉：两台在地面，一台在平台上。编辑后的库记录切换会按实际界面展示丢弃提示，教程分别演示取消与确认；每步等待实际操作完成后再推进。
+
+八套教程分别覆盖投影、蓝图、结构、剪切列表，以及普通与等距视角的框选和剪切。剪切课使用与实际界面共用的命名、列表和粘贴确认控件。上一步回到该步动画开头，从头开始恢复课程初态，结束或跳过后返回原工作区。教学内容只在隔离内存中变化，不扣材料、不移动真实世界方块、不读写玩家剪切目录。
+
+*Blueprint lessons begin with an empty workspace. Library clicks load the teaching scene; edited-content switches explicitly demonstrate cancellation and confirmation. All eight courses wait for actual operation results. Teaching uses isolated state and preserves the original workspace.*
+
+本版本为用户测试包，未发布 GitHub Release 或草稿。最低 Core 依赖保持 0.1.9，配套 Core 运行包随用户测试包提供。
+
+下图为本轮候选包的原生教程画面。八课共 77 步分别核对实际动作结果与原图；蓝图补测和其他七课的来源分开记录，不将早期失败改写为通过。框选及剪切示例保存完整 **6×4×5** 选区，包括空气格与原有方块 NBT。画面来源与审查范围见 [manifest](README/native-v0141/manifest.json)；它们不是专服施工或用户验收证明。
+
+*Original native tutorial captures: empty workspace, library loading, explicit discard confirmation, material review and the complete 6×4×5 Cut volume. Provenance distinguishes the Blueprint follow-up from the other seven courses.*
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/native-v0141/blueprint-empty.png"><img src="README/native-v0141/blueprint-empty.png" alt="蓝图教程从空白工作区开始 / Empty Blueprint workspace" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0141/blueprint-loaded.png"><img src="README/native-v0141/blueprint-loaded.png" alt="点击库记录后载入三台高炉 / Library selection loads three blast furnaces" width="480"></a></td>
+  </tr>
+  <tr><td align="center">空白起步 / Empty start</td><td align="center">单击载入 / Click to load</td></tr>
+  <tr>
+    <td><a href="README/native-v0141/discard-confirmation.png"><img src="README/native-v0141/discard-confirmation.png" alt="切换已编辑规划时的真实丢弃确认 / Explicit discard confirmation" width="480"></a></td>
+    <td><a href="README/native-v0141/material-review.png"><img src="README/native-v0141/material-review.png" alt="原生材料核验窗口 / Native material review" width="480"></a></td>
+  </tr>
+  <tr><td align="center">丢弃确认 / Discard confirmation</td><td align="center">材料核验 / Material review</td></tr>
+  <tr>
+    <td><a href="README/native-v0141/cut-list.png"><img src="README/native-v0141/cut-list.png" alt="完整选区的剪切列表 / Cut list with the complete volume" width="480"></a></td>
+    <td><a href="README/native-v0141/cut-confirmation.png"><img src="README/native-v0141/cut-confirmation.png" alt="粘贴前确认完整范围 / Confirm the complete placement volume" width="480"></a></td>
+  </tr>
+  <tr><td align="center">剪切列表 / Cut list</td><td align="center">粘贴确认 / Placement confirmation</td></tr>
+</table>
+
+<details>
+<summary>v0.1.40 历史界面与有限观察 / Historical interface observations</summary>
+
 ### v0.1.40 编辑器与教程 / Editor & tutorial
 
 **v0.1.40 用户测试构建，未发布 Release。 / v0.1.40 is a user-testing build; no Release has been published.** 本轮仅接受所列有限视觉范围，不代表用户验收或完整八课。 / The reviewed screenshots cover a bounded visual scope, not user acceptance or all eight lessons.
@@ -50,6 +85,8 @@
 </table>
 
 其余内嵌配图保留为此前版本的流程参考，原图与[旧截图 manifest](README/screenshots/manifest.json)不变；它们不作为 v0.1.40 原生验收证据。
+
+</details>
 
 世界蓝图操作支持可选等距视角：手持投影仪，在蓝图/剪切框选或蓝图放置中默认按 V 切入等距视角（可在控制设置中重新绑定），V 或 Esc 返回普通视角。未按 Ctrl 时不显示红色选点框；按住 Ctrl 后，左键固定点1、右键固定点2，选完一角只提示另一角；松开 Ctrl 后 Shift+左键提交。默认 B 开始自由框选，短按左键添加顶点，再按 B 闭合并确认当前预览区域；外框沿实际方块边界显示，保留凹角。普通左拖旋转镜头，拖动不会添加顶点；右拖平移，滚轮缩放（适配 lwjgl3ify 的滚轮单位，每格缩放上限约 1.5 倍）。Alt+滚轮以直接命中方块为参考，沿视线作 -64 至 +64 格的深度偏移。X 切换 X 光，选点无需等待网格重建完成；左侧竖条可拖动高度、切换隐藏上方/下方并显示 Y 值，切片默认渐变 1 格。相机移动不会移动玩家或扩大服务端施工权限；此模式直接调用 Core 引擎，无需安装 Outpost。
 

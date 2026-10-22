@@ -36,43 +36,8 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> title, 306);
-        panel().child(HologramMuiTheme.label(() -> detail, 14, 41, 278, 66, HologramMuiTheme.TEXT));
-        if (confirmWithoutPrompt == null) {
-            panel().child(
-                HologramMuiTheme
-                    .primaryButton(
-                        () -> HologramCutClient.text("confirm"),
-                        162,
-                        120,
-                        132,
-                        22,
-                        () -> finish(true, false))
-                    .name("cut_confirm"));
-            panel().child(
-                HologramMuiTheme
-                    .button(() -> HologramCutClient.text("cancel"), 12, 120, 132, 22, () -> finish(false, false))
-                    .name("cut_cancel"));
-        } else {
-            panel().child(
-                HologramMuiTheme
-                    .button(() -> HologramCutClient.text("cancel"), 12, 120, 56, 22, () -> finish(false, false))
-                    .name("cut_cancel"));
-            panel().child(
-                HologramMuiTheme
-                    .primaryButton(() -> HologramCutClient.text("confirm"), 74, 120, 56, 22, () -> finish(true, false))
-                    .name("cut_confirm"));
-            panel().child(
-                HologramMuiTheme
-                    .button(
-                        () -> HologramCutClient.text("placement.confirmWithoutPrompt"),
-                        136,
-                        120,
-                        158,
-                        22,
-                        () -> finish(true, true))
-                    .name("cut_confirm_skip"));
-        }
+        HologramCutDialogContent
+            .confirmation(panel(), () -> title, () -> detail, confirmWithoutPrompt != null, this::finish);
     }
 
     private void finish(boolean accepted, boolean skipPrompt) {

@@ -1020,6 +1020,19 @@ final class HologramEditorShell {
         return null;
     }
 
+    /** Direct teaching callbacks must respect the same modal owner as MUI2's physical input router. */
+    boolean tutorialTargetAdmitted(String key) {
+        ModularPanel modal = topModal();
+        if (modal == null) return true;
+        IWidget target = tutorialTarget(key);
+        return target != null && target.getPanel() == modal;
+    }
+
+    String tutorialModalIdentity() {
+        ModularPanel modal = topModal();
+        return modal == null ? "" : modal.getName();
+    }
+
     boolean tutorialTargetClipped(String key) {
         IWidget widget = tutorialTarget(key);
         if (widget == null) return false;

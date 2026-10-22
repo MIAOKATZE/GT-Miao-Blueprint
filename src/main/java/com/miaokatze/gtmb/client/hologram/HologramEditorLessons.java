@@ -22,6 +22,8 @@ final class HologramEditorLessons {
         MOVE_XZ,
         COPY_X,
         CLOSE_PANEL,
+        CONFIRM_DISCARD,
+        CANCEL_DISCARD,
         CLOSE_MATERIAL,
         LIBRARY,
         EDITOR,
@@ -40,11 +42,14 @@ final class HologramEditorLessons {
         FIRST_CORNER,
         SECOND_CORNER,
         WORLD_MOVE_XZ,
+        WORLD_ADJUST_CORNER,
         BOX_SUBMIT,
         CUT_SOURCE_REVIEW,
         CUT_STORE,
+        CUT_OPEN_STORAGE,
         CUT_TAKE,
         CUT_LOCK,
+        CUT_PLACE_REVIEW,
         CUT_CANCEL,
         CUT_PLACE,
         CUT_LIST_CLICK,
@@ -71,7 +76,8 @@ final class HologramEditorLessons {
         }
 
         boolean hover() {
-            return operation == Operation.HOVER || operation == Operation.HOVER_NATIVE;
+            return operation == Operation.HOVER || operation == Operation.HOVER_NATIVE
+                || operation == Operation.WORLD_MODE;
         }
     }
 
@@ -122,7 +128,7 @@ final class HologramEditorLessons {
                     sourceStep,
                     new Step(
                         "当前实体来源",
-                        "这个真实样例是单控制器投影，直接编辑其声明参数；无需经过区域成员入口。",
+                        "本课提供一台电力高炉的采集规划，不证明机器已成型。单控制器来源直接编辑其声明参数，无需经过区域成员入口。",
                         source.focus,
                         source.actions.toArray(new Action[0])));
                 if (topic.equals("structure")) {
@@ -154,12 +160,13 @@ final class HologramEditorLessons {
             }
         }
         if (topic.equals("blueprint")) {
+            int networkStep = stepIndex(steps, "量子组与网络"), nbtStep = stepIndex(steps, "NBT 审阅");
             if (observed.data.getCompoundTag("networkBindings")
                 .getTagList("groups", 10)
                 .tagCount() > 0) {
-                Step old = steps.get(16);
+                Step old = steps.get(networkStep);
                 steps.set(
-                    16,
+                    networkStep,
                     new Step(
                         old.title,
                         "从视图与工作区打开真实网络绑定入口，查看本例已有的网络组；演示不会修改真实网络。",
@@ -172,15 +179,15 @@ final class HologramEditorLessons {
                 || observed.data.getBoolean("blueprintProcessingComplete")
                 || observed.data.getBoolean("blueprintSaved");
             if (canNbt) {
-                Step old = steps.get(15);
+                Step old = steps.get(nbtStep);
                 steps.set(
-                    15,
+                    nbtStep,
                     new Step(
                         old.title,
-                        "处理条件已满足，可以从设置页打开实际 NBT 工具；此处仅展示窗口，不写入方块数据。",
-                        "modal",
+                        "该样例从已保存的教学库载入，NBT 工具沿用已有来源门禁。本课只悬停真实入口，不打开或编辑窗口，也不编造逐格 NBT 原值。",
+                        "control.166",
                         action(Operation.CLOSE_PANEL, "modal.close"),
-                        control(166)));
+                        action(Operation.HOVER_NATIVE, "control.166")));
             }
         }
         return Collections.unmodifiableList(steps);
@@ -200,6 +207,11 @@ final class HologramEditorLessons {
 
     private static Action control(int id) {
         return new Action(Operation.CONTROL, id, "control." + id);
+    }
+
+    private static int stepIndex(List<Step> steps, String title) {
+        for (int i = 0; i < steps.size(); i++) if (title.equals(steps.get(i).title)) return i;
+        throw new IllegalStateException("Missing lesson step: " + title);
     }
 
     private static Action action(Operation operation, String target) {
@@ -232,7 +244,12 @@ final class HologramEditorLessons {
     }
 
     private static void projection(List<Step> s) {
-        add(s, "控制器锚定", "投影以控制器为锚点。这里使用当前快照的隔离副本。", "viewport", action(Operation.SELECT_CELL, "viewport"));
+        add(
+            s,
+            "从真实控制器取得投影",
+            "手持投影仪右击真实控制器，导入其结构；右击空气返回已有工作区。本课用一台电力高炉的采集规划演示，控制器是锚点，不是已成型证明。",
+            "viewport",
+            action(Operation.SELECT_CELL, "viewport"));
         add(
             s,
             "进入来源结构",
@@ -286,8 +303,13 @@ final class HologramEditorLessons {
     }
 
     private static void blueprint(List<Step> s, HologramEditorCommands commands) {
-        add(s, "草稿与蓝图库", "右侧库与中央画布共用工作区。客户端和服务器来源分别保留。", "library", action(Operation.LIBRARY, "header.library"));
-        add(s, "点行切换", "单击库行即时更新中央草稿；未保存内容沿用原有提示。", "library", control(14001));
+        add(
+            s,
+            "空白草稿与蓝图库",
+            "从空白工作区开始。右侧两行是教学内存中的规划，首次载入前中央画布没有结构。",
+            "library",
+            action(Operation.LIBRARY, "header.library"));
+        add(s, "首次载入规划", "点击第一行，载入三台电力高炉规划：两台在地面，一台在平台，并带有原生建材；首次空稿载入无需丢弃确认。", "library", control(14000));
         add(
             s,
             "精确选格",
@@ -305,6 +327,24 @@ final class HologramEditorLessons {
         add(s, "沿轴移动", "按住 X 手柄连续拖动，模型按整格吸附。", "viewport", action(Operation.MOVE_X, "gizmo.x"));
         add(s, "平面移动", "拖 XZ 平面同时改变两轴；XY、YZ 使用同样的原生逆解。", "viewport", action(Operation.MOVE_XZ, "gizmo.xz"));
         add(s, "起拖复制", "起拖时按 Ctrl 锁定复制意图，原处保留。", "viewport", action(Operation.COPY_X, "gizmo.x"));
+        add(
+            s,
+            "换行时保留未保存修改",
+            "返回库并点另一行会先询问是否丢弃。点击保留当前规划，继续保留刚才移动和复制的内容。",
+            "library",
+            action(Operation.LIBRARY, "header.library"),
+            control(14001),
+            action(Operation.CANCEL_DISCARD, "control.225"));
+        add(
+            s,
+            "确认后切换来源",
+            "再次点另一行，明确点击丢弃并载入；只有确认后才切换到原始三台高炉规划，随后重新整选来源成员。",
+            "viewport",
+            control(14001),
+            action(Operation.CONFIRM_DISCARD, "control.224"),
+            action(Operation.EDITOR, "launcher.0"),
+            action(Operation.SELECT_CELL, "viewport"),
+            action(Operation.SELECT_STRUCTURE, "viewport"));
         add(
             s,
             "来源成员参数",
@@ -336,10 +376,10 @@ final class HologramEditorLessons {
         add(
             s,
             "作者蓝图的边界",
-            "作者蓝图可逐格编辑目标；当前服务端不允许 virtual 套整机仓室配额。",
-            "modal",
+            "仓室预设只用于完整实体结构，作者蓝图保持禁用。这里只悬停查看真实限制；仍可逐格选择设备或编辑来源声明。",
+            "control.94",
             action(Operation.CLOSE_PANEL, "modal.close"),
-            control(94));
+            action(Operation.HOVER_NATIVE, "control.94"));
         add(
             s,
             "材料来源",
@@ -372,7 +412,7 @@ final class HologramEditorLessons {
         add(
             s,
             "NBT 审阅",
-            "逐格 NBT 在处理后开放；本例尚未完成处理，先查看真实入口与禁用说明。",
+            "NBT 入口沿用实际来源与处理门禁。本课只悬停查看，不打开或编辑窗口，也不编造未录入的逐格 NBT 原值。",
             "control.166",
             action(Operation.CLOSE_PANEL, "modal.close"),
             action(Operation.HOVER_NATIVE, "control.166"));
@@ -397,14 +437,19 @@ final class HologramEditorLessons {
         add(
             s,
             "保存与覆盖",
-            "名称与保存按钮在独立保存侧栏。本例尚未完成处理，保存和覆盖均不执行；教程不写文件。",
+            "名称与保存按钮在独立保存侧栏。这里只悬停查看保存和覆盖入口；是否可用以当前实际门禁为准，不执行保存，也不写文件。",
             "library.save",
             action(Operation.CLOSE_PANEL, "modal.close"),
             action(Operation.OPEN_DOCK, "header.save"),
             action(Operation.HOVER_NATIVE, "library.name"),
             action(Operation.HOVER_NATIVE, "control.140"),
-            action(Operation.HOVER_NATIVE, "control.222"));
-        add(s, "世界位置先锁定", "真实放置先在世界移动并锁定 ghost；这里从已锁定位置解释预检。", "materials", action(Operation.MATERIALS, "viewport"));
+            action(Operation.HOVER_NATIVE, "library.save.overwrite"));
+        add(
+            s,
+            "施工前的材料核验",
+            "真实放置须在世界先移动并锁定 ghost。本课只查看同一个材料核验窗口，不执行世界定位或施工，也不把样例标记为已锁定。",
+            "materials",
+            action(Operation.MATERIALS, "viewport"));
         add(s, "唯一最终确认", "逐项核对需求、已有与缺失；本次 NBT、缓存和补料各有原有门禁。", "materials");
         add(
             s,
@@ -419,7 +464,7 @@ final class HologramEditorLessons {
         add(
             s,
             "来源结构",
-            "控制器锚定实体来源；点轮廓后进入该成员。",
+            "本课预先提供一台电力高炉的采集规划，不宣称现场机器已成型。控制器锚定实体来源；有区域成员时，点轮廓后进入该成员。",
             "inspector",
             action(Operation.SELECT_CELL, "viewport"),
             action(Operation.SELECT_STRUCTURE, "viewport"),
@@ -475,7 +520,7 @@ final class HologramEditorLessons {
         add(
             s,
             "切换条目预览",
-            "点击另一行，右侧立即显示该条目的原样预览；切换条目重置预览相机。",
+            "点击另一行，左侧立即显示该条目的原样预览；切换条目重置预览相机。",
             "cut.preview",
             action(Operation.CUT_LIST_CLICK, "cut.row.tutorial-cut-b"));
         add(
@@ -502,8 +547,10 @@ final class HologramEditorLessons {
         boolean iso = topic.endsWith("iso"), cut = topic.startsWith("cut-");
         add(
             s,
-            iso ? "进入等距上下文" : "选择操作模式",
-            (iso ? "使用等距相机查看" : "使用透视相机查看") + "真实采集的电力高炉规划。以下选区与暂存事务只改变教学内存，未证明实体机器成型。",
+            cut ? "剪切选择前提" : "区域框选前提",
+            (cut ? "正常先 Shift + 右击打开模式选择器，选择剪切。" : "正常从区域框选入口或 Shift + 右击开始框选。")
+                + (iso ? "使用相机切换键进入等距视角。" : "保持普通透视视角。")
+                + "本课从该上下文演示电力高炉采集规划，仅改变教学内存，不证明机器已成型。",
             "viewport",
             action(Operation.WORLD_MODE, "viewport"));
         add(
@@ -520,41 +567,70 @@ final class HologramEditorLessons {
             action(Operation.SECOND_CORNER, "world.corner.second"));
         add(
             s,
-            "调整选区",
-            "拖动选区第二角沿 XZ 扩展；边框按整数格跟随，每帧重新计算框内实际采集格。",
+            "重选第二角",
+            (iso ? "再次 Ctrl + 右键" : "重新瞄准后右键") + "调整第二角，扩大选区；两角按整数格包含边界，始终保留完整高炉规划。世界选区没有编辑器的 XZ 拖动手柄。",
             "viewport",
-            action(Operation.WORLD_MOVE_XZ, "world.handle.xz"));
+            action(Operation.WORLD_ADJUST_CORNER, "world.corner.adjusted"));
         if (!cut) {
             add(
                 s,
                 "提交框选",
-                "读取框内电力高炉采集格，验证选区非空；结果仅保留于教学内存。真实操作按当前模式提交选区。",
+                (iso ? "松开 Ctrl 后 Shift + 左键提交。" : "Shift + 右键提交。") + "读取框内电力高炉采集格，验证非空；完整选区包含空气，结果仅保留于教学内存。",
                 "viewport",
                 action(Operation.BOX_SUBMIT, "viewport"));
             return;
         }
         add(
             s,
-            "来源确认与命名",
-            "将完整电力高炉规划复制到独立教学暂存，再从教学场景移除原格；真实世界与真实剪切目录不变。",
-            "viewport",
-            action(Operation.CUT_SOURCE_REVIEW, "viewport"),
-            action(Operation.CUT_STORE, "viewport"));
+            "提交来源并查看命名",
+            (iso ? "松开 Ctrl 后 Shift + 左键" : "Shift + 右键") + "打开命名与剪切确认。此时原格仍在，尚未入库；下步明确点击保存才剪切。",
+            "cut.lesson.source",
+            action(Operation.CUT_SOURCE_REVIEW, "viewport"));
         add(
             s,
-            "锁定与取消",
-            iso ? "按住 Ctrl 定位，Ctrl+左键锁定，再次左键打开确认。松开 Ctrl 操作镜头，Esc 保留未消费条目。" : "右键锁定，再次右键打开确认。Esc 保留未消费条目。",
+            "明确保存教学剪切",
+            "核对范围与名称，点击保存才将完整选区移到教学暂存，空气也保留在体积中；真实世界与真实目录不变。正常剪切成功后可从剪切列表取出条目。",
             "viewport",
-            action(Operation.CUT_TAKE, "viewport"),
-            action(Operation.CUT_LOCK, "viewport"),
-            action(Operation.CUT_CANCEL, "viewport"));
+            action(Operation.CUT_STORE, "cut.lesson.source.save"));
         add(
             s,
-            "放置与消费",
-            "重新取出并锁定教学几何；逐格核对移动后的坐标与完整数据相等，才消费教学暂存。真实世界不执行放置。",
+            "打开已保存剪切列表",
+            "正常剪切完成后，Shift + 右击打开列表。这里显示刚才保存的同一条教学暂存，尚未取出或消费。",
+            "cut.browser",
+            action(Operation.CUT_OPEN_STORAGE, "viewport"));
+        add(
+            s,
+            "取出并锁定",
+            "正常操作从剪切列表点击放置所选。" + (iso ? "按住 Ctrl 定位，Ctrl + 左键锁定；松开 Ctrl 操作镜头。" : "移动视角定位，右键锁定。") + "锁定不会消费条目。",
             "viewport",
-            action(Operation.CUT_TAKE, "viewport"),
+            action(Operation.CUT_TAKE, "cut.place"),
+            action(Operation.CUT_LOCK, "viewport"));
+        add(
+            s,
+            "再次操作打开确认",
+            (iso ? "再次 Ctrl + 左键" : "再次右键") + "打开独立放置确认。核对坐标后点击取消，保留同一条未消费暂存；Esc 在真实操作中会退出剪切模式。",
+            "viewport",
+            action(Operation.CUT_PLACE_REVIEW, "viewport"),
+            action(Operation.CUT_CANCEL, "cut.lesson.placement.cancel"));
+        add(
+            s,
+            "重新打开同一条目",
+            "取消放置保留原条目；再次打开剪切列表，从同一行的放置所选继续。",
+            "cut.browser",
+            action(Operation.CUT_OPEN_STORAGE, "viewport"));
+        add(
+            s,
+            "重新取出与核对",
+            "取消后从列表重新取出同一条目，定位并锁定，再次操作打开放置确认；原始设备数据保持不变。",
+            "cut.lesson.placement",
+            action(Operation.CUT_TAKE, "cut.place"),
             action(Operation.CUT_LOCK, "viewport"),
-            action(Operation.CUT_PLACE, "viewport"));
+            action(Operation.CUT_PLACE_REVIEW, "viewport"));
+        add(
+            s,
+            "明确确认后消费",
+            "点击独立确认按钮，核对移动后的完整数据才消费教学暂存。真实剪切目录要在服务器成功回执后消费；本课只改变教学内存。",
+            "viewport",
+            action(Operation.CUT_PLACE, "cut.lesson.placement.confirm"));
     }
 }

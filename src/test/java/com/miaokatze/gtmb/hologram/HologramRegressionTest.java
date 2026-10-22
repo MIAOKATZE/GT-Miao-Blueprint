@@ -31,6 +31,9 @@ public final class HologramRegressionTest {
             "tutorial_real_ebf_controller_and_declared_author_courses",
             com.miaokatze.gtmb.client.hologram.HologramEditorTutorialLessonsRegression::run);
         cases.put(
+            "tutorial_playback_empty_document_identity_and_retired_callbacks",
+            com.miaokatze.gtmb.client.hologram.HologramEditorTutorialPlaybackRegression::run);
+        cases.put(
             "isometric_camera_policy_loaded_surface_and_signed_floating_target",
             () -> com.miaokatze.gtmb.client.hologram.HologramIsometricCameraRegression.main(new String[0]));
         cases.put(

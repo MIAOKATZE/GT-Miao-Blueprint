@@ -39,6 +39,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private int step, actionIndex;
     private long actionStarted, targetWaitingSince;
     private boolean replay, queuedNext, pressed, actionApplied, actionPending;
+    private boolean actionDispatched;
+    private long actionDispatchedAt, commandResults, actionCommandResults;
+    private String commandFailure = "";
+    private NBTTagCompound actionBefore;
+    private final java.util.Map<String, NBTTagCompound> teachingLibrary = new java.util.LinkedHashMap<>();
     private long playbackVersion;
     private double pointerX, pointerY, fromX, fromY, targetX, targetY, motionX, motionY;
     private int[] actionBounds;
@@ -46,6 +51,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private NBTTagCompound dragStart;
     private NBTTagCompound pendingNativeScroll;
     private boolean pendingMaterialRestore;
+    private String pendingModalRestore;
+    private long restoreWaitingSince;
     private static final String[] CHECKPOINT_SCROLLS = { "editor_native_tool_rail_list",
         "editor_native_properties_list", "editor_native_selection_list", "editor_native_structure_list",
         "editor_native_materials_list", "blueprint_save_content", "native_blueprint_settings", "library_content",
@@ -162,7 +169,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             ui.shell.pausePresentation();
             sandbox = new HologramUiModules(ui.host);
             sandbox.session.initializeIsolated(sample(id), this::isolatedCommand);
-            sourceFingerprint = HologramCutRawPreviewSession.digest(snapshot(sandbox.session.state()));
+            HologramState curriculumState = id.equals("blueprint")
+                ? new HologramState(
+                    (NBTTagCompound) teachingLibrary.get("tutorial-sample-0")
+                        .copy())
+                : sandbox.session.state();
+            sourceFingerprint = HologramCutRawPreviewSession.digest(snapshot(curriculumState));
             if (worldCourse()) worldStage.initialize(sandbox.session.state());
             try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                 .fieldGraph(sandbox)) {
@@ -179,11 +191,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             cornerCount = cutStage = worldOffsetX = worldOffsetZ = 0;
             cutStored = cutConsumed = false;
             if (id.equals("cut")) cutListLesson = new HologramEditorCutListLesson();
-            isolatedCommands = 0;
+            isolatedCommands = commandResults = 0;
             step = actionIndex = 0;
             pointerX = ui.host.screenWidth() / 2d;
             pointerY = ui.host.screenHeight() / 2d;
-            steps = HologramEditorLessons.course(id, ui.tools.commands(), sandbox.session.state());
+            steps = HologramEditorLessons.course(id, ui.tools.commands(), curriculumState);
             checkpoints.clear();
             overlay = new HologramEditorTutorialOverlay(sandbox, this);
             sceneHandler = IPanelHandler.simple(
@@ -223,6 +235,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     throw new IllegalStateException("Isolated cut workspace was not admitted");
             }
             scenePanel.child(sandbox.shell.build(scenePanel));
+            if (worldCourse()) worldStage.prepare(sandbox, scenePanel);
         }
         scenePanel.onUpdateListener(panel -> {
             if (panel.getArea().width != ui.host.screenWidth() || panel.getArea().height != ui.host.screenHeight())
@@ -234,6 +247,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     void closeWithoutProgress() {
         HologramUiModules closing = sandbox;
+        if (closing != null) closing.session.invalidateTutorialActions();
         sandbox = null;
         requestedTopic = "";
         completionAction = null;
@@ -245,10 +259,13 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         dragStart = null;
         pendingNativeScroll = null;
         pendingMaterialRestore = false;
+        pendingModalRestore = null;
         actionBounds = null;
         lastFocusBounds = null;
         unavailable = "";
-        pressed = queuedNext = actionApplied = actionPending = false;
+        pressed = queuedNext = actionApplied = actionPending = actionDispatched = false;
+        actionBefore = null;
+        teachingLibrary.clear();
         playbackVersion++;
         try {
             if (closing != null) cleanup("pointer capture", closing.preview::releasePointerCapture);
@@ -312,7 +329,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         Runnable returnToBrowser = completionAction;
         closeWithoutProgress();
         try {
-            ui.session.notice("教程已返回原工作区：" + (failure.getMessage() == null ? "演示无法继续" : failure.getMessage()));
+            ui.session.notice("本步演示未能完成，已返回原工作区。");
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Native tutorial aborted", failure);
         } finally {
             if (returnToBrowser != null) ui.host.parent()
@@ -345,7 +362,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 restore(checkpoints.get(step));
                 playStep();
             } else if (id == BASE + 2) {
-                if (actionIndex < actions.size()) queuedNext = true;
+                if (!unavailable.isEmpty()) queuedNext = false;
+                else if (actionIndex < actions.size() || pendingMaterialRestore
+                    || pendingNativeScroll != null
+                    || pendingModalRestore != null) queuedNext = true;
                 else nextStep();
             } else if (id == BASE + 3) finish(false);
             else if (id == BASE + 4) {
@@ -376,14 +396,16 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     @Override
     public String nextLabel() {
-        return queuedNext ? "已排队" : step + 1 == steps.size() ? "完成教程" : "下一步";
+        return !unavailable.isEmpty() ? "本步未完成" : queuedNext ? "已排队" : step + 1 == steps.size() ? "完成教程" : "下一步";
     }
 
     private void playStep() {
         actions = steps.get(step).actions;
         actionIndex = 0;
         actionStarted = targetWaitingSince = 0;
-        pressed = actionApplied = queuedNext = actionPending = false;
+        pressed = actionApplied = queuedNext = actionPending = actionDispatched = false;
+        actionBefore = null;
+        commandFailure = "";
         playbackVersion++;
         actionBounds = null;
         lastFocusBounds = null;
@@ -392,6 +414,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void nextStep() {
+        if (!unavailable.isEmpty() || actionIndex < actions.size()
+            || actionPending
+            || pendingMaterialRestore
+            || pendingNativeScroll != null
+            || pendingModalRestore != null) return;
         queuedNext = false;
         if (step + 1 >= steps.size()) {
             finish(true);
@@ -410,6 +437,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
             .fieldGraph(sandbox)) {
             sandbox.shell.tick();
+            if (worldCourse()) worldStage.refresh();
         }
         if (overlayPanel != null && overlayPanel.isOpen()) ui.host.parent()
             .getScreen()
@@ -422,6 +450,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (!active()) return;
         try {
             if (pendingMaterialRestore) {
+                if (restoreExpired(now)) return;
                 if (scenePanel.getContext()
                     .getScreen()
                     .getPanelManager()
@@ -443,14 +472,25 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 }
                 return;
             }
+            if (pendingModalRestore != null) {
+                if (!pendingModalRestore.equals(sandbox.shell.tutorialModalIdentity())) {
+                    restoreExpired(now);
+                    return;
+                }
+                pendingModalRestore = null;
+            }
             // The native graph has now laid out its restored page/groups; clamp against its actual current scroll area.
             if (pendingNativeScroll != null) {
                 if (restoreNativeScroll(pendingNativeScroll)) pendingNativeScroll = null;
+                else restoreExpired(now);
                 return;
             }
             if (actionIndex >= actions.size()) {
-                if (queuedNext && ui.host.parent()
-                    .tryDeferAction(() -> { if (active()) nextStep(); })) queuedNext = false;
+                final long version = playbackVersion;
+                if (queuedNext && unavailable.isEmpty()
+                    && ui.host.parent()
+                        .tryDeferAction(() -> { if (active() && playbackVersion == version) nextStep(); }))
+                    queuedNext = false;
                 return;
             }
             animate(now);
@@ -459,25 +499,33 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         }
     }
 
+    private boolean restoreExpired(long now) {
+        if (restoreWaitingSince == 0) restoreWaitingSince = now;
+        if (now - restoreWaitingSince < 5_000_000_000L) return false;
+        blockAction("上一步的窗口或滚动位置尚未恢复，教程已停在本步；可返回或重新开始。");
+        return true;
+    }
+
     /** Compatibility entry; all rendering now belongs to native scene and overlay widget trees. */
     void drawScreen(int mouseX, int mouseY, float ticks) {}
 
     private void animate(long now) {
-        if (!worldCourse() && !unavailable.isEmpty()) {
-            // An unavailable prerequisite must not demonstrate dependent controls behind its still-open window.
-            actionIndex = actions.size();
+        if (!unavailable.isEmpty()) {
             actionBounds = null;
             pressed = queuedNext = false;
             return;
         }
         Action action = actions.get(actionIndex);
-        if (actionStarted != 0 && !actionApplied && !actionPending) {
+        if (actionStarted != 0 && !actionApplied && !actionPending && !actionDispatched) {
             int[] current = target(action);
             if (current == null) {
                 actionBounds = null;
                 pressed = false;
+                if (targetWaitingSince == 0) targetWaitingSince = now;
+                if (now - targetWaitingSince >= 5_000_000_000L) blockAction("动作目标已不可用；可返回上一步或重新开始。");
                 return;
             }
+            targetWaitingSince = 0;
             if (!java.util.Arrays.equals(actionBounds, current)) {
                 actionBounds = current;
                 fromX = pointerX;
@@ -488,6 +536,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             }
         }
         if (actionStarted == 0) {
+            if (!actionAdmitted(action)) {
+                blockAction("当前确认窗口尚未按本课步骤处理；未操作其后的控件。");
+                return;
+            }
             if (groupSatisfied(action)) {
                 actionIndex++;
                 actionBounds = null;
@@ -498,20 +550,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 && !worldCourse()
                 && !sandbox.preview.canMoveSelection()) {
                 if (targetWaitingSince == 0) targetWaitingSince = now;
-                if (now - targetWaitingSince < 650_000_000L) return;
-                if (action.operation == Operation.HOVER) {
-                    if (!actionPending) {
-                        final long version = playbackVersion;
-                        actionPending = ui.host.parent()
-                            .tryDeferAction(
-                                () -> { if (active() && playbackVersion == version) omitUnavailableHoverStep(); });
-                    }
-                    return;
-                }
-                unavailable = "能力或选区前提未满足";
-                actionIndex++;
-                targetWaitingSince = 0;
-                actionBounds = null;
+                if (now - targetWaitingSince < 5_000_000_000L) return;
+                blockAction("能力、选区或可见控件前提未满足；可返回上一步或重新开始。");
                 return;
             }
             targetWaitingSince = 0;
@@ -523,6 +563,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             motionX = motionY = 0;
             if (action.drag()) prepareDrag(action);
             actionApplied = false;
+            actionDispatched = false;
             actionStarted = now;
         }
         long elapsed = Math.max(0, now - actionStarted);
@@ -531,8 +572,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         pointerY = fromY + (targetY - fromY) * smooth;
         boolean hover = action.hover();
         pressed = !hover && elapsed >= MOVE_NS && elapsed < MOVE_NS + PRESS_NS + (action.drag() ? MOVE_NS : 0);
-        if (hover && elapsed >= MOVE_NS) actionApplied = true;
-        if (!hover && elapsed >= MOVE_NS && !actionApplied && !actionPending) {
+        if (hover && elapsed >= MOVE_NS) {
+            actionApplied = !worldCourse() || worldStage.satisfied(action.operation);
+            if (!actionApplied && elapsed >= MOVE_NS + 5_000_000_000L) blockAction("教学场景尚未呈现，本步未完成。");
+        }
+        if (!hover && elapsed >= MOVE_NS && !actionApplied && !actionPending && !actionDispatched) {
             final long version = playbackVersion;
             final int index = actionIndex;
             actionPending = ui.host.parent()
@@ -540,14 +584,27 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     if (!active() || playbackVersion != version || actionIndex != index) return;
                     try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                         .fieldGraph(sandbox)) {
+                        if (!actionAdmitted(action)) {
+                            blockAction("确认窗口或目标前提已变化，未执行该动作。");
+                            return;
+                        }
+                        actionBefore = actionObservation();
+                        actionCommandResults = commandResults;
+                        commandFailure = "";
                         if (action.drag()) beginDrag(action);
                         else apply(action);
-                        actionApplied = true;
+                        actionDispatched = true;
+                        actionDispatchedAt = System.nanoTime();
                         actionPending = false;
                     } catch (RuntimeException failure) {
                         abort(failure);
                     }
                 });
+        }
+        if (actionDispatched && !actionApplied) {
+            if (!commandFailure.isEmpty()) blockAction(commandFailure);
+            else if (actionSucceeded(action)) actionApplied = true;
+            else if (now - actionDispatchedAt >= 5_000_000_000L) blockAction("动作尚未完成，教程已停在本步；可返回上一步或重新开始。");
         }
         if (action.drag() && actionApplied) {
             double drag = Math.max(0, Math.min(1, (elapsed - MOVE_NS) / (double) MOVE_NS));
@@ -567,16 +624,193 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         }
         long hold = hover ? HOVER_NS : PRESS_NS + REST_NS + (action.drag() ? MOVE_NS : 0);
         if (actionApplied && elapsed >= MOVE_NS + hold) {
-            if (action.drag() && action.operation != Operation.CUT_LIST_ORBIT && !worldCourse()) commitDrag();
+            if (action.drag() && action.operation != Operation.CUT_LIST_ORBIT && !worldCourse() && !commitDrag())
+                return;
             if (action.operation != Operation.CLOSE_PANEL || sandbox.shell.targetBounds("modal") == null) actionIndex++;
             actionStarted = 0;
+            actionDispatched = false;
             pressed = false;
             dragStart = null;
             actionBounds = null;
         }
     }
 
+    private void blockAction(String reason) {
+        unavailable = reason;
+        queuedNext = pressed = actionPending = false;
+        sandbox.session.notice("本步演示未能完成，可返回上一步或重新开始。");
+    }
+
+    private boolean protectedConfirmation() {
+        return sandbox.library.discardReview() || sandbox.library.overwriteReview()
+            || !sandbox.library.deletePresetId()
+                .isEmpty()
+            || sandbox.config.resetReview()
+            || sandbox.processing.processingPresetSaveReview()
+            || sandbox.review.confirmation();
+    }
+
+    private boolean actionAdmitted(Action action) {
+        if (action.operation == Operation.CONFIRM_DISCARD || action.operation == Operation.CANCEL_DISCARD)
+            return sandbox.library.discardReview() && !sandbox.library.overwriteReview()
+                && sandbox.library.deletePresetId()
+                    .isEmpty()
+                && !sandbox.processing.processingPresetSaveReview()
+                && sandbox.panelName("gtmb_native_library_discard")
+                    .equals(sandbox.shell.tutorialModalIdentity());
+        if (protectedConfirmation()) return false;
+        String key = action.operation == Operation.OPEN_CAPABILITY ? capabilityTarget()
+            : action.control >= 0 ? "control." + resolvedControlId(action) : action.target;
+        if (action.operation == Operation.OPEN_TOOL || action.operation == Operation.HOVER)
+            key = "control." + (HologramEditorControlIds.TOOLS + sandbox.tools.commands()
+                .index(action.target));
+        if (action.operation == Operation.HANDLES)
+            key = "control." + (HologramEditorControlIds.TOOLS + sandbox.tools.commands()
+                .index("moveHandles"));
+        return sandbox.shell.tutorialTargetAdmitted(key);
+    }
+
+    private boolean scriptedDiscardNext() {
+        Action next = actionIndex + 1 < actions.size() ? actions.get(actionIndex + 1)
+            : step + 1 < steps.size() && !steps.get(step + 1).actions.isEmpty() ? steps.get(step + 1).actions.get(0)
+                : null;
+        return next != null
+            && (next.operation == Operation.CONFIRM_DISCARD || next.operation == Operation.CANCEL_DISCARD);
+    }
+
+    private NBTTagCompound actionObservation() {
+        NBTTagCompound result = new NBTTagCompound();
+        if (cutListLesson != null) result.setTag("cutList", cutListLesson.snapshot());
+        result.setTag("state", snapshot(sandbox.session.state()));
+        result.setTag("config", sandbox.config.backgroundUiState());
+        result.setTag("library", sandbox.library.backgroundUiState());
+        result.setTag("processing", sandbox.processing.backgroundUiState());
+        result.setIntArray(
+            "selection",
+            sandbox.preview.selection()
+                .indices());
+        result.setBoolean("handles", sandbox.preview.moveHandles());
+        result.setBoolean("prompt", sandbox.annotations.promptDrawer());
+        if (sandbox.annotations.promptField() != null) result.setString(
+            "promptText",
+            sandbox.annotations.promptField()
+                .getText());
+        result.setBoolean("nbt", sandbox.nbt.nbtDrawer());
+        result.setBoolean("network", sandbox.bindings.networkDrawer());
+        result.setBoolean("material", materialLesson.visible());
+        result.setString("nativeModal", sandbox.shell.tutorialModalIdentity());
+        result.setBoolean("viewWorkspace", sandbox.tools.viewWorkspaceOpen());
+        result.setInteger("dock", sandbox.shell.dockPage());
+        result.setBoolean("dockExpanded", sandbox.shell.dockExpanded());
+        result.setString("modal", sandbox.shell.tutorialModalIdentity());
+        return result;
+    }
+
+    private boolean actionSucceeded(Action action) {
+        if (action.drag()) return action.operation == Operation.CUT_LIST_ORBIT || worldCourse()
+            || sandbox.preview.gizmo()
+                .axis() >= 0;
+        if (worldCourse()) {
+            if (!worldStage.satisfied(action.operation)) return false;
+            cornerCount = worldStage.geometry.corners();
+            cutStored = worldStage.geometry.stored();
+            cutConsumed = worldStage.geometry.consumed();
+            switch (action.operation) {
+                case CUT_SOURCE_REVIEW:
+                    cutStage = 1;
+                    break;
+                case CUT_STORE:
+                case CUT_CANCEL:
+                    cutStage = 2;
+                    break;
+                case CUT_TAKE:
+                    cutStage = 3;
+                    break;
+                case CUT_LOCK:
+                case CUT_PLACE_REVIEW:
+                    cutStage = 4;
+                    break;
+                case CUT_PLACE:
+                    cutStage = 5;
+                    break;
+                default:
+                    break;
+            }
+            return true;
+        }
+        if (sandbox.library.discardReview()) {
+            if (action.operation == Operation.CONTROL && action.control >= 14000
+                && action.control < 15000
+                && scriptedDiscardNext()) return sandbox.shell.targetBounds("modal") != null;
+            if (action.operation != Operation.CANCEL_DISCARD && action.operation != Operation.CONFIRM_DISCARD)
+                blockAction("此动作打开了确认窗口；课程尚未显式处理该确认，已停止推进。");
+            return false;
+        }
+        if (protectedConfirmation()) {
+            blockAction("此动作需要明确确认；教程保留该窗口并停止推进。");
+            return false;
+        }
+        switch (action.operation) {
+            case CONFIRM_DISCARD:
+                return commandResults > actionCommandResults && sandbox.shell.targetBounds("modal") == null;
+            case CANCEL_DISCARD:
+                return sandbox.shell.targetBounds("modal") == null;
+            case CLOSE_PANEL:
+            case CLOSE_MATERIAL:
+            case LIBRARY:
+            case EDITOR:
+            case SETTINGS:
+            case OPEN_DOCK:
+            case HANDLES:
+            case CLOSE_TARGET:
+            case OPEN_TARGET:
+            case CLOSE_SOURCE:
+            case OPEN_SOURCE:
+            case OPEN_MATERIAL:
+                return groupSatisfied(action);
+            case SELECT_CELL:
+                return sandbox.preview.selected() >= 0 && sandbox.preview.selection()
+                    .size() > 0;
+            case SELECT_STRUCTURE:
+                return sandbox.preview.selection()
+                    .size() > 0;
+            case TYPE_CAPABILITY:
+                return unavailable.isEmpty() && !sandbox.config.optionValueField()
+                    .getText()
+                    .isEmpty();
+            case MATERIALS:
+                return materialLesson.visible()
+                    && materialLesson.bounds(ui.host.screenWidth(), ui.host.screenHeight()) != null;
+            case APPLY_CAPABILITY:
+            case SELECT_CANDIDATE:
+                return commandResults > actionCommandResults;
+            case CONTROL:
+                if (action.control >= 14000 && action.control < 15000) return commandResults > actionCommandResults
+                    && !sandbox.session.state().data.getString("selectedPresetId")
+                        .isEmpty();
+                if (action.control == 60) return sandbox.config.drawer() && sandbox.shell.targetBounds("modal") != null;
+                if (action.control == 94)
+                    return sandbox.config.presetDrawer() && sandbox.shell.targetBounds("modal") != null;
+                if (action.control == 95)
+                    return sandbox.config.hatchDrawer() && sandbox.shell.targetBounds("modal") != null;
+                if (action.control == 78)
+                    return sandbox.config.sourceDrawer() && sandbox.shell.targetBounds("modal") != null;
+                if (action.control == 163) return commandResults > actionCommandResults
+                    && !sandbox.session.state().data.getString("activeStructure")
+                        .isEmpty();
+                if (action.control == 165) return commandResults > actionCommandResults
+                    && sandbox.session.state().data.getString("activeStructure")
+                        .isEmpty();
+                break;
+            default:
+                break;
+        }
+        return actionBefore != null && !actionBefore.equals(actionObservation());
+    }
+
     private int[] target(Action action) {
+        if (action.operation == Operation.CONFIRM_DISCARD) return sandbox.shell.controlBounds(224);
+        if (action.operation == Operation.CANCEL_DISCARD) return sandbox.shell.controlBounds(225);
         if (cutListLesson != null) {
             if (action.operation == Operation.CUT_LIST_ORBIT) {
                 int[] bounds = sandbox.shell.targetBounds(action.target);
@@ -610,6 +844,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             double[] point = worldStage.cornerPoint(action.operation != Operation.FIRST_CORNER);
             if (point != null) return around(point);
         }
+        if (worldCourse() && action.operation == Operation.WORLD_ADJUST_CORNER) {
+            double[] point = worldStage.adjustedCornerPoint();
+            return point == null ? null : around(point);
+        }
         if (action.drag()) {
             HologramGizmo gizmo = sandbox.preview.gizmo();
             if (action.operation == Operation.MOVE_XZ) {
@@ -623,15 +861,73 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             double[] point = gizmo.end(0);
             return around(sandbox.shell.sceneToScreen((int) Math.round(point[0]), (int) Math.round(point[1])));
         }
-        if (action.operation == Operation.SELECT_CELL || action.operation == Operation.SELECT_STRUCTURE) {
-            int index = preferredCell();
-            if (index < 0) return null;
-            HologramState.Cell cell = sandbox.session.state().cells.get(index);
-            if (worldCourse()) return around(worldStage.point(cell.dx + .5, cell.dy + .5, cell.dz + .5));
-            double[] point = HologramRenderer.project(cell.dx + .5, cell.dy + .5, cell.dz + .5);
-            return around(sandbox.shell.sceneToScreen((int) Math.round(point[0]), (int) Math.round(point[1])));
+        if (action.operation == Operation.SELECT_STRUCTURE) return structureTarget();
+        if (action.operation == Operation.SELECT_CELL) {
+            int preferred = preferredCell();
+            int[] point = pickedCellPoint(preferred);
+            if (point != null || topic.equals("projection") && step == 0) return point;
+            String active = sandbox.session.state().data.getString("activeStructure");
+            for (HologramState.Cell cell : sandbox.session.state().cells)
+                if (candidateCell(cell) && (active.isEmpty() || cell.belongsToStructure(active))) {
+                    point = pickedCellPoint(cell.index);
+                    if (point != null) return point;
+                }
+            return null;
         }
         return sandbox.shell.targetBounds(action.target);
+    }
+
+    private int[] pickedCellPoint(int index) {
+        HologramState state = sandbox.session.state();
+        if (index < 0 || index >= state.cells.size()) return null;
+        HologramState.Cell cell = state.cells.get(index);
+        double[] projected = HologramRenderer.project(cell.dx, cell.dy, cell.dz);
+        int[] viewport = sandbox.shell.targetBounds("viewport");
+        if (viewport == null) return null;
+        for (int dx : new int[] { 0, -3, 3, -6, 6 }) for (int dy : new int[] { 0, -3, 3, -6, 6 }) {
+            int x = (int) Math.round(projected[0]) + dx, y = (int) Math.round(projected[1]) + dy;
+            if (HologramRenderer.pick(x, y) != index || !HologramRenderer.pickStructure(x, y)
+                .isEmpty()) continue;
+            int[] screen = sandbox.shell.sceneToScreen(x, y);
+            if (screen != null && screen[0] >= viewport[0]
+                && screen[1] >= viewport[1]
+                && screen[0] < viewport[0] + viewport[2]
+                && screen[1] < viewport[1] + viewport[3]) return around(screen);
+        }
+        return null;
+    }
+
+    private int[] structureTarget() {
+        HologramState state = sandbox.session.state();
+        String id = sandbox.config.selectedStructureId();
+        if (id.isEmpty()) id = state.data.getString("tutorialStructureId");
+        int[] bound = HologramRenderer.structureBounds(state)
+            .get(id);
+        if (id.isEmpty() || bound == null) return null;
+        int[] viewport = sandbox.shell.targetBounds("viewport");
+        if (viewport == null) return null;
+        // Probe the actual rendered outline and verify its native picker before demonstrating the click.
+        for (int corner = 0; corner < 8; corner++) for (int axis = 0; axis < 3; axis++) {
+            int other = corner ^ 1 << axis;
+            if (other <= corner) continue;
+            for (double along : new double[] { .5, .25, .75 }) {
+                double[] point = new double[3];
+                for (int a = 0; a < 3; a++) {
+                    double first = (corner & 1 << a) == 0 ? bound[a] - .55 : bound[a + 3] + .55;
+                    double second = (other & 1 << a) == 0 ? bound[a] - .55 : bound[a + 3] + .55;
+                    point[a] = first + (second - first) * along;
+                }
+                double[] projected = HologramRenderer.project(point[0], point[1], point[2]);
+                int x = (int) Math.round(projected[0]), y = (int) Math.round(projected[1]);
+                if (!id.equals(HologramRenderer.pickStructure(x, y))) continue;
+                int[] screen = sandbox.shell.sceneToScreen(x, y);
+                if (screen != null && screen[0] >= viewport[0]
+                    && screen[1] >= viewport[1]
+                    && screen[0] < viewport[0] + viewport[2]
+                    && screen[1] < viewport[1] + viewport[3]) return around(screen);
+            }
+        }
+        return null;
     }
 
     private int[] hoverToolBounds(String command) {
@@ -688,12 +984,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (field == null || !sandbox.shell.activateTarget("config.option.value")
             || !field.widget()
                 .isFocused()) {
-            unavailable = "原生输入框尚未取得焦点，未修改参数。";
+            blockAction("原生输入框尚未取得焦点，未修改参数。");
             return;
         }
         NBTTagCompound cap = sandbox.config.capability(sandbox.config.optionChannel());
         if (cap == null || !cap.getBoolean("editable")) {
-            unavailable = "此能力当前不可编辑，保留原值。";
+            blockAction("此能力当前不可编辑，保留原值。");
             return;
         }
         String value = Long.toString(Math.max(1, Math.min(Integer.MAX_VALUE, (long) cap.getInteger("current") + 1)));
@@ -707,21 +1003,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             if (com.cleanroommc.modularui.ModularUI.Mods.LWJGL3IFY.isLoaded()) field.widget()
                 .onTextInput(new me.eigenraven.lwjgl3ify.api.InputEvents.TextEvent(String.valueOf(character)));
         }
-        if (!value.equals(field.getText())) unavailable = "输入框未接受该值，保留原生校验结果。";
-    }
-
-    /** A clipped or unavailable tool is omitted rather than pointed at an unrelated viewport region. */
-    private void omitUnavailableHoverStep() {
-        List<Step> visibleSteps = new ArrayList<>(steps);
-        visibleSteps.remove(step);
-        steps = Collections.unmodifiableList(visibleSteps);
-        while (checkpoints.size() > step) checkpoints.remove(checkpoints.size() - 1);
-        if (step >= steps.size()) {
-            finish(true);
-            return;
-        }
-        checkpoints.add(capture());
-        playStep();
+        if (!value.equals(field.getText())) blockAction("输入框未接受该值，保留原生校验结果。");
     }
 
     private static int[] around(double[] point) {
@@ -773,11 +1055,19 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             .begin(action.operation == Operation.MOVE_XZ ? HologramGizmo.XZ : 0, local[0], local[1]);
     }
 
-    private void commitDrag() {
-        if (dragStart == null) return;
+    private boolean commitDrag() {
+        if (dragStart == null) {
+            blockAction("拖动未建立有效起点，未提交移动。");
+            return false;
+        }
         NBTTagCompound data = (NBTTagCompound) dragStart.copy();
         int[] offset = sandbox.preview.gizmo()
             .offset();
+        if (offset[0] == 0 && offset[1] == 0 && offset[2] == 0) {
+            blockAction("手柄没有产生整格位移，未将本步计为完成。");
+            sandbox.preview.releasePointerCapture();
+            return false;
+        }
         java.util.Set<String> moved = completeSources(
             sandbox.session.state(),
             sandbox.preview.selection()
@@ -803,6 +1093,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         sandbox.session.isolatedSnapshot(new HologramState(data));
         sandbox.preview.gizmo()
             .cancel();
+        markBlueprintEdited();
+        return true;
     }
 
     private static java.util.Set<String> completeSources(HologramState state, int[] selected) {
@@ -869,6 +1161,15 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         sandbox.preview.selected(
             sandbox.preview.selection()
                 .first());
+        markBlueprintEdited();
+    }
+
+    private void markBlueprintEdited() {
+        NBTTagCompound data = snapshot(sandbox.session.state());
+        data.setBoolean("blueprintDirty", true);
+        data.setLong("planRevision", data.getLong("planRevision") + 1);
+        HologramEditorTutorialSamples.updateMaterials(data);
+        sandbox.session.isolatedSnapshot(new HologramState(data));
     }
 
     private int resolvedControlId(Action action) {
@@ -877,13 +1178,29 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void apply(Action action) {
+        if (worldCourse()) {
+            if (!worldStage.apply(action.operation)) blockAction("世界课程动作未被当前教学场景接受。");
+            cornerCount = worldStage.geometry.corners();
+            cutStored = worldStage.geometry.stored();
+            cutConsumed = worldStage.geometry.consumed();
+            return;
+        }
         switch (action.operation) {
+            case CONFIRM_DISCARD:
+                if (!sandbox.library.discardReview() || !sandbox.shell.activateTarget("control.224"))
+                    blockAction("当前没有匹配的丢弃确认，未执行确认。");
+                break;
+            case CANCEL_DISCARD:
+                if (!sandbox.library.discardReview() || !sandbox.shell.activateTarget("control.225"))
+                    blockAction("当前没有匹配的丢弃确认，未执行取消。");
+                break;
             case CUT_LIST_CLICK:
-                if (!sandbox.shell.activateTarget(action.target)) unavailable = "此列表控件当前不可用；未执行替代操作。";
+                if (!sandbox.shell.activateTarget(action.target)) blockAction("此列表控件当前不可用；未执行替代操作。");
                 break;
             case CONTROL:
                 int id = resolvedControlId(action);
-                if (sandbox.shell.controlEnabled(id)) sandbox.shell.activateTarget("control." + id);
+                if (!sandbox.shell.controlEnabled(id) || !sandbox.shell.activateTarget("control." + id))
+                    blockAction("当前控件不可用，未执行动作。");
                 break;
             case OPEN_TOOL:
                 sandbox.shell.activateTarget(
@@ -897,20 +1214,33 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 sandbox.shell.activateTarget(action.target);
                 break;
             case SELECT_CELL:
-                int index = preferredCell();
-                sandbox.preview.selection()
-                    .click(index, false);
-                sandbox.preview.selected(index);
-                break;
-            case SELECT_STRUCTURE:
-                String structure = sandbox.config.selectedStructureId();
-                if (structure.isEmpty()) structure = sandbox.session.state().data.getString("tutorialStructureId");
-                if (structure.isEmpty()) {
-                    unavailable = "来源结构前提未满足";
+                int[] cellPoint = sandbox.shell.sceneLocalPoint((int) Math.round(targetX), (int) Math.round(targetY));
+                int index = cellPoint == null ? -1 : HologramRenderer.pick(cellPoint[0], cellPoint[1]);
+                if (index < 0) {
+                    blockAction("光标位置没有命中可选格，未替代选取其它位置。");
                     break;
                 }
                 sandbox.preview.selection()
-                    .structure(sandbox.session.state(), structure, false);
+                    .previewClick(sandbox.session.state(), index, "", false, false);
+                sandbox.preview.selected(
+                    sandbox.preview.selection()
+                        .first());
+                break;
+            case SELECT_STRUCTURE:
+                int[] pickedPoint = sandbox.shell.sceneLocalPoint((int) Math.round(targetX), (int) Math.round(targetY));
+                String structure = pickedPoint == null ? ""
+                    : HologramRenderer.pickStructure(pickedPoint[0], pickedPoint[1]);
+                if (structure.isEmpty()) {
+                    blockAction("来源结构前提未满足");
+                    break;
+                }
+                sandbox.preview.selection()
+                    .previewClick(
+                        sandbox.session.state(),
+                        HologramRenderer.pick(pickedPoint[0], pickedPoint[1]),
+                        structure,
+                        false,
+                        false);
                 sandbox.preview.selected(
                     sandbox.preview.selection()
                         .first());
@@ -931,7 +1261,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             case SETTINGS:
             case OPEN_DOCK:
                 if (!groupSatisfied(action) && !sandbox.shell.activateTarget(action.target))
-                    unavailable = "工作台入口当前不可见或不可用；保留原页面。";
+                    blockAction("工作台入口当前不可见或不可用；保留原页面。");
                 break;
             case CLOSE_TARGET:
             case OPEN_TARGET:
@@ -959,49 +1289,6 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 if (materialHandler == null) materialHandler = IPanelHandler
                     .simple(scenePanel, (parent, player) -> materialLesson.build(sandbox), true);
                 materialHandler.openPanel();
-                break;
-            case WORLD_MODE:
-                break;
-            case FIRST_CORNER:
-                worldStage.geometry.choose(false);
-                cornerCount = worldStage.geometry.corners();
-                break;
-            case SECOND_CORNER:
-                worldStage.geometry.choose(true);
-                cornerCount = worldStage.geometry.corners();
-                break;
-            case BOX_SUBMIT:
-                worldStage.geometry.submit();
-                sandbox.session.notice("已读取教学选区内 " + worldStage.geometry.count() + " 格电力高炉规划；仅保留于教学内存。");
-                break;
-            case CUT_SOURCE_REVIEW:
-                worldStage.geometry.requireSelection();
-                cutStage = 1;
-                break;
-            case CUT_STORE:
-                worldStage.geometry.store();
-                cutStored = worldStage.geometry.stored();
-                cutConsumed = worldStage.geometry.consumed();
-                cornerCount = worldStage.geometry.corners();
-                cutStage = 2;
-                break;
-            case CUT_TAKE:
-                worldStage.geometry.take();
-                cutStage = 3;
-                break;
-            case CUT_LOCK:
-                worldStage.geometry.lock();
-                cutStage = 4;
-                break;
-            case CUT_CANCEL:
-                worldStage.geometry.cancel();
-                cutStage = 2;
-                break;
-            case CUT_PLACE:
-                worldStage.geometry.place();
-                cutStored = worldStage.geometry.stored();
-                cutConsumed = worldStage.geometry.consumed();
-                cutStage = 5;
                 break;
             default:
                 break;
@@ -1061,6 +1348,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setBoolean("network", sandbox.bindings.networkDrawer());
         result.setBoolean("material", materialLesson.visible());
         result.setInteger("corners", cornerCount);
+        result.setString("nativeModal", sandbox.shell.tutorialModalIdentity());
+        if (sandbox.annotations.promptField() != null) result.setString(
+            "promptText",
+            sandbox.annotations.promptField()
+                .getText());
         result.setInteger("cutStage", cutStage);
         result.setBoolean("stored", cutStored);
         result.setBoolean("consumed", cutConsumed);
@@ -1072,6 +1364,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void restore(NBTTagCompound checkpoint) {
+        sandbox.session.invalidateTutorialActions();
+        playbackVersion++;
         if (worldCourse() && checkpoint.hasKey("teachingGeometry", 10))
             worldStage.geometry.restore(checkpoint.getCompoundTag("teachingGeometry"));
         if (cutListLesson != null) cutListLesson.restore(checkpoint.getCompoundTag("cutList"));
@@ -1085,9 +1379,14 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             sandbox.processing.restoreBackgroundUiState(checkpoint.getCompoundTag("processing"));
             sandbox.preview.moveHandles(checkpoint.getBoolean("handles"));
             sandbox.annotations.promptDrawer(checkpoint.getBoolean("prompt"));
+            if (sandbox.annotations.promptField() != null && checkpoint.hasKey("promptText", 8))
+                sandbox.annotations.promptField()
+                    .setText(checkpoint.getString("promptText"));
             if (checkpoint.getBoolean("nbt")) sandbox.nbt.openNbtEditor(false);
             sandbox.bindings.networkDrawer(checkpoint.getBoolean("network"));
             pendingMaterialRestore = checkpoint.getBoolean("material");
+            pendingModalRestore = checkpoint.hasKey("nativeModal", 8) ? checkpoint.getString("nativeModal") : null;
+            restoreWaitingSince = 0;
         }
         cornerCount = checkpoint.getInteger("corners");
         cutStage = checkpoint.getInteger("cutStage");
@@ -1104,6 +1403,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (checkpoint.hasKey("nativePresentation", 10))
             sandbox.shell.setDockExpanded(presentation.getBoolean("dockExpanded"));
         refreshNativeGraph();
+        if (worldCourse()) worldStage.restorePresentation();
         sandbox.shell.restorePropertiesGroups(
             checkpoint.getBoolean("targetExpanded"),
             checkpoint.getBoolean("sourceExpanded"),
@@ -1163,7 +1463,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             case CLOSE_PANEL:
                 return sandbox.shell.targetBounds("modal") == null;
             case CLOSE_MATERIAL:
-                return !materialLesson.visible();
+                return !materialLesson.visible() && sandbox.shell.targetBounds("modal") == null;
             case HANDLES:
                 return sandbox.preview.moveHandles();
             case CLOSE_TARGET:
@@ -1191,6 +1491,16 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         throw new IllegalStateException("Missing material lesson action");
     }
 
+    /** Presentation remains visible when a lesson explains a disabled native control. */
+    private int[] completedStepFocusBounds() {
+        if (!active() || step < 0 || step >= steps.size()) return null;
+        if (materialLesson.visible()) return materialLesson.bounds(ui.host.screenWidth(), ui.host.screenHeight());
+        String target = steps.get(step).focus;
+        int[] presentation = sandbox.shell.presentationBounds(target);
+        // Generic modal identity is resolved by the shell rather than its named-widget registry.
+        return presentation != null ? presentation : sandbox.shell.targetBounds(target);
+    }
+
     @Override
     public void drawFocus(ModularGuiContext context, int width, int height) {
         if (!active()) return;
@@ -1199,11 +1509,26 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             ? target(actions.get(actionIndex))
             : null;
         if ((actionApplied || actionIndex >= actions.size()) && unavailable.isEmpty())
-            focus = sandbox.shell.targetBounds(steps.get(step).focus);
+            focus = completedStepFocusBounds();
         if (materialLesson.visible()) focus = materialLesson.bounds(width, height);
         if (focus == null && actionApplied) focus = sandbox.shell.targetBounds("modal");
         lastFocusBounds = focus == null ? null : focus.clone();
         int[] footer = overlay.footerBounds();
+        if (!unavailable.isEmpty()) {
+            String message = "本步演示未能完成，可返回上一步或重新开始。";
+            int messageWidth = ui.host.font()
+                .getStringWidth(message);
+            int messageX = Math.max(4, (width - messageWidth) / 2);
+            int messageY = footer == null ? height - 42 : Math.max(4, footer[1] - 17);
+            Gui.drawRect(
+                messageX - 4,
+                messageY - 3,
+                Math.min(width, messageX + messageWidth + 4),
+                messageY + 12,
+                0xf0543428);
+            ui.host.font()
+                .drawString(message, messageX, messageY, 0xffffddb9);
+        }
         if (focus != null) {
             // Native widget bounds and the normal viewport remain unchanged by the floating navigation.
             HologramEditorTutorialBlur.drawOutside(width, height, focus[0], focus[1], focus[2], focus[3]);
@@ -1297,6 +1622,39 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             Gui.drawRect(x - 1, y + row - 1, x + width + 1, y + row + 1, 0xff30231a);
             Gui.drawRect(x, y + row, x + width, y + row + 1, 0xffffe7b4);
         }
+        if (actionIndex < actions.size() && !actions.get(actionIndex)
+            .hover() && unavailable.isEmpty()) {
+            String hint = inputHint(actions.get(actionIndex).operation, isometric());
+            int hintWidth = ui.host.font()
+                .getStringWidth(hint);
+            int hintX = Math.max(2, Math.min(ui.host.screenWidth() - hintWidth - 8, x + 13));
+            int hintY = Math.max(2, Math.min(ui.host.screenHeight() - 15, y + 15));
+            Gui.drawRect(hintX - 3, hintY - 2, hintX + hintWidth + 3, hintY + 11, pressed ? 0xf083592c : 0xe634302a);
+            ui.host.font()
+                .drawString(hint, hintX, hintY, pressed ? 0xffffe7b4 : 0xffd4c9b6);
+        }
+    }
+
+    static String inputHint(Operation operation, boolean iso) {
+        switch (operation) {
+            case COPY_X:
+                return "Ctrl + 左键";
+            case FIRST_CORNER:
+                return iso ? "Ctrl + 左键" : "左键";
+            case SECOND_CORNER:
+            case WORLD_ADJUST_CORNER:
+                return iso ? "Ctrl + 右键" : "右键";
+            case BOX_SUBMIT:
+            case CUT_SOURCE_REVIEW:
+                return iso ? "Shift + 左键 · 松开 Ctrl" : "Shift + 右键";
+            case CUT_OPEN_STORAGE:
+                return "Shift + 右键";
+            case CUT_LOCK:
+            case CUT_PLACE_REVIEW:
+                return iso ? "Ctrl + 左键" : "右键";
+            default:
+                return "左键";
+        }
     }
 
     private boolean worldCourse() {
@@ -1348,12 +1706,26 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setInteger("actionCount", actions.size());
         result.setBoolean("queuedNext", queuedNext);
         result.setBoolean("pressed", pressed);
+        result.setBoolean("actionDispatched", actionDispatched);
+        result.setBoolean("actionApplied", actionApplied);
+        result.setBoolean("actionPending", actionPending);
+        result.setString(
+            "phase",
+            !unavailable.isEmpty() ? "blocked"
+                : actionIndex >= actions.size() ? "complete"
+                    : actionPending ? "dispatching"
+                        : actionApplied ? "complete"
+                            : actionDispatched ? "waiting-result" : actionStarted == 0 ? "waiting-target" : "moving");
+        result.setLong("commandResults", commandResults);
+        result.setString("commandFailure", commandFailure);
         result.setDouble("pointerX", pointerX);
         result.setDouble("pointerY", pointerY);
         result.setLong("isolatedCommands", isolatedCommands);
         result.setLong("realSessionSequence", ui.session.sequence());
         result.setString("unavailable", unavailable);
         result.setIntArray("focusBounds", lastFocusBounds == null ? new int[0] : lastFocusBounds);
+        int[] completedFocus = completedStepFocusBounds();
+        result.setIntArray("completedStepFocusBounds", completedFocus == null ? new int[0] : completedFocus);
         if (active()) {
             HologramState model = sandbox.session.state();
             NBTTagCompound engine = HologramRenderer.lessonInspection(model);
@@ -1494,9 +1866,13 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         return id;
     }
 
-    private void selectObservedSource(NBTTagCompound data, String id) {
+    private boolean selectObservedSource(NBTTagCompound data, String id) {
         String previous = data.getString("activeStructure");
-        if (previous.equals(id)) return;
+        if (previous.equals(id)) return true;
+        if (!id.isEmpty() && !sandbox.session.state().structureMembers.containsKey(id)) {
+            commandFailure = "教学规划没有该来源成员，未切换结构。";
+            return false;
+        }
         NBTTagCompound cached = data.getCompoundTag("tutorialMemberMetadata");
         if (id.isEmpty()) {
             cached.setTag(previous, sourceMetadata(data));
@@ -1514,8 +1890,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 recorded = HologramEditorTutorialSamples.sameSourceMetadata(observedSourceId(data, id));
                 observedOverview = HologramEditorTutorialSamples.overviewMetadata();
             } catch (java.io.IOException unavailable) {
-                sandbox.session.notice("这个成员没有匹配的真实来源参数：" + unavailable.getMessage());
-                return;
+                commandFailure = "这个成员没有匹配的真实来源参数：" + unavailable.getMessage();
+                return false;
             }
             if (previous.isEmpty()) data.setTag(
                 "tutorialOverviewMetadata",
@@ -1532,15 +1908,19 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         }
         data.setTag("tutorialMemberMetadata", cached);
         data.setString("activeStructure", id);
+        return true;
     }
 
     private void isolatedCommand(String op, NBTTagCompound request) {
         isolatedCommands++;
         NBTTagCompound data = snapshot(sandbox.session.state());
-        if (op.equals("selectStructure")) selectObservedSource(data, request.getString("structureId"));
-        else if (op.equals("configure")) {
+        boolean documentLoaded = false;
+        if (op.equals("selectStructure")) {
+            if (!selectObservedSource(data, request.getString("structureId"))) return;
+        } else if (op.equals("configure")) {
             if (request.getBoolean("applyHatchPreset") && data.getBoolean("virtual")) {
                 sandbox.session.notice("作者蓝图不支持整机仓室预设；此入口用于实体结构的声明配额。");
+                commandFailure = "作者蓝图不支持整机仓室预设，未修改规划。";
                 return;
             }
             for (String key : new String[] { "main", "channels", "mode", "hatchTier", "hatchDowngrade", "materialMain",
@@ -1567,6 +1947,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 if (!HologramEditorTutorialSamples
                     .applyHatchPreset(data, data.getInteger("hatchTier"), data.getBoolean("hatchDowngrade"))) {
                     sandbox.session.notice("当前 EBF 声明候选无法满足完整配额；原规划保持不变。");
+                    commandFailure = "当前 EBF 候选无法满足完整配额，未应用仓室预设。";
                     return;
                 }
                 sandbox.session.notice(data.getString("presetReason"));
@@ -1615,27 +1996,60 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                         cell.setInteger("chosenChoice", choice);
                         cell.setBoolean("hasPin", true);
                         cell.setBoolean("autoTarget", false);
+                    } else {
+                        commandFailure = "教学选格没有该设备候选，未修改目标。";
+                        return;
                     }
                 } else {
                     cell.setInteger("chosenChoice", -1);
                     cell.setBoolean("hasPin", false);
                 }
+            } else {
+                commandFailure = "教学选格前提未满足，未修改目标。";
+                return;
             }
         } else if (op.equals("placeTextBox")) {
             try {
                 HologramEditorTutorialSamples.placeAttachment(data, request);
             } catch (java.io.IOException invalid) {
                 sandbox.session.notice(invalid.getMessage());
+                commandFailure = invalid.getMessage();
                 return;
             }
         } else if (op.equals("editPreset")) {
-            data.setString("virtualPresetName", "隔离示例 · " + request.getString("presetId"));
-            // Both rows are explicitly labelled copies of the same recorded geometry.
-
+            String id = request.getString("presetId");
+            NBTTagCompound saved = teachingLibrary.get(id);
+            if (saved == null) {
+                commandFailure = "教学蓝图库没有所选条目，原工作区保留。";
+                return;
+            }
+            if (data.getBoolean("blueprintDirty") && !request.getBoolean("confirmDiscard")) {
+                commandFailure = "未确认丢弃教学草稿，原工作区保留。";
+                return;
+            }
+            data = HologramEditorTutorialSamples.openBlueprintDocument(saved, data);
+            documentLoaded = true;
+        } else {
+            commandFailure = "此课程尚未实现隔离命令「" + op + "」，未模拟完成。";
+            sandbox.session.notice("本步演示未能完成，可返回上一步或重新开始。");
+            return;
         }
-        // All other commands (including build/save/cut/import/network) terminate here without side effects.
+        if (!op.equals("selectStructure") && !documentLoaded) {
+            data.setLong("planRevision", data.getLong("planRevision") + 1);
+            if (data.getBoolean("virtual")) {
+                data.setBoolean("blueprintDirty", true);
+            }
+        }
         HologramEditorTutorialSamples.updateMaterials(data);
         sandbox.session.isolatedSnapshot(new HologramState(data));
+        if (documentLoaded) {
+            sandbox.processing.initializeSnapshot(sandbox.session.state());
+            sandbox.bindings.initializeSnapshot(sandbox.session.state());
+            sandbox.preview.initializeSelection(sandbox.session.state());
+            sandbox.preview.initializeLayer(sandbox.session.state());
+            sandbox.preview.resetCamera();
+        }
+        commandResults++;
     }
 
     private static NBTTagCompound snapshot(HologramState state) {
@@ -1646,7 +2060,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         return data;
     }
 
-    private static HologramState sample(String topic) {
+    private HologramState sample(String topic) {
         NBTTagCompound data;
         try {
             HologramEditorTutorialSamples.Kind kind = topic.equals("blueprint")
@@ -1654,6 +2068,16 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 : HologramEditorTutorialSamples.Kind.PHYSICAL;
             data = HologramEditorTutorialSamples.planning(kind == HologramEditorTutorialSamples.Kind.AUTHOR);
             data.setString("tutorialStructureId", HologramEditorTutorialSamples.primaryStructure(kind));
+            teachingLibrary.clear();
+            if (topic.equals("blueprint")) {
+                for (int i = 0; i < 2; i++) {
+                    String id = "tutorial-sample-" + i;
+                    teachingLibrary.put(
+                        id,
+                        HologramEditorTutorialSamples.blueprintDocument(id, i == 0 ? "高炉教学规划" : "同一规划 · 隔离副本"));
+                }
+                data = HologramEditorTutorialSamples.emptyBlueprint(data);
+            }
         } catch (java.io.IOException unavailable) {
             throw new IllegalStateException("真实教学样例校验失败：" + unavailable.getMessage(), unavailable);
         }
@@ -1661,7 +2085,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         data.setString("title", topic.equals("blueprint") ? "三台电力高炉 · 派生教学规划" : "电力高炉 · 原生规划教学");
         data.setString("status", "仅在教学会话内存中演示，不提交真实操作");
         data.setString("activeStructure", "");
-        data.setString("openPurpose", topic.equals("blueprint") ? "blueprintEdit" : "");
+        data.setString("openPurpose", "");
         data.setString("editorWorkspace", topic.equals("blueprint") ? "blueprint" : "projection");
         data.setInteger("job", 0);
         data.setLong("uiSequence", 0);
@@ -1680,12 +2104,17 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             row.setString("name", i == 0 ? "高炉教学规划" : "同一规划 · 隔离副本");
             row.setInteger(
                 "cells",
-                data.getTagList("cells", 10)
+                (topic.equals("blueprint") ? teachingLibrary.get("tutorial-sample-" + i) : data).getTagList("cells", 10)
+                    .tagCount());
+            row.setInteger(
+                "structures",
+                (topic.equals("blueprint") ? teachingLibrary.get("tutorial-sample-" + i) : data)
+                    .getTagList("structures", 10)
                     .tagCount());
             presets.appendTag(row);
         }
         data.setTag("presets", presets);
-        data.setString("virtualPresetName", topic.equals("blueprint") ? "三台高炉教学规划" : "高炉教学规划");
+        data.setString("virtualPresetName", topic.equals("blueprint") ? "" : "高炉教学规划");
         HologramEditorTutorialSamples.updateMaterials(data);
         return new HologramState(data);
     }
