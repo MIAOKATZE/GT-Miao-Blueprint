@@ -25,7 +25,7 @@ final class HologramEditorBlueprintSettingsPane {
         Flow content = Flow.col()
             .widthRel(1f)
             .coverChildrenHeight()
-            .childPadding(5)
+            .childPadding(3)
             .padding(6);
         content.child(
             HologramEditorNativeTheme.label(() -> "蓝图设置", HologramEditorNativeTheme.TITLE)
@@ -45,7 +45,7 @@ final class HologramEditorBlueprintSettingsPane {
                 .height(20));
         Flow defaults = Flow.row()
             .widthRel(1f)
-            .height(24)
+            .height(18)
             .childPadding(4);
         defaults.child(defaultTendency(false).expanded());
         defaults.child(defaultTendency(true).expanded());
@@ -60,38 +60,38 @@ final class HologramEditorBlueprintSettingsPane {
                 () -> "开始蓝图处理流程",
                 () -> author() && !ui.processing.processingReady(),
                 () -> "按实际内容核对流程预设、身份、量子网络、坐标、NBT 与提示词。").widthRel(1f)
-                    .height(24));
+                    .height(18));
         content.child(
             action(
                 297,
                 () -> "重新进行蓝图预设",
                 () -> author() && ui.processing.processingReady(),
                 () -> "按当前草稿重新核对六阶段；已移除的数据不会恢复。").widthRel(1f)
-                    .height(24));
+                    .height(18));
         content.child(
             action(
                 221,
                 () -> "保存流程预设",
                 () -> author() && ui.processing.processingReady(),
                 () -> "保存已核对的全局处理选择，不复制某张蓝图的设备内容。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         content.child(
             action(
                 166,
                 () -> ui.preview.selected() >= 0 ? "所选格 NBT" : "方块 NBT",
                 () -> author() && ui.processing.canEditBlueprintNbt(),
                 () -> "沿用已有逐格 NBT 及资源路径审核。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         content.child(
             action(146, () -> "所选格提示词", () -> editable() && ui.preview.selected() >= 0, () -> "只编辑当前选格提示；全局提示词使用独立入口。")
                 .widthRel(1f)
-                .height(22));
+                .height(18));
         content.child(
             action(227, () -> "全局提示词", this::editable, () -> "编辑整份蓝图提示。").widthRel(1f)
-                .height(22));
+                .height(18));
         content.child(
             action(223, () -> "旋转查看 ↻", () -> true, () -> "只改变观察方向，不旋转世界中的机器。").widthRel(1f)
-                .height(22));
+                .height(18));
         content.child(
             action(
                 134,
@@ -100,7 +100,7 @@ final class HologramEditorBlueprintSettingsPane {
                     && ui.session.state().data.getBoolean("target")
                     && ui.session.state().data.getBoolean("supported"),
                 () -> "沿用当前结构默认规划的独立确认；不撤回已施工内容。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         built = new HologramRecessedList().paperEdges()
             .name("native_blueprint_settings")
             .sizeRel(1f)
@@ -156,7 +156,7 @@ final class HologramEditorBlueprintSettingsPane {
                 });
         }, this::author, () -> false, false)
             .widthRel(1f)
-            .height(24)
+            .height(18)
             .tooltipBuilder(
                 t -> t.addLine(
                     ui.processing.processingReady() ? "按当前稿重新准备处理报告并选用" + label + "；已移除数据不会恢复。"

@@ -1,7 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.util.List;
-
 import com.cleanroommc.modularui.api.UpOrDown;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.widget.Interactable;
@@ -17,13 +15,9 @@ import com.cleanroommc.modularui.widgets.layout.Flow;
 /** Transparent native input shield. The four small navigation widgets are its only actionable children. */
 final class HologramEditorTutorialOverlay {
 
-    private static final int CAPTION_HEIGHT = 13, EXPLANATION_HEIGHT = 28, FOOTER_GAP = 7, NAVIGATION_HEIGHT = 20,
-        BOTTOM_GAP = 10;
-    static final int RESERVED_HEIGHT = CAPTION_HEIGHT + EXPLANATION_HEIGHT
-        + FOOTER_GAP * 2
-        + NAVIGATION_HEIGHT
-        + BOTTOM_GAP
-        + 6;
+    private static final int NAVIGATION_HEIGHT = 20, BOTTOM_GAP = 6;
+    // Shared dialog sizing also reads this value. Tutorials use the normal workspace and dialog dimensions.
+    static final int RESERVED_HEIGHT = 0;
 
     interface View {
 
@@ -34,8 +28,6 @@ final class HologramEditorTutorialOverlay {
         boolean queuedNext();
 
         String nextLabel();
-
-        String explanation();
 
         void navigate(int offset);
 
@@ -50,7 +42,6 @@ final class HologramEditorTutorialOverlay {
     private final ButtonWidget<?>[] navigation = new ButtonWidget<?>[4];
     private ModularPanel panel;
     private Flow navigationRow;
-    private Widget<?> captionSlot;
 
     HologramEditorTutorialOverlay(HologramUiModules ui, View view) {
         this.ui = ui;
@@ -80,13 +71,16 @@ final class HologramEditorTutorialOverlay {
                 .disableThemeBackground(true));
         Flow row = Flow.row()
             .coverChildren()
-            .childPadding(7)
+            .childPadding(6)
             .mainAxisAlignment(Alignment.MainAxis.CENTER)
+            .leftRel(.5f, 0, .5f)
+            .bottom(BOTTOM_GAP)
             .background(IDrawable.NONE)
             .disableThemeBackground(true)
             .name("tutorial.navigation");
         navigationRow = row;
         String[] names = { "previous", "next", "skip", "restart" };
+        int[] widths = { 68, 84, 68, 72 };
         for (int i = 0; i < navigation.length; i++) {
             final int index = i;
             ButtonWidget<?> button = HologramEditorNativeTheme
@@ -100,7 +94,7 @@ final class HologramEditorTutorialOverlay {
                     () -> index != 0 || view.canPrevious(),
                     () -> false,
                     index == 1)
-                .size(78, NAVIGATION_HEIGHT)
+                .size(widths[i], NAVIGATION_HEIGHT)
                 .name("tutorial." + names[i])
                 .disableThemeBackground(true);
             if (index == 1) button.overlay(
@@ -109,26 +103,7 @@ final class HologramEditorTutorialOverlay {
             navigation[i] = button;
             row.child(button);
         }
-        captionSlot = new Widget<>().widthRel(1f)
-            .height(CAPTION_HEIGHT)
-            .name("tutorial.caption.slot")
-            .background(IDrawable.NONE)
-            .disableThemeBackground(true);
-        panel.child(
-            Flow.col()
-                .widthRel(1f)
-                .coverChildrenHeight()
-                .bottom(BOTTOM_GAP)
-                .childPadding(FOOTER_GAP)
-                .background(IDrawable.NONE)
-                .disableThemeBackground(true)
-                .name("tutorial.footer")
-                .child(captionSlot)
-                .child(
-                    new Explanation().widthRel(1f)
-                        .height(EXPLANATION_HEIGHT)
-                        .name("tutorial.explanation"))
-                .child(row));
+        panel.child(row);
         return panel;
     }
 
@@ -149,15 +124,8 @@ final class HologramEditorTutorialOverlay {
         return navigationRow == null ? null : ui.shell.nativeWidgetBounds(navigationRow);
     }
 
-    int[] captionBounds() {
-        return captionSlot == null ? null : ui.shell.nativeWidgetBounds(captionSlot);
-    }
-
     int[] footerBounds() {
-        int[] nav = navigationBounds();
-        if (nav == null) return null;
-        return new int[] { 8, host.screenHeight() - RESERVED_HEIGHT, Math.max(1, host.screenWidth() - 16),
-            RESERVED_HEIGHT };
+        return navigationBounds();
     }
 
     private String label(int index) {
@@ -209,39 +177,4 @@ final class HologramEditorTutorialOverlay {
         }
     }
 
-    private final class Explanation extends Widget<Explanation> {
-
-        @Override
-        public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
-            int left = 12, right = getArea().width - 12;
-            int[] own = ui.shell.nativeWidgetBounds(this), viewport = ui.shell.targetBounds("viewport");
-            if (own != null && viewport != null) {
-                left = Math.max(left, viewport[0] + 10 - own[0]);
-                right = Math.min(right, viewport[0] + viewport[2] - 10 - own[0]);
-            }
-            int width = Math.min(620, Math.max(1, right - left)), center = left + Math.max(1, right - left) / 2;
-            List<String> lines = host.font()
-                .listFormattedStringToWidth(view.explanation(), width);
-            for (int i = 0; i < Math.min(2, lines.size()); i++) {
-                String line = lines.get(i);
-                host.font()
-                    .drawString(
-                        line,
-                        center - host.font()
-                            .getStringWidth(line) / 2,
-                        2 + i * 11,
-                        0xffe2c39c);
-            }
-        }
-
-        @Override
-        public boolean canHover() {
-            return false;
-        }
-
-        @Override
-        public boolean canClickThrough() {
-            return true;
-        }
-    }
 }

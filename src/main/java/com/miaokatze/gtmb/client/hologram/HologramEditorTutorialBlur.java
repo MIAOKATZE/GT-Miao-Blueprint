@@ -1,21 +1,23 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.OpenGlHelper;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL14;
+import org.lwjgl.opengl.GLContext;
 
 /**
- * A weak, GPU-only tutorial backdrop. Call once after the underlying screen is drawn, in its full-screen orthographic
- * coordinates, before the clear focus, card and navigation. No renderer, timer or shared framebuffer is owned here.
+ * A light, GPU-only tutorial backdrop. Call once after the underlying screen is drawn, in its full-screen orthographic
+ * coordinates, before the clear focus and navigation. No renderer, timer or shared framebuffer is owned here.
  */
 final class HologramEditorTutorialBlur {
 
     private static int texture, textureWidth, textureHeight;
-    private static final float SAMPLE_ALPHA = .035f;
-    private static final float PHYSICAL_RADIUS = .5f;
+    private static final float SAMPLE_ALPHA = .14f;
+    private static final float PHYSICAL_RADIUS = 1.5f;
 
     private HologramEditorTutorialBlur() {}
 
@@ -45,14 +47,7 @@ final class HologramEditorTutorialBlur {
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
             GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
-            // Reallocate only on first use or physical resize. Subsequent frames copy into the same texture.
-            if (textureWidth != physicalWidth || textureHeight != physicalHeight) {
-                GL11.glCopyTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGB8, 0, 0, physicalWidth, physicalHeight, 0);
-                textureWidth = physicalWidth;
-                textureHeight = physicalHeight;
-            } else {
-                GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, physicalWidth, physicalHeight);
-            }
+            copyDrawBuffer(physicalWidth, physicalHeight);
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glDepthMask(false);
             GL11.glDisable(GL11.GL_ALPHA_TEST);
@@ -64,7 +59,7 @@ final class HologramEditorTutorialBlur {
             GL14.glBlendEquation(GL14.GL_FUNC_ADD);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glColorMask(true, true, true, true);
-            // Retain 86.7% of the original bitmap strokes; the guide adds its separate, light neutral scrim.
+            // Four .14-alpha samples leave 54.7% of the sharp original, followed by a separate neutral scrim.
             GL11.glColor4f(1, 1, 1, SAMPLE_ALPHA);
             float du = PHYSICAL_RADIUS / physicalWidth, dv = PHYSICAL_RADIUS / physicalHeight;
             sample(logicalWidth, logicalHeight, left, top, right, bottom, du, 0);
@@ -74,6 +69,31 @@ final class HologramEditorTutorialBlur {
         } finally {
             GL11.glPopAttrib();
             GL13.glActiveTexture(activeTexture);
+        }
+    }
+
+    private static void copyDrawBuffer(int physicalWidth, int physicalHeight) {
+        boolean splitFramebuffer = GLContext.getCapabilities().OpenGL30
+            || GLContext.getCapabilities().GL_ARB_framebuffer_object
+            || GLContext.getCapabilities().GL_EXT_framebuffer_blit;
+        int readFramebuffer = splitFramebuffer ? GL11.glGetInteger(0x8caa) : 0;
+        int drawFramebuffer = splitFramebuffer ? GL11.glGetInteger(0x8ca6) : 0;
+        // Copy the screen being drawn, including when a native preview used a different read FBO.
+        if (readFramebuffer != drawFramebuffer) OpenGlHelper.func_153171_g(0x8ca8, drawFramebuffer);
+        int readBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
+        try {
+            GL11.glReadBuffer(GL11.glGetInteger(GL11.GL_DRAW_BUFFER));
+            // Reallocate only on first use or physical resize. No readback or per-frame texture allocation.
+            if (textureWidth != physicalWidth || textureHeight != physicalHeight) {
+                GL11.glCopyTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGB8, 0, 0, physicalWidth, physicalHeight, 0);
+                textureWidth = physicalWidth;
+                textureHeight = physicalHeight;
+            } else {
+                GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, physicalWidth, physicalHeight);
+            }
+        } finally {
+            GL11.glReadBuffer(readBuffer);
+            if (readFramebuffer != drawFramebuffer) OpenGlHelper.func_153171_g(0x8ca8, readFramebuffer);
         }
     }
 

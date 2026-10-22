@@ -36,6 +36,12 @@ final class HologramEditorGuide {
             .childPadding(6)
             .background(HologramEditorNativeTheme.PAPER)
             .disableThemeBackground(true);
+        if (ui.session.isTutorial()) {
+            // Keep the normal workspace geometry while the lesson owns all guidance.
+            bar.background(IDrawable.NONE);
+            refreshCollapsed();
+            return bar;
+        }
         bar.child(
             Flow.col()
                 .name("guide.message")
@@ -55,12 +61,12 @@ final class HologramEditorGuide {
         bar.child(
             HologramEditorNativeTheme
                 .iconButton("collapse-up", () -> "收纳智能指引", this::toggleCollapsed, () -> true, () -> false)
-                .size(20)
+                .size(HologramEditorNativeTheme.ICON_BUTTON)
                 .name("guide.collapse"));
         bar.child(
             HologramEditorNativeTheme
                 .iconButton("help-circle", () -> "完整说明与独立教程", this::toggleReference, () -> true, () -> false)
-                .size(20)
+                .size(HologramEditorNativeTheme.ICON_BUTTON)
                 .name("guide.help"));
         refreshCollapsed();
         return bar;
@@ -82,6 +88,10 @@ final class HologramEditorGuide {
             .name("guide.collapsed")
             .background(IDrawable.NONE)
             .disableThemeBackground(true);
+        if (ui.session.isTutorial()) {
+            chip.setEnabled(false);
+            return chip;
+        }
         chip.child(
             HologramEditorNativeTheme.button(() -> "指引", "collapse-down", this::toggleCollapsed)
                 .size(56, 20)
@@ -89,7 +99,7 @@ final class HologramEditorGuide {
         chip.child(
             HologramEditorNativeTheme
                 .iconButton("help-circle", () -> "完整说明", this::toggleReference, () -> true, () -> false)
-                .size(20)
+                .size(HologramEditorNativeTheme.ICON_BUTTON)
                 .name("guide.collapsed.help"));
         refreshCollapsed();
         return chip;
@@ -110,7 +120,7 @@ final class HologramEditorGuide {
             bar.setEnabled(!collapsed);
             bar.scheduleResize();
         }
-        if (chip != null) chip.setEnabled(collapsed);
+        if (chip != null) chip.setEnabled(collapsed && !ui.session.isTutorial());
     }
 
     private void toggleReference() {

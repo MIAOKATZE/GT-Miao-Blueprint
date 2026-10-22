@@ -65,7 +65,7 @@ final class HologramEditorLibraryPane {
             .name("native_blueprint_save")
             .widthRel(1f)
             .coverChildrenHeight()
-            .childPadding(5)
+            .childPadding(3)
             .collapseDisabledChild(true);
         page.child(
             HologramEditorNativeTheme.label(() -> "填写名称另存；更新已有蓝图时，明确选择覆盖目标。")
@@ -80,14 +80,14 @@ final class HologramEditorLibraryPane {
         page.child(
             Flow.row()
                 .widthRel(1f)
-                .height(22)
-                .childPadding(4)
+                .height(18)
+                .childPadding(3)
                 .child(
                     saveMode(false).expanded()
-                        .height(22))
+                        .height(18))
                 .child(
                     saveMode(true).expanded()
-                        .height(22)));
+                        .height(18)));
         page.child(
             HologramEditorNativeTheme.label(this::overwriteTargetLabel)
                 .widthRel(1f)
@@ -99,7 +99,7 @@ final class HologramEditorLibraryPane {
                 () -> ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
                 ui.library::nativeCanSave,
                 () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
-                    .height(25));
+                    .height(20));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -118,7 +118,7 @@ final class HologramEditorLibraryPane {
                 () -> "导出 JSON / PNG",
                 () -> idle() && !ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
                 () -> "导出所选已保存蓝图及其原有 PNG 文件。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         save = new HologramRecessedList().paperEdges()
             .name("blueprint_save_content")
             .sizeRel(1f)
@@ -131,7 +131,7 @@ final class HologramEditorLibraryPane {
         Flow page = Flow.col()
             .name("library_content")
             .sizeRel(1f)
-            .childPadding(4)
+            .childPadding(3)
             .collapseDisabledChild(true);
         page.child(
             Flow.row()
@@ -143,23 +143,41 @@ final class HologramEditorLibraryPane {
                         .expanded()
                         .height(20))
                 .child(
-                    action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站。").width(54)
-                        .height(20))
+                    ui.shell.nativeIconAction(309, "library", () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站。")
+                        .size(HologramEditorNativeTheme.ICON_BUTTON))
                 .child(
-                    local(HologramEditorControlIds.LIBRARY + 3, () -> "管理", () -> true, () -> pages.setPage(1))
-                        .width(28)
-                        .height(20)));
+                    ui.shell
+                        .nativeIconAction(
+                            HologramEditorControlIds.LIBRARY + 3,
+                            "settings",
+                            () -> "管理",
+                            () -> true,
+                            () -> "蓝图库管理，保留工作区。")
+                        .size(HologramEditorNativeTheme.ICON_BUTTON)
+                        .onMousePressed(button -> {
+                            if (button == 0) pages.setPage(1);
+                            return true;
+                        }))
+                .child(
+                    HologramEditorNativeTheme
+                        .flatIconButton(
+                            "collapse-right",
+                            () -> "收起蓝图库",
+                            ui.shell::toggleLibrary,
+                            () -> true,
+                            () -> false)
+                        .size(HologramEditorNativeTheme.ICON_BUTTON)));
         page.child(
             Flow.row()
                 .widthRel(1f)
-                .height(22)
-                .childPadding(4)
+                .height(18)
+                .childPadding(3)
                 .child(
                     source(false).expanded()
-                        .height(22))
+                        .height(18))
                 .child(
                     source(true).expanded()
-                        .height(22)));
+                        .height(18)));
         IWidget filter = HologramEditorNativeTheme.textField(search, 120)
             .name("library_search")
             .hintText("搜索蓝图")
@@ -236,30 +254,35 @@ final class HologramEditorLibraryPane {
                 () -> "放置所选蓝图",
                 () -> idle() && ui.library.selectedPresetExists(),
                 () -> "进入真实世界定位，锁定后校验材料并确认施工。").widthRel(1f)
-                    .height(24));
-        page.child(
+                    .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
+        Flow secondary = Flow.row()
+            .widthRel(1f)
+            .height(18)
+            .childPadding(3);
+        secondary.child(
             action(
                 203,
                 () -> ui.library.publicLibrary() ? "下载至客户端" : "上传 / 更新公库",
                 () -> idle() && ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
-                () -> "沿用原 JSON / PNG 传输、权限与配额。").widthRel(1f)
-                    .height(22));
-        page.child(
+                () -> "沿用原 JSON / PNG 传输、权限与配额。").expanded()
+                    .height(18));
+        secondary.child(
             action(299, () -> "放弃当前草稿", () -> idle() && !ui.session.state().cells.isEmpty(), () -> "确认后放弃当前草稿；已保存文件保留。")
-                .widthRel(1f)
-                .height(22));
+                .expanded()
+                .height(18));
+        page.child(secondary);
         return page;
     }
 
     private IWidget management() {
         Flow page = Flow.col()
             .sizeRel(1f)
-            .childPadding(4);
+            .childPadding(3);
         page.child(
             Flow.row()
                 .widthRel(1f)
                 .height(20)
-                .childPadding(4)
+                .childPadding(3)
                 .child(
                     HologramEditorNativeTheme.label(() -> "蓝图库管理")
                         .expanded()
@@ -267,61 +290,80 @@ final class HologramEditorLibraryPane {
                 .child(
                     local(HologramEditorControlIds.LIBRARY + 5, () -> "返回", () -> true, () -> pages.setPage(0))
                         .width(44)
-                        .height(20)));
+                        .height(18))
+                .child(
+                    HologramEditorNativeTheme
+                        .flatIconButton(
+                            "collapse-right",
+                            () -> "收起蓝图库",
+                            ui.shell::toggleLibrary,
+                            () -> true,
+                            () -> false)
+                        .size(HologramEditorNativeTheme.ICON_BUTTON)));
         HologramRecessedList list = new HologramRecessedList().paperEdges()
             .widthRel(1f)
             .expanded();
-        list.child(
+        Flow catalog = Flow.row()
+            .widthRel(1f)
+            .height(18)
+            .childPadding(3);
+        catalog.child(
             local(HologramEditorControlIds.LIBRARY + 4, () -> "刷新目录", this::idle, ui.library::nativeRefreshCatalog)
-                .widthRel(1f)
-                .height(22));
-        list.child(
-            action(139, () -> "编辑所选", () -> idle() && ui.library.selectedPresetExists(), () -> "编辑库中所选蓝图。").widthRel(1f)
-                .height(22));
-        list.child(
+                .expanded()
+                .height(18));
+        catalog.child(
+            action(139, () -> "编辑所选", () -> idle() && ui.library.selectedPresetExists(), () -> "编辑库中所选蓝图。").expanded()
+                .height(18));
+        list.child(catalog);
+        Flow maintenance = Flow.row()
+            .widthRel(1f)
+            .height(18)
+            .childPadding(3);
+        maintenance.child(
             local(
                 HologramEditorControlIds.LIBRARY + 6,
                 () -> "删除所选蓝图",
                 this::canDelete,
-                () -> ui.router.activate(ui.library.nativeDedicated() ? 205 : 175)).widthRel(1f)
-                    .height(22));
-        list.child(
-            action(226, () -> "升级旧蓝图", ui.library::nativeCanUpgrade, () -> "保留原文件版本门禁；服务器公库仅管理员可操作。").widthRel(1f)
-                .height(22));
+                () -> ui.router.activate(ui.library.nativeDedicated() ? 205 : 175)).expanded()
+                    .height(18));
+        maintenance.child(
+            action(226, () -> "升级旧蓝图", ui.library::nativeCanUpgrade, () -> "保留原文件版本门禁；服务器公库仅管理员可操作。").expanded()
+                .height(18));
+        list.child(maintenance);
         list.child(
             action(
                 207,
                 () -> "服务器库设置 · OP 4",
                 () -> !ui.session.isTutorial() && ui.library.nativeAdmin(),
                 () -> "设置服务器上传、下载与每人配额。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         list.child(
             action(
                 142,
                 () -> "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"),
                 this::editing,
                 () -> "本次蓝图的 NBT 保留选择与资源审核。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         list.child(
             action(
                 143,
                 () -> "保留覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"),
                 this::editing,
                 () -> "覆盖板与内部资源分别审核、付款。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         list.child(
             action(227, () -> "全局提示词", this::editing, () -> "编辑整份蓝图的提示。").widthRel(1f)
-                .height(22));
+                .height(18));
         list.child(
             action(
                 161,
                 () -> "导入命名文件",
                 () -> idle() && !ui.library.nativeDedicated(),
                 () -> "在保存页名称框填写文件名，沿用原文件准入与换稿确认。").widthRel(1f)
-                    .height(22));
+                    .height(18));
         list.child(
             action(150, () -> "来源版本", () -> true, () -> "查看来源与依赖。").widthRel(1f)
-                .height(22));
+                .height(18));
         list.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -399,7 +441,7 @@ final class HologramEditorLibraryPane {
         ui.shell.registerTarget("library.row." + slot, button);
         rowList.child(
             new ParentWidget<>().widthRel(1f)
-                .height(25)
+                .height(20)
                 .setEnabledIf(
                     widget -> !row(slot).getString("id")
                         .isEmpty())
