@@ -53,6 +53,8 @@ final class HologramTextWorkflow {
     }
 
     private static void validateAdmission(HologramSession s, long revision) throws IOException {
+        if ("projection".equals(HologramEditorWorkspaceRegistry.mode(s)))
+            throw new IOException("投影模式不支持文字和图片；请先切换到蓝图模式");
         if (s.cancelled || s.virtualPlacement
             || s.presetBrowseForPlacement
             || s.job == 1

@@ -256,6 +256,9 @@ final class HologramUiLibrary {
         }
         if (ui.session.state().data.getBoolean("discardConfirmationRequired")
             && ("openController".equals(operation) || "importArea".equals(operation)
+                || "switchEditorWorkspace".equals(operation)
+                || "confirmProjectionSource".equals(operation)
+                || "clearWorkspace".equals(operation)
                 || presetSwitchOperation(operation) && !proposal.getString("presetId")
                     .isEmpty())) {
             this.sourceSwitchProposal = (NBTTagCompound) proposal.copy();
@@ -440,20 +443,39 @@ final class HologramUiLibrary {
     }
 
     String nativeReviewTitle() {
+        if (clearWorkspaceReview()) return "清空当前工作区？";
+        if (projectionDiscardReview()) return "丢弃当前投影？";
         return ui.processing.processingPresetSaveReview() ? "保存流程预设" : overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动";
     }
 
     String nativeReviewBody() {
+        if (clearWorkspaceReview()) return "清空将丢弃当前内容及未保存改动。取消会保留当前工作区。";
+        if (projectionDiscardReview()) return "打开蓝图将丢弃当前投影及投影记忆。取消会保留当前投影。";
         return overwriteReview ? "将以当前蓝图替换：" + overwriteName
             : deferredLibraryAction == 299 ? "放弃当前草稿及未保存改动，返回蓝图库。已保存文件保留。" : "继续将放弃未保存改动并切换蓝图；取消返回原稿。";
     }
 
     String nativeReviewTarget() {
+        if (clearWorkspaceReview()) return "已保存蓝图文件保留。";
+        if (projectionDiscardReview()) return "丢弃后需右击控制器重新开启投影模式。";
         if (overwriteReview) return "目标：" + overwriteTarget;
         if (!deferredLibraryTargetName.isEmpty()) return "将切换到：" + deferredLibraryTargetName;
         return sourceSwitchProposal == null ? "可先取消并保存当前稿。"
             : "将导入：" + ("openController".equals(sourceSwitchProposal.getString("op")) ? "新控制器结构"
                 : "importArea".equals(sourceSwitchProposal.getString("op")) ? "新的框选区域" : "所选蓝图");
+    }
+
+    boolean projectionDiscardReview() {
+        return sourceSwitchProposal != null && ("switchEditorWorkspace".equals(sourceSwitchProposal.getString("op"))
+            || "confirmProjectionSource".equals(sourceSwitchProposal.getString("op"))
+            || ui.workspaces.hasProjectionContent() && "importArea".equals(sourceSwitchProposal.getString("op")));
+    }
+
+    boolean clearWorkspaceReview() {
+        return sourceSwitchProposal != null
+            && ("clearWorkspace".equals(sourceSwitchProposal.getString("op")) || "clearWorkspace".equals(
+                sourceSwitchProposal.getCompoundTag("projectionAction")
+                    .getString("op")));
     }
 
     String nativeDeleteName() {

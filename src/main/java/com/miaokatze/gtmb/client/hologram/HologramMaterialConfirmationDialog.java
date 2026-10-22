@@ -48,6 +48,16 @@ final class HologramMaterialConfirmationDialog {
     private final RenderItem iconRenderer = new RenderItem();
     private final Map<Integer, BooleanSupplier> enabledControls = new HashMap<>();
     private final Map<Integer, IntSupplier> controlAccents = new HashMap<>();
+    private Runnable lessonClose;
+
+    /** Reuses the actual review tree; the isolated lesson replaces only its command boundary. */
+    ModularPanel buildLesson(Runnable closeLesson) {
+        lessonClose = closeLesson;
+        materials.update(state());
+        ModularPanel panel = build();
+        ui.shell.registerTarget("materials", panel);
+        return panel;
+    }
 
     boolean controlEnabled(int id) {
         BooleanSupplier enabled = enabledControls.get(id);
@@ -181,10 +191,13 @@ final class HologramMaterialConfirmationDialog {
 
     private ModularPanel build() {
         panelBuilds++;
-        MaterialPanel panel = new MaterialPanel();
+        MaterialPanel panel = new MaterialPanel(
+            lessonClose == null ? "gtmb_material_confirmation" : ui.panelName(HologramEditorMaterialLesson.PANEL_NAME),
+            lessonClose != null);
         panel.size(WIDTH, HEIGHT)
             .background(HologramMuiTheme.CLOTH);
-        HologramMuiTheme.header(panel, () -> ui.review.lastConfirmationTitle(), WIDTH);
+        HologramMuiTheme
+            .header(panel, () -> lessonClose == null ? ui.review.lastConfirmationTitle() : "材料与改动 · 教学规划", WIDTH);
         panel.child(
             HologramMuiTheme
                 .label(() -> ui.review.constructionScopeLabel(true), 14, 38, 604, 15, HologramMuiTheme.MUTED));
@@ -341,7 +354,7 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 55,
-                () -> ui.review.lastConfirmationAction(),
+                () -> lessonClose == null ? ui.review.lastConfirmationAction() : "最终确认 · 教学隔离",
                 184,
                 402,
                 434,
@@ -373,6 +386,7 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String reviewHint() {
+        if (lessonClose != null) return "同一规划的精确材料需求 · 教学库存为 0 · 此处不查询玩家库存或执行施工";
         boolean creative = state().getCompoundTag("materialQuote")
             .getBoolean("creativePaymentsFree");
         if (ui.review.placementReviewActive())
@@ -435,6 +449,24 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private ButtonWidget<?> button(int id, Supplier<String> text, int x, int y, int width, Runnable action,
+        BooleanSupplier enabled, IntSupplier accent) {
+        if (lessonClose != null) {
+            ButtonWidget<?> result = nativeButton(
+                id,
+                text,
+                x,
+                y,
+                width,
+                id == 54 ? lessonClose : () -> {},
+                () -> id == 54,
+                accent);
+            if (id == 54) ui.shell.registerTarget("materials.cancel", result);
+            return result;
+        }
+        return nativeButton(id, text, x, y, width, action, enabled, accent);
+    }
+
+    private ButtonWidget<?> nativeButton(int id, Supplier<String> text, int x, int y, int width, Runnable action,
         BooleanSupplier enabled, IntSupplier accent) {
         enabledControls.put(id, enabled);
         controlAccents.put(id, accent);
@@ -588,16 +620,20 @@ final class HologramMaterialConfirmationDialog {
 
     private static final class MaterialPanel extends Dialog<Void> {
 
-        MaterialPanel() {
-            super("gtmb_material_confirmation");
-            setDisablePanelsBelow(true);
+        private final boolean lesson;
+
+        MaterialPanel(String name, boolean lesson) {
+            super(name);
+            this.lesson = lesson;
+            setDisablePanelsBelow(!lesson);
             setCloseOnOutOfBoundsClick(false);
             setDraggable(false);
         }
 
         @Override
         public void transform(IViewportStack stack) {
-            int w = getScreen().getScreenArea().width, h = getScreen().getScreenArea().height;
+            int w = getScreen().getScreenArea().width,
+                h = getScreen().getScreenArea().height - (lesson ? HologramEditorTutorialOverlay.RESERVED_HEIGHT : 0);
             float scale = Math.min(1f, Math.min(w / (float) (WIDTH + 12), h / (float) (HEIGHT + 12)));
             stack.translate((w - WIDTH * scale) / 2f, (h - HEIGHT * scale) / 2f);
             stack.scale(scale, scale);

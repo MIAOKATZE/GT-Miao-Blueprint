@@ -18,6 +18,7 @@ import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.Expandable;
+import com.cleanroommc.modularui.widgets.ListWidget;
 import com.cleanroommc.modularui.widgets.PagedWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
 import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
@@ -54,6 +55,10 @@ final class HologramEditorShell {
     private Flow structureDrawer;
     private boolean structuresOpen;
     private boolean lastCut;
+    private Flow launchers;
+    private boolean launchersExpanded = true, launchersCompact;
+    private HologramEditorTaskProgress taskProgress;
+    private IWidget footer;
     private IFocusedWidget savedFocus;
     private boolean paused;
     private final Map<Integer, List<Entry>> controls = new HashMap<>();
@@ -110,6 +115,10 @@ final class HologramEditorShell {
             .sizeRel(1f)
             .childPadding(0)
             .background(IDrawable.NONE);
+        taskProgress = new HologramEditorTaskProgress(ui, () -> cut == null ? null : cut.progress());
+        presentation.child(
+            taskProgress.widthRel(1f)
+                .height(20));
         presentation.child(buildDocumentBar());
         Flow top = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .widthRel(1f)
@@ -184,6 +193,25 @@ final class HologramEditorShell {
             .background(EDITOR_BACKDROP)
             .child(editBody)
             .child(cutBody);
+        ButtonWidget<?> empty = new ButtonWidget<>().name("editor_native_empty_projection")
+            .sizeRel(1f)
+            .background(IDrawable.NONE)
+            .disableHoverBackground()
+            .overlay((context, x, y, width, height, theme) -> {
+                com.cleanroommc.modularui.drawable.GuiDraw.drawRect(x, y, width, height, 0xc8292d2f);
+                String message = "右击控制器开启投影模式";
+                ui.host.font()
+                    .drawString(
+                        message,
+                        x + (width - ui.host.font()
+                            .getStringWidth(message)) / 2,
+                        y + height / 2,
+                        0xffdad3c6);
+            })
+            .onMousePressed(button -> true)
+            .setEnabledIf(w -> ui.workspaces.emptyProjection());
+        workspace.child(empty);
+        registerTarget("projection.empty", empty);
         editBody.setEnabledIf(w -> !ui.workspaces.isCut());
         cutBody.setEnabledIf(w -> ui.workspaces.isCut());
         presentation.child(workspace);
@@ -202,6 +230,8 @@ final class HologramEditorShell {
                 .child(inspectorBody));
         root.child(content);
         IWidget bottom = bottomOverride == null ? ui.guide.buildBar() : bottomOverride;
+        footer = bottom;
+        bottom.setEnabled(!ui.workspaces.emptyProjection());
         root.child(bottom);
         ui.tools.attach(host);
         ui.guide.attach(host);
@@ -278,13 +308,14 @@ final class HologramEditorShell {
     }
 
     private IWidget headerButton(String name, String icon, Runnable action, BooleanSupplier visible) {
-        boolean major = "save".equals(icon) || "back".equals(icon);
+        boolean major = "save".equals(icon) || "back".equals(icon) || "library".equals(icon);
         Runnable invoke = () -> ui.host.parent()
             .deferAction(action);
         ButtonWidget<?> button = (major ? HologramEditorNativeTheme.button(() -> name, icon, invoke)
             : HologramEditorNativeTheme.iconButton(icon, () -> name, invoke, () -> true, () -> false)).sizeRel(1f);
         registerTarget("header." + icon, button);
-        return new ParentWidget<>().width(major ? 44 : HologramEditorNativeTheme.ICON_BUTTON)
+        return new ParentWidget<>()
+            .width("library".equals(icon) ? 66 : major ? 44 : HologramEditorNativeTheme.ICON_BUTTON)
             .height(major ? 20 : HologramEditorNativeTheme.ICON_BUTTON)
             .setEnabledIf(w -> visible.getAsBoolean())
             .child(button);
@@ -296,9 +327,9 @@ final class HologramEditorShell {
     }
 
     private IWidget buildLaunchers() {
-        Flow launchers = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
+        launchers = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
             .name("editor_native_panel_launchers")
-            .width(HologramEditorNativeTheme.TOOL_RAIL_WIDTH)
+            .width(116)
             .heightRel(1f)
             .padding(2, 4)
             .childPadding(4)
@@ -306,15 +337,21 @@ final class HologramEditorShell {
         String[] icons = { "select", "structure", "process", "material", "network", "info", "place" };
         String[] names = { "所选格属性", "结构配置", "蓝图处理", "材料与来源", "量子组与网络", "提示词与区域", "材料核验与施工" };
         int[] indices = { 0, 3, 1, 4, 5, 6, 8 };
+        ListWidget<IWidget, ?> list = new ListWidget<>().widthRel(1f)
+            .heightRel(1f)
+            .expanded();
         for (int i = 0; i < names.length; i++) {
             final int index = indices[i];
             final String name = names[i];
-            ButtonWidget<?> button = HologramEditorNativeTheme.iconButton(icons[i], () -> name, () -> {
+            ButtonWidget<?> button = HologramEditorNativeTheme.toolButton(() -> name, icons[i], () -> {
                 if (dockExpanded() && pages.getCurrentPageIndex() == index) setDockExpanded(false);
                 else selectDockPage(index);
-            }, () -> true, () -> dockExpanded() && pages.getCurrentPageIndex() == index)
-                .size(HologramEditorNativeTheme.ICON_BUTTON);
-            ParentWidget<?> slot = new ParentWidget<>().size(HologramEditorNativeTheme.ICON_BUTTON)
+            }, () -> true, () -> dockExpanded() && pages.getCurrentPageIndex() == index, this::launcherLabels)
+                .widthRel(1f)
+                .height(18);
+            HologramEditorNativeTheme.guided(button, () -> pageAccent(index), () -> true);
+            ParentWidget<?> slot = new ParentWidget<>().widthRel(1f)
+                .height(22)
                 .child(button);
             if (index == 1 || index == 6) slot.setEnabledIf(w -> ui.workspaces.blueprint());
             if (index == 5) slot.setEnabledIf(
@@ -322,10 +359,74 @@ final class HologramEditorShell {
                     .tagCount() > 0);
             if (index == 8) slot.setEnabledIf(
                 w -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement"));
-            launchers.child(slot);
+            list.child(slot);
             registerTarget("launcher." + index, button);
         }
+        launchers.child(list);
+        ButtonWidget<?> collapse = HologramEditorNativeTheme.button(() -> launcherLabels() ? ">" : "<", () -> {
+            launchersExpanded = !launchersExpanded;
+            refreshRailLayout();
+        })
+            .widthRel(1f)
+            .height(18);
+        collapse.overlay((context, x, y, width, height, theme) -> {
+            String icon = launcherLabels() ? "collapse-right" : "collapse-left";
+            int px = x + (width - HologramEditorNativeTheme.ICON_SIZE) / 2;
+            int py = y + (height - HologramEditorNativeTheme.ICON_SIZE) / 2;
+            HologramEditorIcons.draw(icon, px, py, 12, true, true, false, collapse.isHovering());
+            int accent = 0;
+            for (int index : indices) if (launcherAvailable(index)) accent = strongerAccent(accent, pageAccent(index));
+            HologramEditorIcons.drawGlint(icon, px, py, 12, accent);
+        });
+        launchers.child(collapse);
+        registerTarget("rail.right", launchers);
+        registerTarget("rail.right.toggle", collapse);
         return launchers;
+    }
+
+    private boolean launcherLabels() {
+        return launchersExpanded && !launchersCompact;
+    }
+
+    private boolean launcherAvailable(int page) {
+        return switch (page) {
+            case 1, 6 -> ui.workspaces.blueprint();
+            case 5 -> ui.workspaces.blueprint() || ui.bindings.networkGroups()
+                .tagCount() > 0;
+            case 8 -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement");
+            default -> true;
+        };
+    }
+
+    private int pageAccent(int page) {
+        if (pages == null || !launcherAvailable(page)) return 0;
+        IWidget pageRoot = pages.getPages()
+            .get(page);
+        int accent = 0;
+        for (Map.Entry<Integer, List<Entry>> control : controls.entrySet()) for (Entry entry : control.getValue()) {
+            if (!entry.enabled.getAsBoolean()) continue;
+            IWidget ancestor = entry.widget;
+            while (ancestor != pageRoot && ancestor.hasParent()) ancestor = ancestor.getParent();
+            if (ancestor == pageRoot) accent = strongerAccent(accent, actionAccent(control.getKey(), entry.enabled));
+        }
+        return accent;
+    }
+
+    static int strongerAccent(int current, int candidate) {
+        if (candidate == 0) return current;
+        if (current == 0 || accentPriority(candidate) > accentPriority(current)) return candidate;
+        return current;
+    }
+
+    private static int accentPriority(int accent) {
+        if (HologramUiAccent.color(accent) == HologramUiAccent.NEXT) return 4;
+        if (HologramUiAccent.color(accent) == HologramUiAccent.WARNING) return 3;
+        return accent == HologramUiAccent.SPECTRUM ? 2 : 1;
+    }
+
+    void refreshRailLayout() {
+        layoutSidebars();
+        if (root != null) root.scheduleResize();
     }
 
     private Expandable expandable() {
@@ -385,7 +486,7 @@ final class HologramEditorShell {
         body.child(heading)
             .child(pages);
         inspectorBody = body;
-        inspectorBody.setEnabledIf(w -> inspectorOpen && !ui.workspaces.isCut());
+        inspectorBody.setEnabledIf(w -> inspectorOpen && !ui.workspaces.isCut() && !ui.workspaces.emptyProjection());
         dock.collapsedView(
             new com.cleanroommc.modularui.widget.Widget<>().width(0)
                 .heightRel(1f)
@@ -482,6 +583,8 @@ final class HologramEditorShell {
 
     void tick() {
         if (root == null || paused || properties == null) return;
+        if (footer != null) footer.setEnabled(!ui.workspaces.emptyProjection());
+        if (taskProgress != null) taskProgress.refresh();
         boolean showingCut = ui.workspaces.isCut();
         cut.activate(showingCut);
         if (lastCut != showingCut) {
@@ -532,9 +635,14 @@ final class HologramEditorShell {
                     if (text != null && !text.isEmpty()) t.addLine(text);
                 })
                 .tooltipAutoUpdate(true);
-        HologramEditorNativeTheme.guided(widget, () -> ui.canvas.controlAccent(id), enabled);
+        HologramEditorNativeTheme.guided(widget, () -> actionAccent(id, enabled), enabled);
         registerControl(id, widget, label, enabled);
         return widget;
+    }
+
+    private int actionAccent(int id, BooleanSupplier enabled) {
+        if (id == 50 && enabled.getAsBoolean() && !ui.workspaces.emptyProjection()) return HologramUiAccent.NEXT;
+        return ui.canvas.controlAccent(id);
     }
 
     void registerControl(int id, IWidget widget, Supplier<String> label, BooleanSupplier enabled) {
@@ -645,8 +753,18 @@ final class HologramEditorShell {
 
     private void layoutSidebars() {
         if (content == null || !content.isValid() || libraryBody == null) return;
-        int available = content.getArea().width - HologramEditorNativeTheme.TOOL_RAIL_WIDTH * 2
-            - (structuresOpen ? 144 : 0);
+        int minimumLibrary = ui.workspaces.blueprint() ? libraryDrawer.isExpanded() ? 100 : 18 : 0;
+        int railBudget = content.getArea().width - (structuresOpen ? 144 : 0) - minimumLibrary - 180;
+        int left = ui.tools.nativeTools()
+            .requestedRailWidth();
+        launchersCompact = launchersExpanded && left + 116 > railBudget;
+        int right = launcherLabels() ? 116 : HologramEditorNativeTheme.TOOL_RAIL_WIDTH;
+        ui.tools.nativeTools()
+            .compactRail(left + right > railBudget);
+        if (launchers != null && launchers.getArea().width != right) launchers.width(right)
+            .scheduleResize();
+        int available = content.getArea().width - ui.tools.nativeTools()
+            .railWidth() - right - (structuresOpen ? 144 : 0);
         int width = Math.min(220, Math.max(100, available - 180));
         if (libraryWidth != width) {
             libraryWidth = width;
@@ -677,12 +795,14 @@ final class HologramEditorShell {
             if (origin == null) return;
             w = Math.min(184, Math.max(100, content.getArea().width - 24));
             h = area[3];
-            x = Math.max(0, area[0] - origin[0] - w);
+            int librarySpace = ui.workspaces.blueprint() ? libraryDrawer.isExpanded() ? libraryWidth : 18 : 0;
+            x = Math.max(0, content.getArea().width - librarySpace - w);
             y = area[1] - origin[1];
         } else {
             int[] area = bounds(dock), origin = bounds(content);
             if (area == null || origin == null || area[2] < 100) return;
-            x = area[0] - origin[0];
+            int librarySpace = ui.workspaces.blueprint() ? libraryDrawer.isExpanded() ? libraryWidth : 18 : 0;
+            x = Math.max(0, content.getArea().width - librarySpace - area[2]);
             y = area[1] - origin[1];
             w = area[2];
             h = area[3];
@@ -956,6 +1076,46 @@ final class HologramEditorShell {
             .getPanelManager()
             .getOpenPanels()) if (panel != host && visible(panel) && panel.disablePanelsBelow()) return panel;
         return null;
+    }
+
+    /** Escape/E returns through the actual native owner, one visible layer per key press. */
+    boolean consumeBackLayer() {
+        ModularPanel modal = topModal();
+        if (modal != null) {
+            IWidget close = modalCloseWidget();
+            if (close instanceof com.cleanroommc.modularui.api.widget.Interactable) {
+                LocatedWidget located = LocatedWidget.of(close);
+                located.applyMatrix(host.getContext());
+                try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
+                    .fieldGraph(ui)) {
+                    ((com.cleanroommc.modularui.api.widget.Interactable) close).onMousePressed(0);
+                } finally {
+                    located.unapplyMatrix(host.getContext());
+                }
+            } else ui.host.parent()
+                .deferAction(modal::closeIfOpen);
+            return true;
+        }
+        if (ui.tools.viewWorkspaceOpen()) {
+            ui.tools.closeTransient();
+            return true;
+        }
+        if (ui.tools.nativeTools()
+            .consumeFloatingBack()) return true;
+        if (libraryPageSelected() && library.consumeBackLayer()) return true;
+        if (structuresOpen) {
+            toggleStructures();
+            return true;
+        }
+        if (dockExpanded()) {
+            setDockExpanded(false);
+            return true;
+        }
+        if (libraryPageSelected()) {
+            toggleLibrary();
+            return true;
+        }
+        return false;
     }
 
     private int[] modalCloseBounds() {

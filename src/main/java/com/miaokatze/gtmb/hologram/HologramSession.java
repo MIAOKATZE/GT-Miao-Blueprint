@@ -33,6 +33,11 @@ final class HologramSession {
     String id = UUID.randomUUID()
         .toString();
     long editorWorkspaceEpoch;
+    /** A controller-free projection page is still a distinct server-owned editor domain. */
+    boolean emptyProjection;
+    boolean projectionDiscardApproved;
+    boolean projectionAreaImportDiscard;
+    HologramPresets.Preset projectionSourcePreset;
     String cutWorkspaceRequestId = "";
     int x, y, z, side;
     final int dimension, slot;

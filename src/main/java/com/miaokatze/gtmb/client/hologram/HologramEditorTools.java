@@ -27,6 +27,10 @@ final class HologramEditorTools {
         return commands;
     }
 
+    HologramEditorNativeTools nativeTools() {
+        return nativeTools;
+    }
+
     void attach(ModularPanel host) {
         nativeTools.attach(host);
     }
@@ -150,6 +154,7 @@ final class HologramEditorTools {
         if (pointerCaptured()) return true;
         String command = commands.match(key, HologramKeyBindings.modifiers());
         if (commands.workspaceCommand(command)) return commands.execute(command);
+        if ("shortcuts".equals(command) && ui.workspaces.emptyProjection()) return commands.execute(command);
         if (ui.workspaces.isCut()) return key != Keyboard.KEY_ESCAPE && key != Keyboard.KEY_E;
         if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E || !commands.sceneAvailable()) return false;
         return !command.isEmpty() && commands.execute(command);

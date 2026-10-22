@@ -43,6 +43,7 @@ final class HologramWorkspace {
         final long sequence, sourceTask, targetTask;
         final long originEditorEpoch;
         final boolean hadSelection;
+        boolean discardProjection;
 
         PresentationTransition(HologramSession origin, HologramSession target) {
             this.origin = origin;
@@ -53,6 +54,8 @@ final class HologramWorkspace {
             originEditorEpoch = origin.editorWorkspaceEpoch;
             sourceTask = origin.blueprintClientTaskToken;
             targetTask = target.blueprintClientTaskToken;
+            discardProjection = HologramEditorWorkspaceRegistry.physicalProjection(origin)
+                && (origin.projectionDiscardApproved || origin.projectionAreaImportDiscard);
             ItemStack held = HologramSessionPolicy.currentTool(origin);
             hadSelection = held != null && held.getTagCompound()
                 .hasKey(HologramSessionKeys.SELECTED_PRESET, 8);
@@ -121,10 +124,14 @@ final class HologramWorkspace {
     static void commitPresentation(HologramSession target, net.minecraft.nbt.NBTTagCompound baseline) {
         if (target == null || target.presentationTransition == null
             || !baseline.hasKey("cells", 9)
+            || !baseline.hasKey("editorWorkspaceEpoch", 4)
+            || baseline.getLong("editorWorkspaceEpoch") != target.editorWorkspaceEpoch
             || baseline.getBoolean("partial")) return;
         PresentationTransition transition = target.presentationTransition;
-        if (transition.matchesTarget(target.player, baseline.getString("session"), baseline.getLong("uiSequence")))
+        if (transition.matchesTarget(target.player, baseline.getString("session"), baseline.getLong("uiSequence"))) {
             target.presentationTransition = null;
+            if (transition.discardProjection) HologramEditorWorkspaceRegistry.discardProjection(transition.origin);
+        }
     }
 
     /** Only a still-current, unpublished display switch may restore the exact former server route. */

@@ -1,0 +1,772 @@
+[
+  {
+    "source": "author-after-165-full.nbt.gz",
+    "sourceSha256": "5e8f7334a94a0c6b0f4523928bf0610e5c12ea9f146a538d5612fd26d0341c3b",
+    "derived": "author-after-165-full.portable.nbt.gz",
+    "derivedSha256": "2dabfd7f278f53b2e57e2d5a2f444e7df7f9396edac43c055fb5e85ecad2b922",
+    "bytes": 12090,
+    "itemStacksBound": 70,
+    "bindings": [
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      }
+    ]
+  },
+  {
+    "source": "author-selected-details-full.nbt.gz",
+    "sourceSha256": "995da4e43fa5c81a96f88a6e9f47c55cf164ef9ab8810ae2b1ba897af5b2ae30",
+    "derived": "author-selected-details-full.portable.nbt.gz",
+    "derivedSha256": "a3f53cd27fa1d84af8e2872b6703b83a9a63675fbe78bf88bc277666581abc57",
+    "bytes": 12630,
+    "itemStacksBound": 84,
+    "bindings": [
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      }
+    ]
+  },
+  {
+    "source": "ebf-source-selected-details.nbt.gz",
+    "sourceSha256": "804b38784c5153d7abf0b3d88bd28e4887ea8be348dedc67452ec71b7ca09e52",
+    "derived": "ebf-source-selected-details.portable.nbt.gz",
+    "derivedSha256": "90f9e51ee10f7c8c6a57c876d3a52975dd395196415684d7d384bdbf44bdfadf",
+    "bytes": 9286,
+    "itemStacksBound": 65,
+    "bindings": [
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "actualStack"
+      }
+    ]
+  },
+  {
+    "source": "member-after-163-full.nbt.gz",
+    "sourceSha256": "04db4be166367c6e47a4f87a27b5db80dda2e3a00d921dfbc76a33af89484f7b",
+    "derived": "member-after-163-full.portable.nbt.gz",
+    "derivedSha256": "2546e9a0b6e8fb4118bc0e76e406e339758a7cca8140f181679c9509d2d46996",
+    "bytes": 12635,
+    "itemStacksBound": 84,
+    "bindings": [
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3363,
+        "registry": "gregtech:gt.blockcasings5",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3359,
+        "registry": "gregtech:gt.blockcasings",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 3358,
+        "registry": "gregtech:gt.blockmachines",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      },
+      {
+        "numeric": 11845,
+        "registry": "littletiles:BlockLittleTiles",
+        "field": "targetStack"
+      }
+    ]
+  }
+]

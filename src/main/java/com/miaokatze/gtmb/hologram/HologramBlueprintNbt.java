@@ -230,6 +230,27 @@ final class HologramBlueprintNbt {
         }
     }
 
+    /** Strict read of offline observations: process-local numeric IDs have no fallback authority. */
+    static NBTTagCompound restorePortableObservation(NBTTagCompound portable) throws IOException {
+        checkDepth(portable, 0);
+        requireItemBindings(portable);
+        NBTTagCompound copy = (NBTTagCompound) portable.copy();
+        stableItems(copy, false);
+        if (hasMissingItems(copy)) throw new IOException("The observation requires an unavailable registered item");
+        return copy;
+    }
+
+    private static void requireItemBindings(NBTBase tag) throws IOException {
+        if (tag instanceof NBTTagCompound) {
+            NBTTagCompound compound = (NBTTagCompound) tag;
+            if (itemCompound(compound) && !compound.hasKey(ITEM_REGISTRY, 8))
+                throw new IOException("An offline observation has an unbound numeric ItemStack ID");
+            for (Object key : compound.func_150296_c()) requireItemBindings(compound.getTag((String) key));
+        } else if (tag instanceof NBTTagList) {
+            for (NBTBase entry : listEntries((NBTTagList) tag)) requireItemBindings(entry);
+        }
+    }
+
     static NBTTagCompound decodeData(String value) throws IOException {
         if (value == null || value.isEmpty()) return null;
         if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");

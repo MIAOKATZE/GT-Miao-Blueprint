@@ -26,6 +26,7 @@ final class HologramUiTextBoxes {
     private boolean chosen, pending;
     private long request;
     private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job localJob;
+    private final HologramProgress.Tracker taskProgress = new HologramProgress.Tracker();
     private byte[] picturePixels;
     private final HologramPictureTexture pictureTexture = new HologramPictureTexture();
     private static final int[][] FACES = { { 0, 1, 3, 2 }, { 4, 6, 7, 5 }, { 0, 4, 5, 1 }, { 2, 3, 7, 6 },
@@ -37,7 +38,8 @@ final class HologramUiTextBoxes {
 
     boolean allowed() {
         NBTTagCompound state = ui.session.state().data;
-        return ui.session.editable() && !state.getBoolean("virtualPlacement")
+        return ui.workspaces.blueprint() && ui.session.editable()
+            && !state.getBoolean("virtualPlacement")
             && !state.getBoolean("presetBrowseForPlacement")
             && !state.getBoolean("snapshotPending")
             && !state.getBoolean("localPlanPending")
@@ -47,6 +49,40 @@ final class HologramUiTextBoxes {
 
     boolean active() {
         return draft != null;
+    }
+
+    HologramProgress progress() {
+        if (draft == null || localJob == null && !pending) {
+            taskProgress.clear();
+            return null;
+        }
+        long now = System.nanoTime();
+        if (localJob != null) return taskProgress.update(
+            "attachment:" + request,
+            "attachment.generate",
+            localJob.completed,
+            localJob.total,
+            "cells",
+            false,
+            now);
+        NBTTagCompound upload = com.miaokatze.gtmb.hologram.HologramAttachmentUpload.clientProgressState();
+        if (upload.getBoolean("pending")) return taskProgress.update(
+            "attachment:" + request,
+            upload.getString("phase"),
+            upload.getLong("done"),
+            upload.getLong("total"),
+            "bytes",
+            false,
+            now);
+        NBTTagCompound ack = ui.session.state().data.getCompoundTag("textPlacementAck");
+        return taskProgress.update(
+            "attachment:" + request,
+            "attachment.validate",
+            ack.getBoolean("pending") ? ack.getLong("done") : 0,
+            ack.getBoolean("pending") ? ack.getLong("total") : 0,
+            "cells",
+            false,
+            now);
     }
 
     boolean choosingPosition() {

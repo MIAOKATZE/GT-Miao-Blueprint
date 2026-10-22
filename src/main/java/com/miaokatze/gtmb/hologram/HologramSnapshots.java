@@ -848,6 +848,8 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
+        if (s.presentationTransition != null)
+            state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);
         state.setBoolean("attachmentPending", s.attachmentTask != null);
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
         state.setBoolean("placementValidating", s.placementValidating);

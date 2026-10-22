@@ -56,15 +56,32 @@ final class HologramDraftPersistence {
     }
 
     static NBTTagCompound storedDraft(HologramSession s, ItemStack held) {
-        NBTTagCompound owned = HologramDraftStorage.get(s.player.worldObj)
-            .read(draftKey(s));
-        if (draftMatches(s, owned)) return owned;
         NBTTagCompound draft = held.getTagCompound()
             .getCompoundTag(HologramSessionKeys.DRAFT);
+        // The item marker identifies the one remembered projection. Historical controller keys
+        // must not revive a projection after another controller or a confirmed discard replaced it.
+        if (!draftMatches(s, draft)) return new NBTTagCompound();
         if (!draft.getBoolean("serverStored")) return draft;
         String key = draft.getString("storageKey");
         return HologramDraftStorage.get(s.player.worldObj)
             .read(key.isEmpty() ? legacyDraftKey(s) : key);
+    }
+
+    static void forgetProjection(HologramSession s) {
+        ItemStack held = HologramSessionPolicy.currentTool(s);
+        if (held == null) return;
+        if (s.libraryWorld.perWorldStorage != null) {
+            HologramDraftStorage storage = HologramDraftStorage.get(s.libraryWorld);
+            storage.remove(draftKey(s));
+            storage.remove(legacyDraftKey(s));
+        }
+        NBTTagCompound draft = held.getTagCompound()
+            .getCompoundTag(HologramSessionKeys.DRAFT);
+        if (draftMatches(s, draft)) {
+            held.getTagCompound()
+                .removeTag(HologramSessionKeys.DRAFT);
+            s.player.inventory.markDirty();
+        }
     }
 
     static void writeDraft(HologramSession s, ItemStack held) {

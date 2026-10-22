@@ -92,16 +92,19 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     private boolean traceAvailable;
     private boolean clickPosition;
     private int clickPixelX, clickPixelY;
+    private final HologramPlacementPointer placementPointer = new HologramPlacementPointer();
 
     private final CameraControls controls = new CameraControls() {
 
         @Override
         public boolean supports(CameraControl control) {
-            return true;
+            return !HologramClient.controlHeld()
+                || control != CameraControl.PAN && control != CameraControl.YAW && control != CameraControl.PITCH;
         }
 
         @Override
         public void panWorld(double dx, double dy, double dz) {
+            if (HologramClient.controlHeld()) return;
             if (!Double.isFinite(dx) || !Double.isFinite(dy) || !Double.isFinite(dz)) return;
             x += dx;
             y += dy;
@@ -110,6 +113,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
         @Override
         public void rotate(double yawDelta, double pitchDelta) {
+            if (HologramClient.controlHeld()) return;
             if (!Double.isFinite(yawDelta) || !Double.isFinite(pitchDelta)) return;
             yaw += yawDelta;
             pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, pitch + pitchDelta));
@@ -235,6 +239,19 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         tracedTick = Long.MIN_VALUE;
         hit = null;
         traceAvailable = false;
+        placementPointer.clear();
+    }
+
+    /** Camera navigation may move the view; only Ctrl updates the proposed world placement. */
+    HologramWorldTarget.Target placementTarget(boolean floating, int distance, int[] feet) {
+        Minecraft mc = Minecraft.getMinecraft();
+        int[] at = placementPointer
+            .sample(HologramClient.controlHeld(), () -> target(floating, true, distance, feet).anchor);
+        if (at == null || mc.theWorld == null
+            || at[1] < 0
+            || at[1] >= mc.theWorld.getHeight()
+            || !mc.theWorld.blockExists(at[0], at[1], at[2])) return new HologramWorldTarget.Target(null, false);
+        return new HologramWorldTarget.Target(at.clone(), false);
     }
 
     private void resetCamera() {

@@ -27,6 +27,22 @@ final class HologramLibraryWorkflow {
             HologramSnapshots.send(s);
             return;
         }
+        if (HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+            if (!HologramEditorWorkspaceRegistry.allowProjectionSource(s, request, "discardBlueprint", "")) {
+                HologramSnapshots.send(s);
+                return;
+            }
+            HologramSession blank = new HologramSession(s.player, s.x, s.y, s.z, false, s.side);
+            blank.virtual = true;
+            blank.open = true;
+            blank.libraryUiActive = true;
+            blank.blueprintSource = "discarded";
+            blank.openPurpose = "blueprintBrowse";
+            blank.status = "可重新选择蓝图或框选导入。已保存蓝图保留";
+            HologramWorkspace.PresentationTransition transition = HologramWorkspace.preparePresentation(s, blank);
+            if (transition != null && HologramWorkspace.activatePresentation(transition)) HologramSnapshots.send(blank);
+            return;
+        }
         net.minecraft.item.ItemStack tool = HologramSessionPolicy.currentTool(s);
         if (tool != null && tool.hasTagCompound()) {
             tool.getTagCompound()
@@ -102,7 +118,7 @@ final class HologramLibraryWorkflow {
         throws java.io.IOException {
         String token = HologramLibraryService.quickToken(request.getString("quickToken"));
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
-        if (previous != null
+        if (previous != null && !HologramEditorWorkspaceRegistry.physicalProjection(previous)
             && !HologramAuthoringWorkflow.allowBlueprintDiscard(previous, request, "choosePlacementPreset", ""))
             throw new java.io.IOException("当前蓝图有未保存修改；请打开蓝图库明确确认放弃后再快捷放置");
         HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
@@ -128,14 +144,17 @@ final class HologramLibraryWorkflow {
             || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
             || !HologramSessionPolicy.previewReach(player, x, y, z)
             || !player.worldObj.blockExists(x, y, z)) throw new java.io.IOException("快捷放置位置未加载或超出范围");
-        HologramSession session = HologramWorkspace.create(player, x, y, z, false, side);
-        session.virtual = true;
-        session.open = false;
+        boolean projectionSource = previous != null && HologramEditorWorkspaceRegistry.physicalProjection(previous);
+        HologramSession session = projectionSource ? previous : HologramWorkspace.create(player, x, y, z, false, side);
+        if (!projectionSource) {
+            session.virtual = true;
+            session.open = false;
+        }
         session.libraryQuickToken = token;
         session.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
         session.libraryQuickPending = true;
         session.libraryQuickBootstrapTick = tick;
-        HologramWorkspace.activate(player.getUniqueID(), session);
+        if (!projectionSource) HologramWorkspace.activate(player.getUniqueID(), session);
         NBTTagCompound result = HologramLibraryProtocol.reply("quickBootstrap");
         result.setString("quickToken", token);
         result.setLong("clientTaskToken", session.libraryQuickClientTaskToken);
@@ -199,6 +218,15 @@ final class HologramLibraryWorkflow {
         // Only canonical, server-owned input reaches this internal receiver. The cache never exposes its base.
         if (!librarySessionCurrent(player, request)) throw new java.io.IOException("蓝图会话已更新");
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
+        if (HologramEditorWorkspaceRegistry.physicalProjection(s) && !s.projectionDiscardApproved) {
+            String previousNonce = s.pendingSourceAction.getString("sourceSwitchNonce");
+            HologramEditorWorkspaceRegistry
+                .allowProjectionSource(s, request, "projectionLibraryActivate", request.getString("localId"));
+            if (!previousNonce.equals(s.pendingSourceAction.getString("sourceSwitchNonce")))
+                s.projectionSourcePreset = HologramPresets.copy(uploaded);
+            HologramSnapshots.send(s);
+            return "projectionDiscardPending";
+        }
         if (!HologramAuthoringWorkflow.allowBlueprintDiscard(s, request, operation, request.getString("localId"))) {
             HologramSnapshots.send(s);
             throw new java.io.IOException("当前蓝图有未保存修改；请确认放弃后重新选择");

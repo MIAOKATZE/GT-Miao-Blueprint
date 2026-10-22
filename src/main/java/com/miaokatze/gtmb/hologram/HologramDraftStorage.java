@@ -33,6 +33,12 @@ public final class HologramDraftStorage extends WorldSavedData {
         markDirty();
     }
 
+    void remove(String key) {
+        if (!drafts.hasKey(key)) return;
+        drafts.removeTag(key);
+        markDirty();
+    }
+
     @Override
     public void readFromNBT(NBTTagCompound tag) {
         drafts = tag.getCompoundTag("drafts");

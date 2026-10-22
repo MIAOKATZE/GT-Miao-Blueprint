@@ -83,8 +83,8 @@ final class HologramEditorCommands {
         add("overview", "返回区域总览", "back", 165, Keyboard.KEY_BACK, 0, false, "保留各来源成员的当前配置并返回总览。");
         add("sources", "材料来源设置", "material", 78, Keyboard.KEY_M, 0, false, "主背包、容器与 ME 开关和优先级沿用现有配置链。");
         add("library", "蓝图库", "library", 149, Keyboard.KEY_L, 0, false, "进入已有蓝图库，不制造新的世界或会话。");
-        add("projectionWorkspace", "投影工作区", "world", -1, Keyboard.KEY_1, 1, false, "返回独立控制器投影；保留蓝图草稿。");
-        add("blueprintWorkspace", "蓝图工作区", "library", -1, Keyboard.KEY_2, 1, false, "切换独立作者蓝图；保留投影规划。");
+        add("projectionWorkspace", "投影工作区", "world", -1, Keyboard.KEY_1, 1, false, "查看最近一次控制器投影；没有投影时提示右击控制器。");
+        add("blueprintWorkspace", "蓝图工作区", "library", -1, Keyboard.KEY_2, 1, false, "进入作者蓝图；已有投影须先确认放弃，取消则保留原内容。");
         add("cutWorkspace", "剪切工作区", "cut", -1, Keyboard.KEY_3, 1, false, "在当前工作台打开剪切列表与预览。");
         add("process", "蓝图处理", "process", 220, Keyboard.KEY_F4, 0, false, "沿已有作者处理门禁打开六步流程。");
         add("save", "保存当前蓝图", "save", 140, Keyboard.KEY_S, 1, false, "复用现有保存与审核流程。");
@@ -92,7 +92,7 @@ final class HologramEditorCommands {
         add("image", "图片蓝图", "image", 332, Keyboard.KEY_F8, 0, false, "复用图片编辑与附件选位流程。");
         add("rotateTextVertical", "文字竖向转动", "rotate", -1, Keyboard.KEY_R, 4, false, "只对已有文字附件使用原竖向旋转操作。");
         add("floatingTools", "唤出 / 收起浮动工具", "detach", -1, Keyboard.KEY_SPACE, 0, false, "拖动标题移动工具条；收起后仍可从左侧或此快捷键唤回。");
-        add("shortcuts", "编辑器快捷键", "help", 110, Keyboard.KEY_F1, 0, false, "编辑器命令独立于游戏键位；E / Esc 保留退出。");
+        add("shortcuts", "编辑器快捷键", "help", 110, Keyboard.KEY_F1, 0, false, "编辑器命令独立于游戏键位；E / Esc 逐级返回，根层才退出。");
         add("viewWorkspace", "视图与工作区", "world", -1, Keyboard.KEY_NONE, 0, false, "打开视图、切片、世界投影和现有工作区入口；不改变当前选择。");
         add("viewCycle", "目标 / 现场 / 差分", "visible", 10, Keyboard.KEY_NONE, 0, false, "切换目标结构、真实现场和施工差分。");
         add("worldPreview", "世界投影显示", "world", 15, Keyboard.KEY_NONE, 0, false, "显示或隐藏世界中的材质预览，不执行施工。");
@@ -105,7 +105,15 @@ final class HologramEditorCommands {
             0,
             false,
             "开始世界框选：左键第一角、右键第二角，Alt使用玩家位置，再次Shift+右击完成，Esc取消。");
-        add("clearWorkspace", "清空当前工作区", "clear", 330, Keyboard.KEY_NONE, 0, false, "清空当前编辑工作区；这不是拆除世界方块。");
+        add(
+            "clearWorkspace",
+            "清空当前工作区",
+            "clear",
+            330,
+            Keyboard.KEY_DELETE,
+            3,
+            false,
+            "清空当前编辑工作区；这不是拆除世界方块，未保存内容沿原放弃确认流程处理。");
         add(
             "networkBindings",
             "已有量子类群绑定",
@@ -262,6 +270,19 @@ final class HologramEditorCommands {
                         } else throw new IllegalArgumentException("Conflicting editor key binding");
                     }
             }
+            // Earlier versions saved this command as unbound. Respect any existing owner of its new shortcut.
+            int clear = index("clearWorkspace");
+            if (!"2".equals(values.getProperty("editorKeySchema")) && keys[clear] == Keyboard.KEY_NONE) {
+                Command command = get(clear);
+                boolean available = true;
+                for (int i = 0; i < size(); i++)
+                    if (i != clear && keys[i] == command.defaultKey && modifiers[i] == command.defaultModifiers)
+                        available = false;
+                if (available) {
+                    keys[clear] = command.defaultKey;
+                    modifiers[clear] = command.defaultModifiers;
+                }
+            }
             for (int i = 0; i < size(); i++) {
                 get(i).key = keys[i];
                 get(i).modifiers = modifiers[i];
@@ -277,9 +298,10 @@ final class HologramEditorCommands {
         File parent = file.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) return false;
         Properties values = new Properties();
+        values.setProperty("editorKeySchema", "2");
         for (Command command : commands) values.setProperty(command.name, command.key + ":" + command.modifiers);
         try (FileOutputStream output = new FileOutputStream(file)) {
-            values.store(output, "GTMB independent editor shortcuts (ctrl=1, shift=2, alt=4); E/Esc remain close");
+            values.store(output, "GTMB independent editor shortcuts (ctrl=1, shift=2, alt=4); E/Esc return one layer");
             return true;
         } catch (IOException failure) {
             return false;
@@ -325,6 +347,7 @@ final class HologramEditorCommands {
     String reason(String name) {
         if (get(name) == null) return "未知编辑器命令";
         if (workspaceCommand(name)) return ui.workspaces.switching() ? "正在切换工作区，请等待回执" : "";
+        if (ui.workspaces.emptyProjection()) return "shortcuts".equals(name) ? "" : "右击控制器开启投影模式";
         if ("viewWorkspace".equals(name)) return viewContextAvailable() ? "" : "先完成当前窗口或任务，再查看视图与工作区";
         if (legacyViewCommand(name)) {
             if (!viewContextAvailable()) return "先完成当前窗口或任务，再调整视图";

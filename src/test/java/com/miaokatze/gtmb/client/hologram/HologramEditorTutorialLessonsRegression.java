@@ -3,12 +3,15 @@ package com.miaokatze.gtmb.client.hologram;
 import java.io.IOException;
 import java.util.List;
 
+import net.minecraft.init.Items;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Action;
 import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Operation;
 import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Step;
+import com.miaokatze.gtmb.hologram.HologramObservedItemBindings;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Use the shipped lossless observations to distinguish a controller capture from declared author members. */
@@ -18,8 +21,9 @@ public final class HologramEditorTutorialLessonsRegression {
 
     public static void run() {
         try {
+            portableIdentityWinsOverNumericId();
             NBTTagCompound physicalData = HologramEditorTutorialSamples
-                .snapshot(HologramEditorTutorialSamples.Kind.PHYSICAL);
+                .portableObservation(HologramEditorTutorialSamples.Kind.PHYSICAL);
             NBTTagCompound physicalBefore = (NBTTagCompound) physicalData.copy();
             HologramState physical = new HologramState(physicalData);
             SimpleAssert.eq(36, physical.cells.size(), "the real physical EBF capture retains all 36 declared cells");
@@ -79,7 +83,7 @@ public final class HologramEditorTutorialLessonsRegression {
                 "a blank declaration cannot promote the empty membership sentinel into an area member");
 
             HologramState author = new HologramState(
-                HologramEditorTutorialSamples.snapshot(HologramEditorTutorialSamples.Kind.AUTHOR));
+                HologramEditorTutorialSamples.portableObservation(HologramEditorTutorialSamples.Kind.AUTHOR));
             String primary = HologramEditorTutorialSamples.primaryStructure(HologramEditorTutorialSamples.Kind.AUTHOR);
             SimpleAssert
                 .eq(39, author.cells.size(), "the recorded author fixture retains its EBF plus additional cells");
@@ -111,6 +115,35 @@ public final class HologramEditorTutorialLessonsRegression {
         } catch (IOException failure) {
             throw new AssertionError("The shipped EBF tutorial observations must load and validate", failure);
         }
+    }
+
+    private static void portableIdentityWinsOverNumericId() throws IOException {
+        NBTTagCompound stack = new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound());
+        stack.setString("gtitBlueprintItemRegistry", "minecraft:diamond");
+        stack.setShort("id", (short) net.minecraft.item.Item.getIdFromItem(Items.iron_ingot));
+        NBTTagCompound root = new NBTTagCompound();
+        NBTTagList nested = new NBTTagList();
+        nested.appendTag(stack);
+        root.setTag("nestedInventory", nested);
+        NBTTagCompound restored = HologramObservedItemBindings.restore(root);
+        SimpleAssert.that(
+            ItemStack.loadItemStackFromNBT(
+                restored.getTagList("nestedInventory", 10)
+                    .getCompoundTagAt(0))
+                .getItem() == Items.diamond,
+            "nested portable ItemStacks bind by registry name even when the numeric ID resolves to another real item");
+        SimpleAssert.eq(
+            net.minecraft.item.Item.getIdFromItem(Items.iron_ingot),
+            (int) stack.getShort("id"),
+            "restoring a portable observation leaves the source evidence immutable");
+        stack.removeTag("gtitBlueprintItemRegistry");
+        boolean rejected = false;
+        try {
+            HologramObservedItemBindings.restore(root);
+        } catch (IOException missing) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "an offline numeric ItemStack without a registry binding is rejected");
     }
 
     private static boolean hasOperation(List<Step> steps, Operation operation) {

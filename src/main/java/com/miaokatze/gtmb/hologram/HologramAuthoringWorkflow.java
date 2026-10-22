@@ -683,6 +683,8 @@ final class HologramAuthoringWorkflow {
     }
 
     static boolean allowBlueprintDiscard(HologramSession s, NBTTagCompound action, String op, String id) {
+        if (HologramEditorWorkspaceRegistry.physicalProjection(s) && !"resetDraft".equals(op))
+            return HologramEditorWorkspaceRegistry.allowProjectionSource(s, action, op, id);
         boolean dirty = blueprintHasUnsavedChanges(s);
         if (!dirty || action.getBoolean("confirmDiscard")) {
             clearSourceSwitch(s);
@@ -701,6 +703,7 @@ final class HologramAuthoringWorkflow {
     }
 
     static void clearSourceSwitch(HologramSession s) {
+        s.projectionSourcePreset = null;
         s.pendingSourceAction = new NBTTagCompound();
         s.pendingSourceTarget = null;
         s.pendingSourceContext = null;
@@ -717,14 +720,20 @@ final class HologramAuthoringWorkflow {
     static void cancelSourceSwitch(HologramSession s, NBTTagCompound request) {
         String nonce = s.pendingSourceAction.getString("sourceSwitchNonce");
         if (!nonce.isEmpty() && !nonce.equals(request.getString("sourceSwitchNonce"))) return;
+        boolean projection = HologramEditorWorkspaceRegistry.physicalProjection(s);
         clearSourceSwitch(s);
-        s.status = "已取消切换来源，当前蓝图和未保存修改保留";
+        if (projection) {
+            s.libraryQuickPending = false;
+            s.libraryQuickToken = "";
+        }
+        s.status = projection ? "已取消打开蓝图，当前投影及投影记忆保留" : "已取消切换来源，当前蓝图和未保存修改保留";
     }
 
     static void requestSourceSwitch(HologramSession s, NBTTagCompound next, TileEntity target, Object context,
         HologramArea area) {
         next.setString("session", s.id);
         next.setLong("planRevision", s.planRevision);
+        next.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
         next.setString(
             "sourceSwitchNonce",
             UUID.randomUUID()
@@ -751,14 +760,19 @@ final class HologramAuthoringWorkflow {
         s.open = true;
         s.cancelled = false;
         s.settingsOnly = false;
-        s.status = "当前蓝图有未保存修改；请明确确认放弃后再导入新的来源";
+        s.status = HologramEditorWorkspaceRegistry.physicalProjection(s) ? "导入区域将丢弃当前投影及投影记忆；请确认是否继续"
+            : "当前蓝图有未保存修改；请明确确认放弃后再导入新的来源";
     }
 
     static boolean sourceSwitchConfirmed(HologramSession s, NBTTagCompound request) {
         NBTTagCompound pending = s.pendingSourceAction;
         ItemStack held = s.player.getHeldItem();
         return s.discardConfirmationRequired && request.getBoolean("confirmDiscard")
-            && HologramWorkspace.areaSessionOwned(s)
+            && (HologramWorkspace.areaSessionOwned(s) || HologramEditorWorkspaceRegistry.physicalProjection(s))
+            && (!HologramEditorWorkspaceRegistry.physicalProjection(s)
+                || HologramSessionPolicy.valid(s) && request.hasKey("editorWorkspaceEpoch", 4)
+                    && request.getLong("editorWorkspaceEpoch") == s.editorWorkspaceEpoch
+                    && pending.getLong("editorWorkspaceEpoch") == s.editorWorkspaceEpoch)
             && held != null
             && held.getItem() == s.pendingSourceTool
             && held.hasTagCompound()
@@ -819,6 +833,13 @@ final class HologramAuthoringWorkflow {
             }
         }
         HologramArea area = s.pendingSourceArea;
+        if (!controller && HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+            s.projectionAreaImportDiscard = true;
+            if (!HologramAreaWorkflow.startAreaImport(s, area)) s.projectionAreaImportDiscard = false;
+            clearSourceSwitch(s);
+            HologramSnapshots.send(s);
+            return;
+        }
         int side = pending.getInteger("side");
         boolean originalDirty = s.blueprintDirty;
         String originalSource = s.blueprintSource;

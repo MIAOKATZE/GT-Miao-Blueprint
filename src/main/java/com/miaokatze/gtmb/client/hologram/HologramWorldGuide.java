@@ -38,9 +38,9 @@ final class HologramWorldGuide {
 
     private static final Pattern KEYS = Pattern.compile(
         "(?:Ctrl\\s*\\+\\s*Shift|Shift\\s*\\+\\s*Alt|Shift|Alt)\\s*\\+\\s*(?:right-click|right|右击|右键|右鍵)"
-            + "|Ctrl\\s*\\+\\s*Shift|Ctrl\\s*\\+\\s*[ZR]|Alt\\s*\\+\\s*(?:Up/Down|上下|滚轮|scroll)"
+            + "|Ctrl\\s*\\+\\s*Shift|Ctrl\\s*\\+\\s*[ZYR]|Alt\\s*\\+\\s*(?:Up/Down|上下|滚轮|scroll)"
             + "|Shift(?:\\s*\\+\\s*(?:右击|右键|右鍵)|-right-click)|Alt-right-click"
-            + "|Left/right|[Rr]ight-click|左键|右键|右鍵|右击|方向键|Arrows|\\b(?:Ctrl|Alt|Esc|R)\\b");
+            + "|Left/right|[Rr]ight-click|左键|右键|右鍵|右击|方向键|Arrows|\\b(?:Ctrl|Shift|Alt|Esc|Delete|B|V|R)\\b");
 
     private HologramWorldGuide() {}
 
@@ -99,29 +99,86 @@ final class HologramWorldGuide {
     }
 
     static void selectionGuide(List<String> lines, NBTTagCompound selection) {
-        if (HologramIsometricCamera.INSTANCE.active()) {
-            if (selection != null && selection.getBoolean("areaContinuous")) {
-                lines.add(selectionCursorText(selection));
-                lines.add(HologramClient.text("camera.continuousKeys", "Left: vertex / height · Ctrl+click: ignored"));
-            } else {
-                lines.add(selectionCursorText(selection));
-            }
+        if (selection == null) return;
+        boolean camera = HologramIsometricCamera.INSTANCE.active();
+        String free = HologramSelectionInput.continuousLabel();
+        if (selection.getBoolean("areaContinuous")) {
+            boolean closed = selection.getBoolean("areaPolygonClosed");
+            boolean height = selection.getBoolean("areaPolygonHeightChosen");
+            String stage = !closed ? "guide.polygonVertices" : height ? "guide.polygonReady" : "guide.polygonHeight";
+            lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text(stage, "Left: polygon point · %s: finish"),
+                    free));
+            if (!closed) lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient
+                        .text("guide.polygonCount", "Vertices %d · Click the first point to close (at least 3)"),
+                    selection.getIntArray("areaPolygon").length / 3));
+            lines.add(HologramClient.text("guide.selectionUndo", "Ctrl+Z: undo · Ctrl+Y: redo"));
+            lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    camera ? HologramClient
+                        .text("guide.polygonCamera", "Release Ctrl to draw · Alt+wheel: depth · %s / Esc: normal view")
+                        : HologramClient.text(
+                            "guide.selectionExit",
+                            "Alt+wheel: depth · %s: isometric view · Esc: cancel selection"),
+                    HologramIsometricCamera.INSTANCE.toggleLabel()));
             return;
         }
+        boolean complete = selection.getIntArray("areaPoints").length == 6;
+        lines.add(selectionCursorText(selection));
+        if (complete) {
+            lines.add(
+                camera
+                    ? HologramClient.text(
+                        "guide.selectionConfirmCamera",
+                        "Release Ctrl, Shift+left: confirm · Arrows: move · Alt+Up/Down: height")
+                    : HologramClient
+                        .text("guide.selectionConfirm", "Shift+right: confirm · Arrows: move · Alt+Up/Down: height"));
+            if (HologramClient.controlHeld()) lines.add(
+                HologramClient
+                    .text("guide.selectionUndoEdit", "Ctrl+Z: undo · Ctrl+Y: redo · Delete: delete current region"));
+            else if (HologramClient.shiftHeld()) lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text(
+                        "guide.selectionShiftEdit",
+                        "Shift+Z: merge regions · Shift+%s: subtract polygon · Delete: delete region"),
+                    free));
+            else lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text(
+                        "guide.selectionEdit",
+                        "Z / Alt+Z: add / subtract · %s: polygon · Hold Shift / Ctrl for more controls"),
+                    free));
+        } else {
+            lines.add(
+                camera
+                    ? HologramClient.text("guide.selectionCorners", "Hold Ctrl + left: point 1 · Ctrl + right: point 2")
+                    : HologramClient.text("guide.selectionCornersNormal", "Left: point 1 · Right: point 2"));
+            lines.add(
+                String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text("guide.selectionStartPolygon", "%s: free polygon · Ctrl+Z: undo a point"),
+                    free));
+        }
         lines.add(
-            HologramClient.text(
-                HologramIsometricCamera.INSTANCE.active() ? "worldGuideSelectionEdit.camera"
-                    : "worldGuideSelectionEdit",
-                "Z: add · Alt+Z: subtract · Shift+Z: merge"));
-        lines.add(HologramClient.text("worldGuideSelectionKeys", "Ctrl+Z: undo · Ctrl+Y: redo"));
-        lines.add(
-            String.format(
-                java.util.Locale.ROOT,
-                HologramClient.text("continuousGuide", "%s: continuous selection · Shift+%s: subtract · %s: finish"),
-                HologramSelectionInput.continuousLabel(),
-                HologramSelectionInput.continuousLabel(),
-                HologramSelectionInput.continuousLabel()));
-        if (selection != null && selection.getBoolean("areaContinuous")) lines.add(selectionCursorText(selection));
+            camera
+                ? String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text("guide.selectionCameraExit", "Alt+wheel: depth · %s / Esc: normal view"),
+                    HologramIsometricCamera.INSTANCE.toggleLabel())
+                : String.format(
+                    java.util.Locale.ROOT,
+                    HologramClient.text(
+                        "guide.selectionNormalExit",
+                        "Alt+wheel: depth · %s: isometric view · Esc: cancel selection"),
+                    HologramIsometricCamera.INSTANCE.toggleLabel()));
     }
 
     static void drawSelectionCursor(NBTTagCompound selection, ScaledResolution resolution) {

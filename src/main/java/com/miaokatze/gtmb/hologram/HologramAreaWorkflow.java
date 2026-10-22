@@ -234,7 +234,9 @@ final class HologramAreaWorkflow {
             s.status = "请先取消区域导入或当前施工任务，再重新导入";
             return false;
         }
-        if (HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s)) {
+        if (HologramEditorWorkspaceRegistry.physicalProjection(s) && !s.projectionAreaImportDiscard
+            || !HologramEditorWorkspaceRegistry.physicalProjection(s)
+                && HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s)) {
             NBTTagCompound next = new NBTTagCompound();
             next.setString("op", "importArea");
             next.setString("presetId", "area");
@@ -246,6 +248,10 @@ final class HologramAreaWorkflow {
             area.begin(s.player.worldObj);
             s.areaImportPreviousDirty = s.blueprintDirty;
             s.areaImportPreviousSource = s.blueprintSource;
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s) || s.emptyProjection) {
+                s.status = "正在分段导入区域与声明结构，请稍候";
+                return true;
+            }
             HologramSession.cancelCaptureRetry(s);
             HologramSession.clearPending(s);
             s.ae.invalidate();
@@ -265,6 +271,7 @@ final class HologramAreaWorkflow {
 
     /** Closing cancels only the unfinished import; the previous draft, targets and world remain intact. */
     static void cancelAreaImport(HologramSession s) {
+        s.projectionAreaImportDiscard = false;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null) {
             if (area.importing) {
@@ -499,10 +506,12 @@ final class HologramAreaWorkflow {
             area.minZ,
             false,
             source.side);
-        staged.id = source.id;
+        if (!HologramEditorWorkspaceRegistry.physicalProjection(source) && !source.emptyProjection)
+            staged.id = source.id;
         staged.uiSequence = source.uiSequence;
         staged.areaSelectionSequence = source.areaSelectionSequence;
-        staged.planRevision = source.planRevision;
+        staged.planRevision = source.planRevision
+            + (HologramEditorWorkspaceRegistry.physicalProjection(source) || source.emptyProjection ? 1 : 0);
         staged.blueprintClientTaskToken = source.blueprintClientTaskToken;
         staged.libraryQuickClientTaskToken = source.libraryQuickClientTaskToken;
         staged.libraryQuickToken = source.libraryQuickToken;
@@ -633,6 +642,7 @@ final class HologramAreaWorkflow {
             if (!previousPhase.equals(area.importStage()) || s.player.worldObj.getTotalWorldTime() % 10 == 0)
                 HologramSnapshots.sendProgress(s);
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
+            s.projectionAreaImportDiscard = false;
             area.cancelImportWork();
             s.status = "区域导入失败：" + failure.getMessage();
             s.open = true;
@@ -643,6 +653,8 @@ final class HologramAreaWorkflow {
     private static void publishImport(HologramSession previous, HologramArea area) throws java.io.IOException {
         if (area.staging == null || !importOwned(previous, area)) throw new java.io.IOException("区域导入会话已过期");
         HologramSession staged = area.staging;
+        boolean projectionSource = HologramEditorWorkspaceRegistry.physicalProjection(previous)
+            || previous.emptyProjection;
         staged.uiSequence = previous.uiSequence;
         staged.areaSelectionSequence = previous.areaSelectionSequence;
         staged.blueprintClientTaskToken = previous.blueprintClientTaskToken;
@@ -650,6 +662,11 @@ final class HologramAreaWorkflow {
         staged.placementReviewNonce = previous.placementReviewNonce;
         staged.blueprintDirty = true;
         staged.blueprintSource = "area";
+        if (projectionSource) previous.open = true;
+        HologramWorkspace.PresentationTransition transition = projectionSource
+            ? HologramWorkspace.preparePresentation(previous, staged)
+            : null;
+        if (projectionSource && transition == null) throw new java.io.IOException("区域导入会话已过期");
         ItemStack tool = HologramSessionPolicy.currentTool(staged);
         if (tool != null && tool.hasTagCompound()) {
             tool.getTagCompound()
@@ -661,7 +678,10 @@ final class HologramAreaWorkflow {
         staged.openPurpose = "blueprintEdit";
         HologramWorkspace.AREA_STRUCTURES.put(previous.player.getUniqueID(), area.declarationSessions);
         HologramWorkspace.AREA_EDITORS.put(previous.player.getUniqueID(), staged);
-        HologramWorkspace.activate(previous.player.getUniqueID(), staged);
+        if (projectionSource) {
+            if (!HologramWorkspace.activatePresentation(transition)) throw new java.io.IOException("区域导入会话已过期");
+            previous.projectionAreaImportDiscard = false;
+        } else HologramWorkspace.activate(previous.player.getUniqueID(), staged);
         area.importing = false;
         area.staging = null;
         area.population = null;

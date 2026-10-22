@@ -34,6 +34,8 @@ final class HologramEditorNativeTools {
     private IPanelHandler floating, context, shortcuts, viewWorkspace;
     private ModularPanel viewWorkspacePanel;
     private int contextX, contextY;
+    private Flow toolRail;
+    private boolean railExpanded = true, railCompact;
 
     HologramEditorNativeTools(HologramUiModules ui) {
         this.ui = ui;
@@ -121,45 +123,104 @@ final class HologramEditorNativeTools {
     IWidget buildToolRail() {
         Flow rail = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
             .name("editor_native_tool_rail")
-            .width(HologramEditorNativeTheme.TOOL_RAIL_WIDTH)
+            .width(104)
             .heightRel(1f)
             .padding(2, 4)
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL);
         rail.child(
             HologramEditorNativeTheme
-                .iconButton(
+                .toolButton(
+                    () -> "结构列表",
                     "structure",
-                    () -> "\u5c55\u5f00 / \u6536\u8d77\u7ed3\u6784\u5217\u8868",
                     ui.shell::toggleStructures,
                     () -> true,
-                    () -> false)
-                .size(HologramEditorNativeTheme.ICON_BUTTON));
+                    () -> false,
+                    this::railLabels)
+                .widthRel(1f)
+                .height(HologramEditorNativeTheme.ICON_BUTTON));
         ListWidget<IWidget, ?> list = new ListWidget<>().name("editor_native_tool_rail_list")
             .sizeRel(1f)
             .expanded();
         for (String name : RAIL) {
-            ButtonWidget<?> button = command(0, name, true).size(HologramEditorNativeTheme.ICON_BUTTON)
+            ButtonWidget<?> button = railCommand(name).widthRel(1f)
+                .height(HologramEditorNativeTheme.ICON_BUTTON)
                 .marginBottom(4);
             com.cleanroommc.modularui.widget.ParentWidget<?> slot = new com.cleanroommc.modularui.widget.ParentWidget<>()
-                .size(16, 20)
+                .widthRel(1f)
+                .height(20)
                 .child(button);
             if ("text".equals(name) || "image".equals(name) || "moveHandles".equals(name))
                 slot.setEnabledIf(w -> ui.workspaces.blueprint());
             list.child(slot);
         }
         rail.child(list);
-        rail.child(command(0, "resetView", true).size(HologramEditorNativeTheme.ICON_BUTTON));
         rail.child(
-            local(
-                HologramEditorTools.TOGGLE_FLOATING,
-                () -> "",
-                "detach",
-                () -> true,
-                this::floatingOpen,
-                () -> commands().help("floatingTools"),
-                true).size(HologramEditorNativeTheme.ICON_BUTTON));
+            railCommand("resetView").widthRel(1f)
+                .height(HologramEditorNativeTheme.ICON_BUTTON));
+        rail.child(
+            HologramEditorNativeTheme
+                .railPresentation(
+                    local(
+                        HologramEditorTools.TOGGLE_FLOATING,
+                        () -> "浮动工具",
+                        "detach",
+                        () -> true,
+                        this::floatingOpen,
+                        () -> commands().help("floatingTools"),
+                        true),
+                    this::railLabels)
+                .widthRel(1f)
+                .height(HologramEditorNativeTheme.ICON_BUTTON));
+        ButtonWidget<?> collapse = HologramEditorNativeTheme.button(() -> railLabels() ? "<" : ">", () -> {
+            railExpanded = !railExpanded;
+            ui.shell.refreshRailLayout();
+        })
+            .widthRel(1f)
+            .height(HologramEditorNativeTheme.ICON_BUTTON);
+        collapse.overlay((context, x, y, width, height, theme) -> {
+            String icon = railLabels() ? "collapse-left" : "collapse-right";
+            int px = x + (width - 12) / 2, py = y + (height - 12) / 2;
+            HologramEditorIcons.draw(icon, px, py, 12, true, true, false, collapse.isHovering());
+            HologramEditorIcons.drawGlint(icon, px, py, 12, railAccent());
+        });
+        rail.child(collapse);
+        toolRail = rail;
+        ui.shell.registerTarget("rail.left", rail);
+        ui.shell.registerTarget("rail.left.toggle", collapse);
         return rail;
+    }
+
+    private ButtonWidget<?> railCommand(String name) {
+        return HologramEditorNativeTheme.railPresentation(command(0, name, true), this::railLabels);
+    }
+
+    boolean railLabels() {
+        return railExpanded && !railCompact;
+    }
+
+    int requestedRailWidth() {
+        return railExpanded ? 104 : HologramEditorNativeTheme.TOOL_RAIL_WIDTH;
+    }
+
+    int railWidth() {
+        return railLabels() ? 104 : HologramEditorNativeTheme.TOOL_RAIL_WIDTH;
+    }
+
+    void compactRail(boolean compact) {
+        railCompact = compact;
+        if (toolRail != null && toolRail.getArea().width != railWidth()) toolRail.width(railWidth())
+            .scheduleResize();
+    }
+
+    private int railAccent() {
+        int accent = 0;
+        for (String name : RAIL) {
+            HologramEditorCommands.Command command = commands().get(name);
+            if (command.control >= 0 && commands().available(name))
+                accent = HologramEditorShell.strongerAccent(accent, ui.canvas.controlAccent(command.control));
+        }
+        return accent;
     }
 
     IWidget buildSelectedBar() {
@@ -183,7 +244,7 @@ final class HologramEditorNativeTools {
         BooleanSupplier enabled = () -> commands().available(name);
         ButtonWidget<?> button = action(
             id,
-            () -> iconOnly ? "" : commandLabel(name) + "  " + commands().shortcut(name),
+            () -> commandLabel(name),
             command.icon,
             enabled,
             () -> "moveHandles".equals(name) && ui.preview.moveHandles(),
@@ -239,9 +300,11 @@ final class HologramEditorNativeTools {
         Runnable invoke = binding ? action
             : () -> ui.host.parent()
                 .deferAction(action);
-        ButtonWidget<?> button = iconOnly
-            ? HologramEditorNativeTheme.iconButton(icon, tooltip, invoke, enabled, selected)
-            : HologramEditorNativeTheme.button(label, icon, invoke, enabled, selected, false)
+        // A rail can reveal the icon button's label. Keep help exclusively in the tooltip, even when
+        // the button was originally constructed compact and is expanded later without rebuilding it.
+        ButtonWidget<?> button = (iconOnly
+            ? HologramEditorNativeTheme.iconButton(icon, label, invoke, enabled, selected)
+            : HologramEditorNativeTheme.button(label, icon, invoke, enabled, selected, false))
                 .tooltipBuilder(t -> t.addLine(tooltip.get()))
                 .tooltipAutoUpdate(true);
         button.name("editor_native_tool_" + id);
@@ -443,7 +506,7 @@ final class HologramEditorNativeTools {
         }
         body.child(rows);
         body.child(
-            HologramEditorNativeTheme.label(() -> "字段焦点优先 · E/Esc保留退出 · 撤销不回滚世界")
+            HologramEditorNativeTheme.label(() -> "字段焦点优先 · E/Esc逐级返回 · 撤销不回滚世界")
                 .widthRel(1f)
                 .height(16));
         Flow footer = Flow.row()
@@ -670,6 +733,12 @@ final class HologramEditorNativeTools {
 
     boolean viewWorkspaceOpen() {
         return viewWorkspace != null && viewWorkspace.isPanelOpen();
+    }
+
+    boolean consumeFloatingBack() {
+        if (!floatingOpen()) return false;
+        closeFloating();
+        return true;
     }
 
     /** Checkpoint restoration already runs outside native input dispatch. */

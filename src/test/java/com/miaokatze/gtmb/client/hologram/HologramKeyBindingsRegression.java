@@ -14,6 +14,16 @@ public final class HologramKeyBindingsRegression {
     private HologramKeyBindingsRegression() {}
 
     public static void run() {
+        HologramEditorCommands commands = new HologramEditorCommands(null);
+        SimpleAssert.eq(
+            "clearWorkspace",
+            commands.match(Keyboard.KEY_DELETE, 3),
+            "Ctrl Shift Delete clears the current workspace");
+        SimpleAssert.that(
+            !"clearWorkspace".equals(commands.match(Keyboard.KEY_DELETE, 0)),
+            "plain Delete retains its cell edit meaning");
+        SimpleAssert
+            .that(!commands.bind(commands.index("clearWorkspace"), Keyboard.KEY_E, 0), "E remains a return key");
         Path directory = null;
         try {
             directory = Files.createTempDirectory("gtmb-hologram-bindings-");

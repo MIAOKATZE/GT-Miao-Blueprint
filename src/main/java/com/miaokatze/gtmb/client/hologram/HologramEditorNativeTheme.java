@@ -302,6 +302,10 @@ public final class HologramEditorNativeTheme {
 
     /** Append once while constructing a widget; keep its existing label/icon overlay and never serialize the effect. */
     static ButtonWidget<?> guided(ButtonWidget<?> button, IntSupplier accent, BooleanSupplier enabled) {
+        if (button instanceof PaperButton) {
+            ((PaperButton) button).accent = () -> enabled.getAsBoolean() ? accent.getAsInt() : 0;
+            return button;
+        }
         button.overlay(
             button.getOverlay(),
             (context, x, y, width, height, theme) -> HologramEditorTheme.drawGuidanceFrame(
@@ -318,6 +322,8 @@ public final class HologramEditorNativeTheme {
 
         private boolean active = true;
         private final BooleanSupplier available;
+        private IntSupplier accent = () -> 0;
+        private BooleanSupplier expandedLabel;
 
         PaperButton(Supplier<String> text, String icon, Runnable action, BooleanSupplier enabled,
             BooleanSupplier selected, boolean primary, boolean iconOnly) {
@@ -349,7 +355,10 @@ public final class HologramEditorNativeTheme {
                 // The atlas is authored on a 12 GUI pixel grid. Keep ordinary glyphs at their native size,
                 // including primary actions, so tighter button padding never introduces fractional scaling.
                 int size = ICON_SIZE;
-                if (hasIcon && iconOnly) {
+                boolean compact = expandedLabel == null ? iconOnly : !expandedLabel.getAsBoolean();
+                int iconX = compact ? x + (width - size) / 2 : x + 4;
+                int iconY = y + (height - size) / 2;
+                if (hasIcon && compact) {
                     HologramEditorIcons.draw(
                         icon,
                         x + (width - size) / 2,
@@ -359,7 +368,7 @@ public final class HologramEditorNativeTheme {
                         available(),
                         selected.getAsBoolean(),
                         isHovering());
-                } else if (hasIcon && height >= 18 && width >= 60) {
+                } else if (hasIcon && (height >= 18 || expandedLabel != null) && width >= 60) {
                     HologramEditorIcons.draw(
                         icon,
                         x + 4,
@@ -374,6 +383,8 @@ public final class HologramEditorNativeTheme {
                     int inset = surface == Surface.ROW ? 5 : 0;
                     lettering.draw(context, x + inset, y, width - inset * 2, height, theme);
                 }
+                if (hasIcon && (compact || (height >= 18 || expandedLabel != null) && width >= 60) && available())
+                    HologramEditorIcons.drawGlint(icon, iconX, iconY, size, accent.getAsInt());
             });
             tooltipBuilder(
                 t -> t.addLine(
@@ -400,5 +411,18 @@ public final class HologramEditorNativeTheme {
         public Result onMousePressed(int button) {
             return available() ? super.onMousePressed(button) : Result.SUCCESS;
         }
+    }
+
+    /** One retained rail button; collapsing changes its presentation, never its action identity. */
+    static ButtonWidget<?> toolButton(Supplier<String> text, String icon, Runnable action, BooleanSupplier enabled,
+        BooleanSupplier selected, BooleanSupplier expanded) {
+        PaperButton button = new PaperButton(text, icon, action, enabled, selected, false, false);
+        button.expandedLabel = expanded;
+        return button;
+    }
+
+    static ButtonWidget<?> railPresentation(ButtonWidget<?> button, BooleanSupplier expanded) {
+        if (button instanceof PaperButton) ((PaperButton) button).expandedLabel = expanded;
+        return button;
     }
 }
