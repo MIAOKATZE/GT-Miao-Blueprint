@@ -255,15 +255,15 @@ final class HologramEditorPropertiesPane {
                 .height(28));
         list.child(
             action(50, this::constructionActionLabel, this::canReviewConstruction, this::constructionReason)
-                .height(26));
-        Flow task = row().height(24);
+                .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
+        Flow task = row().height(18);
         task.child(
             action(
                 51,
                 () -> ui.session.state().data.getInteger("job") == 2 ? "继续" : "暂停",
                 () -> ui.session.pendingSequence() < 0 && (ui.session.state().data.getInteger("job") == 1
                     || ui.session.state().data.getInteger("job") == 2),
-                () -> ui.session.pendingSequence() >= 0 ? "等待服务端回执后可操作。" : "暂停或继续当前施工任务，保留已完成结果。").height(24)
+                () -> ui.session.pendingSequence() >= 0 ? "等待服务端回执后可操作。" : "暂停或继续当前施工任务，保留已完成结果。").height(18)
                     .expanded());
         task.child(
             action(
@@ -272,7 +272,7 @@ final class HologramEditorPropertiesPane {
                 () -> ui.session.pendingSequence() < 0
                     && (ui.session.state().data.getInteger("job") == 1 || ui.session.state().data.getInteger("job") == 2
                         || ui.session.state().data.getBoolean("capturePending")),
-                () -> ui.session.pendingSequence() >= 0 ? "等待服务端回执后可操作。" : "取消当前任务；已施工内容仍保留。").height(24)
+                () -> ui.session.pendingSequence() >= 0 ? "等待服务端回执后可操作。" : "取消当前任务；已施工内容仍保留。").height(18)
                     .expanded());
         list.child(task);
         list.child(
@@ -345,7 +345,7 @@ final class HologramEditorPropertiesPane {
         Flow pane = Flow.col()
             .sizeRel(1f)
             .padding(6)
-            .childPadding(4)
+            .childPadding(3)
             .child(list);
         roots.add(pane);
         return pane;
@@ -400,7 +400,7 @@ final class HologramEditorPropertiesPane {
             })
             .name("properties." + key)
             .widthRel(1f)
-            .height(23);
+            .height(20);
         ui.shell.registerTarget("properties." + key, heading);
         content.setEnabledIf(w -> expanded.getAsBoolean());
         sizingSections.add(content);
@@ -412,7 +412,7 @@ final class HologramEditorPropertiesPane {
         return Flow.col()
             .widthRel(1f)
             .coverChildrenHeight()
-            .childPadding(4)
+            .childPadding(3)
             .collapseDisabledChild(true);
     }
 
@@ -430,7 +430,7 @@ final class HologramEditorPropertiesPane {
     ButtonWidget<?> action(int id, Supplier<String> label, BooleanSupplier enabled, Supplier<String> tooltip) {
         return ui.shell.nativeAction(id, label, enabled, tooltip)
             .widthRel(1f)
-            .height(20);
+            .height(18);
     }
 
     static IWidget label(Supplier<String> text) {
@@ -458,8 +458,8 @@ final class HologramEditorPropertiesPane {
     static Flow row() {
         return Flow.row()
             .widthRel(1f)
-            .height(20)
-            .childPadding(4)
+            .height(18)
+            .childPadding(3)
             .crossAxisAlignment(Alignment.CrossAxis.START);
     }
 }

@@ -12,7 +12,7 @@ import com.cleanroommc.modularui.drawable.UITexture;
 /** Original 12px artwork. Geometry and tooltip/click ownership stay with the native widget. */
 final class HologramEditorIcons {
 
-    static final int SOURCE_SIZE = 12, DISPLAY_SIZE = 24;
+    static final int SOURCE_SIZE = 12, DISPLAY_SIZE = SOURCE_SIZE;
     private static final Set<String> NAMES = Collections.unmodifiableSet(
         new HashSet<>(
             Arrays.asList(

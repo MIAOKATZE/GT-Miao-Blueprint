@@ -123,7 +123,7 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
                 .tooltipBuilder(t -> t.addLine(selection.notice()))
                 .tooltipAutoUpdate(true));
         sidebar = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
-            .width(176)
+            .width(196)
             .heightRel(1f)
             .padding(6)
             .childPadding(4)
@@ -187,9 +187,9 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
         }
         for (NBTTagCompound entry : selection.entries()) {
             String id = entry.getString("id");
-            ButtonWidget<?> row = new ButtonWidget<>().height(36)
+            ButtonWidget<?> row = new ButtonWidget<>().height(embedded ? 28 : 36)
                 .widthRel(1f)
-                .marginBottom(4)
+                .marginBottom(embedded ? 3 : 4)
                 .background(
                     embedded
                         ? (context, x, y, width, height, theme) -> HologramEditorNativeTheme
@@ -228,7 +228,7 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
                         .asWidget()
                         .textAlign(Alignment.CenterLeft)
                         .sizeRel(1f)
-                        .padding(6))
+                        .padding(embedded ? 4 : 6))
                 .name("cut_entry_" + id)
                 .onMousePressed(button -> {
                     if (button != 0) return false;

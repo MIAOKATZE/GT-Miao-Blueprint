@@ -104,7 +104,7 @@ final class HologramEditorCutWorkspace {
         register("cut.browser", browser);
         Flow actions = Flow.column()
             .widthRel(1f)
-            .height(80)
+            .height(44)
             .childPadding(4);
         actions.child(
             button(
@@ -113,14 +113,21 @@ final class HologramEditorCutWorkspace {
                 "world",
                 this::canAct,
                 () -> { if (canAct()) client().beginStoragePlacement(selection.selected()); }).widthRel(1f));
-        actions.child(
+        Flow secondary = Flow.row()
+            .widthRel(1f)
+            .height(18)
+            .childPadding(3);
+        secondary.child(
             button("undo", "撤回原处", "undo", this::canAct, () -> { if (canAct()) confirmUndo = selection.selected(); })
-                .widthRel(1f));
-        actions.child(button("sync", "同步列表 / 重试预览", "reset-view", () -> active && !closed, this::refresh).widthRel(1f));
+                .expanded());
+        secondary.child(
+            button("sync", "同步 / 重试", "reset-view", () -> active && !closed, this::refresh).expanded()
+                .tooltipBuilder(t -> t.addLine("同步剪切列表 / 重试预览")));
+        actions.child(secondary);
         browser.addFooter(actions);
         Flow confirmation = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
             .widthRel(1f)
-            .height(54)
+            .height(48)
             .padding(4)
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL)
@@ -131,7 +138,7 @@ final class HologramEditorCutWorkspace {
                 .height(18));
         Flow confirmationActions = Flow.row()
             .widthRel(1f)
-            .height(24)
+            .height(18)
             .childPadding(4);
         confirmationActions.child(
             button("undo.confirm", "确认撤回", null, () -> canAct() && confirmUndo.equals(selection.selected()), () -> {
@@ -152,7 +159,9 @@ final class HologramEditorCutWorkspace {
     private ButtonWidget<?> button(String name, String label, String icon, BooleanSupplier enabled, Runnable action) {
         ButtonWidget<?> button = HologramEditorNativeTheme
             .button(() -> label, icon, action, enabled, () -> false, "place".equals(name))
-            .height(24)
+            .height(
+                "place".equals(name) ? HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT
+                    : HologramEditorNativeTheme.TEXT_BUTTON_HEIGHT)
             .name("cut_storage_" + name);
         register("cut." + name, button);
         return button;

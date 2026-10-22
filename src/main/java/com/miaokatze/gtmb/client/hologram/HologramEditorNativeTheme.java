@@ -42,6 +42,8 @@ public final class HologramEditorNativeTheme {
     static final int TEXT = HologramEditorTheme.TEXT, TITLE = HologramEditorTheme.TITLE,
         MUTED = HologramEditorTheme.MUTED;
     static final int DARK_TEXT = HologramEditorTheme.BUTTON_TEXT, DISABLED_TEXT = 0xffdbccb1;
+    static final int ICON_SIZE = HologramEditorIcons.DISPLAY_SIZE, ICON_BUTTON = 16, TEXT_BUTTON_HEIGHT = 18,
+        PRIMARY_BUTTON_HEIGHT = 22, TOOL_RAIL_WIDTH = 20;
 
     // MUI 2.3.92 recurses when serializing unregistered tiled/adaptable textures. Register the final objects first;
     // ThemeBuilder then serializes stable IDs, whose registry entries retain the actual tiling and nine-slice metadata.
@@ -344,7 +346,9 @@ public final class HologramEditorNativeTheme {
                 .alignment(surface == Surface.ROW ? Alignment.CenterLeft : Alignment.Center);
             overlay((context, x, y, width, height, theme) -> {
                 boolean hasIcon = HologramEditorIcons.contains(icon);
-                int size = Math.min(24, Math.max(12, (Math.min(width, height) - 6) / 12 * 12));
+                // The atlas is authored on a 12 GUI pixel grid. Keep ordinary glyphs at their native size,
+                // including primary actions, so tighter button padding never introduces fractional scaling.
+                int size = ICON_SIZE;
                 if (hasIcon && iconOnly) {
                     HologramEditorIcons.draw(
                         icon,

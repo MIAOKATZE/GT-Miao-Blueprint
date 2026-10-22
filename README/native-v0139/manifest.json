@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "version": "0.1.39",
+  "captureStatus": "DIRTY_WORKTREE_CANDIDATE",
+  "sourceBaseCommit": "29cbbc4c5ce5c8ca058ed51bff11b7ccbf543988",
+  "buildVersion": "v0.1.38-master+29cbbc4c5c-dirty",
+  "candidateSHA256": "528bd2c9778a543b328344df2a12efa2a239b2ca05e5b0cac9516c7731e6ebec",
+  "sourceFingerprintSHA256": "52c7d4964a60e5b8a0335567fd47c4219b5d2169cfd24a97c47964c5d0f66f17",
+  "run": "visual02",
+  "heapMiB": 4096,
+  "images": [
+    {
+      "file": "projection-properties.png",
+      "captureFile": "00-projection-properties.png",
+      "sha256": "14ba0d7b238ebd3d6b5160c2e716b9679f83032dd75a33fc07acb479fa521c6b",
+      "bytes": 286199,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "15",
+      "scope": "Controller projection; real EBF planning snapshot, compact controls and paper properties."
+    },
+    {
+      "file": "blueprint-library.png",
+      "captureFile": "01-blueprint-empty-library.png",
+      "sha256": "dd62570184bea783f3dbf25954d53836d834346d10422a3c42a0c7ce94fe832b",
+      "bytes": 92670,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "35",
+      "scope": "Empty independent Blueprint workspace; actual 220 GUI collapsible library, client/server source selectors. No saved-row switching."
+    },
+    {
+      "file": "cut-workspace-empty.png",
+      "captureFile": "02-cut-empty-list.png",
+      "sha256": "7b0c4db09d7c53e39f9d32a65998e4721a4448db4ef6711e38482160eb7a3cbb",
+      "bytes": 59623,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "57",
+      "scope": "Same-screen Cut workspace, full-height camera/list and empty private list; no world Cut, placement or undo."
+    },
+    {
+      "file": "tutorial-structure.png",
+      "captureFile": "04-tutorial-first.png",
+      "sha256": "a97054e69067a6ffec28944cb481cb5c74e247d4b74090946b6af169b65adb72",
+      "bytes": 357853,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "532",
+      "scope": "First Projection tutorial scene; same actual workspace geometry, clear native EBF planning focus, softened grey surroundings and four floating buttons; no ordinary bottom guide. Not a formed machine or full walkthrough."
+    }
+  ],
+  "reviewer": "root",
+  "visualReview": "ACCEPTED_FOR_DOCUMENTED_BOUNDED_SCOPE; NOT_USER_ACCEPTANCE",
+  "uncovered": [
+    "Dedicated-server live UI",
+    "Real saved-library row switching",
+    "Real Cut storage, placement, undo or payment",
+    "Complete eight-course walkthrough",
+    "Narrow-screen live client"
+  ],
+  "evidence": "https://github.com/MIAOKATZE/GT-Miao-Blueprint-plan/tree/master/evidence/v0.1.39-editor-density",
+  "artifactProof": "Strict candidate-to-clean comparison permits only three exact generated VERSION sites; clean-to-final runtime payloads must be identical. See delivery compatibility evidence."
+}

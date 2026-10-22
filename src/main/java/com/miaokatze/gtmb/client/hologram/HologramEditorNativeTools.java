@@ -56,8 +56,8 @@ final class HologramEditorNativeTools {
     IWidget buildModeBar() {
         Flow row = Flow.row()
             .name("editor_native_mode_bar")
-            .width(174)
-            .height(21)
+            .width(132)
+            .height(18)
             .childPadding(3);
         row.child(
             local(
@@ -67,7 +67,7 @@ final class HologramEditorNativeTools {
                 () -> !ui.workspaces.switching(),
                 ui.workspaces::projection,
                 () -> "\u771f\u5b9e\u63a7\u5236\u5668\u6295\u5f71\uff1b\u4e0e\u84dd\u56fe\u8349\u7a3f\u72ec\u7acb",
-                false).size(56, 21));
+                false).size(42, 18));
         row.child(
             local(
                 HologramEditorTools.BLUEPRINT_MODE,
@@ -76,7 +76,7 @@ final class HologramEditorNativeTools {
                 () -> !ui.workspaces.switching(),
                 ui.workspaces::blueprint,
                 () -> "\u72ec\u7acb\u84dd\u56fe\u8349\u7a3f\uff1b\u4fdd\u7559\u6295\u5f71\u8bbe\u7f6e",
-                false).size(56, 21));
+                false).size(42, 18));
         row.child(
             local(
                 HologramEditorTools.CUT_MODE,
@@ -85,18 +85,18 @@ final class HologramEditorNativeTools {
                 () -> !ui.workspaces.switching(),
                 ui.workspaces::isCut,
                 () -> "\u540c\u5de5\u4f5c\u53f0\u5185\u67e5\u770b\u72ec\u7acb\u526a\u5207\u5217\u8868",
-                false).size(56, 21));
+                false).size(42, 18));
         return row;
     }
 
     IWidget buildTopTools() {
         Flow row = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .coverChildrenWidth()
-            .height(20)
+            .height(16)
             .childPadding(4)
             .setEnabledIf(w -> !ui.workspaces.isCut());
         for (String name : new String[] { "editUndo", "editRedo", "viewWorkspace", "shortcuts" })
-            row.child(command(0, name, true).size(20));
+            row.child(command(0, name, true).size(HologramEditorNativeTheme.ICON_BUTTON));
         return row;
     }
 
@@ -121,9 +121,9 @@ final class HologramEditorNativeTools {
     IWidget buildToolRail() {
         Flow rail = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
             .name("editor_native_tool_rail")
-            .width(26)
+            .width(HologramEditorNativeTheme.TOOL_RAIL_WIDTH)
             .heightRel(1f)
-            .padding(3, 6)
+            .padding(2, 4)
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL);
         rail.child(
@@ -134,22 +134,22 @@ final class HologramEditorNativeTools {
                     ui.shell::toggleStructures,
                     () -> true,
                     () -> false)
-                .size(20));
+                .size(HologramEditorNativeTheme.ICON_BUTTON));
         ListWidget<IWidget, ?> list = new ListWidget<>().name("editor_native_tool_rail_list")
             .sizeRel(1f)
             .expanded();
         for (String name : RAIL) {
-            ButtonWidget<?> button = command(0, name, true).size(20)
+            ButtonWidget<?> button = command(0, name, true).size(HologramEditorNativeTheme.ICON_BUTTON)
                 .marginBottom(4);
             com.cleanroommc.modularui.widget.ParentWidget<?> slot = new com.cleanroommc.modularui.widget.ParentWidget<>()
-                .size(20, 24)
+                .size(16, 20)
                 .child(button);
             if ("text".equals(name) || "image".equals(name) || "moveHandles".equals(name))
                 slot.setEnabledIf(w -> ui.workspaces.blueprint());
             list.child(slot);
         }
         rail.child(list);
-        rail.child(command(0, "resetView", true).size(20));
+        rail.child(command(0, "resetView", true).size(HologramEditorNativeTheme.ICON_BUTTON));
         rail.child(
             local(
                 HologramEditorTools.TOGGLE_FLOATING,
@@ -158,7 +158,7 @@ final class HologramEditorNativeTools {
                 () -> true,
                 this::floatingOpen,
                 () -> commands().help("floatingTools"),
-                true).size(20));
+                true).size(HologramEditorNativeTheme.ICON_BUTTON));
         return rail;
     }
 
@@ -166,13 +166,13 @@ final class HologramEditorNativeTools {
         ListWidget<IWidget, ?> row = new ListWidget<>().name("editor_native_selected_actions")
             .scrollDirection(GuiAxis.X)
             .widthRel(1f)
-            .height(25)
+            .height(20)
             .background(HologramEditorNativeTheme.PANEL)
             .padding(2)
             .setEnabledIf(ignored -> ui.session.selectedCell() != null);
         row.setEnabled(ui.session.selectedCell() != null);
         for (String name : SELECTED) row.child(
-            command(2, name, true).size(21)
+            command(2, name, true).size(HologramEditorNativeTheme.ICON_BUTTON)
                 .marginRight(3));
         return row;
     }
@@ -306,7 +306,7 @@ final class HologramEditorNativeTools {
             .expanded();
         for (String name : FLOATING) rows.child(
             command(1, name, false).widthRel(1f)
-                .height(26));
+                .height(18));
         body.child(rows);
         body.child(
             local(
@@ -317,7 +317,7 @@ final class HologramEditorNativeTools {
                 () -> false,
                 () -> commands().help("floatingTools"),
                 false).widthRel(1f)
-                    .height(24));
+                    .height(18));
         panel.child(body);
         ui.shell.registerControl(FLOAT_PANEL, panel, () -> "浮动工具", this::floatingOpen);
         return panel;
@@ -369,12 +369,12 @@ final class HologramEditorNativeTools {
         for (String name : CONTEXT) {
             Flow item = Flow.row()
                 .widthRel(1f)
-                .height(25)
+                .height(20)
                 .setEnabledIf(ignored -> commands().available(name));
             item.setEnabled(commands().available(name));
             item.child(
                 command(3, name, false).widthRel(1f)
-                    .height(25));
+                    .height(20));
             entries.child(item);
         }
         body.child(entries);
@@ -387,7 +387,7 @@ final class HologramEditorNativeTools {
                 () -> false,
                 () -> "关闭此菜单，保留选择 · Esc / E",
                 false).widthRel(1f)
-                    .height(23));
+                    .height(18));
         panel.child(body);
         ui.shell.registerControl(CONTEXT_PANEL, panel, () -> "右键工具", this::contextOpen);
         return panel;
@@ -439,7 +439,7 @@ final class HologramEditorNativeTools {
                     () -> ui.shortcuts.bindingTooltip(id),
                     false,
                     () -> ui.shortcuts.captureBindingControl(id)).widthRel(1f)
-                        .height(27));
+                        .height(18));
         }
         body.child(rows);
         body.child(
@@ -448,7 +448,7 @@ final class HologramEditorNativeTools {
                 .height(16));
         Flow footer = Flow.row()
             .widthRel(1f)
-            .height(25)
+            .height(20)
             .childPadding(5);
         footer.child(
             action(
@@ -460,7 +460,7 @@ final class HologramEditorNativeTools {
                 () -> "恢复全部编辑器命令的默认键位。",
                 false,
                 () -> ui.shortcuts.activateControl(115)).width(105)
-                    .height(25));
+                    .height(20));
         footer.child(
             action(
                 BASE + 961,
@@ -471,7 +471,7 @@ final class HologramEditorNativeTools {
                 () -> "关闭键位编辑窗口。",
                 false,
                 this::closeShortcuts).width(105)
-                    .height(25));
+                    .height(20));
         body.child(footer);
         panel.child(body);
         panel.onCloseAction(() -> {
@@ -520,20 +520,20 @@ final class HologramEditorNativeTools {
             "rightView", "topView", "worldPreview" })
             rows.child(
                 command(4, name, false).widthRel(1f)
-                    .height(27));
+                    .height(18));
         rows.child(
             HologramEditorNativeTheme.label(() -> "现有工作区操作")
                 .widthRel(1f)
-                .height(21));
+                .height(18));
         rows.child(
             command(4, "areaSelection", false).widthRel(1f)
-                .height(27));
+                .height(18));
         rows.child(
             command(4, "clearWorkspace", false).widthRel(1f)
-                .height(27));
+                .height(18));
         Flow networks = Flow.row()
             .widthRel(1f)
-            .height(27)
+            .height(18)
             .setEnabledIf(
                 ignored -> ui.bindings.networkGroups()
                     .tagCount() > 0);
@@ -542,11 +542,11 @@ final class HologramEditorNativeTools {
                 .tagCount() > 0);
         networks.child(
             command(4, "networkBindings", false).widthRel(1f)
-                .height(27));
+                .height(18));
         rows.child(networks);
         IWidget noNetworks = HologramEditorNativeTheme.label(() -> "当前蓝图没有已登记的量子类群")
             .widthRel(1f)
-            .height(21)
+            .height(18)
             .setEnabledIf(
                 ignored -> ui.bindings.networkGroups()
                     .tagCount() == 0);
@@ -554,10 +554,10 @@ final class HologramEditorNativeTools {
         rows.child(noNetworks);
         rows.child(
             command(4, "aeMarking", false).widthRel(1f)
-                .height(27));
+                .height(18));
         rows.child(
             command(4, "shortcuts", false).widthRel(1f)
-                .height(27));
+                .height(18));
         body.child(rows);
         IWidget closeView = action(
             BASE + 962,
@@ -568,7 +568,7 @@ final class HologramEditorNativeTools {
             () -> "关闭窗口，保持当前选择。",
             false,
             this::closeViewWorkspace).widthRel(1f)
-                .height(24);
+                .height(18);
         ui.shell.registerTarget("modal.close", closeView);
         body.child(closeView);
         panel.child(body);

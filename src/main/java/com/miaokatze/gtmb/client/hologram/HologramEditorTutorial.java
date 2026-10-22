@@ -16,7 +16,6 @@ import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
-import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widget.WidgetTree;
 import com.cleanroommc.modularui.widgets.Dialog;
 import com.cleanroommc.modularui.widgets.ListWidget;
@@ -222,11 +221,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 if (!sandbox.workspaces.isCut())
                     throw new IllegalStateException("Isolated cut workspace was not admitted");
             }
-            scenePanel.child(
-                sandbox.shell.build(
-                    scenePanel,
-                    new Widget<>().widthRel(1f)
-                        .height(HologramEditorTutorialOverlay.RESERVED_HEIGHT)));
+            scenePanel.child(sandbox.shell.build(scenePanel));
         }
         scenePanel.onUpdateListener(panel -> {
             if (panel.getArea().width != ui.host.screenWidth() || panel.getArea().height != ui.host.screenHeight())
@@ -382,13 +377,6 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         return queuedNext ? "已排队" : step + 1 == steps.size() ? "完成教程" : "下一步";
     }
 
-    @Override
-    public String explanation() {
-        if (!active()) return "";
-        String text = unavailable.isEmpty() ? steps.get(step).description : unavailable;
-        return step == 0 ? "仅操作下方四个按钮，其余由演示鼠标完成。" + text : text;
-    }
-
     private void playStep() {
         actions = steps.get(step).actions;
         actionIndex = 0;
@@ -501,7 +489,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     }
                     return;
                 }
-                unavailable = "本例没有该可用能力或完整选区；保留原状态，跳过此动作。";
+                unavailable = "能力或选区前提未满足";
                 actionIndex++;
                 targetWaitingSince = 0;
                 actionBounds = null;
@@ -899,7 +887,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 String structure = sandbox.config.selectedStructureId();
                 if (structure.isEmpty()) structure = sandbox.session.state().data.getString("tutorialStructureId");
                 if (structure.isEmpty()) {
-                    unavailable = "本例未识别完整来源结构，保留独立选格。";
+                    unavailable = "来源结构前提未满足";
                     break;
                 }
                 sandbox.preview.selection()
@@ -1190,15 +1178,18 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             if (lessonFocus != null) focus = lessonFocus;
         }
         if (materialLesson.visible()) focus = materialLesson.bounds(width, height);
+        if (focus == null) focus = sandbox.shell.targetBounds(steps.get(step).focus);
+        if (focus == null) focus = sandbox.shell.targetBounds("modal");
+        if (focus == null) focus = sandbox.shell.targetBounds("viewport");
         int[] footer = overlay.footerBounds();
         if (focus != null) {
-            // Keep the actual widget boundary. Dialog layout reserves the footer instead of truncating its focus.
+            // Native widget bounds and the normal viewport remain unchanged by the floating navigation.
             HologramEditorTutorialBlur.drawOutside(width, height, focus[0], focus[1], focus[2], focus[3]);
             int x = focus[0], y = focus[1], right = x + focus[2], bottom = y + focus[3];
-            Gui.drawRect(0, 0, width, y, 0x1b606264);
-            Gui.drawRect(0, y, x, bottom, 0x1b606264);
-            Gui.drawRect(right, y, width, bottom, 0x1b606264);
-            Gui.drawRect(0, bottom, width, height, 0x1b606264);
+            Gui.drawRect(0, 0, width, y, 0x33626262);
+            Gui.drawRect(0, y, x, bottom, 0x33626262);
+            Gui.drawRect(right, y, width, bottom, 0x33626262);
+            Gui.drawRect(0, bottom, width, height, 0x33626262);
             HologramEditorTheme.drawGuidanceFrame(x, y, focus[2], focus[3], HologramUiAccent.INFORMATION, true);
             String title = (step + 1) + "/" + steps.size() + " " + steps.get(step).title;
             int[] viewport = sandbox.shell.targetBounds("viewport");
@@ -1216,15 +1207,17 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 ui.host.font()
                     .getStringWidth(visibleTitle) + 10,
                 13);
-            if (label == null) {
-                int[] slot = overlay.captionBounds();
-                if (slot != null) {
-                    visibleTitle = ui.host.font()
-                        .trimStringToWidth(title, Math.max(0, slot[2] - 24));
-                    int labelWidth = ui.host.font()
-                        .getStringWidth(visibleTitle) + 10;
-                    label = new int[] { slot[0] + (slot[2] - labelWidth) / 2, slot[1], labelWidth, 13 };
-                }
+            if (label == null && viewport != null) {
+                // A viewport-wide focus has no outside margin. Keep its short title between the top controls,
+                // or immediately below them when the viewport is too narrow for that central gap.
+                int centralWidth = Math.max(0, viewport[2] - 312);
+                int labelY = viewport[1] + (centralWidth >= 48 ? 9 : 32);
+                int availableWidth = centralWidth >= 48 ? centralWidth : Math.max(0, viewport[2] - 16);
+                visibleTitle = ui.host.font()
+                    .trimStringToWidth(title, Math.max(0, availableWidth - 10));
+                int labelWidth = ui.host.font()
+                    .getStringWidth(visibleTitle) + 10;
+                label = new int[] { viewport[0] + (viewport[2] - labelWidth) / 2, labelY, labelWidth, 13 };
             }
             if (label != null && !visibleTitle.isEmpty()) {
                 Gui.drawRect(label[0], label[1], label[0] + label[2], label[1] + label[3], 0xe65b412a);
