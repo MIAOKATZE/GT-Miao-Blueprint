@@ -134,7 +134,7 @@ public final class HologramEditorTutorialLessonsRegression {
             "nested portable ItemStacks bind by registry name even when the numeric ID resolves to another real item");
         SimpleAssert.eq(
             net.minecraft.item.Item.getIdFromItem(Items.iron_ingot),
-            stack.getShort("id"),
+            (int) stack.getShort("id"),
             "restoring a portable observation leaves the source evidence immutable");
         stack.removeTag("gtitBlueprintItemRegistry");
         boolean rejected = false;
