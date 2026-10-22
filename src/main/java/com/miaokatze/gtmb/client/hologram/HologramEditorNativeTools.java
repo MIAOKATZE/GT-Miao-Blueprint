@@ -20,8 +20,7 @@ final class HologramEditorNativeTools {
     private static final int BASE = HologramEditorControlIds.TOOLS;
     private static final int FLOAT_PANEL = BASE + 950, CONTEXT_PANEL = BASE + 951, KEYS_PANEL = BASE + 952,
         VIEW_PANEL = BASE + 953;
-    private static final String[] RAIL = { "viewWorkspace", "selectAll", "moveHandles", "editCopy", "rotateCell",
-        "inventory", "candidates", "text", "image", "editUndo", "editRedo" };
+    private static final String[] RAIL = { "selectAll", "moveHandles", "rotateCell", "text", "image" };
     private static final String[] FLOATING = { "viewWorkspace", "editCut", "editCopy", "editPaste", "restoreCell",
         "rotateCell", "hatchFacing", "candidates", "inventory", "hatchPreset", "channels", "structure", "overview" };
     private static final String[] SELECTED = { "editCopy", "editPaste", "restoreCell", "hatchFacing", "candidates",
@@ -57,76 +56,100 @@ final class HologramEditorNativeTools {
     IWidget buildModeBar() {
         Flow row = Flow.row()
             .name("editor_native_mode_bar")
-            .widthRel(1f)
-            .height(24)
+            .width(174)
+            .height(21)
             .childPadding(3);
         row.child(
             local(
                 HologramEditorTools.PROJECTION_MODE,
-                () -> "投影",
+                () -> "\u6295\u5f71",
                 null,
-                () -> !ui.session.state().data.getBoolean("virtual"),
-                () -> !ui.session.state().data.getBoolean("virtual"),
-                () -> "返回当前真实控制器规划；没有真实会话时不可切入。",
-                false).size(42, 24));
+                () -> !ui.workspaces.switching(),
+                ui.workspaces::projection,
+                () -> "\u771f\u5b9e\u63a7\u5236\u5668\u6295\u5f71\uff1b\u4e0e\u84dd\u56fe\u8349\u7a3f\u72ec\u7acb",
+                false).size(56, 21));
         row.child(
             local(
                 HologramEditorTools.BLUEPRINT_MODE,
-                () -> "蓝图",
+                () -> "\u84dd\u56fe",
                 null,
-                () -> true,
-                () -> ui.session.state().data.getBoolean("virtual"),
-                () -> "沿原作者编辑 / 蓝图库入口，不创建世界或新会话。",
-                false).size(42, 24));
+                () -> !ui.workspaces.switching(),
+                ui.workspaces::blueprint,
+                () -> "\u72ec\u7acb\u84dd\u56fe\u8349\u7a3f\uff1b\u4fdd\u7559\u6295\u5f71\u8bbe\u7f6e",
+                false).size(56, 21));
         row.child(
             local(
                 HologramEditorTools.CUT_MODE,
-                () -> "剪切",
+                () -> "\u526a\u5207",
                 null,
-                () -> ui.session.editable(),
-                () -> false,
-                () -> "打开真实剪切存储；不自动执行世界操作。",
-                false).size(42, 24));
-        row.child(
-            local(
-                HologramEditorTools.LIBRARY_BUTTON,
-                () -> "蓝图库",
-                "library",
-                () -> true,
-                () -> ui.shell.built() ? ui.shell.libraryPageSelected() && ui.shell.dockExpanded()
-                    : ui.library.libraryDrawer(),
-                () -> "打开真实蓝图库。",
-                true).size(28, 24));
-        row.child(
-            action(
-                HologramEditorControlIds.TUTORIAL,
-                () -> "教程",
-                "tutorial",
-                () -> true,
-                () -> false,
-                () -> "打开当前上下文的原生交互教程。",
-                true,
-                () -> ui.router.activate(HologramEditorControlIds.TUTORIAL)).size(28, 24));
-        row.child(
-            action(
-                HologramEditorControlIds.GUIDE,
-                () -> "帮助",
-                "help",
-                () -> true,
-                () -> false,
-                () -> "展开上下文操作说明。",
-                true,
-                () -> ui.router.activate(HologramEditorControlIds.GUIDE)).size(28, 24));
+                () -> !ui.workspaces.switching(),
+                ui.workspaces::isCut,
+                () -> "\u540c\u5de5\u4f5c\u53f0\u5185\u67e5\u770b\u72ec\u7acb\u526a\u5207\u5217\u8868",
+                false).size(56, 21));
+        return row;
+    }
+
+    IWidget buildTopTools() {
+        Flow row = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
+            .coverChildrenWidth()
+            .height(20)
+            .childPadding(4)
+            .setEnabledIf(w -> !ui.workspaces.isCut());
+        for (String name : new String[] { "editUndo", "editRedo", "viewWorkspace", "shortcuts" })
+            row.child(command(0, name, true).size(20));
+        return row;
+    }
+
+    Flow buildViewPresets() {
+        Flow row = Flow.row()
+            .coverChildrenWidth()
+            .height(18)
+            .childPadding(2);
+        String[] labels = { "\u7b49\u8ddd", "\u524d", "\u9876", "\u4fa7" };
+        String[] names = { "resetView", "frontView", "topView", "rightView" };
+        for (int i = 0; i < names.length; i++) {
+            final String name = names[i], label = labels[i];
+            row.child(
+                HologramEditorNativeTheme.button(() -> label, () -> execute(name))
+                    .size(28, 18)
+                    .tooltipBuilder(t -> t.addLine(commands().help(name)))
+                    .tooltipAutoUpdate(true));
+        }
         return row;
     }
 
     IWidget buildToolRail() {
-        Flow rail = Flow.column()
+        Flow rail = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
             .name("editor_native_tool_rail")
-            .width(34)
+            .width(26)
             .heightRel(1f)
-            .padding(2)
-            .childPadding(3);
+            .padding(3, 6)
+            .childPadding(4)
+            .background(HologramEditorNativeTheme.PANEL);
+        rail.child(
+            HologramEditorNativeTheme
+                .iconButton(
+                    "structure",
+                    () -> "\u5c55\u5f00 / \u6536\u8d77\u7ed3\u6784\u5217\u8868",
+                    ui.shell::toggleStructures,
+                    () -> true,
+                    () -> false)
+                .size(20));
+        ListWidget<IWidget, ?> list = new ListWidget<>().name("editor_native_tool_rail_list")
+            .sizeRel(1f)
+            .expanded();
+        for (String name : RAIL) {
+            ButtonWidget<?> button = command(0, name, true).size(20)
+                .marginBottom(4);
+            com.cleanroommc.modularui.widget.ParentWidget<?> slot = new com.cleanroommc.modularui.widget.ParentWidget<>()
+                .size(20, 24)
+                .child(button);
+            if ("text".equals(name) || "image".equals(name) || "moveHandles".equals(name))
+                slot.setEnabledIf(w -> ui.workspaces.blueprint());
+            list.child(slot);
+        }
+        rail.child(list);
+        rail.child(command(0, "resetView", true).size(20));
         rail.child(
             local(
                 HologramEditorTools.TOGGLE_FLOATING,
@@ -135,22 +158,22 @@ final class HologramEditorNativeTools {
                 () -> true,
                 this::floatingOpen,
                 () -> commands().help("floatingTools"),
-                true).size(28));
-        ListWidget<IWidget, ?> list = new ListWidget<>().name("editor_native_tool_rail_list")
-            .sizeRel(1f)
-            .expanded();
-        for (String name : RAIL) list.child(command(0, name, true).size(28));
-        return rail.child(list);
+                true).size(20));
+        return rail;
     }
 
     IWidget buildSelectedBar() {
         ListWidget<IWidget, ?> row = new ListWidget<>().name("editor_native_selected_actions")
             .scrollDirection(GuiAxis.X)
             .widthRel(1f)
-            .height(33)
+            .height(25)
+            .background(HologramEditorNativeTheme.PANEL)
+            .padding(2)
             .setEnabledIf(ignored -> ui.session.selectedCell() != null);
         row.setEnabled(ui.session.selectedCell() != null);
-        for (String name : SELECTED) row.child(command(2, name, true).size(26));
+        for (String name : SELECTED) row.child(
+            command(2, name, true).size(21)
+                .marginRight(3));
         return row;
     }
 
@@ -164,12 +187,17 @@ final class HologramEditorNativeTools {
             command.icon,
             enabled,
             () -> "moveHandles".equals(name) && ui.preview.moveHandles(),
-            () -> commands().help(name),
+            () -> commandHelp(name),
             iconOnly,
             () -> execute(name));
         if (command.control >= 0)
             HologramEditorNativeTheme.guided(button, () -> ui.canvas.controlAccent(command.control), enabled);
         return button;
+    }
+
+    private String commandHelp(String name) {
+        String help = commands().help(name);
+        return "selectAll".equals(name) ? help + "\n画布点选单格；Shift 拖动框选；拖动鼠标调整视角，滚轮缩放。" : help;
     }
 
     private String commandLabel(String name) {

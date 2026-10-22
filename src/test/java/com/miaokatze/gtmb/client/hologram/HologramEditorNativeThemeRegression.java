@@ -70,23 +70,36 @@ public final class HologramEditorNativeThemeRegression {
                             .equals("TiledUITexture"),
                         "paper remains a real tiled texture");
                     check(
-                        number(texture, "imageWidth") == 64 && number(texture, "imageHeight") == 64,
-                        "paper retains its real 64px tile dimensions");
+                        number(texture, "imageWidth") == 32 && number(texture, "imageHeight") == 32,
+                        "paper uses the HTML's original 32px tile dimensions");
                 } else {
+                    boolean panel = field.getName()
+                        .equals("FRAME");
+                    int sourceSize = panel ? 16 : 12, border = panel ? 3 : 2;
                     check(
                         texture.getClass()
                             .getSimpleName()
                             .equals("AdaptableUITexture"),
                         field.getName() + " remains nine-sliced");
                     check(
-                        number(texture, "imageWidth") == 8 && number(texture, "imageHeight") == 8,
-                        field.getName() + " retains its real source dimensions");
+                        number(texture, "imageWidth") == sourceSize && number(texture, "imageHeight") == sourceSize,
+                        field.getName() + " retains the original HTML asset's source dimensions");
                     for (String edge : new String[] { "bl", "bt", "br", "bb" })
-                        check(number(texture, edge) == 1, field.getName() + " retains its single-pixel " + edge);
+                        check(number(texture, edge) == border, field.getName() + " retains its original slice " + edge);
                 }
                 textures++;
             }
             check(textures >= 11, "all native paper, input and button variants were covered");
+            check(
+                HologramEditorNativeTheme.BUTTON.location.getResourcePath()
+                    .endsWith("/kraft/button.png")
+                    && HologramEditorNativeTheme.SELECTED.location.getResourcePath()
+                        .endsWith("/kraft/button-pressed.png"),
+                "native buttons reuse the HTML's dark R3 artwork");
+            check(
+                HologramEditorNativeTheme.PRIMARY == HologramEditorNativeTheme.SELECTED
+                    && HologramEditorNativeTheme.PRIMARY_HOVER == HologramEditorNativeTheme.SELECTED_HOVER,
+                "HTML primary buttons use the pressed states instead of a separate visual family");
 
             JsonObject json = definition.getJson();
             JsonArray layers = json.getAsJsonObject(IThemeApi.PANEL.getFullName())
@@ -113,9 +126,15 @@ public final class HologramEditorNativeThemeRegression {
                 checkTextureReference(state.get(IThemeApi.BACKGROUND));
                 checkTextureReference(state.get(IThemeApi.SELECTED_BACKGROUND));
                 check(
-                    !state.get(IThemeApi.SELECTED_TEXT_SHADOW)
+                    state.get(IThemeApi.SELECTED_TEXT_SHADOW)
                         .getAsBoolean(),
-                    "selected state remains unshadowed");
+                    "selected button retains the HTML's text shadow");
+                check(
+                    state.get(IThemeApi.TEXT_COLOR)
+                        .getAsInt() == HologramEditorNativeTheme.DARK_TEXT
+                        && state.get(IThemeApi.SELECTED_TEXT_COLOR)
+                            .getAsInt() == HologramEditorNativeTheme.DARK_TEXT,
+                    "both toggle states use readable cream lettering on the dark HTML button artwork");
             }
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Cannot inspect the actual native MUI theme definition", failure);

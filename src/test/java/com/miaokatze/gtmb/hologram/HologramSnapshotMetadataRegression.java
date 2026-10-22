@@ -44,6 +44,7 @@ final class HologramSnapshotMetadataRegression {
             player.capabilities = new PlayerCapabilities();
             player.capabilities.isCreativeMode = true;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
+            candidateSummaryGeneration(player);
             HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
             session.virtual = true;
             session.virtualPlacement = true;
@@ -121,6 +122,69 @@ final class HologramSnapshotMetadataRegression {
         } catch (Exception failed) {
             throw new AssertionError("snapshot metadata", failed);
         }
+    }
+
+    private static void candidateSummaryGeneration(EntityPlayerMP player) {
+        HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+        session.materialSettings.main = session.materialSettings.me = session.materialSettings.containers = false;
+        ItemStack signal = new ItemStack(Blocks.stone);
+        session.capture = new HologramCapture(null, signal);
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> declared = com.gtnewhorizon.structurelib.structure.StructureUtility
+            .ofBlock(Blocks.stone, 0);
+        HologramCapture.Cell cell = new HologramCapture.Cell(declared, 1, 64, 0, signal);
+        cell.block = Blocks.stone;
+        session.capture.cells.add(cell);
+        session.capture.positions.put(HologramValues.position(cell), cell);
+        session.planTargets.add(signal.copy());
+        session.planStatus.add("pending");
+        session.selected = -1;
+        NBTTagCompound baseline = HologramSnapshots.cellRow(session, 0);
+        SimpleAssert
+            .that(baseline.getBoolean("candidateComplete"), "unselected native row has a real complete declaration");
+        SimpleAssert.eq(
+            0,
+            baseline.getTagList("candidates", 10)
+                .tagCount(),
+            "unselected rows still omit candidate options");
+        java.util.List<ItemStack> cached = cell.candidates;
+        HologramDeclarationAdapters.register(
+            com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.dirt, 0),
+            new HologramDeclarationAdapters.Declaration(declared));
+        HologramCellPolicy.refreshDeclarationGeneration(session);
+        SimpleAssert.that(
+            cell.candidates == null && !cell.candidateComplete,
+            "real unrelated adapter registration invalidates the prior candidate generation");
+        NBTTagCompound restored = HologramSnapshots.cellRow(session, 0);
+        SimpleAssert
+            .eq(baseline, restored, "full row publication reinterprets the unchanged declaration after invalidation");
+        SimpleAssert.that(cell.candidates != cached, "new generation recomputes the native cell cache");
+        cached = cell.candidates;
+        for (int repeat = 0; repeat < 50; repeat++) HologramSnapshots.cellRow(session, 0);
+        SimpleAssert.that(
+            cell.candidates == cached,
+            "stable generations reuse the parsed candidates across repeated full rows");
+        session.selected = 0;
+        SimpleAssert.eq(
+            1,
+            HologramSnapshots.cellRow(session, 0)
+                .getTagList("candidates", 10)
+                .tagCount(),
+            "selected native rows retain their actual editable candidate options");
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> incomplete = com.gtnewhorizon.structurelib.structure.StructureUtility
+            .onlyIf(
+                context -> { throw new AssertionError("snapshot evaluated an arbitrary declaration predicate"); },
+                declared);
+        HologramCapture.Cell unknown = new HologramCapture.Cell(incomplete, 2, 64, 0, signal);
+        unknown.block = Blocks.stone;
+        session.capture.cells.add(unknown);
+        session.capture.positions.put(HologramValues.position(unknown), unknown);
+        session.planTargets.add(signal.copy());
+        session.planStatus.add("pending");
+        NBTTagCompound protectedRow = HologramSnapshots.cellRow(session, 1);
+        SimpleAssert.that(
+            !protectedRow.getBoolean("candidateComplete") && !protectedRow.getString("candidateBoundary")
+                .isEmpty(),
+            "a genuinely incomplete custom declaration remains explicitly incomplete after snapshot interpretation");
     }
 
     /** Exercise the actual DTO collector which formerly omitted all ordinary items in creative. */

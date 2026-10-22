@@ -926,6 +926,15 @@ final class HologramCellPolicy {
         return result;
     }
 
+    /** Revalidate a native declaration summary once per cache generation, without publishing unselected options. */
+    static List<ItemStack> snapshotCandidates(HologramSession s, HologramCapture.Cell cell, boolean selected) {
+        if (!selected && (s.virtual || cell.element == null || cell.anchor)) return Collections.emptyList();
+        // candidates() owns generation invalidation and the per-cell/collector caches.
+        // A cleared cache is pending interpretation, not evidence of an incomplete declaration.
+        List<ItemStack> current = candidates(s, cell);
+        return selected ? current : Collections.emptyList();
+    }
+
     @SuppressWarnings("unchecked")
     static List<ItemStack> declaredCandidates(HologramSession s, HologramCapture.Cell cell) {
         refreshDeclarationGeneration(s);

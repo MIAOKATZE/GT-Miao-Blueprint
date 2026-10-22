@@ -6,12 +6,15 @@ import java.util.function.BiConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.cleanroommc.modularui.api.GuiAxis;
 import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.drawable.Rectangle;
 import com.cleanroommc.modularui.utils.Alignment;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
+import com.cleanroommc.modularui.widgets.layout.Flow;
 
 /** The storage screen and its lesson share the actual list, row callbacks, details and raw-preview widget. */
 final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorageBrowserView> {
@@ -28,14 +31,17 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
     }
 
     private final int panelWidth;
+    private final boolean embedded;
     private final Selection selection;
     private final BiConsumer<String, IWidget> target;
+    private Flow sidebar;
     final ListWidget<IWidget, ?> list;
     final HologramCutStoragePreviewWidget camera;
 
     HologramCutStorageBrowserView(int width, int height, Selection selection, HologramCutStoragePreviewView preview,
         BiConsumer<String, IWidget> target) {
         panelWidth = width;
+        embedded = false;
         this.selection = selection;
         this.target = target;
         size(width, height);
@@ -87,6 +93,79 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
         refreshRows();
     }
 
+    /** The editor owns the surrounding header, mode tabs and tutorial entry. */
+    HologramCutStorageBrowserView(Selection selection, HologramCutStoragePreviewView preview,
+        BiConsumer<String, IWidget> target) {
+        panelWidth = 0;
+        embedded = true;
+        this.selection = selection;
+        this.target = target;
+        sizeRel(1f);
+        Flow body = Flow.row()
+            .sizeRel(1f)
+            .childPadding(4);
+        Flow viewport = Flow.column()
+            .heightRel(1f)
+            .expanded()
+            .childPadding(3);
+        // Give MUI's expanded height an explicit unit; an unspecified height can retain its 18px placeholder.
+        camera = new HologramCutStoragePreviewWidget(preview).sizeRel(1f)
+            .expanded()
+            .background(new Rectangle().color(0xff272d30))
+            .name("cut_storage_preview");
+        viewport.child(camera);
+        viewport.child(
+            HologramEditorNativeTheme.label(selection::notice, HologramEditorNativeTheme.MUTED)
+                .widthRel(1f)
+                .height(24)
+                .padding(4)
+                .background(HologramEditorNativeTheme.PANEL)
+                .tooltipBuilder(t -> t.addLine(selection.notice()))
+                .tooltipAutoUpdate(true));
+        sidebar = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
+            .width(176)
+            .heightRel(1f)
+            .padding(6)
+            .childPadding(4)
+            .background(HologramEditorNativeTheme.PANEL);
+        sidebar.child(
+            HologramEditorNativeTheme.label(
+                () -> "私有剪切列表 · " + selection.entries()
+                    .size(),
+                HologramEditorNativeTheme.TITLE)
+                .widthRel(1f)
+                .height(18));
+        list = new HologramRecessedList().paperEdges()
+            .sizeRel(1f)
+            .expanded()
+            .padding(3)
+            .background(HologramEditorNativeTheme.INPUT)
+            .name("cut_storage_list");
+        sidebar.child(list);
+        sidebar.child(
+            HologramEditorNativeTheme.label(this::selectedName, HologramEditorNativeTheme.TITLE)
+                .widthRel(1f)
+                .height(24)
+                .tooltipBuilder(t -> t.addLine(selectedName()))
+                .tooltipAutoUpdate(true));
+        sidebar.child(
+            HologramEditorNativeTheme.label(() -> details(selectedEntry()), HologramEditorNativeTheme.MUTED)
+                .widthRel(1f)
+                .height(24));
+        body.child(viewport)
+            .child(sidebar);
+        child(body);
+        register("cut.list", list);
+        register("cut.preview", camera);
+        refreshRows();
+    }
+
+    /** Embedded controls share the list's fixed-width sidebar; the legacy screen keeps its own footer. */
+    void addFooter(IWidget widget) {
+        if (!embedded) throw new IllegalStateException("Only the editor browser owns an embedded footer");
+        sidebar.child(widget);
+    }
+
     private void register(String name, IWidget widget) {
         if (target != null) target.accept(name, widget);
     }
@@ -97,10 +176,12 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
             .isEmpty()) {
             list.child(
                 IKey.dynamic(() -> HologramCutStoragePreview.text("empty"))
-                    .color(HologramEditorTheme.MUTED)
+                    .color(embedded ? HologramEditorNativeTheme.MUTED : HologramEditorTheme.MUTED)
                     .shadow(false)
                     .asWidget()
+                    .textAlign(embedded ? Alignment.TopLeft : Alignment.CenterLeft)
                     .widthRel(1f)
+                    .padding(embedded ? 4 : 0)
                     .height(30));
             return;
         }
@@ -110,20 +191,39 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
                 .widthRel(1f)
                 .marginBottom(4)
                 .background(
-                    HologramMuiTheme.row(
-                        () -> selection.selected()
-                            .equals(id),
-                        false))
+                    embedded
+                        ? (context, x, y, width, height, theme) -> HologramEditorNativeTheme
+                            .background(
+                                true,
+                                selection.selected()
+                                    .equals(id),
+                                false,
+                                false)
+                            .draw(context, x, y, width, height, theme)
+                        : HologramMuiTheme.row(
+                            () -> selection.selected()
+                                .equals(id),
+                            false))
                 .hoverBackground(
-                    HologramMuiTheme.row(
-                        () -> selection.selected()
-                            .equals(id),
-                        true))
+                    embedded
+                        ? (context, x, y, width, height, theme) -> HologramEditorNativeTheme
+                            .background(
+                                true,
+                                selection.selected()
+                                    .equals(id),
+                                true,
+                                false)
+                            .draw(context, x, y, width, height, theme)
+                        : HologramMuiTheme.row(
+                            () -> selection.selected()
+                                .equals(id),
+                            true))
                 .child(
                     IKey.dynamic(() -> rowText(entry))
                         .color(
                             () -> selection.selected()
-                                .equals(id) ? HologramMuiTheme.TITLE : HologramMuiTheme.TEXT)
+                                .equals(id) ? embedded ? HologramEditorNativeTheme.TITLE : HologramMuiTheme.TITLE
+                                    : embedded ? HologramEditorNativeTheme.TEXT : HologramMuiTheme.TEXT)
                         .shadow(false)
                         .asWidget()
                         .textAlign(Alignment.CenterLeft)
@@ -154,8 +254,12 @@ final class HologramCutStorageBrowserView extends ParentWidget<HologramCutStorag
     }
 
     private String rowText(NBTTagCompound entry) {
-        int width = Math.max(24, (panelWidth - 34) * 34 / 100 - 24);
-        return trim("#" + entry.getLong("sequence") + "  " + entry.getString("name"), width) + "\n\u00a77"
+        int width = Math.max(
+            24,
+            embedded ? list.getArea()
+                .w() - 16 : (panelWidth - 34) * 34 / 100 - 24);
+        return trim("#" + entry.getLong("sequence") + "  " + entry.getString("name"), width) + "\n"
+            + (embedded ? "" : "\u00a77")
             + trim(details(entry), width);
     }
 

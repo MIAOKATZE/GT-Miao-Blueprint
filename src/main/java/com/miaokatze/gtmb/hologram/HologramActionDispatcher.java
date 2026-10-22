@@ -16,6 +16,8 @@ final class HologramActionDispatcher {
     static void handle(EntityPlayerMP player, NBTTagCompound action) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
+        if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
+            || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
         // Each action gets fresh material connections only if it actually queries or changes materials.
         s.materialContext = null;
         if (action.getInteger("clientSnapshotProtocol") == 1) s.cellDeltaProtocol = true;
@@ -54,6 +56,10 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if ("switchEditorWorkspace".equals(op)) {
+            HologramEditorWorkspaceRegistry.switchWorkspace(s, action);
+            return;
+        }
         if ("placeTextBox".equals(op)) {
             HologramTextWorkflow.apply(s, action);
             return;

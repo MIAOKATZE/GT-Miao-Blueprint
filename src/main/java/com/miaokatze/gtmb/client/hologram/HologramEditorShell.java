@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
+import com.cleanroommc.modularui.api.GuiAxis;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.widget.IFocusedWidget;
 import com.cleanroommc.modularui.api.widget.IWidget;
@@ -24,7 +25,7 @@ import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
 /** One persistent native widget graph per editing session. No domain state is copied into the shell. */
 final class HologramEditorShell {
 
-    private static final IDrawable EDITOR_BACKDROP = new Rectangle().color(0xff0c1e28);
+    private static final IDrawable EDITOR_BACKDROP = new Rectangle().color(0xff292d2f);
 
     private final HologramUiModules ui;
     private ModularPanel host;
@@ -34,12 +35,23 @@ final class HologramEditorShell {
     private IWidget sceneOverride;
     private final Map<ModularPanel, Boolean> pausedPanels = new java.util.IdentityHashMap<>();
     private Expandable dock;
+    private Flow inspectorBody;
+    private boolean inspectorOpen, inspectorFloating;
+    private int inspectorX = 60, inspectorY = 72, inspectorWidth = 184, inspectorHeight = 250;
     private PagedWidget<?> pages;
     private HologramEditorPropertiesPane properties;
     private HologramEditorLibraryPane library;
     private HologramEditorBlueprintSettingsPane settings;
     private HologramEditorLegacyDialogs legacy;
     private HologramEditorAnnotationOverlay annotations;
+    private HologramEditorStructurePane structures;
+    private HologramEditorCutWorkspace cut;
+    private Expandable libraryDrawer;
+    private Flow editBody;
+    private ParentWidget<?> cutBody;
+    private Flow structureDrawer;
+    private boolean structuresOpen;
+    private boolean lastCut;
     private IFocusedWidget savedFocus;
     private boolean paused;
     private final Map<Integer, List<Entry>> controls = new HashMap<>();
@@ -96,35 +108,227 @@ final class HologramEditorShell {
             .sizeRel(1f)
             .childPadding(0)
             .background(IDrawable.NONE);
-        Flow top = Flow.row()
+        presentation.child(buildDocumentBar());
+        Flow top = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .widthRel(1f)
-            .height(28)
-            .padding(2)
+            .height(25)
+            .padding(4, 2)
+            .childPadding(8)
             .background(HologramEditorNativeTheme.PANEL);
-        top.child(((Flow) ui.tools.buildModeBar()).width(225));
+        top.child(ui.tools.buildModeBar());
         top.child(
-            new com.cleanroommc.modularui.widget.Widget<>().widthRel(1f)
+            HologramEditorNativeTheme.label(this::workspaceHint, HologramEditorNativeTheme.MUTED)
+                .widthRel(1f)
                 .expanded()
-                .height(20)
-                .background(IDrawable.NONE));
-        top.child(ui.guide.buildChip());
-        Flow body = Flow.row()
+                .height(20));
+        top.child(ui.tools.buildTopTools());
+        presentation.child(top);
+
+        structures = new HologramEditorStructurePane(ui);
+        if (cut == null) cut = new HologramEditorCutWorkspace(ui);
+        editBody = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
+            .name("editor_native_edit_body")
             .sizeRel(1f)
-            .expanded()
+            .childPadding(0);
+        editBody.child(ui.tools.buildToolRail());
+        structureDrawer = Flow.col()
+            .name("editor_native_structure_drawer")
+            .width(144)
+            .heightRel(1f)
+            .padding(5)
             .childPadding(4)
-            .padding(4);
-        scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).sizeRel(1f)
-            .expanded() : sceneOverride;
-        body.child(ui.tools.buildToolRail());
-        Flow sceneColumn = Flow.column()
+            .background(HologramEditorNativeTheme.PANEL)
+            .child(
+                HologramEditorNativeTheme.button(() -> "\u7ed3\u6784\u5217\u8868  \u2039", this::toggleStructures)
+                    .widthRel(1f)
+                    .height(22))
+            .child(structures.build());
+        structureDrawer.setEnabledIf(w -> structuresOpen);
+        editBody.child(structureDrawer);
+        scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).sizeRel(1f) : sceneOverride;
+        ParentWidget<?> viewport = new ParentWidget<>().name("editor_native_viewport")
+            .widthRel(1f)
             .expanded()
             .heightRel(1f)
-            .childPadding(3)
-            .collapseDisabledChild(true);
-        sceneColumn.child(scene);
-        sceneColumn.child(ui.tools.buildSelectedBar());
-        body.child(sceneColumn);
-        dock = new Expandable() {
+            .background(EDITOR_BACKDROP)
+            .child(scene);
+        viewport.child(
+            ui.tools.buildViewPresets()
+                .right(8)
+                .top(8));
+        viewport.child(
+            HologramEditorNativeTheme
+                .label(
+                    () -> "\u7b49\u8ddd \u00b7 \u6b63\u4ea4   " + ui.session.state().cells.size() + " \u683c",
+                    0xffc6c7c1)
+                .name("editor_native_viewport_caption")
+                .pos(10, 10)
+                .size(140, 12));
+        viewport.child(
+            new ParentWidget<>().leftRel(.5f, 0, .5f)
+                .width(174)
+                .bottom(10)
+                .height(25)
+                .child(ui.tools.buildSelectedBar()));
+        editBody.child(viewport);
+        editBody.child(buildLaunchers());
+        editBody.child(buildInspector());
+        editBody.child(buildLibraryDrawer());
+        cutBody = new ParentWidget<>().sizeRel(1f)
+            .child(cut.build());
+        ParentWidget<?> workspace = new ParentWidget<>().widthRel(1f)
+            .heightRel(1f)
+            .expanded()
+            .background(EDITOR_BACKDROP)
+            .child(editBody)
+            .child(cutBody);
+        editBody.setEnabledIf(w -> !ui.workspaces.isCut());
+        cutBody.setEnabledIf(w -> ui.workspaces.isCut());
+        presentation.child(workspace);
+        content = new ParentWidget<>().sizeRel(1f)
+            .expanded()
+            .background(IDrawable.NONE)
+            .child(presentation);
+        // MUI 2.3.92 paints sibling backgrounds before their subtrees. A single-child overlay keeps the
+        // inspector's paper background after the presentation's workspace backdrop, alongside its own content.
+        content.child(
+            new InspectorOverlay().name("editor_native_inspector_overlay")
+                .sizeRel(1f)
+                .background(IDrawable.NONE)
+                .disableThemeBackground(true)
+                .disableHoverThemeBackground(true)
+                .child(inspectorBody));
+        root.child(content);
+        IWidget bottom = bottomOverride == null ? ui.guide.buildBar() : bottomOverride;
+        root.child(bottom);
+        ui.tools.attach(host);
+        ui.guide.attach(host);
+        legacy.attach(host);
+        annotations.attach(host);
+        registerTarget("viewport", ui.workspaces.isCut() ? cut.scene() : scene);
+        registerTarget("inspector", inspectorBody);
+        registerTarget("library", libraryDrawer);
+        return root;
+    }
+
+    void sceneOverride(IWidget widget) {
+        if (root != null) throw new IllegalStateException("Set the scene before building the graph");
+        sceneOverride = widget;
+    }
+
+    void cutOverride(HologramEditorCutWorkspace workspace) {
+        if (root != null) throw new IllegalStateException("Set the cut workspace before building the graph");
+        cut = workspace;
+    }
+
+    private IWidget buildDocumentBar() {
+        Flow bar = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
+            .name("editor_native_document_bar")
+            .widthRel(1f)
+            .height(35)
+            .padding(6, 4)
+            .childPadding(5)
+            .background(HologramEditorNativeTheme.PANEL);
+        // Decoration only: the real structure-list command remains on the tool rail.
+        bar.child(
+            new com.cleanroommc.modularui.widget.Widget<>().size(16)
+                .background(HologramEditorIcons.texture("structure", false, true, false, false))
+                .disableHoverBackground());
+        bar.child(
+            Flow.col()
+                .widthRel(1f)
+                .expanded()
+                .childPadding(2)
+                .child(
+                    HologramEditorNativeTheme.label(this::documentTitle, HologramEditorNativeTheme.TITLE)
+                        .widthRel(1f)
+                        .height(12))
+                .child(
+                    HologramEditorNativeTheme
+                        .label(
+                            () -> ui.workspaces.projection() ? "控制器投影 · 固定锚点"
+                                : ui.workspaces.isCut() ? "当前存档 · 独立剪切列表" : ui.library.blueprintSaveState(),
+                            HologramEditorNativeTheme.MUTED)
+                        .widthRel(1f)
+                        .height(10)));
+        bar.child(headerButton("打开剪切", "cut", () -> ui.workspaces.activateCut(), ui.workspaces::blueprint));
+        bar.child(headerButton("蓝图库", "library", () -> {
+            if (!ui.workspaces.blueprint()) ui.workspaces.activateBlueprint();
+            else toggleLibrary();
+        }, ui.workspaces::blueprint));
+        bar.child(
+            headerButton("教程", "tutorial", () -> ui.router.activate(HologramEditorControlIds.TUTORIAL), () -> true));
+        bar.child(headerButton("保存", "save", () -> selectDockPage(7), ui.workspaces::blueprint));
+        bar.child(headerButton("退出", "back", ui.router::closeRoot, () -> true));
+        bar.child(ui.guide.buildChip());
+        return bar;
+    }
+
+    private String documentTitle() {
+        if (ui.workspaces.isCut()) return "剪切存储";
+        String title = ui.session.state().data.getString("virtualPresetName")
+            .trim();
+        if (title.isEmpty()) title = ui.session.state().data.getString("title")
+            .trim();
+        if (ui.workspaces.blueprint() && (title.isEmpty() || "全息构造器".equals(title)))
+            return ui.session.state().cells.isEmpty() ? "未命名蓝图" : "蓝图草稿";
+        return title.isEmpty() ? "控制器投影" : title;
+    }
+
+    private IWidget headerButton(String name, String icon, Runnable action, BooleanSupplier visible) {
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(
+            () -> name,
+            icon,
+            () -> ui.host.parent()
+                .deferAction(action))
+            .sizeRel(1f);
+        registerTarget("header." + icon, button);
+        return new ParentWidget<>().width(name.length() > 3 ? 62 : 48)
+            .height(23)
+            .setEnabledIf(w -> visible.getAsBoolean())
+            .child(button);
+    }
+
+    private String workspaceHint() {
+        return ui.workspaces.projection() ? "固定控制器 · 等级 / 信道 / 仓室"
+            : ui.workspaces.isCut() ? "选择列表即时预览 · 放置与撤回" : "点选格 · 列表选整组 · G 移动";
+    }
+
+    private IWidget buildLaunchers() {
+        Flow launchers = HologramEditorNativeTheme.collapsingFlow(GuiAxis.Y)
+            .name("editor_native_panel_launchers")
+            .width(26)
+            .heightRel(1f)
+            .padding(3, 6)
+            .childPadding(6)
+            .background(HologramEditorNativeTheme.PANEL);
+        String[] icons = { "select", "structure", "process", "material", "network", "info", "place" };
+        String[] names = { "所选格属性", "结构配置", "蓝图处理", "材料与来源", "量子组与网络", "提示词与区域", "材料核验与施工" };
+        int[] indices = { 0, 3, 1, 4, 5, 6, 8 };
+        for (int i = 0; i < names.length; i++) {
+            final int index = indices[i];
+            final String name = names[i];
+            ButtonWidget<?> button = HologramEditorNativeTheme.iconButton(icons[i], () -> name, () -> {
+                if (dockExpanded() && pages.getCurrentPageIndex() == index) setDockExpanded(false);
+                else selectDockPage(index);
+            }, () -> true, () -> dockExpanded() && pages.getCurrentPageIndex() == index)
+                .size(20);
+            ParentWidget<?> slot = new ParentWidget<>().size(20)
+                .child(button);
+            if (index == 1 || index == 6) slot.setEnabledIf(w -> ui.workspaces.blueprint());
+            if (index == 5) slot.setEnabledIf(
+                w -> ui.workspaces.blueprint() || ui.bindings.networkGroups()
+                    .tagCount() > 0);
+            if (index == 8) slot.setEnabledIf(
+                w -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement"));
+            launchers.child(slot);
+            registerTarget("launcher." + index, button);
+        }
+        return launchers;
+    }
+
+    private Expandable expandable() {
+        return new Expandable() {
 
             @Override
             public com.cleanroommc.modularui.api.widget.Interactable.Result onMousePressed(int button) {
@@ -133,84 +337,138 @@ final class HologramEditorShell {
         }.coverChildrenWidth()
             .disableCoverChildrenHeight()
             .heightRel(1f)
-            .animationDuration(0)
-            .expanded(true);
-        Flow rail = Flow.column()
-            .width(20)
-            .heightRel(1f)
-            .background(HologramEditorNativeTheme.PANEL);
-        rail.child(
-            HologramEditorNativeTheme
-                .iconButton("collapse-left", () -> "展开侧栏", () -> setDockExpanded(true), () -> true, () -> false)
-                .size(20, 26)
-                .name("editor_inspector_expand"));
-        Flow expanded = Flow.column()
-            .width(236)
-            .heightRel(1f)
-            .padding(6)
-            .childPadding(4)
-            .background(HologramEditorNativeTheme.PANEL);
-        Flow tabs = Flow.row()
-            .widthRel(1f)
-            .height(24)
-            .childPadding(2);
-        PagedWidget.Controller controller = new PagedWidget.Controller();
-        pages = new PagedWidget<>().sizeRel(1f)
-            .expanded()
-            .controller(controller)
-            .initialPage(ui.library.libraryDrawer() ? 2 : 0)
-            .addPage(properties.build())
-            .addPage(settings.build())
-            .addPage(library.build())
-            .onPageChange(page -> {
-                ui.library.libraryDrawer(page == 2);
-                if (page == 2) ui.library.blueprintTab(true);
-            });
-        String[] names = { "\u5c5e\u6027", "\u84dd\u56fe\u8bbe\u7f6e", "\u84dd\u56fe\u5e93" };
-        for (int i = 0; i < names.length; i++) {
-            final int index = i;
-            IWidget tab = HologramEditorNativeTheme.pageButton(i, controller, () -> names[index])
-                .widthRel(1f)
-                .expanded()
-                .height(24);
-            tabs.child(tab);
-            registerControl(HologramEditorControlIds.SHELL + 20 + i, tab, () -> names[index], () -> true);
-        }
-        tabs.child(
-            HologramEditorNativeTheme
-                .iconButton("collapse-right", () -> "收起侧栏", () -> setDockExpanded(false), () -> true, () -> false)
-                .size(20, 24)
-                .name("editor_inspector_collapse"));
-        expanded.child(tabs)
-            .child(pages);
-        dock.collapsedView(rail)
-            .expandedView(expanded);
-        body.child(dock);
-        presentation.child(top)
-            .child(body);
-        content = new ParentWidget<>().sizeRel(1f)
-            .expanded()
-            .background(IDrawable.NONE);
-        content.child(presentation);
-        root.child(content);
-        IWidget bottom = bottomOverride == null ? ui.guide.buildBar() : bottomOverride;
-        root.child(bottom);
-        ui.tools.attach(host);
-        ui.guide.attach(host);
-        legacy.attach(host);
-        annotations.attach(host);
-        registerTarget("viewport", scene);
-        registerTarget("inspector", expanded);
-        registerTarget(
-            "library",
-            pages.getPages()
-                .get(2));
-        return root;
+            .animationDuration(0);
     }
 
-    void sceneOverride(IWidget widget) {
-        if (root != null) throw new IllegalStateException("Set the scene before building the graph");
-        sceneOverride = widget;
+    private IWidget buildInspector() {
+        dock = expandable().expanded(false);
+        Flow body = Flow.col()
+            .width(184)
+            .height(250)
+            .padding(5)
+            .childPadding(5)
+            .background(HologramEditorNativeTheme.PANEL);
+        Flow heading = Flow.row()
+            .widthRel(1f)
+            .height(23)
+            .childPadding(3);
+        heading.child(
+            new InspectorHandle().widthRel(1f)
+                .expanded()
+                .height(22));
+        heading.child(
+            HologramEditorNativeTheme
+                .flatIconButton(
+                    "detach",
+                    () -> inspectorFloating ? "停靠到侧栏" : "浮出功能面板",
+                    this::toggleInspectorFloating,
+                    () -> true,
+                    () -> inspectorFloating)
+                .size(20));
+        heading.child(
+            HologramEditorNativeTheme
+                .flatIconButton("collapse-right", () -> "收起功能侧栏", () -> setDockExpanded(false), () -> true, () -> false)
+                .size(20));
+        pages = new PagedWidget<>().sizeRel(1f)
+            .expanded()
+            .initialPage(0)
+            .addPage(properties.buildSelection())
+            .addPage(settings.build())
+            .addPage(new ParentWidget<>().sizeRel(1f))
+            .addPage(properties.buildStructure())
+            .addPage(properties.buildMaterials())
+            .addPage(buildNetworkPane())
+            .addPage(buildAnnotationPane())
+            .addPage(library.buildSave())
+            .addPage(properties.buildConstruction());
+        body.child(heading)
+            .child(pages);
+        inspectorBody = body;
+        inspectorBody.setEnabledIf(w -> inspectorOpen && !ui.workspaces.isCut());
+        dock.collapsedView(
+            new com.cleanroommc.modularui.widget.Widget<>().width(0)
+                .heightRel(1f)
+                .background(IDrawable.NONE))
+            .expandedView(
+                new com.cleanroommc.modularui.widget.Widget<>().width(184)
+                    .heightRel(1f)
+                    .background(IDrawable.NONE));
+        return dock;
+    }
+
+    private IWidget buildNetworkPane() {
+        return Flow.col()
+            .sizeRel(1f)
+            .childPadding(7)
+            .child(
+                nativeAction(196, () -> "已有量子类群绑定", () -> ui.session.editable(), () -> "当前蓝图登记的真实量子类群与网络").widthRel(1f)
+                    .height(24))
+            .child(
+                nativeAction(179, () -> "AE 容器与资源标记", () -> ui.session.editable(), () -> "原容器标记与资源审查").widthRel(1f)
+                    .height(24));
+    }
+
+    private IWidget buildAnnotationPane() {
+        return Flow.col()
+            .sizeRel(1f)
+            .childPadding(7)
+            .child(
+                nativeAction(
+                    146,
+                    () -> "所选格提示词",
+                    () -> ui.session.editable() && ui.session.selectedCell() != null,
+                    () -> "编辑当前格的施工提示").widthRel(1f)
+                        .height(24))
+            .child(
+                nativeAction(227, () -> "全局提示词", () -> ui.session.editable(), () -> "整份蓝图的说明").widthRel(1f)
+                    .height(24))
+            .child(
+                nativeAction(166, () -> "所选格 NBT", () -> ui.processing.canEditBlueprintNbt(), () -> "审阅当前格的真实NBT")
+                    .widthRel(1f)
+                    .height(24));
+    }
+
+    private IWidget buildLibraryDrawer() {
+        libraryDrawer = expandable().expanded(ui.workspaces.blueprint());
+        ui.library.libraryDrawer(ui.workspaces.blueprint());
+        ui.library.blueprintTab(ui.workspaces.blueprint());
+        Flow collapsed = Flow.col()
+            .width(18)
+            .heightRel(1f)
+            .padding(1, 6)
+            .background(HologramEditorNativeTheme.PANEL);
+        collapsed.child(
+            HologramEditorNativeTheme
+                .flatIconButton("library", () -> "展开蓝图库", this::toggleLibrary, () -> true, () -> false)
+                .size(16, 22));
+        Flow body = Flow.col()
+            .width(140)
+            .heightRel(1f)
+            .padding(4)
+            .childPadding(4)
+            .background(HologramEditorNativeTheme.PANEL);
+        body.child(
+            HologramEditorNativeTheme.button(() -> "蓝图库  ›", this::toggleLibrary)
+                .widthRel(1f)
+                .height(22));
+        body.child(
+            new ParentWidget<>().sizeRel(1f)
+                .expanded()
+                .child(library.build()));
+        libraryDrawer.collapsedView(collapsed)
+            .expandedView(body)
+            .setEnabledIf(w -> ui.workspaces.blueprint());
+        return libraryDrawer;
+    }
+
+    void toggleStructures() {
+        structuresOpen = !structuresOpen;
+        if (editBody != null) editBody.scheduleResize();
+    }
+
+    void toggleLibrary() {
+        if (libraryDrawer != null) libraryDrawer.expanded(!libraryDrawer.isExpanded());
+        if (libraryDrawer != null) ui.library.libraryDrawer(libraryDrawer.isExpanded());
     }
 
     boolean controlEnabled(int id) {
@@ -227,8 +485,20 @@ final class HologramEditorShell {
 
     void tick() {
         if (root == null || paused || properties == null) return;
-        if (ui.host.screenWidth() > 0 && ui.host.screenWidth() < 460) dock.expanded(false);
+        boolean showingCut = ui.workspaces.isCut();
+        cut.activate(showingCut);
+        if (lastCut != showingCut) {
+            lastCut = showingCut;
+            root.scheduleResize();
+            ui.preview.releasePointerCapture();
+        }
+        if (showingCut) {
+            cut.tick();
+            return;
+        }
+        layoutInspector();
         properties.refresh();
+        structures.refresh();
         library.refresh();
         settings.refresh();
         legacy.refresh();
@@ -294,7 +564,7 @@ final class HologramEditorShell {
     }
 
     IWidget scene() {
-        return scene;
+        return cut != null && ui.workspaces.isCut() ? cut.scene() : scene;
     }
 
     HologramEditorAnnotationOverlay annotations() {
@@ -326,30 +596,143 @@ final class HologramEditorShell {
         return root != null;
     }
 
+    void close() {
+        if (cut != null) cut.close();
+        ui.preview.releasePointerCapture();
+    }
+
     boolean libraryPageSelected() {
-        return pages != null && pages.getCurrentPageIndex() == 2;
+        return libraryDrawer != null && libraryDrawer.isExpanded() && ui.workspaces.blueprint();
     }
 
     int dockPage() {
-        return pages == null ? 0 : pages.getCurrentPageIndex();
+        return libraryPageSelected() && !dockExpanded() ? 2 : pages == null ? 0 : pages.getCurrentPageIndex();
     }
 
     boolean dockExpanded() {
-        return dock != null && dock.isExpanded();
+        return inspectorOpen;
     }
 
     void selectDockPage(int page) {
         if (pages == null) return;
-        setDockExpanded(true);
-        pages.setPage(page);
         if (page == 2) {
+            if (libraryDrawer != null) libraryDrawer.expanded(true);
             ui.library.libraryDrawer(true);
             ui.library.blueprintTab(true);
+            return;
         }
+        setDockExpanded(true);
+        pages.setPage(page);
     }
 
     void setDockExpanded(boolean expanded) {
-        if (dock != null) dock.expanded(expanded && (ui.host.screenWidth() == 0 || ui.host.screenWidth() >= 460));
+        inspectorOpen = expanded;
+        if (dock != null) dock.expanded(expanded && !inspectorFloating);
+        if (root != null) root.scheduleResize();
+    }
+
+    private void toggleInspectorFloating() {
+        inspectorFloating = !inspectorFloating;
+        setDockExpanded(true);
+        layoutInspector();
+    }
+
+    private void layoutInspector() {
+        if (inspectorBody == null || !inspectorOpen || content == null || !content.isValid()) return;
+        int x, y, w, h;
+        if (inspectorFloating) {
+            w = Math.min(inspectorWidth, Math.max(140, content.getArea().width - 12));
+            h = Math.min(inspectorHeight, Math.max(100, content.getArea().height - 16));
+            x = Math.max(0, Math.min(inspectorX, content.getArea().width - w));
+            y = Math.max(0, Math.min(inspectorY, content.getArea().height - h));
+        } else {
+            int[] area = bounds(dock), origin = bounds(content);
+            if (area == null || origin == null || area[2] < 100) return;
+            x = area[0] - origin[0];
+            y = area[1] - origin[1];
+            w = area[2];
+            h = area[3];
+        }
+        if (inspectorBody.getArea().rx != x || inspectorBody.getArea().ry != y
+            || inspectorBody.getArea().width != w
+            || inspectorBody.getArea().height != h)
+            inspectorBody.pos(x, y)
+                .size(w, h)
+                .scheduleResize();
+    }
+
+    private static final class InspectorOverlay extends ParentWidget<InspectorOverlay> {
+
+        @Override
+        public boolean canHover() {
+            return false;
+        }
+
+        @Override
+        public boolean canHoverThrough() {
+            return true;
+        }
+
+        @Override
+        public boolean canClickThrough() {
+            return true;
+        }
+    }
+
+    private final class InspectorHandle extends com.cleanroommc.modularui.widget.Widget<InspectorHandle>
+        implements com.cleanroommc.modularui.api.widget.Interactable {
+
+        private int grabX, grabY;
+
+        InspectorHandle() {
+            tooltip(t -> t.addLine("拖动标题浮出并移动；图钉按钮停靠回侧栏"));
+        }
+
+        @Override
+        public boolean canHover() {
+            return true;
+        }
+
+        @Override
+        public boolean canClickThrough() {
+            return false;
+        }
+
+        @Override
+        public void draw(com.cleanroommc.modularui.screen.viewport.ModularGuiContext context,
+            com.cleanroommc.modularui.theme.WidgetThemeEntry<?> theme) {
+            String[] titles = { "所选格属性", "蓝图处理", "", "结构配置", "材料与来源", "量子与网络", "提示词与区域", "保存蓝图", "材料核验与施工" };
+            net.minecraft.client.gui.FontRenderer font = ui.host.minecraft().fontRenderer;
+            font.drawString(
+                font.trimStringToWidth(titles[pages.getCurrentPageIndex()], Math.max(8, getArea().width - 2)),
+                1,
+                Math.max(1, (getArea().height - 9) / 2),
+                HologramEditorNativeTheme.TITLE);
+        }
+
+        @Override
+        public Result onMousePressed(int button) {
+            if (button != 0) return Result.STOP;
+            int[] area = bounds(inspectorBody), origin = bounds(content);
+            if (area == null || origin == null) return Result.STOP;
+            grabX = getContext().getAbsMouseX() - area[0];
+            grabY = getContext().getAbsMouseY() - area[1];
+            inspectorX = area[0] - origin[0];
+            inspectorY = area[1] - origin[1];
+            return Result.SUCCESS;
+        }
+
+        @Override
+        public void onMouseDrag(int button, long elapsed) {
+            if (button != 0) return;
+            int[] origin = bounds(content);
+            if (origin == null) return;
+            inspectorFloating = true;
+            inspectorX = getContext().getAbsMouseX() - origin[0] - grabX;
+            inspectorY = getContext().getAbsMouseY() - origin[1] - grabY;
+            dock.expanded(false);
+            layoutInspector();
+        }
     }
 
     void blockInput(IWidget shield) {
@@ -357,6 +740,19 @@ final class HologramEditorShell {
     }
 
     void pausePresentation() {
+        pause(false);
+    }
+
+    void pauseWorkspace() {
+        pause(true);
+        if (cut != null) cut.activate(false);
+    }
+
+    void resumeWorkspace() {
+        resumePresentation();
+    }
+
+    private void pause(boolean workspace) {
         if (root == null || paused) return;
         if (scene instanceof HologramEditorSceneWidget) ((HologramEditorSceneWidget) scene).invalidatePresentation();
         LocatedWidget focused = host.getContext()
@@ -371,7 +767,7 @@ final class HologramEditorShell {
             .getScreen()
             .getPanelManager()
             .getOpenPanels()) {
-            if (panel.isOpen()) {
+            if (panel.isOpen() && (!workspace || panel != host)) {
                 pausedPanels.put(panel, panel.isEnabled());
                 panel.setEnabled(false);
             }
@@ -409,7 +805,9 @@ final class HologramEditorShell {
     }
 
     boolean sceneActive() {
-        return !paused && !ui.library.browsePreviewActive()
+        return !paused && !ui.workspaces.isCut()
+            && !ui.workspaces.switching()
+            && !ui.library.browsePreviewActive()
             && !ui.preview.inventory()
             && ui.preview.previewInteractive()
             && !ui.library.libraryAdminDrawer()

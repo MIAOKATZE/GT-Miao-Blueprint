@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "version": "0.1.38",
+  "captureStatus": "DIRTY_WORKTREE_CANDIDATE",
+  "sourceBaseCommit": "2aaa78cf19eb01d6ea46c7df2798d60d0ba1f786",
+  "buildVersion": "v0.1.37-master+2aaa78cf19-dirty",
+  "candidateSHA256": "a0a1f457ea40d6aa9270c8b7948467dff01e12f9dfbeadf58564845dd78c5bc3",
+  "sourceFingerprintSHA256": "80411b3106cabcc670c3ebd059ff6a73f79e376a0fc26c5daff564a96e32f339",
+  "run": "visual04",
+  "heapMiB": 4096,
+  "images": [
+    {
+      "file": "projection-properties.png",
+      "captureFile": "01-projection-properties.png",
+      "sha256": "6a34c8d0f7b84ec9811ba2f08a470757391c7e828302df204958262cd5c9dbce",
+      "bytes": 277880,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "66",
+      "scope": "Controller projection; real EBF planning snapshot and paper properties."
+    },
+    {
+      "file": "blueprint-library.png",
+      "captureFile": "02-blueprint-draft.png",
+      "sha256": "970366bedbe2fdf0fe1beaaa6e984041672e4a5755f49fa7ac722a40bb8e27e6",
+      "bytes": 98718,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "443",
+      "scope": "Independent two-cell text draft, empty client library and axis/plane handles; no saved row preview claim."
+    },
+    {
+      "file": "cut-workspace-empty.png",
+      "captureFile": "04-cut-same-root.png",
+      "sha256": "5d65b33790e349457eb9b1eddbab272b6cf2e1d4dcaaf4aefec1aa0e33f1b4c2",
+      "bytes": 60184,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "1070",
+      "scope": "Same-screen Cut workspace, empty private list; full-height viewport and intact empty label; no world Cut or placement."
+    },
+    {
+      "file": "tutorial-structure.png",
+      "captureFile": "07-ebf-next.png",
+      "sha256": "39edf0cc0be6890439f68776cdf726815fa1e83764a5016c78d79546a953d8dd",
+      "bytes": 293428,
+      "width": 1920,
+      "height": 1200,
+      "naturalGuiDrawGeneration": "1997",
+      "scope": "Projection tutorial second scene with native captured EBF rendering, paper structure controls and four navigation buttons; isolated planning sample, not a formed machine."
+    }
+  ],
+  "reviewer": "root",
+  "visualReview": "ACCEPTED_FOR_DOCUMENTED_BOUNDED_SCOPE; NOT_USER_ACCEPTANCE",
+  "uncovered": [
+    "Dedicated-server live UI",
+    "Real saved-library row switching",
+    "Real Cut storage, placement, undo or payment",
+    "Complete eight-course walkthrough"
+  ],
+  "evidence": "https://github.com/MIAOKATZE/GT-Miao-Blueprint-plan/tree/master/evidence/v0.1.38-editor-html-fidelity",
+  "artifactProof": "The clean/final runtime is compared against this candidate with only exact generated VERSION changes allowed. See delivery compatibility evidence."
+}

@@ -51,6 +51,53 @@ public final class HologramClient {
     private static boolean localAreaAwaitingBegin, localAreaFinishing, localAreaCancelling;
 
     static volatile HologramState state;
+    private static long editorWorkspaceEpoch;
+    private static long editorSequence;
+    private static String cutWorkspaceRequestId = "";
+    private static Object cutWorkspaceWorld, cutWorkspaceConnection;
+    private static long cutWorkspaceDeadline;
+
+    static long editorWorkspaceSequence() {
+        return editorSequence;
+    }
+
+    /** An opening intent belongs to one request and one uninterrupted screen/world context. */
+    static void cutWorkspaceOpening(String requestId) {
+        Minecraft mc = Minecraft.getMinecraft();
+        rootCloseFence.clear();
+        cutWorkspaceRequestId = requestId;
+        cutWorkspaceWorld = mc.theWorld;
+        cutWorkspaceConnection = mc.getNetHandler();
+        cutWorkspaceDeadline = System.nanoTime() + HologramCutRequests.READ_TIMEOUT_NS;
+    }
+
+    static void cutWorkspaceOpeningRejected(String requestId) {
+        if (cutWorkspaceRequestId.equals(requestId)) clearCutWorkspaceOpening();
+    }
+
+    private static void clearCutWorkspaceOpening() {
+        cutWorkspaceRequestId = "";
+        cutWorkspaceWorld = cutWorkspaceConnection = null;
+        cutWorkspaceDeadline = 0;
+    }
+
+    private static boolean acceptsCutWorkspaceOpening(NBTTagCompound snapshot) {
+        Minecraft mc = Minecraft.getMinecraft();
+        ItemStack held = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
+        return !cutWorkspaceRequestId.isEmpty()
+            && cutWorkspaceRequestId.equals(snapshot.getString("cutWorkspaceRequestId"))
+            && cutWorkspaceWorld == mc.theWorld
+            && cutWorkspaceConnection == mc.getNetHandler()
+            && System.nanoTime() < cutWorkspaceDeadline
+            && mc.thePlayer != null
+            && mc.thePlayer.dimension == snapshot.getInteger("dimension")
+            && com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(held)
+            && held.hasTagCompound()
+            && held.getTagCompound()
+                .getString("gtitHologramToolId")
+                .equals(snapshot.getString("toolId"));
+    }
+
     private static net.minecraft.world.World snapshotWorld;
     static boolean worldPreview = true;
     private static long receivedAt;
@@ -988,6 +1035,7 @@ public final class HologramClient {
     /** Intercept only the world's pause menu; chat and other screens retain their own Escape behavior. */
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void worldEscape(GuiOpenEvent event) {
+        clearCutWorkspaceOpening();
         inputScreenChanged = true;
         if (event.gui != null && HologramIsometricCamera.INSTANCE.active()) {
             HologramIsometricCamera.INSTANCE.close();
@@ -1422,6 +1470,9 @@ public final class HologramClient {
         }
         NBTTagCompound nbt = result.value;
         if (!validSnapshotIdentity(nbt)) return;
+        editorWorkspaceEpoch = Math.max(editorWorkspaceEpoch, nbt.getLong("editorWorkspaceEpoch"));
+        editorSequence = Math
+            .max(editorSequence, Math.max(nbt.getLong("uiSequence"), nbt.getLong("editorWorkspaceSequenceFloor")));
         if (nbt.getBoolean("cancelled") || nbt.getBoolean("capturePending")) {
             if (preparingResult != null && preparingResult.value.getString("session")
                 .equals(nbt.getString("session"))
@@ -1439,7 +1490,7 @@ public final class HologramClient {
                 if (previous.getString("session")
                     .equals(nbt.getString("session"))) {
                     if (olderSnapshot(nbt, previous)) return;
-                } else retire(previous.getString("session"));
+                } else if (previous.getLong("editorWorkspaceEpoch") == 0) retire(previous.getString("session"));
                 HologramClientProgress.decoded(preparingResult.transportSequence, false);
             }
             clearSnapshotPreparation();
@@ -1466,6 +1517,7 @@ public final class HologramClient {
     private static boolean validSnapshotIdentity(NBTTagCompound nbt) {
         String session = nbt.getString("session"), generation = nbt.getString("generation");
         return (generation.isEmpty() || generation.equals(session)) && !retiredSessions.contains(session)
+            && (nbt.getLong("editorWorkspaceEpoch") == 0 || nbt.getLong("editorWorkspaceEpoch") >= editorWorkspaceEpoch)
             && (nbt.getBoolean("cancelled") || state == null
                 || !state.session.equals(session)
                 || !olderSnapshot(nbt, state.data));
@@ -1591,6 +1643,8 @@ public final class HologramClient {
     }
 
     private static void installSnapshot(NBTTagCompound nbt, HologramState prepared) {
+        boolean openingCutWorkspace = "cutWorkspace".equals(nbt.getString("openPurpose"));
+        if (openingCutWorkspace && !acceptsCutWorkspaceOpening(nbt)) return;
         if (nbt.getBoolean("cancelled")) {
             retire(nbt.getString("session"));
             HologramBackgroundTasks.cancelled(nbt.getString("session"));
@@ -1600,6 +1654,11 @@ public final class HologramClient {
         String session = nbt.getString("session");
         String generation = nbt.getString("generation");
         if ((!generation.isEmpty() && !generation.equals(session)) || retiredSessions.contains(session)) return;
+        if (nbt.getLong("editorWorkspaceEpoch") > 0 && nbt.getLong("editorWorkspaceEpoch") < editorWorkspaceEpoch)
+            return;
+        editorWorkspaceEpoch = Math.max(editorWorkspaceEpoch, nbt.getLong("editorWorkspaceEpoch"));
+        editorSequence = Math
+            .max(editorSequence, Math.max(nbt.getLong("uiSequence"), nbt.getLong("editorWorkspaceSequenceFloor")));
         // Progress never replaces the last complete editable structure or consumes an ACK ticket.
         if (nbt.getBoolean("capturePending")) {
             HologramClientProgress.snapshot(nbt);
@@ -1631,7 +1690,7 @@ public final class HologramClient {
         if (!same) {
             fullSnapshotRequested = false;
             rootCloseFence.clear();
-            if (state != null) retire(state.session);
+            if (state != null && state.data.getLong("editorWorkspaceEpoch") == 0) retire(state.session);
             acceptedBatch = -1;
         }
         long now = System.nanoTime();
@@ -1657,6 +1716,17 @@ public final class HologramClient {
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;
+        if (openingCutWorkspace) {
+            clearCutWorkspaceOpening();
+            if (mc.currentScreen instanceof HologramScreen editor) {
+                editor.updateState(next);
+                editor.ui.workspaces.tryActivateCut();
+            } else {
+                HologramScreen editor = new HologramScreen(next);
+                if (editor.ui.workspaces.tryActivateCut()) mc.displayGuiScreen(editor);
+            }
+            return;
+        }
         restorePlacementDeidentification(next);
         if (!same && mc.currentScreen instanceof HologramScreen
             && ((HologramScreen) mc.currentScreen).hasPendingAeReviewNavigation()) {
@@ -1693,8 +1763,8 @@ public final class HologramClient {
                 // The MUI2 stack preserves this child while NEI temporarily owns the vanilla screen.
                 HologramAeContainerScreen.activeForSession(next.session)
                     .updateState(next);
-            } else if (mc.currentScreen instanceof HologramScreen
-                && (same || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
+            } else if (mc.currentScreen instanceof HologramScreen && (same || nbt.getLong("editorWorkspaceEpoch") > 0
+                || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
                     ((HologramScreen) mc.currentScreen).updateState(next);
                 } else if (!same || nbt.getBoolean("open")) {
                     mc.displayGuiScreen(new HologramScreen(next));
@@ -1787,6 +1857,8 @@ public final class HologramClient {
         HologramRenderer.release();
         HologramJobVisuals.bind(null);
         state = null;
+        editorWorkspaceEpoch = 0;
+        editorSequence = 0;
         snapshotWorld = null;
         acceptedBatch = -1;
     }

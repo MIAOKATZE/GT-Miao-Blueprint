@@ -144,6 +144,24 @@ public final class HologramCutService {
             String requestId = UUID.fromString(request.getString("requestId"))
                 .toString();
             if (!requestId.equals(request.getString("requestId"))) throw new IOException("无效剪切请求编号");
+            if ("openWorkspace".equals(request.getString("action"))) {
+                // Opening a manager never loads the clipboard journal or retries a world mutation.
+                HologramLibraryFacade.actorId(player);
+                if (player.isDead || !(player.worldObj instanceof WorldServer)
+                    || !ItemNekoHologramProjector.isProjector(player.getHeldItem()))
+                    throw new IOException("请持有投影仪后打开剪切工作区");
+                HologramSession workspace = HologramEditorWorkspaceRegistry.openCutWorkspace(player);
+                if (workspace == null) throw new IOException("当前任务尚未完成；请保留原工作区并等待回执");
+                workspace.open = true;
+                workspace.settingsOnly = false;
+                workspace.openPurpose = "cutWorkspace";
+                workspace.cutWorkspaceRequestId = requestId;
+                HologramSnapshots.send(workspace);
+                response.setBoolean("success", true);
+                response.setString("code", "ok");
+                response.setString("message", "正在打开剪切工作区");
+                return response;
+            }
             storage = new HologramCutStorage(saveRoot(), HologramLibraryFacade.actorId(player));
             state = storage.load();
             recover(storage, state);

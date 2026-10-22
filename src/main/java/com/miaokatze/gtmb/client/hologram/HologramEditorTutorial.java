@@ -16,7 +16,6 @@ import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
-import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widget.WidgetTree;
 import com.cleanroommc.modularui.widgets.Dialog;
@@ -37,6 +36,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private List<Action> actions = Collections.emptyList();
     private final List<NBTTagCompound> checkpoints = new ArrayList<>();
     private String topic = "", requestedTopic = "", lastAutoTopic = "", unavailable = "";
+    private String sourceFingerprint = "";
     private int step, actionIndex;
     private long actionStarted, targetWaitingSince;
     private boolean replay, queuedNext, pressed, actionApplied, actionPending;
@@ -47,8 +47,9 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private NBTTagCompound pendingNativeScroll;
     private boolean pendingMaterialRestore;
     private static final String[] CHECKPOINT_SCROLLS = { "editor_native_tool_rail_list",
-        "editor_native_properties_list", "native_blueprint_settings", "library_content", "library_rows",
-        "editor_native_view_workspace_list", "config.channels.viewport", "config.options.viewport",
+        "editor_native_properties_list", "editor_native_selection_list", "editor_native_structure_list",
+        "editor_native_materials_list", "blueprint_save_content", "native_blueprint_settings", "library_content",
+        "library_rows", "editor_native_view_workspace_list", "config.channels.viewport", "config.options.viewport",
         "config.candidates.viewport", "config.presets.viewport", "config.sources.viewport", "config.channels.rows",
         "config.options.rows", "config.candidates.rows" };
     private int cornerCount, cutStage, worldOffsetX, worldOffsetZ;
@@ -88,7 +89,14 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private String currentTopic() {
-        return ui.session.state().data.getBoolean("virtual") || ui.library.blueprintTab() ? "blueprint" : "projection";
+        switch (ui.workspaces.mode()) {
+            case CUT:
+                return "cut";
+            case BLUEPRINT:
+                return "blueprint";
+            default:
+                return "projection";
+        }
     }
 
     void tick() {
@@ -149,11 +157,13 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         requestedTopic = "";
         topic = id;
         this.replay = replay;
-        if (id.equals("projection") || id.equals("blueprint")) lastAutoTopic = id;
+        if (id.equals("projection") || id.equals("blueprint") || id.equals("cut")) lastAutoTopic = id;
         try {
             ui.shell.pausePresentation();
             sandbox = new HologramUiModules(ui.host);
             sandbox.session.initializeIsolated(sample(id), this::isolatedCommand);
+            sourceFingerprint = HologramCutRawPreviewSession.digest(snapshot(sandbox.session.state()));
+            if (worldCourse()) worldStage.initialize(sandbox.session.state());
             try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                 .fieldGraph(sandbox)) {
                 sandbox.config.initializeFields();
@@ -188,7 +198,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 return overlayPanel;
             }, true);
             overlayHandler.openPanel();
-            sandbox.shell.selectDockPage(id.equals("blueprint") ? 2 : 0);
+            if (!id.equals("cut")) sandbox.shell.selectDockPage(id.equals("blueprint") ? 2 : 0);
             checkpoints.add(capture());
             playStep();
         } catch (RuntimeException failure) {
@@ -207,17 +217,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
             .fieldGraph(sandbox)) {
             if (cutListLesson != null) {
-                ParentWidget<?> body = cutListLesson.build(sandbox);
-                scenePanel.child(
-                    sandbox.shell.buildLessonContent(
-                        scenePanel,
-                        body,
-                        cutListLesson.previewWidget(),
-                        new Widget<>().widthRel(1f)
-                            .height(HologramEditorTutorialOverlay.RESERVED_HEIGHT)));
-                // Explanation and captions use the full dark lesson surface, not the narrow preview camera.
-                sandbox.shell.registerTarget("viewport", body);
-            } else scenePanel.child(
+                sandbox.shell.cutOverride(cutListLesson.prepareWorkspace(sandbox));
+                sandbox.workspaces.activateCut();
+                if (!sandbox.workspaces.isCut())
+                    throw new IllegalStateException("Isolated cut workspace was not admitted");
+            }
+            scenePanel.child(
                 sandbox.shell.build(
                     scenePanel,
                     new Widget<>().widthRel(1f)
@@ -255,6 +260,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 cutListLesson = null;
             }
             cleanup("material panel", materialLesson::close);
+            cleanup("native teaching scene", worldStage::close);
             cleanup("tutorial panels", this::closeOwnedPanels);
         } finally {
             try {
@@ -545,6 +551,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             } else if (worldCourse()) {
                 worldOffsetX = (int) Math.round(3 * drag);
                 worldOffsetZ = (int) Math.round(2 * drag);
+                worldStage.geometry.expand(worldOffsetX, worldOffsetZ);
             } else {
                 int[] local = sandbox.shell.sceneLocalPoint((int) Math.round(pointerX), (int) Math.round(pointerY));
                 if (local != null) sandbox.preview.gizmo()
@@ -593,10 +600,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (action.operation == Operation.APPLY_CAPABILITY) return sandbox.shell.controlBounds(68);
         if (worldCourse() && (action.operation == Operation.FIRST_CORNER || action.operation == Operation.SECOND_CORNER
             || action.operation == Operation.WORLD_MOVE_XZ)) {
-            double[] point = worldStage.point(
-                action.operation == Operation.SECOND_CORNER ? 4 : action.drag() ? 1.675 : 0,
-                0,
-                action.operation == Operation.SECOND_CORNER ? 3 : action.drag() ? 1.375 : 0);
+            double[] point = worldStage.cornerPoint(action.operation != Operation.FIRST_CORNER);
             if (point != null) return around(point);
         }
         if (action.drag()) {
@@ -730,7 +734,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             return;
         }
         if (worldCourse()) {
-            double[] point = worldStage.point(4.675, 0, 3.375);
+            int[] end = worldStage.geometry.corner(true);
+            double[] point = worldStage.point(end[0] + 3.5, end[1] + .5, end[2] + 2.5);
             if (point != null) {
                 motionX = point[0] - targetX;
                 motionY = point[1] - targetY;
@@ -915,17 +920,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 sandbox.shell.activateTarget(action.target);
                 break;
             case LIBRARY:
-                sandbox.shell.activateTarget(action.target);
-                sandbox.library.blueprintTab(true);
-                sandbox.library.libraryDrawer(true);
-                break;
             case EDITOR:
-                sandbox.shell.activateTarget(action.target);
-                sandbox.library.libraryDrawer(false);
-                break;
             case SETTINGS:
-                sandbox.shell.activateTarget(action.target);
-                sandbox.library.libraryDrawer(false);
+            case OPEN_DOCK:
+                if (!groupSatisfied(action) && !sandbox.shell.activateTarget(action.target))
+                    unavailable = "工作台入口当前不可见或不可用；保留原页面。";
                 break;
             case CLOSE_TARGET:
             case OPEN_TARGET:
@@ -954,35 +953,44 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             case WORLD_MODE:
                 break;
             case FIRST_CORNER:
-                cornerCount = 1;
+                worldStage.geometry.choose(false);
+                cornerCount = worldStage.geometry.corners();
                 break;
             case SECOND_CORNER:
-                cornerCount = 2;
+                worldStage.geometry.choose(true);
+                cornerCount = worldStage.geometry.corners();
                 break;
             case BOX_SUBMIT:
-                unavailable = "教学选区已确认；真实蓝图未被导入或覆盖。";
+                worldStage.geometry.submit();
+                sandbox.session.notice("已读取教学选区内 " + worldStage.geometry.count() + " 格电力高炉规划；仅保留于教学内存。");
                 break;
             case CUT_SOURCE_REVIEW:
+                worldStage.geometry.requireSelection();
                 cutStage = 1;
                 break;
             case CUT_STORE:
-                cutStored = true;
-                cutConsumed = false;
-                cornerCount = 0;
+                worldStage.geometry.store();
+                cutStored = worldStage.geometry.stored();
+                cutConsumed = worldStage.geometry.consumed();
+                cornerCount = worldStage.geometry.corners();
                 cutStage = 2;
                 break;
             case CUT_TAKE:
+                worldStage.geometry.take();
                 cutStage = 3;
                 break;
             case CUT_LOCK:
+                worldStage.geometry.lock();
                 cutStage = 4;
                 break;
             case CUT_CANCEL:
+                worldStage.geometry.cancel();
                 cutStage = 2;
                 break;
             case CUT_PLACE:
-                cutStored = false;
-                cutConsumed = true;
+                worldStage.geometry.place();
+                cutStored = worldStage.geometry.stored();
+                cutConsumed = worldStage.geometry.consumed();
                 cutStage = 5;
                 break;
             default:
@@ -1015,6 +1023,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private NBTTagCompound capture() {
         NBTTagCompound result = new NBTTagCompound();
+        if (worldCourse()) result.setTag("teachingGeometry", worldStage.geometry.snapshot());
         if (cutListLesson != null) result.setTag("cutList", cutListLesson.snapshot());
         result.setTag("state", snapshot(sandbox.session.state()));
         result.setTag("preview", sandbox.preview.backgroundUiState());
@@ -1053,6 +1062,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void restore(NBTTagCompound checkpoint) {
+        if (worldCourse() && checkpoint.hasKey("teachingGeometry", 10))
+            worldStage.geometry.restore(checkpoint.getCompoundTag("teachingGeometry"));
         if (cutListLesson != null) cutListLesson.restore(checkpoint.getCompoundTag("cutList"));
         try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
             .fieldGraph(sandbox)) {
@@ -1128,6 +1139,17 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private boolean groupSatisfied(Action action) {
         switch (action.operation) {
+            case LIBRARY:
+                return sandbox.shell.libraryPageSelected();
+            case EDITOR:
+                return dockVisible(0);
+            case SETTINGS:
+                return dockVisible(1);
+            case OPEN_DOCK:
+                if ("header.save".equals(action.target)) return dockVisible(7);
+                if (action.target.startsWith("launcher."))
+                    return dockVisible(Integer.parseInt(action.target.substring("launcher.".length())));
+                return false;
             case CLOSE_PANEL:
                 return sandbox.shell.targetBounds("modal") == null;
             case CLOSE_MATERIAL:
@@ -1135,18 +1157,22 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             case HANDLES:
                 return sandbox.preview.moveHandles();
             case CLOSE_TARGET:
-                return !sandbox.shell.propertiesGroupExpanded("target");
+                return dockVisible(0) && !sandbox.shell.propertiesGroupExpanded("target");
             case OPEN_TARGET:
-                return sandbox.shell.propertiesGroupExpanded("target");
+                return dockVisible(0) && sandbox.shell.propertiesGroupExpanded("target");
             case CLOSE_SOURCE:
-                return !sandbox.shell.propertiesGroupExpanded("source");
+                return dockVisible(3) && !sandbox.shell.propertiesGroupExpanded("source");
             case OPEN_SOURCE:
-                return sandbox.shell.propertiesGroupExpanded("source");
+                return dockVisible(3) && sandbox.shell.propertiesGroupExpanded("source");
             case OPEN_MATERIAL:
-                return sandbox.shell.propertiesGroupExpanded("material");
+                return dockVisible(4) && sandbox.shell.propertiesGroupExpanded("material");
             default:
                 return false;
         }
+    }
+
+    private boolean dockVisible(int page) {
+        return sandbox.shell.dockExpanded() && sandbox.shell.dockPage() == page;
     }
 
     private Action newMaterialAction() {
@@ -1312,10 +1338,89 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setLong("isolatedCommands", isolatedCommands);
         result.setLong("realSessionSequence", ui.session.sequence());
         result.setString("unavailable", unavailable);
+        if (active()) {
+            HologramState model = sandbox.session.state();
+            NBTTagCompound engine = HologramRenderer.lessonInspection(model);
+            engine.setString("renderer", "HologramRenderer.preview");
+            engine.setString(
+                "sourceId",
+                topic.equals("blueprint") ? "author-selected-details-full" : "ebf-source-selected-details");
+            engine.setString("sourceClass", "gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace");
+            engine.setString("contentSha256", HologramCutRawPreviewSession.digest(snapshot(model)));
+            engine.setString("sourceSha256", sourceFingerprint);
+            engine.setInteger("modelCellCount", model.cells.size());
+            engine.setInteger(
+                "selectedCellCount",
+                sandbox.preview.selection()
+                    .size());
+            engine.setLong("renderGeneration", sandbox.canvas.renderGeneration());
+            engine.setInteger("dockPage", sandbox.shell.dockPage());
+            engine.setBoolean("dockExpanded", sandbox.shell.dockExpanded());
+            engine.setBoolean("libraryExpanded", sandbox.shell.libraryPageSelected());
+            engine.setBoolean("isolatedCommandSink", sandbox.session.isTutorial());
+            result.setTag("lessonEngine", engine);
+        }
+        if (active() && worldCourse()) {
+            NBTTagCompound geometry = worldStage.geometry.snapshot();
+            result.setInteger(
+                "nativeTeachingCells",
+                geometry.getCompoundTag("scene")
+                    .getTagList("cells", 10)
+                    .tagCount());
+            result.setInteger("selectedTeachingCells", worldStage.geometry.count());
+            result.setInteger(
+                "capturedTeachingCells",
+                geometry.getCompoundTag("capturedSelection")
+                    .getTagList("cells", 10)
+                    .tagCount());
+            result.setBoolean("teachingClipboardPresent", worldStage.geometry.stored());
+            result.setBoolean("teachingClipboardConsumed", worldStage.geometry.consumed());
+            result.setString("teachingRenderer", "HologramCutRawPreviewSession.renderLocal");
+            NBTTagCompound renderer = worldStage.inspection();
+            result.setTag("teachingRenderInspection", renderer);
+            NBTTagCompound engine = result.getCompoundTag("lessonEngine");
+            engine.setString("renderer", "HologramCutRawPreviewSession.renderLocal");
+            engine.setString("sourceSha256", HologramCutRawPreviewSession.digest(geometry.getCompoundTag("source")));
+            engine.setString("sceneSha256", HologramCutRawPreviewSession.digest(geometry.getCompoundTag("scene")));
+            engine.setString("contentSha256", engine.getString("sceneSha256"));
+            engine.setBoolean("worldMutation", false);
+            engine.setBoolean("playerMutation", false);
+            engine.setTag("rawRenderer", renderer.copy());
+            engine.setLong("renderedCellCount", renderer.getLong("staticRendered"));
+            engine.setBoolean("snapshotPresented", renderer.getBoolean("snapshotPresented"));
+            engine.setInteger(
+                "modelCellCount",
+                geometry.getCompoundTag("scene")
+                    .getTagList("cells", 10)
+                    .tagCount());
+            engine.setInteger("selectedCellCount", worldStage.geometry.count());
+            engine.setInteger(
+                "sourceCellCount",
+                geometry.getCompoundTag("source")
+                    .getTagList("cells", 10)
+                    .tagCount());
+            engine.setIntArray("selectionFirst", geometry.getIntArray("first"));
+            engine.setIntArray("selectionSecond", geometry.getIntArray("second"));
+            engine.setBoolean("placementLocked", geometry.getBoolean("locked"));
+            engine.setBoolean("placementPreview", geometry.getBoolean("placing"));
+            if (geometry.hasKey("clipboard", 10)) engine.setString(
+                "clipboardSha256",
+                HologramCutRawPreviewSession.digest(geometry.getCompoundTag("clipboard")));
+        }
         result.setBoolean("cutStored", cutStored);
         result.setBoolean("cutConsumed", cutConsumed);
         result.setInteger("cornerCount", cornerCount);
-        if (cutListLesson != null) result.setTag("cutList", cutListLesson.snapshot());
+        if (cutListLesson != null) {
+            result.setTag("cutList", cutListLesson.snapshot());
+            NBTTagCompound engine = result.getCompoundTag("lessonEngine");
+            engine.setString("renderer", "HologramCutRawPreviewSession.renderLocal");
+            NBTTagCompound renderer = cutListLesson.renderer()
+                .inspection();
+            engine.setTag("rawRenderer", renderer);
+            engine.setLong("renderedCellCount", renderer.getLong("staticRendered"));
+            engine.setBoolean("snapshotPresented", renderer.getLong("frames") > 0);
+            engine.setString("contentSha256", HologramCutRawPreviewSession.digest(cutListLesson.raw()));
+        }
         return result;
     }
 
@@ -1489,10 +1594,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             throw new IllegalStateException("真实教学样例校验失败：" + unavailable.getMessage(), unavailable);
         }
         data.setString("session", "__gtmb_tutorial__");
-        data.setString("title", "隔离教学场景 · 真实采集样例");
+        data.setString("title", "电力高炉 · 真实采集规划教学");
         data.setString("status", "仅在教学会话内存中演示，不提交真实操作");
         data.setString("activeStructure", "");
         data.setString("openPurpose", topic.equals("blueprint") ? "blueprintEdit" : "");
+        data.setString("editorWorkspace", topic.equals("blueprint") ? "blueprint" : "projection");
         data.setInteger("job", 0);
         data.setLong("uiSequence", 0);
         for (String key : new String[] { "areaImporting", "snapshotPending", "placementValidating", "attachmentPending",

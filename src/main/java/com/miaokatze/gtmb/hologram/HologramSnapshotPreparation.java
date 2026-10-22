@@ -151,6 +151,8 @@ final class HologramSnapshotPreparation {
             task.s.hints |= task.state.getBoolean("hints");
             task.s.libraryInitialSnapshot |= task.state.getBoolean("libraryInitialSnapshot");
             if (task.s.openPurpose.isEmpty()) task.s.openPurpose = task.state.getString("openPurpose");
+            if (task.s.cutWorkspaceRequestId.isEmpty())
+                task.s.cutWorkspaceRequestId = task.state.getString("cutWorkspaceRequestId");
         }
         task.state = null;
         task.metadata = null;
@@ -190,6 +192,7 @@ final class HologramSnapshotPreparation {
         final String session, phase, active;
         final long revision, ui, batch, planGeneration, clientTask;
         final long voucherRevision = DecorationVoucherConfig.revision();
+        final long declarationGeneration = HologramDeclarationAdapters.generation();
         final int x, y, z, size, job, scope, layer, selected;
         final boolean authoring, draftOnly;
         final String planError;
@@ -249,6 +252,7 @@ final class HologramSnapshotPreparation {
         boolean valid() {
             return ticket.current() && HologramWorkspace.find(s.player.getUniqueID()) == s
                 && voucherRevision == DecorationVoucherConfig.revision()
+                && declarationGeneration == HologramDeclarationAdapters.generation()
                 && session.equals(s.id)
                 && s.player.worldObj == world
                 && capture == s.capture

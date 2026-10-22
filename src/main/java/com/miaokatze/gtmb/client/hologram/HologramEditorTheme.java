@@ -12,18 +12,18 @@ import com.cleanroommc.modularui.theme.WidgetTheme;
 /** Client presentation only. Paper ink and dark-surface lettering deliberately have separate palettes. */
 final class HologramEditorTheme {
 
-    static final int TEXT = 0xff46301d, TITLE = 0xff684017, MUTED = 0xff5f4428, ERROR = 0xff7c261f;
-    static final int BUTTON_TEXT = 0xfff8e4b9, BUTTON_MUTED = 0xffc1ab87;
+    static final int TEXT = 0xff33271b, TITLE = 0xff684017, MUTED = 0xff59422d, ERROR = 0xff7c261f;
+    static final int BUTTON_TEXT = 0xffffe7b9, BUTTON_MUTED = 0xffdbccb1;
     static final int PAPER_WARNING = ERROR, PAPER_SUGGESTION = 0xff144d51, PAPER_INFORMATION = 0xff244c78;
     static final int PAPER_NEXT = 0xff254b2b, PAPER_WEBSITE = 0xff674018;
 
     static final UITexture PAPER = pixel(
         UITexture.builder()
             .location("gtmb", "gui/editor/kraft/paper")
-            .tiled(64, 64)
+            .tiled(32, 32)
             .nonOpaque()
             .build());
-    static final UITexture PANEL_FRAME = texture("kraft/panel", 8, 8, 1);
+    static final UITexture PANEL_FRAME = texture("kraft/panel", 16, 16, 3);
     static final UITexture PANEL = new PaperSurface();
     static final UITexture CLOTH = PANEL;
     static final UITexture BUTTON = texture("kraft/button", 12, 12, 2);
@@ -31,7 +31,7 @@ final class HologramEditorTheme {
     static final UITexture PRESSED = texture("kraft/button-pressed", 12, 12, 2);
     static final UITexture SELECTED_HOVER = texture("kraft/button-selected-hover", 12, 12, 2);
     static final UITexture DISABLED = texture("kraft/button-disabled", 12, 12, 2);
-    static final UITexture INPUT = texture("kraft/input", 8, 8, 1);
+    static final UITexture INPUT = texture("kraft/input", 12, 12, 2);
     static final UITexture SLOT = texture("kraft/slot", 12, 12, 2);
     static final UITexture SCROLLBAR = texture("kraft/scrollbar", 12, 12, 2);
 

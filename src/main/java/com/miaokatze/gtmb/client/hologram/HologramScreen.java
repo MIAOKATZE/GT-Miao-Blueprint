@@ -9,7 +9,11 @@ import net.minecraft.nbt.NBTTagList;
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
 
-    final HologramUiModules ui = new HologramUiModules(this);
+    HologramUiModules ui = new HologramUiModules(this);
+    private final HologramEditorWorkspaces.Graphs workspaceGraphs = new HologramEditorWorkspaces.Graphs();
+    private final java.util.Set<HologramUiModules> initializedGraphs = java.util.Collections
+        .newSetFromMap(new java.util.IdentityHashMap<>());
+    private com.cleanroommc.modularui.widget.ParentWidget<?> workspaceMount;
     private boolean websiteConfirmationResumePending;
     private boolean detached, detachedStarted, detachedReturned, detachedReplay;
     private String detachedTopic;
@@ -19,6 +23,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     HologramScreen(HologramState state) {
         super("workstation");
         ui.session.initialize(state);
+        workspaceGraphs.retain(state, () -> ui);
     }
 
     private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
@@ -46,6 +51,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void updateState(HologramState next) {
+        if (!detached && !ui.tutorial.active()
+            && HologramEditorWorkspaces.domain(ui.session.state()) != HologramEditorWorkspaces.domain(next)) {
+            ui.memory.rememberUi();
+            ui.preview.releasePointerCapture();
+            ui.tools.closeTransient();
+            ui.shell.pauseWorkspace();
+            ui.workspaces.acknowledged();
+            ui = workspaceGraphs.retain(next, () -> {
+                HologramUiModules created = new HologramUiModules(this);
+                created.session.initialize(next);
+                return created;
+            });
+            ui.workspaces.domainActivated();
+            if (workspaceMount != null) mountWorkspaceGraph();
+            ui.shell.resumeWorkspace();
+        }
         if (!detached) try (FieldGraph ignored = fieldGraph(ui)) {
             ui.session.updateState(next);
         }
@@ -60,8 +81,21 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             }
             domainInitialized = true;
         }
-        panel().child(ui.shell.build(panel()));
+        initializedGraphs.add(ui);
+        workspaceMount = new com.cleanroommc.modularui.widget.ParentWidget<>().sizeRel(1f);
+        workspaceMount.child(ui.shell.build(panel()));
+        panel().child(workspaceMount);
         return true;
+    }
+
+    private void mountWorkspaceGraph() {
+        if (initializedGraphs.add(ui)) {
+            try (FieldGraph ignored = fieldGraph(ui)) {
+                ui.router.initGui();
+                workspaceMount.child(ui.shell.build(panel()));
+            }
+            workspaceMount.scheduleResize();
+        }
     }
 
     public void initGui() {
@@ -83,10 +117,27 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     protected void onMuiClose() {
-        if (detached) {
-            ui.tutorial.closeWithoutProgress();
-            endTutorialFields();
-        } else ui.router.onGuiClosed();
+        try {
+            if (detached) {
+                ui.tutorial.closeWithoutProgress();
+                endTutorialFields();
+            } else ui.router.onGuiClosed();
+        } finally {
+            // This hook runs on final MUI panel disposal, unlike onGuiClosed's
+            // temporary website/NEI suspensions. Dormant graph GPU resources end here.
+            java.util.Set<HologramUiModules> graphs = java.util.Collections
+                .newSetFromMap(new java.util.IdentityHashMap<>());
+            graphs.addAll(workspaceGraphs.values());
+            graphs.add(ui);
+            for (HologramUiModules graph : graphs) {
+                graph.shell.close();
+                graph.canvas.layout()
+                    .release();
+                releaseFieldGraph(graph);
+            }
+            workspaceGraphs.clear();
+            initializedGraphs.clear();
+        }
     }
 
     @Override

@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "version": "native-paper-r1",
-  "origin": "Original native paper calibration; code-authored assets. Legacy dark button variants retain R3 compatibility.",
+  "version": "R3-kraft-12",
+  "origin": "Original integer code-native textures; source/build_pixel_assets.py",
   "license": "Project AGPL-3.0; LICENSE-PROJECT.txt",
   "filter": "nearest",
   "mipmaps": false,
@@ -9,20 +9,20 @@
     {
       "id": "paper",
       "png": "kraft/paper.png",
-      "width": 64,
-      "height": 64,
+      "width": 32,
+      "height": 32,
       "slice": null,
       "tiled": true,
-      "sha256": "da311de5b20e08eaa216fc9f9bae33ef2b2927590fea671c890943ffa9258124"
+      "sha256": "80c2b88097c2befb71f1f6a7c90baa61b9f79786f696682ce27bd4a78964c331"
     },
     {
       "id": "panel",
       "png": "kraft/panel.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
+      "width": 16,
+      "height": 16,
+      "slice": 3,
       "tiled": false,
-      "sha256": "9c1a38b7a684e1bca138fa3ef9c3ee51586300b0a0d7e5cdb28aae0e80afb74a"
+      "sha256": "dfcbb23a881b7abb2a74ac9111ee76204fa084153b4d5fb0322d722a97dbc413"
     },
     {
       "id": "button",
@@ -72,11 +72,11 @@
     {
       "id": "input",
       "png": "kraft/input.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
+      "width": 12,
+      "height": 12,
+      "slice": 2,
       "tiled": false,
-      "sha256": "93e10eadb304032b61d6c1a9b36a06bc630dec3d77f67ada6170aa03f1483986"
+      "sha256": "0c7035624212e48bdf7a27b9f3bcf5c89558010b5cea86365ad38c5d87003f8e"
     },
     {
       "id": "slot",
@@ -95,78 +95,6 @@
       "slice": 2,
       "tiled": false,
       "sha256": "0195da38d9bb8f14d189f08994ec2e2398bbd20196ea6a3cc0bc51994922576c"
-    },
-    {
-      "id": "input-focus",
-      "png": "kraft/input-focus.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "cd4b0658a55e4ac25fde75d3e22158ac07f3ece9b6d5c1d11de9692481df14af"
-    },
-    {
-      "id": "native-button",
-      "png": "kraft/native-button.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "f80672cc3b15654c003e250dec1c58284f5a30ad0ff0e44b2d119bf9750f7f57"
-    },
-    {
-      "id": "native-button-hover",
-      "png": "kraft/native-button-hover.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "9d6911e4200356130d479343ceb5ee4563a555b4878fb2653c8cd257957d55c9"
-    },
-    {
-      "id": "native-button-selected",
-      "png": "kraft/native-button-selected.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "f8106dce20d5491f671c2254e945b317194c14595658932140887fe5114b7187"
-    },
-    {
-      "id": "native-button-selected-hover",
-      "png": "kraft/native-button-selected-hover.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "9b689105a4546206e7d6fc192ddfac0828cbf2580923dc5ce96cba8a4ebc8931"
-    },
-    {
-      "id": "native-button-disabled",
-      "png": "kraft/native-button-disabled.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "91616fffd6d791dbe615015d18ebb08f422f1f189a70a572f184ef07bc1aff18"
-    },
-    {
-      "id": "native-primary",
-      "png": "kraft/native-primary.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "fe81676fca6afa61e0f052b97bf560ab0bcae355f4cf4c697a05af45444ab553"
-    },
-    {
-      "id": "native-primary-hover",
-      "png": "kraft/native-primary-hover.png",
-      "width": 8,
-      "height": 8,
-      "slice": 1,
-      "tiled": false,
-      "sha256": "67f5524b41e51a322b4fa24391b31c4992bc6a0a7fe368e2b347d0b8ddcd612e"
     }
   ]
 }

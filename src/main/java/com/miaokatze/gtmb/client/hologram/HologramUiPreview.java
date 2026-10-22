@@ -157,7 +157,7 @@ final class HologramUiPreview {
         HologramRenderer.showEmptyCells = inventory || ui.position.positionDrawer() || airSelectionHeld();
         HologramRenderer.projectionLayer = allLayers ? Integer.MAX_VALUE : layer;
         HologramRenderer.selectedStructureId = ui.config.selectedStructureId();
-        drawRect(0, 0, viewportWidth(), previewHeight(), 0xff0c1e28);
+        drawRect(0, 0, viewportWidth(), previewHeight(), 0xff292d2f);
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();

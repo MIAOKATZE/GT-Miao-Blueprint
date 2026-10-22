@@ -22,6 +22,15 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "editor_workspaces_keep_owned_domains_and_transport_rollback",
+            HologramEditorWorkspacesRegression::run);
+        cases.put(
+            "tutorial_engine_geometry_owns_cut_payload_and_checkpoint",
+            com.miaokatze.gtmb.client.hologram.HologramEditorTutorialGeometryRegression::run);
+        cases.put(
+            "tutorial_real_ebf_controller_and_declared_author_courses",
+            com.miaokatze.gtmb.client.hologram.HologramEditorTutorialLessonsRegression::run);
+        cases.put(
             "isometric_camera_policy_loaded_surface_and_signed_floating_target",
             () -> com.miaokatze.gtmb.client.hologram.HologramIsometricCameraRegression.main(new String[0]));
         cases.put(
