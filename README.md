@@ -15,6 +15,32 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
+### v0.1.42 教程布局与选区操作 / Tutorial layout & selection
+
+蓝图课从空白工作区打开两台高炉规划，先演示沿轴移动、取消与确认换行，再用平面移动放到预留位置，最后复制成三台。左后方平台保留一台，地面两台之间留出空间；原生手柄位移、无碰撞与底面承托共同核对。
+
+工具栏默认仅显示图标，可用底部箭头展开名称，悬停查看说明。教程按操作收纳侧栏：看库时收属性，改参数时收库，移动和复制时留出画布。
+
+等距多边形按住 **Ctrl+左键** 落点、闭合或调整高度；松开 Ctrl 操作镜头。**Delete** 先撤回正在绘制的最后顶点或半成框，否则移除最近完成的整个选区；多边形按一次完整选择处理。它不删除世界方块，可用 Ctrl+Z 撤销。
+
+*The lesson loads two furnaces, demonstrates movement and copies a third into a clear supported position. Tool labels start collapsed and lesson sidebars follow the current operation. Isometric polygon clicks require Ctrl; Delete removes pending input or the latest complete selection.*
+
+下图为本轮原生候选包的实际画面，来源与有限观察范围见 [manifest](README/native-v0142/manifest.json)。本轮仅对修改后的摆放段补做实机观察；世界 Ctrl/Delete 另以回归验证，未作为真实世界输入验收。版本为用户测试包，未创建 Release 或草稿。
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/native-v0142/blueprint-two.png"><img src="README/native-v0142/blueprint-two.png" alt="点击库载入两台高炉 / Load two furnaces" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0142/blueprint-move.png"><img src="README/native-v0142/blueprint-move.png" alt="收起侧栏后移动 / Move with sidebars collapsed" width="480"></a></td>
+  </tr>
+  <tr>
+    <td><a href="README/native-v0142/blueprint-plane.png"><img src="README/native-v0142/blueprint-plane.png" alt="平面移动到地面空位 / Move onto a clear floor position" width="480"></a></td>
+    <td><a href="README/native-v0142/blueprint-three.png"><img src="README/native-v0142/blueprint-three.png" alt="复制后三台高炉 / Three furnaces after copying" width="480"></a></td>
+  </tr>
+</table>
+
+<details>
+<summary>v0.1.41 历史教程流程与原生观察 / Historical tutorial observations</summary>
+
 ### v0.1.41 教程流程修正 / Tutorial flow fixes
 
 蓝图教程从**空白工作区**开始，点击侧边蓝图库的记录后才载入三台电力高炉：两台在地面，一台在平台上。编辑后的库记录切换会按实际界面展示丢弃提示，教程分别演示取消与确认；每步等待实际操作完成后再推进。
@@ -46,6 +72,8 @@
   </tr>
   <tr><td align="center">剪切列表 / Cut list</td><td align="center">粘贴确认 / Placement confirmation</td></tr>
 </table>
+
+</details>
 
 <details>
 <summary>v0.1.40 历史界面与有限观察 / Historical interface observations</summary>

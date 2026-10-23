@@ -40,6 +40,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private long actionStarted, targetWaitingSince;
     private boolean replay, queuedNext, pressed, actionApplied, actionPending;
     private boolean actionDispatched;
+    private boolean scenePresentationPrepared;
     private long actionDispatchedAt, commandResults, actionCommandResults;
     private String commandFailure = "";
     private NBTTagCompound actionBefore;
@@ -265,6 +266,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         unavailable = "";
         pressed = queuedNext = actionApplied = actionPending = actionDispatched = false;
         actionBefore = null;
+        scenePresentationPrepared = false;
         teachingLibrary.clear();
         playbackVersion++;
         try {
@@ -401,6 +403,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private void playStep() {
         actions = steps.get(step).actions;
+        scenePresentationPrepared = false;
         actionIndex = 0;
         actionStarted = targetWaitingSince = 0;
         pressed = actionApplied = queuedNext = actionPending = actionDispatched = false;
@@ -516,6 +519,26 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             return;
         }
         Action action = actions.get(actionIndex);
+        if (actionStarted == 0 && !scenePresentationPrepared
+            && !worldCourse()
+            && sandbox.shell.targetBounds("modal") == null
+            && (action.operation == Operation.SELECT_CELL || action.operation == Operation.SELECT_STRUCTURE
+                || action.operation == Operation.MOVE_X
+                || action.operation == Operation.MOVE_XZ
+                || action.operation == Operation.COPY_X)) {
+            if (!actionPending) {
+                final long version = playbackVersion;
+                final int index = actionIndex;
+                actionPending = ui.host.parent()
+                    .tryDeferAction(() -> {
+                        if (!active() || playbackVersion != version || actionIndex != index) return;
+                        sandbox.shell.setTutorialSceneOnly();
+                        scenePresentationPrepared = true;
+                        actionPending = false;
+                    });
+            }
+            return;
+        }
         if (actionStarted != 0 && !actionApplied && !actionPending && !actionDispatched) {
             int[] current = target(action);
             if (current == null) {
@@ -542,6 +565,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             }
             if (groupSatisfied(action)) {
                 actionIndex++;
+                scenePresentationPrepared = false;
                 actionBounds = null;
                 return;
             }
@@ -628,6 +652,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 return;
             if (action.operation != Operation.CLOSE_PANEL || sandbox.shell.targetBounds("modal") == null) actionIndex++;
             actionStarted = 0;
+            scenePresentationPrepared = false;
             actionDispatched = false;
             pressed = false;
             dragStart = null;
@@ -1030,8 +1055,9 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 motionY = point[1] - targetY;
             }
         } else {
+            int[] offset = HologramEditorTutorialBlueprint.offset(action.operation);
             double[] from = HologramRenderer.project(0, 0, 0),
-                to = HologramRenderer.project(3, 0, action.operation == Operation.MOVE_XZ ? 2 : 0);
+                to = HologramRenderer.project(offset[0], offset[1], offset[2]);
             int[] screenFrom = sandbox.shell.sceneToScreen((int) Math.round(from[0]), (int) Math.round(from[1]));
             int[] screenTo = sandbox.shell.sceneToScreen((int) Math.round(to[0]), (int) Math.round(to[1]));
             if (screenFrom != null && screenTo != null) {
@@ -1063,38 +1089,50 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         NBTTagCompound data = (NBTTagCompound) dragStart.copy();
         int[] offset = sandbox.preview.gizmo()
             .offset();
+        int[] expected = HologramEditorTutorialBlueprint.offset(actions.get(actionIndex).operation);
+        if (!java.util.Arrays.equals(expected, offset) || !HologramEditorTutorialBlueprint.clearAndSupported(
+            data,
+            sandbox.preview.selection()
+                .indices(),
+            offset)) {
+            return rejectDrag("手柄位移尚未到达本课的空闲承托位置，已保留拖动前的布局。");
+        }
         if (offset[0] == 0 && offset[1] == 0 && offset[2] == 0) {
-            blockAction("手柄没有产生整格位移，未将本步计为完成。");
-            sandbox.preview.releasePointerCapture();
-            return false;
+            return rejectDrag("手柄没有产生整格位移，未将本步计为完成。");
         }
         java.util.Set<String> moved = completeSources(
             sandbox.session.state(),
             sandbox.preview.selection()
                 .indices());
-        NBTTagList cells = data.getTagList("cells", 10);
-        for (int index : sandbox.preview.selection()
-            .indices()) if (index >= 0 && index < cells.tagCount()) {
-                NBTTagCompound cell = cells.getCompoundTagAt(index);
-                for (int axis = 0; axis < 3; axis++) {
-                    String key = new String[] { "x", "y", "z" }[axis];
-                    cell.setInteger(key, cell.getInteger(key) + offset[axis]);
-                    cell.setInteger("d" + key, cell.getInteger("d" + key) + offset[axis]);
-                }
-            }
-        NBTTagList structures = data.getTagList("structures", 10);
-        for (int i = 0; i < structures.tagCount(); i++) {
-            NBTTagCompound structure = structures.getCompoundTagAt(i);
-            if (moved.contains(structure.getString("id"))) for (int axis = 0; axis < 3; axis++) {
-                String key = new String[] { "x", "y", "z" }[axis];
-                structure.setInteger(key, structure.getInteger(key) + offset[axis]);
-            }
-        }
+        HologramEditorTutorialBlueprint.translate(
+            data,
+            sandbox.preview.selection()
+                .indices(),
+            moved,
+            offset);
         sandbox.session.isolatedSnapshot(new HologramState(data));
         sandbox.preview.gizmo()
             .cancel();
         markBlueprintEdited();
         return true;
+    }
+
+    private boolean rejectDrag(String reason) {
+        // Copy intent creates a provisional member at drag start; a rejected destination must remove it again.
+        if (actionBefore != null) {
+            HologramState before = new HologramState(
+                (NBTTagCompound) actionBefore.getCompoundTag("state")
+                    .copy());
+            sandbox.session.isolatedSnapshot(before);
+            sandbox.preview.selection()
+                .load(actionBefore.getIntArray("selection"), -1, before.cells.size());
+            sandbox.preview.selected(
+                sandbox.preview.selection()
+                    .first());
+        }
+        sandbox.preview.releasePointerCapture();
+        blockAction(reason);
+        return false;
     }
 
     private static java.util.Set<String> completeSources(HologramState state, int[] selected) {
@@ -1129,6 +1167,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             if (!known.add(copyId)) throw new IllegalStateException("Duplicate tutorial source copy");
             NBTTagCompound copy = (NBTTagCompound) original.copy();
             copy.setString("id", copyId);
+            copy.setString("name", original.getString("name") + " · 副本");
             copy.setString(
                 "tutorialObservedSourceId",
                 original.hasKey("tutorialObservedSourceId", 8) ? original.getString("tutorialObservedSourceId") : id);
@@ -1738,6 +1777,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             engine.setString("sourceSha256", sourceFingerprint);
             engine.setInteger("modelCellCount", model.cells.size());
             engine.setInteger(
+                "modelStructureCount",
+                model.data.getTagList("structures", 10)
+                    .tagCount());
+            engine.setInteger(
                 "selectedCellCount",
                 sandbox.preview.selection()
                     .size());
@@ -2048,6 +2091,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             sandbox.preview.initializeSelection(sandbox.session.state());
             sandbox.preview.initializeLayer(sandbox.session.state());
             sandbox.preview.resetCamera();
+            sandbox.preview.yaw(Math.toRadians(38));
+            sandbox.preview.pitch(Math.toRadians(30));
         }
         commandResults++;
     }
@@ -2057,6 +2102,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         NBTTagList cells = new NBTTagList();
         for (HologramState.Cell cell : state.cells) cells.appendTag(cell.tag());
         data.setTag("cells", cells);
+        data.setInteger("cellCount", cells.tagCount());
         return data;
     }
 
@@ -2082,7 +2128,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             throw new IllegalStateException("真实教学样例校验失败：" + unavailable.getMessage(), unavailable);
         }
         data.setString("session", "__gtmb_tutorial__");
-        data.setString("title", topic.equals("blueprint") ? "三台电力高炉 · 派生教学规划" : "电力高炉 · 原生规划教学");
+        data.setString("title", topic.equals("blueprint") ? "两台电力高炉起步 · 派生教学规划" : "电力高炉 · 原生规划教学");
         data.setString("status", "仅在教学会话内存中演示，不提交真实操作");
         data.setString("activeStructure", "");
         data.setString("openPurpose", "");

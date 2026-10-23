@@ -65,6 +65,7 @@ final class HologramWorldGuide {
             String stage = selection.getBoolean("areaPolygonClosed")
                 ? selection.getBoolean("areaPolygonHeightChosen") ? "continuousReady" : "continuousHeight"
                 : "continuousLine";
+            if (HologramIsometricCamera.INSTANCE.active()) stage += "Camera";
             return modeText(selection.getString("areaPolygonMode")) + " · "
                 + String.format(
                     java.util.Locale.ROOT,
@@ -117,12 +118,15 @@ final class HologramWorldGuide {
                     HologramClient
                         .text("guide.polygonCount", "Vertices %d · Click the first point to close (at least 3)"),
                     selection.getIntArray("areaPolygon").length / 3));
-            lines.add(HologramClient.text("guide.selectionUndo", "Ctrl+Z: undo · Ctrl+Y: redo"));
+            lines.add(
+                HologramClient.text("guide.selectionUndo", "Ctrl+Z: undo · Ctrl+Y: redo · Delete: remove last point"));
             lines.add(
                 String.format(
                     java.util.Locale.ROOT,
-                    camera ? HologramClient
-                        .text("guide.polygonCamera", "Release Ctrl to draw · Alt+wheel: depth · %s / Esc: normal view")
+                    camera
+                        ? HologramClient.text(
+                            "guide.polygonCamera",
+                            "Ctrl+left: vertex / height · Alt+wheel: depth · %s / Esc: normal view")
                         : HologramClient.text(
                             "guide.selectionExit",
                             "Alt+wheel: depth · %s: isometric view · Esc: cancel selection"),
@@ -141,13 +145,13 @@ final class HologramWorldGuide {
                         .text("guide.selectionConfirm", "Shift+right: confirm · Arrows: move · Alt+Up/Down: height"));
             if (HologramClient.controlHeld()) lines.add(
                 HologramClient
-                    .text("guide.selectionUndoEdit", "Ctrl+Z: undo · Ctrl+Y: redo · Delete: delete current region"));
+                    .text("guide.selectionUndoEdit", "Ctrl+Z: undo · Ctrl+Y: redo · Delete: remove latest selection"));
             else if (HologramClient.shiftHeld()) lines.add(
                 String.format(
                     java.util.Locale.ROOT,
                     HologramClient.text(
                         "guide.selectionShiftEdit",
-                        "Shift+Z: merge regions · Shift+%s: subtract polygon · Delete: delete region"),
+                        "Shift+Z: merge regions · Shift+%s: subtract polygon · Delete: remove latest selection"),
                     free));
             else lines.add(
                 String.format(

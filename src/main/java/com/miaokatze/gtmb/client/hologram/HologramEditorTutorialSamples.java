@@ -50,6 +50,7 @@ final class HologramEditorTutorialSamples {
         data.setString("virtualPresetId", id);
         data.setString("blueprintSavedId", id);
         data.setString("virtualPresetName", name);
+        data.setString("title", "两台电力高炉 · 教学起始规划");
         data.setString("blueprintSource", "saved");
         data.setString("openPurpose", "blueprintEdit");
         data.setString("editorWorkspace", "blueprint");
@@ -112,7 +113,7 @@ final class HologramEditorTutorialSamples {
         return (NBTTagCompound) sample(kind).data.copy();
     }
 
-    /** Authored arrangement derived from one observed 36-cell EBF, never represented as a three-machine capture. */
+    /** Authored arrangement derived from one observed 36-cell EBF, never represented as a multi-machine capture. */
     static NBTTagCompound planning(boolean blueprint) throws IOException {
         NBTTagCompound data = snapshot(blueprint ? Kind.AUTHOR : Kind.PHYSICAL);
         String primary = primaryStructure(Kind.AUTHOR);
@@ -156,9 +157,13 @@ final class HologramEditorTutorialSamples {
                 target(cell, devices[assigned++]);
         }
         require(assigned == devices.length, "The EBF has insufficient bottom hatch positions");
+        return arrange(data, machine, blueprint, primary);
+    }
+
+    /** Shared with geometry regressions; device normalization above remains bound to the native GT registry. */
+    static NBTTagCompound arrange(NBTTagCompound data, NBTTagList machine, boolean blueprint, String primary) {
         NBTTagList cells = new NBTTagList(), structures = new NBTTagList();
-        int[][] offsets = blueprint ? new int[][] { { 0, 0, 0 }, { 5, 0, 0 }, { 0, 4, 6 } }
-            : new int[][] { { 0, 0, 0 } };
+        int[][] offsets = blueprint ? new int[][] { { 0, 0, 0 }, { -4, 4, 6 } } : new int[][] { { 0, 0, 0 } };
         NBTTagCompound declared = blueprint ? data.getTagList("structures", 10)
             .getCompoundTagAt(0) : null;
         for (int m = 0; m < offsets.length; m++) {
@@ -167,7 +172,7 @@ final class HologramEditorTutorialSamples {
             if (blueprint) {
                 NBTTagCompound declaration = (NBTTagCompound) declared.copy();
                 declaration.setString("id", member);
-                declaration.setString("name", "电力高炉 " + (m + 1) + (m == 2 ? " · 平台" : " · 地面"));
+                declaration.setString("name", "电力高炉 " + (m + 1) + (m == 1 ? " · 平台" : " · 地面"));
                 declaration.setString("tutorialObservedSourceId", primary);
                 for (int axis = 0; axis < 3; axis++) {
                     String key = new String[] { "x", "y", "z" }[axis];
@@ -194,13 +199,17 @@ final class HologramEditorTutorialSamples {
         }
         if (blueprint) {
             // A real block platform, four supporting pillars and an access stair; no decorative stand-ins for machines.
-            for (int x = -2; x <= 2; x++) for (int z = 5; z <= 9; z++)
+            for (int x = -6; x <= -2; x++) for (int z = 5; z <= 9; z++)
                 cells.appendTag(buildingCell(data, x, 3, z, new ItemStack(Blocks.stonebrick)));
-            for (int x : new int[] { -2, 2 }) for (int z : new int[] { 5, 9 }) for (int y = 0; y < 3; y++)
+            for (int x : new int[] { -6, -2 }) for (int z : new int[] { 5, 9 }) for (int y = 0; y < 3; y++)
                 cells.appendTag(buildingCell(data, x, y, z, new ItemStack(Blocks.stonebrick)));
-            for (int y = 0; y < 4; y++)
-                cells.appendTag(buildingCell(data, 3 + y, y, 7, new ItemStack(Blocks.stone_brick_stairs)));
-            for (int x = -2; x <= 7; x++) for (int z = -1; z <= 9; z++)
+            for (int y = 0; y < 4; y++) {
+                for (int support = 0; support < y; support++)
+                    cells.appendTag(buildingCell(data, 2 - y, support, 7, new ItemStack(Blocks.stonebrick)));
+                cells.appendTag(buildingCell(data, 2 - y, y, 7, new ItemStack(Blocks.stone_brick_stairs, 1, 1)));
+            }
+            // Reserve a grounded lane for moving the first machine and a separate bay for its later copy.
+            for (int x = -6; x <= 4; x++) for (int z = -1; z <= 9; z++)
                 cells.appendTag(buildingCell(data, x, -1, z, new ItemStack(Blocks.stonebrick)));
         }
         data.setTag("cells", cells);

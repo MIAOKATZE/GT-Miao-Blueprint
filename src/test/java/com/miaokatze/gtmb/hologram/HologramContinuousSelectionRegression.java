@@ -11,6 +11,9 @@ final class HologramContinuousSelectionRegression {
 
     static void run() {
         try {
+            pendingDeletion();
+            completedDeletion();
+            rejectedPolygonDeletion();
             HologramAreaSelection area = new HologramAreaSelection();
             HologramAreaSelection camera = new HologramAreaSelection();
             camera.worldPoint(0, 0, 64, 0);
@@ -160,6 +163,129 @@ final class HologramContinuousSelectionRegression {
         } catch (IOException failure) {
             throw new AssertionError("continuous selection geometry", failure);
         }
+    }
+
+    private static void pendingDeletion() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        area.worldPoint(2, 9, 64, 9);
+        area.deleteLatest();
+        SimpleAssert.eq(0, area.points().length, "Delete clears a pending second corner without completing a box");
+        area.worldPoint(1, 0, 64, 0);
+        area.worldPoint(2, 4, 66, 4);
+        area.beginContinuous(false);
+        area.continuousPoint(10, 64, 10);
+        area.continuousPoint(12, 64, 10);
+        area.continuousPoint(10, 64, 12);
+        area.continuousPoint(10, 64, 10);
+        area.continuousPoint(10, 70, 10);
+        area.deleteLatest();
+        NBTTagCompound reopened = area.snapshot();
+        SimpleAssert.that(
+            area.continuousActive() && reopened.getIntArray("areaPolygon").length == 6
+                && !reopened.getBoolean("areaPolygonClosed")
+                && !reopened.getBoolean("areaPolygonHeightChosen")
+                && area.contains(4, 66, 4),
+            "Delete removes the last vertex of a closed/high polygon and preserves committed geometry");
+        area.undoRegion();
+        SimpleAssert.that(
+            area.snapshot()
+                .getBoolean("areaPolygonHeightChosen"),
+            "undo Delete restores the closed outline and chosen height");
+        area.redoRegion();
+        area.deleteLatest();
+        area.deleteLatest();
+        SimpleAssert.that(
+            !area.continuousActive() && area.snapshot()
+                .getIntArray("areaPolygon").length == 0 && area.contains(4, 66, 4),
+            "removing the final polygon vertex exits pending mode without removing an earlier selection");
+        area.beginContinuous(false);
+        area.deleteLatest();
+        SimpleAssert.that(!area.continuousActive() && area.complete(), "Delete also exits an empty armed polygon");
+        area.beginNext("add");
+        area.worldPoint(1, 8, 64, 8);
+        area.deleteLatest();
+        SimpleAssert.that(area.complete() && area.contains(4, 66, 4), "pending half-box deletion restores prior box");
+    }
+
+    private static void completedDeletion() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        area.worldPoint(1, 0, 64, 0);
+        area.worldPoint(2, 4, 66, 4);
+        area.beginContinuous(true);
+        area.continuousPoint(0, 64, 0);
+        area.continuousPoint(4, 64, 0);
+        area.continuousPoint(0, 64, 4);
+        area.finishContinuous(66);
+        SimpleAssert.that(
+            area.regionSnapshot()
+                .tagCount() > 2 && !area.contains(0, 64, 0)
+                && area.contains(4, 64, 4),
+            "fixture has a multi-row subtractive polygon over a completed box");
+        area.cycle(1);
+        area.move(1, 0, 0, 256);
+        area.deleteLatest();
+        SimpleAssert.that(
+            area.regionSnapshot()
+                .tagCount() == 1 && area.contains(1, 64, 0)
+                && area.contains(5, 66, 4),
+            "Delete removes the entire latest polygon despite cycling to and moving an older box");
+        area.undoRegion();
+        area.redoRegion();
+        SimpleAssert.eq(
+            1,
+            area.regionSnapshot()
+                .tagCount(),
+            "redo Delete preserves polygon batch identity");
+        area.toggleMode("add");
+        area.worldPoint(1, 10, 64, 10);
+        area.worldPoint(2, 11, 65, 11);
+        area.cycle(-1);
+        area.deleteLatest();
+        SimpleAssert.that(
+            area.regionSnapshot()
+                .tagCount() == 1 && !area.contains(10, 64, 10)
+                && area.contains(5, 66, 4),
+            "Delete removes the latest completed box instead of the cycled current box");
+        area.undoRegion();
+        area.mergeRegions();
+        area.deleteLatest();
+        SimpleAssert.that(
+            area.regionSnapshot()
+                .tagCount() == 0 && !area.complete(),
+            "the resolved merge is deleted as one whole selection");
+        area.undoRegion();
+        SimpleAssert
+            .that(area.contains(5, 66, 4) && area.contains(10, 64, 10), "undo restores all disjoint merged regions");
+    }
+
+    private static void rejectedPolygonDeletion() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        for (int x = 0; x < 127; x++) {
+            if (x != 0) area.beginNext("add");
+            area.worldPoint(1, x, 64, 0);
+            area.worldPoint(2, x, 64, 0);
+        }
+        area.beginContinuous(false);
+        area.continuousPoint(0, 64, 10);
+        area.continuousPoint(4, 64, 10);
+        area.continuousPoint(0, 64, 14);
+        NBTTagCompound pending = area.snapshot();
+        boolean rejected = false;
+        try {
+            area.finishContinuous(66);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(
+            rejected && pending.equals(area.snapshot()),
+            "polygon exceeding the 128-region limit leaves pending input and completed batches intact");
+        for (int vertex = 0; vertex < 3; vertex++) area.deleteLatest();
+        area.deleteLatest();
+        SimpleAssert.that(
+            area.regionSnapshot()
+                .tagCount() == 126 && !area.contains(126, 64, 0)
+                && area.contains(125, 64, 0),
+            "after deleting a rejected polygon's vertices, Delete still removes only the latest completed box");
     }
 
     private static boolean[] mask(HologramAreaSelection area) {

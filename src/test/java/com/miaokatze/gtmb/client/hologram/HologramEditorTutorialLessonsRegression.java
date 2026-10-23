@@ -135,11 +135,17 @@ public final class HologramEditorTutorialLessonsRegression {
         SimpleAssert.that(
             hasOperation(blueprint, Operation.CANCEL_DISCARD) && hasOperation(blueprint, Operation.CONFIRM_DISCARD),
             "dirty source switching demonstrates both explicit modal choices");
-        int copy = operationStep(blueprint, Operation.COPY_X),
+        int axis = operationStep(blueprint, Operation.MOVE_X), plane = operationStep(blueprint, Operation.MOVE_XZ),
+            copy = operationStep(blueprint, Operation.COPY_X),
             cancel = operationStep(blueprint, Operation.CANCEL_DISCARD),
             confirm = operationStep(blueprint, Operation.CONFIRM_DISCARD);
-        SimpleAssert
-            .that(copy < cancel && cancel < confirm, "a real edit precedes discard cancellation and confirmation");
+        SimpleAssert.that(
+            axis < cancel && cancel < confirm && confirm < plane && plane < copy,
+            "discard teaching follows a real move, then the final ground layout is moved and copied after reloading");
+        SimpleAssert.eq(25, blueprint.size(), "the complete blueprint course retains 25 deliberate steps");
+        SimpleAssert.that(
+            blueprint.get(1).description.contains("两台") && blueprint.get(copy).description.contains("共三台"),
+            "the course explains two initial machines and the third created by the actual copy");
         for (String topic : new String[] { "box-fps", "box-iso", "cut-fps", "cut-iso" }) {
             List<Step> world = HologramEditorLessons.course(topic, commands);
             SimpleAssert.that(

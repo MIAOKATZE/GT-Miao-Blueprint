@@ -52,8 +52,15 @@ public class HologramAreaSelection {
         final int minX, minY, minZ, maxX, maxY, maxZ;
         final String mode;
         final int[] first, second;
+        // Session-local identity: a polygon's raster boxes remain one user selection through history.
+        final Object group;
 
         Region(int[] a, int[] b, String mode) {
+            this(a, b, mode, new Object());
+        }
+
+        Region(int[] a, int[] b, String mode, Object group) {
+            this.group = group;
             first = a.clone();
             second = b.clone();
             minX = Math.min(a[0], b[0]);
@@ -97,7 +104,8 @@ public class HologramAreaSelection {
         if (index == 1) first = new int[] { xx, yy, zz };
         else second = new int[] { xx, yy, zz };
         if (first == null || second == null) return;
-        Region region = new Region(first, second, pointMode);
+        Region region = current >= 0 ? new Region(first, second, pointMode, regions.get(current).group)
+            : new Region(first, second, pointMode);
         if (current >= 0) regions.set(current, region);
         else {
             if ("replace".equals(pointMode)) regions.clear();
@@ -247,7 +255,8 @@ public class HologramAreaSelection {
         if (before == null) remember();
         else remember(before);
         if (retained == 0) regions.clear();
-        regions.addAll(boxes);
+        Object group = new Object();
+        for (Region box : boxes) regions.add(new Region(box.first, box.second, box.mode, group));
         continuous = closed = heightChosen = false;
         polygon.clear();
         select(regions.size() - 1);
@@ -371,7 +380,8 @@ public class HologramAreaSelection {
         if (merged.size() > 128) throw new IOException("合并结果超过128个区域，请减少选区");
         remember();
         regions.clear();
-        for (Region box : merged) regions.add(new Region(box.first, box.second, "add"));
+        Object group = new Object();
+        for (Region box : merged) regions.add(new Region(box.first, box.second, "add", group));
         inputMode = "replace";
         select(regions.size() - 1);
     }
@@ -436,6 +446,27 @@ public class HologramAreaSelection {
         select(regions.isEmpty() ? -1 : Math.min(current, regions.size() - 1));
     }
 
+    /** Delete edits local selection only: pending input first, then the most recently completed selection. */
+    public void deleteLatest() {
+        if (continuous) {
+            remember();
+            if (!polygon.isEmpty()) polygon.remove(polygon.size() - 1);
+            closed = heightChosen = false;
+            if (polygon.isEmpty()) continuous = false;
+            return;
+        }
+        if (current < 0 && (first != null || second != null || more)) {
+            remember();
+            select(regions.size() - 1);
+            return;
+        }
+        if (regions.isEmpty()) return;
+        remember();
+        Object group = regions.get(regions.size() - 1).group;
+        regions.removeIf(region -> region.group == group);
+        select(regions.size() - 1);
+    }
+
     public void move(int dx, int dy, int dz, int height) {
         if (!complete()) return;
         int[] a = translated(first, dx, dy, dz), b = translated(second, dx, dy, dz);
@@ -444,7 +475,7 @@ public class HologramAreaSelection {
         remember();
         first = a;
         second = b;
-        regions.set(current, new Region(a, b, pointMode));
+        regions.set(current, new Region(a, b, pointMode, regions.get(current).group));
     }
 
     private static int[] translated(int[] point, int dx, int dy, int dz) {

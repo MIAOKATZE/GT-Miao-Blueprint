@@ -56,7 +56,7 @@ final class HologramEditorShell {
     private boolean structuresOpen;
     private boolean lastCut;
     private Flow launchers;
-    private boolean launchersExpanded = true, launchersCompact;
+    private boolean launchersExpanded, launchersCompact;
     private HologramEditorTaskProgress taskProgress;
     private IWidget footer;
     private IFocusedWidget savedFocus;
@@ -567,6 +567,7 @@ final class HologramEditorShell {
     void toggleLibrary() {
         if (libraryDrawer != null) libraryDrawer.expanded(!libraryDrawer.isExpanded());
         if (libraryDrawer != null) ui.library.libraryDrawer(libraryDrawer.isExpanded());
+        if (ui.session.isTutorial() && libraryPageSelected()) setDockExpanded(false);
     }
 
     boolean controlEnabled(int id) {
@@ -730,13 +731,28 @@ final class HologramEditorShell {
     void selectDockPage(int page) {
         if (pages == null) return;
         if (page == 2) {
+            if (ui.session.isTutorial()) setDockExpanded(false);
             if (libraryDrawer != null) libraryDrawer.expanded(true);
             ui.library.libraryDrawer(true);
             ui.library.blueprintTab(true);
             return;
         }
+        if (ui.session.isTutorial()) closeTutorialLibrary();
         setDockExpanded(true);
         pages.setPage(page);
+    }
+
+    /** Lessons devote the viewport to manipulation instead of retaining unrelated inspectors. */
+    void setTutorialSceneOnly() {
+        if (!ui.session.isTutorial()) return;
+        closeTutorialLibrary();
+        setDockExpanded(false);
+        if (structuresOpen) toggleStructures();
+    }
+
+    private void closeTutorialLibrary() {
+        if (libraryDrawer != null) libraryDrawer.expanded(false);
+        ui.library.libraryDrawer(false);
     }
 
     void setDockExpanded(boolean expanded) {

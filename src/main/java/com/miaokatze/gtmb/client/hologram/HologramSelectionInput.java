@@ -26,10 +26,9 @@ final class HologramSelectionInput {
     static CameraAction cameraAction(int button, boolean control, boolean shift, boolean alt, boolean rotate,
         boolean continuous) {
         if (button != 0 && button != 1) return CameraAction.NONE;
-        if (continuous && control) return CameraAction.NONE;
+        if (continuous) return control && button == 0 ? CameraAction.CONTINUOUS_POINT : CameraAction.NONE;
         if (control) return button == 0 ? CameraAction.CORNER_ONE : CameraAction.CORNER_TWO;
         if (button == 0 && rotate) return CameraAction.NONE;
-        if (continuous) return button == 0 ? CameraAction.CONTINUOUS_POINT : CameraAction.NONE;
         return button == 0 && shift && !alt ? CameraAction.SUBMIT : CameraAction.NONE;
     }
 
@@ -55,13 +54,19 @@ final class HologramSelectionInput {
     private final HologramWorldFlow.KeyEdge polygon = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge delete = new HologramWorldFlow.KeyEdge();
     private Object previous;
+    private Object previousWorld;
     private boolean wasActive;
 
     boolean tick(HologramAreaSelection selection, boolean enabled) {
         Minecraft mc = Minecraft.getMinecraft();
-        boolean active = enabled && selection != null && mc.currentScreen == null;
-        boolean changed = previous != selection || wasActive != active;
+        boolean active = enabled && selection != null
+            && mc.currentScreen == null
+            && mc.theWorld != null
+            && mc.thePlayer != null
+            && mc.inGameHasFocus;
+        boolean changed = previous != selection || previousWorld != mc.theWorld || wasActive != active;
         previous = selection;
+        previousWorld = mc.theWorld;
         wasActive = active;
         boolean altered = false;
         boolean control = HologramClient.controlHeld(), alt = HologramClient.altHeld();
@@ -96,7 +101,7 @@ final class HologramSelectionInput {
             altered = true;
         }
         if (delete.sample(key(Keyboard.KEY_DELETE), changed) && active) {
-            selection.deleteCurrent();
+            selection.deleteLatest();
             altered = true;
         }
         int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT };
