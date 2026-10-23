@@ -112,9 +112,11 @@ final class HologramCutClient {
 
     boolean confirmContinuous() {
         if (!continuousActive()) return false;
+        int closeRejections = selection.polygonCloseRejections();
         try {
             selection.confirmContinuous();
         } catch (java.io.IOException invalid) {
+            if (selection.polygonCloseRejections() != closeRejections) HologramAreaOverlay.flashPolygonStart();
             status.show(invalid.getMessage());
         }
         return true;
@@ -379,6 +381,7 @@ final class HologramCutClient {
             HologramClient.invalidCameraTarget();
             return;
         }
+        int closeRejections = selection.polygonCloseRejections();
         try {
             if (selection.continuousActive()) {
                 if (firstCorner) selection.continuousPoint(point[0], point[1], point[2]);
@@ -386,6 +389,7 @@ final class HologramCutClient {
             }
             selection.worldPoint(firstCorner ? 1 : 2, point[0], point[1], point[2]);
         } catch (java.io.IOException invalid) {
+            if (selection.polygonCloseRejections() != closeRejections) HologramAreaOverlay.flashPolygonStart();
             status.show(invalid.getMessage());
         }
     }

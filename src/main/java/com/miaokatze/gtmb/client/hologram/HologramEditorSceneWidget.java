@@ -122,7 +122,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
                 .consumeSceneMouse(x, y, button)) return Result.SUCCESS;
             if (button == 0) ui.preview.consumeViewportLeftMouse(x, y, button);
             else if (button == 1) ui.preview.consumeViewportRightMouse(x, y, button);
-            else if (button == 2) ui.preview.resetCamera();
+            else if (button == 2) ui.preview.consumeViewportMiddleMouse(x, y, button);
         }
         return Result.SUCCESS;
     }

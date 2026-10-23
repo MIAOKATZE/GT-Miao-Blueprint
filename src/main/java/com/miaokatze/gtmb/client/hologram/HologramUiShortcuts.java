@@ -51,7 +51,7 @@ final class HologramUiShortcuts {
 
     java.util.List<String> idleHintLines() {
         String editing = ui.session.state().data.getBoolean("virtual")
-            ? geometryHelp() + "（当前" + (ui.preview.moveHandles() ? "开" : "关") + "）"
+            ? "中键拖动平移 · 右键拖动旋转 · " + geometryHelp() + "（当前" + (ui.preview.moveHandles() ? "开" : "关") + "）"
             : viewHelp();
         return java.util.Arrays.asList(
             selectionHelp(),
@@ -83,8 +83,9 @@ final class HologramUiShortcuts {
     }
 
     private String viewHelp() {
-        return "拖动旋转 · 滚轮缩放 · " + ui.tools.commands()
-            .shortcut("cameraForward")
+        return (ui.preview.blueprintCameraControls() ? "中键拖动平移 · 右键拖动旋转 · 滚轮缩放 · " : "左键拖动旋转 · 滚轮缩放 · ")
+            + ui.tools.commands()
+                .shortcut("cameraForward")
             + "/"
             + ui.tools.commands()
                 .shortcut("cameraLeft")

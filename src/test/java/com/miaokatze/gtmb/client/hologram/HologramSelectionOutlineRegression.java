@@ -58,7 +58,7 @@ final class HologramSelectionOutlineRegression {
         checkPolygon(new int[] { 0, 64, 0, 4, 64, 0, 4, 64, 1, 1, 64, 1, 1, 64, 4, 0, 64, 4 });
         checkPolygon(new int[] { -2, 64, -2, 4, 64, 1, 0, 64, 4 });
         List<int[]> live = HologramSelectionOutline
-            .polygon(new int[] { 0, 64, 0, 4, 64, 0 }, new int[] { 4, 66, 4 }, false);
+            .polygon(new int[] { 0, 64, 0, 4, 64, 0 }, new int[] { 4, 64, 4 }, false);
         SimpleAssert.that(
             encloses(live, 3, 1) && !encloses(live, 0, 4),
             "the cursor previews a filled region before another vertex is committed");
@@ -70,10 +70,12 @@ final class HologramSelectionOutlineRegression {
             pending.beginContinuous(false);
             pending.continuousPoint(0, 64, 0);
             pending.continuousPoint(4, 64, 0);
+            pending.continuousPoint(4, 64, 4);
+            pending.continuousPoint(0, 64, 0);
             NBTTagCompound before = pending.snapshot();
-            pending.finishContinuous(new int[] { 4, 66, 4 });
+            pending.finishContinuous(new int[] { 4, 64, 4 });
             for (int x = -1; x <= 5; x++) for (int z = -1; z <= 5; z++) SimpleAssert
-                .that(encloses(live, x, z) == pending.contains(x, 65, z), "B confirms the cursor's actual live region");
+                .that(encloses(live, x, z) == pending.contains(x, 64, z), "B confirms the cursor's actual live region");
             pending.undoRegion();
             SimpleAssert.that(before.equals(pending.snapshot()), "B confirmation is undone as one gesture");
         } catch (java.io.IOException failure) {
@@ -87,6 +89,7 @@ final class HologramSelectionOutlineRegression {
             area.beginContinuous(false);
             for (int i = 0; i < vertices.length; i += 3)
                 area.continuousPoint(vertices[i], vertices[i + 1], vertices[i + 2]);
+            area.continuousPoint(vertices[0], vertices[1], vertices[2]);
             area.finishContinuous(66);
             SimpleAssert.that(!area.continuousActive(), "the second B action closes and confirms the polygon");
             List<int[]> edges = HologramSelectionOutline.polygon(vertices, null, true);

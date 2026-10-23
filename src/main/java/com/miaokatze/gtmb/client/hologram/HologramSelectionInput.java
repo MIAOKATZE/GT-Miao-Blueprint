@@ -89,6 +89,7 @@ final class HologramSelectionInput {
         }
         if (polygon.sample(continuous != null && GameSettings.isKeyDown(continuous) && !control && !alt, changed)
             && active) {
+            int closeRejections = selection.polygonCloseRejections();
             try {
                 if (selection.continuousActive()) {
                     int[] cursor = HologramCutClient.INSTANCE.continuousActive() ? HologramClient.cutAnchor(false)
@@ -96,6 +97,7 @@ final class HologramSelectionInput {
                     selection.finishContinuous(cursor);
                 } else selection.beginContinuous(HologramClient.shiftHeld());
             } catch (java.io.IOException invalid) {
+                if (selection.polygonCloseRejections() != closeRejections) HologramAreaOverlay.flashPolygonStart();
                 HologramClient.selectionNotice(invalid.getMessage());
             }
             altered = true;

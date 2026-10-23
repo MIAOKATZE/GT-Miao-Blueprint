@@ -20,7 +20,9 @@ public class HologramAreaSelection {
     private String inputMode = "replace", polygonMode = "replace";
     private final List<int[]> polygon = new ArrayList<>();
     private boolean continuous, closed, heightChosen;
-    private int polygonHeight;
+    private int polygonHeight, polygonHeightAxis = 1;
+    private int[] polygonHeightPoint;
+    private int polygonCloseRejected;
     private int lastWorldCorner;
 
     private final class SelectionState {
@@ -34,6 +36,8 @@ public class HologramAreaSelection {
         final List<int[]> vertices = new ArrayList<>(polygon);
         final boolean drawing = continuous, loop = closed, high = heightChosen;
         final int height = polygonHeight;
+        final int axis = polygonHeightAxis;
+        final int[] heightPoint = polygonHeightPoint == null ? null : polygonHeightPoint.clone();
         final int corner = lastWorldCorner;
     }
 
@@ -89,10 +93,14 @@ public class HologramAreaSelection {
     }
 
     public void point(int index, int xx, int yy, int zz, String mode) throws IOException {
+        point(index, xx, yy, zz, mode, false);
+    }
+
+    private void point(int index, int xx, int yy, int zz, String mode, boolean startNext) throws IOException {
         if (!validMode(mode)) throw new IOException("区域组合模式无效");
         if (index != 1 && index != 2) throw new IOException("区域角点无效");
-        // Explicit geometry modes remain available to the protocol; world input owns its persistent mode.
-        boolean next = first != null && second != null && !"replace".equals(mode);
+        // Explicit geometry modes remain available to the protocol; world input arms only one new box.
+        boolean next = startNext || first != null && second != null && !"replace".equals(mode);
         if ((next || current < 0) && regions.size() >= 128) throw new IOException("区域组合过多，请撤销或完成");
         remember();
         if (next) {
@@ -145,10 +153,12 @@ public class HologramAreaSelection {
         closed = previous.loop;
         heightChosen = previous.high;
         polygonHeight = previous.height;
+        polygonHeightAxis = previous.axis;
+        polygonHeightPoint = previous.heightPoint == null ? null : previous.heightPoint.clone();
         lastWorldCorner = previous.corner;
     }
 
-    /** Persistent world input mode; a first complete box is required before add/subtract. */
+    /** Arm one new world-input box; a committed selection is required before add/subtract. */
     public void toggleMode(String mode) {
         if (regions.isEmpty() || !validMode(mode) || "replace".equals(mode) || continuous) return;
         remember();
@@ -157,140 +167,183 @@ public class HologramAreaSelection {
     }
 
     public void worldPoint(int index, int x, int y, int z) throws IOException {
-        if (index == 0) index = first == null ? 1 : second == null ? 2 : lastWorldCorner == 1 ? 2 : 1;
-        point(index, x, y, z, inputMode);
+        boolean startNext = !"replace".equals(inputMode) && !more;
+        if (index == 0) index = startNext || first == null ? 1 : second == null ? 2 : lastWorldCorner == 1 ? 2 : 1;
+        point(index, x, y, z, inputMode, startNext);
         lastWorldCorner = index;
+        if (complete()) inputMode = "replace";
     }
 
     public boolean continuousActive() {
         return continuous;
     }
 
-    /** C during line entry resets the line, while keeping the committed selection intact. */
+    public boolean hasSelectionContent() {
+        return !regions.isEmpty() || first != null || second != null || !polygon.isEmpty();
+    }
+
+    /** Transient feedback event, deliberately outside snapshots and geometry history. */
+    public int polygonCloseRejections() {
+        return polygonCloseRejected;
+    }
+
+    /** Restarting line entry keeps the committed selection and inherits any armed box mode. */
     public void beginContinuous(boolean subtract) {
         if (continuous && closed) return;
         if (subtract && regions.isEmpty()) return;
         remember();
-        polygonMode = continuous ? polygonMode : regions.isEmpty() ? "replace" : subtract ? "subtract" : "add";
+        polygonMode = continuous ? polygonMode
+            : regions.isEmpty() ? "replace" : subtract ? "subtract" : !"replace".equals(inputMode) ? inputMode : "add";
         continuous = true;
         closed = heightChosen = false;
+        polygonHeightAxis = 1;
+        polygonHeightPoint = null;
         polygon.clear();
     }
 
     public void continuousPoint(int x, int y, int z) throws IOException {
         if (!continuous) return;
+        int[] point = { x, y, z };
         if (closed) {
             remember();
-            polygonHeight = y;
+            polygonHeightPoint = point;
+            polygonHeight = point[polygonHeightAxis];
             heightChosen = true;
             return;
         }
-        if (!polygon.isEmpty() && x == polygon.get(0)[0] && z == polygon.get(0)[2]) {
-            if (polygon.size() < 3) throw new IOException("请至少选择三个不同的连续框选点");
-            long area = 0;
-            for (int i = 0; i < polygon.size(); i++) {
-                int[] a = polygon.get(i), b = polygon.get((i + 1) % polygon.size());
-                area += (long) a[0] * b[2] - (long) b[0] * a[2];
-            }
-            if (area == 0) throw new IOException("连续框选轮廓没有面积");
-            if (polygonBoxes(polygon.get(0)[1]).isEmpty()) throw new IOException("连续框选轮廓没有面积");
+        if (!polygon.isEmpty() && samePoint(point, polygon.get(0))) {
+            validatePolygon();
+            if (polygonBoxes(polygon.get(0)[polygonHeightAxis]).isEmpty()) throw new IOException("连续框选轮廓没有面积");
             remember();
             closed = true;
             return;
         }
-        if (polygon.size() >= 128) throw new IOException("连续框选点过多");
-        for (int[] vertex : polygon) if (vertex[0] == x && vertex[2] == z) throw new IOException("请点击首点闭合，或选择新的轮廓点");
+        int axis = nextPolygonAxis(point);
         remember();
-        polygon.add(new int[] { x, polygon.isEmpty() ? y : polygon.get(0)[1], z });
+        polygon.add(point);
+        polygonHeightAxis = axis;
+    }
+
+    private static boolean samePoint(int[] a, int[] b) {
+        return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+    }
+
+    /** Keep ambiguous lines flexible until a non-collinear third point identifies the plane. */
+    private int nextPolygonAxis(int[] point) throws IOException {
+        if (polygon.size() >= 128) throw new IOException("连续框选点过多");
+        for (int[] vertex : polygon) if (samePoint(vertex, point)) {
+            polygonCloseRejected++;
+            throw new IOException("请点击首点闭合，或选择新的轮廓点");
+        }
+        for (int axis : new int[] { 1, 2, 0 }) {
+            boolean coplanar = true;
+            for (int[] vertex : polygon) if (vertex[axis] != point[axis]) coplanar = false;
+            if (coplanar) return axis;
+        }
+        throw new IOException("连续框选轮廓点必须位于同一水平或轴对齐竖直平面");
+    }
+
+    private int polygonUAxis() {
+        return polygonHeightAxis == 0 ? 1 : 0;
+    }
+
+    private int polygonVAxis() {
+        return polygonHeightAxis == 2 ? 1 : 2;
+    }
+
+    private void validatePolygon() throws IOException {
+        if (!continuous || polygon.size() < 3) throw new IOException("请至少选择三个不同的连续框选点");
+        int u = polygonUAxis(), v = polygonVAxis();
+        int[] origin = polygon.get(0);
+        double area = 0;
+        for (int i = 1; i + 1 < polygon.size(); i++) {
+            int[] a = polygon.get(i), b = polygon.get(i + 1);
+            area += ((double) a[u] - origin[u]) * ((double) b[v] - origin[v])
+                - ((double) b[u] - origin[u]) * ((double) a[v] - origin[v]);
+        }
+        if (area == 0) throw new IOException("连续框选轮廓没有面积");
     }
 
     public void confirmContinuous() throws IOException {
+        requireClosedPolygon();
         if (!continuous || !closed || !heightChosen) throw new IOException("请先闭合连续框选轮廓，再点击方块选择高度");
         commitContinuous(polygonHeight);
     }
 
-    /** The same free-selection key closes the pending footprint and confirms its current preview height. */
+    private void requireClosedPolygon() throws IOException {
+        if (continuous && !closed) {
+            polygonCloseRejected++;
+            throw new IOException("请点击首点闭合连续框选轮廓");
+        }
+    }
+
+    /** The preview height is a coordinate along the inferred plane's normal axis. */
     public void finishContinuous(int previewHeight) throws IOException {
-        finishContinuous(previewHeight, null);
+        requireClosedPolygon();
+        validatePolygon();
+        commitContinuous(heightChosen ? polygonHeight : previewHeight);
     }
 
     public void finishContinuous(int[] cursor) throws IOException {
-        SelectionState before = new SelectionState();
-        if (!closed && cursor != null) {
-            boolean existing = false;
-            for (int[] vertex : polygon) if (vertex[0] == cursor[0] && vertex[2] == cursor[2]) existing = true;
-            if (!existing) {
-                if (polygon.size() >= 128) throw new IOException("连续框选点过多");
-                polygon.add(new int[] { cursor[0], polygon.isEmpty() ? cursor[1] : polygon.get(0)[1], cursor[2] });
-            }
-        }
-        try {
-            finishContinuous(cursor != null ? cursor[1] : polygon.isEmpty() ? 0 : polygon.get(0)[1], before);
-        } catch (IOException invalid) {
-            restore(before);
-            throw invalid;
-        }
-    }
-
-    private void finishContinuous(int previewHeight, SelectionState before) throws IOException {
-        if (!continuous || polygon.size() < 3) throw new IOException("请至少选择三个不同的连续框选点");
-        long area = 0;
-        for (int i = 0; i < polygon.size(); i++) {
-            int[] a = polygon.get(i), b = polygon.get((i + 1) % polygon.size());
-            area += (long) a[0] * b[2] - (long) b[0] * a[2];
-        }
-        if (area == 0) throw new IOException("连续框选轮廓没有面积");
-        commitContinuous(heightChosen ? polygonHeight : previewHeight, before);
+        finishContinuous(
+            cursor != null ? cursor[polygonHeightAxis] : polygon.isEmpty() ? 0 : polygon.get(0)[polygonHeightAxis]);
     }
 
     private void commitContinuous(int height) throws IOException {
-        commitContinuous(height, null);
-    }
-
-    private void commitContinuous(int height, SelectionState before) throws IOException {
         List<Region> boxes = polygonBoxes(height);
         if (boxes.isEmpty()) throw new IOException("连续框选轮廓没有面积");
         int retained = "replace".equals(polygonMode) ? 0 : regions.size();
         if (retained + boxes.size() > 128) throw new IOException("区域组合过多，请先合并或简化轮廓");
-        if (before == null) remember();
-        else remember(before);
+        remember();
         if (retained == 0) regions.clear();
         Object group = new Object();
         for (Region box : boxes) regions.add(new Region(box.first, box.second, box.mode, group));
         continuous = closed = heightChosen = false;
+        polygonHeightPoint = null;
+        inputMode = "replace";
         polygon.clear();
         select(regions.size() - 1);
     }
 
     /** Inclusive block-center polygon raster, merged into bounded row prisms for the existing wire protocol. */
     private List<Region> polygonBoxes(int height) throws IOException {
-        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, minZ = minX, maxZ = maxX;
-        for (int[] v : polygon) {
-            minX = Math.min(minX, v[0]);
-            maxX = Math.max(maxX, v[0]);
-            minZ = Math.min(minZ, v[2]);
-            maxZ = Math.max(maxZ, v[2]);
+        int u = polygonUAxis(), v = polygonVAxis();
+        int minU = Integer.MAX_VALUE, maxU = Integer.MIN_VALUE, minV = minU, maxV = maxU;
+        for (int[] point : polygon) {
+            minU = Math.min(minU, point[u]);
+            maxU = Math.max(maxU, point[u]);
+            minV = Math.min(minV, point[v]);
+            maxV = Math.max(maxV, point[v]);
         }
-        if (((long) maxX - minX + 1) * ((long) maxZ - minZ + 1) > 1_048_576L) throw new IOException("连续框选底面过大，请缩小轮廓");
+        long width = (long) maxU - minU + 1, depth = (long) maxV - minV + 1;
+        if (width > 1_048_576L || depth > 1_048_576L || width * depth > 1_048_576L)
+            throw new IOException("连续框选底面过大，请缩小轮廓");
         List<Region> result = new ArrayList<>();
-        for (int z = minZ; z <= maxZ; z++) {
+        for (long vv = minV; vv <= maxV; vv++) {
+            int rowV = (int) vv;
             int start = 0;
             boolean run = false;
-            for (int x = minX; x <= maxX; x++) {
-                boolean inside = polygonContains(x, z);
+            for (long uu = minU; uu <= maxU; uu++) {
+                int columnU = (int) uu;
+                boolean inside = polygonContains(columnU, rowV, u, v);
                 if (inside && !run) {
-                    start = x;
+                    start = columnU;
                     run = true;
                 }
-                if (run && (!inside || x == maxX)) {
-                    int end = inside && x == maxX ? x : x - 1;
+                if (run && (!inside || columnU == maxU)) {
+                    int end = inside && columnU == maxU ? columnU : columnU - 1;
                     Region previous = null;
                     for (Region box : result)
-                        if (box.minX == start && box.maxX == end && box.maxZ == z - 1) previous = box;
-                    Region row = new Region(
-                        new int[] { start, polygon.get(0)[1], previous == null ? z : previous.minZ },
-                        new int[] { end, height, z },
-                        polygonMode);
+                        if (box.first[u] == start && box.second[u] == end && (long) box.second[v] == vv - 1)
+                            previous = box;
+                    int[] a = polygon.get(0)
+                        .clone(), b = a.clone();
+                    a[u] = start;
+                    a[v] = previous == null ? rowV : previous.first[v];
+                    b[u] = end;
+                    b[v] = rowV;
+                    b[polygonHeightAxis] = height;
+                    Region row = new Region(a, b, polygonMode);
                     if (previous != null) result.set(result.indexOf(previous), row);
                     else result.add(row);
                     if (result.size() > 128) throw new IOException("连续框选轮廓过于复杂，请简化轮廓");
@@ -301,16 +354,16 @@ public class HologramAreaSelection {
         return result;
     }
 
-    private boolean polygonContains(int x, int z) {
+    private boolean polygonContains(int x, int z, int u, int v) {
         boolean inside = false;
         for (int i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
             int[] a = polygon.get(j), b = polygon.get(i);
-            long cross = (long) (x - a[0]) * (b[2] - a[2]) - (long) (z - a[2]) * (b[0] - a[0]);
-            if (cross == 0 && x >= Math.min(a[0], b[0])
-                && x <= Math.max(a[0], b[0])
-                && z >= Math.min(a[2], b[2])
-                && z <= Math.max(a[2], b[2])) return true;
-            if ((a[2] > z) != (b[2] > z) && x < a[0] + (double) (b[0] - a[0]) * (z - a[2]) / (b[2] - a[2]))
+            long cross = ((long) x - a[u]) * ((long) b[v] - a[v]) - ((long) z - a[v]) * ((long) b[u] - a[u]);
+            if (cross == 0 && x >= Math.min(a[u], b[u])
+                && x <= Math.max(a[u], b[u])
+                && z >= Math.min(a[v], b[v])
+                && z <= Math.max(a[v], b[v])) return true;
+            if ((a[v] > z) != (b[v] > z) && x < a[u] + (double) (b[u] - a[u]) * (z - a[v]) / (b[v] - a[v]))
                 inside = !inside;
         }
         return inside;
@@ -452,11 +505,23 @@ public class HologramAreaSelection {
             remember();
             if (!polygon.isEmpty()) polygon.remove(polygon.size() - 1);
             closed = heightChosen = false;
+            polygonHeightPoint = null;
+            // Removing a plane-defining vertex can leave an ambiguous line again.
+            polygonHeightAxis = 1;
+            for (int axis : new int[] { 1, 2, 0 }) {
+                boolean coplanar = true;
+                for (int[] vertex : polygon) if (vertex[axis] != polygon.get(0)[axis]) coplanar = false;
+                if (coplanar) {
+                    polygonHeightAxis = axis;
+                    break;
+                }
+            }
             if (polygon.isEmpty()) continuous = false;
             return;
         }
         if (current < 0 && (first != null || second != null || more)) {
             remember();
+            inputMode = "replace";
             select(regions.size() - 1);
             return;
         }
@@ -555,6 +620,10 @@ public class HologramAreaSelection {
         state.setBoolean("areaPolygonClosed", closed);
         state.setBoolean("areaPolygonHeightChosen", heightChosen);
         state.setInteger("areaPolygonHeight", polygonHeight);
+        state.setInteger("areaPolygonHeightAxis", polygonHeightAxis);
+        state.setIntArray(
+            "areaPolygonHeightPoint",
+            polygonHeightPoint == null ? new int[0] : polygonHeightPoint.clone());
         state.setString("areaPolygonMode", polygonMode);
         int[] vertices = new int[polygon.size() * 3];
         for (int i = 0; i < polygon.size(); i++) System.arraycopy(polygon.get(i), 0, vertices, i * 3, 3);
@@ -614,6 +683,8 @@ public class HologramAreaSelection {
         regionRedo.clear();
         polygon.clear();
         continuous = closed = heightChosen = false;
+        polygonHeightAxis = 1;
+        polygonHeightPoint = null;
         inputMode = "replace";
         pointMode = mode;
         more = state.getBoolean("areaMore");

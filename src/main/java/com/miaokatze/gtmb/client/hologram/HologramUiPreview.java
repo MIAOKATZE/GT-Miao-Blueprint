@@ -19,6 +19,8 @@ import org.lwjgl.opengl.GL11;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
+import com.miaokatze.miaokatzecore.api.camera.CameraBasis;
+import com.miaokatze.miaokatzecore.api.camera.CameraPose;
 import com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates;
 
 /** Internal preview workflow; composed by the workstation, never part of the mod extension API. */
@@ -73,6 +75,8 @@ final class HologramUiPreview {
     private boolean dragging;
 
     private boolean moved;
+
+    private int navigationButton = -1;
 
     private boolean inventory;
 
@@ -172,6 +176,7 @@ final class HologramUiPreview {
                 pitch,
                 zoom,
                 camera.x,
+                camera.y,
                 camera.z,
                 allLayers ? Integer.MAX_VALUE : layer,
                 view,
@@ -247,6 +252,7 @@ final class HologramUiPreview {
                 this.pitch,
                 this.zoom,
                 this.camera.x,
+                this.camera.y,
                 this.camera.z,
                 this.allLayers ? Integer.MAX_VALUE : this.layer,
                 this.view,
@@ -1136,6 +1142,10 @@ final class HologramUiPreview {
         if (button == 1 && ui.preview.previewInteractive()
             && ui.canvas.inViewport(mx, my)
             && !ui.preview.previewBlockedAt(mx, my)) {
+            if (blueprintCameraControls()) {
+                beginNavigation(mx, my, button);
+                return true;
+            }
             if (this.inventoryDragging || this.inventorySlot >= 0 || this.sourceChoice >= 0) {
                 this.inventoryDragging = false;
                 this.inventorySlot = this.sourceChoice = -1;
@@ -1144,6 +1154,26 @@ final class HologramUiPreview {
             return true;
         }
         return false;
+    }
+
+    boolean blueprintCameraControls() {
+        return !ui.library.browsePreviewActive() && ui.session.state().data.getBoolean("virtual");
+    }
+
+    boolean consumeViewportMiddleMouse(int mx, int my, int button) {
+        if (button != 2 || !ui.preview.previewInteractive()
+            || !ui.canvas.inViewport(mx, my)
+            || ui.preview.previewBlockedAt(mx, my)) return false;
+        if (blueprintCameraControls()) beginNavigation(mx, my, button);
+        else if (!inventory) resetCamera();
+        return true;
+    }
+
+    private void beginNavigation(int mx, int my, int button) {
+        navigationButton = button;
+        dragX = mx;
+        dragY = my;
+        moved = false;
     }
 
     boolean consumeViewportLeftMouse(int mx, int my, int button) {
@@ -1294,6 +1324,26 @@ final class HologramUiPreview {
     }
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (navigationButton >= 0 && navigationButton == button) {
+            int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - dragX, dy = my - dragY;
+            if (Math.abs(dx) + Math.abs(dy) > 1) moved = true;
+            if (button == 1) {
+                yaw -= dx * .012;
+                pitch = Math.max(-1.35, Math.min(1.35, pitch + dy * .012));
+            } else {
+                double scale = HologramRenderer.gridScale();
+                if (scale > 0) {
+                    CameraBasis basis = new CameraBasis(
+                        new CameraPose(0, 0, 0, -Math.toDegrees(yaw), Math.toDegrees(pitch)));
+                    camera.x += (-dx * basis.rightX() + dy * basis.upX()) / scale;
+                    camera.y += (-dx * basis.rightY() + dy * basis.upY()) / scale;
+                    camera.z += (-dx * basis.rightZ() + dy * basis.upZ()) / scale;
+                }
+            }
+            dragX = mx;
+            dragY = my;
+            return;
+        }
         if (ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), false)) return;
         if (ui.library.browsePreviewActive()) {
             if (browseDragging && browseMeshInteractive()) {
@@ -1322,13 +1372,20 @@ final class HologramUiPreview {
         if (!this.dragging) return;
         int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - this.dragX, dy = my - this.dragY;
         if (Math.abs(dx) + Math.abs(dy) > 1) this.moved = true;
-        this.yaw = this.yaw - (dx * .012);
-        this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch + dy * .012));
+        if (!blueprintCameraControls()) {
+            this.yaw = this.yaw - (dx * .012);
+            this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch + dy * .012));
+        }
         this.dragX = mx;
         this.dragY = my;
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
+        if (navigationButton >= 0 && navigationButton == button) {
+            mouseClickMove(x, y, button, 0);
+            navigationButton = -1;
+            return;
+        }
         if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
         if (ui.library.browsePreviewActive()) {
             if (button == 0) browseDragging = false;
@@ -1409,6 +1466,7 @@ final class HologramUiPreview {
     }
 
     void pauseForImport() {
+        navigationButton = -1;
         editQueue.clear();
         queuedDispatchSequence = -1;
         dragging = boxSelecting = inventoryDragging = false;
@@ -1416,6 +1474,7 @@ final class HologramUiPreview {
     }
 
     void releasePointerCapture() {
+        navigationButton = -1;
         dragging = browseDragging = boxSelecting = inventoryDragging = false;
         gizmo.cancel();
     }
@@ -1640,6 +1699,7 @@ final class HologramUiPreview {
         state.setDouble("pitch", pitch);
         state.setDouble("zoom", zoom);
         state.setDouble("cameraX", camera.x);
+        state.setDouble("cameraY", camera.y);
         state.setDouble("cameraZ", camera.z);
         state.setInteger("sourceOffset", sourceOffset);
         state.setInteger("sourceChoice", sourceChoice);
@@ -1674,6 +1734,7 @@ final class HologramUiPreview {
         pitch = state.getDouble("pitch");
         zoom = state.getDouble("zoom");
         camera.x = state.getDouble("cameraX");
+        camera.y = state.getDouble("cameraY");
         camera.z = state.getDouble("cameraZ");
         sourceOffset = Math.max(0, state.getInteger("sourceOffset"));
         sourceChoice = state.getInteger("sourceChoice");
@@ -1681,6 +1742,7 @@ final class HologramUiPreview {
         inventory = state.getBoolean("inventory");
         inventorySlot = state.getInteger("inventorySlot");
         // Pointer gestures and queued edits are intentionally never replayed on a new widget tree.
+        navigationButton = -1;
         dragging = boxSelecting = inventoryDragging = false;
         gizmo.cancel();
         ui.config.syncTargetSelectors();

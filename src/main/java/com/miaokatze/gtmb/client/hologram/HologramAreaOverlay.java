@@ -30,6 +30,8 @@ final class HologramAreaOverlay {
     private static RenderWitness lastRenderWitness;
     private static int[] outlineVertices, outlineCursor;
     private static boolean outlineClosed;
+    private static int outlineAxis = -1;
+    private static long polygonStartFlashUntil;
     private static java.util.List<int[]> outline = java.util.Collections.emptyList();
 
     private HologramAreaOverlay() {}
@@ -40,6 +42,10 @@ final class HologramAreaOverlay {
 
     static void clearRenderWitness() {
         lastRenderWitness = null;
+    }
+
+    static void flashPolygonStart() {
+        polygonStartFlashUntil = System.nanoTime() + 1_500_000_000L;
     }
 
     static void render(HologramState state, float partialTicks) {
@@ -74,9 +80,8 @@ final class HologramAreaOverlay {
                 boolean current = selection.hasKey("areaCurrentRegion", 3)
                     && i == selection.getInteger("areaCurrentRegion");
                 GL11.glLineWidth(current ? 4 : 2);
-                if (current) GL11.glColor4f(.35f, .85f, 1, 1);
-                else if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, .8f);
-                else GL11.glColor4f(.35f, 1, .6f, .8f);
+                if ("subtract".equals(region.getString("mode"))) GL11.glColor4f(1, .35f, .35f, current ? 1 : .8f);
+                else GL11.glColor4f(.35f, .85f, 1, current ? 1 : .8f);
                 draw(
                     region.getInteger("minX"),
                     region.getInteger("minY"),
@@ -101,7 +106,8 @@ final class HologramAreaOverlay {
                     by = cursor[1];
                     bz = cursor[2];
                 }
-                GL11.glColor4f(.35f, .85f, 1, .85f);
+                if ("subtract".equals(selection.getString("areaPointMode"))) GL11.glColor4f(1, .35f, .35f, .85f);
+                else GL11.glColor4f(.35f, .85f, 1, .85f);
                 draw(points[0], points[1], points[2], bx, by, bz, px, py, pz);
             }
             // Draw last so the live red target remains legible on confirmed regions and the pending cyan box.
@@ -110,6 +116,8 @@ final class HologramAreaOverlay {
                 GL11.glColor4f(1, .15f, .15f, 1);
                 draw(cursor[0], cursor[1], cursor[2], cursor[0], cursor[1], cursor[2], px, py, pz);
             }
+            if (selection.getBoolean("areaContinuous"))
+                drawPolygonVertices(selection.getIntArray("areaPolygon"), px, py, pz);
             lastRenderWitness = new RenderWitness(state, cursor);
         } finally {
             GL11.glPopAttrib();
@@ -140,24 +148,28 @@ final class HologramAreaOverlay {
         if (vertices.length < 3) return;
         boolean closed = selection.getBoolean("areaPolygonClosed");
         boolean subtract = "subtract".equals(selection.getString("areaPolygonMode"));
-        GL11.glColor4f(subtract ? 1 : .35f, subtract ? .35f : 1, .6f, 1);
+        GL11.glColor4f(subtract ? 1 : .35f, subtract ? .35f : .85f, subtract ? .35f : 1, 1);
         GL11.glLineWidth(3);
-        int base = vertices[1];
+        int axis = selection.hasKey("areaPolygonHeightAxis", 3) ? selection.getInteger("areaPolygonHeightAxis") : 1;
+        if (axis < 0 || axis > 2) return;
+        int base = vertices[axis];
         int height = selection.getBoolean("areaPolygonHeightChosen") ? selection.getInteger("areaPolygonHeight")
-            : cursor != null ? cursor[1] : base;
+            : closed && cursor != null ? cursor[axis] : base;
         if (!java.util.Arrays.equals(vertices, outlineVertices) || !java.util.Arrays.equals(cursor, outlineCursor)
-            || closed != outlineClosed) {
+            || closed != outlineClosed
+            || axis != outlineAxis) {
             outlineVertices = vertices.clone();
             outlineCursor = cursor == null ? null : cursor.clone();
             outlineClosed = closed;
-            outline = HologramSelectionOutline.polygon(vertices, cursor, closed);
+            outlineAxis = axis;
+            outline = HologramSelectionOutline.polygon(vertices, cursor, closed, axis);
         }
         java.util.Map<Long, Integer> corners = new java.util.HashMap<>();
         GL11.glBegin(GL11.GL_LINES);
         for (int[] edge : outline) {
             for (int level : new int[] { Math.min(base, height), Math.max(base, height) + 1 }) {
-                GL11.glVertex3d(edge[0] - px, level - py, edge[1] - pz);
-                GL11.glVertex3d(edge[2] - px, level - py, edge[3] - pz);
+                polygonVertex(axis, edge[0], edge[1], level, px, py, pz);
+                polygonVertex(axis, edge[2], edge[3], level, px, py, pz);
             }
             for (int i : new int[] { 0, 2 }) {
                 long key = (long) edge[i] << 32 | edge[i + 1] & 0xffffffffL;
@@ -167,9 +179,50 @@ final class HologramAreaOverlay {
         corners.forEach((key, directions) -> {
             if (directions != 3) return;
             int x = (int) (key >> 32), z = (int) (long) key;
-            GL11.glVertex3d(x - px, Math.min(base, height) - py, z - pz);
-            GL11.glVertex3d(x - px, Math.max(base, height) + 1 - py, z - pz);
+            polygonVertex(axis, x, z, Math.min(base, height), px, py, pz);
+            polygonVertex(axis, x, z, Math.max(base, height) + 1, px, py, pz);
         });
         GL11.glEnd();
+        int[] lock = selection.getIntArray("areaPolygonHeightPoint");
+        if (closed && selection.getBoolean("areaPolygonHeightChosen") && lock.length == 3) {
+            int u = axis == 0 ? 1 : 0, v = axis == 2 ? 1 : 2;
+            GL11.glColor4f(subtract ? 1 : .35f, subtract ? .35f : .85f, subtract ? .35f : 1, 1);
+            GL11.glLineWidth(5);
+            GL11.glBegin(GL11.GL_LINES);
+            polygonVertex(axis, lock[u] + .5, lock[v] + .5, Math.min(base, height), px, py, pz);
+            polygonVertex(axis, lock[u] + .5, lock[v] + .5, Math.max(base, height) + 1, px, py, pz);
+            GL11.glEnd();
+        }
+    }
+
+    private static void drawPolygonVertices(int[] vertices, double px, double py, double pz) {
+        long remaining = polygonStartFlashUntil - System.nanoTime();
+        boolean flash = remaining > 0 && remaining / 150_000_000L % 2 == 0;
+        for (int i = 0; i < vertices.length; i += 3) {
+            if (i == 0) {
+                GL11.glLineWidth(flash ? 6 : 4);
+                GL11.glColor4f(flash ? 1 : .75f, flash ? .45f : .2f, 1, 1);
+            } else {
+                GL11.glLineWidth(3);
+                GL11.glColor4f(.05f, .45f, .2f, 1);
+            }
+            draw(
+                vertices[i],
+                vertices[i + 1],
+                vertices[i + 2],
+                vertices[i],
+                vertices[i + 1],
+                vertices[i + 2],
+                px,
+                py,
+                pz);
+        }
+    }
+
+    private static void polygonVertex(int axis, double u, double v, double height, double px, double py, double pz) {
+        GL11.glVertex3d(
+            (axis == 0 ? height : u) - px,
+            (axis == 1 ? height : axis == 0 ? u : v) - py,
+            (axis == 2 ? height : v) - pz);
     }
 }

@@ -22,6 +22,9 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "selection_discard_confirmation_preserves_content_and_persists_only_accepted_choice",
+            com.miaokatze.gtmb.client.hologram.HologramSelectionDiscardRegression::run);
+        cases.put(
             "editor_workspaces_keep_owned_domains_and_transport_rollback",
             HologramEditorWorkspacesRegression::run);
         cases.put(

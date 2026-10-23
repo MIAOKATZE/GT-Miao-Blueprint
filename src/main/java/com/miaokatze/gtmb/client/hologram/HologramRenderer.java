@@ -250,6 +250,29 @@ final class HologramRenderer {
 
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
         double panX, double panZ, int layer, int view, int selected, int mouseX, int mouseY, double rehearsal) {
+        return preview(
+            state,
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            panX,
+            0,
+            panZ,
+            layer,
+            view,
+            selected,
+            mouseX,
+            mouseY,
+            rehearsal);
+    }
+
+    static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+        double panX, double panY, double panZ, int layer, int view, int selected, int mouseX, int mouseY,
+        double rehearsal) {
         if (width <= 0 || height <= 0 || !Double.isFinite(zoom) || zoom <= 0) {
             presentedFrame = null;
             presentedState = null;
@@ -271,6 +294,8 @@ final class HologramRenderer {
             + zoom
             + ":"
             + panX
+            + ":"
+            + panY
             + ":"
             + panZ
             + ":"
@@ -352,7 +377,7 @@ final class HologramRenderer {
                         .max(maxX - minX + 2, Math.max(maxZ - minZ + 2, (double) state.maxY - state.minY + 2));
                 }
             }
-            double cx = boundsX + panX, cy = boundsY, cz = boundsZ + panZ, extent = boundsExtent;
+            double cx = boundsX + panX, cy = boundsY + panY, cz = boundsZ + panZ, extent = boundsExtent;
             projectedFrame = new HologramEditorCameraFrame(x, y, width, height, yaw, pitch, zoom, cx, cy, cz, extent);
             int facing = 0;
             for (int side = 0; side < 6; side++) {

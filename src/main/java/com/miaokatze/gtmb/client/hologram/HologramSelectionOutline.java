@@ -38,6 +38,21 @@ final class HologramSelectionOutline {
 
     /** Raster the same inclusive block-center polygon as import, retaining its concave outer perimeter. */
     static List<int[]> polygon(int[] supplied, int[] cursor, boolean closed) {
+        return polygon(supplied, cursor, closed, 1);
+    }
+
+    /** Edges use the two in-plane axes in world-axis order, excluding the extrusion axis. */
+    static List<int[]> polygon(int[] supplied, int[] cursor, boolean closed, int heightAxis) {
+        int u = heightAxis == 0 ? 1 : 0, v = heightAxis == 2 ? 1 : 2;
+        int[] planar = new int[supplied.length];
+        for (int i = 0; i < supplied.length; i += 3) {
+            planar[i] = supplied[i + u];
+            planar[i + 2] = supplied[i + v];
+        }
+        return planarPolygon(planar, cursor == null ? null : new int[] { cursor[u], 0, cursor[v] }, closed);
+    }
+
+    private static List<int[]> planarPolygon(int[] supplied, int[] cursor, boolean closed) {
         int[] vertices = supplied;
         boolean existing = false;
         if (cursor != null) for (int i = 0; i < supplied.length; i += 3)

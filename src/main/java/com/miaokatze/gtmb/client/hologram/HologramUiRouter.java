@@ -731,10 +731,7 @@ final class HologramUiRouter {
             if (ui.tools.consumeMouse(mx, my, button)) return;
             if (ui.preview.consumeViewportRightMouse(mx, my, button)) return;
             if (ui.preview.consumeViewportLeftMouse(mx, my, button)) return;
-            if (button == 2 && ui.preview.previewInteractive()
-                && !ui.preview.inventory()
-                && ui.canvas.inViewport(mx, my)
-                && !ui.preview.previewBlockedAt(mx, my)) ui.preview.resetCamera();
+            ui.preview.consumeViewportMiddleMouse(mx, my, button);
         }
     }
 
