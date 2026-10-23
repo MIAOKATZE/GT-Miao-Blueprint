@@ -146,7 +146,10 @@ final class HologramSnapshotMetadataTask {
                 } else if (stage == 9) appendDependency();
                 else if (stage == 10) appendHint();
                 else if (stage == 11) appendSelection();
-                else if (ae.step(1, deadline)) {
+                else if (authoring && s.geometryEdits.validationPending) {
+                    stage = 13;
+                    cursor = 1;
+                } else if (ae.step(1, deadline)) {
                     stage = 13;
                     cursor = 1;
                 }
@@ -176,6 +179,15 @@ final class HologramSnapshotMetadataTask {
 
     private void initialize() {
         HologramSnapshots.writeBlueprintScalars(s, state);
+        if (authoring && s.geometryEdits.validationPending) {
+            // Presentation resync needs geometry rows, but does not authorize a complete processing pass.
+            HologramGeometryEdits.pendingMetadata(s, state);
+            keysCached = true;
+            sourceWarning = s.virtualPreset == null ? "" : HologramBlueprintData.sourceWarning(s.virtualPreset, null);
+            stage = 5;
+            cursor = 0;
+            return;
+        }
         source = new HologramSnapshotMetadataSource(s, dataContext);
         if (s.virtualPreset != null) try {
             dataContext.freeze(s.virtualPreset.processingNbt);

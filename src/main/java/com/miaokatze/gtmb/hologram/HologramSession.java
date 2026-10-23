@@ -25,6 +25,8 @@ import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 
 final class HologramSession {
 
+    final HologramGeometryEdits geometryEdits = new HologramGeometryEdits();
+
     final HologramNetworkBindings.State networkBindings = new HologramNetworkBindings.State();
     boolean networkBindingRequested;
 

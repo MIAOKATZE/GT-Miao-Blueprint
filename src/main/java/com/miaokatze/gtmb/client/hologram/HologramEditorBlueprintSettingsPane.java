@@ -142,7 +142,8 @@ final class HologramEditorBlueprintSettingsPane {
                     if (!author()) return;
                     try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                         .fieldGraph(ui)) {
-                        if (ui.processing.processingReady()) {
+                        if (ui.processing.processingReady()
+                            || ui.session.state().data.getBoolean("geometryValidationPending")) {
                             // Wait for the authoritative report and original flow before applying the chosen tendency.
                             pendingTendency = share ? 233 : 232;
                             pendingTendencySession = ui.session.state().session;

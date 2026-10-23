@@ -180,7 +180,26 @@ public final class HologramBlueprintArtifact {
 
     /** Legacy unbound previews are usable only as an explicitly named sibling during migration. */
     public static boolean previewMatches(byte[] json, byte[] png) throws IOException {
-        return hash(json).equals(inspectPng(png).source);
+        String pngHash = HologramBlueprintPreviewBinding.pngSha256(json);
+        return hash(HologramBlueprintPreviewBinding.sourceJson(json)).equals(inspectPng(png).source)
+            && (pngHash.isEmpty() || pngHash.equals(hash(png)));
+    }
+
+    /** Explicit fresh-save boundary. Reads, transfers and legacy loads never manufacture this metadata. */
+    public static Artifact prepareSave(byte[] json, byte[] freshlyCapturedPng) throws IOException {
+        jsonBounds(json);
+        json = json.clone();
+        byte[] source = HologramBlueprintPreviewBinding.sourceJson(json);
+        byte[] png = bindPreview(source, freshlyCapturedPng);
+        byte[] boundJson = HologramBlueprintPreviewBinding.bind(source, hash(png));
+        return new Artifact(boundJson, png);
+    }
+
+    /** Identity/envelope transformations preserve the old pair's binding generation, including legacy absence. */
+    public static Artifact transfer(byte[] json, Artifact original) throws IOException {
+        if (!HologramBlueprintPreviewBinding.pngSha256(original.json)
+            .isEmpty()) return prepareSave(json, original.png);
+        return new Artifact(json.clone(), bindPreview(json, original.png));
     }
 
     public static boolean previewHasBinding(byte[] png) throws IOException {
@@ -194,7 +213,10 @@ public final class HologramBlueprintArtifact {
         if (png == null || png.length > MAX_PNG_BYTES) throw new IOException("Invalid blueprint PNG size");
         png = png.clone();
         Png info = inspectPng(png);
-        String source = hash(json);
+        String source = hash(HologramBlueprintPreviewBinding.sourceJson(json));
+        String pngHash = HologramBlueprintPreviewBinding.pngSha256(json);
+        if (!pngHash.isEmpty() && (!source.equals(info.source) || !pngHash.equals(hash(png))))
+            throw new IOException("Blueprint PNG differs from its saved JSON binding; save the blueprint again");
         if (source.equals(info.source)) return png.clone();
         if (info.source == null && info.chunks.size() == MAX_PNG_CHUNKS)
             throw new IOException("Bound PNG has too many chunks");
@@ -261,7 +283,7 @@ public final class HologramBlueprintArtifact {
             input.readFully(png);
             if (!MessageDigest.isEqual(jsonDigest, digest(json)) || !MessageDigest.isEqual(pngDigest, digest(png)))
                 throw new IOException("Blueprint artifact digest mismatch");
-            requireSource(json, inspectPng(png));
+            requireSource(json, png, inspectPng(png));
             return new Artifact(json, png);
         }
     }
@@ -285,7 +307,7 @@ public final class HologramBlueprintArtifact {
         byte[] json = readBounded(jsonPath, MAX_JSON_BYTES);
         byte[] png = readBounded(pngPath, MAX_PNG_BYTES);
         jsonBounds(json);
-        requireSource(json, inspectPng(png));
+        requireSource(json, png, inspectPng(png));
         return new Artifact(json, png);
     }
 
@@ -424,8 +446,12 @@ public final class HologramBlueprintArtifact {
             throw new IOException("Blueprint artifact operation is no longer current");
     }
 
-    private static void requireSource(byte[] json, Png png) throws IOException {
-        if (!hash(json).equals(png.source)) throw new IOException("Blueprint PNG is missing its matching JSON digest");
+    private static void requireSource(byte[] json, byte[] pngBytes, Png png) throws IOException {
+        if (!hash(HologramBlueprintPreviewBinding.sourceJson(json)).equals(png.source))
+            throw new IOException("Blueprint PNG is missing its matching JSON digest");
+        String expected = HologramBlueprintPreviewBinding.pngSha256(json);
+        if (!expected.isEmpty() && !expected.equals(hash(pngBytes)))
+            throw new IOException("Blueprint PNG digest differs from its saved JSON binding");
     }
 
     private static final class Chunk {

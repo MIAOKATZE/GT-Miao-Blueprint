@@ -74,6 +74,7 @@ public final class HologramCarpenterOwnerRegression {
                 HologramDeidentification.foreignOwner(block, before, actor.identity, actor.name),
                 "unrelated device identity still blocks even on a native Carpenter root");
         }
+        HologramCarpentersCompatibilityRegression.run(base);
         System.out.println(
             "GTMB_CARPENTER_OWNER PASS native 3.7.3 online/offline binding and exact nonowner persistence; no world/GUI claim");
     }

@@ -77,6 +77,9 @@ final class HologramUiPreview {
     private boolean moved;
 
     private int navigationButton = -1;
+    private int navigationStartX, navigationStartY;
+    private long navigationMotion;
+    private boolean navigationDragged;
 
     private boolean inventory;
 
@@ -1160,6 +1163,13 @@ final class HologramUiPreview {
         return !ui.library.browsePreviewActive() && ui.session.state().data.getBoolean("virtual");
     }
 
+    /** Blueprint camera presses precede context-menu presses; a short right release opens the existing menu. */
+    boolean consumeViewportNavigationMouse(int mx, int my, int button) {
+        if (!blueprintCameraControls() || ui.tools.modalOpen() || ui.tools.pointerCaptured()) return false;
+        return button == 1 ? consumeViewportRightMouse(mx, my, button)
+            : button == 2 && consumeViewportMiddleMouse(mx, my, button);
+    }
+
     boolean consumeViewportMiddleMouse(int mx, int my, int button) {
         if (button != 2 || !ui.preview.previewInteractive()
             || !ui.canvas.inViewport(mx, my)
@@ -1171,9 +1181,12 @@ final class HologramUiPreview {
 
     private void beginNavigation(int mx, int my, int button) {
         navigationButton = button;
+        navigationStartX = mx;
+        navigationStartY = my;
+        navigationMotion = 0;
+        navigationDragged = false;
         dragX = mx;
         dragY = my;
-        moved = false;
     }
 
     boolean consumeViewportLeftMouse(int mx, int my, int button) {
@@ -1326,8 +1339,18 @@ final class HologramUiPreview {
     void mouseClickMove(int x, int y, int button, long elapsed) {
         if (navigationButton >= 0 && navigationButton == button) {
             int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - dragX, dy = my - dragY;
-            if (Math.abs(dx) + Math.abs(dy) > 1) moved = true;
+            navigationMotion += Math.abs((long) dx) + Math.abs((long) dy);
             if (button == 1) {
+                if (!navigationDragged) {
+                    if (navigationMotion < 4) {
+                        dragX = mx;
+                        dragY = my;
+                        return;
+                    }
+                    navigationDragged = true;
+                    dx = mx - navigationStartX;
+                    dy = my - navigationStartY;
+                }
                 yaw -= dx * .012;
                 pitch = Math.max(-1.35, Math.min(1.35, pitch + dy * .012));
             } else {
@@ -1383,7 +1406,10 @@ final class HologramUiPreview {
     void mouseMovedOrUp(int x, int y, int button) {
         if (navigationButton >= 0 && navigationButton == button) {
             mouseClickMove(x, y, button, 0);
+            boolean contextClick = button == 1 && !navigationDragged;
             navigationButton = -1;
+            // NativeTools retains its normal deferred panel lifecycle and inventory-cancellation behavior.
+            if (contextClick) ui.tools.consumeMouse(ui.canvas.localX(x), ui.canvas.localY(y), button);
             return;
         }
         if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
@@ -1480,7 +1506,9 @@ final class HologramUiPreview {
     }
 
     void retainSelection(HologramState next) {
-        selection.retain(next.cells.size());
+        if (next.topologyChanged) selection
+            .load(next.data.getIntArray("selectedIndices"), next.data.getInteger("selected"), next.cells.size());
+        else selection.retain(next.cells.size());
         selected = selection.first();
     }
 

@@ -53,11 +53,12 @@ final class HologramBlueprintSharing {
         if (!basename.matches("(?:local_|public_)[a-fA-F0-9-]{36}")) throw new IOException("蓝图必须先完成真实结构预览保存");
         HologramBlueprintArtifact.Artifact original = HologramBlueprintArtifact
             .readPair(HologramBlueprintFiles.resolve(HologramLibraryFacade.blueprintDirectory(), basename));
-        writeNamed(file, preset, original.png);
+        writeNamed(file, preset, original);
     }
 
     static void write(Path file, HologramPresets.Preset preset, byte[] preview) throws IOException {
-        HologramBlueprintArtifact.writePair(file, encoded(preset), preview);
+        HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.prepareSave(encoded(preset), preview);
+        HologramBlueprintArtifact.writePair(file, saved.json, saved.png);
     }
 
     private static byte[] encoded(HologramPresets.Preset preset) throws IOException {
@@ -67,8 +68,10 @@ final class HologramBlueprintSharing {
         return HologramBlueprintCompactCodec.encode(copy, (done, total) -> {});
     }
 
-    private static void writeNamed(Path file, HologramPresets.Preset preset, byte[] preview) throws IOException {
-        byte[] bytes = encoded(preset);
+    private static void writeNamed(Path file, HologramPresets.Preset preset,
+        HologramBlueprintArtifact.Artifact original) throws IOException {
+        HologramBlueprintArtifact.Artifact transferred = HologramBlueprintArtifact.transfer(encoded(preset), original);
+        byte[] bytes = transferred.json;
         Path directory = file.toAbsolutePath()
             .normalize()
             .getParent();
@@ -79,7 +82,7 @@ final class HologramBlueprintSharing {
         alias = HologramBlueprintFiles.logicalAlias(directory, file, alias);
         Path target = HologramBlueprintFiles.target(directory, alias, bytes);
         HologramBlueprintArtifact.PairWrite receipt = HologramBlueprintArtifact
-            .writePairPending(target, bytes, preview, () -> true);
+            .writePairPending(target, bytes, transferred.png, () -> true);
         try {
             HologramBlueprintArtifact.readPair(target);
             HologramBlueprintFiles.track(directory, alias, receipt);

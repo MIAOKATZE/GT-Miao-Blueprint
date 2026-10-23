@@ -13,6 +13,7 @@ final class HologramSelectionOutlineRegression {
     private HologramSelectionOutlineRegression() {}
 
     static void run() {
+        HologramSelectionSurfaceRegression.run();
         NBTTagCompound selection = new NBTTagCompound();
         SimpleAssert.eq(
             "camera.selectionHold",

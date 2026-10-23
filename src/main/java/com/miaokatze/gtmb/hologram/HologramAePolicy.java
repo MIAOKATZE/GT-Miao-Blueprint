@@ -118,10 +118,14 @@ final class HologramAePolicy {
         int completed = 0;
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("identity", completed++, result.cells.size());
+            Block block = cell.block();
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (HologramAeBlueprint.supports(cell.block(), payload) || HologramNetworkBindings.node(cell.block())
+            if (HologramCarpentersCompatibility.stripOwner(block, payload))
+                cell.tileNbt = HologramBlueprintNbt.encodeCanonical(payload);
+            cell.itemNbt = HologramCarpentersCompatibility.normalize(block, cell.itemNbt);
+            if (HologramAeBlueprint.supports(block, payload) || HologramNetworkBindings.node(block)
                 || HologramNetworkSchemas.removeExternalReferences(
-                    cell.block(),
+                    block,
                     cell.damage,
                     payload == null ? null : (NBTTagCompound) payload.copy())
                 || payload != null && (payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)

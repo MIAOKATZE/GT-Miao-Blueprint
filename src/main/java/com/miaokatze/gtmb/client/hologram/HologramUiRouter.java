@@ -728,6 +728,7 @@ final class HologramUiRouter {
                 ui.position.positionZField()
                     .mouseClicked(mx, my, button);
             }
+            if (ui.preview.consumeViewportNavigationMouse(mx, my, button)) return;
             if (ui.tools.consumeMouse(mx, my, button)) return;
             if (ui.preview.consumeViewportRightMouse(mx, my, button)) return;
             if (ui.preview.consumeViewportLeftMouse(mx, my, button)) return;

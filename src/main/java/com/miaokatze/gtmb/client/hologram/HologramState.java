@@ -9,6 +9,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
+
 /** Immutable client snapshot; all amounts and construction outcomes come from the server. */
 final class HologramState {
 
@@ -21,11 +23,15 @@ final class HologramState {
     final Object parentIdentity;
     final int[] changedIndices;
     final int parsedCells;
+    private final boolean fullBaseline;
+    List<Cell> changedPreviousCells = Collections.emptyList();
+    boolean topologyChanged;
     final java.util.Map<String, List<Integer>> structureMembers;
     int minY = 0, maxY = 0;
     private int minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
 
     HologramState(NBTTagCompound source) {
+        fullBaseline = fullBaseline(source);
         parentIdentity = null;
         changedIndices = new int[0];
         data = metadata(source);
@@ -35,6 +41,8 @@ final class HologramState {
         minWorldZ = maxWorldZ = data.getInteger("z");
         List<Cell> parsed = new ArrayList<>();
         NBTTagList list = source.getTagList("cells", 10);
+        if (!HologramBlueprintLimits.accepts(list.tagCount()))
+            throw new IllegalArgumentException("Blueprint cell count exceeds limit");
         parsedCells = list.tagCount();
         for (int i = 0; i < list.tagCount(); i++) {
             Cell cell = new Cell(i, list.getCompoundTagAt(i));
@@ -59,6 +67,7 @@ final class HologramState {
     }
 
     private HologramState(Preparation ready) {
+        fullBaseline = ready.fullBaseline;
         parentIdentity = null;
         changedIndices = new int[0];
         data = ready.data;
@@ -78,8 +87,33 @@ final class HologramState {
         maxWorldZ = ready.maxWorldZ;
     }
 
+    /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
+    private HologramState(HologramState decorated, HologramState publication) {
+        data = decorated.data;
+        session = decorated.session;
+        cells = decorated.cells;
+        materials = decorated.materials;
+        regions = decorated.regions;
+        structureMembers = decorated.structureMembers;
+        parentIdentity = publication.parentIdentity;
+        changedIndices = publication.changedIndices;
+        changedPreviousCells = publication.changedPreviousCells;
+        topologyChanged = publication.topologyChanged;
+        parsedCells = publication.parsedCells;
+        fullBaseline = publication.fullBaseline;
+        minY = decorated.minY;
+        maxY = decorated.maxY;
+        minWorldX = decorated.minWorldX;
+        maxWorldX = decorated.maxWorldX;
+        minWorldY = decorated.minWorldY;
+        maxWorldY = decorated.maxWorldY;
+        minWorldZ = decorated.minWorldZ;
+        maxWorldZ = decorated.maxWorldZ;
+    }
+
     /** One bounded early view shares completed cells and owns its small spatial index. */
     private HologramState(Preparation ready, int count) {
+        fullBaseline = false;
         parentIdentity = null;
         changedIndices = new int[0];
         data = metadata(ready.data, false);
@@ -124,6 +158,7 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final boolean fullBaseline;
         int lastStepWork;
 
         /** Ownership of the decoded tree transfers to this preparation; no published state mutates it. */
@@ -133,8 +168,11 @@ final class HologramState {
 
         Preparation(NBTTagCompound source, boolean displayRows) {
             this.displayRows = displayRows;
+            fullBaseline = fullBaseline(source);
             data = metadata(source, false);
             rows = source.getTagList("cells", 10);
+            if (!HologramBlueprintLimits.accepts(rows.tagCount()))
+                throw new IllegalArgumentException("Blueprint cell count exceeds limit");
             materialRows = source.getTagList("materials", 10);
             minWorldX = maxWorldX = data.getInteger("x");
             minWorldY = maxWorldY = data.getInteger("y");
@@ -233,6 +271,11 @@ final class HologramState {
     }
 
     private HologramState(HologramState base, NBTTagCompound patch) {
+        this(base, patch, false);
+    }
+
+    private HologramState(HologramState base, NBTTagCompound patch, boolean decoration) {
+        fullBaseline = decoration && base.fullBaseline;
         parentIdentity = base.identity;
         data = new NBTTagCompound();
         // Published metadata values are read-only. Share unchanged values; copy only incoming replacements.
@@ -274,15 +317,22 @@ final class HologramState {
         NBTTagList rows = patch.getTagList("cells", 10);
         parsedCells = rows.tagCount();
         changedIndices = new int[parsedCells];
-        CellPages pages = parsedCells == 0 ? null : new CellPages((CellPages) base.cells);
+        topologyChanged = patch.getBoolean("topology");
+        int nextSize = topologyChanged ? patch.getInteger("cellCount") : base.cells.size();
+        CellPages pages = parsedCells == 0 && nextSize == base.cells.size() ? null
+            : new CellPages((CellPages) base.cells, nextSize);
+        List<Cell> before = new ArrayList<>();
+        for (int index = nextSize; index < base.cells.size(); index++) before.add(base.cells.get(index));
         java.util.Set<Integer> indices = new java.util.HashSet<>();
         for (int i = 0; i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             int index = row.getInteger("index");
-            if (!row.hasKey("index") || index < 0 || index >= base.cells.size() || !indices.add(index))
+            if (!row.hasKey("index", 3) || index < 0 || index >= nextSize || !indices.add(index))
                 throw new IllegalArgumentException("Invalid partial cell index");
-            Cell old = base.cells.get(index);
+            Cell old = index < base.cells.size() ? base.cells.get(index) : null;
+            if (old != null) before.add(old);
             if (row.getBoolean("annotationOnly")) {
+                if (old == null) throw new IllegalArgumentException("Appended annotation has no baseline cell");
                 NBTTagCompound annotations = row;
                 row = old.tag();
                 row.setString("prompt", annotations.getString("prompt"));
@@ -290,18 +340,26 @@ final class HologramState {
             }
             Cell cell = new Cell(index, row);
             // Topology-changing operations require a full snapshot with a new spatial index.
-            if (cell.x != old.x || cell.y != old.y
+            if (!topologyChanged && (cell.x != old.x || cell.y != old.y
                 || cell.z != old.z
                 || cell.dx != old.dx
                 || cell.dy != old.dy
-                || cell.dz != old.dz) throw new IllegalArgumentException("Partial snapshot changed cell coordinates");
+                || cell.dz != old.dz)) throw new IllegalArgumentException("Partial snapshot changed cell coordinates");
             pages.replace(index, cell);
             changedIndices[i] = index;
         }
+        for (int index = base.cells.size(); index < nextSize; index++)
+            if (!indices.contains(index)) throw new IllegalArgumentException("Missing appended topology cell");
+        changedPreviousCells = Collections.unmodifiableList(before);
         cells = pages == null ? base.cells : pages;
-        regions = changedIndices.length == 0 ? base.regions
-            : new HologramRegionCache(base.regions, cells, changedIndices);
-        structureMembers = memberships(base, cells, changedIndices);
+        regions = before.isEmpty() && changedIndices.length == 0 ? base.regions
+            : new HologramRegionCache(base.regions, cells, changedIndices, before, topologyChanged);
+        if (topologyChanged) for (int index : changedIndices) {
+            Cell cell = cells.get(index);
+            if (regions.at(cell.x, cell.y, cell.z) != cell)
+                throw new IllegalArgumentException("Duplicate topology coordinates");
+        }
+        structureMembers = memberships(base, cells, changedIndices, before);
         minY = base.minY;
         maxY = base.maxY;
         minWorldX = base.minWorldX;
@@ -310,6 +368,17 @@ final class HologramState {
         maxWorldY = base.maxWorldY;
         minWorldZ = base.minWorldZ;
         maxWorldZ = base.maxWorldZ;
+        if (topologyChanged) {
+            int[] bounds = regions.bounds();
+            minWorldX = Math.min(data.getInteger("x"), bounds[0]);
+            minWorldY = Math.min(data.getInteger("y"), bounds[1]);
+            minWorldZ = Math.min(data.getInteger("z"), bounds[2]);
+            maxWorldX = Math.max(data.getInteger("x"), bounds[3]);
+            maxWorldY = Math.max(data.getInteger("y"), bounds[4]);
+            maxWorldZ = Math.max(data.getInteger("z"), bounds[5]);
+            minY = cells.isEmpty() ? 0 : bounds[1] - data.getInteger("y");
+            maxY = cells.isEmpty() ? 0 : bounds[4] - data.getInteger("y");
+        }
         materials = patch.hasKey("materials") ? readMaterials(data) : base.materials;
     }
 
@@ -326,7 +395,15 @@ final class HologramState {
                 .equals(source.getString("generation"))
             || source.getLong("baseRevision") != base.data.getLong("planRevision")
             || source.getLong("planRevision") < source.getLong("baseRevision")
-            || source.getInteger("cellCount") != base.cells.size())
+            || source.getBoolean("topology")
+                && (!base.data.getBoolean("virtual") || base.data.getBoolean("virtualPlacement"))
+            || source.getBoolean("topology") && source.getLong("planRevision") == source.getLong("baseRevision")
+            || (source.getBoolean("topology")
+                ? !source.hasKey("baseCellCount", 3) || source.getInteger("baseCellCount") != base.cells.size()
+                    || !HologramBlueprintLimits.accepts(source.getInteger("cellCount"))
+                    || (long) source.getInteger("cellCount") > (long) base.cells.size() + source.getTagList("cells", 10)
+                        .tagCount()
+                : source.getInteger("cellCount") != base.cells.size()))
             throw new IllegalArgumentException("Partial snapshot base mismatch");
         return new HologramState(base, source);
     }
@@ -346,7 +423,7 @@ final class HologramState {
         }
         changes.setBoolean("areaSelectionShell", shell);
         changes.setBoolean("snapshotPending", receipt.getBoolean("workspaceUiOnly") && shell);
-        return same ? base.withMetadata(changes) : new HologramState(changes);
+        return same ? new HologramState(base, changes) : new HologramState(changes);
     }
 
     /** A delayed full baseline can install its geometry without rolling back a newer point receipt. */
@@ -373,6 +450,18 @@ final class HologramState {
         return base != null && parentIdentity == base.identity;
     }
 
+    /** Provenance of this publication, including an explicitly transmitted empty full baseline. */
+    boolean completeBaseline() {
+        return fullBaseline;
+    }
+
+    private static boolean fullBaseline(NBTTagCompound source) {
+        return source.hasKey("cells", 9) && !source.getBoolean("partial")
+            && !source.getBoolean("areaSelectionOnly")
+            && !source.getBoolean("displayPartial")
+            && !source.getBoolean("areaSelectionShell");
+    }
+
     /** Explicit export for diagnostics/fixtures. Interactive updates never materialize the whole cells tree. */
     NBTTagCompound fullData() {
         NBTTagCompound result = (NBTTagCompound) data.copy();
@@ -383,7 +472,17 @@ final class HologramState {
     }
 
     HologramState withMetadata(NBTTagCompound changes) {
-        return new HologramState(this, changes);
+        return new HologramState(this, changes, true);
+    }
+
+    /** Called once at installation, after decorating this incoming wire snapshot and before rendering it. */
+    HologramState withPublication(HologramState publication) {
+        if (!session.equals(publication.session) || cells != publication.cells
+            || regions != publication.regions
+            || !data.getString("generation")
+                .equals(publication.data.getString("generation")))
+            throw new IllegalArgumentException("Metadata decorator changed publication geometry");
+        return this == publication ? this : new HologramState(this, publication);
     }
 
     private static NBTTagCompound metadata(NBTTagCompound source) {
@@ -436,18 +535,23 @@ final class HologramState {
         return cell.structureIds.isEmpty() ? Collections.singletonList("") : cell.structureIds;
     }
 
-    private static java.util.Map<String, List<Integer>> memberships(HologramState base, List<Cell> cells,
-        int[] changed) {
+    private static java.util.Map<String, List<Integer>> memberships(HologramState base, List<Cell> cells, int[] changed,
+        List<Cell> before) {
         java.util.Map<String, List<Integer>> replacements = new java.util.LinkedHashMap<>();
-        for (int index : changed) {
-            List<String> old = membershipIds(base.cells.get(index)), next = membershipIds(cells.get(index));
-            if (old.equals(next)) continue;
-            for (String id : old) replacements
+        java.util.Map<Integer, Cell> oldCells = new java.util.HashMap<>();
+        for (Cell old : before) oldCells.put(old.index, old);
+        for (Cell old : before) {
+            if (old.index < cells.size() && membershipIds(old).equals(membershipIds(cells.get(old.index)))) continue;
+            for (String id : membershipIds(old)) replacements
                 .computeIfAbsent(
                     id,
                     unused -> new ArrayList<>(base.structureMembers.getOrDefault(id, Collections.emptyList())))
-                .remove(Integer.valueOf(index));
-            for (String id : next) replacements
+                .remove(Integer.valueOf(old.index));
+        }
+        for (int index : changed) {
+            Cell old = oldCells.get(index);
+            if (old != null && membershipIds(old).equals(membershipIds(cells.get(index)))) continue;
+            for (String id : membershipIds(cells.get(index))) replacements
                 .computeIfAbsent(
                     id,
                     unused -> new ArrayList<>(base.structureMembers.getOrDefault(id, Collections.emptyList())))
@@ -457,7 +561,8 @@ final class HologramState {
         java.util.Map<String, List<Integer>> result = new java.util.LinkedHashMap<>(base.structureMembers);
         replacements.forEach((id, members) -> {
             Collections.sort(members);
-            result.put(id, Collections.unmodifiableList(members));
+            if (members.isEmpty()) result.remove(id);
+            else result.put(id, Collections.unmodifiableList(members));
         });
         return Collections.unmodifiableMap(result);
     }
@@ -478,9 +583,19 @@ final class HologramState {
             }
         }
 
-        CellPages(CellPages base) {
-            size = base.size;
-            pages = base.pages.clone();
+        CellPages(CellPages base, int nextSize) {
+            size = nextSize;
+            pages = java.util.Arrays.copyOf(base.pages, (nextSize + 255) >> 8);
+            for (int page = 0; page < pages.length; page++) {
+                int length = Math.min(256, size - (page << 8));
+                if (pages[page] == null) {
+                    pages[page] = new Cell[length];
+                    copied.add(page);
+                } else if (pages[page].length != length) {
+                    pages[page] = java.util.Arrays.copyOf(pages[page], length);
+                    copied.add(page);
+                }
+            }
         }
 
         CellPages(Cell[][] pages, int size) {

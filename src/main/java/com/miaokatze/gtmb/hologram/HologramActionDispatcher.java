@@ -169,6 +169,13 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        // Geometry can compact indices. Never interpret an old client selection in the new index domain.
+        if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op))
+            && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)) {
+            s.status = "蓝图计划已更新，请重新选择编辑目标";
+            HologramSnapshots.send(s);
+            return;
+        }
         if ("editDelete".equals(op)) {
             try {
                 HologramBlueprintEditor.deleteBlueprintCells(s, action);

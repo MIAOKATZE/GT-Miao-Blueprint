@@ -115,6 +115,9 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
         if (!frameValid()) return Result.STOP;
         if (!ui.shell.sceneActive() && !ui.library.browsePreviewActive()) return Result.STOP;
         int x = getContext().getMouseX(), y = getContext().getMouseY();
+        try (HologramUiCanvas.NativeSceneSpace ignored = space()) {
+            if (ui.preview.consumeViewportNavigationMouse(x, y, button)) return Result.SUCCESS;
+        }
         if (button == 1 && ui.tools.consumeMouse(getContext().getAbsMouseX(), getContext().getAbsMouseY(), button))
             return Result.SUCCESS;
         try (HologramUiCanvas.NativeSceneSpace ignored = space()) {

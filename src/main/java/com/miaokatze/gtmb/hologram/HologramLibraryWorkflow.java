@@ -424,7 +424,10 @@ final class HologramLibraryWorkflow {
             || request.getLong("planRevision") != s.blueprintSaveRevision
             || s.planRevision != s.blueprintSaveRevision
             || s.blueprintSaveJsonSha256.isEmpty()
-            || !s.blueprintSaveJsonSha256.equals(request.getString("jsonSha256"))) return false;
+            || !s.blueprintSaveJsonSha256.equals(
+                request.hasKey("reviewedJsonSha256", 8) ? request.getString("reviewedJsonSha256")
+                    : request.getString("jsonSha256")))
+            return false;
         if (request.getBoolean("localSaveReceipt")) {
             if (!HologramLibraryFacade.localSaveWritten(s.player, request)) return false;
             s.blueprintSavePreviewSha256 = request.getString("previewSha256");

@@ -880,6 +880,11 @@ final class HologramAuthoringWorkflow {
     }
 
     private static void blueprintEdited(HologramSession s, String dependency, boolean indexedAnnotations) {
+        if (HologramSessionPolicy.authoring(s)
+            && ("geometry".equals(dependency) || s.geometryEdits.validationPending)) {
+            HologramGeometryEdits.invalidateSource(s);
+            return;
+        }
         s.blueprintDirty = true;
         clearSourceSwitch(s);
         s.blueprintSaveReceipt = "";
@@ -937,6 +942,7 @@ final class HologramAuthoringWorkflow {
 
     static void requireBlueprintProcessing(HologramSession s, HologramPresets.Preset source)
         throws java.io.IOException {
+        if (!s.processingReviewed && s.processingSource != null) source = s.processingSource;
         if (!s.processingReviewed
             && HologramBlueprintProcessing.requiredStages(source, s.dimension, s.x, s.y, s.z) == 0) {
             HologramBlueprintProcessing.Policy automatic = HologramBlueprintProcessing.defaults("self", 0);
@@ -944,6 +950,7 @@ final class HologramAuthoringWorkflow {
             automatic.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
             source.processingNbt = HologramBlueprintProcessing
                 .process(source, automatic, s.dimension, s.x, s.y, s.z).processingNbt;
+            if (s.virtualPreset != null) s.virtualPreset.processingNbt = source.processingNbt;
             s.processingPolicy = automatic;
             s.processingReviewed = true;
         }
@@ -963,6 +970,7 @@ final class HologramAuthoringWorkflow {
     }
 
     static void validateProcessedSaveOptions(HologramSession s, NBTTagCompound request) throws java.io.IOException {
+        HologramGeometryEdits.validate(s);
         if (s.virtualPreset == null) throw new java.io.IOException("请先完整载入蓝图，再保存作者蓝图");
         if (!s.processingReviewed) requireBlueprintProcessing(s, s.virtualPreset);
         HologramPresets.Preset reviewed = s.virtualPreset;
@@ -993,6 +1001,7 @@ final class HologramAuthoringWorkflow {
         try {
             if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)
                 throw new java.io.IOException("蓝图计划已更新，请重新核对处理目标");
+            HologramGeometryEdits.validate(s);
             if ("beginBlueprintReprocessing".equals(op)) {
                 if (s.capture == null || s.capture.incomplete
                     || s.capturePending

@@ -136,7 +136,15 @@ final class HologramRenderer {
         lastSnapshotDirtyRegions = dirty.size();
         for (HologramRegionCache.Key key : dirty) previewRegions.remove(key);
         if (visibleState == previous) visibleState = next;
-        if (boundsState == previous) boundsState = next;
+        boolean extentChanged = next.topologyChanged
+            && !java.util.Arrays.equals(previous.regions.bounds(), next.regions.bounds());
+        if (boundsState == previous) boundsState = extentChanged ? null : next;
+        if (next.topologyChanged) {
+            structureBoundsState = null;
+            previewPreparation = null;
+            // A changed extent changes the screen transform, not the retained native region geometry.
+            if (extentChanged) for (PreviewRegion region : previewRegions.values()) region.projectedKey = "";
+        }
         if (structureBoundsState == previous) {
             boolean sameMemberships = true;
             for (int index : next.changedIndices) {
@@ -147,15 +155,16 @@ final class HologramRenderer {
             if (sameMemberships) structureBoundsState = next;
         }
         if (worldState == previous) {
-            if (worldIndex != previous.cells.size() && next.changedIndices.length != 0) {
+            if (worldIndex != previous.cells.size()
+                && (next.changedIndices.length != 0 || !next.changedPreviousCells.isEmpty())) {
                 clearWorldGroups();
             } else {
                 for (HologramRegionCache.Key key : dirty) {
                     WorldGroup group = worldGroups.get(coordinate(key.x, key.y, key.z));
                     if (group != null) invalidateWorldGroup(group);
                 }
-                for (int index : next.changedIndices) {
-                    HologramState.Cell old = previous.cells.get(index);
+                for (HologramState.Cell old : next.changedPreviousCells) {
+                    int index = old.index;
                     Coordinate position = coordinate(old.x, old.y, old.z);
                     WorldGroup group = worldGroups.get(coordinate(old.x >> 4, old.y >> 4, old.z >> 4));
                     if (group != null) {
@@ -167,8 +176,9 @@ final class HologramRenderer {
                     worldGhosts.remove(position);
                     worldOccluders.remove(position);
                     worldOutlineCells.remove(position);
-                    indexWorldCell(next, next.cells.get(index));
                 }
+                for (int index : next.changedIndices) indexWorldCell(next, next.cells.get(index));
+                worldIndex = next.cells.size();
             }
             worldState = next;
         }
@@ -363,13 +373,11 @@ final class HologramRenderer {
                 boundsX = boundsY = boundsZ = 0;
                 boundsExtent = 1;
                 if (!state.cells.isEmpty()) {
-                    double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE, minZ = minX, maxZ = maxX;
-                    for (HologramState.Cell c : state.cells) {
-                        minX = Math.min(minX, c.dx);
-                        maxX = Math.max(maxX, c.dx);
-                        minZ = Math.min(minZ, c.dz);
-                        maxZ = Math.max(maxZ, c.dz);
-                    }
+                    int[] bounds = state.regions.bounds();
+                    double minX = (double) bounds[0] - state.data.getInteger("x"),
+                        maxX = (double) bounds[3] - state.data.getInteger("x"),
+                        minZ = (double) bounds[2] - state.data.getInteger("z"),
+                        maxZ = (double) bounds[5] - state.data.getInteger("z");
                     boundsX = (minX + maxX) / 2;
                     boundsY = (state.minY + (double) state.maxY) / 2.0;
                     boundsZ = (minZ + maxZ) / 2;

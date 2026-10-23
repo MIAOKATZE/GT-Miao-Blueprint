@@ -1102,6 +1102,9 @@ public final class HologramSnapshotPublishRegression {
         HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
         net.minecraft.block.Block occupied = world.occupied;
         int occupiedX = world.occupiedX;
+        Field providerField = net.minecraft.world.World.class.getDeclaredField("chunkProvider");
+        providerField.setAccessible(true);
+        Object oldProvider = providerField.get(world);
         boolean creative = player.capabilities.isCreativeMode;
         HologramSession previous = new HologramSession(player, 0, 64, 0, false, 2);
         previous.planRevision = 1;
@@ -1115,6 +1118,7 @@ public final class HologramSnapshotPublishRegression {
         try {
             world.occupied = net.minecraft.init.Blocks.stone;
             world.occupiedX = 0;
+            providerField.set(world, areaScanChunks(world));
             player.capabilities.isCreativeMode = true;
             area.point(1, 0, 64, 0);
             area.point(2, 0, 127, 63);
@@ -1130,6 +1134,9 @@ public final class HologramSnapshotPublishRegression {
                 java.util.concurrent.locks.LockSupport.parkNanos(100_000L);
             }
             HologramSession staged = HologramWorkspace.find(id);
+            SimpleAssert.that(
+                area.imported,
+                "actual loaded-section scan must succeed before owner handoff: " + previous.status);
             SimpleAssert.that(
                 staged != previous && staged.id.equals(previous.id),
                 "actual Area publish replaces the server object while retaining the wire session nonce");
@@ -1186,6 +1193,7 @@ public final class HologramSnapshotPublishRegression {
                 .assertAreaSnapshotCompletes(complete, previous.planRevision);
         } finally {
             HologramNetwork.clearServerQueues();
+            providerField.set(world, oldProvider);
             world.occupied = occupied;
             world.occupiedX = occupiedX;
             player.capabilities.isCreativeMode = creative;
@@ -1199,6 +1207,38 @@ public final class HologramSnapshotPublishRegression {
             else HologramWorkspace.AREA_STRUCTURES.put(id, oldStructures);
             WIRE.clear();
         }
+    }
+
+    /** Back the fixture's x=0 stone plane with loaded native sections; import must never force-load a chunk. */
+    private static net.minecraft.world.chunk.IChunkProvider areaScanChunks(net.minecraft.world.World world) {
+        net.minecraft.world.chunk.Chunk[] chunks = new net.minecraft.world.chunk.Chunk[4];
+        for (int cz = 0; cz < chunks.length; cz++) {
+            net.minecraft.world.chunk.Chunk chunk = new net.minecraft.world.chunk.Chunk(world, 0, cz);
+            chunks[cz] = chunk;
+            for (int sy = 4; sy <= 7; sy++) {
+                net.minecraft.world.chunk.storage.ExtendedBlockStorage section = new net.minecraft.world.chunk.storage.ExtendedBlockStorage(
+                    sy << 4,
+                    false);
+                chunk.getBlockStorageArray()[sy] = section;
+                for (int yy = 0; yy < 16; yy++)
+                    for (int zz = 0; zz < 16; zz++) section.func_150818_a(0, yy, zz, net.minecraft.init.Blocks.stone);
+                SimpleAssert.that(!section.isEmpty(), "native section occupancy agrees with fixture getBlock");
+            }
+        }
+        return (net.minecraft.world.chunk.IChunkProvider) java.lang.reflect.Proxy.newProxyInstance(
+            net.minecraft.world.chunk.IChunkProvider.class.getClassLoader(),
+            new Class<?>[] { net.minecraft.world.chunk.IChunkProvider.class },
+            (proxy, method, arguments) -> {
+                String name = method.getName();
+                if (name.equals("chunkExists") || name.equals("provideChunk")) {
+                    int cx = (Integer) arguments[0], cz = (Integer) arguments[1];
+                    boolean loaded = cx == 0 && cz >= 0 && cz < chunks.length;
+                    if (name.equals("chunkExists")) return loaded;
+                    SimpleAssert.that(loaded, "read-only scan cannot provide an unloaded fixture chunk");
+                    return chunks[cz];
+                }
+                throw new AssertionError("read-only area import must not invoke chunk provider " + name);
+            });
     }
 
     /** Real world gestures publish bounded receipts even before a full baseline exists. */

@@ -4,12 +4,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
+
+import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 
 /** Compatible tool settings and world-owned draft persistence. */
 final class HologramDraftPersistence {
@@ -179,12 +183,69 @@ final class HologramDraftPersistence {
             .setTag(HologramSessionKeys.DRAFT, draft);
     }
 
-    static void readDraft(HologramSession s) {
+    /** Preflight before session creation, which may clear selection or initialize the held tool identity. */
+    static String admissionFailure(EntityPlayerMP player, int x, int y, int z) {
+        ItemStack held = player.getHeldItem();
+        if (held == null || !held.hasTagCompound()
+            || !held.getTagCompound()
+                .hasKey(HologramSessionKeys.DRAFT, 10))
+            return "";
+        NBTTagCompound marker = held.getTagCompound()
+            .getCompoundTag(HologramSessionKeys.DRAFT);
+        if (marker.getInteger("dimension") != player.dimension || marker.getInteger("x") != x
+            || marker.getInteger("y") != y
+            || marker.getInteger("z") != z) return "";
+        if (!player.worldObj.blockExists(x, y, z)) return "";
+        TileEntity target = player.worldObj.getTileEntity(x, y, z);
+        Object context = HologramStructureDiscovery.context(target);
+        String type = target instanceof IGregTechTileEntity && context != null ? context.getClass()
+            .getName() + ":"
+            + ((IGregTechTileEntity) target).getMetaTileID()
+            : target == null ? ""
+                : target.getClass()
+                    .getName();
+        if (!marker.getString("controllerType")
+            .equals(type)) return "";
+        NBTTagCompound draft = marker;
+        if (marker.getBoolean("serverStored")) {
+            String key = marker.getString("storageKey");
+            if (key.isEmpty()) key = player.getUniqueID() + ":"
+                + held.getTagCompound()
+                    .getString(HologramSessionKeys.TOOL_ID);
+            draft = HologramDraftStorage.get(player.worldObj)
+                .read(key);
+        }
+        if (draft.getInteger("dimension") != player.dimension || draft.getInteger("x") != x
+            || draft.getInteger("y") != y
+            || draft.getInteger("z") != z
+            || !draft.getString("controllerType")
+                .equals(type))
+            return "";
+        return countsValid(draft) ? "" : "旧草稿记录格数超过上限：须小于一百万；原草稿已保留，未打开或覆盖";
+    }
+
+    static boolean countsValid(NBTTagCompound draft) {
+        return HologramBlueprintLimits.accepts(
+            draft.getTagList("automatic", 10)
+                .tagCount())
+            && HologramBlueprintLimits.accepts(
+                draft.getTagList("edits", 10)
+                    .tagCount())
+            && HologramBlueprintLimits.accepts(
+                draft.getTagList("blueprintAnnotations", 10)
+                    .tagCount());
+    }
+
+    static boolean readDraft(HologramSession s) {
         ItemStack held = HologramSessionPolicy.currentTool(s);
         if (held == null || !held.getTagCompound()
-            .hasKey(HologramSessionKeys.DRAFT, 10)) return;
+            .hasKey(HologramSessionKeys.DRAFT, 10)) return true;
         NBTTagCompound draft = storedDraft(s, held);
-        if (!draftMatches(s, draft)) return;
+        if (!draftMatches(s, draft)) return true;
+        if (!countsValid(draft)) {
+            s.status = "旧草稿记录格数须小于一百万；原草稿已保留，未载入或覆盖";
+            return false;
+        }
         s.blueprintPrompt = HologramSessionPolicy.boundedPrompt(draft.getString("blueprintPrompt"));
         s.blueprintSavedId = draft.getString("blueprintSavedId");
         if (!s.blueprintSavedId.isEmpty() && !s.blueprintSavedId.matches("[a-zA-Z0-9_-]{1,64}"))
@@ -217,7 +278,7 @@ final class HologramDraftPersistence {
         s.allocationsFrozen = draft.getBoolean("allocationsFrozen");
         s.frozenAutoTargets.clear();
         NBTTagList automatic = draft.getTagList("automatic", 10);
-        for (int i = 0; i < Math.min(automatic.tagCount(), HologramCapture.LIMIT); i++) {
+        for (int i = 0; i < automatic.tagCount(); i++) {
             NBTTagCompound row = automatic.getCompoundTagAt(i);
             String key = row.getString("position");
             if (key.length() > 48) continue;
@@ -233,7 +294,7 @@ final class HologramDraftPersistence {
         s.materialSettings.priority = HologramValues.clamp(draft.getInteger("materialPriority"), 0, 2);
         s.materialSettings.recoveryDestination = HologramValues.clamp(draft.getInteger("recoveryDestination"), 0, 1);
         NBTTagList edits = draft.getTagList("edits", 10);
-        for (int i = 0; i < Math.min(edits.tagCount(), HologramCapture.LIMIT); i++) {
+        for (int i = 0; i < edits.tagCount(); i++) {
             NBTTagCompound entry = edits.getCompoundTagAt(i);
             int dx = entry.getInteger("dx"), dy = entry.getInteger("dy"), dz = entry.getInteger("dz");
             if (!HologramSessionPolicy.validRelativePosition(s, dx, dy, dz)) continue;
@@ -247,6 +308,7 @@ final class HologramDraftPersistence {
             if (entry.hasKey("facing", 3) && direction >= 0 && direction <= 5) s.facingPins.put(key, direction);
             if (entry.getBoolean("suppressed")) s.suppressedAuto.add(key);
         }
+        return true;
     }
 
     static void restoreBlueprintAnnotations(HologramSession s) {

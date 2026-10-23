@@ -372,6 +372,18 @@ public class HologramAreaSelection {
     /** Resolve ordered masks into disjoint positive boxes without enumerating world cells. */
     public void mergeRegions() throws IOException {
         if (continuous || regions.size() < 2) return;
+        List<Region> merged = resolvedRegions();
+        if (merged.size() > 128) throw new IOException("合并结果超过128个区域，请减少选区");
+        remember();
+        regions.clear();
+        Object group = new Object();
+        for (Region box : merged) regions.add(new Region(box.first, box.second, "add", group));
+        inputMode = "replace";
+        select(regions.size() - 1);
+    }
+
+    /** Exact final mask for read-only import, without changing selection groups or history. */
+    List<Region> resolvedRegions() throws IOException {
         List<Region> merged = new ArrayList<>();
         int work = 0;
         for (Region box : regions) {
@@ -430,13 +442,7 @@ public class HologramAreaSelection {
                 }
             }
         } while (joined);
-        if (merged.size() > 128) throw new IOException("合并结果超过128个区域，请减少选区");
-        remember();
-        regions.clear();
-        Object group = new Object();
-        for (Region box : merged) regions.add(new Region(box.first, box.second, "add", group));
-        inputMode = "replace";
-        select(regions.size() - 1);
+        return merged;
     }
 
     private static void split(Region a, Region b, List<Region> out) {

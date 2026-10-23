@@ -48,6 +48,7 @@ public final class HologramClient {
     private static int localAreaSlot, localAreaDimension, localAreaDamage;
     private static String localAreaTool = "", localAreaSession = "";
     private static long localAreaRevision;
+    private static long localAreaCommandSequence = -1;
     private static long localAreaEpoch;
     private static boolean localAreaAwaitingBegin, localAreaFinishing, localAreaCancelling;
 
@@ -1224,6 +1225,7 @@ public final class HologramClient {
         localAreaTool = held.hasTagCompound() ? held.getTagCompound()
             .getString("gtitHologramToolId") : "";
         localAreaSession = "";
+        localAreaCommandSequence = -1;
         localAreaAwaitingBegin = true;
         localAreaFinishing = localAreaCancelling = false;
     }
@@ -1309,6 +1311,7 @@ public final class HologramClient {
             }
             localAreaAwaitingBegin = false;
             localAreaSession = receipt.getString("session");
+            if (localAreaTool.isEmpty()) localAreaTool = receipt.getString("toolId");
             localAreaRevision = receipt.getLong("planRevision");
             if (localAreaCancelling) submitLocalAreaSelection(true);
             else if (localAreaFinishing) submitLocalAreaSelection(false);
@@ -1324,6 +1327,36 @@ public final class HologramClient {
         }
     }
 
+    /** A complete baseline can supersede the compact receipt that normally retires submitted geometry. */
+    static void retireSubmittedLocalArea(NBTTagCompound snapshot) {
+        if (!localAreaFinishing || localAreaAwaitingBegin
+            || localAreaCancelling
+            || localAreaSession.isEmpty()
+            || localAreaCommandSequence < 0
+            || snapshot.getBoolean("workspaceUiOnly")
+            || snapshot.getBoolean("areaSelectionOnly")
+            || snapshot.getBoolean("partial")
+            || snapshot.getBoolean("capturePending")
+            || !snapshot.hasKey("areaSelecting", 1)
+            || snapshot.getBoolean("areaSelecting")
+            || !snapshot.hasKey("planRevision", 4)
+            || snapshot.getLong("planRevision") < localAreaRevision
+            || !snapshot.hasKey("uiSequence", 4)
+            || snapshot.getLong("uiSequence") < localAreaCommandSequence
+            || !snapshot.hasKey("dimension", 3)
+            || snapshot.getInteger("dimension") != localAreaDimension
+            || !snapshot.hasKey("toolId", 8)
+            || !HologramInputContext.selectionTool(localAreaTool, snapshot.getString("toolId"))) return;
+        if (!localAreaSession.equals(snapshot.getString("session"))
+            && !(localAreaSession.equals(snapshot.getString("editorWorkspacePreviousSession"))
+                && "blueprint".equals(snapshot.getString("editorWorkspace"))))
+            return;
+        localArea = null;
+        localAreaView = null;
+        localAreaFinishing = false;
+        localAreaCommandSequence = -1;
+    }
+
     private static void submitLocalAreaSelection(boolean cancel) {
         if (localAreaSession.isEmpty() || !cancel && localArea == null) return;
         NBTTagCompound request = new NBTTagCompound();
@@ -1337,6 +1370,7 @@ public final class HologramClient {
                 state == null ? 0 : state.data.getLong("uiSequence"),
                 HologramBackgroundTasks.commandSequence(localAreaSession)) + 1;
             request.setLong("uiSequence", sequence);
+            localAreaCommandSequence = sequence;
             HologramBackgroundTasks.command(localAreaSession, sequence, "importArea");
         }
         HologramNetwork.sendAction(request);
@@ -1770,6 +1804,7 @@ public final class HologramClient {
             return;
         }
         if (!nbt.getBoolean("partial") && !nbt.getBoolean("areaSelectionOnly")) fullSnapshotRequested = false;
+        HologramState publication = next;
         next = HologramMaterialQuoteUpdates.retain(next, state);
         next = HologramBackgroundTasks.retainMaterialOrder(next);
         if (!same) {
@@ -1782,6 +1817,8 @@ public final class HologramClient {
         receivedAt = now;
         HologramJobVisuals.bind(next);
         next = HologramJobVisuals.metadata(next);
+        next = next.withPublication(publication);
+        NBTTagCompound acceptedLocalAreaBaseline = nbt;
         nbt = next.data;
         acceptedBatch = nbt.getLong("batchSeq");
         pendingPositionLock.snapshot(nbt);
@@ -1792,6 +1829,7 @@ public final class HologramClient {
             && nbt.getBoolean("areaImported")
             && "area".equals(nbt.getString("blueprintSource"))) HologramLibraryClient.INSTANCE.clearSelection();
         state = next;
+        if (next.completeBaseline()) retireSubmittedLocalArea(acceptedLocalAreaBaseline);
         HologramUiConfiguration.observePresetSnapshot(next);
         HologramBackgroundTasks.snapshot(next);
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);

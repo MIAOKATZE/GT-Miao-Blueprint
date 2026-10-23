@@ -74,6 +74,7 @@ final class HologramAuthoringQueries {
     }
 
     static HologramPresets.Preset processingSource(HologramSession s) throws java.io.IOException {
+        HologramGeometryEdits.validate(s);
         if (s.capture == null || s.capture.incomplete || s.capturePending)
             throw new java.io.IOException("请先完整载入结构或区域，再进行蓝图处理");
         if (s.processingSource == null) {

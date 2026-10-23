@@ -23,7 +23,22 @@ Z / Alt+Z 只加选或减选下一个框，青色表示加选、红色表示减�
 
 有已选内容时，取消框选会先询问是否放弃；「否」或弹框中的 Esc 保留选区，「是并且不再提醒」会保存偏好。Delete 仍可单独撤回最近选区。
 
-*Blueprint camera: middle-drag to pan, right-drag to rotate. Add/subtract applies to one new box. Free polygons support horizontal and axis-aligned vertical planes with an explicit purple closing vertex and a separately locked extrusion depth. Cancelling a nonempty selection asks before discarding it.*
+当前可编辑框的两个角点用紫色粗框和放大的「左键 / 右键」标注，外露表面以淡斜线网显示。开始下一个选区会隐藏旧框角点标注；Delete 或 Ctrl+Z 回到旧框时随状态恢复。
+
+移动、复制和删除现在刷新受影响区域的渲染，保留其他分区；完整蓝图检查延至后续处理、保存及材料或施工准入。修复区域导入与保存后的状态收尾，使同一连接中可以再次 Shift+右键开始新蓝图。蓝图右键短按释放仍可打开工具菜单，拖动则旋转镜头。
+
+*Blueprint camera: middle-drag to pan, right-drag to rotate. Add/subtract applies to one new box. Free polygons support horizontal and axis-aligned vertical planes with an explicit purple closing vertex and a separately locked extrusion depth. Cancelling a nonempty selection asks before discarding it. Editable corners use purple markers, and exposed surfaces use a faint diagonal hatch.*
+
+原生观察图展示当前框角标及 Esc 放弃确认，来源见 [manifest](README/native-v0144/manifest.json)。小型实机流程已核对删除、处理、保存后的再次框选；不代表专服、施工或全部多边形场景验收。
+
+*Native captures show editable corners and the discard dialog. The bounded run checks deletion, processing, saving and capture reentry; it does not establish dedicated-server, construction or exhaustive polygon coverage.*
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/native-v0144/selection-corners.png"><img src="README/native-v0144/selection-corners.png" alt="当前框的左右键角标 / Editable selection corners" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0144/discard-confirmation.png"><img src="README/native-v0144/discard-confirmation.png" alt="Esc 放弃选区确认 / Selection discard confirmation" width="480"></a></td>
+  </tr>
+</table>
 
 ### v0.1.43 内部附加编辑与并列进度 / Attachment windows & task progress
 
@@ -228,7 +243,11 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 
 大图的导入、快照准备与传输按阶段显示状态：总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。**关闭工作台后长任务仍可继续**，再次打开恢复原业务页面、选区与视角。稳定几何上的局部编辑会保留未改动的 16³ 预览分区；几何增删与专门审核在需要时完整刷新。
 
+读取、区域采集与编辑的上限为 **999,999 个实际记录格**；包围盒中的空白位置不计入上限。
+
 *Progress follows the actual task stages. Long tasks can continue after closing the workspace; reopening restores the page, selection and view. Local edits retain unchanged preview regions where applicable.*
+
+*Reading, region capture and editing are limited to **999,999 recorded cells**; empty positions inside the bounding box do not count toward the limit.*
 
 <p align="center">
   <a href="README/screenshots/region-import-progress.png"><img src="README/screenshots/region-import-progress.png" alt="区域导入快照准备进度79%，可返回世界后台继续 / Region snapshot preparation at 79 percent with background continuation" width="620"></a><br>
@@ -303,6 +322,10 @@ v0.1.25 支持 [LittleTiles 添加图片与像素画](README/picture-blueprints.
 自动提示词在私用和分享倾向下均默认轻度。木匠方块的来源所有者不会阻塞蓝图，新放置方块按原生规则归当前放置者，无需为此去标识；形状、饰面、染色与其他配置保留，施工仍需支付相应装饰材料。原版立式、壁挂告示牌按一个告示牌物品计料并保留文字。
 
 *Automatic annotations default to Light for both private and shared designs. Copied Carpenter blocks belong to their installer without requiring deidentification; shape, skins and other settings remain intact and their materials are still charged. Vanilla standing and wall signs consume one sign and retain their text.*
+
+保存时不保留木匠方块的原主人信息；旧版蓝图仍可读取，方块形态与饰面保持。
+
+*Saved blueprints do not retain the original owner information for Carpenter blocks. Older blueprints remain readable with their shapes and skins intact.*
 
 *Blueprint Settings handles processing and saving. Review identity, coordinate, network and resource choices for private use or sharing, resolve conflicts, then save.*
 
@@ -396,6 +419,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 *Server configuration controls availability and allowed decoration mod IDs; restart after changes.*
 
+抵用券覆盖范围按当前服务端配置计算；列入范围不代表该次施工免支付。
+
+*Voucher coverage follows the current server configuration; inclusion does not promise a payment-free build.*
+
 <a id="cut"></a>
 
 ## 06 · 连续剪切，排队搬家 / Queue cuts & move builds
@@ -443,6 +470,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 独立蓝图现在以 **蓝图名＋完整内容哈希** 命名，JSON 与 PNG 使用同一个文件名主体。蓝图库中的「升级旧蓝图」会一键重新无损压缩、校准配对文件名，并保留最近蓝图与上传关联；旧文件仍可读取。缺图、配对不明确或写入失败的条目会保留原件并报告原因。服务器公库升级由管理员执行。
 
 *Individual blueprints use their name plus the full content hash, with matching JSON/PNG basenames. Upgrade old blueprints recompresses and renames existing pairs while retaining recent and upload associations. Unreadable or ambiguous pairs remain intact and are reported; server-library upgrades require an administrator.*
+
+普通保存或覆盖保存会重新采集当前蓝图，并生成与 JSON 内容绑定的 PNG 预览。配对校验或写入失败时，原有 JSON 与 PNG 一并保留。旧本地文件读取不会静默升级；上传旧蓝图至蓝图站前请重新保存。站点三个预览位的任一位置都可使用同名配对 PNG，文字与图片附加展示规则不变。
+
+*Every normal save or overwrite recaptures the current blueprint and creates a PNG preview bound to its JSON content. If pair validation or writing fails, both existing files are kept. Reading an older local file does not silently upgrade it; resave it before uploading to the site. Any of the site's three preview slots can use a same-basename paired PNG; text and picture attachment display rules remain unchanged.*
 
 剪切暂存归当前存档与玩家，不参与蓝图分享。保存后的配置、资源与网络选择请按实际用途核对；完整处理规则见 [使用指南](https://miaokatze.com/wiki?mod=gtmb)。
 

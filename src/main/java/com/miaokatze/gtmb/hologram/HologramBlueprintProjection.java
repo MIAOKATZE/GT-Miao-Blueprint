@@ -114,7 +114,8 @@ final class HologramBlueprintProjection {
                 block = cell.block;
             saved.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
             saved.metadata = HologramCellPolicy.targetPreviewMeta(s, cell, target);
-            if (target.hasTagCompound()) saved.itemNbt = HologramBlueprintNbt.encodeCaptured(target.getTagCompound());
+            if (target.hasTagCompound())
+                saved.itemNbt = HologramBlueprintNbt.encodeCaptured(block, target.getTagCompound());
             HologramBlueprintData.addPalette(result, palette, target);
         }
         saved.tileNbt = cell.tileNbt;
@@ -130,7 +131,7 @@ final class HologramBlueprintProjection {
                 NBTTagCompound data = HologramNativeCapture.capture(actual);
                 saved.tileNbt = HologramAeBlueprint.supports(cell.block, data)
                     ? HologramBlueprintNbt.encodeCanonical(cell.block, data)
-                    : HologramBlueprintNbt.encodeCaptured(data);
+                    : HologramBlueprintNbt.encodeCaptured(cell.block, data);
             }
         }
         saved.tileNbt = HologramDisplaySnapshot.retainCasing(target, cell.element, saved.tileNbt);

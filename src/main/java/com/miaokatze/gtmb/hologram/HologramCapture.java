@@ -35,8 +35,8 @@ import tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods;
 /** Armed only during a server-thread preview. Hints describe appearance, never permission to write. */
 public final class HologramCapture {
 
-    /** Java collection capacity; no structure-size policy limit. */
-    public static final int LIMIT = Integer.MAX_VALUE - 8;
+    /** Recorded cells; unrecorded space inside the bounds does not consume this budget. */
+    public static final int LIMIT = HologramBlueprintLimits.MAX_CELLS;
     private static final int CELLS_PER_BATCH = 4096;
     /** Wall-clock threshold at checkpoints; native machine callbacks cannot be interrupted mid-call. */
     private static final long CAPTURE_TIME_NS = 100000000L;
@@ -276,6 +276,10 @@ public final class HologramCapture {
                         capture.fail("CONFLICTING_CELL " + position);
                         return false;
                     }
+                    if (capture.cells.size() >= LIMIT) {
+                        capture.fail("CELL_LIMIT: 蓝图实际记录格数须小于一百万");
+                        return false;
+                    }
                     Cell cell = new Cell(element, xx, yy, zz, piece.trigger);
                     if (xx == x && yy == y && zz == z) capture.declaredAnchorIndex = capture.cells.size();
                     capture.cells.add(cell);
@@ -454,6 +458,10 @@ public final class HologramCapture {
             .getFrontFacing()
             .ordinal();
         if (declaredAnchorIndex >= 0) cells.remove(declaredAnchorIndex);
+        if (cells.size() >= LIMIT) {
+            fail("CELL_LIMIT: 控制器计入蓝图实际记录格数，一百万格不予采集");
+            return;
+        }
         cells.add(anchor);
         positions.put(x + "," + y + "," + z, anchor);
     }

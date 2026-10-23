@@ -1856,7 +1856,8 @@ final class HologramLibraryClient {
                 if (!java.util.Arrays.equals(source.json, actual.json) || !source.stamp.equals(fileStamp(path)))
                     throw new java.io.IOException("蓝图文件已变化，请重新选择");
                 byte[] uploadJson = uploadJson(actual.json, () -> token == generation && contentAdmission == admitted);
-                artifact = HologramBlueprintArtifact.encode(uploadJson, actual.png);
+                HologramBlueprintArtifact.Artifact transferred = HologramBlueprintArtifact.transfer(uploadJson, actual);
+                artifact = HologramBlueprintArtifact.encode(transferred.json, transferred.png);
                 source.artifact = artifact;
                 source.artifactHash = hash(artifact);
             }
@@ -1887,6 +1888,8 @@ final class HologramLibraryClient {
 
     /** A miss may compress its in-memory transport representation; the source file stays byte-exact. */
     static byte[] uploadJson(byte[] source, java.util.function.BooleanSupplier current) throws java.io.IOException {
+        if (!com.miaokatze.gtmb.hologram.HologramBlueprintPreviewBinding.pngSha256(source)
+            .isEmpty()) return source;
         try (com.google.gson.stream.JsonReader reader = new com.google.gson.stream.JsonReader(
             new java.io.InputStreamReader(
                 new java.io.ByteArrayInputStream(source),
@@ -2782,11 +2785,16 @@ final class HologramLibraryClient {
         work(() -> {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             if (!ImageIO.write(image, "png", output)) throw new java.io.IOException("PNG encoder unavailable");
-            byte[] preview = output.toByteArray();
+            HologramBlueprintArtifact.Artifact captured = HologramBlueprintArtifact
+                .prepareSave(json, output.toByteArray());
+            byte[] preview = captured.png;
             if (localSaveReceipt && !receipt.isEmpty()) {
                 if (!saveBytesCurrent(token, session, revision)) return;
-                HologramClientLibrary.LocalSave local = store
-                    .prepareLocalSave(json, preview, replace, () -> saveBytesCurrent(token, session, revision));
+                HologramClientLibrary.LocalSave local = store.prepareLocalSave(
+                    captured.json,
+                    preview,
+                    replace,
+                    () -> saveBytesCurrent(token, session, revision));
                 NBTTagCompound acknowledgement = request("ackBlueprintSaved");
                 acknowledgement.setLong("clientTaskToken", originalBackgroundToken);
                 acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
@@ -2795,10 +2803,11 @@ final class HologramLibraryClient {
                 acknowledgement.setString("localId", replace);
                 acknowledgement.setString("saveReceipt", receipt);
                 acknowledgement.setString("jsonSha256", local.jsonHash);
+                acknowledgement.setString("reviewedJsonSha256", HologramBlueprintArtifact.hash(json));
                 acknowledgement.setString("previewSha256", local.pngHash);
                 acknowledgement.setBoolean("localSaveReceipt", true);
                 publishDiskSave(local, acknowledgement, serverKey, token);
-            } else persistArtifact(json, preview, replace, receipt, session, revision, token, serverKey);
+            } else persistArtifact(captured.json, preview, replace, receipt, session, revision, token, serverKey);
         });
     }
 
@@ -2884,6 +2893,14 @@ final class HologramLibraryClient {
             acknowledgement.setString("localId", saved);
             acknowledgement.setString("saveReceipt", receipt);
             acknowledgement.setString("jsonSha256", actualJsonHash);
+            try {
+                acknowledgement.setString(
+                    "reviewedJsonSha256",
+                    HologramBlueprintArtifact
+                        .hash(com.miaokatze.gtmb.hologram.HologramBlueprintPreviewBinding.sourceJson(actual.json)));
+            } catch (java.io.IOException invalid) {
+                throw new IllegalStateException("Previously validated blueprint binding changed", invalid);
+            }
             acknowledgement.setString("previewSha256", actualPreviewHash);
             pendingSaveAck = acknowledgement;
             outgoing = artifact;

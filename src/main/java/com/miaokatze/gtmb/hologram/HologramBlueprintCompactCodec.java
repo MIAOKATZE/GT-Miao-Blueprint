@@ -25,7 +25,7 @@ public final class HologramBlueprintCompactCodec {
 
     private static final String ENCODING = "gtmb-dictionary-1";
     static final int MAX_DICTIONARY = 65536;
-    static final int MAX_CELLS = 1000000;
+    static final int MAX_CELLS = HologramBlueprintLimits.MAX_CELLS;
     private static final Gson GSON = new GsonBuilder().serializeNulls()
         .create();
     private static final Gson MODEL = new GsonBuilder().create();
@@ -347,6 +347,7 @@ public final class HologramBlueprintCompactCodec {
 
     /** Expanded logical UTF-8 size of an admitted DTO, without validation or an entire blueprint tree. */
     static long expandedBytes(HologramPresets.Preset preset) throws IOException {
+        if (preset.cells != null) HologramBlueprintLimits.require(preset.cells.size());
         JsonObject metadata = metadata(preset);
         long size = measure(metadata);
         boolean fields = !metadata.entrySet()

@@ -201,6 +201,7 @@ final class HologramPlanPolicy {
     }
 
     static boolean constructionAllowed(HologramSession s) {
+        if (!HologramGeometryEdits.requirePlan(s)) return false;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return false;
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
             s.status = "请先放置蓝图，右击确定位置并核对材料后施工";
