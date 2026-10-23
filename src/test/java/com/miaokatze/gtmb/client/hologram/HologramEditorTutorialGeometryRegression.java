@@ -185,11 +185,21 @@ public final class HologramEditorTutorialGeometryRegression {
                 machine.appendTag(copy);
             }
             NBTTagCompound initial = HologramEditorTutorialSamples.arrange(observed, machine, true, id);
-            SimpleAssert.eq(240, initial.getTagList("cells", 10).tagCount(), "two EBFs plus 168 supporting blocks");
-            SimpleAssert.eq(2, initial.getTagList("structures", 10).tagCount(), "only two machines precede copying");
+            SimpleAssert.eq(
+                240,
+                initial.getTagList("cells", 10)
+                    .tagCount(),
+                "two EBFs plus 168 supporting blocks");
+            SimpleAssert.eq(
+                2,
+                initial.getTagList("structures", 10)
+                    .tagCount(),
+                "only two machines precede copying");
             SimpleAssert.eq(
                 initial.getInteger("x") - 4,
-                initial.getTagList("structures", 10).getCompoundTagAt(1).getInteger("x"),
+                initial.getTagList("structures", 10)
+                    .getCompoundTagAt(1)
+                    .getInteger("x"),
                 "the raised source sits left of the final ground copy in the teaching camera");
             double yaw = Math.toRadians(38);
             SimpleAssert.that(
@@ -202,11 +212,13 @@ public final class HologramEditorTutorialGeometryRegression {
                 building.add(cell.getInteger("dx") + ":" + cell.getInteger("dy") + ":" + cell.getInteger("dz"));
             }
             for (int x = -6; x <= 4; x++) for (int z = -1; z <= 9; z++) SimpleAssert.that(
-                building.contains(x + ":-1:" + z), "the shifted ground slab retains its full eleven-by-eleven footprint");
-            for (int x = -6; x <= -2; x++) for (int z = 5; z <= 9; z++) SimpleAssert.that(
-                building.contains(x + ":3:" + z), "the entire platform shifts with the elevated source");
+                building.contains(x + ":-1:" + z),
+                "the shifted ground slab retains its full eleven-by-eleven footprint");
+            for (int x = -6; x <= -2; x++) for (int z = 5; z <= 9; z++) SimpleAssert
+                .that(building.contains(x + ":3:" + z), "the entire platform shifts with the elevated source");
             for (int y = 0; y < 4; y++) for (int support = 0; support <= y; support++) SimpleAssert.that(
-                building.contains((2 - y) + ":" + support + ":7"), "the adjacent access stair retains solid support");
+                building.contains((2 - y) + ":" + support + ":7"),
+                "the adjacent access stair retains solid support");
             int[] selected = new int[36];
             for (int i = 0; i < selected.length; i++) selected[i] = i;
             SimpleAssert.that(
@@ -218,8 +230,8 @@ public final class HologramEditorTutorialGeometryRegression {
                 HologramEditorTutorialBlueprint.clearAndSupported(initial, elevated, new int[] { 0, 0, 0 }),
                 "the elevated machine rests on a complete platform");
             SimpleAssert.that(
-                HologramEditorTutorialBlueprint.clearAndSupported(
-                    initial, selected, HologramEditorTutorialBlueprint.offset(Operation.MOVE_X)),
+                HologramEditorTutorialBlueprint
+                    .clearAndSupported(initial, selected, HologramEditorTutorialBlueprint.offset(Operation.MOVE_X)),
                 "the first axis move remains inside the grounded free lane");
             SimpleAssert.that(
                 !HologramEditorTutorialBlueprint.clearAndSupported(initial, selected, new int[] { 0, 1, 0 }),
@@ -235,16 +247,21 @@ public final class HologramEditorTutorialGeometryRegression {
             HologramEditorTutorialBlueprint.translate(placed, selected, Collections.singleton(id), plane);
             NBTTagList cells = placed.getTagList("cells", 10), declarations = placed.getTagList("structures", 10);
             for (int i = 36; i < cells.tagCount(); i++) SimpleAssert.that(
-                cells.getCompoundTagAt(i).equals(initial.getTagList("cells", 10).getCompoundTagAt(i)),
+                cells.getCompoundTagAt(i)
+                    .equals(
+                        initial.getTagList("cells", 10)
+                            .getCompoundTagAt(i)),
                 "moving one ground machine preserves every platform and building row: " + i);
-            NBTTagCompound copy = (NBTTagCompound) declarations.getCompoundTagAt(0).copy();
+            NBTTagCompound copy = (NBTTagCompound) declarations.getCompoundTagAt(0)
+                .copy();
             String copyId = id + "-tutorial-copy";
             copy.setString("id", copyId);
             declarations.appendTag(copy);
             int[] duplicate = new int[36];
             for (int i = 0; i < duplicate.length; i++) {
                 duplicate[i] = cells.tagCount();
-                NBTTagCompound cell = (NBTTagCompound) cells.getCompoundTagAt(i).copy();
+                NBTTagCompound cell = (NBTTagCompound) cells.getCompoundTagAt(i)
+                    .copy();
                 cell.setString("structureId", copyId);
                 cells.appendTag(cell);
             }
@@ -255,8 +272,13 @@ public final class HologramEditorTutorialGeometryRegression {
             HologramEditorTutorialBlueprint.translate(placed, duplicate, Collections.singleton(copyId), delta);
             SimpleAssert.eq(3, declarations.tagCount(), "the actual copy adds the third declaration");
             SimpleAssert.eq(276, cells.tagCount(), "copy adds exactly the complete 36-cell EBF footprint");
-            SimpleAssert.eq(-2, cells.getCompoundTagAt(duplicate[0]).getInteger("dx")
-                - machine.getCompoundTagAt(0).getInteger("dx"), "copied source anchor ends at X -2");
+            SimpleAssert.eq(
+                -2,
+                cells.getCompoundTagAt(duplicate[0])
+                    .getInteger("dx")
+                    - machine.getCompoundTagAt(0)
+                        .getInteger("dx"),
+                "copied source anchor ends at X -2");
             for (int[] member : new int[][] { selected, elevated, duplicate }) SimpleAssert.that(
                 HologramEditorTutorialBlueprint.clearAndSupported(placed, member, new int[] { 0, 0, 0 }),
                 "every final machine remains separate and fully supported");

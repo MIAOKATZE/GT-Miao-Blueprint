@@ -519,10 +519,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             return;
         }
         Action action = actions.get(actionIndex);
-        if (actionStarted == 0 && !scenePresentationPrepared && !worldCourse()
+        if (actionStarted == 0 && !scenePresentationPrepared
+            && !worldCourse()
             && sandbox.shell.targetBounds("modal") == null
             && (action.operation == Operation.SELECT_CELL || action.operation == Operation.SELECT_STRUCTURE
-                || action.operation == Operation.MOVE_X || action.operation == Operation.MOVE_XZ
+                || action.operation == Operation.MOVE_X
+                || action.operation == Operation.MOVE_XZ
                 || action.operation == Operation.COPY_X)) {
             if (!actionPending) {
                 final long version = playbackVersion;
@@ -1088,12 +1090,11 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         int[] offset = sandbox.preview.gizmo()
             .offset();
         int[] expected = HologramEditorTutorialBlueprint.offset(actions.get(actionIndex).operation);
-        if (!java.util.Arrays.equals(expected, offset)
-            || !HologramEditorTutorialBlueprint.clearAndSupported(
-                data,
-                sandbox.preview.selection()
-                    .indices(),
-                offset)) {
+        if (!java.util.Arrays.equals(expected, offset) || !HologramEditorTutorialBlueprint.clearAndSupported(
+            data,
+            sandbox.preview.selection()
+                .indices(),
+            offset)) {
             return rejectDrag("手柄位移尚未到达本课的空闲承托位置，已保留拖动前的布局。");
         }
         if (offset[0] == 0 && offset[1] == 0 && offset[2] == 0) {
@@ -1119,11 +1120,15 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private boolean rejectDrag(String reason) {
         // Copy intent creates a provisional member at drag start; a rejected destination must remove it again.
         if (actionBefore != null) {
-            HologramState before = new HologramState((NBTTagCompound) actionBefore.getCompoundTag("state").copy());
+            HologramState before = new HologramState(
+                (NBTTagCompound) actionBefore.getCompoundTag("state")
+                    .copy());
             sandbox.session.isolatedSnapshot(before);
             sandbox.preview.selection()
                 .load(actionBefore.getIntArray("selection"), -1, before.cells.size());
-            sandbox.preview.selected(sandbox.preview.selection().first());
+            sandbox.preview.selected(
+                sandbox.preview.selection()
+                    .first());
         }
         sandbox.preview.releasePointerCapture();
         blockAction(reason);
@@ -1771,7 +1776,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             engine.setString("contentSha256", HologramCutRawPreviewSession.digest(snapshot(model)));
             engine.setString("sourceSha256", sourceFingerprint);
             engine.setInteger("modelCellCount", model.cells.size());
-            engine.setInteger("modelStructureCount", model.data.getTagList("structures", 10).tagCount());
+            engine.setInteger(
+                "modelStructureCount",
+                model.data.getTagList("structures", 10)
+                    .tagCount());
             engine.setInteger(
                 "selectedCellCount",
                 sandbox.preview.selection()

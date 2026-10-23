@@ -72,5 +72,5 @@
   "currentNativeSteps": 9,
   "userAccepted": false,
   "scope": "Current candidate: blueprint0..8 with real Skip/root return/natural exit; four originals viewed. World Ctrl/Delete: regression only.",
-  "artifactProof": "Candidate-to-clean: only three exact generated VERSION sites; clean-to-final: complete runtime payload equality."
+  "artifactProof": "Candidate-to-clean: three exact generated VERSION sites plus Code/LineNumberTable debug offsets only; every other class and resource byte must match. Clean-to-final: complete runtime payload equality."
 }

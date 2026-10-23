@@ -323,7 +323,12 @@ final class HologramEditorLessons {
             "viewport",
             action(Operation.SELECT_STRUCTURE, "viewport"),
             action(Operation.HANDLES, "viewport"));
-        add(s, "沿轴移动", "按住 X 手柄向正 X 移动 2 格，地面高炉仍落在地基上；平台高炉保持原位。模型按整格吸附。", "viewport", action(Operation.MOVE_X, "gizmo.x"));
+        add(
+            s,
+            "沿轴移动",
+            "按住 X 手柄向正 X 移动 2 格，地面高炉仍落在地基上；平台高炉保持原位。模型按整格吸附。",
+            "viewport",
+            action(Operation.MOVE_X, "gizmo.x"));
         add(
             s,
             "换行时保留未保存修改",
@@ -341,8 +346,18 @@ final class HologramEditorLessons {
             action(Operation.CONFIRM_DISCARD, "control.224"),
             action(Operation.SELECT_CELL, "viewport"),
             action(Operation.SELECT_STRUCTURE, "viewport"));
-        add(s, "平面布置地面高炉", "拖 XZ 平面向正 X 移动 3 格、正 Z 移动 1 格，将地面高炉移入地基右侧空位；高度保持不变。XY、YZ 使用同样的原生逆解。", "viewport", action(Operation.MOVE_XZ, "gizmo.xz"));
-        add(s, "复制到另一空位", "起拖时按 Ctrl 锁定复制意图，沿 X 向负方向拖动 5 格。原高炉保留在右侧，副本落在左侧空位，两台之间留出通道；此时共三台：两台地面、一台平台。", "viewport", action(Operation.COPY_X, "gizmo.x"));
+        add(
+            s,
+            "平面布置地面高炉",
+            "拖 XZ 平面向正 X 移动 3 格、正 Z 移动 1 格，将地面高炉移入地基右侧空位；高度保持不变。XY、YZ 使用同样的原生逆解。",
+            "viewport",
+            action(Operation.MOVE_XZ, "gizmo.xz"));
+        add(
+            s,
+            "复制到另一空位",
+            "起拖时按 Ctrl 锁定复制意图，沿 X 向负方向拖动 5 格。原高炉保留在右侧，副本落在左侧空位，两台之间留出通道；此时共三台：两台地面、一台平台。",
+            "viewport",
+            action(Operation.COPY_X, "gizmo.x"));
         add(
             s,
             "来源成员参数",

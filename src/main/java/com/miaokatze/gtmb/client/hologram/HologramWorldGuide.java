@@ -118,12 +118,15 @@ final class HologramWorldGuide {
                     HologramClient
                         .text("guide.polygonCount", "Vertices %d · Click the first point to close (at least 3)"),
                     selection.getIntArray("areaPolygon").length / 3));
-            lines.add(HologramClient.text("guide.selectionUndo", "Ctrl+Z: undo · Ctrl+Y: redo · Delete: remove last point"));
+            lines.add(
+                HologramClient.text("guide.selectionUndo", "Ctrl+Z: undo · Ctrl+Y: redo · Delete: remove last point"));
             lines.add(
                 String.format(
                     java.util.Locale.ROOT,
-                    camera ? HologramClient
-                        .text("guide.polygonCamera", "Ctrl+left: vertex / height · Alt+wheel: depth · %s / Esc: normal view")
+                    camera
+                        ? HologramClient.text(
+                            "guide.polygonCamera",
+                            "Ctrl+left: vertex / height · Alt+wheel: depth · %s / Esc: normal view")
                         : HologramClient.text(
                             "guide.selectionExit",
                             "Alt+wheel: depth · %s: isometric view · Esc: cancel selection"),

@@ -163,8 +163,7 @@ final class HologramEditorTutorialSamples {
     /** Shared with geometry regressions; device normalization above remains bound to the native GT registry. */
     static NBTTagCompound arrange(NBTTagCompound data, NBTTagList machine, boolean blueprint, String primary) {
         NBTTagList cells = new NBTTagList(), structures = new NBTTagList();
-        int[][] offsets = blueprint ? new int[][] { { 0, 0, 0 }, { -4, 4, 6 } }
-            : new int[][] { { 0, 0, 0 } };
+        int[][] offsets = blueprint ? new int[][] { { 0, 0, 0 }, { -4, 4, 6 } } : new int[][] { { 0, 0, 0 } };
         NBTTagCompound declared = blueprint ? data.getTagList("structures", 10)
             .getCompoundTagAt(0) : null;
         for (int m = 0; m < offsets.length; m++) {

@@ -188,14 +188,15 @@ final class HologramContinuousSelectionRegression {
             "Delete removes the last vertex of a closed/high polygon and preserves committed geometry");
         area.undoRegion();
         SimpleAssert.that(
-            area.snapshot().getBoolean("areaPolygonHeightChosen"),
+            area.snapshot()
+                .getBoolean("areaPolygonHeightChosen"),
             "undo Delete restores the closed outline and chosen height");
         area.redoRegion();
         area.deleteLatest();
         area.deleteLatest();
         SimpleAssert.that(
-            !area.continuousActive() && area.snapshot().getIntArray("areaPolygon").length == 0
-                && area.contains(4, 66, 4),
+            !area.continuousActive() && area.snapshot()
+                .getIntArray("areaPolygon").length == 0 && area.contains(4, 66, 4),
             "removing the final polygon vertex exits pending mode without removing an earlier selection");
         area.beginContinuous(false);
         area.deleteLatest();
@@ -216,35 +217,45 @@ final class HologramContinuousSelectionRegression {
         area.continuousPoint(0, 64, 4);
         area.finishContinuous(66);
         SimpleAssert.that(
-            area.regionSnapshot().tagCount() > 2 && !area.contains(0, 64, 0) && area.contains(4, 64, 4),
+            area.regionSnapshot()
+                .tagCount() > 2 && !area.contains(0, 64, 0)
+                && area.contains(4, 64, 4),
             "fixture has a multi-row subtractive polygon over a completed box");
         area.cycle(1);
         area.move(1, 0, 0, 256);
         area.deleteLatest();
         SimpleAssert.that(
-            area.regionSnapshot().tagCount() == 1 && area.contains(1, 64, 0) && area.contains(5, 66, 4),
+            area.regionSnapshot()
+                .tagCount() == 1 && area.contains(1, 64, 0)
+                && area.contains(5, 66, 4),
             "Delete removes the entire latest polygon despite cycling to and moving an older box");
         area.undoRegion();
         area.redoRegion();
-        SimpleAssert.eq(1, area.regionSnapshot().tagCount(), "redo Delete preserves polygon batch identity");
+        SimpleAssert.eq(
+            1,
+            area.regionSnapshot()
+                .tagCount(),
+            "redo Delete preserves polygon batch identity");
         area.toggleMode("add");
         area.worldPoint(1, 10, 64, 10);
         area.worldPoint(2, 11, 65, 11);
         area.cycle(-1);
         area.deleteLatest();
         SimpleAssert.that(
-            area.regionSnapshot().tagCount() == 1 && !area.contains(10, 64, 10) && area.contains(5, 66, 4),
+            area.regionSnapshot()
+                .tagCount() == 1 && !area.contains(10, 64, 10)
+                && area.contains(5, 66, 4),
             "Delete removes the latest completed box instead of the cycled current box");
         area.undoRegion();
         area.mergeRegions();
         area.deleteLatest();
         SimpleAssert.that(
-            area.regionSnapshot().tagCount() == 0 && !area.complete(),
+            area.regionSnapshot()
+                .tagCount() == 0 && !area.complete(),
             "the resolved merge is deleted as one whole selection");
         area.undoRegion();
-        SimpleAssert.that(
-            area.contains(5, 66, 4) && area.contains(10, 64, 10),
-            "undo restores all disjoint merged regions");
+        SimpleAssert
+            .that(area.contains(5, 66, 4) && area.contains(10, 64, 10), "undo restores all disjoint merged regions");
     }
 
     private static void rejectedPolygonDeletion() throws IOException {
@@ -271,7 +282,9 @@ final class HologramContinuousSelectionRegression {
         for (int vertex = 0; vertex < 3; vertex++) area.deleteLatest();
         area.deleteLatest();
         SimpleAssert.that(
-            area.regionSnapshot().tagCount() == 126 && !area.contains(126, 64, 0) && area.contains(125, 64, 0),
+            area.regionSnapshot()
+                .tagCount() == 126 && !area.contains(126, 64, 0)
+                && area.contains(125, 64, 0),
             "after deleting a rejected polygon's vertices, Delete still removes only the latest completed box");
     }
 

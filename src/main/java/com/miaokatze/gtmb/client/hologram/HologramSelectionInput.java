@@ -59,8 +59,11 @@ final class HologramSelectionInput {
 
     boolean tick(HologramAreaSelection selection, boolean enabled) {
         Minecraft mc = Minecraft.getMinecraft();
-        boolean active = enabled && selection != null && mc.currentScreen == null && mc.theWorld != null
-            && mc.thePlayer != null && mc.inGameHasFocus;
+        boolean active = enabled && selection != null
+            && mc.currentScreen == null
+            && mc.theWorld != null
+            && mc.thePlayer != null
+            && mc.inGameHasFocus;
         boolean changed = previous != selection || previousWorld != mc.theWorld || wasActive != active;
         previous = selection;
         previousWorld = mc.theWorld;
