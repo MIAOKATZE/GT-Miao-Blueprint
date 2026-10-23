@@ -48,6 +48,8 @@ public final class HologramClient {
     private static int localAreaSlot, localAreaDimension, localAreaDamage;
     private static String localAreaTool = "", localAreaSession = "";
     private static long localAreaRevision;
+    private static long localAreaCommandSequence = -1;
+    private static long localAreaEpoch;
     private static boolean localAreaAwaitingBegin, localAreaFinishing, localAreaCancelling;
 
     static volatile HologramState state;
@@ -304,10 +306,12 @@ public final class HologramClient {
     static boolean confirmContinuous() {
         if (!continuousActive()) return false;
         if (HologramCutClient.INSTANCE.continuousActive()) return HologramCutClient.INSTANCE.confirmContinuous();
+        int rejectedBefore = localArea.polygonCloseRejections();
         try {
             localArea.confirmContinuous();
             localAreaView = null;
         } catch (java.io.IOException invalid) {
+            if (localArea.polygonCloseRejections() != rejectedBefore) HologramAreaOverlay.flashPolygonStart();
             selectionNotice(invalid.getMessage());
         }
         return true;
@@ -541,10 +545,12 @@ public final class HologramClient {
             return;
         }
         if (action == HologramSelectionInput.CameraAction.CONTINUOUS_POINT) {
+            int closeRejections = localArea.polygonCloseRejections();
             try {
                 localArea.continuousPoint(point[0], point[1], point[2]);
                 localAreaView = null;
             } catch (java.io.IOException invalid) {
+                if (localArea.polygonCloseRejections() != closeRejections) HologramAreaOverlay.flashPolygonStart();
                 selectionNotice(invalid.getMessage());
             }
         } else localAreaPoint(
@@ -566,7 +572,10 @@ public final class HologramClient {
     public void cutMouse(MouseEvent event) {
         if (HologramIsometricCamera.INSTANCE.active() && (event.button == 1
             && !(controlHeld() && (areaProjectorWorld() || HologramCutClient.INSTANCE.selecting()))
-            || event.button == 0 && !controlHeld() && Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R))) {
+            || event.button == 0 && !controlHeld()
+                && !(areaProjectorWorld() && !HologramCutClient.INSTANCE.cameraContext())
+                && Keyboard.isCreated()
+                && Keyboard.isKeyDown(Keyboard.KEY_R))) {
             event.setCanceled(true);
             return;
         }
@@ -622,7 +631,7 @@ public final class HologramClient {
                 control,
                 shift,
                 altHeld(),
-                Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R),
+                false,
                 localArea != null && localArea.continuousActive());
             if (action == HologramSelectionInput.CameraAction.NONE) return;
             if (action == HologramSelectionInput.CameraAction.SUBMIT) {
@@ -635,10 +644,12 @@ public final class HologramClient {
                 return;
             }
             if (action == HologramSelectionInput.CameraAction.CONTINUOUS_POINT) {
+                int closeRejections = localArea.polygonCloseRejections();
                 try {
                     localArea.continuousPoint(point[0], point[1], point[2]);
                     localAreaView = null;
                 } catch (java.io.IOException invalid) {
+                    if (localArea.polygonCloseRejections() != closeRejections) HologramAreaOverlay.flashPolygonStart();
                     selectionNotice(invalid.getMessage());
                 }
             } else localAreaPoint(
@@ -652,12 +663,14 @@ public final class HologramClient {
         if (localArea != null && localArea.continuousActive()) {
             event.setCanceled(true);
             if (event.button == 0) {
+                int closeRejections = localArea.polygonCloseRejections();
                 int[] point = areaSelectionAnchor();
                 if (point == null) invalidCameraTarget();
                 else try {
                     localArea.continuousPoint(point[0], point[1], point[2]);
                     localAreaView = null;
                 } catch (java.io.IOException invalid) {
+                    if (localArea.polygonCloseRejections() != closeRejections) HologramAreaOverlay.flashPolygonStart();
                     selectionNotice(invalid.getMessage());
                 }
             }
@@ -1077,18 +1090,76 @@ public final class HologramClient {
             }
         }
         if (event.gui instanceof GuiIngameMenu && localArea != null) {
-            event.setCanceled(true);
-            worldAction("cancelAreaSelection");
+            requestAreaDiscard(event);
             return;
         }
         if (!(event.gui instanceof GuiIngameMenu) || state == null || !areaWorldContext() && !projectorWorld()) return;
         HologramWorldFlow.Intent intent = HologramWorldFlow.intent(worldStage(), HologramWorldFlow.Gesture.ESCAPE);
         if (intent != HologramWorldFlow.Intent.CANCEL_AREA && intent != HologramWorldFlow.Intent.CANCEL_PLACEMENT)
             return;
+        if (intent == HologramWorldFlow.Intent.CANCEL_AREA) {
+            requestAreaDiscard(event);
+            return;
+        }
         event.setCanceled(true);
         if (intent == HologramWorldFlow.Intent.CANCEL_PLACEMENT)
             dismissRootView(state.session, state.data.getLong("uiSequence"));
         worldAction(intent == HologramWorldFlow.Intent.CANCEL_AREA ? "cancelAreaSelection" : "cancelVirtualPlacement");
+    }
+
+    /** This is reached only after camera/placement Escape layers have had their turn. */
+    private static void requestAreaDiscard(GuiOpenEvent event) {
+        Minecraft mc = Minecraft.getMinecraft();
+        final com.miaokatze.gtmb.hologram.HologramAreaSelection selection = localArea;
+        boolean content = selection != null ? selection.hasSelectionContent()
+            : state != null && selectionHasContent(state.data);
+        if (!content || HologramEditorPreferences.get(mc.mcDataDir)
+            .selectionDiscardSuppressed()) {
+            event.setCanceled(true);
+            worldAction("cancelAreaSelection");
+            return;
+        }
+        final Object world = mc.theWorld, connection = mc.getNetHandler();
+        final long epoch = localAreaEpoch;
+        final HologramState snapshot = state;
+        final ItemStack held = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
+        final Object item = held == null ? null : held.getItem();
+        final int damage = held == null ? 0 : held.getItemDamage();
+        final int slot = mc.thePlayer == null ? -1 : mc.thePlayer.inventory.currentItem;
+        final int dimension = mc.thePlayer == null ? 0 : mc.thePlayer.dimension;
+        final String tool = held == null || !held.hasTagCompound() ? ""
+            : held.getTagCompound()
+                .getString("gtitHologramToolId");
+        event.gui = new HologramSelectionDiscardScreen(() -> {
+            Minecraft current = Minecraft.getMinecraft();
+            ItemStack currentHeld = current.thePlayer == null ? null : current.thePlayer.getHeldItem();
+            if (current.theWorld != world || current.getNetHandler() != connection
+                || current.thePlayer == null
+                || current.thePlayer.dimension != dimension
+                || current.thePlayer.inventory.currentItem != slot
+                || currentHeld == null
+                || currentHeld.getItem() != item
+                || currentHeld.getItemDamage() != damage
+                || !tool.equals(
+                    currentHeld.hasTagCompound() ? currentHeld.getTagCompound()
+                        .getString("gtitHologramToolId") : ""))
+                return false;
+            return selection != null
+                ? localArea == selection && localAreaEpoch == epoch
+                    && localAreaContext()
+                    && !localAreaFinishing
+                    && !localAreaCancelling
+                    && (localAreaSession.isEmpty() || state != null && state.session.equals(localAreaSession))
+                : localArea == null && state == snapshot
+                    && snapshotWorld == world
+                    && state.data.getBoolean("areaSelecting");
+        }, () -> worldAction("cancelAreaSelection"));
+    }
+
+    static boolean selectionHasContent(NBTTagCompound selection) {
+        return selection != null && (selection.getTagList("areaRegions", 10)
+            .tagCount() > 0 || selection.getIntArray("areaPoints").length > 0
+            || selection.getIntArray("areaPolygon").length > 0);
     }
 
     private static void worldAction(String action) {
@@ -1144,6 +1215,7 @@ public final class HologramClient {
         ItemStack held = mc.thePlayer.getHeldItem();
         if (!com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(held)) return;
         localArea = new com.miaokatze.gtmb.hologram.HologramAreaSelection();
+        localAreaEpoch++;
         localAreaView = null;
         localAreaWorld = mc.theWorld;
         localAreaItem = held.getItem();
@@ -1153,6 +1225,7 @@ public final class HologramClient {
         localAreaTool = held.hasTagCompound() ? held.getTagCompound()
             .getString("gtitHologramToolId") : "";
         localAreaSession = "";
+        localAreaCommandSequence = -1;
         localAreaAwaitingBegin = true;
         localAreaFinishing = localAreaCancelling = false;
     }
@@ -1238,6 +1311,7 @@ public final class HologramClient {
             }
             localAreaAwaitingBegin = false;
             localAreaSession = receipt.getString("session");
+            if (localAreaTool.isEmpty()) localAreaTool = receipt.getString("toolId");
             localAreaRevision = receipt.getLong("planRevision");
             if (localAreaCancelling) submitLocalAreaSelection(true);
             else if (localAreaFinishing) submitLocalAreaSelection(false);
@@ -1246,10 +1320,41 @@ public final class HologramClient {
             localAreaView = null;
             localAreaFinishing = localAreaCancelling = false;
         } else {
+            if (!localAreaSession.equals(receipt.getString("session"))) localAreaEpoch++;
             localAreaSession = receipt.getString("session");
             localAreaRevision = receipt.getLong("planRevision");
             localAreaFinishing = false;
         }
+    }
+
+    /** A complete baseline can supersede the compact receipt that normally retires submitted geometry. */
+    static void retireSubmittedLocalArea(NBTTagCompound snapshot) {
+        if (!localAreaFinishing || localAreaAwaitingBegin
+            || localAreaCancelling
+            || localAreaSession.isEmpty()
+            || localAreaCommandSequence < 0
+            || snapshot.getBoolean("workspaceUiOnly")
+            || snapshot.getBoolean("areaSelectionOnly")
+            || snapshot.getBoolean("partial")
+            || snapshot.getBoolean("capturePending")
+            || !snapshot.hasKey("areaSelecting", 1)
+            || snapshot.getBoolean("areaSelecting")
+            || !snapshot.hasKey("planRevision", 4)
+            || snapshot.getLong("planRevision") < localAreaRevision
+            || !snapshot.hasKey("uiSequence", 4)
+            || snapshot.getLong("uiSequence") < localAreaCommandSequence
+            || !snapshot.hasKey("dimension", 3)
+            || snapshot.getInteger("dimension") != localAreaDimension
+            || !snapshot.hasKey("toolId", 8)
+            || !HologramInputContext.selectionTool(localAreaTool, snapshot.getString("toolId"))) return;
+        if (!localAreaSession.equals(snapshot.getString("session"))
+            && !(localAreaSession.equals(snapshot.getString("editorWorkspacePreviousSession"))
+                && "blueprint".equals(snapshot.getString("editorWorkspace"))))
+            return;
+        localArea = null;
+        localAreaView = null;
+        localAreaFinishing = false;
+        localAreaCommandSequence = -1;
     }
 
     private static void submitLocalAreaSelection(boolean cancel) {
@@ -1265,6 +1370,7 @@ public final class HologramClient {
                 state == null ? 0 : state.data.getLong("uiSequence"),
                 HologramBackgroundTasks.commandSequence(localAreaSession)) + 1;
             request.setLong("uiSequence", sequence);
+            localAreaCommandSequence = sequence;
             HologramBackgroundTasks.command(localAreaSession, sequence, "importArea");
         }
         HologramNetwork.sendAction(request);
@@ -1698,6 +1804,7 @@ public final class HologramClient {
             return;
         }
         if (!nbt.getBoolean("partial") && !nbt.getBoolean("areaSelectionOnly")) fullSnapshotRequested = false;
+        HologramState publication = next;
         next = HologramMaterialQuoteUpdates.retain(next, state);
         next = HologramBackgroundTasks.retainMaterialOrder(next);
         if (!same) {
@@ -1710,6 +1817,8 @@ public final class HologramClient {
         receivedAt = now;
         HologramJobVisuals.bind(next);
         next = HologramJobVisuals.metadata(next);
+        next = next.withPublication(publication);
+        NBTTagCompound acceptedLocalAreaBaseline = nbt;
         nbt = next.data;
         acceptedBatch = nbt.getLong("batchSeq");
         pendingPositionLock.snapshot(nbt);
@@ -1720,6 +1829,7 @@ public final class HologramClient {
             && nbt.getBoolean("areaImported")
             && "area".equals(nbt.getString("blueprintSource"))) HologramLibraryClient.INSTANCE.clearSelection();
         state = next;
+        if (next.completeBaseline()) retireSubmittedLocalArea(acceptedLocalAreaBaseline);
         HologramUiConfiguration.observePresetSnapshot(next);
         HologramBackgroundTasks.snapshot(next);
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);

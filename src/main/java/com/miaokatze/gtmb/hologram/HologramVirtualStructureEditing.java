@@ -393,6 +393,7 @@ final class HologramVirtualStructureEditing {
                 }
             }
             for (HologramCapture.Cell cell : generated.values()) append(merged, cell);
+            HologramBlueprintLimits.require(merged.cells.size());
             // Replace only the selected member's saved rows; unrelated source rows and their NBT are retained.
             HologramPresets.Preset replacementPreset = HologramSnapshotMetadataSource.copyMetadata(preset);
             replacementPreset.palette.addAll(preset.palette);
@@ -499,7 +500,8 @@ final class HologramVirtualStructureEditing {
                     .ordinal());
         }
 
-        private static void append(HologramCapture capture, HologramCapture.Cell cell) {
+        private static void append(HologramCapture capture, HologramCapture.Cell cell) throws IOException {
+            HologramBlueprintLimits.require((long) capture.cells.size() + 1);
             capture.cells.add(cell);
             capture.positions.put(HologramValues.position(cell), cell);
         }

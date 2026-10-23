@@ -36,7 +36,7 @@ final class HologramLinkNodePreview {
     }
 
     static void advance(HologramState previous, HologramState next) {
-        for (int index : next.changedIndices) NODES.remove(previous.cells.get(index));
+        for (HologramState.Cell cell : next.changedPreviousCells) NODES.remove(cell);
     }
 
     static void clear() {

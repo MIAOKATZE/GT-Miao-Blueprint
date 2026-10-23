@@ -383,7 +383,7 @@ final class HologramEditorLessons {
         add(
             s,
             "精确选格",
-            "Ctrl 增减选格；" + commands.shortcut("sameType") + " 扩展同类。点结构轮廓可整选成员。",
+            "按住中键拖动平移镜头，右键拖动旋转，滚轮缩放；左键选格。Ctrl 增减选格；" + commands.shortcut("sameType") + " 扩展同类。点结构轮廓可整选成员。",
             "viewport",
             action(Operation.SELECT_CELL, "viewport"));
         add(

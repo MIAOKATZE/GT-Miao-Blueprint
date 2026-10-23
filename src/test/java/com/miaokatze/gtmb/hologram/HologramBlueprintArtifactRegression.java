@@ -38,6 +38,7 @@ public final class HologramBlueprintArtifactRegression {
         try {
             byte[] png = image();
             exactBytesAndBinding(png);
+            reversePreviewBinding(png);
             wireDescriptor(png);
             malformedPng(png);
             validEncodingVariants();
@@ -145,6 +146,90 @@ public final class HologramBlueprintArtifactRegression {
         expectIo(() -> HologramBlueprintArtifact.decode(wire(json, png)), "valid unbound PNG cannot enter wire");
         byte[] duplicate = insert(bound, "tEXt", text(HologramBlueprintArtifact.hash(json)));
         expectIo(() -> HologramBlueprintArtifact.decode(wire(json, duplicate)), "duplicate source binding rejected");
+    }
+
+    private static void reversePreviewBinding(byte[] png) throws Exception {
+        byte[] source = json("reviewed_binding"), sourceCopy = source.clone();
+        HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.prepareSave(source, png);
+        SimpleAssert.that(Arrays.equals(source, sourceCopy), "fresh save does not mutate reviewed source");
+        SimpleAssert.that(
+            Arrays.equals(source, HologramBlueprintPreviewBinding.sourceJson(saved.json)),
+            "removing only versioned metadata restores reviewed bytes and whitespace exactly");
+        SimpleAssert.eq(
+            saved.pngSha256,
+            HologramBlueprintPreviewBinding.pngSha256(saved.json),
+            "saved JSON records SHA256 of complete actual PNG bytes");
+        SimpleAssert.eq(
+            saved.jsonSha256,
+            HologramBlueprintPreviewBinding.boundJsonSha256(source, saved.pngSha256),
+            "server reconstructs exact disk JSON digest from prepared source and PNG digest");
+        HologramBlueprintArtifact.Artifact wire = HologramBlueprintArtifact
+            .decode(HologramBlueprintArtifact.encode(saved.json, saved.png));
+        SimpleAssert.that(
+            Arrays.equals(saved.json, wire.json) && Arrays.equals(saved.png, wire.png),
+            "bound transfer preserves both complete disk members byte exactly");
+        SimpleAssert.that(
+            HologramBlueprintArtifact.previewMatches(saved.json, saved.png),
+            "both binding directions match after fresh save");
+        BufferedImage changedImage = ImageIO.read(new java.io.ByteArrayInputStream(png));
+        changedImage.setRGB(320, 320, 0xffff00ff);
+        ByteArrayOutputStream changedBytes = new ByteArrayOutputStream();
+        ImageIO.write(changedImage, "png", changedBytes);
+        changedImage.flush();
+        byte[] swapped = HologramBlueprintArtifact.bindPreview(source, changedBytes.toByteArray());
+        expectIo(
+            () -> HologramBlueprintArtifact.decode(wire(saved.json, swapped)),
+            "different pixels with the correct reviewed source digest still fail reverse binding");
+        expectIo(
+            () -> HologramBlueprintArtifact.encode(saved.json, swapped),
+            "encoding cannot silently replace a saved PNG hash");
+        HologramBlueprintArtifact.Artifact updated = HologramBlueprintArtifact
+            .prepareSave(json("updated_binding"), changedBytes.toByteArray());
+        SimpleAssert.that(!saved.pngSha256.equals(updated.pngSha256), "fresh update replaces preview and binding");
+        HologramBlueprintArtifact.Artifact legacy = HologramBlueprintArtifact
+            .decode(HologramBlueprintArtifact.encode(source, png));
+        SimpleAssert.eq(
+            "",
+            HologramBlueprintPreviewBinding.pngSha256(legacy.json),
+            "legacy local read manufactures no PNG hash");
+        SimpleAssert.eq(
+            "",
+            HologramBlueprintPreviewBinding
+                .pngSha256(HologramBlueprintArtifact.transfer(json("legacy_transfer"), legacy).json),
+            "legacy export and public identity changes do not manufacture a new binding");
+        byte[] noncanonical = new String(saved.json, StandardCharsets.UTF_8).replace("\"version\":1", "\"version\":2")
+            .getBytes(StandardCharsets.UTF_8);
+        expectIo(
+            () -> HologramBlueprintPreviewBinding.sourceJson(noncanonical),
+            "unknown binding versions fail closed");
+        String prefix = HologramBlueprintPreviewBinding.JSON_PREFIX + saved.pngSha256
+            + HologramBlueprintPreviewBinding.JSON_SUFFIX;
+        expectIo(
+            () -> HologramBlueprintPreviewBinding
+                .sourceJson(("{" + prefix + "\"previewBinding\":{},\"id\":1}").getBytes(StandardCharsets.UTF_8)),
+            "duplicate binding cannot be stripped into another binding");
+        expectIo(
+            () -> HologramBlueprintPreviewBinding
+                .sourceJson(("{" + prefix + "\"data\":{\"x\":1,\"x\":2}}").getBytes(StandardCharsets.UTF_8)),
+            "duplicate nested JSON keys are rejected before binding");
+        Path directory = Files.createTempDirectory("gtmb-reverse-binding-");
+        Path path = directory.resolve("bound.json");
+        try {
+            HologramBlueprintArtifact.writePair(path, saved.json, saved.png);
+            AtomicInteger moves = new AtomicInteger();
+            expectIo(() -> HologramBlueprintArtifact.writePair(path, updated.json, updated.png, (from, to) -> {
+                if (moves.incrementAndGet() == 2) throw new IOException("injected second-member replacement failure");
+                Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            }), "failed bound update rolls back both members");
+            pairEquals(path, saved.json, saved.png, "failed update preserves exact previous binding and preview");
+            HologramBlueprintArtifact.PairWrite pending = HologramBlueprintArtifact
+                .writePairPending(path, updated.json, updated.png, () -> true);
+            pending.rollback();
+            pairEquals(path, saved.json, saved.png, "logical index rejection restores previous bound pair");
+        } finally {
+            HologramBlueprintArtifact.deletePair(path);
+            Files.delete(directory);
+        }
     }
 
     private static void malformedPng(byte[] png) throws Exception {

@@ -21,6 +21,13 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
+        cases.put(
+            "blueprint_client_cell_admission_is_strict_and_atomic",
+            com.miaokatze.gtmb.client.hologram.HologramBlueprintCellAdmissionRegression::run);
+        cases.put(
+            "selection_discard_confirmation_preserves_content_and_persists_only_accepted_choice",
+            com.miaokatze.gtmb.client.hologram.HologramSelectionDiscardRegression::run);
         cases.put(
             "editor_workspaces_keep_owned_domains_and_transport_rollback",
             HologramEditorWorkspacesRegression::run);
@@ -57,6 +64,12 @@ public final class HologramRegressionTest {
         cases.put(
             "background_tasks_survive_ui_close_and_fence_late_results",
             com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression::run);
+        cases.put(
+            "area_import_task_uses_complete_geometry_provenance_after_metadata_stripping",
+            com.miaokatze.gtmb.client.hologram.HologramAreaWorkspaceReceiptRegression::run);
+        cases.put(
+            "completed_area_capture_retires_local_gestures_before_the_next_blueprint",
+            com.miaokatze.gtmb.client.hologram.HologramAreaSelectionLifecycleRegression::run);
         cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);
         cases.put(
             "admitted_jobs_survive_hotbar_selection_and_publish_real_stop_receipts",
@@ -247,6 +260,9 @@ public final class HologramRegressionTest {
         cases.put("channel_wrapped_declarations_are_expanded", HologramRegressionTest::wrappedDeclarations);
         cases.put("clipboard_edits_preserve_automatic_source_and_other_cells", HologramServiceEditRegression::run);
         cases.put("stable_module_edits_use_sparse_history_resources_and_cell_deltas", HologramLocalEditRegression::run);
+        cases.put(
+            "geometry_edits_patch_both_endpoints_and_validate_at_next_workflow",
+            HologramGeometryEditRegression::run);
         cases.put("preset_updates_keep_identity_and_persist_atomically", HologramPresetPersistenceRegression::run);
         cases.put(
             "blueprint_nbt_sharing_missing_dependencies_and_legacy_storage",

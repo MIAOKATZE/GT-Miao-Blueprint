@@ -97,7 +97,7 @@ final class HologramTextures {
 
     static void advance(HologramState previous, HologramState next) {
         if (snapshot != previous) return;
-        for (int index : next.changedIndices) RESOLVED.remove(previous.cells.get(index));
+        for (HologramState.Cell cell : next.changedPreviousCells) RESOLVED.remove(cell);
         snapshot = next;
     }
 

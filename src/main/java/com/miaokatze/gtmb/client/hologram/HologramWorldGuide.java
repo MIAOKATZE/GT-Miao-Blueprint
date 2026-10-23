@@ -203,38 +203,45 @@ final class HologramWorldGuide {
         if (messages.isEmpty()) return;
         Minecraft mc = Minecraft.getMinecraft();
         FontRenderer font = mc.fontRenderer;
-        int available = Math.max(40, resolution.getScaledWidth() - 24);
         List<String> rows = new ArrayList<>();
         for (int i = 0; i < messages.size(); i++) {
             String styled = highlight(messages.get(i), i == 0 ? "\u00a7b" : "\u00a77");
-            rows.addAll(font.listFormattedStringToWidth(styled, available));
+            rows.add(styled);
         }
         int width = 0;
         for (String row : rows) width = Math.max(width, font.getStringWidth(row));
+        // Match GTSWN's TerminalBaubleController top hint card, including its fit-to-width/height font scale.
+        int availableWidth = Math.max(1, resolution.getScaledWidth() - 20);
+        int availableHeight = Math.max(20, resolution.getScaledHeight() / 3);
+        float scale = Math.min(1, availableWidth / (float) (width + 20));
+        scale = Math.min(scale, availableHeight / (float) (rows.size() * 11 + 12));
         // Leave room for Waila's standard top block tooltip without linking its optional renderer.
         boolean blockTooltip = Loader.isModLoaded("Waila") && mc.objectMouseOver != null
             && mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK;
         int top = blockTooltip ? 40 : 8;
-        int x = (resolution.getScaledWidth() - width) / 2, y = top;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glPushMatrix();
         try {
-            Gui.drawRect(x - 5, y - 4, x + width + 5, y + rows.size() * (font.FONT_HEIGHT + 2), 0x99000000);
-            for (String row : rows) {
-                font.drawStringWithShadow(
-                    row,
-                    (resolution.getScaledWidth() - font.getStringWidth(row)) / 2,
-                    y,
-                    0xFFFFFF);
-                y += font.FONT_HEIGHT + 2;
+            GL11.glTranslatef(resolution.getScaledWidth() / 2f, top, 0);
+            GL11.glScalef(scale, scale, 1);
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            int half = (width + 16) / 2;
+            Gui.drawRect(-half, 0, half, rows.size() * 11 + 6, 0x99000000);
+            for (int i = 0; i < rows.size(); i++) {
+                String row = rows.get(i);
+                font.drawStringWithShadow(row, -font.getStringWidth(row) / 2, 4 + i * 11, 0xFFFFFF);
             }
         } finally {
+            GL11.glPopMatrix();
             GL11.glPopAttrib();
         }
         lastRenderWitness = new RenderWitness(
             resolution.getScaledWidth() / 2,
             top,
-            width,
-            rows.size() * (font.FONT_HEIGHT + 2),
+            (int) Math.ceil((width + 16) * scale),
+            (int) Math.ceil((rows.size() * 11 + 6) * scale),
             rows);
     }
 

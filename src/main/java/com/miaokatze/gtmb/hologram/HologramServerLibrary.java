@@ -517,9 +517,11 @@ final class HologramServerLibrary {
             Entry entry = published.get(request.getString("id"));
             if (entry == null) throw new IOException("Blueprint no longer exists");
             HologramBlueprintArtifact.Artifact artifact = storedArtifact(entry);
+            HologramBlueprintArtifact.Artifact download = HologramBlueprintArtifact
+                .transfer(encodeShare(entry.blueprint), artifact);
             queueDownload(
                 peer,
-                HologramBlueprintArtifact.encode(encodeShare(entry.blueprint), artifact.png),
+                HologramBlueprintArtifact.encode(download.json, download.png),
                 entry.blueprint.name,
                 request,
                 entry.blueprint.id);
@@ -798,14 +800,14 @@ final class HologramServerLibrary {
                             send(peer, contentReply(upload.request, jsonHash, false, false));
                         } else HologramLibraryFacade.importPrivate(peer.player, upload.request, blueprint);
                     }
-                } else publish(peer, upload, blueprint, artifact.png);
+                } else publish(peer, upload, blueprint, artifact);
             }
             abort(peer);
         } else upload.ackPending = true;
     }
 
-    private void publish(Peer peer, Upload upload, HologramPresets.Preset blueprint, byte[] preview)
-        throws IOException {
+    private void publish(Peer peer, Upload upload, HologramPresets.Preset blueprint,
+        HologramBlueprintArtifact.Artifact original) throws IOException {
         Entry previous = upload.replace.isEmpty() ? null : owned(peer.owner, upload.replace);
         if (previous == null) checkQuota(peer.owner, countOwned(peer.owner), config.view().maxUploads);
         if (previous == null && published.size() >= MAX_ENTRIES) throw new IOException("Server library is full");
@@ -820,7 +822,9 @@ final class HologramServerLibrary {
         envelope.uploadedBy = peer.name;
         envelope.blueprint = blueprint;
         byte[] bytes = HologramBlueprintCompactCodec.encodeEnvelope(blueprint, envelope.owner, envelope.uploadedBy);
-        byte[] boundPreview = HologramBlueprintArtifact.bindPreview(bytes, preview);
+        HologramBlueprintArtifact.Artifact publication = HologramBlueprintArtifact.transfer(bytes, original);
+        bytes = publication.json;
+        byte[] boundPreview = publication.png;
         long nextBytes = storedBytes - (previous == null ? 0 : previous.bytes) + bytes.length + boundPreview.length;
         if (nextBytes > MAX_STORED_BYTES) throw new IOException("Server library byte budget is full");
         Entry replacement = new Entry(
@@ -1005,12 +1009,14 @@ final class HologramServerLibrary {
                     throw new IOException("Library connection or runtime changed");
                 HologramBlueprintArtifact.Artifact original = storedArtifact(previous);
                 byte[] compact = HologramBlueprintUpgrade.migrate(
-                    original.json,
+                    HologramBlueprintPreviewBinding.sourceJson(original.json),
                     HologramBlueprintArtifact.MAX_JSON_BYTES,
                     () -> peer.online && !closed && epoch == runtimeEpoch);
                 Path oldPath = HologramBlueprintFiles.resolve(directory, previous.blueprint.id);
                 Path target = HologramBlueprintFiles.target(directory, previous.blueprint.id, compact);
-                byte[] bound = HologramBlueprintArtifact.bindPreview(compact, original.png);
+                HologramBlueprintArtifact.Artifact migratedPair = HologramBlueprintArtifact.transfer(compact, original);
+                compact = migratedPair.json;
+                byte[] bound = migratedPair.png;
                 if (oldPath.equals(target) && java.util.Arrays.equals(original.json, compact)
                     && java.util.Arrays.equals(original.png, bound)) {
                     row.setString("state", "current");
@@ -1221,7 +1227,11 @@ final class HologramServerLibrary {
     synchronized String savedContentCommitted(EntityPlayerMP player, NBTTagCompound proof) {
         Peer peer = peers.get(HologramLibraryFacade.actorId(player));
         if (closed || peer == null || peer.player != player || !peer.online) return "";
-        String hash = trusted.commitSaved(peer, proof.getString("saveReceipt"), proof.getString("jsonSha256"));
+        String hash = trusted.commitSaved(
+            peer,
+            proof.getString("saveReceipt"),
+            proof.hasKey("reviewedJsonSha256", 8) ? proof.getString("reviewedJsonSha256")
+                : proof.getString("jsonSha256"));
         if (!hash.isEmpty()) return hash;
         hash = proof.getString("contentHash");
         return trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, hash) ? hash : "";

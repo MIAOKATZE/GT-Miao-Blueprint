@@ -240,7 +240,7 @@ public final class HologramLibraryFacade {
                     proof.setString("previewSha256", "");
                     proof.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
                     proof.setBoolean("localSaveReceipt", true);
-                    rememberSavedResult(player, proof);
+                    rememberSavedResult(player, proof, json);
                 }
                 // Publish the result capability before the worker can advertise the download.
                 current.draft(player, request, json, name);
@@ -271,7 +271,7 @@ public final class HologramLibraryFacade {
                 if (!HologramLibraryService.saveCurrent(player, request) || !HologramService.libraryPreviewVerified(
                     player,
                     request,
-                    HologramBlueprintArtifact.hash(artifact.json),
+                    HologramBlueprintArtifact.hash(HologramBlueprintPreviewBinding.sourceJson(artifact.json)),
                     HologramBlueprintArtifact.hash(artifact.png)))
                     throw new IOException("Blueprint preview source or receipt changed");
                 NBTTagCompound verified = HologramLibraryProtocol.reply("previewVerified");
@@ -279,6 +279,9 @@ public final class HologramLibraryFacade {
                 verified.setLong("clientTaskToken", request.getLong("clientTaskToken"));
                 verified.setString("saveReceipt", request.getString("saveReceipt"));
                 verified.setString("jsonSha256", HologramBlueprintArtifact.hash(artifact.json));
+                verified.setString(
+                    "reviewedJsonSha256",
+                    HologramBlueprintArtifact.hash(HologramBlueprintPreviewBinding.sourceJson(artifact.json)));
                 verified.setString("previewSha256", HologramBlueprintArtifact.hash(artifact.png));
                 verified.setString("session", request.getString("session"));
                 verified.setLong("planRevision", request.getLong("planRevision"));
@@ -338,11 +341,23 @@ public final class HologramLibraryFacade {
 
     /** One owner-bound result per peer resolves cancel/ACK races without retaining preview payloads. */
     private static void rememberSavedResult(EntityPlayerMP player, NBTTagCompound verified) throws IOException {
+        rememberSavedResult(player, verified, null);
+    }
+
+    private static void rememberSavedResult(EntityPlayerMP player, NBTTagCompound verified, byte[] preparedJson)
+        throws IOException {
         pruneSavedResults();
         UUID owner = actorId(player);
         if (!savedResults.containsKey(owner) && savedResults.size() >= 64)
             throw new IOException("Blueprint save result queue is busy");
-        SavedResult next = new SavedResult(player, verified), previous = savedResults.put(owner, next);
+        long retained = preparedJson == null ? 0 : preparedJson.length;
+        for (java.util.Map.Entry<UUID, SavedResult> entry : savedResults.entrySet()) if (!entry.getKey()
+            .equals(owner) && entry.getValue().preparedJson != null) retained += entry.getValue().preparedJson.length;
+        if (retained > 2L * HologramBlueprintArtifact.MAX_JSON_BYTES)
+            throw new IOException("Blueprint pending source byte budget is full; retry after another save completes");
+        SavedResult next = new SavedResult(player, verified);
+        next.preparedJson = preparedJson;
+        SavedResult previous = savedResults.put(owner, next);
         if (previous != null && previous.matches(player, verified) && previous.proof.hasKey("contentHash", 8))
             next.proof.setString("contentHash", previous.proof.getString("contentHash"));
         if (previous != null && "pending".equals(previous.outcome) && !previous.matches(player, verified)) {
@@ -377,6 +392,7 @@ public final class HologramLibraryFacade {
             } else current.discardSavedContent(player, result.proof);
         }
         result.outcome = committed ? "saveCommitted" : "saveRejected";
+        result.preparedJson = null;
         result.finishedAtNanos = System.nanoTime();
         result.message = message == null ? "" : message;
         result.send();
@@ -395,6 +411,7 @@ public final class HologramLibraryFacade {
         if ("pending".equals(result.outcome)) {
             if (!HologramLibraryService.saveCurrent(player, request)) {
                 result.outcome = "saveRejected";
+                result.preparedJson = null;
                 result.finishedAtNanos = System.nanoTime();
                 result.message = "Blueprint save source was cancelled or replaced";
             }
@@ -406,6 +423,7 @@ public final class HologramLibraryFacade {
 
         final EntityPlayerMP actor;
         final NBTTagCompound proof;
+        byte[] preparedJson;
         String outcome = "pending", message = "";
         long finishedAtNanos;
 
@@ -427,11 +445,24 @@ public final class HologramLibraryFacade {
                 && proof.getString("localId")
                     .equals(localId)
                 && (!request.hasKey("jsonSha256", 8) || proof.getString("jsonSha256")
-                    .equals(request.getString("jsonSha256")))
+                    .equals(request.getString("jsonSha256")) || matchesBoundJson(request))
                 && (!request.hasKey("previewSha256", 8) || proof.getString("previewSha256")
                     .equals(request.getString("previewSha256"))
                     || proof.getBoolean("localSaveReceipt") && proof.getString("previewSha256")
                         .isEmpty());
+        }
+
+        private boolean matchesBoundJson(NBTTagCompound request) {
+            if (preparedJson == null || !proof.getBoolean("localSaveReceipt")
+                || !proof.getString("jsonSha256")
+                    .equals(request.getString("reviewedJsonSha256")))
+                return false;
+            try {
+                return HologramBlueprintPreviewBinding.boundJsonSha256(preparedJson, request.getString("previewSha256"))
+                    .equals(request.getString("jsonSha256"));
+            } catch (IOException invalid) {
+                return false;
+            }
         }
 
         boolean bindLocalPreview(NBTTagCompound request) {
@@ -442,7 +473,14 @@ public final class HologramLibraryFacade {
                 return false;
             String previous = proof.getString("previewSha256");
             if (!previous.isEmpty() && !previous.equals(request.getString("previewSha256"))) return false;
+            if (!proof.getString("jsonSha256")
+                .equals(request.getString("jsonSha256"))) {
+                if (!matchesBoundJson(request)) return false;
+                proof.setString("reviewedJsonSha256", proof.getString("jsonSha256"));
+                proof.setString("jsonSha256", request.getString("jsonSha256"));
+            }
             proof.setString("previewSha256", request.getString("previewSha256"));
+            preparedJson = null;
             return true;
         }
 
@@ -467,6 +505,7 @@ public final class HologramLibraryFacade {
             } else if ("pending".equals(result.outcome)
                 && !HologramLibraryService.saveCurrent(result.actor, result.proof)) {
                     result.outcome = "saveRejected";
+                    result.preparedJson = null;
                     result.finishedAtNanos = now;
                     result.message = "Blueprint source changed before its disk ACK";
                     HologramServerLibrary current = library;

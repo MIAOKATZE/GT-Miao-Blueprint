@@ -430,21 +430,26 @@ public final class HologramBackgroundTasks {
         materialOrders.finishOwner(OWNER);
     }
 
+    /** Cells live outside metadata; only a genuinely complete new-workspace baseline may transfer task ownership. */
+    static boolean advancesAreaWorkspace(HologramState previous, HologramState next, String ownerSession,
+        long ownerCommand) {
+        if (previous == null || next == null || !next.completeBaseline()) return false;
+        NBTTagCompound data = next.data;
+        return previous.session.equals(ownerSession) && !ownerSession.equals(next.session)
+            && ownerSession.equals(data.getString("editorWorkspacePreviousSession"))
+            && "projection".equals(previous.data.getString("editorWorkspace"))
+            && "blueprint".equals(data.getString("editorWorkspace"))
+            && data.getLong("editorWorkspaceEpoch") > previous.data.getLong("editorWorkspaceEpoch")
+            && data.getLong("uiSequence") == ownerCommand
+            && "area".equals(data.getString("blueprintSource"));
+    }
+
     static void snapshot(HologramState next) {
         if (context != null && context.session.equals(next.session)) context = next;
         if (libraryTask() && HologramLibraryClient.INSTANCE.snapshot(next)) reviewSubmitted = false;
         NBTTagCompound data = next.data;
         if ("server".equals(OWNER.kind()) && "area".equals(operation)
-            && context != null
-            && !session.equals(next.session)
-            && session.equals(data.getString("editorWorkspacePreviousSession"))
-            && "projection".equals(context.data.getString("editorWorkspace"))
-            && "blueprint".equals(data.getString("editorWorkspace"))
-            && data.getLong("editorWorkspaceEpoch") > context.data.getLong("editorWorkspaceEpoch")
-            && data.getLong("uiSequence") == command
-            && data.hasKey("cells", 9)
-            && !data.getBoolean("partial")
-            && "area".equals(data.getString("blueprintSource"))
+            && advancesAreaWorkspace(context, next, session, command)
             && OWNER.advance("server", session + ":" + command, next.session + ":" + command)) {
             session = next.session;
             context = next;

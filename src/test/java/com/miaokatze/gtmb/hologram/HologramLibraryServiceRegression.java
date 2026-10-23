@@ -333,7 +333,7 @@ final class HologramLibraryServiceRegression {
     @SuppressWarnings("unchecked")
     private static void exerciseLocalReceipt(EntityPlayerMP owner, EntityPlayerMP other, EntityPlayerMP reconnect,
         Object session, NBTTagCompound base, String local, String jsonHash, String pngHash)
-        throws ReflectiveOperationException {
+        throws ReflectiveOperationException, java.io.IOException {
         Field resultsField = HologramLibraryFacade.class.getDeclaredField("savedResults");
         resultsField.setAccessible(true);
         Map<UUID, Object> results = (Map<UUID, Object>) resultsField.get(null);
@@ -482,6 +482,54 @@ final class HologramLibraryServiceRegression {
                 "saveRejected",
                 get(results.get(owner.getUniqueID()), "outcome"),
                 "rejected callback resolves prepublished save rather than leaving it pending");
+            byte[] reviewed = " \n{\"blueprint\":{\"name\":\"binding_fixture\",\"cells\":[]}}\r\n"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            String reviewedHash = HologramBlueprintArtifact.hash(reviewed);
+            proof.setString(
+                "saveReceipt",
+                UUID.randomUUID()
+                    .toString());
+            proof.setString("jsonSha256", reviewedHash);
+            proof.setString("previewSha256", "");
+            set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
+            set(session, "blueprintSaveJsonSha256", reviewedHash);
+            set(session, "blueprintSavePreviewSha256", "");
+            set(session, "blueprintDirty", true);
+            Method rememberSource = HologramLibraryFacade.class
+                .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class, byte[].class);
+            rememberSource.setAccessible(true);
+            rememberSource.invoke(null, owner, proof, reviewed);
+            NBTTagCompound boundAck = (NBTTagCompound) proof.copy();
+            boundAck.setString("op", "ackBlueprintSaved");
+            boundAck.setString("reviewedJsonSha256", reviewedHash);
+            boundAck.setString("previewSha256", pngHash);
+            boundAck.setString("jsonSha256", HologramBlueprintPreviewBinding.boundJsonSha256(reviewed, pngHash));
+            NBTTagCompound forged = (NBTTagCompound) boundAck.copy();
+            forged.setString("jsonSha256", jsonHash);
+            HologramService.handle(owner, forged);
+            SimpleAssert.that(
+                (Boolean) get(session, "blueprintDirty"),
+                "matching review hash cannot authorize an unrelated claimed disk JSON hash");
+            SimpleAssert.eq("", get(session, "blueprintSavePreviewSha256"), "forged bound ACK cannot bind preview");
+            forged = (NBTTagCompound) boundAck.copy();
+            forged.setString("reviewedJsonSha256", jsonHash);
+            HologramService.handle(owner, forged);
+            SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "changed reviewed hash rejects bound disk ACK");
+            HologramService.handle(owner, boundAck);
+            SimpleAssert
+                .that(!(Boolean) get(session, "blueprintDirty"), "actual bound JSON ACK commits through dispatcher");
+            Object boundResult = results.get(owner.getUniqueID());
+            NBTTagCompound acceptedProof = (NBTTagCompound) get(boundResult, "proof");
+            SimpleAssert.eq(
+                boundAck.getString("jsonSha256"),
+                acceptedProof.getString("jsonSha256"),
+                "commit reply retains exact complete disk JSON digest");
+            SimpleAssert.eq(
+                reviewedHash,
+                acceptedProof.getString("reviewedJsonSha256"),
+                "commit proof independently retains exact reviewed source digest");
+            SimpleAssert
+                .that(get(boundResult, "preparedJson") == null, "completed ACK releases pending prepared bytes");
         } finally {
             if (previous == null) results.remove(owner.getUniqueID());
             else results.put(owner.getUniqueID(), previous);

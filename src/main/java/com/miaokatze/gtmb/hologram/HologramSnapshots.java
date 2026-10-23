@@ -162,6 +162,45 @@ final class HologramSnapshots {
         state.setTag("cellNbtOverrides", overrides.copy());
     }
 
+    static NBTTagList structureLabels(HologramSession s) {
+        HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+        NBTTagList structureLabels = area == null ? new NBTTagList() : area.labels();
+        if (s.virtualPreset != null && !s.virtualPreset.structures.isEmpty()) {
+            structureLabels = new NBTTagList();
+            for (HologramPresets.Structure saved : s.virtualPreset.structures) {
+                NBTTagCompound row = new NBTTagCompound();
+                row.setString("id", saved.id);
+                row.setString("name", saved.name == null ? "结构" : saved.name);
+                if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
+                    try {
+                        row.setTag("textBox", HologramTextWorkflow.definition(saved));
+                    } catch (java.io.IOException invalid) {
+                        row.setString("textBoxError", "文字定义损坏");
+                    }
+                }
+                row.setInteger("x", s.x + saved.x);
+                row.setInteger("y", s.y + saved.y);
+                row.setInteger("z", s.z + saved.z);
+                row.setBoolean("enabled", saved.enabled);
+                String warning = HologramBlueprintData.blueprintSourceWarning(s.virtualPreset, saved.id);
+                row.setBoolean("sourceMissing", !warning.isEmpty());
+                row.setString("sourceWarning", warning);
+                row.setString("sourceClass", saved.sourceClass == null ? "" : saved.sourceClass);
+                row.setString("sourceMod", saved.sourceMod == null ? "" : saved.sourceMod);
+                row.setBoolean("declared", warning.isEmpty());
+                TileEntity tile = HologramSessionPolicy.authoring(s) ? null
+                    : s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
+                row.setBoolean(
+                    "formed",
+                    tile instanceof IGregTechTileEntity
+                        && ((IGregTechTileEntity) tile).getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
+                        && ((MTEEnhancedMultiBlockBase<?>) ((IGregTechTileEntity) tile).getMetaTileEntity()).mMachine);
+                structureLabels.appendTag(row);
+            }
+        }
+        return structureLabels;
+    }
+
     static void writeBlueprintState(HologramSession s, NBTTagCompound state) {
         try {
             HologramPresets.Preset networkView = s.virtualPreset;
@@ -250,39 +289,7 @@ final class HologramSnapshots {
         state.setBoolean(
             "placementDeidentificationRecommended",
             deidentificationLevel == 0 && !s.placementDeidentificationChosen);
-        NBTTagList structureLabels = area == null ? new NBTTagList() : area.labels();
-        if (s.virtualPreset != null && !s.virtualPreset.structures.isEmpty()) {
-            structureLabels = new NBTTagList();
-            for (HologramPresets.Structure saved : s.virtualPreset.structures) {
-                NBTTagCompound row = new NBTTagCompound();
-                row.setString("id", saved.id);
-                row.setString("name", saved.name == null ? "结构" : saved.name);
-                if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
-                    try {
-                        row.setTag("textBox", HologramTextWorkflow.definition(saved));
-                    } catch (java.io.IOException invalid) {
-                        row.setString("textBoxError", "文字定义损坏");
-                    }
-                }
-                row.setInteger("x", s.x + saved.x);
-                row.setInteger("y", s.y + saved.y);
-                row.setInteger("z", s.z + saved.z);
-                row.setBoolean("enabled", saved.enabled);
-                String warning = HologramBlueprintData.blueprintSourceWarning(s.virtualPreset, saved.id);
-                row.setBoolean("sourceMissing", !warning.isEmpty());
-                row.setString("sourceWarning", warning);
-                row.setString("sourceClass", saved.sourceClass == null ? "" : saved.sourceClass);
-                row.setString("sourceMod", saved.sourceMod == null ? "" : saved.sourceMod);
-                row.setBoolean("declared", warning.isEmpty());
-                TileEntity tile = s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
-                row.setBoolean(
-                    "formed",
-                    tile instanceof IGregTechTileEntity
-                        && ((IGregTechTileEntity) tile).getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase
-                        && ((MTEEnhancedMultiBlockBase<?>) ((IGregTechTileEntity) tile).getMetaTileEntity()).mMachine);
-                structureLabels.appendTag(row);
-            }
-        }
+        NBTTagList structureLabels = structureLabels(s);
         String sourceWarning = s.virtualPreset == null ? ""
             : HologramBlueprintData.blueprintSourceWarning(s.virtualPreset, "");
         if (s.virtualPreset != null && sourceWarning.isEmpty())
@@ -667,6 +674,7 @@ final class HologramSnapshots {
         if (presets != null) state.setTag("presets", presets);
         state.setBoolean("workspaceUiOnly", true);
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
+        state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);
         state.setBoolean("attachmentPending", s.attachmentTask != null);
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
@@ -825,7 +833,7 @@ final class HologramSnapshots {
         }
         long measured = HologramRuntimeMetrics.start();
         try {
-            if (!HologramLocalPlanRefresh.sendDelta(s)) sendComplete(s);
+            if (!HologramGeometryEdits.sendDelta(s) && !HologramLocalPlanRefresh.sendDelta(s)) sendComplete(s);
         } finally {
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SNAPSHOT_BUILD, measured);
         }
@@ -850,6 +858,7 @@ final class HologramSnapshots {
         NBTTagCompound state = new NBTTagCompound();
         if (s.presentationTransition != null)
             state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);
+        state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);
         state.setBoolean("attachmentPending", s.attachmentTask != null);
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
         state.setBoolean("placementValidating", s.placementValidating);

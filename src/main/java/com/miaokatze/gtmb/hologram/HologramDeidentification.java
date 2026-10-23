@@ -81,9 +81,10 @@ final class HologramDeidentification {
     }
 
     private static String project(HologramPresets.Cell cell, String encoded, int level) throws IOException {
-        if (encoded == null || encoded.isEmpty() || level == 0) return encoded;
+        if (encoded == null || encoded.isEmpty()) return encoded;
+        if (level == 0) return HologramCarpentersCompatibility.normalize(cell.block(), encoded);
         NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
-        if (carpenterOwner(cell.block(), tag)) tag.setString("cbOwner", "");
+        HologramCarpentersCompatibility.stripOwner(cell.block(), tag);
         boolean registered = cell.block() != null && cell.block() == GregTechAPI.sBlockMachines
             || HologramAeBlueprint.supports(cell.block(), tag)
             || HologramNetworkBindings.node(cell.block())
@@ -159,7 +160,7 @@ final class HologramDeidentification {
 
     /** Native placement assigns this root owner to the installer; it is not a retained network identity. */
     static boolean carpenterPlacementOwner(Block block, NBTTagCompound tag, String key) {
-        return tag != null && ("cbOwner".equals(key) || "owner".equals(key))
+        return tag != null && ("cbOwner".equals(key) || "owner".equals(key) || "ownerID".equals(key))
             && tag.hasKey(key, 8)
             && (block == null ? CARPENTER_TILES.contains(tag.getString("id")) : carpenterBlock(block));
     }
@@ -167,6 +168,10 @@ final class HologramDeidentification {
     /** TEBase 3.7.3's exact registered root IDs and string field; never arbitrary or nested cbOwner data. */
     static boolean carpenterOwner(NBTTagCompound tag) {
         return tag != null && CARPENTER_TILES.contains(tag.getString("id")) && tag.hasKey("cbOwner", 8);
+    }
+
+    static boolean carpenterRoot(NBTTagCompound tag) {
+        return tag != null && CARPENTER_TILES.contains(tag.getString("id"));
     }
 
     static boolean carpenterOwner(Block block, NBTTagCompound tag) {

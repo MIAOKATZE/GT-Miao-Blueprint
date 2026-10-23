@@ -14,6 +14,11 @@ final class HologramContinuousSelectionRegression {
             pendingDeletion();
             completedDeletion();
             rejectedPolygonDeletion();
+            oneShotBoxes();
+            verticalPolygons();
+            rejectedNonCoplanarPoints();
+            verticalBudgetAndEndpoint();
+            selectionContent();
             HologramAreaSelection area = new HologramAreaSelection();
             HologramAreaSelection camera = new HologramAreaSelection();
             camera.worldPoint(0, 0, 64, 0);
@@ -46,12 +51,18 @@ final class HologramContinuousSelectionRegression {
             SimpleAssert.that(
                 area.contains(0, 60, 0) && area.contains(5, 62, 2),
                 "Z mode creates another box using plain clicks");
+            SimpleAssert.eq(
+                "replace",
+                area.snapshot()
+                    .getString("areaInputMode"),
+                "completing an additive box automatically disarms its input mode");
+            area.toggleMode("add");
             area.toggleMode("add");
             SimpleAssert.eq(
                 "replace",
                 area.snapshot()
                     .getString("areaInputMode"),
-                "repeated Z disables additive mode");
+                "repeated Z cancels an armed additive mode before the next corner");
             NBTTagCompound previous = area.snapshot();
             area.toggleMode("subtract");
             area.undoRegion();
@@ -103,7 +114,7 @@ final class HologramContinuousSelectionRegression {
             HologramAreaSelection polygon = new HologramAreaSelection();
             polygon.beginContinuous(false);
             polygon.continuousPoint(0, 64, 0);
-            polygon.continuousPoint(4, 99, 0);
+            polygon.continuousPoint(4, 64, 0);
             polygon.continuousPoint(4, 64, 1);
             polygon.continuousPoint(1, 64, 1);
             polygon.continuousPoint(1, 64, 4);
@@ -165,6 +176,279 @@ final class HologramContinuousSelectionRegression {
         }
     }
 
+    private static void selectionContent() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        SimpleAssert.that(!area.hasSelectionContent(), "an untouched selection needs no discard confirmation");
+        area.beginContinuous(false);
+        SimpleAssert.that(!area.hasSelectionContent(), "arming an empty polygon adds no discardable content");
+        area.continuousPoint(0, 64, 0);
+        SimpleAssert.that(area.hasSelectionContent(), "a single polygon vertex requires discard confirmation");
+        area.deleteLatest();
+        area.worldPoint(2, 4, 66, 4);
+        SimpleAssert.that(area.hasSelectionContent(), "a pending right corner requires discard confirmation");
+        area.deleteLatest();
+        SimpleAssert.that(!area.hasSelectionContent(), "deleting the only pending corner clears discardable content");
+        area.worldPoint(1, 0, 64, 0);
+        SimpleAssert.that(area.hasSelectionContent(), "a pending left corner requires discard confirmation");
+        area.worldPoint(2, 4, 66, 4);
+        area.beginNext("add");
+        SimpleAssert.that(area.hasSelectionContent(), "committed regions count even while a new empty box is armed");
+    }
+
+    private static void oneShotBoxes() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        area.worldPoint(1, 0, 60, 0);
+        area.worldPoint(2, 2, 62, 2);
+        NBTTagCompound original = area.snapshot();
+        area.toggleMode("add");
+        area.worldPoint(2, 8, 66, 8);
+        SimpleAssert.that(
+            !area.complete() && area.snapshot()
+                .getInteger("areaPendingCorner") == 2 && area.contains(2, 62, 2) && !area.contains(8, 66, 8),
+            "right corner first starts a separate pending box and preserves the locked box");
+        area.worldPoint(1, 6, 64, 6);
+        SimpleAssert.that(
+            area.regions.size() == 2 && area.contains(0, 60, 0)
+                && area.contains(8, 66, 8)
+                && "replace".equals(
+                    area.snapshot()
+                        .getString("areaInputMode"))
+                && "add".equals(area.regions.get(1).mode),
+            "one-shot additive completion retains cyan mode and clears only the input arm");
+        area.undoRegion();
+        SimpleAssert.that(
+            !area.complete() && "add".equals(
+                area.snapshot()
+                    .getString("areaInputMode")),
+            "undo completion restores the pending right corner and its one-shot mode");
+        area.redoRegion();
+        area.worldPoint(1, 7, 64, 7);
+        SimpleAssert.that(
+            area.regions.size() == 2 && !area.contains(6, 64, 6) && area.contains(8, 66, 8),
+            "later clicks edit the current additive box without implicitly creating another box");
+        area.cycle(-1);
+        area.worldPoint(2, 3, 62, 3);
+        SimpleAssert.that(
+            area.regions.size() == 2 && area.contains(3, 62, 3),
+            "cycling back permits editing the original locked box after one-shot completion");
+        area.toggleMode("subtract");
+        area.worldPoint(2, 2, 62, 2);
+        area.worldPoint(1, 1, 60, 1);
+        SimpleAssert.that(
+            area.regions.size() == 3 && !area.contains(1, 60, 1)
+                && "subtract".equals(area.regions.get(2).mode)
+                && "replace".equals(
+                    area.snapshot()
+                        .getString("areaInputMode")),
+            "right-corner-first subtraction also completes once and preserves its red ordered mask");
+        area.deleteLatest();
+        SimpleAssert
+            .that(area.contains(1, 60, 1), "deleting the one-shot subtraction restores the older positive mask");
+        HologramAreaSelection cancelled = new HologramAreaSelection();
+        cancelled.readSnapshot(original);
+        cancelled.toggleMode("add");
+        cancelled.worldPoint(2, 8, 66, 8);
+        cancelled.deleteLatest();
+        SimpleAssert.that(
+            cancelled.complete() && "replace".equals(
+                cancelled.snapshot()
+                    .getString("areaInputMode")),
+            "deleting a pending one-shot box restores editing with no leftover armed mode");
+    }
+
+    private static void verticalPolygons() throws IOException {
+        HologramAreaSelection xy = new HologramAreaSelection();
+        xy.beginContinuous(false);
+        xy.continuousPoint(0, 60, 8);
+        xy.continuousPoint(4, 60, 8);
+        xy.continuousPoint(4, 61, 8);
+        xy.continuousPoint(1, 61, 8);
+        xy.continuousPoint(1, 64, 8);
+        xy.continuousPoint(0, 64, 8);
+        xy.continuousPoint(0, 60, 8);
+        SimpleAssert.eq(
+            2,
+            xy.snapshot()
+                .getInteger("areaPolygonHeightAxis"),
+            "XY outline infers Z thickness");
+        xy.continuousPoint(20, 90, 10);
+        xy.continuousPoint(40, 80, 6);
+        xy.undoRegion();
+        SimpleAssert.eq(
+            10,
+            xy.snapshot()
+                .getInteger("areaPolygonHeight"),
+            "undo restores a vertical thickness click");
+        xy.redoRegion();
+        int[] lock = xy.snapshot()
+            .getIntArray("areaPolygonHeightPoint");
+        SimpleAssert.that(
+            lock.length == 3 && lock[0] == 40 && lock[1] == 80 && lock[2] == 6,
+            "height lock keeps the actual clicked world position for its marker");
+        xy.finishContinuous(new int[] { 100, 100, 100 });
+        SimpleAssert.that(
+            xy.contains(0, 63, 6) && xy.contains(4, 60, 8)
+                && !xy.contains(3, 63, 7)
+                && !xy.contains(0, 60, 9)
+                && !xy.contains(0, 60, 5),
+            "concave XY raster extrudes along locked Z rather than following the later cursor");
+        HologramAreaSelection imported = new HologramAreaSelection();
+        imported.readSnapshot(xy.snapshot());
+        SimpleAssert.that(
+            imported.contains(0, 63, 6) && !imported.contains(3, 63, 7),
+            "vertical concave polygon survives the existing box serialization");
+        xy.undoRegion();
+        SimpleAssert.that(
+            xy.continuousActive() && xy.snapshot()
+                .getBoolean("areaPolygonHeightChosen")
+                && xy.snapshot()
+                    .getInteger("areaPolygonHeightAxis") == 2,
+            "undo commit restores the closed vertical outline and locked thickness axis");
+        xy.deleteLatest();
+        SimpleAssert.that(
+            !xy.snapshot()
+                .getBoolean("areaPolygonClosed")
+                && !xy.snapshot()
+                    .getBoolean("areaPolygonHeightChosen")
+                && xy.snapshot()
+                    .getIntArray("areaPolygonHeightPoint").length == 0,
+            "Delete reopens a vertical outline and removes its obsolete lock marker");
+        xy.undoRegion();
+        xy.redoRegion();
+        xy.undoRegion();
+        xy.confirmContinuous();
+        xy.deleteLatest();
+        SimpleAssert
+            .that(xy.regions.isEmpty(), "Delete removes all raster rows of a vertical polygon as one selection");
+
+        HologramAreaSelection yz = new HologramAreaSelection();
+        yz.worldPoint(1, 0, 60, 0);
+        yz.worldPoint(2, 6, 64, 4);
+        yz.toggleMode("add");
+        yz.beginContinuous(false);
+        SimpleAssert.eq(
+            "add",
+            yz.snapshot()
+                .getString("areaPolygonMode"),
+            "B inherits an armed additive mode");
+        yz.deleteLatest();
+        yz.toggleMode("subtract");
+        yz.beginContinuous(false);
+        SimpleAssert.eq(
+            "subtract",
+            yz.snapshot()
+                .getString("areaPolygonMode"),
+            "B inherits an armed subtractive mode without requiring Shift");
+        yz.continuousPoint(2, 60, 0);
+        yz.continuousPoint(2, 64, 0);
+        yz.continuousPoint(2, 60, 4);
+        yz.continuousPoint(2, 60, 0);
+        SimpleAssert.eq(
+            0,
+            yz.snapshot()
+                .getInteger("areaPolygonHeightAxis"),
+            "YZ outline infers X thickness");
+        yz.continuousPoint(4, 100, 100);
+        yz.confirmContinuous();
+        SimpleAssert.that(
+            !yz.contains(3, 61, 1) && yz.contains(3, 63, 3)
+                && yz.contains(1, 61, 1)
+                && yz.contains(5, 61, 1)
+                && "replace".equals(
+                    yz.snapshot()
+                        .getString("areaInputMode")),
+            "YZ triangle subtracts only its X extrusion and polygon completion clears an earlier box arm");
+        yz.cycle(1);
+        yz.worldPoint(2, 7, 64, 4);
+        SimpleAssert.that(yz.contains(7, 64, 4), "a polygon commit leaves the older locked box editable");
+    }
+
+    private static void rejectedNonCoplanarPoints() throws IOException {
+        HologramAreaSelection area = new HologramAreaSelection();
+        area.beginContinuous(false);
+        area.continuousPoint(0, 60, 0);
+        area.continuousPoint(4, 60, 0);
+        area.continuousPoint(4, 64, 0);
+        NBTTagCompound before = area.snapshot();
+        boolean rejected = false;
+        try {
+            area.continuousPoint(0, 60, 1);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(
+            rejected && before.equals(area.snapshot()),
+            "non-coplanar click rejects without changing vertices, axis, or history availability");
+        rejected = false;
+        try {
+            area.finishContinuous(new int[] { 0, 60, 1 });
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(
+            rejected && before.equals(area.snapshot()),
+            "B rejects an outline that has not been closed by clicking its first vertex");
+        SimpleAssert.eq(1, area.polygonCloseRejections(), "unclosed B attempt emits one transient feedback event");
+        rejected = false;
+        try {
+            area.confirmContinuous();
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(
+            rejected && before.equals(area.snapshot()) && area.polygonCloseRejections() == 2,
+            "explicit submit shares the unclosed feedback event without changing geometry or history");
+        rejected = false;
+        try {
+            area.continuousPoint(4, 60, 0);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(
+            rejected && before.equals(area.snapshot()) && area.polygonCloseRejections() == 3,
+            "clicking another existing vertex also points back to the purple first vertex without an undo entry");
+        area.undoRegion();
+        SimpleAssert.eq(
+            6,
+            area.snapshot()
+                .getIntArray("areaPolygon").length,
+            "rejected geometry adds no hidden undo history entry");
+        area.continuousPoint(4, 60, 4);
+        SimpleAssert.eq(
+            1,
+            area.snapshot()
+                .getInteger("areaPolygonHeightAxis"),
+            "after deleting the plane-defining third point the shared edge can choose a horizontal plane");
+    }
+
+    private static void verticalBudgetAndEndpoint() throws IOException {
+        HologramAreaSelection large = new HologramAreaSelection();
+        large.beginContinuous(false);
+        large.continuousPoint(2, 0, 0);
+        large.continuousPoint(2, 1024, 0);
+        large.continuousPoint(2, 0, 1024);
+        NBTTagCompound before = large.snapshot();
+        boolean rejected = false;
+        try {
+            large.continuousPoint(2, 0, 0);
+        } catch (IOException expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(
+            rejected && before.equals(large.snapshot()),
+            "vertical polygon uses the same footprint budget and preserves its pending input on rejection");
+        HologramAreaSelection edge = new HologramAreaSelection();
+        edge.beginContinuous(false);
+        edge.continuousPoint(Integer.MAX_VALUE - 1, 60, 0);
+        edge.continuousPoint(Integer.MAX_VALUE, 60, 0);
+        edge.continuousPoint(Integer.MAX_VALUE, 61, 0);
+        edge.continuousPoint(Integer.MAX_VALUE - 1, 60, 0);
+        edge.finishContinuous(1);
+        SimpleAssert.that(
+            edge.contains(Integer.MAX_VALUE, 61, 1),
+            "bounded vertical raster terminates and retains the inclusive maximum integer coordinate");
+    }
+
     private static void pendingDeletion() throws IOException {
         HologramAreaSelection area = new HologramAreaSelection();
         area.worldPoint(2, 9, 64, 9);
@@ -215,6 +499,7 @@ final class HologramContinuousSelectionRegression {
         area.continuousPoint(0, 64, 0);
         area.continuousPoint(4, 64, 0);
         area.continuousPoint(0, 64, 4);
+        area.continuousPoint(0, 64, 0);
         area.finishContinuous(66);
         SimpleAssert.that(
             area.regionSnapshot()
@@ -269,6 +554,7 @@ final class HologramContinuousSelectionRegression {
         area.continuousPoint(0, 64, 10);
         area.continuousPoint(4, 64, 10);
         area.continuousPoint(0, 64, 14);
+        area.continuousPoint(0, 64, 10);
         NBTTagCompound pending = area.snapshot();
         boolean rejected = false;
         try {

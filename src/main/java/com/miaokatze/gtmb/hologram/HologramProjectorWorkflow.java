@@ -36,6 +36,11 @@ final class HologramProjectorWorkflow {
             HologramSnapshots.sendUi(previous);
             return;
         }
+        String draftFailure = HologramDraftPersistence.admissionFailure(player, x, y, z);
+        if (!draftFailure.isEmpty()) {
+            player.addChatMessage(new net.minecraft.util.ChatComponentText(draftFailure));
+            return;
+        }
         if (previous != null && previous.player == player
             && HologramWorkspace.areaSessionOwned(previous)
             && HologramAuthoringWorkflow.blueprintHasUnsavedChanges(previous)) {
@@ -65,9 +70,12 @@ final class HologramProjectorWorkflow {
             HologramSnapshots.sendStoppedJob(previous);
         }
         HologramSession session = HologramWorkspace.create(player, x, y, z, true, side);
-        HologramWorkspace.activate(player.getUniqueID(), session);
         session.libraryUiActive = true;
-        HologramDraftPersistence.readDraft(session);
+        if (!HologramDraftPersistence.readDraft(session)) {
+            player.addChatMessage(new net.minecraft.util.ChatComponentText(session.status));
+            return;
+        }
+        HologramWorkspace.activate(player.getUniqueID(), session);
         session.openPurpose = "controllerStructure";
         HologramBuildPreparation.scan(session);
         HologramDraftPersistence.persist(session);

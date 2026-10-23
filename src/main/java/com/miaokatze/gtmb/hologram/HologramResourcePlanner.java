@@ -49,6 +49,7 @@ final class HologramResourcePlanner {
     }
 
     static void refreshPlan(HologramSession s) {
+        if (!HologramGeometryEdits.requirePlan(s)) return;
         HologramDeferredPlanRefresh.cancel(s);
         resetPlan(s);
         if (s.capture == null) return;
@@ -566,6 +567,7 @@ final class HologramResourcePlanner {
     }
 
     static void refreshResources(HologramSession s) {
+        if (!HologramGeometryEdits.requirePlan(s)) return;
         if (HologramSessionPolicy.authoring(s)) {
             clearAuthoringQuotes(s);
             return;

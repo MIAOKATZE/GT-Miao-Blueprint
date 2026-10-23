@@ -37,6 +37,14 @@ final class HologramEditorPreferences {
         put("guide.collapsed", Boolean.toString(value));
     }
 
+    boolean selectionDiscardSuppressed() {
+        return Boolean.parseBoolean(values.getProperty("selection.discard.suppressed", "false"));
+    }
+
+    void suppressSelectionDiscard() {
+        put("selection.discard.suppressed", "true");
+    }
+
     boolean seen(String topic) {
         return values.containsKey(LESSON_PREFIX + topic);
     }

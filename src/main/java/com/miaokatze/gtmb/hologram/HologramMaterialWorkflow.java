@@ -148,6 +148,7 @@ final class HologramMaterialWorkflow {
     }
 
     private static void requireReview(HologramSession s, NBTTagCompound action) throws IOException {
+        HologramGeometryEdits.validate(s);
         if (!s.virtual || s.virtualPreset == null
             || !s.virtualPlacement
             || !s.virtualLocked

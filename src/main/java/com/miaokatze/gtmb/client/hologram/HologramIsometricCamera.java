@@ -54,26 +54,32 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         .sliceLabelVisible(true)
         .panelPosition(12, 12)
         .build();
-    private static final CameraSettings.Navigation NAVIGATION = CameraSettings.Navigation.builder()
-        .pan(true)
-        .yaw(true)
-        .pitch(true)
-        .zoom(true)
-        .reset(true)
-        .panButton(1)
-        .panExcludesControl(true)
-        .rotateDrag(0, 0)
-        .rotationClickThreshold(4)
-        .rotateExcludesControl(true)
-        .wheelZoom(CameraSettings.Navigation.WheelZoom.DIRECT_EXCEPT_ALT)
-        .wheelSensitivity(50)
-        .wheelDeltaUnit(CameraSettings.Navigation.WheelDeltaUnit.AUTO)
-        .wheelZoomLimit(1.5)
-        .pitchRange(MIN_PITCH, MAX_PITCH)
-        .scaleRange(MIN_SCALE, MAX_SCALE)
-        .basePixelsPerWorldUnit(DEFAULT_SCALE)
-        .sliceRange(0, 256)
-        .build();
+    private static final CameraSettings.Navigation NAVIGATION = navigation(1, 0);
+    private static final CameraSettings.Navigation BLUEPRINT_NAVIGATION = navigation(2, 1);
+
+    private static CameraSettings.Navigation navigation(int panButton, int rotateButton) {
+        return CameraSettings.Navigation.builder()
+            .pan(true)
+            .yaw(true)
+            .pitch(true)
+            .zoom(true)
+            .reset(true)
+            .panButton(panButton)
+            .panExcludesControl(true)
+            .rotateDrag(rotateButton, 0)
+            .rotationClickThreshold(4)
+            .rotateExcludesControl(true)
+            .wheelZoom(CameraSettings.Navigation.WheelZoom.DIRECT_EXCEPT_ALT)
+            .wheelSensitivity(50)
+            .wheelDeltaUnit(CameraSettings.Navigation.WheelDeltaUnit.AUTO)
+            .wheelZoomLimit(1.5)
+            .pitchRange(MIN_PITCH, MAX_PITCH)
+            .scaleRange(MIN_SCALE, MAX_SCALE)
+            .basePixelsPerWorldUnit(DEFAULT_SCALE)
+            .sliceRange(0, 256)
+            .build();
+    }
+
     static final HologramIsometricCamera INSTANCE = new HologramIsometricCamera();
     private final KeyBinding toggle = binding("toggle", Keyboard.KEY_V);
     private WorldCameras.Lease lease;
@@ -83,6 +89,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     private HeightSlice slice = HeightSlice.disabled();
     private HeightSlice lastSlice;
     private CameraSettings settings = settingsFor(slice);
+    private CameraSettings blueprintSettings = settingsFor(slice, BLUEPRINT_NAVIGATION);
     private boolean closing, displaced, sliceKeyDown, toggleKeyDown, escapeKeyDown, previousContext;
     private Object inputWorld;
     private CameraFrame tracedFrame;
@@ -136,6 +143,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
             slice = requested;
             if (slice.enabled()) lastSlice = slice;
             settings = settingsFor(slice);
+            blueprintSettings = settingsFor(slice, BLUEPRINT_NAVIGATION);
         }
     };
 
@@ -381,8 +389,10 @@ final class HologramIsometricCamera implements WorldCameras.Source {
             lines.add(
                 String.format(
                     HologramClient.text(
-                        "camera.on",
-                        "%s / Esc: normal view | R + left drag: rotate | Right drag: pan | Wheel: zoom | X: X-ray"),
+                        blueprintNavigation() ? "camera.blueprintOn" : "camera.on",
+                        blueprintNavigation()
+                            ? "%s / Esc: normal view | Middle drag: pan | Right drag: rotate | Wheel: zoom | X: X-ray"
+                            : "%s / Esc: normal view | Left drag: rotate | Right drag: pan | Wheel: zoom | X: X-ray"),
                     key));
             return;
         }
@@ -402,7 +412,11 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
     @Override
     public CameraSettings settings() {
-        return settings;
+        return blueprintNavigation() ? blueprintSettings : settings;
+    }
+
+    private boolean blueprintNavigation() {
+        return active() && HologramClient.areaProjectorWorld() && !HologramCutClient.INSTANCE.cameraContext();
     }
 
     @Override
@@ -434,11 +448,15 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     }
 
     private static CameraSettings settingsFor(HeightSlice slice) {
+        return settingsFor(slice, NAVIGATION);
+    }
+
+    private static CameraSettings settingsFor(HeightSlice slice, CameraSettings.Navigation navigation) {
         return CameraSettings.builder()
             .render(RENDER)
             .input(INPUT)
             .hud(HUD)
-            .navigation(NAVIGATION)
+            .navigation(navigation)
             .guiPolicy(WorldCameras.GuiPolicy.RELEASE)
             .slice(slice)
             .build();

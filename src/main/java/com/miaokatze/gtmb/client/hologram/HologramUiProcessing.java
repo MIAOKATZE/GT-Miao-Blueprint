@@ -481,6 +481,10 @@ final class HologramUiProcessing {
         }
         if (id == 220) {
             if (!HologramGuidance.authorWorkspace(ui.session.state())) return true;
+            if (ui.session.state().data.getBoolean("geometryValidationPending")) {
+                reopenProcessing();
+                return true;
+            }
             openProcessing(ui.session.state().data.getBoolean("processingResumeAllowed"));
             reprocessCurrent = false;
             return true;

@@ -66,7 +66,20 @@ final class HologramVoucherCoverage {
             item = HologramBlueprintNbt.decode(cell.itemNbt);
         if (item != null) shell.setTagCompound((NBTTagCompound) item.copy());
         if (HologramRecovery.hasSeal(shell)) return false;
-        HologramBlueprintResources.Plan resources = HologramBlueprintResources.plan(tile)
+        boolean decoration = HologramDecorMaterials.supports(block, tile);
+        if (decoration ? !HologramDecorationVoucher.hostAllowed(block)
+            : !HologramDecorationVoucher.covered(block, shell)) return false;
+        // Native attributes are already priced by the actual factory bill. Resource inspection must receive
+        // those exact credits before deciding whether independently payable inventory/assets remain.
+        HologramDecorMaterials.Descriptor descriptor = decoration
+            ? HologramDecorMaterials.describe(block, cell.metadata, tile)
+            : null;
+        java.util.List<ItemStack> nativeItems = new java.util.ArrayList<>();
+        if (descriptor != null) {
+            for (HologramDecorMaterials.Cost cost : descriptor.costs) nativeItems.add(cost.prebuilt.copy());
+        } else if (HologramNativePlacement.supported(block))
+            nativeItems = HologramNativePlacement.materials(block, cell.metadata, tile);
+        HologramBlueprintResources.Plan resources = HologramBlueprintResources.plan(tile, nativeItems)
             .merge(HologramBlueprintResources.plan(item));
         if (!resources.items.isEmpty() || !resources.fluids.isEmpty()
             || !resources.essentia.isEmpty()
@@ -76,16 +89,13 @@ final class HologramVoucherCoverage {
             return false;
         HologramEnergyPayload.Prepared cache = HologramEnergyPayload.prepare(block, cell.metadata, tile, item);
         if (!cache.demand.empty() || !cache.warnings.isEmpty()) return false;
-        if (HologramDecorMaterials.supports(block, tile)) {
-            HologramDecorMaterials.Descriptor descriptor = HologramDecorMaterials.describe(block, cell.metadata, tile);
+        if (descriptor != null) {
             return HologramDecorationVoucher.hasCovered(block, descriptor)
                 && HologramDecorationVoucher.payable(block, descriptor).costs.isEmpty();
         }
-        if (!HologramDecorationVoucher.covered(block, shell)) return false;
         if (!HologramGtswnPlacementMaterials.extraMaterials(block, tile)
             .isEmpty()) return false;
         if (HologramNativePlacement.supported(block)) {
-            java.util.List<ItemStack> nativeItems = HologramNativePlacement.materials(block, cell.metadata, tile);
             if (!HologramNativePlacement.additionalMaterials(block, nativeItems, shell)
                 .isEmpty()) return false;
         }

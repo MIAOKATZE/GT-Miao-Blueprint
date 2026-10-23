@@ -100,7 +100,7 @@ final class HologramBlueprintValidationCache {
     void filter(HologramPresets.Cell cell) throws IOException {
         Block block = block(cell);
         cell.tileNbt = filter(block, cell.tileNbt, true);
-        cell.itemNbt = filter(null, cell.itemNbt, false);
+        cell.itemNbt = filter(block, cell.itemNbt, false);
     }
 
     private String filter(Block block, String encoded, boolean tile) throws IOException {
@@ -112,6 +112,7 @@ final class HologramBlueprintValidationCache {
         }
         filterMisses++;
         net.minecraft.nbt.NBTTagCompound source = HologramBlueprintNbt.decode(encoded);
+        HologramCarpentersCompatibility.stripOwner(block, source);
         if (tile) HologramCoordinatePolicies.validatePaymentPayload(source);
         String result = HologramBlueprintNbt.filterDecoded(tile ? block : null, source, keys, retainCovers);
         if (admit(encoded.length() + (result == null ? 0 : result.length()))) filtered.put(key, result);

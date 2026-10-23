@@ -14,6 +14,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
+import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -42,6 +43,7 @@ final class HologramArea extends HologramAreaSelection {
     HologramBlueprintProjection.Population population;
     HologramResourcePlanner.PlanTask planTask;
     long expandedNbt;
+    private HologramAreaBlockCursor blockCursor;
     String active = "";
 
     public boolean contains(int xx, int yy, int zz) {
@@ -78,14 +80,10 @@ final class HologramArea extends HologramAreaSelection {
         maxX = bounds[3];
         maxY = bounds[4];
         maxZ = bounds[5];
-        long width = (long) maxX - minX + 1, height = (long) maxY - minY + 1, depth = (long) maxZ - minZ + 1;
-        if (width > 1000000 || height > 1000000
-            || depth > 1000000
-            || width * height > 1000000
-            || width * height * depth > 1000000) throw new IOException("区域包围盒超过一百万格，请缩小选区");
         if (minY < 0 || maxY >= world.getHeight()) throw new IOException("区域高度无效");
         if (minX < -30000000 || maxX >= 30000000 || minZ < -30000000 || maxZ >= 30000000)
             throw new IOException("区域超出世界坐标边界");
+        blockCursor = new HologramAreaBlockCursor(resolvedRegions());
         x = minX;
         y = minY;
         z = minZ;
@@ -112,22 +110,24 @@ final class HologramArea extends HologramAreaSelection {
         imported = false;
     }
 
-    /** Subtraction can only reduce the mask, so its exterior bounds never enlarge the source scan. */
-
     /** No world mutation or material extraction occurs during import. */
     boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
         if (imported) return true;
         World world = player.worldObj;
         long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
-        for (int work = 0; y <= maxY; work++) {
+        for (int work = 0; !blockCursor.done() && work < 4096; work++) {
             if (work > 0 && System.nanoTime() >= deadline) break;
+            if (!blockCursor.step((cx, sy, cz) -> emptySection(world, cx, sy, cz))) continue;
+            x = blockCursor.x;
+            y = blockCursor.y;
+            z = blockCursor.z;
             if (contains(x, y, z)) {
                 if (!world.blockExists(x, y, z)) throw new IOException("区域包含未加载区块，导入已停止");
                 Block block = world.getBlock(x, y, z);
                 int meta = world.getBlockMetadata(x, y, z);
                 TileEntity tile = world.getTileEntity(x, y, z);
                 if (block != Blocks.air) {
-                    if (blueprint.cells.size() >= HologramCapture.LIMIT) throw new IOException("区域非空气方块超过蓝图格数上限，请拆分选区");
+                    HologramBlueprintLimits.require((long) blueprint.cells.size() + 1);
                     NBTTagCompound data = tile == null ? null : HologramNativeCapture.capture(tile);
                     ItemStack sample = serverSample(block, meta, tile, data);
                     HologramPresets.Cell cell = sample == null ? new HologramPresets.Cell()
@@ -138,11 +138,11 @@ final class HologramArea extends HologramAreaSelection {
                     cell.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
                     cell.metadata = meta;
                     if (sample != null && sample.hasTagCompound())
-                        cell.itemNbt = HologramBlueprintNbt.encodeCaptured(sample.getTagCompound());
+                        cell.itemNbt = HologramBlueprintNbt.encodeCaptured(block, sample.getTagCompound());
                     if (tile != null) {
                         cell.tileNbt = HologramAeBlueprint.supports(block, data)
                             ? HologramBlueprintNbt.encodeCanonical(block, data)
-                            : HologramBlueprintNbt.encodeCaptured(data);
+                            : HologramBlueprintNbt.encodeCaptured(block, data);
                     }
                     expandedNbt += HologramBlueprintNbt.expandedBytes(cell.tileNbt)
                         + HologramBlueprintNbt.expandedBytes(cell.itemNbt);
@@ -169,15 +169,8 @@ final class HologramArea extends HologramAreaSelection {
                         blueprint.palette.add(HologramPresets.cell(sample, 0, 0, 0, -1, false));
                 }
             }
-            if (++x > maxX) {
-                x = minX;
-                if (++z > maxZ) {
-                    z = minZ;
-                    y++;
-                }
-            }
         }
-        if (y <= maxY) return false;
+        if (!blockCursor.done()) return false;
         if (discoveryIndex < discovery.size()) {
             Structure structure = discovery.get(discoveryIndex);
             if (declarationMembers != null) {
@@ -247,6 +240,15 @@ final class HologramArea extends HologramAreaSelection {
         if (!imported) declarationSessions.clear();
         population = null;
         planTask = null;
+        blockCursor = null;
+    }
+
+    private static boolean emptySection(World world, int chunkX, int sectionY, int chunkZ) throws IOException {
+        if (!world.getChunkProvider()
+            .chunkExists(chunkX, chunkZ)) throw new IOException("区域包含未加载区块，导入已停止");
+        ExtendedBlockStorage[] sections = world.getChunkFromChunkCoords(chunkX, chunkZ)
+            .getBlockStorageArray();
+        return sectionY >= sections.length || sections[sectionY] == null || sections[sectionY].isEmpty();
     }
 
     /** Current import phase; no source-world reads are needed for the progress display. */
@@ -256,8 +258,7 @@ final class HologramArea extends HologramAreaSelection {
 
     long importDone() {
         if ("blocks".equals(importPhase)) {
-            long width = (long) maxX - minX + 1, depth = (long) maxZ - minZ + 1;
-            return (((long) y - minY) * depth + z - minZ) * width + x - minX;
+            return blockCursor == null ? 0 : blockCursor.completed();
         }
         if ("declarations".equals(importPhase)) return discoveryIndex;
         if ("declaration_memberships".equals(importPhase)) return declarationMemberDone;
@@ -270,8 +271,7 @@ final class HologramArea extends HologramAreaSelection {
     }
 
     long importTotal() {
-        if ("blocks".equals(importPhase))
-            return ((long) maxX - minX + 1) * ((long) maxZ - minZ + 1) * ((long) maxY - minY + 1);
+        if ("blocks".equals(importPhase)) return blockCursor == null ? 0 : blockCursor.total();
         if ("declarations".equals(importPhase)) return discovery.size();
         if ("declaration_memberships".equals(importPhase)) return declarationMemberTotal;
         if ("canonicalize".equals(importPhase)) return preparation == null ? 1 : preparation.progress().total;

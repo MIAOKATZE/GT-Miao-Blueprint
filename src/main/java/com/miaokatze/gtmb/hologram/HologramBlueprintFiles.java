@@ -353,11 +353,19 @@ public final class HologramBlueprintFiles {
                     pngPath = match;
                 }
                 String id = adopt(root, source, document);
-                byte[] compact = HologramBlueprintUpgrade
-                    .migrate(old, HologramBlueprintArtifact.MAX_JSON_BYTES, currentOperation);
+                byte[] compact = HologramBlueprintUpgrade.migrate(
+                    HologramBlueprintPreviewBinding.sourceJson(old),
+                    HologramBlueprintArtifact.MAX_JSON_BYTES,
+                    currentOperation);
                 progress.accept(done, jsonFiles.size());
+                byte[] bound;
+                if (!HologramBlueprintPreviewBinding.pngSha256(old)
+                    .isEmpty()) {
+                    HologramBlueprintArtifact.Artifact migrated = HologramBlueprintArtifact.prepareSave(compact, png);
+                    compact = migrated.json;
+                    bound = migrated.png;
+                } else bound = HologramBlueprintArtifact.bindPreview(compact, png);
                 Path target = target(root, id, compact);
-                byte[] bound = HologramBlueprintArtifact.bindPreview(compact, png);
                 if (source.equals(target) && java.util.Arrays.equals(old, compact)
                     && java.util.Arrays.equals(png, bound)) {
                     current++;
@@ -366,7 +374,7 @@ public final class HologramBlueprintFiles {
                     continue;
                 }
                 HologramBlueprintArtifact.PairWrite receipt = HologramBlueprintArtifact
-                    .writePairPending(target, compact, png, currentOperation);
+                    .writePairPending(target, compact, bound, currentOperation);
                 try {
                     HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(target);
                     if (!java.util.Arrays.equals(actual.json, compact)) throw new IOException("升级回读校验失败");

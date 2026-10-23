@@ -632,7 +632,12 @@ public final class HologramLibraryRegression {
             for (int x = 0; x < image.getWidth(); x++) image.setRGB(x, y, random.nextInt(0x1000000));
         java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(image, "png", encoded);
-        byte[] source = HologramBlueprintArtifact.bindPreview(new byte[] { 1 }, encoded.toByteArray());
+        denied(
+            () -> HologramBlueprintArtifact.bindPreview(new byte[] { 1 }, encoded.toByteArray()),
+            "arbitrary binary source bytes cannot masquerade as legacy blueprint JSON");
+        byte[] json = "{\"schema\":2,\"blueprint\":{\"name\":\"thumbnail_fixture\",\"cells\":[]}}"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] source = HologramBlueprintArtifact.bindPreview(json, encoded.toByteArray());
         byte[] thumbnail = HologramServerLibrary.thumbnail(source, () -> true);
         SimpleAssert.that(
             thumbnail.length <= HologramServerLibrary.THUMBNAIL_BYTES,

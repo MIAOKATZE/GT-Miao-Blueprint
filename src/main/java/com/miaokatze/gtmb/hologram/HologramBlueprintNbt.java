@@ -52,6 +52,10 @@ final class HologramBlueprintNbt {
         return encode(tag, false);
     }
 
+    static String encodeCaptured(Block block, NBTTagCompound tag) throws IOException {
+        return encode(tag, false, true, block);
+    }
+
     /** AE schemas already handled identities; never recursively rewrite encoded pattern recipe data. */
     static String encodeCanonical(NBTTagCompound tag) throws IOException {
         return encode(tag, false);
@@ -115,9 +119,15 @@ final class HologramBlueprintNbt {
 
     private static String encode(NBTTagCompound tag, boolean rewriteOwnership, boolean resolveItems)
         throws IOException {
+        return encode(tag, rewriteOwnership, resolveItems, null);
+    }
+
+    private static String encode(NBTTagCompound tag, boolean rewriteOwnership, boolean resolveItems, Block block)
+        throws IOException {
         if (tag == null) return null;
         checkDepth(tag, 0);
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
+        if (block != null) HologramCarpentersCompatibility.stripOwner(block, copy);
         if (rewriteOwnership) rewrite(copy, null, "", false, false);
         if (resolveItems) stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

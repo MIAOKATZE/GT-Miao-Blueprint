@@ -260,7 +260,12 @@ final class HologramControllerCapture {
         for (HologramCapture.Cell manual : s.manualPositions.values()) {
             boolean found = false;
             found = s.capture.positions.containsKey(HologramValues.position(manual));
-            if (!found && s.capture.cells.size() < HologramCapture.LIMIT) {
+            if (!found && s.capture.cells.size() >= HologramCapture.LIMIT) {
+                s.capture.incomplete = true;
+                s.capture.failure = "CELL_LIMIT: 保留手动格后蓝图实际记录格数须小于一百万";
+                break;
+            }
+            if (!found) {
                 s.capture.cells.add(manual);
                 s.capture.positions.put(HologramValues.position(manual), manual);
             }

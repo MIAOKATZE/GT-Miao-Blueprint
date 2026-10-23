@@ -54,6 +54,11 @@ final class HologramBlueprintEditor {
     }
 
     static void refreshEdited(HologramSession s, java.util.Set<Integer> dirty) {
+        if (HologramSessionPolicy.authoring(s) && s.geometryEdits.validationPending) {
+            s.geometryEdits.changed(s, dirty);
+            HologramGeometryEdits.refresh(s);
+            return;
+        }
         if (HologramLocalPlanRefresh.refresh(s, dirty)) return;
         if (HologramSessionPolicy.authoring(s)) {
             HologramResourcePlanner.refreshPlan(s);
@@ -98,8 +103,10 @@ final class HologramBlueprintEditor {
             }
             HologramEditState previous = from.remove(from.size() - 1);
             remember(undo ? s.redoEdits : s.undoEdits, previous.current(s));
+            if (HologramSessionPolicy.authoring(s) && previous.sparseIndices == null) s.geometryEdits.begin(s);
             previous.apply(s);
-            if (previous.sparseIndices == null) HologramResourcePlanner.refreshPlan(s);
+            if (previous.sparseIndices == null && HologramSessionPolicy.authoring(s)) HologramGeometryEdits.refresh(s);
+            else if (previous.sparseIndices == null) HologramResourcePlanner.refreshPlan(s);
             else refreshEdited(s, previous.sparseIndices);
             if (previous.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, previous.sparseIndices))
                 HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
@@ -544,6 +551,9 @@ final class HologramBlueprintEditor {
             || s.job == 1
             || s.job == 2
             || !s.player.capabilities.allowEdit) throw new java.io.IOException("请等待完整采集并结束施工后编辑蓝图");
+        if (action.hasKey("planRevision")
+            && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision))
+            throw new java.io.IOException("蓝图计划已更新，请重新选择移动目标");
         if ((!action.hasKey("dx", 3) && !action.hasKey("dy", 3) && !action.hasKey("dz", 3))
             || (action.hasKey("dx") && !action.hasKey("dx", 3))
             || (action.hasKey("dy") && !action.hasKey("dy", 3))
@@ -569,6 +579,7 @@ final class HologramBlueprintEditor {
                 || !s.player.worldObj.isAirBlock((int) x, (int) y, (int) z)))
                 throw new java.io.IOException("移动目标必须是已加载的空气方块；原选区保留");
             HologramCapture.Cell copy = HologramBlueprintData.blueprintCell(source, (int) x, (int) y, (int) z);
+            copy.stableIndex = action.getBoolean("copy") ? -1 : index;
             HologramBlueprintData.setMemberships(
                 copy,
                 source.memberships()
@@ -706,14 +717,18 @@ final class HologramBlueprintEditor {
             if (value == null || value.isEmpty()) continue;
             Integer size = sizes.get(value);
             if (size == null) {
-                if (preparedSizes == null) size = HologramBlueprintNbt.expandedBytes(value);
-                else size = preparedSizes.get(value);
+                if (preparedSizes == null) {
+                    size = HologramSessionPolicy.authoring(s) ? s.geometryEdits.payloadSizes.get(value) : null;
+                    if (size == null) size = HologramBlueprintNbt.expandedBytes(value);
+                } else size = preparedSizes.get(value);
                 if (size == null) throw new java.io.IOException("附加对象数据预算已变化，请重新确认");
                 sizes.put(value, size);
             }
             expanded += size;
             if (expanded > 64L * 1024 * 1024) throw new java.io.IOException("复制后的设备NBT超过64MiB上限");
         }
+        s.geometryEdits.begin(s);
+        if (HologramSessionPolicy.authoring(s)) s.geometryEdits.payloadSizes = sizes;
         remember(s.undoEdits, new HologramEditState(s));
         s.redoEdits.clear();
         if (!copyGroups && !remove.isEmpty()) for (HologramPresets.Structure structure : s.virtualPreset.structures) {
@@ -733,7 +748,9 @@ final class HologramBlueprintEditor {
                     structure.z = copy.z - s.z;
                 }
         HologramCapture capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
-        capture.cells.addAll(staged.values());
+        capture.cells.addAll(
+            HologramSessionPolicy.authoring(s) ? HologramGeometryEdits.stableOrder(s.capture.cells, staged, copies)
+                : staged.values());
         capture.positions.putAll(staged);
         s.capture = capture;
         s.pins.clear();
@@ -760,7 +777,8 @@ final class HologramBlueprintEditor {
         s.selected = s.selectedIndices.isEmpty() ? -1
             : s.selectedIndices.iterator()
                 .next();
-        HologramResourcePlanner.refreshPlan(s);
+        if (HologramSessionPolicy.authoring(s)) HologramGeometryEdits.refresh(s);
+        else HologramResourcePlanner.refreshPlan(s);
     }
 
     private static int[] textMinimum(List<HologramCapture.Cell> cells, String group) {

@@ -3,7 +3,7 @@ package com.miaokatze.gtmb.client.hologram;
 /** Camera translation in block units; moving a preview never changes the blueprint origin. */
 final class HologramPreviewCamera {
 
-    double x, z;
+    double x, y, z;
 
     void move(double yaw, double seconds, double right, double forward, double speed) {
         if (!Double.isFinite(seconds) || seconds <= 0 || !Double.isFinite(speed) || speed <= 0) return;
@@ -15,6 +15,6 @@ final class HologramPreviewCamera {
     }
 
     void reset() {
-        x = z = 0;
+        x = y = z = 0;
     }
 }
