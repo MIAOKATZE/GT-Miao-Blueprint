@@ -15,6 +15,16 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
+### v0.1.44 框选与镜头交互 / Selection and camera controls
+
+蓝图画布及蓝图等距框选使用中键拖动平移、右键拖动旋转。世界等距选点仍需按住 Ctrl；投影与剪切保留各自的镜头操作。顶部世界提示采用与 GTSWN 相同的字号适配规则。
+
+Z / Alt+Z 只加选或减选下一个框，青色表示加选、红色表示减选；完成后自动恢复角点编辑。按 B 开始自由多边形会继承已启用的减选。轮廓支持水平与两种轴对齐竖直平面：点击紫色首点闭合，其他顶点为深绿色；未闭合就确认时，首点闪动。闭合后点击仅锁定法向厚度，粗线标明锁定点，再次点击可重设。
+
+有已选内容时，取消框选会先询问是否放弃；「否」或弹框中的 Esc 保留选区，「是并且不再提醒」会保存偏好。Delete 仍可单独撤回最近选区。
+
+*Blueprint camera: middle-drag to pan, right-drag to rotate. Add/subtract applies to one new box. Free polygons support horizontal and axis-aligned vertical planes with an explicit purple closing vertex and a separately locked extrusion depth. Cancelling a nonempty selection asks before discarding it.*
+
 ### v0.1.43 内部附加编辑与并列进度 / Attachment windows & task progress
 
 文字和图片编辑现在使用工作台内部悬浮窗，保持当前蓝图和视角；标题可拖动，材质、滤镜与预设等完整功能继续保留，窗口在小屏下按比例适配。Esc 先退出文本焦点，再逐层收起子窗和编辑窗；输入框中的 E 继续用于输入。
