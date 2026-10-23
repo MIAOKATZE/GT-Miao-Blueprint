@@ -1,8 +1,14 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.io.IOException;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.client.hologram.HologramEditorLessons.Operation;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Finite transactions must preserve native payloads and keep cancellation/checkpoints independent. */
@@ -11,6 +17,7 @@ public final class HologramEditorTutorialGeometryRegression {
     private HologramEditorTutorialGeometryRegression() {}
 
     public static void run() {
+        blueprintMovesIntoSeparateSupportedBays();
         NBTTagCompound source = source();
         NBTTagCompound original = (NBTTagCompound) source.copy();
         NBTTagCompound checkpoint = new NBTTagCompound();
@@ -161,6 +168,101 @@ public final class HologramEditorTutorialGeometryRegression {
             geometry.storageOpen() && geometry.stored() && !geometry.placing(),
             "a storage checkpoint reopens the unconsumed entry before its place-button action");
         rebasedSelection(source, original);
+    }
+
+    private static void blueprintMovesIntoSeparateSupportedBays() {
+        try {
+            NBTTagCompound observed = HologramEditorTutorialSamples
+                .portableObservation(HologramEditorTutorialSamples.Kind.AUTHOR);
+            String id = HologramEditorTutorialSamples.primaryStructure(HologramEditorTutorialSamples.Kind.AUTHOR);
+            NBTTagList machine = new NBTTagList(), source = observed.getTagList("cells", 10);
+            for (int i = 0; i < source.tagCount(); i++) {
+                NBTTagCompound cell = source.getCompoundTagAt(i);
+                if (!id.equals(cell.getString("structureId"))) continue;
+                NBTTagCompound copy = (NBTTagCompound) cell.copy();
+                // This geometry-only path does not restore numeric device IDs from another game instance.
+                copy.removeTag("targetStack");
+                machine.appendTag(copy);
+            }
+            NBTTagCompound initial = HologramEditorTutorialSamples.arrange(observed, machine, true, id);
+            SimpleAssert.eq(240, initial.getTagList("cells", 10).tagCount(), "two EBFs plus 168 supporting blocks");
+            SimpleAssert.eq(2, initial.getTagList("structures", 10).tagCount(), "only two machines precede copying");
+            SimpleAssert.eq(
+                initial.getInteger("x") - 4,
+                initial.getTagList("structures", 10).getCompoundTagAt(1).getInteger("x"),
+                "the raised source sits left of the final ground copy in the teaching camera");
+            double yaw = Math.toRadians(38);
+            SimpleAssert.that(
+                2 * Math.sin(yaw) - Math.cos(yaw) > .4,
+                "the final raised and copied three-by-three footprints have a horizontal projected gap");
+            Set<String> building = new HashSet<>();
+            NBTTagList initialCells = initial.getTagList("cells", 10);
+            for (int i = 72; i < initialCells.tagCount(); i++) {
+                NBTTagCompound cell = initialCells.getCompoundTagAt(i);
+                building.add(cell.getInteger("dx") + ":" + cell.getInteger("dy") + ":" + cell.getInteger("dz"));
+            }
+            for (int x = -6; x <= 4; x++) for (int z = -1; z <= 9; z++) SimpleAssert.that(
+                building.contains(x + ":-1:" + z), "the shifted ground slab retains its full eleven-by-eleven footprint");
+            for (int x = -6; x <= -2; x++) for (int z = 5; z <= 9; z++) SimpleAssert.that(
+                building.contains(x + ":3:" + z), "the entire platform shifts with the elevated source");
+            for (int y = 0; y < 4; y++) for (int support = 0; support <= y; support++) SimpleAssert.that(
+                building.contains((2 - y) + ":" + support + ":7"), "the adjacent access stair retains solid support");
+            int[] selected = new int[36];
+            for (int i = 0; i < selected.length; i++) selected[i] = i;
+            SimpleAssert.that(
+                HologramEditorTutorialBlueprint.clearAndSupported(initial, selected, new int[] { 0, 0, 0 }),
+                "the initial ground machine has a complete foundation and no overlapping rows");
+            int[] elevated = new int[36];
+            for (int i = 0; i < elevated.length; i++) elevated[i] = 36 + i;
+            SimpleAssert.that(
+                HologramEditorTutorialBlueprint.clearAndSupported(initial, elevated, new int[] { 0, 0, 0 }),
+                "the elevated machine rests on a complete platform");
+            SimpleAssert.that(
+                HologramEditorTutorialBlueprint.clearAndSupported(
+                    initial, selected, HologramEditorTutorialBlueprint.offset(Operation.MOVE_X)),
+                "the first axis move remains inside the grounded free lane");
+            SimpleAssert.that(
+                !HologramEditorTutorialBlueprint.clearAndSupported(initial, selected, new int[] { 0, 1, 0 }),
+                "a floating machine cannot pass the lesson commit guard");
+            SimpleAssert.that(
+                !HologramEditorTutorialBlueprint.clearAndSupported(initial, selected, new int[] { -4, 4, 6 }),
+                "moving onto the elevated source cannot pass the overlap guard");
+            NBTTagCompound placed = (NBTTagCompound) initial.copy();
+            int[] plane = HologramEditorTutorialBlueprint.offset(Operation.MOVE_XZ);
+            SimpleAssert.that(
+                HologramEditorTutorialBlueprint.clearAndSupported(placed, selected, plane),
+                "after explicitly discarding the axis edit, the plane move reaches the right free bay");
+            HologramEditorTutorialBlueprint.translate(placed, selected, Collections.singleton(id), plane);
+            NBTTagList cells = placed.getTagList("cells", 10), declarations = placed.getTagList("structures", 10);
+            for (int i = 36; i < cells.tagCount(); i++) SimpleAssert.that(
+                cells.getCompoundTagAt(i).equals(initial.getTagList("cells", 10).getCompoundTagAt(i)),
+                "moving one ground machine preserves every platform and building row: " + i);
+            NBTTagCompound copy = (NBTTagCompound) declarations.getCompoundTagAt(0).copy();
+            String copyId = id + "-tutorial-copy";
+            copy.setString("id", copyId);
+            declarations.appendTag(copy);
+            int[] duplicate = new int[36];
+            for (int i = 0; i < duplicate.length; i++) {
+                duplicate[i] = cells.tagCount();
+                NBTTagCompound cell = (NBTTagCompound) cells.getCompoundTagAt(i).copy();
+                cell.setString("structureId", copyId);
+                cells.appendTag(cell);
+            }
+            int[] delta = HologramEditorTutorialBlueprint.offset(Operation.COPY_X);
+            SimpleAssert.that(
+                HologramEditorTutorialBlueprint.clearAndSupported(placed, duplicate, delta),
+                "the Ctrl-drag duplicate has a distinct supported left bay");
+            HologramEditorTutorialBlueprint.translate(placed, duplicate, Collections.singleton(copyId), delta);
+            SimpleAssert.eq(3, declarations.tagCount(), "the actual copy adds the third declaration");
+            SimpleAssert.eq(276, cells.tagCount(), "copy adds exactly the complete 36-cell EBF footprint");
+            SimpleAssert.eq(-2, cells.getCompoundTagAt(duplicate[0]).getInteger("dx")
+                - machine.getCompoundTagAt(0).getInteger("dx"), "copied source anchor ends at X -2");
+            for (int[] member : new int[][] { selected, elevated, duplicate }) SimpleAssert.that(
+                HologramEditorTutorialBlueprint.clearAndSupported(placed, member, new int[] { 0, 0, 0 }),
+                "every final machine remains separate and fully supported");
+        } catch (IOException failure) {
+            throw new AssertionError("The shipped blueprint source must remain available", failure);
+        }
     }
 
     private static void fullVolume(NBTTagCompound entry, int sx, int sy, int sz, int blocks, int air, String context) {

@@ -35,7 +35,7 @@ final class HologramEditorNativeTools {
     private ModularPanel viewWorkspacePanel;
     private int contextX, contextY;
     private Flow toolRail;
-    private boolean railExpanded = true, railCompact;
+    private boolean railExpanded, railCompact;
 
     HologramEditorNativeTools(HologramUiModules ui) {
         this.ui = ui;

@@ -309,13 +309,12 @@ final class HologramEditorLessons {
             "从空白工作区开始。右侧两行是教学内存中的规划，首次载入前中央画布没有结构。",
             "library",
             action(Operation.LIBRARY, "header.library"));
-        add(s, "首次载入规划", "点击第一行，载入三台电力高炉规划：两台在地面，一台在平台，并带有原生建材；首次空稿载入无需丢弃确认。", "library", control(14000));
+        add(s, "首次载入规划", "点击第一行，载入两台电力高炉规划：一台在地面，一台在左后方有支柱的平台上。地面空位留给后续移动与复制；首次空稿载入无需丢弃确认。", "library", control(14000));
         add(
             s,
             "精确选格",
             "Ctrl 增减选格；" + commands.shortcut("sameType") + " 扩展同类。点结构轮廓可整选成员。",
             "viewport",
-            action(Operation.EDITOR, "launcher.0"),
             action(Operation.SELECT_CELL, "viewport"));
         add(
             s,
@@ -324,13 +323,11 @@ final class HologramEditorLessons {
             "viewport",
             action(Operation.SELECT_STRUCTURE, "viewport"),
             action(Operation.HANDLES, "viewport"));
-        add(s, "沿轴移动", "按住 X 手柄连续拖动，模型按整格吸附。", "viewport", action(Operation.MOVE_X, "gizmo.x"));
-        add(s, "平面移动", "拖 XZ 平面同时改变两轴；XY、YZ 使用同样的原生逆解。", "viewport", action(Operation.MOVE_XZ, "gizmo.xz"));
-        add(s, "起拖复制", "起拖时按 Ctrl 锁定复制意图，原处保留。", "viewport", action(Operation.COPY_X, "gizmo.x"));
+        add(s, "沿轴移动", "按住 X 手柄向正 X 移动 2 格，地面高炉仍落在地基上；平台高炉保持原位。模型按整格吸附。", "viewport", action(Operation.MOVE_X, "gizmo.x"));
         add(
             s,
             "换行时保留未保存修改",
-            "返回库并点另一行会先询问是否丢弃。点击保留当前规划，继续保留刚才移动和复制的内容。",
+            "返回库并点另一行会先询问是否丢弃。点击保留当前规划，保留刚才向 X 移动 2 格的结果；当前仍是两台高炉。",
             "library",
             action(Operation.LIBRARY, "header.library"),
             control(14001),
@@ -338,13 +335,14 @@ final class HologramEditorLessons {
         add(
             s,
             "确认后切换来源",
-            "再次点另一行，明确点击丢弃并载入；只有确认后才切换到原始三台高炉规划，随后重新整选来源成员。",
+            "再次点另一行，明确点击丢弃并载入，撤回刚才的轴向移动，恢复原始两台规划。随后整选地面高炉，为新的地面布局作准备。",
             "viewport",
             control(14001),
             action(Operation.CONFIRM_DISCARD, "control.224"),
-            action(Operation.EDITOR, "launcher.0"),
             action(Operation.SELECT_CELL, "viewport"),
             action(Operation.SELECT_STRUCTURE, "viewport"));
+        add(s, "平面布置地面高炉", "拖 XZ 平面向正 X 移动 3 格、正 Z 移动 1 格，将地面高炉移入地基右侧空位；高度保持不变。XY、YZ 使用同样的原生逆解。", "viewport", action(Operation.MOVE_XZ, "gizmo.xz"));
+        add(s, "复制到另一空位", "起拖时按 Ctrl 锁定复制意图，沿 X 向负方向拖动 5 格。原高炉保留在右侧，副本落在左侧空位，两台之间留出通道；此时共三台：两台地面、一台平台。", "viewport", action(Operation.COPY_X, "gizmo.x"));
         add(
             s,
             "来源成员参数",

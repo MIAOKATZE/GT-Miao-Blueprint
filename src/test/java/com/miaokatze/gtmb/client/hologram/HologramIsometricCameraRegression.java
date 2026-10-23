@@ -210,13 +210,19 @@ public final class HologramIsometricCameraRegression {
             HologramSelectionInput.CameraAction.SUBMIT,
             HologramSelectionInput.cameraAction(0, false, true, false, false, false),
             "Shift+left explicitly submits the box selection");
+        for (boolean shift : new boolean[] { false, true }) for (boolean alt : new boolean[] { false, true }) {
+            SimpleAssert.eq(
+                HologramSelectionInput.CameraAction.NONE,
+                HologramSelectionInput.cameraAction(0, false, shift, alt, false, true),
+                "isometric polygon navigation never adds a vertex, closes or changes height without Ctrl");
+            SimpleAssert.eq(
+                HologramSelectionInput.CameraAction.CONTINUOUS_POINT,
+                HologramSelectionInput.cameraAction(0, true, shift, alt, true, true),
+                "Ctrl+left selects polygon vertices and height even when R is held");
+        }
         SimpleAssert.eq(
-            HologramSelectionInput.CameraAction.CONTINUOUS_POINT,
-            HologramSelectionInput.cameraAction(0, false, false, false, false, true),
-            "continuous mode retains plain-left vertices and height");
-        for (int button : new int[] { 0, 1 }) SimpleAssert.eq(
             HologramSelectionInput.CameraAction.NONE,
-            HologramSelectionInput.cameraAction(button, true, false, false, false, true),
-            "Ctrl corners cannot accidentally append a continuous point");
+            HologramSelectionInput.cameraAction(1, true, false, false, false, true),
+            "Ctrl+right cannot replace a box corner during polygon entry");
     }
 }
