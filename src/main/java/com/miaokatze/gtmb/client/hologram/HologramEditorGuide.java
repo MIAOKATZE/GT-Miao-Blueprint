@@ -167,15 +167,19 @@ final class HologramEditorGuide {
                 .widthRel(1f)
                 .height(26));
         column.child(details);
-        String[] topics = { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps", "cut-iso" };
-        String[] labels = { "投影教程", "蓝图教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切" };
-        for (int row = 0; row < 2; row++) {
+        String[] topics = { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps", "cut-iso",
+            "text", "picture" };
+        String[] labels = { "投影教程", "蓝图教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切",
+            net.minecraft.client.resources.I18n.format("gtmb.hologram.lesson.text"),
+            net.minecraft.client.resources.I18n.format("gtmb.hologram.lesson.picture") };
+        for (int row = 0; row < (topics.length + 3) / 4; row++) {
             Flow entries = Flow.row()
                 .widthRel(1f)
                 .height(20)
                 .childPadding(5);
             for (int col = 0; col < 4; col++) {
                 final int index = row * 4 + col;
+                if (index >= topics.length) break;
                 entries.child(
                     HologramEditorNativeTheme.button(
                         () -> labels[index],
@@ -242,11 +246,11 @@ final class HologramEditorGuide {
             toggleReference();
             return true;
         }
-        if (id >= BASE + 2 && id <= BASE + 9) {
+        if (id >= BASE + 2 && id <= BASE + 11) {
             if (reference != null && reference.isPanelOpen()) reference.closePanel();
             ui.tutorial.start(
                 new String[] { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps",
-                    "cut-iso" }[id - BASE - 2],
+                    "cut-iso", "text", "picture" }[id - BASE - 2],
                 true);
             return true;
         }

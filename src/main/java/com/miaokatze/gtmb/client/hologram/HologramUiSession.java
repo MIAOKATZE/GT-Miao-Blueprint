@@ -31,7 +31,7 @@ final class HologramUiSession {
         if (isTutorial()) tutorialGeneration.invalidate();
     }
 
-    /** Detached teaching sessions never enter production command preparation, ACKs or transport. */
+    /** Detached teaching sessions never enter production command preparation or transport. */
     boolean isTutorial() {
         return tutorialSink != null;
     }
@@ -52,6 +52,8 @@ final class HologramUiSession {
     void isolatedSnapshot(HologramState snapshot) {
         if (!isTutorial()) throw new IllegalStateException("Production snapshots require the normal ACK workflow");
         state = snapshot;
+        // Local receipts use the same request-matched attachment lifecycle as received production snapshots.
+        ui.textBoxes.acknowledge(snapshot);
         ui.config.syncTargetSelectors();
     }
 

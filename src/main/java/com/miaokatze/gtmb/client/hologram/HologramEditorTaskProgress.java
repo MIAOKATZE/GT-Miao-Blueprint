@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
+import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
@@ -19,8 +20,13 @@ final class HologramEditorTaskProgress extends Widget<HologramEditorTaskProgress
         this.ui = ui;
         this.cut = cut;
         name("editor_native_task_progress");
-        background(HologramEditorNativeTheme.PANEL);
         disableHoverBackground();
+        setEnabled(false);
+        tooltipBuilder(tooltip -> {
+            long now = System.nanoTime();
+            for (HologramProgress progress : observations)
+                tooltip.addLine(IKey.str(HologramProgressView.summary(progress, now)));
+        }).tooltipAutoUpdate(true);
         ui.shell.registerTarget("progress", this);
         ui.shell.registerTarget("progress.tasks", this);
     }
@@ -36,8 +42,7 @@ final class HologramEditorTaskProgress extends Widget<HologramEditorTaskProgress
             if (ui.workspaces.isCut()) add(cut.get());
             add(ui.textBoxes.progress());
         }
-        int height = observations.size() * 20;
-        if (getArea().height != height) height(height).scheduleResize();
+        setEnabled(!observations.isEmpty());
     }
 
     private void add(HologramProgress progress) {
@@ -53,10 +58,12 @@ final class HologramEditorTaskProgress extends Widget<HologramEditorTaskProgress
 
     @Override
     public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
-        int y = 2;
-        for (HologramProgress progress : observations) {
-            HologramProgressView.draw(ui.host.font(), progress, 6, y, getArea().width - 12, 3, false);
-            y += 20;
+        int count = observations.size();
+        if (count == 0) return;
+        int width = Math.max(0, getArea().width - 4);
+        for (int i = 0; i < count; i++) {
+            int left = 2 + width * i / count, right = 2 + width * (i + 1) / count;
+            HologramProgressView.drawCompact(ui.host.font(), observations.get(i), left, 2, right - left - 3, 3);
         }
     }
 }

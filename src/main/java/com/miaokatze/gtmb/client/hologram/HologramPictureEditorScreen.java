@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.opengl.GL11;
 
@@ -20,9 +21,11 @@ import com.miaokatze.gtmb.hologram.HologramPictureBox;
 import com.miaokatze.gtmb.hologram.HologramTextBox;
 
 /** Local image catalog and material-pixel proof sheet, sharing the existing attachment placement intent. */
-final class HologramPictureEditorScreen extends HologramMuiScreen {
+final class HologramPictureEditorScreen extends HologramAttachmentEditor {
 
     private final HologramUiModules ui;
+    private final boolean tutorial;
+    private final String tutorialFilename;
     private final HologramTextBox original;
     private HologramPictureBox source;
     private final Path folder = Minecraft.getMinecraft().mcDataDir.toPath()
@@ -52,8 +55,10 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
     private HologramPictureBox previewPicture;
 
     HologramPictureEditorScreen(HologramUiModules ui, HologramTextBox value) {
-        super("picture_editor", 620, 454);
+        super(ui, "picture", 620, 454);
         this.ui = ui;
+        tutorial = ui.session.isTutorial();
+        tutorialFilename = tutorial ? ui.session.state().data.getString("tutorialPictureFilename") : "";
         original = value;
         source = value.picture == null ? new HologramPictureBox() : value.picture;
         keepAspect = source.keepAspect;
@@ -87,7 +92,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                         folder.toAbsolutePath()
                             .toString())));
         panel().child(HologramMuiTheme.button(() -> "图片预设", 344, 38, 128, 22, this::openPresets));
-        panel().child(HologramMuiTheme.button(() -> "刷新图片", 480, 38, 126, 22, this::refresh));
+        panel().child(target("refresh", HologramMuiTheme.button(() -> "刷新图片", 480, 38, 126, 22, this::refresh)));
         ParentWidget<?> catalog = new ParentWidget<>().pos(14, 66)
             .size(178, 278)
             .background(HologramMuiTheme.PANEL);
@@ -98,10 +103,12 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 .size(162, 22)
                 .setEnabledIf(w -> page * 9 + row < files.size());
             fileRow.child(
-                HologramMuiTheme.button(() -> filename(row), 0, 0, 162, 22, () -> load(filename(row)))
-                    .setEnabledIf(w -> !loading)
-                    .tooltipBuilder(t -> t.addLine(filename(row)))
-                    .tooltipAutoUpdate(true));
+                target(
+                    "file." + row,
+                    HologramMuiTheme.button(() -> filename(row), 0, 0, 162, 22, () -> load(filename(row))))
+                        .setEnabledIf(w -> !loading)
+                        .tooltipBuilder(t -> t.addLine(filename(row)))
+                        .tooltipAutoUpdate(true));
             catalog.child(fileRow);
         }
         catalog.child(HologramMuiTheme.button(() -> "‹", 8, 250, 38, 20, () -> page = Math.max(0, page - 1)));
@@ -130,9 +137,15 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 .size(402, 162)
                 .background(HologramMuiTheme.PANEL));
         panel().child(
-            HologramMuiTheme.button(() -> (!filters ? "● " : "") + "尺寸与材料", 204, 236, 198, 22, () -> filters = false));
+            target(
+                "dimensions",
+                HologramMuiTheme
+                    .button(() -> (!filters ? "● " : "") + "尺寸与材料", 204, 236, 198, 22, () -> filters = false)));
         panel().child(
-            HologramMuiTheme.button(() -> (filters ? "● " : "") + "滤镜与抠图", 408, 236, 198, 22, () -> filters = true));
+            target(
+                "filters",
+                HologramMuiTheme
+                    .button(() -> (filters ? "● " : "") + "滤镜与抠图", 408, 236, 198, 22, () -> filters = true)));
         ParentWidget<?> dimensions = new ParentWidget<>().pos(204, 264)
             .size(402, 134)
             .setEnabledIf(w -> !filters);
@@ -185,21 +198,25 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         field(effects, "contrast", "对比度 −100…100", 136, 0, () -> true);
         field(effects, "saturation", "饱和度 0…200", 272, 0, () -> true);
         effects.child(
-            HologramMuiTheme.button(
-                () -> "滤镜 · " + HologramPictureBox.FILTER_NAMES[filter],
-                0,
-                44,
-                266,
-                24,
-                () -> filter = (filter + 1) % HologramPictureBox.FILTER_NAMES.length));
+            target(
+                "filter",
+                HologramMuiTheme.button(
+                    () -> "滤镜 · " + HologramPictureBox.FILTER_NAMES[filter],
+                    0,
+                    44,
+                    266,
+                    24,
+                    () -> filter = (filter + 1) % HologramPictureBox.FILTER_NAMES.length)));
         effects.child(
-            HologramMuiTheme.button(
-                () -> (removeBackground ? "✓ " : "") + "自动抠图",
-                272,
-                44,
-                130,
-                24,
-                () -> removeBackground = !removeBackground));
+            target(
+                "removeBackground",
+                HologramMuiTheme.button(
+                    () -> (removeBackground ? "✓ " : "") + "自动抠图",
+                    272,
+                    44,
+                    130,
+                    24,
+                    () -> removeBackground = !removeBackground)));
         field(effects, "tolerance", "背景色容差 0…64", 0, 80, () -> removeBackground);
         effects.child(
             HologramMuiTheme
@@ -209,24 +226,17 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
             HologramMuiTheme.label(() -> notice, 14, 404, 592, 20, HologramMuiTheme.TITLE)
                 .tooltipBuilder(t -> t.addLine(notice))
                 .tooltipAutoUpdate(true));
+        panel().child(HologramMuiTheme.button(() -> "返回工作区", 14, 430, 160, 20, this::returnToWorkbench));
         panel().child(
-            HologramMuiTheme.button(
-                () -> "返回工作区",
-                14,
-                430,
-                160,
-                20,
-                () -> deferAction(
-                    () -> Minecraft.getMinecraft()
-                        .displayGuiScreen(ui.host.parent()))));
-        panel().child(
-            HologramMuiTheme.primaryButton(
-                () -> loading ? "正在转换…" : ui.session.state().cells.isEmpty() ? "确认图片 · 生成像素画" : "确认图片 · 选择放置位置",
-                342,
-                430,
-                264,
-                20,
-                this::confirm));
+            target(
+                "generate",
+                HologramMuiTheme.primaryButton(
+                    () -> loading ? "正在转换…" : ui.session.state().cells.isEmpty() ? "确认图片 · 生成像素画" : "确认图片 · 选择放置位置",
+                    342,
+                    430,
+                    264,
+                    20,
+                    this::confirm)));
         refresh();
     }
 
@@ -234,7 +244,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         java.util.function.BooleanSupplier enabled) {
         target.child(HologramMuiTheme.label(() -> label, x, y, 130, 15, HologramMuiTheme.MUTED));
         target.child(
-            HologramMuiTheme.textField(values.get(key), x, y + 16, 130, 20, 6)
+            target("field." + key, HologramMuiTheme.textField(values.get(key), x, y + 16, 130, 20, 6))
                 .setEnabledIf(w -> enabled.getAsBoolean()));
     }
 
@@ -270,7 +280,8 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
         long token = ++generation;
         worker.execute(() -> {
             try {
-                List<String> names = HologramPictureFiles.scan(folder);
+                List<String> names = tutorial ? tutorialFilename.isEmpty() ? java.util.Collections.emptyList()
+                    : java.util.Collections.singletonList(tutorialFilename) : HologramPictureFiles.scan(folder);
                 main(() -> {
                     if (token != generation || closed) return;
                     files.clear();
@@ -288,6 +299,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
 
     private void load(String filename) {
         if (loading || filename.isEmpty()) return;
+        if (tutorial && !tutorialFilename.equals(filename)) return;
         loading = true;
         long token = ++generation;
         ++previewGeneration;
@@ -371,8 +383,7 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
     private void place(HologramTextBox draft) {
         try {
             ui.textBoxes.begin(draft);
-            Minecraft.getMinecraft()
-                .displayGuiScreen(ui.host.parent());
+            returnToWorkbench();
         } catch (java.io.IOException failure) {
             notice = failure.getMessage();
         }
@@ -413,6 +424,58 @@ final class HologramPictureEditorScreen extends HologramMuiScreen {
                 notice = message;
             }
         });
+    }
+
+    String tutorialPictureTarget(String filename) {
+        if (!ui.session.isTutorial() || loading) return "";
+        int index = files.indexOf(filename);
+        if (index < 0) return "";
+        page = index / 9;
+        return "attachment.picture.file." + index % 9;
+    }
+
+    @Override
+    NBTTagCompound editorState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setTag("definition", original.write());
+        state.setTag("source", source.write());
+        state.setBoolean("filters", filters);
+        state.setBoolean("keepAspect", keepAspect);
+        state.setBoolean("removeBackground", removeBackground);
+        state.setBoolean("dither", dither);
+        state.setInteger("palette", palette);
+        state.setInteger("filter", filter);
+        state.setInteger("page", page);
+        state.setBoolean("loading", loading);
+        state.setBoolean("previewReady", preview != null && previewPicture != null);
+        state.setString("filename", source.filename);
+        for (Map.Entry<String, StringValue> entry : values.entrySet()) state.setString(
+            "field." + entry.getKey(),
+            entry.getValue()
+                .getStringValue());
+        return state;
+    }
+
+    @Override
+    void restoreEditorState(NBTTagCompound state) {
+        try {
+            NBTTagCompound savedSource = state.getCompoundTag("source");
+            source = savedSource.getIntArray("source").length == 0 ? new HologramPictureBox()
+                : HologramPictureBox.read(savedSource);
+        } catch (java.io.IOException failure) {
+            notice = failure.getMessage();
+        }
+        filters = state.getBoolean("filters");
+        keepAspect = state.getBoolean("keepAspect");
+        removeBackground = state.getBoolean("removeBackground");
+        dither = state.getBoolean("dither");
+        palette = state.getInteger("palette");
+        filter = state.getInteger("filter");
+        page = state.getInteger("page");
+        for (Map.Entry<String, StringValue> entry : values.entrySet())
+            if (state.hasKey("field." + entry.getKey())) entry.getValue()
+                .setStringValue(state.getString("field." + entry.getKey()));
+        previewSignature = "";
     }
 
     private static String message(Exception failure) {

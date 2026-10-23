@@ -104,6 +104,7 @@ public final class HologramEditorTutorialLessonsRegression {
             for (int i = 0; i < commands.size(); i++) commands.get(i).key = 0;
             List<Step> blueprint = HologramEditorLessons.course("blueprint", commands, author);
             completeCourseOrdering(commands, blueprint);
+            attachmentCoursesUseTheCompletePlacementChain(commands);
             SimpleAssert.that(
                 hasOperation(blueprint, Operation.SELECT_STRUCTURE) && hasControl(blueprint, 163),
                 "the actual author blueprint course retains group selection and source editing");
@@ -190,6 +191,82 @@ public final class HologramEditorTutorialLessonsRegression {
         SimpleAssert.that(
             cutList.get(1).description.contains("左侧"),
             "the cut preview description matches the retained left viewport");
+    }
+
+    private static void attachmentCoursesUseTheCompletePlacementChain(HologramEditorCommands commands)
+        throws IOException {
+        for (String topic : new String[] { "text", "picture" }) {
+            List<Step> lesson = HologramEditorLessons.course(topic, commands);
+            String expectedTool = topic.equals("picture") ? "image" : "text";
+            int toolActions = 0;
+            for (Step step : lesson) for (Action action : step.actions) {
+                if (action.operation != Operation.OPEN_TOOL) continue;
+                int index = commands.index(action.target);
+                SimpleAssert.that(
+                    index >= 0,
+                    "attachment tool actions resolve in the production command catalogue: " + action.target);
+                SimpleAssert.eq(
+                    expectedTool,
+                    commands.get(index).name,
+                    "attachment opening and placement confirmation use the real command name");
+                SimpleAssert.eq(
+                    topic.equals("picture") ? 332 : 331,
+                    commands.get(index).control,
+                    "attachment commands retain the real router's text/image control identity");
+                toolActions++;
+            }
+            SimpleAssert
+                .eq(2, toolActions, "both opening and final placement confirmation resolve through real commands");
+            int handles = commands.index("moveHandles");
+            SimpleAssert.that(
+                handles >= 0 && commands.get(handles).name.equals("moveHandles"),
+                "attachment movement uses the production move-handles command");
+            SimpleAssert.eq(
+                topic.equals("text") ? 9 : 11,
+                lesson.size(),
+                "attachment lessons retain distinct review boundaries: " + topic);
+            SimpleAssert.that(
+                lesson.get(0).actions.isEmpty() && operationStep(lesson, Operation.OPEN_TOOL) > 0
+                    && !hasOperation(lesson, Operation.SELECT_CELL)
+                    && operationStep(lesson, Operation.TYPE_ATTACHMENT)
+                        < operationStep(lesson, Operation.POSITION_ATTACHMENT)
+                    && operationStep(lesson, Operation.POSITION_ATTACHMENT)
+                        < operationStep(lesson, Operation.SELECT_ATTACHMENT)
+                    && operationStep(lesson, Operation.SELECT_ATTACHMENT) < operationStep(lesson, Operation.MOVE_X),
+                "attachment teaching opens without preselection, enters content, positions, then selects and moves the result: "
+                    + topic);
+            int generation = -1;
+            for (int i = 0; i < lesson.size(); i++) for (Action action : lesson.get(i).actions)
+                if (action.target.equals("attachment." + topic + ".generate")) generation = i;
+            SimpleAssert.that(
+                generation >= 0 && lesson.get(generation).actions.size() == 2
+                    && lesson.get(generation).actions.get(1).target.equals("attachment.preset.skip"),
+                "generate and explicit preset-skip share one step, keeping checkpoint boundaries free of save closures: "
+                    + topic);
+            SimpleAssert.that(
+                !hasOperation(lesson, Operation.LIBRARY) && !hasControl(lesson, 222),
+                "attachment lessons do not save or replace library documents: " + topic);
+        }
+        List<Step> picture = HologramEditorLessons.course("picture", commands);
+        SimpleAssert.that(
+            hasOperation(picture, Operation.SELECT_PICTURE) && hasTarget(picture, "attachment.picture.filters")
+                && hasTarget(picture, "attachment.picture.filter"),
+            "image teaching loads a local catalog row and uses the actual filter controls");
+        java.nio.file.Path directory = java.nio.file.Files.createTempDirectory("gtmb-tutorial-picture-regression-");
+        java.nio.file.Path own = null;
+        try {
+            own = HologramEditorTutorialSamples.createPictureSample(directory);
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(own.toFile());
+            SimpleAssert.eq(8, image.getWidth(), "the teaching image has a bounded eight-pixel width");
+            SimpleAssert.eq(8, image.getHeight(), "the teaching image has a bounded eight-pixel height");
+            SimpleAssert.that(
+                own.getParent()
+                    .equals(directory),
+                "the helper owns a unique file in its supplied catalog");
+        } finally {
+            if (own != null) java.nio.file.Files.deleteIfExists(own);
+            java.nio.file.Files.deleteIfExists(directory);
+        }
     }
 
     private static int operationStep(List<Step> steps, Operation operation) {

@@ -116,9 +116,6 @@ final class HologramEditorShell {
             .childPadding(0)
             .background(IDrawable.NONE);
         taskProgress = new HologramEditorTaskProgress(ui, () -> cut == null ? null : cut.progress());
-        presentation.child(
-            taskProgress.widthRel(1f)
-                .height(20));
         presentation.child(buildDocumentBar());
         Flow top = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .widthRel(1f)
@@ -283,6 +280,10 @@ final class HologramEditorShell {
                             HologramEditorNativeTheme.MUTED)
                         .widthRel(1f)
                         .height(10)));
+        // Tasks share the existing document row; their arrival must never move the mode bar or canvas.
+        bar.child(
+            taskProgress.widthRel(.35f)
+                .height(20));
         bar.child(headerButton("打开剪切", "cut", () -> ui.workspaces.activateCut(), ui.workspaces::blueprint));
         bar.child(headerButton("蓝图库", "library", () -> {
             if (!ui.workspaces.blueprint()) ui.workspaces.activateBlueprint();
@@ -1017,7 +1018,7 @@ final class HologramEditorShell {
         return bounds(best);
     }
 
-    private IWidget tutorialTarget(String key) {
+    IWidget tutorialTarget(String key) {
         if (!ui.session.isTutorial()) return null;
         if ("modal.close".equals(key)) return modalCloseWidget();
         if (key.startsWith("control.")) {
