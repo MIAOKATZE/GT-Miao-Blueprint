@@ -53,7 +53,12 @@ final class HologramEditorLessons {
         CUT_CANCEL,
         CUT_PLACE,
         CUT_LIST_CLICK,
-        CUT_LIST_ORBIT
+        CUT_LIST_ORBIT,
+        ATTACHMENT_CLICK,
+        TYPE_ATTACHMENT,
+        SELECT_PICTURE,
+        POSITION_ATTACHMENT,
+        SELECT_ATTACHMENT
     }
 
     static final class Action {
@@ -102,6 +107,7 @@ final class HologramEditorLessons {
         else if (topic.equals("blueprint")) blueprint(steps, commands);
         else if (topic.equals("structure")) structure(steps);
         else if (topic.equals("cut")) cut(steps);
+        else if (topic.equals("text") || topic.equals("picture")) attachment(steps, topic.equals("picture"));
         else if (topic.equals("box-fps") || topic.equals("box-iso")
             || topic.equals("cut-fps")
             || topic.equals("cut-iso")) world(steps, topic);
@@ -302,6 +308,70 @@ final class HologramEditorLessons {
         add(s, "返回工作区", "结束后恢复原控件树、草稿、相机与选区。", "viewport", action(Operation.CLOSE_MATERIAL, "materials.cancel"));
     }
 
+    private static void attachment(List<Step> s, boolean picture) {
+        String noun = picture ? "图片" : "文字", editor = picture ? "picture" : "text";
+        String tool = picture ? "image" : "text";
+        String panel = "attachment." + editor + ".panel";
+        add(s, "准备附加内容", "本课的隔离石台用于展示与承托附件。直接从工具打开编辑器，生成后才在画布选择位置并确认，无需预先选格。", "viewport");
+        add(s, "打开" + noun + "浮窗", "从左侧工具打开工作台内的" + noun + "浮窗，原规划保留在背后。", panel, action(Operation.OPEN_TOOL, tool));
+        if (picture) {
+            add(
+                s,
+                "读取本地示例图",
+                "将自己的图片放入 MiaoBlueprintPicture 后，点击文件行读取。本课只读取临时生成的 8×8 示例图；不会读取你的其他图片。",
+                panel,
+                action(Operation.SELECT_PICTURE, "attachment.picture.file.0"));
+            add(
+                s,
+                "控制像素规模",
+                "将短边设为 8 像素，保留纵横比。像素大小与厚度决定生成的小瓷砖体积。",
+                "attachment.picture.field.shortSide",
+                action(Operation.TYPE_ATTACHMENT, "attachment.picture.field.shortSide"));
+            add(
+                s,
+                "预览滤镜",
+                "打开滤镜页并切换一次黑白滤镜，真实预览会重新计算。抠图和色彩参数可在同页调整，本课保持其余默认值。",
+                panel,
+                action(Operation.ATTACHMENT_CLICK, "attachment.picture.filters"),
+                action(Operation.ATTACHMENT_CLICK, "attachment.picture.filter"));
+        } else {
+            add(
+                s,
+                "输入短文字",
+                "在真实多行输入框键入 GT。字体、像素宽高、厚度和颜色可以调整，本课沿用默认值。",
+                "attachment.text.input",
+                action(Operation.TYPE_ATTACHMENT, "attachment.text.input"));
+        }
+        add(
+            s,
+            "生成" + noun + "草稿",
+            "点击生成，沿真实生成器计算小瓷砖。预设询问中选择不保存，本课不写入本地预设库。",
+            "viewport",
+            action(Operation.ATTACHMENT_CLICK, "attachment." + editor + ".generate"),
+            action(Operation.ATTACHMENT_CLICK, "attachment.preset.skip"));
+        add(
+            s,
+            "在石台上选位",
+            "移动演示鼠标并点击石台顶面，为附件选定实际位置。此时仍是可调整的预览；R / Alt+R 可旋转，小键盘或手柄可微调。",
+            "viewport",
+            action(Operation.POSITION_ATTACHMENT, "viewport"));
+        add(s, "确认附加到规划", "再次点击左侧确认放置，把生成结果加入本课的隔离规划。真实使用时也要经过这次明确确认。", "viewport", action(Operation.OPEN_TOOL, tool));
+        add(
+            s,
+            "整体选择附件",
+            "点附件轮廓整体选中。文字与图片保留为可编辑的整体，再次点击对应工具可以编辑内容。",
+            "viewport",
+            action(Operation.SELECT_ATTACHMENT, "viewport"));
+        add(
+            s,
+            "用手柄移动附件",
+            "显示手柄，沿 X 移动 2 格。附件整体移动，原石台保持原位。",
+            "viewport",
+            action(Operation.HANDLES, "viewport"),
+            action(Operation.MOVE_X, "gizmo.x"));
+        add(s, "返回原工作区", "完成、跳过或返回都会清理本课的临时附件与示例图片，并恢复进入前的工作区；上一步和重播恢复对应的教学状态。", "viewport");
+    }
+
     private static void blueprint(List<Step> s, HologramEditorCommands commands) {
         add(
             s,
@@ -405,14 +475,14 @@ final class HologramEditorLessons {
         add(
             s,
             "文字工具入口",
-            "文字工具另开独立编辑窗口。本课只悬停说明入口，不创建文字；继续演示结构与蓝图处理。",
+            "文字工具打开工作台内浮窗。完整输入、生成和附加操作见教程列表的「文字附加」独立课；本课继续演示结构与蓝图处理。",
             "control." + (HologramEditorControlIds.TOOLS + commands.index("text")),
             action(Operation.CLOSE_PANEL, "modal.close"),
             action(Operation.HOVER, "text"));
         add(
             s,
             "图片工具入口",
-            "图片工具另开独立编辑窗口。本课只悬停说明入口，不生成图片，也不模拟选位或确认。",
+            "图片工具打开工作台内浮窗。读取本地图、滤镜、生成和附加操作见教程列表的「图片附加」独立课。",
             "control." + (HologramEditorControlIds.TOOLS + commands.index("image")),
             action(Operation.HOVER, "image"));
         add(

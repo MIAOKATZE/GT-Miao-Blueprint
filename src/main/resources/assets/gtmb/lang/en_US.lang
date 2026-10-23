@@ -485,3 +485,6 @@ gtmb.hologram.guide.selectionStartPolygon=%s: free polygon · Ctrl+Z: undo a poi
 gtmb.hologram.guide.selectionCameraExit=Alt+wheel: depth · %s / Esc: normal view
 gtmb.hologram.guide.selectionNormalExit=Alt+wheel: depth · %s: isometric view · Esc: cancel selection
 gtmb.hologram.camera.placementMoving=Hold Ctrl to position · Ctrl+left: lock · Release Ctrl for camera controls
+
+gtmb.hologram.lesson.text=Attach text
+gtmb.hologram.lesson.picture=Attach pictures

@@ -83,6 +83,22 @@ final class HologramProgressView {
         if (value == null || width < 40) return;
         long now = System.nanoTime();
         String metric = metric(value, now);
+        draw(font, value, x, y, width, barHeight, darkSurface, now, metric);
+    }
+
+    /** A fixed-height header lane: shorten the metric before it can overlap the neighbouring task. */
+    static void drawCompact(FontRenderer font, HologramProgress value, int x, int y, int width, int barHeight) {
+        if (value == null || width < 2) return;
+        long now = System.nanoTime();
+        String metric = metric(value, now);
+        if (font.getStringWidth(metric) > width / 2)
+            metric = value.percent() >= 0 ? value.percent() + "%" : value.elapsedSeconds(now) + "s";
+        if (font.getStringWidth(metric) > width) metric = "";
+        draw(font, value, x, y, width, barHeight, false, now, metric);
+    }
+
+    private static void draw(FontRenderer font, HologramProgress value, int x, int y, int width, int barHeight,
+        boolean darkSurface, long now, String metric) {
         int metricWidth = font.getStringWidth(metric);
         String label = font.trimStringToWidth(phaseLabel(value), Math.max(0, width - metricWidth - 8));
         font.drawString(label, x, y, HologramEditorTheme.textColor(0xb9d5d4, darkSurface));
@@ -105,8 +121,8 @@ final class HologramProgressView {
             int fill = width * value.percent() / 100;
             Gui.drawRect(x, top, x + fill, top + barHeight, value.percent() == 100 ? 0xff82d6aa : 0xff81dce9);
         } else {
-            int segment = Math.max(8, width / 5), travel = Math.max(1, width - segment);
-            long position = Math.max(0, now - value.startedAt) / 10000000L % (travel * 2L);
+            int segment = Math.min(width, Math.max(8, width / 5)), travel = width - segment;
+            long position = travel == 0 ? 0 : Math.max(0, now - value.startedAt) / 10000000L % (travel * 2L);
             int offset = (int) (position > travel ? travel * 2L - position : position);
             Gui.drawRect(x + offset, top, x + offset + segment, top + barHeight, 0xff81dce9);
         }

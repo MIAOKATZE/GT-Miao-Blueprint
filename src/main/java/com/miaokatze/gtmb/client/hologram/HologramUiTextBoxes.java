@@ -20,6 +20,8 @@ final class HologramUiTextBoxes {
     private final HologramUiModules ui;
     private final HologramGizmo gizmo = new HologramGizmo();
     private HologramTextBox draft;
+    private HologramAttachmentEditor editor;
+    private boolean restoringDraft;
     private List<HologramTextBox.Cell> ghost = Collections.emptyList();
     private int originalX, originalY, originalZ;
     private int[] dragOrigin;
@@ -89,10 +91,16 @@ final class HologramUiTextBoxes {
         return draft != null && !chosen && !pending;
     }
 
+    boolean placementReady() {
+        return draft != null && localJob == null && !pending && !ghost.isEmpty();
+    }
+
     void reset() {
+        closeEditor();
         if (pending) com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
         if (localJob != null) localJob.cancel();
         localJob = null;
+        restoringDraft = false;
         picturePixels = null;
         pictureTexture.clear();
         draft = null;
@@ -142,7 +150,7 @@ final class HologramUiTextBoxes {
             ui.session.send("placeTextBox", action, true);
             return;
         }
-        // Finish the current MUI mouse dispatch before replacing its active screen and viewport tree.
+        // Finish native dispatch before adding a panel to the existing workbench manager.
         ui.host.parent()
             .deferAction(() -> openEditor(picture));
     }
@@ -157,13 +165,138 @@ final class HologramUiTextBoxes {
                 : selected == null ? new HologramTextBox() : HologramTextBox.read(selected);
             if (value.id.isEmpty())
                 value.id = (picture ? HologramPictureBox.PREFIX : HologramTextBox.PREFIX) + java.util.UUID.randomUUID();
-            HologramMuiScreen editor = picture ? new HologramPictureEditorScreen(ui, value)
-                : new HologramTextEditorScreen(ui, value);
-            editor.openFrom(ui.host.parent());
+            if (editorOpen()) return;
+            editor = picture ? new HologramPictureEditorScreen(ui, value) : new HologramTextEditorScreen(ui, value);
+            editor.openFloating();
         } catch (Exception failure) {
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Attachment editor could not open", failure);
             ui.session.notice("打开编辑器失败，请重试：" + (failure.getMessage() == null ? "窗口初始化失败" : failure.getMessage()));
         }
+    }
+
+    boolean editorOpen() {
+        return editor != null && editor.editorOpen();
+    }
+
+    void closeEditor() {
+        if (editor != null) editor.closeFloating();
+        editor = null;
+    }
+
+    /** The caller runs this after input dispatch; fields lose focus before any dialog is closed. */
+    boolean consumeEditorBack() {
+        if (!editorOpen()) return false;
+        if (ui.shell.fieldFocused()) ui.host.parent()
+            .getScreen()
+            .getContext()
+            .removeFocus();
+        else if (!ui.shell.consumeBackLayer()) closeEditor();
+        return true;
+    }
+
+    NBTTagCompound editorState() {
+        NBTTagCompound state = editorOpen() ? editor.editorState() : new NBTTagCompound();
+        state.setBoolean("open", editorOpen());
+        state.setBoolean("picture", editor instanceof HologramPictureEditorScreen);
+        state.setBoolean("positionChosen", chosen);
+        state.setBoolean("localJobActive", localJob != null);
+        state.setBoolean("pending", pending);
+        if (draft != null) state.setTag("draft", draft.write());
+        return state;
+    }
+
+    String tutorialPictureTarget(String filename) {
+        return editor instanceof HologramPictureEditorScreen
+            ? ((HologramPictureEditorScreen) editor).tutorialPictureTarget(filename)
+            : "";
+    }
+
+    /** Playback sends the same native cursor, deletion and character events as a focused user field. */
+    boolean tutorialType(String target, String value) {
+        if (!ui.session.isTutorial() || !editorOpen() || !ui.shell.tutorialTargetAdmitted(target)) return false;
+        com.cleanroommc.modularui.api.widget.IWidget widget = ui.shell.tutorialTarget(target);
+        if (!(widget instanceof com.cleanroommc.modularui.widgets.textfield.BaseTextFieldWidget)
+            || !ui.shell.activateTarget(target)) return false;
+        com.cleanroommc.modularui.widgets.textfield.BaseTextFieldWidget<?> field = (com.cleanroommc.modularui.widgets.textfield.BaseTextFieldWidget<?>) widget;
+        for (int i = 0; i < 8; i++) field.onKeyPressed('\0', Keyboard.KEY_UP);
+        field.onKeyPressed('\0', Keyboard.KEY_HOME);
+        for (int i = 0; i < 512; i++) field.onKeyPressed('\0', Keyboard.KEY_DELETE);
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            field.onKeyPressed(character, Keyboard.KEY_NONE);
+            if (com.cleanroommc.modularui.ModularUI.Mods.LWJGL3IFY.isLoaded())
+                field.onTextInput(new me.eigenraven.lwjgl3ify.api.InputEvents.TextEvent(String.valueOf(character)));
+        }
+        NBTTagCompound observed = editor.editorState();
+        return value.equals(
+            observed.getString(
+                target.endsWith(".input") ? "text" : "field." + target.substring(target.lastIndexOf('.') + 1)));
+    }
+
+    NBTTagCompound backgroundUiState() {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setTag("editor", editorState());
+        if (draft != null) state.setTag("draft", draft.write());
+        state.setBoolean("chosen", chosen || pending);
+        return state;
+    }
+
+    boolean restoreBackgroundUiState(NBTTagCompound state) {
+        reset();
+        try {
+            if (state.hasKey("draft", 10)) {
+                begin(HologramTextBox.read(state.getCompoundTag("draft")));
+                chosen = state.getBoolean("chosen");
+                restoringDraft = true;
+            }
+            NBTTagCompound saved = state.getCompoundTag("editor");
+            if (saved.getBoolean("open")) {
+                NBTTagCompound definitionTag = (NBTTagCompound) saved.getCompoundTag("definition")
+                    .copy();
+                HologramTextBox definition = restoreEditorDefinition(definitionTag);
+                if (!saved.getBoolean("picture")) definition.text = saved.getString("text");
+                editor = saved.getBoolean("picture") ? new HologramPictureEditorScreen(ui, definition)
+                    : new HologramTextEditorScreen(ui, definition);
+                editor.openFloating(saved);
+            }
+            return true;
+        } catch (java.io.IOException failure) {
+            ui.session.notice(failure.getMessage());
+            return false;
+        }
+    }
+
+    /** An editor checkpoint can precede rasterization; generated definitions still use the strict codec. */
+    private static HologramTextBox restoreEditorDefinition(NBTTagCompound tag) throws java.io.IOException {
+        if (tag.hasKey("picture", 10) || tag.getInteger("width") != 0
+            || tag.getInteger("height") != 0
+            || tag.getByteArray("bitmap").length != 0) return HologramTextBox.read(tag);
+        HologramTextBox value = new HologramTextBox();
+        value.id = tag.getString("id");
+        value.text = tag.getString("text");
+        value.font = tag.getString("font");
+        value.material = tag.getString("material");
+        value.metadata = tag.getInteger("metadata");
+        value.color = tag.getInteger("color");
+        value.pixelX = tag.getInteger("pixelX");
+        value.pixelY = tag.getInteger("pixelY");
+        value.thickness = tag.getInteger("thickness");
+        value.x = tag.getInteger("x");
+        value.y = tag.getInteger("y");
+        value.z = tag.getInteger("z");
+        value.yaw = tag.getDouble("yaw");
+        value.pitch = tag.getDouble("pitch");
+        value.roll = tag.getDouble("roll");
+        value.arc = tag.getDouble("arc");
+        value.bend = tag.getDouble("bend");
+        value.twist = tag.getDouble("twist");
+        value.shear = tag.getDouble("shear");
+        value.bold = tag.getBoolean("bold");
+        value.underline = tag.getBoolean("underline");
+        value.vertical = tag.getBoolean("vertical");
+        value.turns = tag.getIntArray("turns");
+        value.layoutVersion = tag.getInteger("layoutVersion");
+        return value;
     }
 
     /** A repeated workspace snapshot must not replace a local editor with a new root screen. */
@@ -345,7 +478,13 @@ final class HologramUiTextBoxes {
             }
             picturePixels = ready.picturePixels;
             boolean wasChosen = chosen;
-            if (ghost.isEmpty()) begin(draft, ready.cells);
+            if (restoringDraft) {
+                restoringDraft = false;
+                ghost = ready.cells;
+                originalX = draft.x;
+                originalY = draft.y;
+                originalZ = draft.z;
+            } else if (ghost.isEmpty()) begin(draft, ready.cells);
             else {
                 ghost = ready.cells;
                 chosen = wasChosen;

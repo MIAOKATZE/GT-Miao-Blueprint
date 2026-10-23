@@ -18,6 +18,7 @@ public final class HologramEditorTutorialGeometryRegression {
 
     public static void run() {
         blueprintMovesIntoSeparateSupportedBays();
+        attachmentMovementPreservesEditableDefinition();
         NBTTagCompound source = source();
         NBTTagCompound original = (NBTTagCompound) source.copy();
         NBTTagCompound checkpoint = new NBTTagCompound();
@@ -168,6 +169,55 @@ public final class HologramEditorTutorialGeometryRegression {
             geometry.storageOpen() && geometry.stored() && !geometry.placing(),
             "a storage checkpoint reopens the unconsumed entry before its place-button action");
         rebasedSelection(source, original);
+    }
+
+    private static void attachmentMovementPreservesEditableDefinition() {
+        NBTTagCompound initial = new NBTTagCompound();
+        NBTTagCompound platform = HologramEditorTutorialSamples.attachmentCanvas(initial);
+        SimpleAssert.eq(
+            35,
+            platform.getTagList("cells", 10)
+                .tagCount(),
+            "attachment teaching uses one bounded support surface");
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setInteger("dx", -2);
+        cell.setInteger("x", -2);
+        cell.setInteger("dy", 0);
+        cell.setInteger("dz", 0);
+        platform.getTagList("cells", 10)
+            .appendTag(cell);
+        NBTTagCompound definition = new NBTTagCompound();
+        definition.setInteger("x", -2);
+        definition.setString("text", "GT");
+        NBTTagCompound declaration = new NBTTagCompound();
+        declaration.setString("id", "gtmb_text_regression");
+        declaration.setInteger("x", -2);
+        declaration.setTag("textBox", definition);
+        platform.getTagList("structures", 10)
+            .appendTag(declaration);
+        NBTTagCompound before = (NBTTagCompound) platform.copy();
+        int[] offset = HologramEditorTutorialBlueprint.offset(Operation.MOVE_X);
+        SimpleAssert.that(
+            HologramEditorTutorialBlueprint.clearAndSupported(platform, new int[] { 35 }, offset),
+            "the attachment destination is clear and remains on the stone surface");
+        HologramEditorTutorialBlueprint
+            .translate(platform, new int[] { 35 }, Collections.singleton("gtmb_text_regression"), offset);
+        SimpleAssert.eq(0, definition.getInteger("x"), "moving the attachment updates its editable generator origin");
+        SimpleAssert.eq("GT", definition.getString("text"), "moving the attachment retains its source text");
+        SimpleAssert.eq(
+            -2,
+            before.getTagList("structures", 10)
+                .getCompoundTagAt(0)
+                .getCompoundTag("textBox")
+                .getInteger("x"),
+            "the checkpoint remains independent of a subsequent attachment move");
+        SimpleAssert.that(
+            before.getTagList("cells", 10)
+                .getCompoundTagAt(0)
+                .equals(
+                    platform.getTagList("cells", 10)
+                        .getCompoundTagAt(0)),
+            "moving an attachment leaves its original support cells unchanged");
     }
 
     private static void blueprintMovesIntoSeparateSupportedBays() {

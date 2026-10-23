@@ -5,6 +5,7 @@ import java.util.Map;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
 
 import com.cleanroommc.modularui.api.widget.Interactable;
 import com.cleanroommc.modularui.drawable.GuiTextures;
@@ -18,7 +19,7 @@ import com.cleanroommc.modularui.widgets.textfield.TextEditorWidget;
 import com.miaokatze.gtmb.hologram.HologramTextBox;
 
 /** Multiline document input with two compact property sheets; changes remain local until placement confirmation. */
-final class HologramTextEditorScreen extends HologramMuiScreen {
+final class HologramTextEditorScreen extends HologramAttachmentEditor {
 
     private static final String[] FONTS = { "minecraft", "miao", "fusion", "dejavu", "dejavu_serif" };
     private static final String[] COLOR_NAMES = { "白", "橙", "品红", "淡蓝", "黄", "黄绿", "粉", "灰", "淡灰", "青", "紫", "蓝", "棕",
@@ -35,7 +36,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     private String notice = "确认后在工作区选择位置；再次确认才写入蓝图";
 
     HologramTextEditorScreen(HologramUiModules ui, HologramTextBox text) {
-        super("text_editor", 590, 398);
+        super(ui, "text", 590, 398);
         this.ui = ui;
         this.text = text;
         document = new Document(text.text);
@@ -53,7 +54,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     protected void buildPanel() {
         HologramMuiTheme.header(panel(), () -> "文字转蓝图 · LittleTiles 文本框", 590);
         panel().child(
-            document.pos(14, 40)
+            target("input", document).pos(14, 40)
                 .size(402, 82)
                 .background(HologramEditorTheme.INPUT)
                 .setTextColor(HologramEditorTheme.TEXT));
@@ -61,7 +62,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
             new FontPreview().pos(426, 40)
                 .size(150, 82)
                 .background(HologramMuiTheme.PANEL));
-        panel().child(HologramMuiTheme.button(this::fontName, 14, 130, 218, 20, this::cycleFont));
+        panel().child(target("font", HologramMuiTheme.button(this::fontName, 14, 130, 218, 20, this::cycleFont)));
         panel().child(
             HologramMuiTheme
                 .button(() -> (text.bold ? "✓ " : "") + "加粗", 240, 130, 76, 20, () -> text.bold = !text.bold));
@@ -82,8 +83,10 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 20,
                 () -> text.vertical = !text.vertical));
         panel().child(
-            HologramMuiTheme
-                .button(() -> materials ? "返回形态" : "颜色与材料", 492, 130, 84, 20, () -> materials = !materials));
+            target(
+                "materials",
+                HologramMuiTheme
+                    .button(() -> materials ? "返回形态" : "颜色与材料", 492, 130, 84, 20, () -> materials = !materials)));
         ParentWidget<?> shape = new ParentWidget<>().pos(14, 158)
             .size(562, 170)
             .setEnabledIf(w -> !materials);
@@ -110,25 +113,18 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
             HologramMuiTheme.label(() -> notice, 14, 336, 562, 23, HologramMuiTheme.TITLE)
                 .tooltipBuilder(t -> t.addLine(notice))
                 .tooltipAutoUpdate(true));
-        panel().child(
-            HologramMuiTheme.button(
-                () -> "返回工作区",
-                14,
-                368,
-                160,
-                20,
-                () -> deferAction(
-                    () -> Minecraft.getMinecraft()
-                        .displayGuiScreen(ui.host.parent()))));
+        panel().child(HologramMuiTheme.button(() -> "返回工作区", 14, 368, 160, 20, this::returnToWorkbench));
         panel().child(HologramMuiTheme.button(() -> "字体预设", 180, 368, 124, 20, this::openPresets));
         panel().child(
-            HologramMuiTheme.primaryButton(
-                () -> ui.session.state().cells.isEmpty() ? "确认内容 · 生成文字" : "确认内容 · 选择放置位置",
-                312,
-                368,
-                264,
-                20,
-                this::confirm));
+            target(
+                "generate",
+                HologramMuiTheme.primaryButton(
+                    () -> ui.session.state().cells.isEmpty() ? "确认内容 · 生成文字" : "确认内容 · 选择放置位置",
+                    312,
+                    368,
+                    264,
+                    20,
+                    this::confirm)));
     }
 
     private void field(ParentWidget<?> panel, String key, String name, double initial, int x, int y) {
@@ -136,7 +132,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
             key,
             initial == Math.rint(initial) ? Long.toString((long) initial) : Double.toString(initial));
         panel.child(HologramMuiTheme.label(() -> name, x, y, 180, 15, HologramMuiTheme.MUTED));
-        panel.child(HologramMuiTheme.textField(value, x, y + 16, 180, 20, 10));
+        panel.child(target("field." + key, HologramMuiTheme.textField(value, x, y + 16, 180, 20, 10)));
     }
 
     private StringValue value(String key, String initial) {
@@ -301,7 +297,18 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 color -> values.get("color")
                     .setStringValue(String.format(java.util.Locale.ROOT, "%06X", color & 0xffffff)),
                 0xff000000 | tint(),
-                false).background(HologramMuiTheme.CLOTH));
+                false) {
+
+                @Override
+                public void transform(com.cleanroommc.modularui.api.layout.IViewportStack stack) {
+                    HologramAttachmentPopup.fit(this, stack);
+                }
+
+                @Override
+                public boolean shouldAnimate() {
+                    return false;
+                }
+            }.background(HologramMuiTheme.CLOTH));
     }
 
     @Override
@@ -311,7 +318,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
 
     private void openInventory() {
         openDialog("gtmb_text_material_inventory", (parent, player) -> {
-            Dialog<ItemStack> inventory = new Dialog<>("gtmb_text_material_inventory", this::sample);
+            Dialog<ItemStack> inventory = new HologramAttachmentPopup<>("gtmb_text_material_inventory", this::sample);
             inventory.size(202, 166)
                 .background(HologramMuiTheme.CLOTH);
             HologramMuiTheme.header(inventory, () -> "背包 · 选择材质", 202);
@@ -418,8 +425,7 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
     private void place() {
         try {
             ui.textBoxes.begin(text);
-            Minecraft.getMinecraft()
-                .displayGuiScreen(ui.host.parent());
+            returnToWorkbench();
         } catch (java.io.IOException failure) {
             notice = failure.getMessage();
         }
@@ -446,6 +452,28 @@ final class HologramTextEditorScreen extends HologramMuiScreen {
                 throw new IllegalArgumentException(failure.getMessage(), failure);
             }
         });
+    }
+
+    @Override
+    NBTTagCompound editorState() {
+        NBTTagCompound state = new NBTTagCompound();
+        NBTTagCompound definition = text.write();
+        state.setTag("definition", definition);
+        state.setString("text", document.content());
+        state.setBoolean("materials", materials);
+        for (Map.Entry<String, StringValue> entry : values.entrySet()) state.setString(
+            "field." + entry.getKey(),
+            entry.getValue()
+                .getStringValue());
+        return state;
+    }
+
+    @Override
+    void restoreEditorState(NBTTagCompound state) {
+        materials = state.getBoolean("materials");
+        for (Map.Entry<String, StringValue> entry : values.entrySet())
+            if (state.hasKey("field." + entry.getKey())) entry.getValue()
+                .setStringValue(state.getString("field." + entry.getKey()));
     }
 
     private static final class Document extends TextEditorWidget {

@@ -6,6 +6,7 @@ import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widgets.Dialog;
@@ -30,7 +31,7 @@ final class HologramAttachmentPresetDialogs {
                 return;
             }
             screen.openDialog("gtmb_attachment_save_preset", (parent, player) -> {
-                Dialog<?> dialog = new Dialog<>("gtmb_attachment_save_preset", null);
+                Dialog<?> dialog = new HologramAttachmentPopup<>("gtmb_attachment_save_preset", null);
                 dialog.size(350, 164)
                     .background(HologramMuiTheme.CLOTH);
                 HologramMuiTheme.header(dialog, () -> "是否保存为预设", 350);
@@ -40,22 +41,31 @@ final class HologramAttachmentPresetDialogs {
                     (picture ? "图片" : "字体") + "预设 "
                         + (store.rows(picture)
                             .size() + 1));
-                dialog.child(HologramMuiTheme.textField(name, 16, 62, 318, 22, 48));
+                dialog.child(
+                    target(screen, "attachment.preset.name", HologramMuiTheme.textField(name, 16, 62, 318, 22, 48)));
                 String[] error = { "" };
                 dialog.child(HologramMuiTheme.label(() -> error[0], 16, 90, 318, 28, HologramMuiTheme.TITLE));
-                dialog.child(HologramMuiTheme.primaryButton(() -> "保存", 16, 126, 150, 22, () -> {
-                    try {
-                        store.save(picture, name.getStringValue(), settings);
-                        dialog.closeIfOpen();
-                        screen.deferAction(proceed);
-                    } catch (IOException failure) {
-                        error[0] = failure.getMessage();
-                    }
-                }));
-                dialog.child(HologramMuiTheme.button(() -> "不保存", 184, 126, 150, 22, () -> {
-                    dialog.closeIfOpen();
-                    screen.deferAction(proceed);
-                }));
+                dialog.child(
+                    target(
+                        screen,
+                        "attachment.preset.save",
+                        HologramMuiTheme.primaryButton(() -> "保存", 16, 126, 150, 22, () -> {
+                            try {
+                                store.save(picture, name.getStringValue(), settings);
+                                dialog.closeIfOpen();
+                                screen.deferAction(proceed);
+                            } catch (IOException failure) {
+                                error[0] = failure.getMessage();
+                            }
+                        })));
+                dialog.child(
+                    target(
+                        screen,
+                        "attachment.preset.skip",
+                        HologramMuiTheme.button(() -> "不保存", 184, 126, 150, 22, () -> {
+                            dialog.closeIfOpen();
+                            screen.deferAction(proceed);
+                        })));
                 return dialog;
             });
         } catch (IOException failure) {
@@ -63,11 +73,17 @@ final class HologramAttachmentPresetDialogs {
         }
     }
 
+    private static <T extends IWidget> T target(HologramMuiScreen screen, String key, T widget) {
+        return screen instanceof HologramAttachmentEditor
+            ? ((HologramAttachmentEditor) screen).sharedTarget(key, widget)
+            : widget;
+    }
+
     static void open(HologramMuiScreen screen, boolean picture, Consumer<NBTTagCompound> apply) {
         try {
             HologramAttachmentPresets store = store();
             screen.openDialog("gtmb_attachment_preset_list", (parent, player) -> {
-                Dialog<?> dialog = new Dialog<>("gtmb_attachment_preset_list", null);
+                Dialog<?> dialog = new HologramAttachmentPopup<>("gtmb_attachment_preset_list", null);
                 dialog.size(400, 310)
                     .background(HologramMuiTheme.CLOTH);
                 HologramMuiTheme.header(dialog, () -> picture ? "图片处理预设" : "字体处理预设", 400);
@@ -125,7 +141,7 @@ final class HologramAttachmentPresetDialogs {
     private static void rename(HologramMuiScreen screen, HologramAttachmentPresets store,
         HologramAttachmentPresets.Entry entry) {
         screen.openDialog("gtmb_attachment_rename_preset", (parent, player) -> {
-            Dialog<?> dialog = new Dialog<>("gtmb_attachment_rename_preset", null);
+            Dialog<?> dialog = new HologramAttachmentPopup<>("gtmb_attachment_rename_preset", null);
             dialog.size(320, 144)
                 .background(HologramMuiTheme.CLOTH);
             HologramMuiTheme.header(dialog, () -> "修改预设名称", 320);
@@ -148,7 +164,7 @@ final class HologramAttachmentPresetDialogs {
 
     private static void error(HologramMuiScreen screen, String reason) {
         screen.openDialog("gtmb_attachment_preset_error", (parent, player) -> {
-            Dialog<?> dialog = new Dialog<>("gtmb_attachment_preset_error", null);
+            Dialog<?> dialog = new HologramAttachmentPopup<>("gtmb_attachment_preset_error", null);
             dialog.size(350, 130)
                 .background(HologramMuiTheme.CLOTH);
             HologramMuiTheme.header(dialog, () -> "处理预设", 350);

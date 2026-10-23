@@ -15,6 +15,29 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
+### v0.1.43 内部附加编辑与并列进度 / Attachment windows & task progress
+
+文字和图片编辑现在使用工作台内部悬浮窗，保持当前蓝图和视角；标题可拖动，材质、滤镜与预设等完整功能继续保留，窗口在小屏下按比例适配。Esc 先退出文本焦点，再逐层收起子窗和编辑窗；输入框中的 E 继续用于输入。
+
+顶部「教程」新增「文字附加」和「图片附加」独立课程，演示实际输入、生成、选位、确认和整体移动。图片课只读取自动生成的 8×8 示例图，结束清理自身文件并恢复原工作区。
+
+任务进度与文档标题位于同一固定高度顶栏，多条任务横向并列。任务开始、增加或结束都不挤动模式栏与画布；悬停可查看完整阶段、数量与耗时。
+
+*Text and image editors now float inside the workbench. Two new lessons demonstrate the complete attachment workflow. Concurrent task bars share the existing header without moving the workspace.*
+
+以下原图展示内部图文浮窗及并列进度布局，来源和有限验证范围见 [manifest](README/native-v0143/manifest.json)。进度图使用受控示例任务核对布局，不代表实际扫描或施工完成。
+
+<table>
+  <tr>
+    <td width="50%"><a href="README/native-v0143/text-window.png"><img src="README/native-v0143/text-window.png" alt="文字附加内部浮窗 / Internal text editor" width="480"></a></td>
+    <td width="50%"><a href="README/native-v0143/picture-window.png"><img src="README/native-v0143/picture-window.png" alt="图片附加内部浮窗 / Internal image editor" width="480"></a></td>
+  </tr>
+  <tr><td colspan="2"><a href="README/native-v0143/parallel-progress.png"><img src="README/native-v0143/parallel-progress.png" alt="固定顶栏中的并列进度（受控示例任务） / Parallel progress layout fixture" width="960"></a></td></tr>
+</table>
+
+<details>
+<summary>v0.1.42 历史教程布局与选区操作 / Previous tutorial layout & selection</summary>
+
 ### v0.1.42 教程布局与选区操作 / Tutorial layout & selection
 
 蓝图课从空白工作区打开两台高炉规划，先演示沿轴移动、取消与确认换行，再用平面移动放到预留位置，最后复制成三台。左后方平台保留一台，地面两台之间留出空间；原生手柄位移、无碰撞与底面承托共同核对。
@@ -37,6 +60,8 @@
     <td><a href="README/native-v0142/blueprint-three.png"><img src="README/native-v0142/blueprint-three.png" alt="复制后三台高炉 / Three furnaces after copying" width="480"></a></td>
   </tr>
 </table>
+
+</details>
 
 <details>
 <summary>v0.1.41 历史教程流程与原生观察 / Historical tutorial observations</summary>

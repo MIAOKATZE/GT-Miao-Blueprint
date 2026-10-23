@@ -42,7 +42,7 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         return screen;
     }
 
-    protected final ModularPanel panel() {
+    protected ModularPanel panel() {
         return getScreen().getMainPanel();
     }
 
@@ -72,7 +72,7 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
     protected abstract void buildPanel();
 
     /** The next MUI tick runs after input's panel/manager doSafe scopes have returned. */
-    final void deferAction(Runnable action) {
+    void deferAction(Runnable action) {
         deferredAction.offer(guardDeferredAction(action));
     }
 
@@ -85,10 +85,18 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         return action;
     }
 
-    final void openDialog(String name, SecondaryPanel.IPanelBuilder builder) {
-        deferAction(
-            () -> dialogs.computeIfAbsent(name, ignored -> new LocalDialog(panel()))
-                .open(builder));
+    void openDialog(String name, SecondaryPanel.IPanelBuilder builder) {
+        openDialog(name, builder, () -> true);
+    }
+
+    /** Revalidate a pending local dialog after dispatch, before building any native widgets. */
+    final void openDialog(String name, SecondaryPanel.IPanelBuilder builder,
+        java.util.function.BooleanSupplier admitted) {
+        deferAction(() -> {
+            if (!admitted.getAsBoolean()) return;
+            dialogs.computeIfAbsent(name, ignored -> new LocalDialog(panel()))
+                .open(builder);
+        });
     }
 
     /** PanelManager retains the first handler for a name for the entire screen lifetime. */

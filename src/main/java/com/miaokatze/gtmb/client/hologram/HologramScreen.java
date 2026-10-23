@@ -337,6 +337,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         if (ui.tutorial.blockInput()) return true;
         if (detached) return true;
+        if (back && ui.textBoxes.editorOpen()) {
+            deferAction(ui.textBoxes::consumeEditorBack);
+            return true;
+        }
         if (key == org.lwjgl.input.Keyboard.KEY_ESCAPE && ui.router.textFieldFocused()) {
             // Keep the current draft. MUI's late Escape closes every panel when a world is loaded.
             getScreen().getContext()

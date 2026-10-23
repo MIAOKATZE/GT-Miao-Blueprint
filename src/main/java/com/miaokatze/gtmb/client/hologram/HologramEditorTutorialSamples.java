@@ -104,6 +104,40 @@ final class HologramEditorTutorialSamples {
         return data;
     }
 
+    /** A small authored teaching surface; it is not a captured structure or a library document. */
+    static NBTTagCompound attachmentCanvas(NBTTagCompound source) {
+        NBTTagCompound data = emptyBlueprint(source);
+        NBTTagList cells = new NBTTagList();
+        for (int x = -3; x <= 3; x++)
+            for (int z = -2; z <= 2; z++) cells.appendTag(buildingCell(data, x, -1, z, new ItemStack(Blocks.stone)));
+        data.setTag("cells", cells);
+        data.setInteger("cellCount", cells.tagCount());
+        data.setString("title", "文字与图片 · 隔离教学石台");
+        return data;
+    }
+
+    /** Own one temporary image only; never overwrite or enumerate the player's image contents. */
+    static java.nio.file.Path createPictureSample(java.nio.file.Path folder) throws IOException {
+        java.nio.file.Files.createDirectories(folder);
+        java.nio.file.Path file = java.nio.file.Files.createTempFile(folder, "gtmb-tutorial-", ".png");
+        try {
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+                8,
+                8,
+                java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
+                boolean cross = x == y || x + y == 7;
+                image.setRGB(x, y, cross ? 0xffffc55c : (x + y) % 2 == 0 ? 0xff51a8c5 : 0xff285267);
+            }
+            if (!javax.imageio.ImageIO.write(image, "png", file.toFile()))
+                throw new IOException("PNG writer unavailable");
+            return file;
+        } catch (IOException | RuntimeException failure) {
+            java.nio.file.Files.deleteIfExists(file);
+            throw failure;
+        }
+    }
+
     static synchronized NBTTagCompound snapshot(Kind kind) throws IOException {
         return HologramObservedItemBindings.restore(sample(kind).data);
     }

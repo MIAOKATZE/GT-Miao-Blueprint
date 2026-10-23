@@ -485,3 +485,6 @@ gtmb.hologram.guide.selectionStartPolygon=%s 自由多边形 · Ctrl+Z 撤回选
 gtmb.hologram.guide.selectionCameraExit=Alt+滚轮 调整深度 · %s / Esc 返回普通视角
 gtmb.hologram.guide.selectionNormalExit=Alt+滚轮 调整深度 · %s 等距视角 · Esc 取消框选
 gtmb.hologram.camera.placementMoving=按住 Ctrl 移动投影 · Ctrl+左键锁定 · 松开 Ctrl 操作镜头
+
+gtmb.hologram.lesson.text=文字附加
+gtmb.hologram.lesson.picture=图片附加

@@ -36,6 +36,10 @@ final class HologramEditorTutorialBlueprint {
             if (members.contains(structure.getString("id"))) for (int axis = 0; axis < 3; axis++) {
                 String key = new String[] { "x", "y", "z" }[axis];
                 structure.setInteger(key, structure.getInteger(key) + offset[axis]);
+                if (structure.hasKey("textBox", 10)) {
+                    NBTTagCompound attachment = structure.getCompoundTag("textBox");
+                    attachment.setInteger(key, attachment.getInteger(key) + offset[axis]);
+                }
             }
         }
     }
