@@ -1045,6 +1045,16 @@ public final class HologramClient {
 
     @SubscribeEvent
     public void cutWorldKey(InputEvent.KeyInputEvent event) {
+        if (Keyboard.isCreated() && Keyboard.getEventKey() == Keyboard.KEY_DELETE) {
+            boolean enabled = areaProjectorWorld() && localArea != null
+                && !localAreaFinishing
+                && !localAreaCancelling
+                && !HologramBackgroundTasks.busy()
+                && !HologramCutClient.INSTANCE.active()
+                && Minecraft.getMinecraft().inGameHasFocus;
+            if (areaSelectionInput.deleteKey(localArea, enabled, Keyboard.getEventKeyState(), Keyboard.isRepeatEvent()))
+                localAreaView = null;
+        }
         if (Keyboard.isCreated() && Keyboard.getEventKey() == Keyboard.KEY_ESCAPE && Keyboard.getEventKeyState()) {
             if (cameraEscapeKeyTime == Keyboard.getEventNanoseconds()) return;
             if (HologramIsometricCamera.INSTANCE.active()) {
@@ -1110,6 +1120,7 @@ public final class HologramClient {
     /** This is reached only after camera/placement Escape layers have had their turn. */
     private static void requestAreaDiscard(GuiOpenEvent event) {
         Minecraft mc = Minecraft.getMinecraft();
+        pauseUnsubmittedLocalAreaFinish();
         final com.miaokatze.gtmb.hologram.HologramAreaSelection selection = localArea;
         boolean content = selection != null ? selection.hasSelectionContent()
             : state != null && selectionHasContent(state.data);
@@ -1140,7 +1151,8 @@ public final class HologramClient {
                 || currentHeld == null
                 || currentHeld.getItem() != item
                 || currentHeld.getItemDamage() != damage
-                || !tool.equals(
+                || !HologramInputContext.selectionTool(
+                    tool,
                     currentHeld.hasTagCompound() ? currentHeld.getTagCompound()
                         .getString("gtitHologramToolId") : ""))
                 return false;
@@ -1150,10 +1162,49 @@ public final class HologramClient {
                     && !localAreaFinishing
                     && !localAreaCancelling
                     && (localAreaSession.isEmpty() || state != null && state.session.equals(localAreaSession))
-                : localArea == null && state == snapshot
+                : localArea == null && selectionDiscardSnapshotMatches(snapshot, state)
                     && snapshotWorld == world
                     && state.data.getBoolean("areaSelecting");
-        }, () -> worldAction("cancelAreaSelection"));
+        }, () -> worldAction("cancelAreaSelection"), () -> {
+            if (selection != null) {
+                selection.deleteLatest();
+                localAreaView = null;
+            } else {
+                // Normally registration has already materialized the local selection. Preserve the
+                // same bounded geometry path for a server-only selection captured before that point.
+                com.miaokatze.gtmb.hologram.HologramAreaSelection restored = new com.miaokatze.gtmb.hologram.HologramAreaSelection();
+                try {
+                    restored.readSnapshot(snapshot.data);
+                    beginLocalAreaSelection();
+                    if (localArea == null) return;
+                    localArea = restored;
+                    localAreaSession = snapshot.session;
+                    localAreaRevision = snapshot.data.getLong("planRevision");
+                    localAreaAwaitingBegin = false;
+                    localArea.deleteLatest();
+                    localAreaView = null;
+                } catch (java.io.IOException invalid) {
+                    selectionNotice(invalid.getMessage());
+                }
+            }
+        });
+    }
+
+    /** Escape supersedes a finish gesture that is still waiting for its initial registration. */
+    static void pauseUnsubmittedLocalAreaFinish() {
+        if (localAreaAwaitingBegin && localAreaCommandSequence < 0) localAreaFinishing = false;
+    }
+
+    /** Metadata publication may replace the DTO while the same authoritative selection is still current. */
+    static boolean selectionDiscardSnapshotMatches(HologramState captured, HologramState current) {
+        if (captured == null || current == null || !captured.session.equals(current.session)) return false;
+        NBTTagCompound before = captured.data, now = current.data;
+        return now.getBoolean("areaSelecting") && !now.getBoolean("areaImporting")
+            && before.getInteger("dimension") == now.getInteger("dimension")
+            && HologramInputContext.selectionTool(before.getString("toolId"), now.getString("toolId"))
+            && before.getLong("planRevision") == now.getLong("planRevision")
+            && before.getLong("uiSequence") == now.getLong("uiSequence")
+            && before.getLong("areaSelectionSequence") == now.getLong("areaSelectionSequence");
     }
 
     static boolean selectionHasContent(NBTTagCompound selection) {
@@ -1169,6 +1220,7 @@ public final class HologramClient {
             localAreaFinishing = true;
             if (!localAreaAwaitingBegin) {
                 if (localAreaSession.isEmpty() || localAreaRevision < 0) {
+                    localAreaCommandSequence = -1;
                     localAreaAwaitingBegin = true;
                     worldAction("beginAreaSelection");
                 } else submitLocalAreaSelection(false);

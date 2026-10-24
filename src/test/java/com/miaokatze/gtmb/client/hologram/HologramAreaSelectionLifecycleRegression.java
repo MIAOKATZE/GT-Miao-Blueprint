@@ -103,6 +103,7 @@ public final class HologramAreaSelectionLifecycleRegression {
             SimpleAssert.that(
                 !HologramClient.blueprintInputBusy(),
                 "explicit projection-to-blueprint transition retires its originating submitted geometry");
+            pendingFinishEscape();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Cannot inspect local area lifecycle", failure);
         } finally {
@@ -114,6 +115,62 @@ public final class HologramAreaSelectionLifecycleRegression {
                 throw new AssertionError("Cannot restore local area fixture", failure);
             }
         }
+    }
+
+    private static void pendingFinishEscape() throws ReflectiveOperationException {
+        submitted();
+        HologramAreaSelection selection = (HologramAreaSelection) field("localArea").get(null);
+        try {
+            selection.worldPoint(1, 0, 64, 0);
+            selection.worldPoint(2, 2, 64, 2);
+        } catch (java.io.IOException invalid) {
+            throw new AssertionError("Cannot prepare pending registration selection", invalid);
+        }
+        field("localAreaSession").set(null, "");
+        field("localAreaCommandSequence").setLong(null, -1);
+        field("localAreaAwaitingBegin").setBoolean(null, true);
+        HologramClient.pauseUnsubmittedLocalAreaFinish();
+        SimpleAssert
+            .that(!field("localAreaFinishing").getBoolean(null), "Escape releases a finish awaiting registration");
+        SimpleAssert.that(field("localAreaAwaitingBegin").getBoolean(null), "Escape retains the pending begin owner");
+        SimpleAssert.that(field("localArea").get(null) == selection, "Escape retains local selection and its history");
+
+        // The next frame receives the authoritative begin after No closed the question. It must not
+        // submit the earlier finish gesture or leave the normal editing gate latched.
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setBoolean("areaSelectionOnly", true);
+        receipt.setBoolean("areaSelecting", true);
+        receipt.setString("session", "first-area");
+        receipt.setString("toolId", "projector");
+        receipt.setLong("planRevision", 9);
+        java.lang.reflect.Method register = HologramClient.class
+            .getDeclaredMethod("receiveLocalAreaRegistration", NBTTagCompound.class);
+        register.setAccessible(true);
+        register.invoke(null, receipt);
+        SimpleAssert.that(
+            !field("localAreaAwaitingBegin").getBoolean(null),
+            "authoritative begin resolves only its pending registration");
+        SimpleAssert
+            .that(!field("localAreaFinishing").getBoolean(null), "late begin cannot replay the escaped finish intent");
+        SimpleAssert.eq(
+            "first-area",
+            field("localAreaSession").get(null),
+            "same selection remains bound for a later explicit cancellation");
+        selection.deleteLatest();
+        SimpleAssert
+            .that(!selection.hasSelectionContent(), "returned selection accepts Delete after the later begin receipt");
+        selection.undoRegion();
+        SimpleAssert.that(selection.complete(), "returned selection still accepts undo after Delete");
+
+        submitted();
+        HologramClient.pauseUnsubmittedLocalAreaFinish();
+        SimpleAssert
+            .that(field("localAreaFinishing").getBoolean(null), "Escape cannot reopen editing of a submitted import");
+        field("localAreaAwaitingBegin").setBoolean(null, true);
+        HologramClient.pauseUnsubmittedLocalAreaFinish();
+        SimpleAssert.that(
+            field("localAreaFinishing").getBoolean(null),
+            "an issued command identity cannot be cleared as an unsent finish");
     }
 
     private static void submitted() throws ReflectiveOperationException {

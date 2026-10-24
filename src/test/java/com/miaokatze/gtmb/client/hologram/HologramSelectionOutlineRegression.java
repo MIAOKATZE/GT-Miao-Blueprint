@@ -14,6 +14,7 @@ final class HologramSelectionOutlineRegression {
 
     static void run() {
         HologramSelectionSurfaceRegression.run();
+        checkCornerSnapshots();
         NBTTagCompound selection = new NBTTagCompound();
         SimpleAssert.eq(
             "camera.selectionHold",
@@ -81,6 +82,59 @@ final class HologramSelectionOutlineRegression {
             SimpleAssert.that(before.equals(pending.snapshot()), "B confirmation is undone as one gesture");
         } catch (java.io.IOException failure) {
             throw new AssertionError("confirming the live polygon", failure);
+        }
+    }
+
+    private static void checkCornerSnapshots() {
+        try {
+            HologramAreaSelection area = new HologramAreaSelection();
+            SimpleAssert
+                .eq(0, HologramAreaOverlay.cornerMask(area.snapshot()), "empty selection has no corner markers");
+            area.worldPoint(2, 4, 64, 4);
+            SimpleAssert
+                .eq(2, HologramAreaOverlay.cornerMask(area.snapshot()), "right-first input keeps the right label");
+            area.worldPoint(1, 0, 64, 0);
+            int[] first = area.points();
+            SimpleAssert
+                .eq(3, HologramAreaOverlay.cornerMask(area.snapshot()), "completed box shows both button labels");
+            area.toggleMode("add");
+            SimpleAssert.eq(
+                3,
+                HologramAreaOverlay.cornerMask(area.snapshot()),
+                "arming a mode leaves the currently editable corners visible until the next box starts");
+            area.worldPoint(1, 8, 64, 8);
+            SimpleAssert
+                .eq(1, HologramAreaOverlay.cornerMask(area.snapshot()), "new box shows only its pending left corner");
+            SimpleAssert.that(
+                java.util.Arrays.equals(
+                    new int[] { 8, 64, 8 },
+                    area.snapshot()
+                        .getIntArray("areaPoints")),
+                "next-box markers cannot retain the previous box's coordinates");
+            area.undoRegion();
+            SimpleAssert
+                .eq(3, HologramAreaOverlay.cornerMask(area.snapshot()), "undo restores both previous corner labels");
+            SimpleAssert
+                .that(java.util.Arrays.equals(first, area.points()), "undo restores the prior corner identities");
+            area.worldPoint(2, 9, 64, 9);
+            SimpleAssert
+                .eq(2, HologramAreaOverlay.cornerMask(area.snapshot()), "new right-first box has only its right label");
+            area.deleteLatest();
+            SimpleAssert
+                .eq(3, HologramAreaOverlay.cornerMask(area.snapshot()), "Delete restores previous corner labels");
+            SimpleAssert
+                .that(java.util.Arrays.equals(first, area.points()), "Delete restores the prior corner identities");
+            area.beginNext("subtract");
+            SimpleAssert
+                .eq(0, HologramAreaOverlay.cornerMask(area.snapshot()), "an empty next-box gesture hides old markers");
+            area.undoRegion();
+            SimpleAssert
+                .eq(3, HologramAreaOverlay.cornerMask(area.snapshot()), "undoing next-box entry restores old markers");
+            area.beginContinuous(false);
+            SimpleAssert
+                .eq(0, HologramAreaOverlay.cornerMask(area.snapshot()), "polygon entry uses its own vertex markers");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("ordinary corner overlay snapshot protocol", failure);
         }
     }
 

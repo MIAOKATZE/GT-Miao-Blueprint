@@ -26,6 +26,15 @@ final class HologramSelectionDiscardDecision {
         discard.run();
     }
 
+    /** The hint is an alternative answer: return to editing after removing exactly one latest input. */
+    void deleteLatest(Runnable delete) {
+        if (finished) return;
+        boolean admitted = valid.getAsBoolean();
+        finished = true;
+        close.run();
+        if (admitted) delete.run();
+    }
+
     void retire() {
         finished = true;
     }
