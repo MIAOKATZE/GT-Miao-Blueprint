@@ -8,9 +8,11 @@ import org.lwjgl.input.Keyboard;
 final class HologramSelectionDiscardScreen extends HologramMuiScreen {
 
     private final HologramSelectionDiscardDecision decision;
+    private final Runnable deleteLatest;
 
-    HologramSelectionDiscardScreen(BooleanSupplier currentSelection, Runnable discard) {
+    HologramSelectionDiscardScreen(BooleanSupplier currentSelection, Runnable discard, Runnable deleteLatest) {
         super("selection_discard", 306, 116);
+        this.deleteLatest = deleteLatest;
         decision = new HologramSelectionDiscardDecision(
             () -> currentSelection.getAsBoolean() && !HologramBackgroundTasks.busy(),
             () -> mc.displayGuiScreen(null),
@@ -54,6 +56,15 @@ final class HologramSelectionDiscardScreen extends HologramMuiScreen {
 
     private void finish(boolean accepted, boolean skipPrompt) {
         deferAction(() -> { if (mc.currentScreen == this) decision.answer(accepted, skipPrompt); });
+    }
+
+    @Override
+    protected boolean muiKeyBefore(char character, int key) {
+        if (key == Keyboard.KEY_DELETE) {
+            deferAction(() -> { if (mc.currentScreen == this) decision.deleteLatest(deleteLatest); });
+            return true;
+        }
+        return false;
     }
 
     @Override

@@ -57,6 +57,19 @@ final class HologramSelectionInput {
     private Object previousWorld;
     private boolean wasActive;
 
+    /** A real short press can arrive between ticks, including immediately after a modal closes. */
+    boolean deleteKey(HologramAreaSelection selection, boolean enabled, boolean pressed, boolean repeat) {
+        return deleteTick(selection, enabled, pressed, repeat);
+    }
+
+    /** Events and polling share one edge so a held press can never remove two regions. */
+    boolean deleteTick(HologramAreaSelection selection, boolean enabled, boolean pressed, boolean contextChanged) {
+        boolean edge = delete.sample(pressed, contextChanged);
+        if (!edge || !enabled || selection == null) return false;
+        selection.deleteLatest();
+        return true;
+    }
+
     boolean tick(HologramAreaSelection selection, boolean enabled) {
         Minecraft mc = Minecraft.getMinecraft();
         boolean active = enabled && selection != null
@@ -102,10 +115,7 @@ final class HologramSelectionInput {
             }
             altered = true;
         }
-        if (delete.sample(key(Keyboard.KEY_DELETE), changed) && active) {
-            selection.deleteLatest();
-            altered = true;
-        }
+        if (deleteTick(selection, active, key(Keyboard.KEY_DELETE), changed)) altered = true;
         int[] keys = { Keyboard.KEY_UP, Keyboard.KEY_DOWN, Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT };
         boolean[] pressed = new boolean[keys.length];
         for (int i = 0; i < keys.length; i++) pressed[i] = key(keys[i]);

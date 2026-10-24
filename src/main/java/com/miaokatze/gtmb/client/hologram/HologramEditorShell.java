@@ -431,13 +431,14 @@ final class HologramEditorShell {
     }
 
     private Expandable expandable() {
+        // The inspector's collapsed view is zero-width; MUI's default minimum of 8 leaves a dead strip.
         return new Expandable() {
 
             @Override
             public com.cleanroommc.modularui.api.widget.Interactable.Result onMousePressed(int button) {
                 return com.cleanroommc.modularui.api.widget.Interactable.Result.STOP;
             }
-        }.coverChildrenWidth()
+        }.coverChildrenWidth(0)
             .disableCoverChildrenHeight()
             .heightRel(1f)
             .animationDuration(0);

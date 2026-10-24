@@ -22,18 +22,42 @@ final class HologramAreaOverlay {
 
         final HologramState state;
         private final int[] cursor;
+        private final int[] points;
+        final int pendingCorner, cornerCount, labelCount, surfaceFaceCount, surfaceBatchCount;
+        final long serial;
+        final boolean localSelection, inheritedAlphaTest, alphaTest, orthographic;
+        final float inheritedAlphaReference;
 
-        RenderWitness(HologramState state, int[] cursor) {
+        RenderWitness(HologramState state, int[] cursor, int[] points, int pendingCorner, int cornerCount,
+            int labelCount, boolean localSelection, boolean inheritedAlphaTest, float inheritedAlphaReference,
+            boolean alphaTest, int drawnSurfaceFaces) {
             this.state = state;
             this.cursor = cursor == null ? null : cursor.clone();
+            this.points = points.clone();
+            this.pendingCorner = pendingCorner;
+            this.cornerCount = cornerCount;
+            this.labelCount = labelCount;
+            this.serial = ++renderSerial;
+            this.localSelection = localSelection;
+            this.inheritedAlphaTest = inheritedAlphaTest;
+            this.inheritedAlphaReference = inheritedAlphaReference;
+            this.alphaTest = alphaTest;
+            surfaceFaceCount = drawnSurfaceFaces;
+            surfaceBatchCount = surfaceFaceCount == 0 ? 0 : surfaceLists.size();
+            orthographic = Math.abs(CORNER_PROJECTION.get(15)) > .5;
         }
 
         int[] cursor() {
             return cursor == null ? null : cursor.clone();
         }
+
+        int[] points() {
+            return points.clone();
+        }
     }
 
     private static RenderWitness lastRenderWitness;
+    private static long renderSerial;
     private static int[] outlineVertices, outlineCursor;
     private static boolean outlineClosed;
     private static int outlineAxis = -1;
@@ -87,16 +111,25 @@ final class HologramAreaOverlay {
         double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
         double py = camera.lastTickPosY + (camera.posY - camera.lastTickPosY) * partialTicks;
         double pz = camera.lastTickPosZ + (camera.posZ - camera.lastTickPosZ) * partialTicks;
+        boolean inheritedAlphaTest = GL11.glIsEnabled(GL11.GL_ALPHA_TEST);
+        float inheritedAlphaReference = GL11.glGetFloat(GL11.GL_ALPHA_TEST_REF);
+        CORNER_PROJECTION.clear();
+        GL11.glGetFloat(GL11.GL_PROJECTION_MATRIX, CORNER_PROJECTION);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            // WorldLast normally inherits GREATER .1: every faint fill/hatch fragment is otherwise discarded.
+            GL11.glDisable(GL11.GL_ALPHA_TEST);
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glDisable(GL11.GL_FOG);
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glDepthMask(false);
             GL11.glLineWidth(2);
+            boolean alphaTest = GL11.glIsEnabled(GL11.GL_ALPHA_TEST);
             NBTTagList regions = selection.getTagList("areaRegions", 10);
-            drawSurface(selection, cursor, px, py, pz);
+            int drawnSurfaceFaces = drawSurface(selection, cursor, px, py, pz);
             drawPolygon(selection, cursor, px, py, pz);
             for (int i = 0; i < regions.tagCount(); i++) {
                 NBTTagCompound region = regions.getCompoundTagAt(i);
@@ -139,10 +172,22 @@ final class HologramAreaOverlay {
                 GL11.glColor4f(1, .15f, .15f, 1);
                 draw(cursor[0], cursor[1], cursor[2], cursor[0], cursor[1], cursor[2], px, py, pz);
             }
+            int[] corners = { 0, 0 };
             if (selection.getBoolean("areaContinuous"))
                 drawPolygonVertices(selection.getIntArray("areaPolygon"), px, py, pz);
-            else drawCorners(selection, points, px, py, pz);
-            lastRenderWitness = new RenderWitness(state, cursor);
+            else corners = drawCorners(selection, points, px, py, pz);
+            lastRenderWitness = new RenderWitness(
+                state,
+                cursor,
+                points,
+                selection.getInteger("areaPendingCorner"),
+                corners[0],
+                corners[1],
+                state == null || selection != state.data,
+                inheritedAlphaTest,
+                inheritedAlphaReference,
+                alphaTest,
+                drawnSurfaceFaces);
         } finally {
             GL11.glPopAttrib();
         }
@@ -150,6 +195,15 @@ final class HologramAreaOverlay {
 
     static boolean showTarget(boolean isometric, boolean control) {
         return !isometric || control;
+    }
+
+    /** Left/right identity comes from the snapshot, including a right corner chosen before the left one. */
+    static int cornerMask(NBTTagCompound selection) {
+        if (selection.getBoolean("areaContinuous")) return 0;
+        int length = selection.getIntArray("areaPoints").length;
+        if (length == 6) return 3;
+        int pending = selection.getInteger("areaPendingCorner");
+        return length == 3 && (pending == 1 || pending == 2) ? 1 << (pending - 1) : 0;
     }
 
     private static final class SurfaceBatch {
@@ -164,7 +218,7 @@ final class HologramAreaOverlay {
         }
     }
 
-    private static void drawSurface(NBTTagCompound selection, int[] cursor, double px, double py, double pz) {
+    private static int drawSurface(NBTTagCompound selection, int[] cursor, double px, double py, double pz) {
         long started = System.nanoTime();
         if (selection.getBoolean("areaContinuous") && selection.getBoolean("areaPolygonClosed")) {
             int[] vertices = selection.getIntArray("areaPolygon");
@@ -179,7 +233,7 @@ final class HologramAreaOverlay {
                 }
                 if (surfaceFootprintBuilder != null) {
                     surfaceFootprintBuilder.advance(Math.max(0, 1_500_000L - (System.nanoTime() - started)));
-                    if (!surfaceFootprintBuilder.complete()) return;
+                    if (!surfaceFootprintBuilder.complete()) return 0;
                     surfaceFootprint = surfaceFootprintBuilder.rectangles();
                     surfaceFootprintBuilder = null;
                 }
@@ -205,12 +259,12 @@ final class HologramAreaOverlay {
                 surfaceBuilder = null;
             }
         }
-        if (surfaceFaces.isEmpty()) return;
+        if (surfaceFaces.isEmpty()) return 0;
         // Upload small chunks under the same frame budget. Steady-state rendering never resubmits every vertex in Java.
         while (surfaceUploaded < surfaceFaces.size() && System.nanoTime() - started < 1_500_000L) {
             HologramSelectionSurface.Face first = surfaceFaces.get(surfaceUploaded);
             int list = GL11.glGenLists(3);
-            if (list == 0) return;
+            if (list == 0) return 0;
             surfaceLists.add(new SurfaceBatch(list, first));
             int end = surfaceUploaded + 1;
             while (end < Math.min(surfaceFaces.size(), surfaceUploaded + 32) && surfaceFaces.get(end).axis == first.axis
@@ -225,7 +279,7 @@ final class HologramAreaOverlay {
             }
             surfaceUploaded = end;
         }
-        if (surfaceUploaded != surfaceFaces.size()) return;
+        if (surfaceUploaded != surfaceFaces.size()) return 0;
         double[] view = surfaceView(px, py, pz);
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_POLYGON_BIT | GL11.GL_CURRENT_BIT | GL11.GL_LINE_BIT);
         int matrixMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
@@ -258,6 +312,7 @@ final class HologramAreaOverlay {
             GL11.glMatrixMode(matrixMode);
             GL11.glPopAttrib();
         }
+        return surfaceFaces.size();
     }
 
     private static void discardSurface() {
@@ -348,12 +403,9 @@ final class HologramAreaOverlay {
     }
 
     /** Only the snapshot's editable corners are marked; history and the next-box gesture need no extra state. */
-    private static void drawCorners(NBTTagCompound selection, int[] points, double px, double py, double pz) {
-        if (points.length != 3 && points.length != 6) return;
-        if (points.length == 6 && selection.hasKey("areaInputMode", 8)
-            && !"replace".equals(selection.getString("areaInputMode"))) return;
+    private static int[] drawCorners(NBTTagCompound selection, int[] points, double px, double py, double pz) {
+        if (cornerMask(selection) == 0) return new int[] { 0, 0 };
         int pending = selection.getInteger("areaPendingCorner");
-        if (points.length == 3 && pending != 1 && pending != 2) return;
         Minecraft mc = Minecraft.getMinecraft();
         FontRenderer font = mc.fontRenderer;
         ScaledResolution resolution = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight);
@@ -367,7 +419,7 @@ final class HologramAreaOverlay {
             int button = points.length == 3 ? pending - 1 : i / 3;
             GL11.glLineWidth(6);
             GL11.glColor4f(.75f, .2f, 1, 1);
-            draw(points[i], points[i + 1], points[i + 2], points[i], points[i + 1], points[i + 2], px, py, pz);
+            draw(points[i], points[i + 1], points[i + 2], points[i], points[i + 1], points[i + 2], px, py, pz, .025);
             labels[button] = cornerLabel(
                 font,
                 button,
@@ -408,10 +460,14 @@ final class HologramAreaOverlay {
             GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glDisable(GL11.GL_FOG);
             GL11.glEnable(GL11.GL_TEXTURE_2D);
+            // FontRenderer enables alpha testing internally; do not inherit a terrain cutout threshold for glyphs.
+            GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
+            GL11.glColor4f(1, 1, 1, 1);
             for (CornerLabel label : labels) if (label != null) drawCornerLabel(font, label);
         } finally {
             GL11.glMatrixMode(matrixMode);
         }
+        return new int[] { points.length / 3, (labels[0] == null ? 0 : 1) + (labels[1] == null ? 0 : 1) };
     }
 
     private static CornerLabel cornerLabel(FontRenderer font, int button, double x, double y, double z, int width,
@@ -474,6 +530,8 @@ final class HologramAreaOverlay {
             int y = (int) Math.round((label.top - label.screenY) / CORNER_TEXT_SCALE);
             int width = (int) Math.ceil(label.width / CORNER_TEXT_SCALE);
             Gui.drawRect(x, y, x + width, y + font.FONT_HEIGHT + 6, 0xCC160C22);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             font.drawStringWithShadow(label.text, x + 4, y + 3, 0xE0B0FF);
         } finally {
             GL11.glPopMatrix();
@@ -481,6 +539,11 @@ final class HologramAreaOverlay {
     }
 
     private static void draw(int ax, int ay, int az, int bx, int by, int bz, double px, double py, double pz) {
+        draw(ax, ay, az, bx, by, bz, px, py, pz, .002);
+    }
+
+    private static void draw(int ax, int ay, int az, int bx, int by, int bz, double px, double py, double pz,
+        double expansion) {
         AxisAlignedBB box = AxisAlignedBB
             .getBoundingBox(
                 Math.min(ax, bx),
@@ -489,7 +552,7 @@ final class HologramAreaOverlay {
                 Math.max(ax, bx) + 1D,
                 Math.max(ay, by) + 1D,
                 Math.max(az, bz) + 1D)
-            .expand(.002, .002, .002)
+            .expand(expansion, expansion, expansion)
             .getOffsetBoundingBox(-px, -py, -pz);
         RenderGlobal.drawOutlinedBoundingBox(box, -1);
     }
