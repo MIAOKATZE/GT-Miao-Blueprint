@@ -7,6 +7,7 @@ import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.RenderGlobal;
+import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.entity.Entity;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -24,6 +25,8 @@ final class HologramAreaOverlay {
         private final int[] cursor;
         private final int[] points;
         final int pendingCorner, cornerCount, labelCount, surfaceFaceCount, surfaceBatchCount;
+        final int surfaceHatchBatchCount, surfaceHatchLineCount;
+        final float surfaceHatchWidth, surfaceHatchAlpha;
         final long serial;
         final boolean localSelection, inheritedAlphaTest, alphaTest, orthographic;
         final float inheritedAlphaReference;
@@ -44,6 +47,10 @@ final class HologramAreaOverlay {
             this.alphaTest = alphaTest;
             surfaceFaceCount = drawnSurfaceFaces;
             surfaceBatchCount = surfaceFaceCount == 0 ? 0 : surfaceLists.size();
+            surfaceHatchBatchCount = surfaceFaceCount == 0 ? 0 : hatchLists.size();
+            surfaceHatchLineCount = surfaceFaceCount == 0 ? 0 : hatchLineCount;
+            surfaceHatchWidth = lastHatchWidth;
+            surfaceHatchAlpha = .8f;
             orthographic = Math.abs(CORNER_PROJECTION.get(15)) > .5;
         }
 
@@ -73,6 +80,13 @@ final class HologramAreaOverlay {
     private static java.util.List<HologramSelectionSurface.Face> surfaceFaces = java.util.Collections.emptyList();
     private static HologramSelectionSurface.Builder surfaceBuilder;
     private static final java.util.List<SurfaceBatch> surfaceLists = new java.util.ArrayList<>();
+    private static final java.util.List<SurfaceBatch> hatchLists = new java.util.ArrayList<>();
+    private static java.util.List<HologramSelectionSurface.Face> hatchFaces = java.util.Collections.emptyList();
+    private static HologramSelectionSurface.Hatch hatchBuilder;
+    private static int hatchUploaded;
+    private static int hatchLineCount;
+    private static float lastHatchWidth;
+    private static double[] hatchTransform;
     private static int surfaceUploaded;
     private static double surfaceOriginX, surfaceOriginY, surfaceOriginZ;
     private static java.util.List<int[]> surfaceFootprintOutline;
@@ -174,7 +188,7 @@ final class HologramAreaOverlay {
             }
             int[] corners = { 0, 0 };
             if (selection.getBoolean("areaContinuous"))
-                drawPolygonVertices(selection.getIntArray("areaPolygon"), px, py, pz);
+                corners = drawPolygonVertices(selection.getIntArray("areaPolygon"), px, py, pz);
             else corners = drawCorners(selection, points, px, py, pz);
             lastRenderWitness = new RenderWitness(
                 state,
@@ -208,12 +222,13 @@ final class HologramAreaOverlay {
 
     private static final class SurfaceBatch {
 
-        final int list, axis;
+        final int list, axis, normal;
         final long plane;
 
         SurfaceBatch(int list, HologramSelectionSurface.Face face) {
             this.list = list;
             axis = face.axis;
+            normal = face.normal;
             plane = face.plane;
         }
     }
@@ -263,7 +278,7 @@ final class HologramAreaOverlay {
         // Upload small chunks under the same frame budget. Steady-state rendering never resubmits every vertex in Java.
         while (surfaceUploaded < surfaceFaces.size() && System.nanoTime() - started < 1_500_000L) {
             HologramSelectionSurface.Face first = surfaceFaces.get(surfaceUploaded);
-            int list = GL11.glGenLists(3);
+            int list = GL11.glGenLists(1);
             if (list == 0) return 0;
             surfaceLists.add(new SurfaceBatch(list, first));
             int end = surfaceUploaded + 1;
@@ -272,15 +287,25 @@ final class HologramAreaOverlay {
             GL11.glNewList(list, GL11.GL_COMPILE);
             surfaceTriangles(surfaceUploaded, end, surfaceOriginX, surfaceOriginY, surfaceOriginZ);
             GL11.glEndList();
-            for (int normal : new int[] { 1, -1 }) {
-                GL11.glNewList(list + (normal > 0 ? 1 : 2), GL11.GL_COMPILE);
-                surfaceLines(surfaceUploaded, end, normal, surfaceOriginX, surfaceOriginY, surfaceOriginZ);
-                GL11.glEndList();
-            }
             surfaceUploaded = end;
         }
         if (surfaceUploaded != surfaceFaces.size()) return 0;
         double[] view = surfaceView(px, py, pz);
+        updateHatch(view, px, py, pz);
+        while (hatchUploaded < hatchFaces.size() && System.nanoTime() - started < 1_500_000L) {
+            HologramSelectionSurface.Face face = hatchFaces.get(hatchUploaded);
+            if (hatchBuilder == null) hatchBuilder = new HologramSelectionSurface.Hatch(face);
+            int list = GL11.glGenLists(1);
+            if (list == 0) break;
+            GL11.glNewList(list, GL11.GL_COMPILE);
+            boolean complete = surfaceLines(face, hatchBuilder, surfaceOriginX, surfaceOriginY, surfaceOriginZ);
+            GL11.glEndList();
+            hatchLists.add(new SurfaceBatch(list, face));
+            if (complete) {
+                hatchBuilder = null;
+                hatchUploaded++;
+            }
+        }
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_POLYGON_BIT | GL11.GL_CURRENT_BIT | GL11.GL_LINE_BIT);
         int matrixMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
         GL11.glMatrixMode(GL11.GL_MODELVIEW);
@@ -295,18 +320,12 @@ final class HologramAreaOverlay {
             GL11.glPolygonMode(GL11.GL_FRONT_AND_BACK, GL11.GL_FILL);
             GL11.glColor4f(.35f, .85f, 1, .025f);
             for (SurfaceBatch batch : surfaceLists) GL11.glCallList(batch.list);
-            GL11.glLineWidth(1);
-            GL11.glColor4f(.35f, .85f, 1, view == null ? .045f : .09f);
-            for (SurfaceBatch batch : surfaceLists) {
-                // Lines have no GL face culling. Use the actual render matrix, including Core's virtual camera.
-                if (view == null) {
-                    GL11.glCallList(batch.list + 1);
-                    GL11.glCallList(batch.list + 2);
-                } else {
-                    double facing = view[6] == 0 ? view[batch.axis + 3] : view[batch.axis] - batch.plane;
-                    if (Math.abs(facing) > 1e-8) GL11.glCallList(batch.list + (facing > 0 ? 1 : 2));
-                }
-            }
+            // Match the cyan box outline's line submission, width and opacity. Both projections use this path.
+            lastHatchWidth = selection.getBoolean("areaContinuous") ? 3
+                : selection.hasKey("areaCurrentRegion", 3) && selection.getInteger("areaCurrentRegion") >= 0 ? 4 : 2;
+            GL11.glLineWidth(lastHatchWidth);
+            GL11.glColor4f(.35f, .85f, 1, .8f);
+            for (SurfaceBatch batch : hatchLists) GL11.glCallList(batch.list);
         } finally {
             GL11.glPopMatrix();
             GL11.glMatrixMode(matrixMode);
@@ -319,9 +338,55 @@ final class HologramAreaOverlay {
         surfaceBoxes = null;
         surfaceBuilder = null;
         surfaceFaces = java.util.Collections.emptyList();
-        for (SurfaceBatch batch : surfaceLists) GL11.glDeleteLists(batch.list, 3);
+        for (SurfaceBatch batch : surfaceLists) GL11.glDeleteLists(batch.list, 1);
         surfaceLists.clear();
         surfaceUploaded = 0;
+        discardHatch();
+    }
+
+    private static void discardHatch() {
+        for (SurfaceBatch batch : hatchLists) GL11.glDeleteLists(batch.list, 1);
+        hatchLists.clear();
+        hatchFaces = java.util.Collections.emptyList();
+        hatchUploaded = 0;
+        hatchLineCount = 0;
+        hatchBuilder = null;
+        hatchTransform = null;
+    }
+
+    private static void updateHatch(double[] view, double px, double py, double pz) {
+        double[] clip = new double[19];
+        for (int column = 0; column < 4; column++) for (int row = 0; row < 4; row++) for (int k = 0; k < 4; k++)
+            clip[column * 4 + row] += SURFACE_PROJECTION.get(k * 4 + row) * SURFACE_MODELVIEW.get(column * 4 + k);
+        clip[16] = px;
+        clip[17] = py;
+        clip[18] = pz;
+        if (java.util.Arrays.equals(clip, hatchTransform)) return;
+        java.util.List<HologramSelectionSurface.Face> visible = new java.util.ArrayList<>();
+        for (HologramSelectionSurface.Face face : surfaceFaces) {
+            // Lines do not participate in GL face culling. Select exterior-facing CSG faces explicitly.
+            if (view != null) {
+                double facing = view[6] == 0 ? view[face.axis + 3] : view[face.axis] - face.plane;
+                if (facing * face.normal <= 1e-8) continue;
+            }
+            HologramSelectionSurface.Face window = HologramSelectionSurface.hatchWindow(face, clip, px, py, pz);
+            if (window != null) visible.add(window);
+        }
+        boolean same = visible.size() == hatchFaces.size();
+        for (int i = 0; same && i < visible.size(); i++) {
+            HologramSelectionSurface.Face a = visible.get(i), b = hatchFaces.get(i);
+            same = a.axis == b.axis && a.normal == b.normal
+                && a.plane == b.plane
+                && a.u0 == b.u0
+                && a.u1 == b.u1
+                && a.v0 == b.v0
+                && a.v1 == b.v1;
+        }
+        if (!same) {
+            discardHatch();
+            hatchFaces = visible;
+        }
+        hatchTransform = clip;
     }
 
     private static void surfaceTriangles(int start, int end, double px, double py, double pz) {
@@ -338,17 +403,32 @@ final class HologramAreaOverlay {
         GL11.glEnd();
     }
 
-    private static void surfaceLines(int start, int end, int normal, double px, double py, double pz) {
-        GL11.glBegin(GL11.GL_LINES);
-        for (int index = start; index < end; index++) {
-            HologramSelectionSurface.Face face = surfaceFaces.get(index);
-            if (face.normal != normal) continue;
-            for (double[] line : HologramSelectionSurface.hatch(face)) {
-                surfaceVertex(face, line[0], line[1], px, py, pz);
-                surfaceVertex(face, line[2], line[3], px, py, pz);
+    private static boolean surfaceLines(HologramSelectionSurface.Face face, HologramSelectionSurface.Hatch hatch,
+        double px, double py, double pz) {
+        Tessellator tess = Tessellator.instance;
+        tess.startDrawing(GL11.GL_LINES);
+        boolean complete = false;
+        for (int i = 0; i < 512; i++) {
+            double[] line = hatch.next();
+            if (line == null) {
+                complete = true;
+                break;
             }
+            surfaceLineVertex(tess, face, line[0], line[1], px, py, pz);
+            surfaceLineVertex(tess, face, line[2], line[3], px, py, pz);
+            hatchLineCount++;
         }
-        GL11.glEnd();
+        tess.draw();
+        return complete;
+    }
+
+    private static void surfaceLineVertex(Tessellator tess, HologramSelectionSurface.Face face, double u, double v,
+        double px, double py, double pz) {
+        double plane = face.plane + face.normal * .002;
+        tess.addVertex(
+            (face.axis == 0 ? plane : face.axis == 1 ? v : u) - px,
+            (face.axis == 1 ? plane : face.axis == 2 ? v : u) - py,
+            (face.axis == 2 ? plane : face.axis == 0 ? v : u) - pz);
     }
 
     private static void surfaceVertex(HologramSelectionSurface.Face face, double u, double v, double px, double py,
@@ -498,8 +578,8 @@ final class HologramAreaOverlay {
         double pixelsPerUnit = Math.abs(CORNER_PROJECTION.get(0)) * width / (2 * cw);
         if (!(pixelsPerUnit > 0) || !Double.isFinite(pixelsPerUnit)) return null;
         String text = "\u00a7l" + HologramClient.text(
-            button == 0 ? "selectionCorner.left" : "selectionCorner.right",
-            button == 0 ? "Left click" : "Right click");
+            button == 2 ? "selectionCorner.start" : button == 0 ? "selectionCorner.left" : "selectionCorner.right",
+            button == 2 ? "Start" : button == 0 ? "Left click" : "Right click");
         return new CornerLabel(
             text,
             vx,
@@ -615,7 +695,7 @@ final class HologramAreaOverlay {
         }
     }
 
-    private static void drawPolygonVertices(int[] vertices, double px, double py, double pz) {
+    private static int[] drawPolygonVertices(int[] vertices, double px, double py, double pz) {
         long remaining = polygonStartFlashUntil - System.nanoTime();
         boolean flash = remaining > 0 && remaining / 150_000_000L % 2 == 0;
         for (int i = 0; i < vertices.length; i += 3) {
@@ -623,8 +703,8 @@ final class HologramAreaOverlay {
                 GL11.glLineWidth(flash ? 6 : 4);
                 GL11.glColor4f(flash ? 1 : .75f, flash ? .45f : .2f, 1, 1);
             } else {
-                GL11.glLineWidth(3);
-                GL11.glColor4f(.05f, .45f, .2f, 1);
+                GL11.glLineWidth(4);
+                GL11.glColor4f(1, .55f, .1f, 1);
             }
             draw(
                 vertices[i],
@@ -637,6 +717,40 @@ final class HologramAreaOverlay {
                 py,
                 pz);
         }
+        if (vertices.length < 3) return new int[] { 0, 0 };
+        Minecraft mc = Minecraft.getMinecraft();
+        ScaledResolution resolution = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight);
+        int width = resolution.getScaledWidth(), height = resolution.getScaledHeight();
+        CORNER_MODELVIEW.clear();
+        CORNER_PROJECTION.clear();
+        GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, CORNER_MODELVIEW);
+        GL11.glGetFloat(GL11.GL_PROJECTION_MATRIX, CORNER_PROJECTION);
+        CornerLabel label = cornerLabel(
+            mc.fontRenderer,
+            2,
+            vertices[0] + .5 - px,
+            vertices[1] + .5 - py,
+            vertices[2] + .5 - pz,
+            width,
+            height);
+        HologramWorldGuide.RenderWitness guide = HologramWorldGuide.lastRenderWitness();
+        int topInset = guide == null ? 8 : guide.top + guide.height + 8;
+        if (label == null || label.width > width - 8 || label.height > height - topInset - 4)
+            return new int[] { vertices.length / 3, 0 };
+        label.left = Math.max(4, Math.min(width - label.width - 4, label.screenX - label.width / 2.0));
+        label.top = Math.max(topInset, Math.min(height - label.height - 4, label.screenY - label.height - 10));
+        int matrixMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
+        GL11.glMatrixMode(GL11.GL_MODELVIEW);
+        try {
+            GL11.glDisable(GL11.GL_CULL_FACE);
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
+            GL11.glColor4f(1, 1, 1, 1);
+            drawCornerLabel(mc.fontRenderer, label);
+        } finally {
+            GL11.glMatrixMode(matrixMode);
+        }
+        return new int[] { vertices.length / 3, 1 };
     }
 
     private static void polygonVertex(int axis, double u, double v, double height, double px, double py, double pz) {

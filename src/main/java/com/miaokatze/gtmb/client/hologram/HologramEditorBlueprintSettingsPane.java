@@ -12,9 +12,6 @@ final class HologramEditorBlueprintSettingsPane {
 
     private final HologramUiModules ui;
     private IWidget built;
-    private int pendingTendency = -1;
-    private long pendingTendencySequence = -1;
-    private String pendingTendencySession = "";
 
     HologramEditorBlueprintSettingsPane(HologramUiModules ui) {
         this.ui = ui;
@@ -40,41 +37,12 @@ final class HologramEditorBlueprintSettingsPane {
                 .widthRel(1f)
                 .height(32));
         content.child(
-            HologramEditorNativeTheme.label(() -> "默认处理预设", HologramEditorNativeTheme.TITLE)
-                .widthRel(1f)
-                .height(20));
-        Flow defaults = Flow.row()
-            .widthRel(1f)
-            .height(18)
-            .childPadding(4);
-        defaults.child(defaultTendency(false).expanded());
-        defaults.child(defaultTendency(true).expanded());
-        content.child(defaults);
-        content.child(
-            HologramEditorNativeTheme.label(() -> "自用保留可用关系；分享按原流程推荐清理。细项仍可调整。")
-                .widthRel(1f)
-                .height(32));
-        content.child(
             action(
                 220,
-                () -> "开始蓝图处理流程",
-                () -> author() && !ui.processing.processingReady(),
-                () -> "按实际内容核对流程预设、身份、量子网络、坐标、NBT 与提示词。").widthRel(1f)
-                    .height(18));
-        content.child(
-            action(
-                297,
-                () -> "重新进行蓝图预设",
-                () -> author() && ui.processing.processingReady(),
-                () -> "按当前草稿重新核对六阶段；已移除的数据不会恢复。").widthRel(1f)
-                    .height(18));
-        content.child(
-            action(
-                221,
-                () -> "保存流程预设",
-                () -> author() && ui.processing.processingReady(),
-                () -> "保存已核对的全局处理选择，不复制某张蓝图的设备内容。").widthRel(1f)
-                    .height(18));
+                () -> ui.processing.processingReady() ? "重新核对蓝图处理" : "开始蓝图处理流程",
+                this::author,
+                () -> "打开处理弹窗，选择倾向自用、倾向分享或已保存的流程；完成后在窗内保存蓝图。").widthRel(1f)
+                    .height(22));
         content.child(
             action(
                 166,
@@ -108,64 +76,7 @@ final class HologramEditorBlueprintSettingsPane {
         return built;
     }
 
-    void refresh() {
-        if (pendingTendency < 0) return;
-        if (!pendingTendencySession.equals(ui.session.state().session)) {
-            pendingTendency = -1;
-            pendingTendencySequence = -1;
-            return;
-        }
-        if (ui.processing.processingFlow() != null) {
-            final int choice = pendingTendency;
-            pendingTendency = -1;
-            pendingTendencySequence = -1;
-            ui.host.parent()
-                .deferAction(() -> {
-                    if (!author() || ui.processing.processingFlow() == null) return;
-                    try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
-                        .fieldGraph(ui)) {
-                        ui.router.activate(choice);
-                    }
-                });
-        } else if (pendingTendencySequence >= 0 && ui.session.pendingSequence() < 0
-            && ui.session.state().data.getLong("uiSequence") >= pendingTendencySequence) {
-                pendingTendency = -1;
-                pendingTendencySequence = -1;
-            }
-    }
-
-    private ButtonWidget<?> defaultTendency(boolean share) {
-        String label = share ? "倾向分享" : "倾向自用";
-        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> label, "process", () -> {
-            ui.host.parent()
-                .deferAction(() -> {
-                    if (!author()) return;
-                    try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
-                        .fieldGraph(ui)) {
-                        if (ui.processing.processingReady()
-                            || ui.session.state().data.getBoolean("geometryValidationPending")) {
-                            // Wait for the authoritative report and original flow before applying the chosen tendency.
-                            pendingTendency = share ? 233 : 232;
-                            pendingTendencySession = ui.session.state().session;
-                            ui.router.activate(297);
-                            pendingTendencySequence = ui.session.sequence();
-                            return;
-                        }
-                        ui.router.activate(220);
-                        ui.router.activate(share ? 233 : 232);
-                    }
-                });
-        }, this::author, () -> false, false)
-            .widthRel(1f)
-            .height(18)
-            .tooltipBuilder(
-                t -> t.addLine(
-                    ui.processing.processingReady() ? "按当前稿重新准备处理报告并选用" + label + "；已移除数据不会恢复。"
-                        : "打开真实处理流程并选用" + label + "默认策略；量子、坐标和 NBT 继续按原规则校验。"))
-            .tooltipAutoUpdate(true);
-        ui.shell.registerTarget(share ? "processing.default.share" : "processing.default.self", button);
-        return button;
-    }
+    void refresh() {}
 
     private boolean editable() {
         return ui.session.editable() && !ui.library.browsePreviewActive();

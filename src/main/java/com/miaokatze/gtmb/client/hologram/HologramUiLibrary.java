@@ -966,12 +966,12 @@ final class HologramUiLibrary {
             mx,
             my);
         ui.canvas.button(
-            221,
+            140,
             190,
             239,
             125,
             17,
-            "保存流程预设",
+            "保存蓝图",
             ui.session.editable() && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
             mx,
             my);
@@ -994,10 +994,10 @@ final class HologramUiLibrary {
     }
 
     void drawBlueprintSwitchReview(int mx, int my) {
-        drawRect(80, 92, 598, 242, 0xff172f36);
+        HologramEditorTheme.PANEL.draw(80, 92, 518, 150);
         if (ui.processing.processingPresetSaveReview()) {
-            ui.canvas.text("保存流程预设", 96, 106, 486, 0xf5e4b9);
-            ui.canvas.text("为本次已核对的处理选择命名，供下次导入时复用", 96, 132, 486, 0xb9d5d4);
+            ui.canvas.text("保存流程预设", 96, 106, 486, HologramEditorTheme.TITLE);
+            ui.canvas.text("为本次已核对的处理选择命名，供下次导入时复用", 96, 132, 486, HologramEditorTheme.TEXT);
             ui.processing.processingPresetField()
                 .drawTextBox();
             ui.canvas.button(225, 96, 201, 230, 22, "取消", true, mx, my);
@@ -1016,14 +1016,14 @@ final class HologramUiLibrary {
                 my);
             return;
         }
-        ui.canvas.text(this.overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动", 96, 106, 486, 0xf5e4b9);
+        ui.canvas.text(this.overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动", 96, 106, 486, HologramEditorTheme.TITLE);
         ui.canvas.text(
             this.overwriteReview ? "将以当前蓝图替换：" + this.overwriteName
                 : this.deferredLibraryAction == 299 ? "放弃当前蓝图预设及未保存改动，返回蓝图库。已保存文件保留。" : "当前蓝图尚未保存；继续将放弃这些改动并切换蓝图。",
             96,
             138,
             486,
-            0xb9d5d4);
+            HologramEditorTheme.TEXT);
         ui.canvas
             .text(
                 this.overwriteReview ? "目标：" + this.overwriteTarget
@@ -1039,7 +1039,7 @@ final class HologramUiLibrary {
                 96,
                 163,
                 486,
-                0x94afb4);
+                HologramEditorTheme.MUTED);
         ui.canvas.button(225, 96, 201, 230, 22, "取消", true, mx, my);
         ui.canvas.button(
             224,
@@ -1748,7 +1748,7 @@ final class HologramUiLibrary {
                 return true;
             }
             if (ui.canvas.inViewport(mx, my) && !ui.preview.previewBlockedAt(mx, my)) {
-                ui.preview.zoom(Math.max(.25, Math.min(4, ui.preview.zoom() * (wheel > 0 ? 1.1 : 1 / 1.1))));
+                ui.preview.zoom(ui.preview.zoom() * (wheel > 0 ? 1.1 : 1 / 1.1));
                 return true;
             }
             return false;

@@ -26,6 +26,12 @@ public final class HologramIsometricCameraRegression {
         SimpleAssert.eq(WorldCameras.GuiPolicy.RELEASE, camera.guiPolicy(), "any GUI releases the blueprint camera");
         CameraSettings settings = camera.settings();
         SimpleAssert.that(
+            settings.navigation()
+                .minScale() == .4
+                && settings.navigation()
+                    .maxScale() == 128,
+            "world camera has the GTSWN engineering .4..128 pixels-per-block zoom range");
+        SimpleAssert.that(
             settings.input()
                 .freeCursor(),
             "world selection uses a free pointer owned and restored by Core");
@@ -131,6 +137,10 @@ public final class HologramIsometricCameraRegression {
                 .maxScale(),
             "zoom commands retain the configured maximum scale");
         SimpleAssert.that(camera.settings() == settings, "view commands reuse the immutable settings instance");
+        controls.zoom(1e-12);
+        SimpleAssert.that(
+            800 / (2 * camera.sample(0, 800, 600).projection.halfWidth()) == .4,
+            "zoom-out commands reach the shared engineering minimum without changing the default fit");
         camera.toggleSlice();
         HeightSlice defaultSlice = camera.settings()
             .slice();

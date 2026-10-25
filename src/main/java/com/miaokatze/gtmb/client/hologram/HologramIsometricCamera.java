@@ -31,7 +31,8 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
     private static final String OWNER = "gtmb:blueprint";
     private static final double DEFAULT_YAW = 45, DEFAULT_PITCH = 35.264389682754654;
-    private static final double DEFAULT_SCALE = 12, MIN_SCALE = 3, MAX_SCALE = 64;
+    // GTSWN engineering uses 16 * ZoomMotion(.025..8): the same .4..128 pixels per world block.
+    private static final double DEFAULT_SCALE = 12, MIN_SCALE = .4, MAX_SCALE = 128;
     private static final double MIN_PITCH = 15, MAX_PITCH = 85;
     private static final CameraSettings.Render RENDER = CameraSettings.Render.builder()
         .hideHand(true)

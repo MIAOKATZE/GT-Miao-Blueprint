@@ -52,7 +52,7 @@ final class HologramTextEditorScreen extends HologramAttachmentEditor {
 
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> "文字转蓝图 · LittleTiles 文本框", 590);
+        HologramMuiTheme.header(panel(), () -> headerTitle("文字转蓝图 · LittleTiles 文本框"), 590);
         panel().child(
             target("input", document).pos(14, 40)
                 .size(402, 82)

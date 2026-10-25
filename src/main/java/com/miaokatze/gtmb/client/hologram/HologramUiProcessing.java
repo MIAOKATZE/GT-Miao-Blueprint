@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
-import static net.minecraft.client.gui.Gui.*;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -39,9 +38,24 @@ final class HologramUiProcessing {
 
     private long processingReopenSequence = -1;
 
+    private long processingSubmitSequence = -1;
+
+    private boolean processingResultReview;
+
+    private HologramMuiTextField processingBlueprintField;
+
     boolean processingReady() {
-        return !ui.session.state().data.getBoolean("blueprintProcessingRequired")
-            || ui.session.state().data.getBoolean("blueprintProcessingComplete");
+        return processingReady(ui.session.state().data);
+    }
+
+    static boolean processingReady(NBTTagCompound state) {
+        return !state.getBoolean("blueprintProcessingRequired") || state.getBoolean("blueprintProcessingComplete");
+    }
+
+    static boolean processingAcknowledged(NBTTagCompound state, long sequence) {
+        return sequence >= 0 && state.getLong("uiSequence") >= sequence
+            && !state.getBoolean("pending")
+            && "processBlueprint".equals(state.getString("processingPresetOperation"));
     }
 
     boolean canEditBlueprintNbt() {
@@ -87,6 +101,7 @@ final class HologramUiProcessing {
     }
 
     private void openProcessing(boolean resume) {
+        processingResultReview = false;
         NBTTagCompound policy = ui.session.state().data.hasKey("processingPolicy")
             ? ui.session.state().data.getCompoundTag("processingPolicy")
             : processingState().getCompoundTag("policy");
@@ -131,7 +146,11 @@ final class HologramUiProcessing {
 
     void drawProcessingFlow(int mx, int my) {
         if (this.processingFlow == null) return;
-        drawRect(28, 48, 650, 304, 0xff172f36);
+        HologramEditorTheme.PANEL.draw(28, 48, 622, 256);
+        if (processingResultReview) {
+            drawProcessingResult(mx, my);
+            return;
+        }
         int stage = this.processingFlow.stage;
         NBTTagCompound policy = this.processingFlow.values();
         ui.canvas.text(
@@ -144,7 +163,7 @@ final class HologramUiProcessing {
             42,
             58,
             590,
-            0xf5e4b9);
+            HologramEditorTheme.TITLE);
         ui.canvas.button(
             232,
             42,
@@ -174,9 +193,9 @@ final class HologramUiProcessing {
             312,
             81,
             318,
-            0x94afb4);
+            HologramEditorTheme.MUTED);
         if (stage == 0) {
-            ui.canvas.text("选择已保存的流程，或明确不使用预设；应用后仍逐步核对", 42, 103, 588, 0xb9d5d4);
+            ui.canvas.text("选择已保存的流程，或明确不使用预设；应用后仍逐步核对", 42, 103, 588, HologramEditorTheme.TEXT);
             ui.canvas.button(
                 235,
                 42,
@@ -201,7 +220,8 @@ final class HologramUiProcessing {
                     true,
                     mx,
                     my);
-            if (presets.tagCount() == 0) ui.canvas.text("暂无流程预设；完成一次处理后可保存供下次复用", 42, 154, 588, 0x94afb4);
+            if (presets.tagCount() == 0)
+                ui.canvas.text("暂无流程预设；完成一次处理后可保存供下次复用", 42, 154, 588, HologramEditorTheme.MUTED);
             this.processingPresetField.drawTextBox();
             ui.canvas.button(
                 293,
@@ -234,7 +254,7 @@ final class HologramUiProcessing {
                 mx,
                 my);
         } else if (stage == 1) {
-            ui.canvas.text("等级 0 保留原身份，1 清理已登记网络身份；更高等级逐步清理位置等字段", 42, 103, 588, 0xb9d5d4);
+            ui.canvas.text("等级 0 保留原身份，1 清理已登记网络身份；更高等级逐步清理位置等字段", 42, 103, 588, HologramEditorTheme.TEXT);
             int minimum = Math.max(
                 0,
                 Math.min(
@@ -258,11 +278,11 @@ final class HologramUiProcessing {
                 42,
                 163,
                 588,
-                0xb9d5d4);
-            ui.canvas.text("按已登记设备字段逐级处理；已清除的数据无法恢复", 42, 210, 588, 0x94afb4);
-            ui.canvas.text("当前最低等级 " + minimum + "；只有点击等级才确认本步骤", 42, 185, 588, 0x94afb4);
+                HologramEditorTheme.TEXT);
+            ui.canvas.text("按已登记设备字段逐级处理；已清除的数据无法恢复", 42, 210, 588, HologramEditorTheme.MUTED);
+            ui.canvas.text("当前最低等级 " + minimum + "；只有点击等级才确认本步骤", 42, 185, 588, HologramEditorTheme.MUTED);
         } else if (stage == 2) {
-            ui.canvas.text("自用保留原网络；分享使用终端改绑。节点分类可选，不设置时默认所有节点一组。", 42, 103, 588, 0xb9d5d4);
+            ui.canvas.text("自用保留原网络；分享使用终端改绑。节点分类可选，不设置时默认所有节点一组。", 42, 103, 588, HologramEditorTheme.TEXT);
             ui.canvas.button(
                 262,
                 42,
@@ -305,9 +325,9 @@ final class HologramUiProcessing {
                     .tagCount() > 0,
                 mx,
                 my);
-            ui.canvas.text("可直接下一步；需要多个网络时再分类，自定义分类必须完整分配后保存。", 42, 235, 588, 0x94afb4);
+            ui.canvas.text("可直接下一步；需要多个网络时再分类，自定义分类必须完整分配后保存。", 42, 235, 588, HologramEditorTheme.MUTED);
         } else if (stage == 3) {
-            ui.canvas.text("每项坐标可清除、保留绝对位置、或随蓝图相对移动", 42, 103, 588, 0xb9d5d4);
+            ui.canvas.text("每项坐标可清除、保留绝对位置、或随蓝图相对移动", 42, 103, 588, HologramEditorTheme.TEXT);
             if (mx >= 42 && mx < 630 && my >= 100 && my < 140) ui.canvas.tooltip(
                 ui.host.font()
                     .listFormattedStringToWidth(
@@ -340,7 +360,7 @@ final class HologramUiProcessing {
                     42,
                     y + 5,
                     270,
-                    0xb9d5d4);
+                    HologramEditorTheme.TEXT);
                 if (mx >= 42 && mx < 312 && my >= y && my < y + 22) ui.canvas.tooltip(
                     ui.host.font()
                         .listFormattedStringToWidth(
@@ -371,7 +391,8 @@ final class HologramUiProcessing {
                         ui.host.font()
                             .listFormattedStringToWidth(relation.getString("clearDetail"), 430));
             }
-            if (relations.tagCount() == 0) ui.canvas.text("没有已登记坐标关系；请选择默认方式确认本步骤", 42, 155, 588, 0x94afb4);
+            if (relations.tagCount() == 0)
+                ui.canvas.text("没有已登记坐标关系；请选择默认方式确认本步骤", 42, 155, 588, HologramEditorTheme.MUTED);
         } else if (stage == 4) {
             boolean budgetExceeded = resourceReport().getBoolean("resourceReviewTruncated");
             ui.canvas.text(
@@ -382,7 +403,7 @@ final class HologramUiProcessing {
                 42,
                 103,
                 588,
-                budgetExceeded ? 0xff5952 : 0xb9d5d4);
+                budgetExceeded ? 0xff5952 : HologramEditorTheme.TEXT);
             ui.canvas.button(280, 42, 122, 186, 18, "保留普通 NBT 根条目", true, mx, my);
             ui.canvas.button(281, 240, 122, 186, 18, "确认当前忽略清单", true, mx, my);
             ui.canvas.button(
@@ -433,7 +454,7 @@ final class HologramUiProcessing {
                             430));
             }
         } else {
-            ui.canvas.text("自动提示补充已登记配置问题，不改写您已有的提示词", 42, 103, 588, 0xb9d5d4);
+            ui.canvas.text("自动提示补充已登记配置问题，不改写您已有的提示词", 42, 103, 588, HologramEditorTheme.TEXT);
             String[] values = { "light", "full", "none" }, names = { "轻度 · 关键绑定与放置提醒", "完整 · 全部已登记问题说明", "不自动添加提示词" };
             for (int i = 0; i < 3; i++) ui.canvas.button(
                 290 + i,
@@ -445,7 +466,7 @@ final class HologramUiProcessing {
                 true,
                 mx,
                 my);
-            ui.canvas.text("完成后可保存蓝图、复用流程预设，以及继续编辑各方块 NBT", 42, 238, 588, 0x94afb4);
+            ui.canvas.button(140, 42, 230, 588, 17, "保存蓝图 · 完成处理并经服务器校验后开放", false, mx, my);
         }
         ui.canvas.button(
             296,
@@ -481,7 +502,7 @@ final class HologramUiProcessing {
         }
         if (id == 220) {
             if (!HologramGuidance.authorWorkspace(ui.session.state())) return true;
-            if (ui.session.state().data.getBoolean("geometryValidationPending")) {
+            if (processingReady() || ui.session.state().data.getBoolean("geometryValidationPending")) {
                 reopenProcessing();
                 return true;
             }
@@ -502,6 +523,16 @@ final class HologramUiProcessing {
             return true;
         }
         if (this.processingFlow == null) return false;
+        if (processingResultReview && id != 293 && id != 294 && id != 295) {
+            if (id == 234) {
+                processingFlow = null;
+                processingResultReview = false;
+            } else if (id == 140 || id == 132) {
+                if (prepareProcessingSave(id)) return true;
+                return false; // Continue through the original native save / overwrite workflow.
+            }
+            return true;
+        }
         if (id == 298) {
             processingResourcesView = !processingResourcesView;
             processingFlow.offset = 0;
@@ -542,6 +573,7 @@ final class HologramUiProcessing {
                 request.setBoolean("reprocessCurrent", reprocessCurrent);
                 this.processingFlow = null;
                 ui.session.send("processBlueprint", request, true);
+                processingSubmitSequence = ui.session.sequence();
             }
             return true;
         }
@@ -624,6 +656,61 @@ final class HologramUiProcessing {
         return true;
     }
 
+    private void openProcessingResult() {
+        String presetName = processingPresetField == null ? "" : processingPresetField.getText();
+        openProcessing(true);
+        if (!presetName.trim()
+            .isEmpty()) processingPresetField.setText(presetName);
+        processingResultReview = true;
+        processingBlueprintField = new HologramMuiTextField(ui.host.parent(), 42, 126, 588, 18);
+        processingBlueprintField.setMaxStringLength(64);
+        String name = ui.library.presetNameField()
+            .getText()
+            .trim();
+        if (name.isEmpty()) name = ui.session.state().data.getString("virtualPresetName");
+        processingBlueprintField.setText(name);
+    }
+
+    private void drawProcessingResult(int mx, int my) {
+        ui.canvas.text("蓝图处理已完成 · 服务器校验通过", 42, 61, 588, HologramEditorTheme.TITLE);
+        ui.canvas.text("下一步：保存这份蓝图，供蓝图库、分享与放置使用。", 42, 89, 588, HologramEditorTheme.TEXT);
+        ui.canvas.text("蓝图名称", 42, 110, 588, HologramEditorTheme.MUTED);
+        processingBlueprintField.drawTextBox();
+        boolean ready = ui.session.editable() && processingReady() && !ui.session.state().cells.isEmpty();
+        ui.canvas.button(140, 42, 155, 288, 25, "保存蓝图", ready, mx, my);
+        ui.canvas.button(132, 342, 155, 288, 25, "另存为新蓝图", ready, mx, my);
+        ui.canvas.text("处理流程预设只复用身份、网络、坐标、NBT 与提示的处理选择。", 42, 198, 588, HologramEditorTheme.MUTED);
+        processingPresetField.drawTextBox();
+        ui.canvas.button(293, 342, 220, 91, 18, "保存流程", ready, mx, my);
+        ui.canvas.button(294, 439, 220, 91, 18, "更新所选", ready && !selectedProcessingPreset.isEmpty(), mx, my);
+        ui.canvas.button(295, 536, 220, 94, 18, "删除所选", ready && !selectedProcessingPreset.isEmpty(), mx, my);
+        ui.canvas.button(234, 342, 274, 288, 20, "返回蓝图编辑", true, mx, my);
+        ui.canvas.text(ui.library.blueprintSaveState(), 42, 279, 288, HologramEditorTheme.MUTED);
+    }
+
+    int guidanceAccent(int id) {
+        if (processingResultReview) return id == 140 ? HologramUiAccent.NEXT : 0;
+        return processingFlow == null ? 0 : processingFlow.guidanceAccent(id);
+    }
+
+    /** Preserve the original save and overwrite routes after collecting the result-page name. */
+    boolean prepareProcessingSave(int id) {
+        if (!processingResultReview || (id != 140 && id != 132)) return false;
+        if (!ui.session.editable() || !processingReady()) return true;
+        String name = processingBlueprintField.getText()
+            .trim();
+        if (name.isEmpty()) {
+            processingBlueprintField.setFocused(true);
+            ui.session.notice("请输入蓝图名称");
+            return true;
+        }
+        ui.library.presetNameField()
+            .setText(name);
+        processingFlow = null;
+        processingResultReview = false;
+        return false;
+    }
+
     private void drawResourceReview(int mx, int my) {
         NBTTagList resources = resourceReview();
         processingFlow.offset = Math.max(0, Math.min(processingFlow.offset, Math.max(0, resources.tagCount() - 4)));
@@ -635,7 +722,8 @@ final class HologramUiProcessing {
                 + ","
                 + resource.getInteger("z");
             String decision = processingFlow.resourceDecision(resource);
-            ui.canvas.text("原图格 " + location + " · " + resource.getString("path"), 42, y + 4, 279, 0xf2dca5);
+            ui.canvas
+                .text("原图格 " + location + " · " + resource.getString("path"), 42, y + 4, 279, HologramEditorTheme.TEXT);
             String[] actions = { "remove", "preserve", "migrate" }, names = { "移除该路径", "完全保留", "迁移格式" };
             if (resource.getBoolean("canCancelPreserve")) {
                 actions[2] = "cancel";
@@ -667,7 +755,8 @@ final class HologramUiProcessing {
                                 : "。此路径含无法解析或无法完整计费的信息，不能保存；请选择移除该路径后继续。"),
                         430));
         }
-        if (resources.tagCount() == 0) ui.canvas.text("当前没有待核对的资源路径；可切回普通 NBT 根条目。", 42, 154, 588, 0x94afb4);
+        if (resources.tagCount() == 0)
+            ui.canvas.text("当前没有待核对的资源路径；可切回普通 NBT 根条目。", 42, 154, 588, HologramEditorTheme.MUTED);
     }
 
     String coordinateDisplayMode(NBTTagCompound relation) {
@@ -755,9 +844,14 @@ final class HologramUiProcessing {
                 this.processingPresetField.mouseClicked(mx, my, button);
                 if (mx >= 96 && mx < 582 && my >= 150 && my < 168) return true;
             }
-            if (this.processingFlow != null && this.processingFlow.stage == 0) {
+            if (this.processingFlow != null && (this.processingFlow.stage == 0 || processingResultReview)
+                && !processingPresetSaveReview) {
                 this.processingPresetField.mouseClicked(mx, my, button);
                 if (mx >= 42 && mx < 330 && my >= 220 && my < 238) return true;
+            }
+            if (processingResultReview && !processingPresetSaveReview) {
+                processingBlueprintField.mouseClicked(mx, my, button);
+                if (mx >= 42 && mx < 630 && my >= 126 && my < 144) return true;
             }
             if (button == 0) for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) {
                 if (control.enabled) ui.router.activate(control.id);
@@ -771,6 +865,12 @@ final class HologramUiProcessing {
     boolean consumeProcessingKey(char c, int key) {
         if (this.processingFlow != null) {
             if (key == Keyboard.KEY_ESCAPE) ui.processing.activateProcessing(234);
+            else if (processingResultReview && processingBlueprintField.isFocused())
+                processingBlueprintField.textboxKeyTyped(c, key);
+            else if (processingResultReview && processingPresetField.isFocused())
+                processingPresetField.textboxKeyTyped(c, key);
+            else if (processingResultReview && (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER))
+                ui.router.activate(140);
             else if (this.processingFlow.stage == 0 && this.processingPresetField.isFocused())
                 this.processingPresetField.textboxKeyTyped(c, key);
             else if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER)
@@ -801,6 +901,12 @@ final class HologramUiProcessing {
     }
 
     void acknowledgePreset(HologramState next) {
+        if (processingAcknowledged(next.data, processingSubmitSequence)) {
+            processingSubmitSequence = -1;
+            if ("processBlueprint".equals(next.data.getString("processingPresetOperation"))
+                && next.data.getBoolean("processingPresetOperationSuccess")
+                && next.data.getBoolean("blueprintProcessingComplete")) openProcessingResult();
+        }
         if (processingReopenSequence >= 0 && next.data.getLong("uiSequence") >= processingReopenSequence) {
             processingReopenSequence = -1;
             if (next.data.getBoolean("processingPresetOperationSuccess")) openProcessing(false);
@@ -819,6 +925,7 @@ final class HologramUiProcessing {
     void rejectCommand(long sequence) {
         if (processingPresetLoadSequence == sequence) processingPresetLoadSequence = -1;
         if (processingReopenSequence == sequence) processingReopenSequence = -1;
+        if (processingSubmitSequence == sequence) processingSubmitSequence = -1;
     }
 
     HologramProcessingFlow processingFlow() {
@@ -857,6 +964,7 @@ final class HologramUiProcessing {
     }
 
     void tickField() {
+        if (processingResultReview && processingBlueprintField != null) processingBlueprintField.updateCursorCounter();
         if (ui.processing.processingPresetField() != null
             && (ui.processing.processingFlow() != null || ui.processing.processingPresetSaveReview()))
             ui.processing.processingPresetField()
@@ -887,6 +995,9 @@ final class HologramUiProcessing {
         state.setBoolean("resourcesView", processingResourcesView);
         state.setBoolean("reprocessCurrent", reprocessCurrent);
         state.setLong("reopenSequence", processingReopenSequence);
+        state.setLong("submitSequence", processingSubmitSequence);
+        state.setBoolean("resultReview", processingResultReview);
+        if (processingBlueprintField != null) state.setString("blueprintName", processingBlueprintField.getText());
         state.setString("selectedPreset", selectedProcessingPreset);
         if (processingFlow != null) state.setTag("flow", processingFlow.backgroundUiState());
         if (processingPresetField != null) state.setString("name", processingPresetField.getText());
@@ -901,8 +1012,18 @@ final class HologramUiProcessing {
         reprocessCurrent = state.getBoolean("reprocessCurrent");
         processingReopenSequence = state.hasKey("reopenSequence", 4) ? state.getLong("reopenSequence") : -1;
         selectedProcessingPreset = state.getString("selectedPreset");
+        processingSubmitSequence = state.hasKey("submitSequence", 4) ? state.getLong("submitSequence") : -1;
+        if (processingSubmitSequence >= 0
+            && ui.session.state().data.getLong("uiSequence") >= processingSubmitSequence) {
+            acknowledgePreset(ui.session.state());
+            return;
+        }
         // Completed processing invalidates an older local flow; reopening must not offer to submit it again.
         if (state.getLong("revision") != ui.session.revision()) return;
+        if (state.getBoolean("resultReview") && processingReady()) {
+            openProcessingResult();
+            processingBlueprintField.setText(state.getString("blueprintName"));
+        }
         processingPresetSaveReview = state.getBoolean("saveReview");
         if (state.hasKey("flow", 10))
             processingFlow = HologramProcessingFlow.restoreBackgroundUiState(state.getCompoundTag("flow"));

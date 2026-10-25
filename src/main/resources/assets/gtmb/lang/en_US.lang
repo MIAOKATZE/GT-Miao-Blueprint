@@ -458,6 +458,7 @@ gtmb.hologram.camera.off=%s: isometric camera
 gtmb.hologram.camera.on=Isometric | %s / Esc: normal view | Left drag: rotate | Right drag: pan | Wheel: zoom | X: X-ray | Alt+wheel: depth
 gtmb.hologram.camera.blueprintOn=Blueprint | %s / Esc: normal view | Middle drag: pan | Right drag: rotate | Wheel: zoom | X: X-ray
 gtmb.hologram.selectionCorner.left=Left click
+gtmb.hologram.selectionCorner.start=Start
 gtmb.hologram.selectionCorner.right=Right click
 gtmb.hologram.camera.selectionHold=Hold Ctrl to start selecting
 gtmb.hologram.camera.selectionBoth=Left/right click: select points

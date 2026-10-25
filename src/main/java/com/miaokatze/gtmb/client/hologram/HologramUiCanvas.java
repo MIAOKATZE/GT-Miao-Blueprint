@@ -266,8 +266,7 @@ final class HologramUiCanvas {
             ui.session.pendingSequence() >= 0 || ui.bindings.networkBindingNavigation()
                 .pending(),
             ui.bindings.networkRebindSelected());
-        else if (ui.processing.processingFlow() != null) accent = ui.processing.processingFlow()
-            .guidanceAccent(id);
+        else if (ui.processing.processingFlow() != null) accent = ui.processing.guidanceAccent(id);
         else if (ui.review.confirmation() && (id == 169 || id == 55)
             && HologramPlacementConfirmation.cacheResources(ui.session.state().data)
                 .tagCount() > 0)

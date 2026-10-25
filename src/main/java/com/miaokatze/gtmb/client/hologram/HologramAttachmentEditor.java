@@ -45,9 +45,25 @@ abstract class HologramAttachmentEditor extends HologramMuiScreen {
                 try {
                     buildPanel();
                     if (restoreState != null) restoreEditorState(restoreState);
+                    boolean lessonEntry = !attachmentUi.session.isTutorial();
+                    int titleWidth = lessonEntry ? editorWidth - 218 : editorWidth - 36;
                     floating.child(
                         new TitleDrag().pos(0, 0)
-                            .size(editorWidth - 36, 32));
+                            .size(titleWidth, 32));
+                    if (lessonEntry) {
+                        boolean picture = kind.equals("picture");
+                        IWidget lesson = HologramMuiTheme
+                            .button(
+                                () -> attachmentUi.tutorial.attachmentLessonLabel(picture),
+                                editorWidth - 214,
+                                7,
+                                178,
+                                20,
+                                () -> deferAction(() -> attachmentUi.tutorial.startAttachmentLesson(picture)))
+                            .tooltipBuilder(t -> t.addLine("观看独立教程，结束后返回此窗口并保留输入。"));
+                        floating.child(lesson);
+                        target("tutorial", lesson);
+                    }
                     IWidget close = HologramEditorNativeTheme
                         .iconButton("close", () -> "返回工作区 · Esc / E", this::returnToWorkbench, () -> true, () -> false)
                         .pos(editorWidth - 30, 7)
@@ -141,6 +157,12 @@ abstract class HologramAttachmentEditor extends HologramMuiScreen {
         else deferAction(
             () -> Minecraft.getMinecraft()
                 .displayGuiScreen(attachmentUi.host.parent()));
+    }
+
+    protected final String headerTitle(String title) {
+        // The shared header starts at x=36; leave six pixels before the lesson button or close area.
+        int available = editorWidth - (attachmentUi.session.isTutorial() ? 84 : 256);
+        return attachmentUi.host.minecraft().fontRenderer.trimStringToWidth(title, Math.max(1, available));
     }
 
     protected final <T extends IWidget> T target(String key, T widget) {

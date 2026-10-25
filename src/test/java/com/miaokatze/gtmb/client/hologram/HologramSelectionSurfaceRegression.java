@@ -1,6 +1,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -19,7 +20,8 @@ final class HologramSelectionSurfaceRegression {
     static void run() {
         checkHatch(new HologramSelectionSurface.Face(1, 1, 0, -3, 2, -2, 3));
         checkHatch(new HologramSelectionSurface.Face(0, -1, -2, 0, 1, 0, 1));
-        checkHatch(new HologramSelectionSurface.Face(2, 1, 1, Integer.MIN_VALUE, (long) Integer.MAX_VALUE + 1, -1, 1));
+        checkHatch(new HologramSelectionSurface.Face(2, 1, 1, -12, 20, -7, 9));
+        checkHatchWindows();
         try {
             HologramAreaSelection area = new HologramAreaSelection();
             box(area, -3, -2, -3, -1, 1, 1, "replace");
@@ -83,10 +85,10 @@ final class HologramSelectionSurfaceRegression {
     }
 
     private static void checkHatch(HologramSelectionSurface.Face face) {
-        List<double[]> lines = HologramSelectionSurface.hatch(face);
-        SimpleAssert
-            .that(!lines.isEmpty() && lines.size() <= 18, "hatch upload work stays bounded even on huge thin faces");
+        List<double[]> lines = hatch(face);
+        SimpleAssert.that(!lines.isEmpty(), "ordinary boundary faces contain visible diagonals");
         boolean forward = false, backward = false;
+        double previousForward = Double.NaN, previousBackward = Double.NaN;
         for (double[] line : lines) {
             for (int end : new int[] { 0, 2 }) SimpleAssert.that(
                 Double.isFinite(line[end]) && Double.isFinite(line[end + 1])
@@ -100,8 +102,62 @@ final class HologramSelectionSurfaceRegression {
                 .that(du > 0 && Math.abs(Math.abs(dv) - du) < 1e-7, "hatch uses finite nonempty diagonal segments");
             forward |= dv > 0;
             backward |= dv < 0;
+            double diagonal = dv > 0 ? line[0] - line[1] : line[0] + line[1];
+            double previous = dv > 0 ? previousForward : previousBackward;
+            if (Double.isFinite(previous)) SimpleAssert.that(
+                Math.abs(diagonal - previous - .5) < 1e-7,
+                "half-block grid spacing never expands to satisfy a face line-count limit");
+            if (dv > 0) previousForward = diagonal;
+            else previousBackward = diagonal;
         }
         SimpleAssert.that(forward && backward, "both diagonal mesh directions survive clipping");
+        if (face.u1 - face.u0 > 10) SimpleAssert
+            .that(lines.size() > 18, "larger faces retain all half-block lines instead of eighteen sparse lines");
+    }
+
+    private static List<double[]> hatch(HologramSelectionSurface.Face face) {
+        HologramSelectionSurface.Hatch hatch = new HologramSelectionSurface.Hatch(face);
+        List<double[]> lines = new ArrayList<>();
+        for (double[] line; (line = hatch.next()) != null;) lines.add(line);
+        return lines;
+    }
+
+    private static void checkHatchWindows() {
+        double[] orthographic = { .125, 0, 0, 0, 0, .125, 0, 0, 0, 0, .125, 0, 0, 0, 0, 1 };
+        HologramSelectionSurface.Face huge = new HologramSelectionSurface.Face(
+            1,
+            1,
+            0,
+            Integer.MIN_VALUE,
+            (long) Integer.MAX_VALUE + 1,
+            Integer.MIN_VALUE,
+            (long) Integer.MAX_VALUE + 1);
+        HologramSelectionSurface.Face window = HologramSelectionSurface.hatchWindow(huge, orthographic, 0, 0, 0);
+        SimpleAssert.that(
+            window != null && window.u0 == -16 && window.u1 == 16 && window.v0 == -16 && window.v1 == 16,
+            "an integer-span face only uploads its actual visible orthographic tile window");
+        checkHatch(window);
+        HologramSelectionSurface.Face offscreen = new HologramSelectionSurface.Face(0, 1, 100, -4, 4, -4, 4);
+        SimpleAssert.eq(
+            null,
+            HologramSelectionSurface.hatchWindow(offscreen, orthographic, 0, 0, 0),
+            "offscreen faces allocate no hatch upload work");
+        // Perspective looking down -Z: X/Y clip against +/-(-Z), near=1, far=32.
+        double[] perspective = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -33.0 / 31, -1, 0, 0, -64.0 / 31, 0 };
+        HologramSelectionSurface.Face front = new HologramSelectionSurface.Face(2, 1, -8, -100, 100, -100, 100);
+        window = HologramSelectionSurface.hatchWindow(front, perspective, 0, 0, 0);
+        SimpleAssert.that(
+            window != null && window.u0 == -16 && window.u1 == 16 && window.v0 == -16 && window.v1 == 16,
+            "ordinary perspective uses the same fixed-spacing visible face window");
+        // Keep world alignment with a camera translated far from the origin, including negative coordinates.
+        window = HologramSelectionSurface.hatchWindow(huge, orthographic, 103, 0, -103);
+        SimpleAssert.that(
+            window != null && window.u0 == -112 && window.u1 == -80 && window.v0 == 80 && window.v1 == 112,
+            "camera-relative frustum clipping retains the surface's cyclic UV axes and world grid phase");
+        HologramSelectionSurface.Hatch resumable = new HologramSelectionSurface.Hatch(huge);
+        for (int i = 0; i < 513; i++) SimpleAssert.that(
+            resumable.next() != null,
+            "a large face iterator resumes after an upload chunk without allocating its entire world grid");
     }
 
     private static void box(HologramAreaSelection area, int ax, int ay, int az, int bx, int by, int bz, String mode)

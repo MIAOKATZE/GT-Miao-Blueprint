@@ -196,9 +196,8 @@ final class HologramUiPreview {
     }
 
     void scrollNativeScene(int wheel) {
-        if (ui.library.browsePreviewActive())
-            browseZoom = Math.max(.25, Math.min(4, browseZoom * (wheel > 0 ? 1.1 : 1 / 1.1)));
-        else if (ui.shell.sceneActive()) zoom = Math.max(.25, Math.min(4, zoom * (wheel > 0 ? 1.1 : 1 / 1.1)));
+        if (ui.library.browsePreviewActive()) zoom(browseZoom * (wheel > 0 ? 1.1 : 1 / 1.1));
+        else if (ui.shell.sceneActive()) zoom(zoom * (wheel > 0 ? 1.1 : 1 / 1.1));
     }
 
     boolean viewControlEnabled(int id) {
@@ -1680,6 +1679,7 @@ final class HologramUiPreview {
     }
 
     double zoom(double value) {
+        value = HologramPreviewCamera.clampZoom(value);
         if (ui.library.browsePreviewActive()) {
             if (browseMeshInteractive()) browseZoom = value;
         } else this.zoom = value;
