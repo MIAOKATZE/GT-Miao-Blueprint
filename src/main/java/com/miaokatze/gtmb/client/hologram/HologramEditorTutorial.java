@@ -121,7 +121,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             return;
         }
         String current = currentTopic();
-        if (!current.equals(lastAutoTopic) && ready() && !preferences().seen(current)) begin(current, false);
+        if (!current.equals(lastAutoTopic) && ready()
+            && !ui.textBoxes.editorOpen()
+            && !ui.shell.hasModalPanel()
+            && !preferences().seen(current)) begin(current, false);
     }
 
     private boolean ready() {
@@ -129,6 +132,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         return ui.shell.built() && !HologramBackgroundTasks.busy()
             && ui.session.pendingSequence() < 0
             && ui.session.progress() == null
+            && ui.textBoxes.progress() == null
             && ui.session.editable()
             && ui.preview.gizmo()
                 .axis() < 0
@@ -149,6 +153,16 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         else ui.session.notice("当前操作完成后开始教程；后台业务继续。");
     }
 
+    String attachmentLessonLabel(boolean picture) {
+        String topic = picture ? "picture" : "text";
+        return (preferences().seen(topic) ? "" : "首次使用：观看") + (picture ? "图片教程" : "文字教程");
+    }
+
+    /** The explicit entry pauses the existing editor tree, preserving its ungenerated fields and draft. */
+    void startAttachmentLesson(boolean picture) {
+        start(picture ? "picture" : "text", true);
+    }
+
     void startDetached(String topic, boolean replay, Runnable returnToBrowser) {
         if (active()) return;
         if (!ui.session.isTutorial()) throw new IllegalStateException("Detached tutorials require an isolated host");
@@ -167,7 +181,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         requestedTopic = "";
         topic = id;
         this.replay = replay;
-        if (id.equals("projection") || id.equals("blueprint") || id.equals("cut")) lastAutoTopic = id;
+        // Any explicit course serves this workspace visit; do not chain an unseen main course on return.
+        lastAutoTopic = currentTopic();
         try {
             ui.shell.pausePresentation();
             if (id.equals("picture")) {
@@ -375,11 +390,10 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     private void finish(boolean completed) {
         String completedTopic = topic;
-        boolean record = !replay;
         Runnable returnToBrowser = completionAction;
         closeWithoutProgress();
         try {
-            if (record) cleanup("tutorial preference", () -> preferences().finish(completedTopic, completed));
+            cleanup("tutorial preference", () -> preferences().finish(completedTopic, completed));
         } finally {
             if (returnToBrowser != null) ui.host.parent()
                 .deferAction(returnToBrowser);
@@ -389,7 +403,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     boolean activate(int id) {
         if (!active()) {
             if (id != BASE) return false;
-            start(currentTopic(), true);
+            ui.guide.openLessons();
             return true;
         }
         try {

@@ -385,6 +385,9 @@ public final class HologramEditorNativeTheme {
                 }
                 if (hasIcon && (compact || (height >= 18 || expandedLabel != null) && width >= 60) && available())
                     HologramEditorIcons.drawGlint(icon, iconX, iconY, size, accent.getAsInt());
+                // PaperButton owns its overlay, so guided() stores the accent here instead of appending one.
+                // Keep the full perimeter visible even when the glyph alone would hide the next action.
+                HologramEditorTheme.drawGuidanceFrame(x, y, width, height, accent.getAsInt(), available());
             });
             tooltipBuilder(
                 t -> t.addLine(

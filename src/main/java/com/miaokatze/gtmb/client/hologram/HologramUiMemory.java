@@ -170,7 +170,7 @@ final class HologramUiMemory {
                 return 0x68dded;
             if (id == 220 && HologramGuidance.authorWorkspace(ui.session.state()) && !ui.processing.processingReady())
                 return 0x80efaa;
-            if ((id == 140 || id == 221) && ui.library.libraryDrawer()
+            if (id == 140 && HologramGuidance.authorWorkspace(ui.session.state())
                 && ui.processing.processingReady()
                 && ui.session.state().data.getBoolean("blueprintDirty")) return 0x80efaa;
             if ((id == 166 || id == 146) && ui.preview.selected() >= 0 && this.cellEditHint) return 0x68dded;

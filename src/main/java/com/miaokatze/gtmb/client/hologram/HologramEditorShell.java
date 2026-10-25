@@ -289,8 +289,7 @@ final class HologramEditorShell {
             if (!ui.workspaces.blueprint()) ui.workspaces.activateBlueprint();
             else toggleLibrary();
         }, ui.workspaces::blueprint));
-        bar.child(
-            headerButton("教程", "tutorial", () -> ui.router.activate(HologramEditorControlIds.TUTORIAL), () -> true));
+        bar.child(headerButton("教程", "tutorial", ui.guide::openLessons, () -> true));
         bar.child(headerButton("保存", "save", () -> selectDockPage(7), ui.workspaces::blueprint));
         bar.child(headerButton("退出", "back", ui.router::closeRoot, () -> true));
         bar.child(ui.guide.buildChip());
@@ -309,14 +308,22 @@ final class HologramEditorShell {
     }
 
     private IWidget headerButton(String name, String icon, Runnable action, BooleanSupplier visible) {
-        boolean major = "save".equals(icon) || "back".equals(icon) || "library".equals(icon);
+        boolean major = "save".equals(icon) || "back".equals(icon) || "library".equals(icon) || "tutorial".equals(icon);
         Runnable invoke = () -> ui.host.parent()
             .deferAction(action);
         ButtonWidget<?> button = (major ? HologramEditorNativeTheme.button(() -> name, icon, invoke)
             : HologramEditorNativeTheme.iconButton(icon, () -> name, invoke, () -> true, () -> false)).sizeRel(1f);
+        if ("save".equals(icon)) HologramEditorNativeTheme.guided(
+            button,
+            () -> actionAccent(140, () -> true),
+            () -> ui.workspaces.blueprint() && ui.session.editable()
+                && ui.processing.processingReady()
+                && !ui.session.state().cells.isEmpty());
         registerTarget("header." + icon, button);
         return new ParentWidget<>()
-            .width("library".equals(icon) ? 66 : major ? 44 : HologramEditorNativeTheme.ICON_BUTTON)
+            .width(
+                "library".equals(icon) ? 66
+                    : "tutorial".equals(icon) ? 60 : major ? 44 : HologramEditorNativeTheme.ICON_BUTTON)
             .height(major ? 20 : HologramEditorNativeTheme.ICON_BUTTON)
             .setEnabledIf(w -> visible.getAsBoolean())
             .child(button);
@@ -378,6 +385,7 @@ final class HologramEditorShell {
             int accent = 0;
             for (int index : indices) if (launcherAvailable(index)) accent = strongerAccent(accent, pageAccent(index));
             HologramEditorIcons.drawGlint(icon, px, py, 12, accent);
+            HologramEditorTheme.drawGuidanceFrame(x, y, width, height, accent, true);
         });
         launchers.child(collapse);
         registerTarget("rail.right", launchers);

@@ -844,7 +844,7 @@ final class HologramUiRouter {
                                         .tagCount() - 4),
                                 ui.config.drawerOffset() + (wheel > 0 ? -1 : 1))));
                 } else if (ui.canvas.inViewport(mx, my) && !ui.preview.previewBlockedAt(mx, my))
-                    ui.preview.zoom(Math.max(.25, Math.min(4, ui.preview.zoom() * (wheel > 0 ? 1.1 : 1 / 1.1))));
+                    ui.preview.zoom(ui.preview.zoom() * (wheel > 0 ? 1.1 : 1 / 1.1));
         }
     }
 
@@ -1013,6 +1013,7 @@ final class HologramUiRouter {
         if (ui.processing.confirmPresetSave(id)) return;
         if (ui.library.confirmOverwrite(id)) return;
         if (ui.library.confirmDiscard(id)) return;
+        if (ui.processing.prepareProcessingSave(id)) return;
         if (ui.library.toggleOverwriteMode(id)) return;
         if (ui.preview.rotateCameraControl(id)) return;
         if (ui.processing.activateProcessing(id)) return;

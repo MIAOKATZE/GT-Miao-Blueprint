@@ -28,6 +28,48 @@ public final class HologramEditorTutorialPlaybackRegression {
         emptyWorkspaceHasNoCapturedDocument();
         loadingDocumentReplacesGeometryWithoutMutatingLibrary();
         inputHintsMatchWorldControls();
+        manualCoursesRememberIndependentOutcomes();
+    }
+
+    private static void manualCoursesRememberIndependentOutcomes() {
+        java.nio.file.Path directory = null;
+        try {
+            directory = java.nio.file.Files.createTempDirectory("gtmb-tutorial-preferences-");
+            java.io.File file = directory.resolve("guide.properties")
+                .toFile();
+            HologramEditorPreferences first = new HologramEditorPreferences(file);
+            first.finish("text", false);
+            HologramEditorPreferences reopened = new HologramEditorPreferences(file);
+            SimpleAssert.that(
+                reopened.seen("text"),
+                "skipping a first manual text lesson suppresses repeated first-use prompts");
+            SimpleAssert.that(
+                !reopened.seen("picture") && !reopened.seen("blueprint"),
+                "attachment lesson outcomes do not mark other courses as seen");
+            reopened.finish("text", true);
+            reopened.finish("text", false);
+            reopened.finish("picture", true);
+            reopened.finish("picture", false);
+            HologramEditorPreferences afterReplay = new HologramEditorPreferences(file);
+            SimpleAssert.eq(
+                "completed",
+                afterReplay.outcome("text"),
+                "completing a replay upgrades a skipped course and later skipping preserves completion");
+            SimpleAssert.eq(
+                "completed",
+                afterReplay.outcome("picture"),
+                "a skipped picture replay does not downgrade its saved completion");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("Tutorial preferences must persist independent manual lesson outcomes", failure);
+        } finally {
+            if (directory != null) try {
+                java.nio.file.Files.deleteIfExists(directory.resolve("guide.properties.pending"));
+                java.nio.file.Files.deleteIfExists(directory.resolve("guide.properties"));
+                java.nio.file.Files.deleteIfExists(directory);
+            } catch (java.io.IOException failure) {
+                throw new AssertionError("Tutorial preference regression cleanup failed", failure);
+            }
+        }
     }
 
     private static void retiredCallbacksCannotMutateRestoredState() {

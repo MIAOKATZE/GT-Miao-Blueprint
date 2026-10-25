@@ -91,6 +91,10 @@ final class HologramEditorTheme {
         int edge = HologramUiAccent.BORDER_WIDTH;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
+            GL11.glDisable(GL11.GL_ALPHA_TEST);
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             if (accent != HologramUiAccent.SPECTRUM) {
                 int color = edgeColor(accent, now, 0);
                 GuiDraw.drawRect(x, y, width, edge, color);

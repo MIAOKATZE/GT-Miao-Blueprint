@@ -84,7 +84,7 @@ final class HologramPictureEditorScreen extends HologramAttachmentEditor {
 
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> "添加图片 · LittleTiles 像素画", 620);
+        HologramMuiTheme.header(panel(), () -> headerTitle("添加图片 · LittleTiles 像素画"), 620);
         panel().child(
             HologramMuiTheme.label(() -> ".minecraft / MiaoBlueprintPicture", 14, 40, 450, 18, HologramMuiTheme.MUTED)
                 .tooltipBuilder(

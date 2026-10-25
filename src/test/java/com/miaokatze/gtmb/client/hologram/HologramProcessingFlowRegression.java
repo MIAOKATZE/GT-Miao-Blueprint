@@ -14,6 +14,7 @@ public final class HologramProcessingFlowRegression {
 
     public static void run() {
         explicitChoiceGuidance();
+        authoritativeProcessingNavigation();
         nativeSaveStages();
         resourceDecisionsStayScoped();
         HologramProcessingFlow optional = new HologramProcessingFlow(new NBTTagCompound());
@@ -235,6 +236,40 @@ public final class HologramProcessingFlowRegression {
         check(
             optional.guidanceAccent(231) == 0x80efaa && !optional.explicitChoice(),
             "an empty optional stage may continue while its recommendation remains unconfirmed");
+    }
+
+    private static void authoritativeProcessingNavigation() {
+        NBTTagCompound state = new NBTTagCompound();
+        check(HologramUiProcessing.processingReady(state), "A direct-save draft is saveable before processing starts");
+        state.setBoolean("blueprintProcessingRequired", true);
+        check(
+            !HologramUiProcessing.processingReady(state),
+            "A required processing report cannot enable blueprint save");
+        state.setLong("uiSequence", 14);
+        state.setString("processingPresetOperation", "processBlueprint");
+        state.setBoolean("pending", true);
+        check(
+            !HologramUiProcessing.processingAcknowledged(state, 14),
+            "A pending snapshot is not a completion receipt");
+        state.setBoolean("pending", false);
+        check(
+            !HologramUiProcessing.processingAcknowledged(state, 15),
+            "An older receipt cannot finish a new processing request");
+        state.setString("processingPresetOperation", "saveProcessingPreset");
+        check(
+            !HologramUiProcessing.processingAcknowledged(state, 14),
+            "Saving a reusable workflow does not finish blueprint processing");
+        state.setString("processingPresetOperation", "processBlueprint");
+        check(
+            HologramUiProcessing.processingAcknowledged(state, 14),
+            "The matching authoritative receipt ends submission waiting");
+        check(
+            !HologramUiProcessing.processingReady(state),
+            "An acknowledged failure still cannot enable blueprint save");
+        state.setBoolean("blueprintProcessingComplete", true);
+        check(
+            HologramUiProcessing.processingReady(state),
+            "Only the server completion flag opens required blueprint save");
     }
 
     private static void nativeSaveStages() {

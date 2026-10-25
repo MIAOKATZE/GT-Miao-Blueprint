@@ -132,6 +132,12 @@ final class HologramEditorGuide {
             });
     }
 
+    void openLessons() {
+        if (reference == null) return;
+        ui.host.parent()
+            .deferAction(() -> { if (!reference.isPanelOpen()) reference.openPanel(); });
+    }
+
     private ModularPanel buildReference() {
         ModularPanel panel = new Dialog<Void>(ui.panelName("gtmb_editor_reference")).setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
@@ -143,7 +149,7 @@ final class HologramEditorGuide {
             .childPadding(7)
             .name("guide.reference.content");
         column.child(
-            HologramEditorNativeTheme.label(() -> "操作说明与独立课程", HologramEditorNativeTheme.TITLE)
+            HologramEditorNativeTheme.label(() -> "现场教程与操作说明", HologramEditorNativeTheme.TITLE)
                 .widthRel(1f)
                 .height(17));
         ListWidget<IWidget, ?> details = new ListWidget<>().sizeRel(1f)
@@ -166,19 +172,16 @@ final class HologramEditorGuide {
             HologramEditorNativeTheme.label(() -> "材料核验只有一次最终确认；Esc 按面板层级返回。")
                 .widthRel(1f)
                 .height(26));
-        column.child(details);
-        String[] topics = { "projection", "blueprint", "cut", "structure", "box-fps", "box-iso", "cut-fps", "cut-iso",
-            "text", "picture" };
-        String[] labels = { "投影教程", "蓝图教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切",
-            net.minecraft.client.resources.I18n.format("gtmb.hologram.lesson.text"),
-            net.minecraft.client.resources.I18n.format("gtmb.hologram.lesson.picture") };
-        for (int row = 0; row < (topics.length + 3) / 4; row++) {
+        String[] topics = { "blueprint", "text", "picture", "projection", "cut", "structure", "box-fps", "box-iso",
+            "cut-fps", "cut-iso" };
+        String[] labels = { "蓝图教程", "文字附加教程", "图片附加教程", "投影教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切" };
+        for (int row = 0; row < (topics.length + 2) / 3; row++) {
             Flow entries = Flow.row()
                 .widthRel(1f)
                 .height(20)
                 .childPadding(5);
-            for (int col = 0; col < 4; col++) {
-                final int index = row * 4 + col;
+            for (int col = 0; col < 3; col++) {
+                final int index = row * 3 + col;
                 if (index >= topics.length) break;
                 entries.child(
                     HologramEditorNativeTheme.button(
@@ -195,6 +198,7 @@ final class HologramEditorGuide {
             }
             column.child(entries);
         }
+        column.child(details);
         column.child(
             Flow.row()
                 .widthRel(1f)

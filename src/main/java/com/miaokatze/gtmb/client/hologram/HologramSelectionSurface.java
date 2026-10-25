@@ -66,25 +66,91 @@ final class HologramSelectionSurface {
         }
     }
 
-    /** World-aligned crosshatching clipped to one face; at most eighteen segments regardless of its world span. */
-    static List<double[]> hatch(Face face) {
-        List<double[]> lines = new ArrayList<>();
-        double spacing = .5;
-        double target = ((double) face.u1 - face.u0 + (double) face.v1 - face.v0) / 8;
-        while (spacing < target) spacing *= 2;
-        for (int direction : new int[] { -1, 1 }) {
-            double min = direction > 0 ? (double) face.u0 + face.v0 : (double) face.u0 - face.v1;
-            double max = direction > 0 ? (double) face.u1 + face.v1 : (double) face.u1 - face.v0;
-            for (double diagonal = Math.ceil(min / spacing) * spacing; diagonal <= max; diagonal += spacing) {
-                double from = Math.max(face.u0, direction > 0 ? diagonal - face.v1 : diagonal + face.v0);
-                double to = Math.min(face.u1, direction > 0 ? diagonal - face.v0 : diagonal + face.v1);
-                if (to <= from) continue;
-                lines.add(
-                    new double[] { from, direction > 0 ? diagonal - from : from - diagonal, to,
-                        direction > 0 ? diagonal - to : to - diagonal });
-            }
+    /** A resumable half-block world-aligned grid; memory and upload chunks do not depend on face span. */
+    static final class Hatch {
+
+        private final Face face;
+        private int direction = -1;
+        private double diagonal;
+
+        Hatch(Face face) {
+            this.face = face;
+            diagonal = first();
         }
-        return lines;
+
+        private double first() {
+            return (direction > 0 ? (double) face.u0 + face.v0 : (double) face.u0 - face.v1) + .5;
+        }
+
+        double[] next() {
+            while (direction <= 1) {
+                double max = direction > 0 ? (double) face.u1 + face.v1 : (double) face.u1 - face.v0;
+                if (diagonal >= max) {
+                    direction += 2;
+                    if (direction <= 1) diagonal = first();
+                    continue;
+                }
+                double value = diagonal;
+                diagonal += .5;
+                double from = Math.max(face.u0, direction > 0 ? value - face.v1 : value + face.v0);
+                double to = Math.min(face.u1, direction > 0 ? value - face.v0 : value + face.v1);
+                if (to > from) return new double[] { from, direction > 0 ? value - from : from - value, to,
+                    direction > 0 ? value - to : to - value };
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Clip a face against the actual render frustum, then pad to whole 16-block tiles for cache stability. The
+     * original CSG face remains exact; only invisible hatch segments are omitted, never spaced farther apart.
+     */
+    static Face hatchWindow(Face face, double[] clip, double px, double py, double pz) {
+        int uAxis = (face.axis + 1) % 3, vAxis = (face.axis + 2) % 3;
+        List<double[]> polygon = new ArrayList<>();
+        polygon.add(new double[] { face.u0, face.v0 });
+        polygon.add(new double[] { face.u1, face.v0 });
+        polygon.add(new double[] { face.u1, face.v1 });
+        polygon.add(new double[] { face.u0, face.v1 });
+        double[] origin = { px, py, pz };
+        for (int axis = 0; axis < 3 && !polygon.isEmpty(); axis++) for (int sign : new int[] { -1, 1 }) {
+            double[] plane = new double[4];
+            for (int column = 0; column < 4; column++)
+                plane[column] = clip[column * 4 + 3] + sign * clip[column * 4 + axis];
+            double constant = plane[3] + plane[face.axis] * (face.plane - origin[face.axis])
+                - plane[uAxis] * origin[uAxis]
+                - plane[vAxis] * origin[vAxis];
+            List<double[]> next = new ArrayList<>();
+            if (polygon.isEmpty()) break;
+            double[] previous = polygon.get(polygon.size() - 1);
+            double previousDistance = plane[uAxis] * previous[0] + plane[vAxis] * previous[1] + constant;
+            for (double[] point : polygon) {
+                double distance = plane[uAxis] * point[0] + plane[vAxis] * point[1] + constant;
+                if ((previousDistance >= 0) != (distance >= 0)) {
+                    double t = previousDistance / (previousDistance - distance);
+                    next.add(
+                        new double[] { previous[0] + t * (point[0] - previous[0]),
+                            previous[1] + t * (point[1] - previous[1]) });
+                }
+                if (distance >= 0) next.add(point);
+                previous = point;
+                previousDistance = distance;
+            }
+            polygon = next;
+        }
+        if (polygon.isEmpty()) return null;
+        double minU = Double.POSITIVE_INFINITY, minV = minU, maxU = Double.NEGATIVE_INFINITY, maxV = maxU;
+        for (double[] point : polygon) {
+            minU = Math.min(minU, point[0]);
+            maxU = Math.max(maxU, point[0]);
+            minV = Math.min(minV, point[1]);
+            maxV = Math.max(maxV, point[1]);
+        }
+        long u0 = Math.max(face.u0, (long) Math.floor(minU / 16) * 16);
+        long u1 = Math.min(face.u1, (long) Math.ceil(maxU / 16) * 16);
+        long v0 = Math.max(face.v0, (long) Math.floor(minV / 16) * 16);
+        long v1 = Math.min(face.v1, (long) Math.ceil(maxV / 16) * 16);
+        return u0 < u1 && v0 < v1 ? new Face(face.axis, face.normal, face.plane, u0, u1, v0, v1) : null;
     }
 
     /** Only geometry enters the cache key; cursor movement matters solely while a corner is pending. */

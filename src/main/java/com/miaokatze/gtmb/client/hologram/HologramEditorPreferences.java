@@ -54,6 +54,7 @@ final class HologramEditorPreferences {
     }
 
     void finish(String topic, boolean completed) {
+        if (!completed && seen(topic)) return;
         put(LESSON_PREFIX + topic, completed ? "completed" : "skipped");
     }
 
