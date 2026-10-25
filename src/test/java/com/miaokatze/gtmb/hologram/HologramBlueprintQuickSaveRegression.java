@@ -26,6 +26,14 @@ final class HologramBlueprintQuickSaveRegression {
                 (int) HologramBlueprintNbt.decode(valid.capture.cells.get(0).tileNbt)
                     .getShort("mFacing"),
                 "the approved GT schema adapter changes the retained native facing bytes");
+            HologramPresets.Preset disk = HologramLibraryFacade.get(valid.player, valid.virtualPreset.id);
+            HologramPresets.Preset replay = HologramBlueprintRotation
+                .rotatedBaseline(disk, HologramBlueprintRotation.approvedTurns(valid, disk));
+            HologramPresets.Preset current = HologramBlueprintProjection.blueprint(valid, "Current rotated save");
+            SimpleAssert.eq(
+                replay.cells.get(0).block,
+                current.cells.get(0).block,
+                "the admitted saved source and current projection retain the same explicit material block identity");
             HologramAuthoringWorkflow.validateProcessedSaveOptions(valid, save());
             SimpleAssert
                 .that(valid.processingReviewed, "Ctrl+S rechecks an approved native NBT turn with its saved policy");
@@ -61,19 +69,28 @@ final class HologramBlueprintQuickSaveRegression {
         NBTTagCompound nativeData = new NBTTagCompound();
         nativeData.setString("id", "BaseMetaTileEntity");
         nativeData.setShort("mFacing", (short) 2);
-        s.virtualPreset.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(nativeData);
+        s.capture.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(nativeData);
+        HologramPresets.Preset raw = HologramBlueprintProjection.blueprint(s, "Native rotation quick save");
         HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 0);
         policy.autoHints = "none";
         policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
-        HologramPresets.Preset saved = HologramBlueprintProcessing.process(s.virtualPreset, policy, 0, 0, 64, 0);
+        HologramPresets.Preset saved = HologramBlueprintProcessing.process(raw, policy, 0, 0, 64, 0);
+        saved = HologramAePolicy.sanitize(saved).preset;
+        HologramBlueprintProcessing.enforcePolicy(saved);
         saved.id = "native-turn-quick-save";
+        HologramAuthoringWorkflow.validateAuthorDraft(saved);
+        SimpleAssert.eq(
+            "minecraft:stone",
+            saved.cells.get(0).block,
+            "the fixture enters the library through the real projection and complete save admission");
         cache.set(null, Collections.singletonList(HologramPresets.copy(saved)));
         // The stone carrier keeps this fixture independent of a GT machine registry, using the real named NBT adapter.
-        s.capture.cells.get(0).tileNbt = saved.cells.get(0).tileNbt;
-        s.virtualPreset = saved;
-        s.processingSource = HologramPresets.copy(saved);
-        s.processingPolicy = HologramBlueprintProcessing.policy(saved);
-        s.processingReviewed = true;
+        s.virtualPreset = HologramPresets.get(saved.id);
+        s.processingSource = HologramPresets.copy(s.virtualPreset);
+        s.processingPolicy = HologramBlueprintProcessing.policy(s.virtualPreset);
+        s.processingReviewed = false;
+        s.retainedNbtKeys = s.virtualPreset.retainedNbtKeys;
+        HologramBlueprintProjection.populateVirtual(s);
         s.blueprintSource = "saved";
         s.open = true;
         s.openPurpose = "blueprintEdit";
