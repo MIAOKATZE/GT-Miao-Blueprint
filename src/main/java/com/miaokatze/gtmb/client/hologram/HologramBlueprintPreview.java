@@ -182,7 +182,18 @@ public final class HologramBlueprintPreview {
     /** Called from a worker. This takes its own immutable input copy and queues exactly one render-context capture. */
     static Request capture(NBTTagCompound exactSnapshot, BooleanSupplier current, Consumer<BufferedImage> done,
         Consumer<Throwable> failure) {
-        Request request = new Request(exactSnapshot, current, done, failure);
+        return capture(
+            exactSnapshot,
+            HologramSavePreviewPose.DEFAULT_YAW,
+            HologramSavePreviewPose.DEFAULT_PITCH,
+            current,
+            done,
+            failure);
+    }
+
+    static Request capture(NBTTagCompound exactSnapshot, double yaw, double pitch, BooleanSupplier current,
+        Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+        Request request = new Request(exactSnapshot, yaw, pitch, current, done, failure);
         if (!REQUESTS.offer(request)) {
             request.fail(new IOException("Blueprint preview queue is full"));
             return request;
@@ -249,6 +260,8 @@ public final class HologramBlueprintPreview {
         witness.setBoolean("renderTickEnd", true);
         witness.setBoolean("readbackSucceeded", true);
         witness.setBoolean("nativeRendering", true);
+        witness.setDouble("cameraYaw", request.yaw);
+        witness.setDouble("cameraPitch", request.pitch);
         witness.setInteger("preexistingErrorCount", request.preexistingErrorCount);
         witness.setLong("captureGeneration", CAPTURE_GENERATION.incrementAndGet());
         captureWitness = witness;
@@ -285,6 +298,7 @@ public final class HologramBlueprintPreview {
 
     static final class Request {
 
+        final double yaw, pitch;
         private final NBTTagCompound snapshot;
         private final BooleanSupplier current;
         private final Consumer<BufferedImage> done;
@@ -296,8 +310,12 @@ public final class HologramBlueprintPreview {
         private boolean nativeRendering, readbackSucceeded;
         private volatile boolean cancelled;
 
-        private Request(NBTTagCompound snapshot, BooleanSupplier current, Consumer<BufferedImage> done,
-            Consumer<Throwable> failure) {
+        Request(NBTTagCompound snapshot, double yaw, double pitch, BooleanSupplier current,
+            Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+            if (!Double.isFinite(yaw) || !Double.isFinite(pitch))
+                throw new IllegalArgumentException("Invalid preview camera");
+            this.yaw = yaw;
+            this.pitch = pitch;
             SourceReceipt source = takeSource(Objects.requireNonNull(snapshot));
             this.sourceJsonSha256 = source == null ? "" : source.hash;
             this.snapshot = (NBTTagCompound) (source == null ? snapshot : source.snapshot).copy();
@@ -383,7 +401,7 @@ public final class HologramBlueprintPreview {
             capturing = true;
             request.requireCurrent();
             HologramRenderer
-                .preview(state, 0, 0, SIZE, SIZE, Math.PI / 4, Math.PI / 6, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
+                .preview(state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
             // A native shape must never be silently replaced with the renderer's diagnostic cube fallback.
             for (HologramState.Cell cell : state.cells) {
                 Block block = cell.block(false);

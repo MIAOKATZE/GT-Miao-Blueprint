@@ -827,7 +827,8 @@ final class HologramUiProcessing {
                         .copy());
                 ui.identity.deidentificationSaveOptions(savePreset);
                 ui.library.libraryResult(ui.session.notice(id == 140 ? "正在保存，请等待服务器确认" : "正在另存为新蓝图，请等待服务器确认"));
-                HologramLibraryClient.INSTANCE.expectDraftDownload();
+                HologramLibraryClient.INSTANCE
+                    .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
                 ui.session.send("saveBlueprintAs", savePreset, true);
                 ui.library.presetSaveSequence(ui.session.sequence());
                 return true;

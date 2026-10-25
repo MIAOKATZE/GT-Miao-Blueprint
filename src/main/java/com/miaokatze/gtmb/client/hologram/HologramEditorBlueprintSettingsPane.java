@@ -76,7 +76,7 @@ final class HologramEditorBlueprintSettingsPane {
             action(227, () -> "全局提示词", this::editable, () -> "编辑整份蓝图提示。").widthRel(1f)
                 .height(18));
         content.child(
-            action(223, () -> "旋转查看 ↻", () -> true, () -> "只改变观察方向，不旋转世界中的机器。").widthRel(1f)
+            action(223, () -> "旋转查看 ↻", () -> true, () -> "调整观察方向，保存封面沿用此视角；不改变放置朝向。").widthRel(1f)
                 .height(18));
         content.child(
             action(

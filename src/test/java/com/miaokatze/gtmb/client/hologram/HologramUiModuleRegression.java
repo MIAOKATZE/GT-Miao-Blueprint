@@ -440,6 +440,16 @@ public final class HologramUiModuleRegression {
                     && !clean.library.libraryNavigation().local,
                 "integrated-library row handoff is an editable server session and preserves the current camera");
             NBTTagCompound nextData = (NBTTagCompound) clean.session.state().data.copy();
+            HologramUiModules overwrite = librarySwitchUi();
+            overwrite.session.state().data.setBoolean("blueprintProcessingRequired", true);
+            overwrite.session.state().data.setBoolean("blueprintProcessingComplete", false);
+            setUiField(overwrite.library, "overwriteMode", true);
+            setUiField(overwrite.library, "overwriteTarget", "chosen-target");
+            SimpleAssert
+                .that(!overwrite.processing.processingReady(), "rotated content is awaiting the server save gate");
+            SimpleAssert.that(
+                overwrite.library.prepareLibraryNavigation(140) && overwrite.library.overwriteReview(),
+                "explicit overwrite reaches target confirmation before server-owned saved-policy rechecking");
             nextData.setString("session", "loaded-target");
             nextData.setString("generation", "loaded-target");
             nextData.setString("libraryLocalId", "");
