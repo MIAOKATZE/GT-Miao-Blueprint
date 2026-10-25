@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "sourceDirectory": "README/screenshots/20261025",
+  "generator": "tools/release-collage-0148/generate.py",
+  "method": "Browser Canvas 2D drawImage; complete screenshots scaled proportionally into full-width vertical rows. External labels and gutters only; no crop, in-image overlays, retouching or generated UI.",
+  "scope": [
+    "Original source PNG bytes remain unchanged. Source capture build and commit are unknown; these are interface illustrations, not validation receipts.",
+    "The picture editor's visible empty-input error is preserved; this image does not demonstrate successful generation."
+  ],
+  "layout": {
+    "width": 1440,
+    "padding": 12,
+    "labelHeight": 40,
+    "rowGap": 12,
+    "background": "#171b20",
+    "labelFont": "500 24px \"Microsoft YaHei\",sans-serif",
+    "recommendedReleaseWidth": 720
+  },
+  "collages": [
+    {
+      "asset": "workspaces-collage.png",
+      "title_zh": "投影、蓝图与剪切工作区",
+      "sha256": "e368d21f6e8d2ae5054936bfdb98c81156e4a1d2b338fa06abddd23b91850518",
+      "bytes": 1380755,
+      "width": 1440,
+      "height": 2380,
+      "sources": [
+        {
+          "asset": "projection-workspace.png",
+          "sha256": "9f52add7c9f7e030bb579ded7e9dbd1eaf86d8a6dfd38b41e08032cd7de97da3",
+          "bytes": 271446,
+          "width": 2559,
+          "height": 1333,
+          "label": "01  投影工作区",
+          "destination": {
+            "x": 12,
+            "y": 52,
+            "width": 1416,
+            "height": 738
+          }
+        },
+        {
+          "asset": "blueprint-workspace.png",
+          "sha256": "30a2b9fb892ef1a762a6d96ade2d791f764ee698b7a606b64f0903d45dff918f",
+          "bytes": 482229,
+          "width": 2557,
+          "height": 1335,
+          "label": "02  蓝图工作区",
+          "destination": {
+            "x": 12,
+            "y": 842,
+            "width": 1416,
+            "height": 739
+          }
+        },
+        {
+          "asset": "cut-workspace.png",
+          "sha256": "5b0bcaae8f79a89789053c511a5fdf0f19460beb4c5381c8dfca5e2073f8dd3a",
+          "bytes": 319286,
+          "width": 2559,
+          "height": 1329,
+          "label": "03  剪切工作区",
+          "destination": {
+            "x": 12,
+            "y": 1633,
+            "width": 1416,
+            "height": 735
+          }
+        }
+      ]
+    },
+    {
+      "asset": "attachments-collage.png",
+      "title_zh": "文字与图片内部编辑浮窗",
+      "sha256": "ab38c90a1f48b5bd124c7aeb6d09e7c59fbceb75ebc1b924b7236351d26d99b6",
+      "bytes": 1113195,
+      "width": 1440,
+      "height": 2108,
+      "sources": [
+        {
+          "asset": "text-editor.png",
+          "sha256": "0813de8cf2246faee703d324a0e75d40965b7f0efc2beabd206a5f92f045e0ea",
+          "bytes": 113886,
+          "width": 1774,
+          "height": 1198,
+          "label": "01  文字编辑浮窗",
+          "destination": {
+            "x": 12,
+            "y": 52,
+            "width": 1416,
+            "height": 956
+          }
+        },
+        {
+          "asset": "picture-editor.png",
+          "sha256": "560a568d11a443a3db950df22b93dd8f6ca614141beff4d3c3c31a2969b3837a",
+          "bytes": 214137,
+          "width": 1771,
+          "height": 1296,
+          "label": "02  图片编辑浮窗",
+          "destination": {
+            "x": 12,
+            "y": 1060,
+            "width": 1416,
+            "height": 1036
+          }
+        }
+      ]
+    }
+  ]
+}
