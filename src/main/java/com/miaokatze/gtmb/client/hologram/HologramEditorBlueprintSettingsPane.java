@@ -3,9 +3,13 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraftforge.common.util.ForgeDirection;
+
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 
 /** Blueprint authoring actions live in the dock, never in a horizontal band over the model. */
 final class HologramEditorBlueprintSettingsPane {
@@ -25,9 +29,23 @@ final class HologramEditorBlueprintSettingsPane {
             .childPadding(3)
             .padding(6);
         content.child(
-            HologramEditorNativeTheme.label(() -> "蓝图设置", HologramEditorNativeTheme.TITLE)
+            Flow.row()
                 .widthRel(1f)
-                .height(20));
+                .height(20)
+                .childPadding(4)
+                .child(
+                    HologramEditorNativeTheme.label(() -> "蓝图设置", HologramEditorNativeTheme.TITLE)
+                        .expanded()
+                        .height(20))
+                .child(
+                    ui.shell
+                        .nativeIconAction(
+                            HologramEditorControlIds.BLUEPRINT_ROTATE,
+                            "rotate",
+                            () -> "旋转默认放置朝向",
+                            this::canRotateBlueprint,
+                            this::rotationTooltip)
+                        .size(HologramEditorNativeTheme.ICON_BUTTON)));
         content.child(
             HologramEditorNativeTheme
                 .label(
@@ -85,6 +103,41 @@ final class HologramEditorBlueprintSettingsPane {
     private boolean author() {
         return editable() && HologramGuidance.authorWorkspace(ui.session.state())
             && !ui.session.state().cells.isEmpty();
+    }
+
+    boolean canRotateBlueprint() {
+        NBTTagCompound state = ui.session.state().data;
+        return ui.workspaces.blueprint() && editable()
+            && state.getBoolean("geometryEditable")
+            && state.getInteger("virtualSchema") >= 2
+            && !state.getBoolean("virtualPlacement")
+            && !state.getBoolean("localPlanPending")
+            && state.getInteger("job") != 4
+            && !state.getBoolean("capturePending")
+            && !state.getBoolean("snapshotPending")
+            && !ui.session.state().cells.isEmpty();
+    }
+
+    void rotateBlueprint() {
+        if (!canRotateBlueprint()) return;
+        NBTTagCompound request = new NBTTagCompound();
+        request.setLong("planRevision", ui.session.revision());
+        ui.session.send("rotateBlueprint", request, true);
+    }
+
+    private String rotationTooltip() {
+        int facing = ui.session.state().data.getInteger("facing");
+        ForgeDirection direction = facing >= 0 && facing < ExtendedFacing.values().length
+            ? ExtendedFacing.values()[facing].getDirection()
+            : ForgeDirection.UNKNOWN;
+        String heading = switch (direction) {
+            case NORTH -> "当前：北 → 下次：东";
+            case EAST -> "当前：东 → 下次：南";
+            case SOUTH -> "当前：南 → 下次：西";
+            case WEST -> "当前：西 → 下次：北";
+            default -> "保留原有竖直姿态，仅调整水平布局";
+        };
+        return heading + "\n每次水平旋转整份蓝图 90°，四个固定方向循环。" + "\n保存后，下次载入和放置沿用此朝向。" + "\nCtrl+Z 撤销 · Ctrl+S 快捷保存";
     }
 
     private ButtonWidget<?> action(int id, Supplier<String> label, BooleanSupplier enabled, Supplier<String> tooltip) {

@@ -518,6 +518,13 @@ final class HologramAuthoringWorkflow {
                             s.deidentificationChosen = true;
                         }
                         boolean update = !"saveBlueprintAs".equals(op) && preset.id != null && !preset.id.isEmpty();
+                        if ("saveBlueprint".equals(op) && action.getBoolean("saveCurrent")) {
+                            String targetId = HologramLibraryWorkflow
+                                .currentBlueprintSaveId(s, HologramLibraryFacade.enabled());
+                            update = !targetId.isEmpty();
+                            if (HologramLibraryFacade.enabled()) s.libraryReplaceLocalId = targetId;
+                            else preset.id = update ? targetId : null;
+                        }
                         if ("saveBlueprintReplace".equals(op)) {
                             if (!action.getBoolean("confirmOverwrite")) throw new java.io.IOException("覆盖保存必须明确确认目标蓝图");
                             String targetId = action.getString("presetId");
@@ -658,6 +665,7 @@ final class HologramAuthoringWorkflow {
                         s.processingWorkflowStarted = false;
                         s.blueprintDirty = true;
                         s.blueprintSource = "imported";
+                        HologramBlueprintRotation.reset(s);
                         s.openPurpose = "blueprintEdit";
                         HologramBlueprintProjection.populateVirtual(s);
                         s.status = "蓝图已导入为作者蓝图；请完成处理流程后保存";
@@ -972,6 +980,7 @@ final class HologramAuthoringWorkflow {
     static void validateProcessedSaveOptions(HologramSession s, NBTTagCompound request) throws java.io.IOException {
         HologramGeometryEdits.validate(s);
         if (s.virtualPreset == null) throw new java.io.IOException("请先完整载入蓝图，再保存作者蓝图");
+        if (!s.processingReviewed && request.getBoolean("saveCurrent")) recheckSavedBlueprint(s);
         if (!s.processingReviewed) requireBlueprintProcessing(s, s.virtualPreset);
         HologramPresets.Preset reviewed = s.virtualPreset;
         if (request.hasKey("retainNbt") && request.getBoolean("retainNbt") != reviewed.retainNbt
@@ -985,6 +994,76 @@ final class HologramAuthoringWorkflow {
             if (!java.util.Objects.equals(keys, reviewed.retainedNbtKeys))
                 throw new java.io.IOException("NBT 选择已变化，请返回处理流程重新核对");
         }
+    }
+
+    /** Replay a stored decision only while every retained payload still belongs to that saved source. */
+    private static void recheckSavedBlueprint(HologramSession s) throws java.io.IOException {
+        if (!HologramLibraryWorkflow.savedBlueprintWorkspace(s) || s.virtualPreset.id == null) return;
+        HologramPresets.Preset baseline = HologramLibraryFacade.get(s.player, s.virtualPreset.id);
+        if (baseline == null || !HologramBlueprintProcessing.complete(baseline)) return;
+        int turns = HologramBlueprintRotation.approvedTurns(s, baseline);
+        if (turns < 0) return;
+        if (turns != 0) baseline = HologramBlueprintRotation.rotatedBaseline(baseline, turns);
+        HologramPresets.Preset current = HologramAuthoringQueries.processingSource(s);
+        HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.policy(baseline);
+        if (!reusableSavedPolicy(baseline, current, policy, s.processingPolicy, s.dimension, s.x, s.y, s.z)) return;
+        HologramPresets.Preset processed = HologramBlueprintProcessing
+            .process(current, policy, s.dimension, s.x, s.y, s.z);
+        HologramAePolicy.Draft reviewed = HologramAePolicy.sanitize(processed);
+        HologramBlueprintProcessing.enforcePolicy(reviewed.preset);
+        validateAuthorDraft(reviewed.preset);
+        publishSavedBlueprint(s, reviewed.preset);
+        s.processingSource = reviewed.preset;
+        s.processingPolicy = policy;
+        s.processingReviewed = true;
+        s.retainedNbtKeys = reviewed.preset.retainedNbtKeys;
+        s.ae.invalidateReviews();
+    }
+
+    static boolean reusableSavedPolicy(HologramPresets.Preset baseline, HologramPresets.Preset current,
+        HologramBlueprintProcessing.Policy policy, HologramBlueprintProcessing.Policy editedPolicy, int dimension,
+        int x, int y, int z) throws java.io.IOException {
+        if (!HologramBlueprintProcessing.complete(baseline) || !policy.complete()
+            || !policy.coordinateOverrides.isEmpty()
+            || !policy.cellNbtOverrides.isEmpty()
+            || !policy.resourceDecisions.isEmpty()
+            || current.deidentificationLevel != baseline.deidentificationLevel
+            || current.retainNbt != baseline.retainNbt
+            || current.retainCovers != baseline.retainCovers
+            || !java.util.Objects.equals(current.retainedNbtKeys, baseline.retainedNbtKeys)) return false;
+        if (editedPolicy != null) {
+            NBTTagCompound original = policy.write(), edited = editedPolicy.write();
+            original.removeTag("confirmedStages");
+            edited.removeTag("confirmedStages");
+            if (!original.equals(edited)) return false;
+        }
+        int mappingStages = (1 << 2) | (1 << 3);
+        if ((HologramBlueprintProcessing.requiredStages(current, dimension, x, y, z) & mappingStages) != 0)
+            return false;
+        Map<List<String>, Integer> payloads = new HashMap<>();
+        for (HologramPresets.Cell cell : baseline.cells)
+            if (hasSavedPayload(cell)) payloads.merge(savedPayload(cell), 1, Integer::sum);
+        for (HologramPresets.Cell cell : current.cells) if (hasSavedPayload(cell)) {
+            List<String> key = savedPayload(cell);
+            int remaining = payloads.getOrDefault(key, 0);
+            if (remaining == 0) return false;
+            payloads.put(key, remaining - 1);
+        }
+        return true;
+    }
+
+    private static boolean hasSavedPayload(HologramPresets.Cell cell) {
+        return cell.tileNbt != null && !cell.tileNbt.isEmpty() || cell.itemNbt != null && !cell.itemNbt.isEmpty();
+    }
+
+    private static List<String> savedPayload(HologramPresets.Cell cell) {
+        return java.util.Arrays.asList(
+            cell.item,
+            Integer.toString(cell.damage),
+            cell.block,
+            Integer.toString(cell.metadata),
+            cell.tileNbt == null ? "" : cell.tileNbt,
+            cell.itemNbt == null ? "" : cell.itemNbt);
     }
 
     static boolean processingAction(HologramSession s, NBTTagCompound action, String op) {

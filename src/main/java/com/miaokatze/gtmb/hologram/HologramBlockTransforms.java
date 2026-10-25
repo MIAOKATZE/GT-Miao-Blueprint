@@ -29,6 +29,7 @@ final class HologramBlockTransforms {
         NBTTagCompound item;
         Map<String, int[]> littleReferences;
         int x, y, z;
+        boolean authoring;
 
         Data(Block block, String sourceClass, int metadata, NBTTagCompound tile, NBTTagCompound item) {
             this.block = block;
@@ -91,14 +92,17 @@ final class HologramBlockTransforms {
         data.x = original.x;
         data.y = original.y;
         data.z = original.z;
+        data.authoring = original.authoring;
         List<Adapter> adapters;
         synchronized (HologramBlockTransforms.class) {
             adapters = new ArrayList<>(ADAPTERS);
         }
+        boolean handled = false;
         for (Adapter adapter : adapters) {
             try {
                 if (adapter.accepts(data)) {
                     adapter.turn(data, vertical);
+                    handled = true;
                     break;
                 }
             } catch (RuntimeException | LinkageError invalid) {
@@ -108,7 +112,35 @@ final class HologramBlockTransforms {
                     invalid);
             }
         }
+        if (!handled && !turnVanillaMetadata(data, vertical)
+            && data.authoring
+            && (data.tile != null && !data.tile.hasNoTags() || data.item != null && !data.item.hasNoTags()))
+            throw new IOException("该方块的设备或物品 NBT 没有已适配的转向规则");
         return data;
+    }
+
+    private static boolean turnVanillaMetadata(Data data, boolean vertical) {
+        if (data.block != null && data.block.getClass()
+            .getName()
+            .startsWith("net.minecraft.block.")) {
+            com.miaokatze.gtmb.api.CutTransforms.State state = new com.miaokatze.gtmb.api.CutTransforms.State(
+                data.block,
+                data.metadata,
+                data.tile,
+                data.x,
+                data.y,
+                data.z,
+                data.x,
+                data.y,
+                data.z);
+            if (HologramCutTransformMetadata.apply(
+                state,
+                new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0))) {
+                data.metadata = state.metadata;
+                return true;
+            }
+        }
+        return false;
     }
 
     static Result turn(Block block, String sourceClass, int metadata, String tile, String item, boolean vertical)
@@ -118,12 +150,18 @@ final class HologramBlockTransforms {
 
     static Result turn(Block block, String sourceClass, int metadata, String tile, String item, boolean vertical,
         Map<String, int[]> references, int x, int y, int z) throws IOException {
+        return turn(block, sourceClass, metadata, tile, item, vertical, references, x, y, z, false);
+    }
+
+    private static Result turn(Block block, String sourceClass, int metadata, String tile, String item,
+        boolean vertical, Map<String, int[]> references, int x, int y, int z, boolean authoring) throws IOException {
         NBTTagCompound tileData = HologramBlueprintNbt.decode(tile), itemData = HologramBlueprintNbt.decode(item);
         Data original = new Data(block, sourceClass, metadata, tileData, itemData);
         original.littleReferences = references;
         original.x = x;
         original.y = y;
         original.z = z;
+        original.authoring = authoring;
         Data data = turn(original, vertical);
         if (HologramAeBlueprint.supports(block, data.tile)) HologramAeBlueprint.rotateUnresolved(data.tile, vertical);
         // Preserve unchanged payload byte-for-byte, including every inventory/configuration tag.
@@ -149,6 +187,11 @@ final class HologramBlockTransforms {
     }
 
     static void turn(HologramPresets.Cell cell, boolean vertical, Map<String, int[]> references) throws IOException {
+        turn(cell, vertical, references, false);
+    }
+
+    static void turn(HologramPresets.Cell cell, boolean vertical, Map<String, int[]> references, boolean authoring)
+        throws IOException {
         String type = cell.stack() != null && cell.stack()
             .getItem() instanceof gregtech.common.blocks.ItemMachines ? "gregtech." : "";
         Result result = turn(
@@ -161,7 +204,8 @@ final class HologramBlockTransforms {
             references,
             cell.x,
             cell.y,
-            cell.z);
+            cell.z,
+            authoring);
         cell.metadata = result.metadata;
         cell.tileNbt = result.tileNbt;
         cell.itemNbt = result.itemNbt;
@@ -173,6 +217,11 @@ final class HologramBlockTransforms {
 
     static void turn(HologramCapture.Cell cell, boolean vertical, Map<String, int[]> references, int oldX, int oldY,
         int oldZ) throws IOException {
+        turn(cell, vertical, references, oldX, oldY, oldZ, false);
+    }
+
+    static void turn(HologramCapture.Cell cell, boolean vertical, Map<String, int[]> references, int oldX, int oldY,
+        int oldZ, boolean authoring) throws IOException {
         Result result = turn(
             cell.block,
             cell.sourceClass,
@@ -183,7 +232,8 @@ final class HologramBlockTransforms {
             references,
             oldX,
             oldY,
-            oldZ);
+            oldZ,
+            authoring);
         cell.meta = result.metadata;
         cell.tileNbt = result.tileNbt;
         cell.itemNbt = result.itemNbt;

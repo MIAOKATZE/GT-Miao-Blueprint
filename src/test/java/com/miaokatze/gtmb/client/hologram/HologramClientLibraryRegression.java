@@ -32,9 +32,54 @@ public final class HologramClientLibraryRegression {
             HologramLibrarySaveLifecycleRegression.run();
             exerciseQuickFence();
             exerciseLegacyMappings();
+            exerciseImportedAuthorUpdates();
             exerciseDisplayListing();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
+        }
+    }
+
+    private static void exerciseImportedAuthorUpdates() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-secondary-foreign-author-");
+        try {
+            HologramClientLibrary library = new HologramClientLibrary(game);
+            String id = "local_11111111-1111-1111-1111-111111111111";
+            Files.createDirectories(library.directory());
+            Path legacy = library.directory()
+                .resolve(id + ".json");
+            HologramBlueprintArtifact.writePair(legacy, json("Nxer legacy import", "Nxer"), png(0xff334455));
+            SimpleAssert.eq(
+                id,
+                library.list()
+                    .get(0).id,
+                "legacy aliases register their stable editable identity");
+            byte[] edited = json("Nxer secondary edit", "Nxer");
+            library.save(edited, png(0xff778899), id);
+            SimpleAssert.eq(
+                1,
+                library.list()
+                    .size(),
+                "secondary save replaces the loaded import without duplicates");
+            SimpleAssert.eq(
+                "Nxer",
+                library.list()
+                    .get(0).authorName,
+                "a portable file retains the imported author when a different player edits it locally");
+            SimpleAssert.that(
+                java.util.Arrays.equals(edited, library.read(id)),
+                "secondary save keeps the exact server-reviewed JSON bytes");
+            SimpleAssert.eq(
+                0xff778899,
+                javax.imageio.ImageIO.read(
+                    HologramBlueprintArtifact.previewPath(library.savedPath(id))
+                        .toFile())
+                    .getRGB(0, 0),
+                "secondary save writes the new matching structure preview");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
         }
     }
 

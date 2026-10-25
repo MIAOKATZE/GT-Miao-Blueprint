@@ -45,6 +45,25 @@ final class HologramPresetPersistenceRegression {
             Object initialBase = field(initialSource, "base");
             HologramPresets.labels();
             HologramPresets.get("preset_5");
+            Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            HologramSession editing = (HologramSession) ((sun.misc.Unsafe) unsafeField.get(null))
+                .allocateInstance(HologramSession.class);
+            editing.virtual = true;
+            editing.openPurpose = "";
+            editing.workspaceTab = "blueprint";
+            editing.blueprintSource = "saved";
+            editing.virtualPreset = HologramPresets.get("preset_5");
+            editing.blueprintSavedId = "preset_9";
+            SimpleAssert.eq(
+                "preset_5",
+                HologramLibraryWorkflow.currentBlueprintSaveId(editing, false),
+                "integrated save binds the loaded original even when a different saved/tool selection remains");
+            editing.virtualPreset.id = "missing";
+            SimpleAssert.eq(
+                "",
+                HologramLibraryWorkflow.currentBlueprintSaveId(editing, false),
+                "a deleted original becomes a new save instead of replacing another selected row");
             SimpleAssert
                 .eq(initialHash, HologramPresets.contentHash("preset_5"), "same catalog reuses content identity");
             SimpleAssert.that(

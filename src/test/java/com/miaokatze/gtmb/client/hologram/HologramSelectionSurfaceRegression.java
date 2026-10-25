@@ -103,16 +103,20 @@ final class HologramSelectionSurfaceRegression {
             forward |= dv > 0;
             backward |= dv < 0;
             double diagonal = dv > 0 ? line[0] - line[1] : line[0] + line[1];
+            SimpleAssert.that(
+                Math.abs(diagonal / 2 - Math.rint(diagonal / 2)) < 1e-7,
+                "separately clipped faces share the same two-block world grid phase");
             double previous = dv > 0 ? previousForward : previousBackward;
             if (Double.isFinite(previous)) SimpleAssert.that(
-                Math.abs(diagonal - previous - .5) < 1e-7,
-                "half-block grid spacing never expands to satisfy a face line-count limit");
+                Math.abs(diagonal - previous - 2) < 1e-7,
+                "two-block grid spacing never expands to satisfy a face line-count limit");
             if (dv > 0) previousForward = diagonal;
             else previousBackward = diagonal;
         }
-        SimpleAssert.that(forward && backward, "both diagonal mesh directions survive clipping");
+        if (face.u1 - face.u0 >= 2 && face.v1 - face.v0 >= 2)
+            SimpleAssert.that(forward && backward, "both diagonal mesh directions survive on larger faces");
         if (face.u1 - face.u0 > 10) SimpleAssert
-            .that(lines.size() > 18, "larger faces retain all half-block lines instead of eighteen sparse lines");
+            .that(lines.size() > 18, "larger faces retain all two-block lines instead of eighteen sparse lines");
     }
 
     private static List<double[]> hatch(HologramSelectionSurface.Face face) {

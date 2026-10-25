@@ -621,6 +621,10 @@ final class HologramEditorShell {
         return nativeAction(id, HologramEditorIcons.forControl(id, ""), label, enabled, tooltip, false);
     }
 
+    void rotateBlueprint() {
+        if (settings != null) settings.rotateBlueprint();
+    }
+
     ButtonWidget<?> nativeIconAction(int id, String icon, Supplier<String> label, BooleanSupplier enabled,
         Supplier<String> tooltip) {
         return nativeAction(id, icon, label, enabled, tooltip, true);

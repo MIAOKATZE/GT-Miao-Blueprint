@@ -26,12 +26,31 @@ final class HologramEditState {
     final java.util.Set<String> virtualEdited;
     final boolean presetEnabled, presetPaused, hatchDowngrade, noHatches;
     final int hatchTier;
+    // Present only for whole-blueprint turns; ordinary sparse/full edits keep their existing memory cost.
+    final HologramPresets.Preset presetPose;
+    final int sessionFacing;
+    final java.util.Set<String> manualPositionKeys;
+    final int rotationTurns;
+    final long rotationProofEpoch;
 
     HologramEditState(HologramSession s) {
         this(s, null);
     }
 
     HologramEditState(HologramSession s, java.util.Set<Integer> indices) {
+        this(s, indices, false);
+    }
+
+    HologramEditState(HologramSession s, boolean fullPose) {
+        this(s, null, fullPose);
+    }
+
+    private HologramEditState(HologramSession s, java.util.Set<Integer> indices, boolean fullPose) {
+        presetPose = fullPose ? HologramBlueprintRotation.copyPreset(s.virtualPreset) : null;
+        sessionFacing = s.facing;
+        manualPositionKeys = fullPose ? new java.util.HashSet<>(s.manualPositions.keySet()) : null;
+        rotationTurns = s.rotationTurns;
+        rotationProofEpoch = s.rotationProofEpoch;
         sparseIndices = indices == null ? null : new java.util.LinkedHashSet<>(indices);
         sparseCapture = indices == null ? null : s.capture;
         selectionIndices = new java.util.LinkedHashSet<>(s.selectedIndices);
@@ -99,7 +118,7 @@ final class HologramEditState {
     }
 
     HologramEditState current(HologramSession s) {
-        return new HologramEditState(s, sparseIndices);
+        return new HologramEditState(s, sparseIndices, presetPose != null);
     }
 
     boolean sameAs(HologramEditState other) {
@@ -144,6 +163,12 @@ final class HologramEditState {
     }
 
     void apply(HologramSession s) {
+        // The disk baseline does not travel through undo. Only this draft's orientation does.
+        if (rotationProofEpoch == s.rotationProofEpoch) s.rotationTurns = rotationTurns;
+        if (presetPose != null) {
+            s.virtualPreset = HologramBlueprintRotation.restorePose(s.virtualPreset, presetPose);
+            s.facing = sessionFacing;
+        }
         if (sparseIndices != null) {
             int row = 0;
             for (int index : sparseIndices) {
@@ -281,5 +306,12 @@ final class HologramEditState {
                 if (allowed == direction) s.facingPins.put(HologramValues.position(cell), direction);
         }
         for (HologramCapture.Cell cell : s.capture.cells) cell.candidates = null;
+        if (manualPositionKeys != null) {
+            s.manualPositions.clear();
+            for (String key : manualPositionKeys) {
+                HologramCapture.Cell cell = s.capture.positions.get(key);
+                if (cell != null) s.manualPositions.put(key, cell);
+            }
+        }
     }
 }

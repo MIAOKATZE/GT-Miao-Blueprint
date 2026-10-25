@@ -306,6 +306,10 @@ final class HologramLibraryWorkflow {
         if (!HologramLibraryFacade.enabled() || !librarySessionCurrent(player, request))
             throw new java.io.IOException("蓝图会话已更新，请重新保存");
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
+        boolean current = request.getBoolean("saveCurrent");
+        s.blueprintOperation = current ? "saveBlueprint" : "exportDraft";
+        s.blueprintOperationSuccess = false;
+        captureClientTaskToken(s, request);
         HologramAuthoringWorkflow.validateProcessedSaveOptions(s, request);
         if (s.capture == null || s.capture.incomplete) throw new java.io.IOException("请先完整载入蓝图蓝图");
         String name = request.getString("name");
@@ -323,10 +327,38 @@ final class HologramLibraryWorkflow {
             preset.deidentificationChosen = true;
             s.deidentificationChosen = true;
         }
-        s.libraryReplaceLocalId = HologramLibraryService.localId(request.getString("replaceLocalId"), true);
-        captureClientTaskToken(s, request);
-        HologramAuthoringWorkflow.beginAeSaveReview(s, preset, "exportDraft", !s.libraryReplaceLocalId.isEmpty());
+        s.libraryReplaceLocalId = current ? currentBlueprintSaveId(s, true)
+            : HologramLibraryService.localId(request.getString("replaceLocalId"), true);
+        HologramAuthoringWorkflow.beginAeSaveReview(
+            s,
+            preset,
+            current ? "saveBlueprint" : "exportDraft",
+            !s.libraryReplaceLocalId.isEmpty());
         HologramSnapshots.send(s);
+    }
+
+    /** A current save can replace only the loaded editor source, never a tool/list selection. */
+    static String currentBlueprintSaveId(HologramSession s, boolean clientLibrary) throws java.io.IOException {
+        if (!savedBlueprintWorkspace(s) || s.virtualPreset.id == null || s.virtualPreset.id.isEmpty()) return "";
+        String id = s.virtualPreset.id;
+        if (clientLibrary) {
+            if (!id.startsWith("private_") || s.libraryPrivatePreset == null
+                || !id.equals(s.libraryPrivatePreset.id)
+                || s.libraryLocalId.isEmpty()) return "";
+            return HologramLibraryService.localId(s.libraryLocalId, true);
+        }
+        if (id.startsWith("public_") || id.startsWith("private_")) return "";
+        return HologramPresets.get(id) == null ? "" : id;
+    }
+
+    /** Opening intent is consumed by snapshots; the server's editor/source ownership persists. */
+    static boolean savedBlueprintWorkspace(HologramSession s) {
+        return s.virtual && !s.virtualPlacement
+            && !s.cancelled
+            && !s.settingsOnly
+            && "blueprint".equals(HologramEditorWorkspaceRegistry.mode(s))
+            && "saved".equals(s.blueprintSource)
+            && s.virtualPreset != null;
     }
 
     static void saveReviewedDraft(HologramSession s, HologramPresets.Preset preset, String operation, boolean update,
@@ -362,7 +394,7 @@ final class HologramLibraryWorkflow {
             || s.libraryWorld != s.player.worldObj
             || !HologramLibraryService.connectedProjector(s.player)
             || !HologramSessionPolicy.valid(s))) throw new java.io.IOException("保存会话已关闭或工具已更换，请重新审核");
-        HologramLibraryService.stampAuthor(preset, s.player, !update && !"importBlueprint".equals(operation));
+        stampSavedAuthor(s, preset, operation, update);
         HologramBlueprintVersions.stampSaved(preset);
         if (!clientLibrary) {
             preset = HologramPresets.prepareSaved(preset, update);
@@ -414,6 +446,14 @@ final class HologramLibraryWorkflow {
         if (ae) s.status += "；存储元件内容未保存，源物品未改变；AE 身份在施工时重建，样板、卡及空元件需付料。";
     }
 
+    static void stampSavedAuthor(HologramSession s, HologramPresets.Preset preset, String operation, boolean update) {
+        HologramLibraryService.stampAuthor(
+            preset,
+            s.player,
+            !update && !"importBlueprint".equals(operation)
+                && !("saveBlueprint".equals(operation) && "saved".equals(s.blueprintSource)));
+    }
+
     /** A successful transfer is not a successful disk write. Only this owner-bound receipt clears the draft. */
     static boolean acknowledgeBlueprintSave(HologramSession s, NBTTagCompound request) {
         if (!HologramLibraryService.saveCurrent(s.player, request) || !s.id.equals(request.getString("session"))
@@ -454,6 +494,7 @@ final class HologramLibraryWorkflow {
         s.blueprintSaveReceipt = "";
         s.blueprintDirty = false;
         s.blueprintSource = "saved";
+        HologramBlueprintRotation.committed(s);
         s.blueprintOperationSuccess = true;
         HologramAuthoringWorkflow.clearSourceSwitch(s);
         s.status = "客户端已校验并完成原子保存，蓝图修改已保存";

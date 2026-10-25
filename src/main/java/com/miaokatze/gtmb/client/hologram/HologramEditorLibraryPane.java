@@ -79,7 +79,7 @@ final class HologramEditorLibraryPane {
             .childPadding(3)
             .collapseDisabledChild(true);
         page.child(
-            HologramEditorNativeTheme.label(() -> "填写名称另存；更新已有蓝图时，明确选择覆盖目标。")
+            HologramEditorNativeTheme.label(() -> "Ctrl+S 保存当前编辑蓝图；公库来源保存为本地副本。")
                 .widthRel(1f)
                 .height(30));
         IWidget name = ui.shell.adoptField(ui.library.presetNameField())
@@ -111,6 +111,9 @@ final class HologramEditorLibraryPane {
                 ui.library::nativeCanSave,
                 () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
                     .height(20));
+        page.child(
+            action(132, () -> "另存为新蓝图", ui.library::nativeCanSave, () -> "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
+                .height(18));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -532,7 +535,7 @@ final class HologramEditorLibraryPane {
 
     private ButtonWidget<?> saveMode(boolean overwrite) {
         BooleanSupplier available = () -> !ui.session.isTutorial() && !ui.library.browsePreviewActive();
-        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> overwrite ? "更新已有蓝图" : "另存新蓝图", null, () -> {
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> overwrite ? "选择覆盖目标" : "保存当前蓝图", null, () -> {
             if (ui.library.overwriteMode() != overwrite) defer(() -> {
                 if (!available.getAsBoolean() || ui.library.overwriteMode() == overwrite) return;
                 ui.router.activate(222);
@@ -542,7 +545,7 @@ final class HologramEditorLibraryPane {
         ui.shell.registerControl(
             222,
             button,
-            () -> overwrite ? "更新已有蓝图" : "另存新蓝图",
+            () -> overwrite ? "选择覆盖目标" : "保存当前蓝图",
             () -> available.getAsBoolean() && ui.library.overwriteMode() != overwrite);
         ui.shell.registerTarget(overwrite ? "library.save.overwrite" : "library.save.asNew", button);
         return button;

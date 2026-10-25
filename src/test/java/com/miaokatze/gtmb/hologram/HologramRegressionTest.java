@@ -279,6 +279,9 @@ public final class HologramRegressionTest {
             "virtual_preset_world_turns_preserve_geometry_edits_and_controller_roll",
             HologramVirtualRotationRegression::run);
         cases.put(
+            "blueprint_default_orientation_is_atomic_undoable_and_saved",
+            HologramBlueprintRotationRegression::run);
+        cases.put(
             "local_preview_cube_poses_preserve_handedness_and_canonical_recipes",
             HologramPreviewPoseRegression::run);
         cases.put("local_display_decoding_grants_no_server_construction_authority", () -> {

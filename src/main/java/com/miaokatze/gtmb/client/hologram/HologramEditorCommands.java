@@ -87,7 +87,7 @@ final class HologramEditorCommands {
         add("blueprintWorkspace", "蓝图工作区", "library", -1, Keyboard.KEY_2, 1, false, "进入作者蓝图；已有投影须先确认放弃，取消则保留原内容。");
         add("cutWorkspace", "剪切工作区", "cut", -1, Keyboard.KEY_3, 1, false, "在当前工作台打开剪切列表与预览。");
         add("process", "蓝图处理", "process", 220, Keyboard.KEY_F4, 0, false, "沿已有作者处理门禁打开六步流程。");
-        add("save", "保存当前蓝图", "save", 140, Keyboard.KEY_S, 1, false, "复用现有保存与审核流程。");
+        add("save", "保存当前蓝图", "save", 140, Keyboard.KEY_S, 1, false, "直接保存当前编辑蓝图；公库来源另存本地副本，保留服务器审核。");
         add("text", "文字蓝图", "text", 331, Keyboard.KEY_F7, 0, false, "复用文字编辑与附件选位流程。");
         add("image", "图片蓝图", "image", 332, Keyboard.KEY_F8, 0, false, "复用图片编辑与附件选位流程。");
         add("rotateTextVertical", "文字竖向转动", "rotate", -1, Keyboard.KEY_R, 4, false, "只对已有文字附件使用原竖向旋转操作。");
@@ -405,8 +405,7 @@ final class HologramEditorCommands {
                 : ui.session.state().data.getBoolean("virtual") ? "虚拟蓝图不能进入实体拆除规划" : "";
             case "process" -> !editable ? ui.session.editingReason()
                 : HologramGuidance.authorWorkspace(ui.session.state()) ? "" : "当前不是可处理的作者蓝图";
-            case "save" -> !editable ? ui.session.editingReason()
-                : ui.session.state().cells.isEmpty() ? "先载入蓝图内容" : ui.processing.processingReady() ? "" : "先完成现有蓝图处理流程";
+            case "save" -> !editable ? ui.session.editingReason() : ui.session.state().cells.isEmpty() ? "先载入蓝图内容" : "";
             case "text" -> ui.textBoxes.allowed(false) ? "" : "当前模式或依赖不允许编辑文字附件";
             case "image" -> ui.textBoxes.allowed(true) ? "" : "当前模式或依赖不允许编辑图片附件";
             case "rotateTextVertical" -> !editable ? ui.session.editingReason()
@@ -435,7 +434,7 @@ final class HologramEditorCommands {
                 if (ui.workspaces.blueprint()) ui.shell.toggleLibrary();
                 else ui.workspaces.activateBlueprint();
             }
-            case "save" -> ui.shell.selectDockPage(7);
+            case "save" -> ui.library.saveCurrentBlueprint();
             case "editCut", "editPaste", "rotateTextVertical" -> ui.preview.editAction(name);
             case "selectAll" -> {
                 ui.preview.selection()

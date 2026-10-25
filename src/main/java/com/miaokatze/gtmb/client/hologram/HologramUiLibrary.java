@@ -410,7 +410,6 @@ final class HologramUiLibrary {
     boolean nativeCanSave() {
         return !ui.session.isTutorial() && !browsePreviewActive()
             && nativeIdle()
-            && ui.processing.processingReady()
             && !ui.session.state().data.getBoolean("settingsOnly")
             && !ui.session.state().cells.isEmpty();
     }
@@ -1220,6 +1219,29 @@ final class HologramUiLibrary {
         return options;
     }
 
+    /** The save command owns the workspace, independently of a manually selected overwrite row. */
+    void saveCurrentBlueprint() {
+        if (!nativeCanSave()) return;
+        submitBlueprintSave(true);
+    }
+
+    private void submitBlueprintSave(boolean current) {
+        if (!ui.session.editable() || browsePreviewActive() || ui.session.state().cells.isEmpty()) return;
+        if (ui.canvas.rejectLocalPlanAction(current ? 140 : 132)) return;
+        NBTTagCompound options = blueprintSaveOptions();
+        if (options.getString("name")
+            .trim()
+            .isEmpty()) options.setString("name", "未命名蓝图");
+        options.setBoolean("saveCurrent", current);
+        if (dedicatedLibrary()) {
+            HologramLibraryClient.INSTANCE.saveDraft(ui.session.state(), options, current);
+        } else {
+            HologramLibraryClient.INSTANCE.expectDraftDownload();
+            ui.session.send(current ? "saveBlueprint" : "saveBlueprintAs", options, true);
+            presetSaveSequence = ui.session.sequence();
+        }
+    }
+
     void drawDeleteReview(int mx, int my) {
         drawRect(50, 85, 428, 219, 0xff172f36);
         String storage = dedicatedLibrary() ? this.publicLibrary ? "服务器公库" : "客户端本地" : "本地蓝图库";
@@ -1428,6 +1450,10 @@ final class HologramUiLibrary {
     }
 
     boolean prepareLibraryNavigation(int id) {
+        if (!ui.session.isTutorial() && (id == 132 || id == 140 && !overwriteMode)) {
+            if (nativeCanSave()) submitBlueprintSave(id == 140);
+            return true;
+        }
         if (id == 299 && !discardConfirmed) {
             if (!ui.session.editable()) return true;
             this.discardReview = true;
@@ -1783,7 +1809,8 @@ final class HologramUiLibrary {
         if (!waiting) cancelLibraryNavigation();
         String operation = next.data.getString("blueprintOperation");
         boolean canonical = next.data.getBoolean("virtual") && next.data.getBoolean("blueprintOperationSuccess")
-            && ("savePreset".equals(operation) || "saveBlueprintAs".equals(operation)
+            && ("savePreset".equals(operation) || "saveBlueprint".equals(operation)
+                || "saveBlueprintAs".equals(operation)
                 || "updatePreset".equals(operation)
                 || "exportDraft".equals(operation))
             && (!ui.session.state().data.getBoolean("blueprintOperationSuccess")

@@ -105,6 +105,9 @@ final class HologramSession {
     boolean processingPresetOperationSuccess;
     boolean blueprintDirty, discardConfirmationRequired, processingReviewed, processingWorkflowStarted;
     HologramPresets.Preset processingSource;
+    HologramBlueprintRotation.Proof rotationProof;
+    long rotationProofEpoch;
+    int rotationTurns;
     HologramDecorMaterials.Ledger decorLedger = new HologramDecorMaterials.Ledger();
     final List<ItemStack> decorPlanItems = new ArrayList<>();
     final Map<HologramBlueprintResources.ExactKey, Long> pendingAssetBudget = new HashMap<>();
