@@ -1,6 +1,6 @@
 # 添加图片与像素画
 
-本页对应 v0.1.43 用户测试版本与 GTNH 2.9.0 RC 环境。
+本页按 GTMB v0.1.48 准备版本整理，目标环境为 GTNH 2.9.0 RC；客户端与服务端需要 MIAOKATZE Core 0.1.22 或更新版本。正式发布与下载见 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。
 
 将图片放入当前客户端游戏目录的 `.minecraft/MiaoBlueprintPicture`。从蓝图工具栏打开图片编辑后，自动列出本地图片并读取首张；点击文件名切换，放入新文件后点击“刷新图片”。支持 PNG、JPEG、BMP 和 GIF 首帧，PNG 的透明区域保留。文件最多 16 MiB、原图最多 1600 万像素；最多列出 256 张图片。
 

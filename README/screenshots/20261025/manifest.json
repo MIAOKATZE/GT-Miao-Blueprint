@@ -1,0 +1,147 @@
+{
+    "schemaVersion":  1,
+    "capturedDate":  "2026-10-25",
+    "captureBuild":  null,
+    "captureSource":  null,
+    "provenance":  "User-provided interface screenshots supplied on 2026-10-25; exact capture build and source commit are unknown.",
+    "handling":  "Byte-identical copies of the supplied originals; no cropping, retouching, overlays or generated content.",
+    "scope":  [
+                  "Interface illustrations only; not native-test receipts, user acceptance, survival construction evidence or compatibility guarantees.",
+                  "picture-editor.png preserves the visible For input string: \"\" message and does not demonstrate successful generation.",
+                  "material-review.png shows creative mode.",
+                  "isometric-placement.png contains an earlier Ctrl-movement hint; current 0.1.48 previews update without Ctrl, while locking and confirming require Ctrl.",
+                  "Personal key bindings shown in screenshots may differ from defaults; the current default free-polygon key is B."
+              ],
+    "screenshots":  [
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/全新剪切界面.png",
+                            "asset":  "cut-workspace.png",
+                            "sha256":  "5b0bcaae8f79a89789053c511a5fdf0f19460beb4c5381c8dfca5e2073f8dd3a",
+                            "bytes":  319286,
+                            "width":  2559,
+                            "height":  1329,
+                            "caption_zh":  "剪切暂存队列与独立预览",
+                            "caption_en":  "Cut queue and independent preview"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/全新投影界面.png",
+                            "asset":  "projection-workspace.png",
+                            "sha256":  "9f52add7c9f7e030bb579ded7e9dbd1eaf86d8a6dfd38b41e08032cd7de97da3",
+                            "bytes":  271446,
+                            "width":  2559,
+                            "height":  1333,
+                            "caption_zh":  "固定控制器的投影工作区",
+                            "caption_en":  "Controller-anchored Projection workspace"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/全新蓝图界面.png",
+                            "asset":  "blueprint-workspace.png",
+                            "sha256":  "30a2b9fb892ef1a762a6d96ade2d791f764ee698b7a606b64f0903d45dff918f",
+                            "bytes":  482229,
+                            "width":  2557,
+                            "height":  1335,
+                            "caption_zh":  "蓝图工作区中的建筑规划",
+                            "caption_en":  "Building design in the Blueprint workspace"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/图片附加界面材质更新.png",
+                            "asset":  "picture-editor.png",
+                            "sha256":  "560a568d11a443a3db950df22b93dd8f6ca614141beff4d3c3c31a2969b3837a",
+                            "bytes":  214137,
+                            "width":  1771,
+                            "height":  1296,
+                            "caption_zh":  "图片编辑器与材料预览（保留底部空输入错误提示）",
+                            "caption_en":  "Picture editor and material preview (empty-input error remains visible)"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/多边形框选模式.png",
+                            "asset":  "polygon-selection.png",
+                            "sha256":  "f3baf036cc179a69e0494df7de4ad3f11a05998f80a2e488fc924e94198b6ceb",
+                            "bytes":  1486510,
+                            "width":  1242,
+                            "height":  952,
+                            "caption_zh":  "自由多边形与法向厚度框选",
+                            "caption_en":  "Free polygon and extrusion-depth selection"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/多重可收纳工具栏.png",
+                            "asset":  "collapsible-tools.png",
+                            "sha256":  "6c039536bd27395b70c3972c4e1970e4127d2ae392dff80fc35b724d923bf221",
+                            "bytes":  598234,
+                            "width":  2559,
+                            "height":  1336,
+                            "caption_zh":  "可收纳的处理与蓝图库侧栏",
+                            "caption_en":  "Collapsible processing and library panels"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/教程系统.png",
+                            "asset":  "tutorial.png",
+                            "sha256":  "e1f40ce044ada937aaeb3695d347dd40daeeeae07bd5b4ceb835d7242fc4da9e",
+                            "bytes":  1195818,
+                            "width":  2559,
+                            "height":  1332,
+                            "caption_zh":  "蓝图教程的载入步骤与导航",
+                            "caption_en":  "Blueprint tutorial loading step and navigation"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/文字附加界面材质更新.png",
+                            "asset":  "text-editor.png",
+                            "sha256":  "0813de8cf2246faee703d324a0e75d40965b7f0efc2beabd206a5f92f045e0ea",
+                            "bytes":  113886,
+                            "width":  1774,
+                            "height":  1198,
+                            "caption_zh":  "文字字形预览与形态设置",
+                            "caption_en":  "Text glyph preview and shape settings"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/更为充沛的框选提示.png",
+                            "asset":  "selection-guidance.png",
+                            "sha256":  "1d59fba7be51b2a6dcd1e0e2f9f1f31e2439b3e60952bc1d3d624b475baca057",
+                            "bytes":  834038,
+                            "width":  1335,
+                            "height":  777,
+                            "caption_zh":  "紫色角点与框选操作提示",
+                            "caption_en":  "Purple corners and contextual selection hints"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/材料审核与装饰抵用券.png",
+                            "asset":  "material-review.png",
+                            "sha256":  "36aa50dc571df148eaca56cc69d3dfa287bfd154cce430550fe0bf91026433bc",
+                            "bytes":  199888,
+                            "width":  1840,
+                            "height":  1296,
+                            "caption_zh":  "创造模式材料审核与装饰抵用标记",
+                            "caption_en":  "Creative-mode material review and voucher eligibility"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/等距框选模式.png",
+                            "asset":  "isometric-selection.png",
+                            "sha256":  "18a9f0bf3554eca7c03ebaef1c053716c09d29a2ca58fc8a6e246d5e03630fbd",
+                            "bytes":  1284709,
+                            "width":  1335,
+                            "height":  933,
+                            "caption_zh":  "等距视角的建筑框选",
+                            "caption_en":  "Building selection in isometric view"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/等距视角放置蓝图.png",
+                            "asset":  "isometric-placement.png",
+                            "sha256":  "e5748ab65333cca893cc855e93c9dc36891c5de1d2c29f3cd3e565447b7f3453",
+                            "bytes":  933380,
+                            "width":  1527,
+                            "height":  883,
+                            "caption_zh":  "等距蓝图放置预览（画面含早期Ctrl移动提示）",
+                            "caption_en":  "Isometric placement preview (earlier Ctrl-movement hint visible)"
+                        },
+                        {
+                            "source":  "plan/图片/新增-几乎更新了大部分内容！/透视模式.png",
+                            "asset":  "xray-slicing.png",
+                            "sha256":  "70188fa500aa0716b803acefd0a9541b6d3fb17e7e29ea65d3217404c55bda2a",
+                            "bytes":  1625576,
+                            "width":  1621,
+                            "height":  985,
+                            "caption_zh":  "X光高度切片与隐藏上方",
+                            "caption_en":  "X-ray height slicing with upper layers hidden"
+                        }
+                    ]
+}

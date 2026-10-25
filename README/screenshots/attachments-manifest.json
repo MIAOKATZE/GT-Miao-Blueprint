@@ -4,7 +4,8 @@
   "capture_source": null,
   "notes": [
     "Functional illustrations provided by the user for v0.1.25 publication; capture build/source unknown.",
-    "These images do not establish native acceptance, survival payment or performance."
+    "These images do not establish native acceptance, survival payment or performance.",
+    "Obsolete UI illustrations were removed from the current documentation on 2026-10-25; original versions remain available in Git history."
   ],
   "screenshots": [
     {
@@ -14,30 +15,6 @@
       "bytes": 948198,
       "caption_zh": "用小瓷砖将文字与图片带入世界",
       "caption_en": "Bring text and pictures into the world with LittleTiles"
-    },
-    {
-      "source": "plan/图片/文字附加编辑.png",
-      "asset": "text-attachment-editor.png",
-      "sha256": "ee7e1d3df6143dd71cded8fdf09484e335ae8039b033b82a0419ed46361e1a22",
-      "bytes": 83584,
-      "caption_zh": "文字编辑：字体、材料、厚度与三维形态",
-      "caption_en": "Text editor: fonts, materials, thickness and 3D shape"
-    },
-    {
-      "source": "plan/图片/图片附加编辑.png",
-      "asset": "picture-attachment-editor.png",
-      "sha256": "6de754965db6fccac3ffbb39b2cd71cf6553a7c4446b3cf25dd146030e447004",
-      "bytes": 141479,
-      "caption_zh": "添加图片：像素尺寸、固定材料组合与预览",
-      "caption_en": "Add pictures: pixel dimensions, fixed material palettes and preview"
-    },
-    {
-      "source": "plan/图片/蓝图附加文字图片.png",
-      "asset": "blueprint-attachments.png",
-      "sha256": "0b84d2284240e51a0c818c6e368d0412db927707337d3c4b7f177241445b03e9",
-      "bytes": 100162,
-      "caption_zh": "在蓝图工作区整体选择和编辑附加文字与图片",
-      "caption_en": "Select and edit text and picture attachments as whole objects in the blueprint workspace"
     }
   ]
 }
