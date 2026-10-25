@@ -14,6 +14,7 @@ public final class HologramInputContextRegression {
         Object world = new Object(), item = new Object(), stack = new Object();
         HologramInputContext context = new HologramInputContext();
         HologramWorldFlow.UsePressFence fence = new HologramWorldFlow.UsePressFence();
+        SimpleAssert.that(context.observeFocus(true), "initial focused input starts a boundary");
         SimpleAssert.that(
             context.observe(world, null, item, 0, 2, "projector", stack, false),
             "first held-tool context is a transition");
@@ -25,6 +26,15 @@ public final class HologramInputContextRegression {
         SimpleAssert.that(!fence.consume(), "held right mouse still emits one request");
         fence.observe(false, false);
         SimpleAssert.that(fence.consume(), "releasing the physical button permits the second corner");
+        fence.observe(true, context.observeFocus(false));
+        SimpleAssert.that(!fence.consume(), "losing window focus isolates a held right press");
+        fence.observe(true, context.observeFocus(true));
+        SimpleAssert.that(!fence.consume(), "focus gain cannot replay the inherited held press");
+        SimpleAssert.that(
+            !context.observe(world, null, item, 0, 2, "projector", stack, false),
+            "focus transitions preserve the same logical projector and selection context");
+        fence.observe(false, false);
+        SimpleAssert.that(fence.consume(), "a release or fresh native press rearms right click after focus gain");
         SimpleAssert.that(
             context.observe(world, null, item, 0, 2, "another", stack, false),
             "another tool UUID requires release even in the same slot");

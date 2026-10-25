@@ -33,13 +33,19 @@ final class HologramUiDeidentification {
 
     int deidentificationChoice(boolean placement) {
         if (!placement && (ui.session.state().data.getBoolean("blueprintProcessingComplete")
-            || ui.session.state().data.getBoolean("blueprintDirectSave")))
+            || ui.session.state().data.getBoolean("blueprintDirectSave")
+            || authoredIdentityChosen(ui.session.state().data)))
             return ui.session.state().data.getInteger("blueprintDeidentificationLevel");
         HologramDeidentificationMemory memory = HologramDeidentificationMemory.client();
         return HologramDeidentificationMemory.level(
             ui.session.state().data,
             placement,
             memory.choice(HologramDeidentificationMemory.source(ui.session.state().data)));
+    }
+
+    /** A geometry review does not undo the author's already selected identity level, including zero. */
+    private static boolean authoredIdentityChosen(NBTTagCompound state) {
+        return state.getBoolean("deidentificationChosen") && state.hasKey("blueprintDeidentificationLevel", 3);
     }
 
     void offerPlacementDeidentification() {
@@ -228,12 +234,13 @@ final class HologramUiDeidentification {
     }
 
     void deidentificationSaveOptions(NBTTagCompound options) {
-        HologramDeidentificationMemory memory = HologramDeidentificationMemory.client();
-        Integer remembered = memory.choice(HologramDeidentificationMemory.source(ui.session.state().data));
+        boolean chosen = ui.session.state().data.getBoolean("blueprintProcessingComplete")
+            || authoredIdentityChosen(ui.session.state().data);
+        Integer remembered = chosen ? null
+            : HologramDeidentificationMemory.client()
+                .choice(HologramDeidentificationMemory.source(ui.session.state().data));
         options.setInteger("deidentificationLevel", ui.identity.deidentificationChoice(false));
-        options.setBoolean(
-            "deidentificationChosen",
-            ui.session.state().data.getBoolean("blueprintProcessingComplete") || remembered != null);
+        options.setBoolean("deidentificationChosen", chosen || remembered != null);
         if (ui.session.state().data.getBoolean("blueprintProcessingComplete")) {
             options.setBoolean("retainNbt", ui.session.state().data.getBoolean("blueprintRetainNbt"));
             options.setBoolean("retainCovers", ui.session.state().data.getBoolean("blueprintRetainCovers"));

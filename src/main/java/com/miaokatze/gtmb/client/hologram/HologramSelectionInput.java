@@ -76,7 +76,7 @@ final class HologramSelectionInput {
             && mc.currentScreen == null
             && mc.theWorld != null
             && mc.thePlayer != null
-            && mc.inGameHasFocus;
+            && HologramClient.worldInputFocused();
         boolean changed = previous != selection || previousWorld != mc.theWorld || wasActive != active;
         previous = selection;
         previousWorld = mc.theWorld;

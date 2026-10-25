@@ -82,6 +82,17 @@ final class HologramBlueprintQuickSaveRegression {
                         .contains("保存选项"),
                     "policy replay still checks the actual requested options against the reviewed result");
             }
+            options = replace();
+            options.setInteger("deidentificationLevel", 1);
+            try {
+                HologramAuthoringWorkflow.validateProcessedSaveOptions(changedOptions, options);
+                throw new AssertionError("explicit overwrite cannot silently change the reviewed identity level");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("保存选项"),
+                    "server identity-level option checks remain strict after client request default correction");
+            }
         } finally {
             cache.set(null, previous);
         }

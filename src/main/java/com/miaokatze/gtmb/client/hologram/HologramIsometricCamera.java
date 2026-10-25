@@ -91,7 +91,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     private HeightSlice lastSlice;
     private CameraSettings settings = settingsFor(slice);
     private CameraSettings blueprintSettings = settingsFor(slice, BLUEPRINT_NAVIGATION);
-    private boolean closing, displaced, sliceKeyDown, toggleKeyDown, escapeKeyDown, previousContext;
+    private boolean closing, displaced, sliceKeyDown, toggleKeyDown, escapeKeyDown, previousContext, previousFocus;
     private Object inputWorld;
     private CameraFrame tracedFrame;
     private int tracedPixelX, tracedPixelY;
@@ -173,18 +173,20 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     void tick() {
         Minecraft mc = Minecraft.getMinecraft();
         boolean context = HologramClient.cameraContext();
-        boolean contextChanged = inputWorld != mc.theWorld || previousContext != context;
+        boolean focused = HologramClient.worldInputFocused();
+        boolean contextChanged = inputWorld != mc.theWorld || previousContext != context || previousFocus != focused;
         inputWorld = mc.theWorld;
         previousContext = context;
+        previousFocus = focused;
         boolean toggleDown = Keyboard.isCreated() && GameSettings.isKeyDown(toggle);
         boolean escapeDown = Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_ESCAPE);
-        boolean togglePressed = toggleDown && !toggleKeyDown && !contextChanged;
-        boolean escapePressed = escapeDown && !escapeKeyDown;
+        boolean togglePressed = focused && toggleDown && !toggleKeyDown && !contextChanged;
+        boolean escapePressed = focused && escapeDown && !escapeKeyDown && !contextChanged;
         toggleKeyDown = toggleDown;
         escapeKeyDown = escapeDown;
         if (active() && (mc.theWorld != world || mc.thePlayer == null
             || mc.thePlayer.isDead
-            || mc.currentScreen != null
+            || mc.currentScreen != null && !WorldCameraHooks.isAutomaticPauseScreen()
             || !context)) close();
         if (active() && escapePressed) close();
         else if (context && togglePressed && HologramClient.cameraToggleRequested()) {
@@ -192,7 +194,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
             else if (mc.thePlayer != null && !mc.thePlayer.isDead) open();
         }
         boolean pressed = Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_X);
-        if (active() && pressed && !sliceKeyDown) toggleSlice();
+        if (focused && !contextChanged && active() && pressed && !sliceKeyDown) toggleSlice();
         sliceKeyDown = pressed;
     }
 
@@ -251,11 +253,11 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         placementPointer.clear();
     }
 
-    /** Camera navigation may move the view; only Ctrl updates the proposed world placement. */
+    /** Passive preview follows the displayed target; a captured camera drag preserves its last position. */
     HologramWorldTarget.Target placementTarget(boolean floating, int distance, int[] feet) {
         Minecraft mc = Minecraft.getMinecraft();
         int[] at = placementPointer
-            .sample(HologramClient.controlHeld(), () -> target(floating, true, distance, feet).anchor);
+            .preview(WorldCameraHooks.pointerCaptured(), () -> target(floating, true, distance, feet).anchor);
         if (at == null || mc.theWorld == null
             || at[1] < 0
             || at[1] >= mc.theWorld.getHeight()
@@ -445,6 +447,15 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
     @Override
     public boolean allowRawKey(int keyCode) {
+        if (keyCode == Keyboard.KEY_ESCAPE && active()
+            && HologramClient.worldInputFocused()
+            && Keyboard.isCreated()
+            && Keyboard.getEventKeyState()
+            && !Keyboard.isRepeatEvent()) {
+            // A real new Escape must exit even on the first tick after focus returns.
+            escapeKeyDown = true;
+            close();
+        }
         return false;
     }
 

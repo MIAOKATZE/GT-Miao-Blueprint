@@ -132,7 +132,7 @@ final class HologramCutClient {
 
     void tick() {
         Minecraft mc = mc();
-        if (!Mouse.isCreated() || !Mouse.isButtonDown(1)) rightDown = false;
+        if (!HologramClient.worldInputFocused() || !Mouse.isCreated() || !Mouse.isButtonDown(1)) rightDown = false;
         if (world != mc.theWorld || mc.thePlayer != null && dimension != mc.thePlayer.dimension) {
             HologramCutStoragePreview.invalidate();
             HologramNetwork.clearCutClientTransport();
@@ -179,7 +179,8 @@ final class HologramCutClient {
             closeScreen();
         }
         if (requests.observeHeld(true)) refreshDirectory();
-        boolean cameraReady = !HologramIsometricCamera.INSTANCE.blocksWorldInput();
+        boolean cameraReady = HologramClient.worldInputFocused()
+            && !HologramIsometricCamera.INSTANCE.blocksWorldInput();
         boolean enabled = cameraReady && mc.currentScreen == null
             && cutMode
             && !entries.isEmpty()
@@ -203,7 +204,7 @@ final class HologramCutClient {
 
     private void lockedNudge() {
         Minecraft mc = mc();
-        boolean enabled = mc.currentScreen == null && held()
+        boolean enabled = HologramClient.worldInputFocused() && held()
             && !HologramIsometricCamera.INSTANCE.blocksWorldInput()
             && stage == HologramCutInput.Stage.LOCKED
             && locked != null
@@ -236,7 +237,7 @@ final class HologramCutClient {
     /** Cancel mouse events before Minecraft updates attack/use bindings. */
     boolean mouse(MouseEvent event) {
         if (event.button == 1 && !event.buttonstate) rightDown = false;
-        if (!held() || mc().currentScreen != null || blueprintBusy()) return false;
+        if (!held() || !HologramClient.worldInputFocused() || blueprintBusy()) return false;
         if (event.dwheel != 0 && aiming() && alt()) return false; // shared distance handler owns the wheel
         boolean intercept = event.button == 1 && interceptsUse() || event.button == 0 && active();
         if (!intercept) return false;
@@ -244,6 +245,7 @@ final class HologramCutClient {
         KeyBinding.setKeyBindState(mc().gameSettings.keyBindUseItem.getKeyCode(), false);
         KeyBinding.setKeyBindState(mc().gameSettings.keyBindAttack.getKeyCode(), false);
         if (!event.buttonstate) return true;
+        if (!HologramClient.cameraPlacementClickAllowed()) return true;
         if (HologramIsometricCamera.INSTANCE.active() && selecting()) {
             HologramSelectionInput.CameraAction action = HologramSelectionInput.cameraAction(
                 event.button,
