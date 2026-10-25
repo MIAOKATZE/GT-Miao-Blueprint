@@ -34,9 +34,57 @@ public final class HologramLibrarySaveLifecycleRegression {
             confirmationAdvancesUiAcknowledgement();
             cancelledCatalogCanRefreshAgain();
             preparationActivityIsCorrelatedAndBounded();
+            savedPreviewOwnsItsObservedAngles();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Blueprint save lifecycle", failure);
         }
+    }
+
+    private static void savedPreviewOwnsItsObservedAngles() {
+        HologramState clicked = state(91, 12, "saveBlueprintReplace", false, false);
+        HologramSavePreviewPose pose = new HologramSavePreviewPose(91, 8, clicked, .87, .42);
+        HologramLibraryClient.SaveCommand command = new HologramLibraryClient.SaveCommand(
+            91,
+            clicked.session,
+            12,
+            "saveBlueprintReplace");
+        SimpleAssert.that(
+            pose.accepts(91, 8, clicked.session, 42, command, clicked),
+            "the click-time geometry retains its observed cover angles");
+        HologramState prepared = state(91, 12, "saveBlueprintReplace", false, true);
+        prepared.data.setLong("planRevision", 43);
+        SimpleAssert.that(
+            pose.accepts(91, 8, clicked.session, 43, command, prepared),
+            "the exact save publication may advance revision during automatic preparation");
+        SimpleAssert.that(
+            !pose.accepts(91, 8, clicked.session, 43, command, clicked),
+            "a header ahead of its owned publication waits for the corresponding snapshot");
+        prepared.data.setLong("uiSequence", 13);
+        SimpleAssert.that(
+            !pose.accepts(91, 8, clicked.session, 43, command, prepared),
+            "an unrelated later command cannot carry an earlier save's camera to a new revision");
+        prepared.data.setLong("uiSequence", 12);
+        prepared.data.setLong("blueprintClientTaskToken", 92);
+        SimpleAssert.that(
+            !pose.accepts(91, 8, clicked.session, 43, command, prepared),
+            "a successor task publication cannot authorize camera revision advancement");
+        SimpleAssert.that(
+            !pose.accepts(92, 8, clicked.session, 42, command, clicked)
+                && !pose.accepts(91, 9, clicked.session, 42, command, clicked)
+                && !pose.accepts(91, 8, "different-source", 42, command, clicked)
+                && !pose.accepts(91, 8, clicked.session, 41, command, clicked),
+            "task, transport generation, session and older revisions fence the frozen view");
+        HologramBlueprintPreview.Request capture = new HologramBlueprintPreview.Request(
+            new NBTTagCompound(),
+            pose.yaw,
+            pose.pitch,
+            () -> true,
+            image -> {},
+            failure -> {});
+        clicked.data.setLong("planRevision", 100);
+        SimpleAssert.eq(.87, capture.yaw, "the render request keeps the saved yaw after later UI changes");
+        SimpleAssert.eq(.42, capture.pitch, "the render request keeps the saved pitch after later UI changes");
+        SimpleAssert.eq(42L, pose.revision, "the save camera freezes the source revision instead of retaining its DTO");
     }
 
     private static void freshPreviewAndAdmissionOwnTheirIdleBudget() throws ReflectiveOperationException {
@@ -63,6 +111,15 @@ public final class HologramLibrarySaveLifecycleRegression {
             long before = System.nanoTime();
             SimpleAssert.that((Boolean) start.invoke(client, "读取蓝图预览"), "fresh preview acquires its actual owner");
             long first = client.backgroundTaskToken(), started = (Long) get(client, "lastActivity");
+            set(
+                client,
+                "savePreviewPose",
+                new HologramSavePreviewPose(
+                    first,
+                    (Long) get(client, "generation"),
+                    state(first, 1, "saveBlueprint", false, false),
+                    .87,
+                    .42));
             SimpleAssert.that(started >= before, "disk preparation receives an idle budget before its first tick");
             set(client, "preparing", true);
             client.tick();
@@ -72,10 +129,21 @@ public final class HologramLibrarySaveLifecycleRegression {
             SimpleAssert.eq(started, get(client, "lastActivity"), "continuing an owner cannot refresh its idle budget");
             set(client, "preparing", false);
             finish.invoke(client, first, true, "preview read");
+            SimpleAssert
+                .eq(null, get(client, "savePreviewPose"), "successful task completion retires its cover camera");
             set(client, "lastActivity", System.nanoTime() - java.util.concurrent.TimeUnit.SECONDS.toNanos(121));
             before = System.nanoTime();
             start.invoke(client, "准备蓝图内容");
             long second = client.backgroundTaskToken();
+            set(
+                client,
+                "savePreviewPose",
+                new HologramSavePreviewPose(
+                    second,
+                    (Long) get(client, "generation"),
+                    state(second, 1, "saveBlueprint", false, false),
+                    .87,
+                    .42));
             SimpleAssert.that(
                 second != first && (Long) get(client, "lastActivity") >= before,
                 "admission after a completed disk task receives a fresh owner and idle budget");
@@ -95,6 +163,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             client.tick();
             SimpleAssert
                 .eq(0L, client.backgroundTaskToken(), "a genuinely idle preparation still fails at the existing bound");
+            SimpleAssert.eq(null, get(client, "savePreviewPose"), "failure and cancellation retire their cover camera");
             start.invoke(client, "升级服务器蓝图");
             long upgradeToken = client.backgroundTaskToken();
             Class<?> upgradeClass = Class.forName(HologramLibraryClient.class.getName() + "$UpgradeTask");

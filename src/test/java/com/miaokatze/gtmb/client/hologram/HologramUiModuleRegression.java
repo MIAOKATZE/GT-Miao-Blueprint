@@ -31,6 +31,7 @@ public final class HologramUiModuleRegression {
         confirmedLibraryTargets();
         controllerConstructionConfirmation();
         presentationSnapshotFailure();
+        authorSaveKeepsIdentityChoiceAfterRotation();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -440,6 +441,16 @@ public final class HologramUiModuleRegression {
                     && !clean.library.libraryNavigation().local,
                 "integrated-library row handoff is an editable server session and preserves the current camera");
             NBTTagCompound nextData = (NBTTagCompound) clean.session.state().data.copy();
+            HologramUiModules overwrite = librarySwitchUi();
+            overwrite.session.state().data.setBoolean("blueprintProcessingRequired", true);
+            overwrite.session.state().data.setBoolean("blueprintProcessingComplete", false);
+            setUiField(overwrite.library, "overwriteMode", true);
+            setUiField(overwrite.library, "overwriteTarget", "chosen-target");
+            SimpleAssert
+                .that(!overwrite.processing.processingReady(), "rotated content is awaiting the server save gate");
+            SimpleAssert.that(
+                overwrite.library.prepareLibraryNavigation(140) && overwrite.library.overwriteReview(),
+                "explicit overwrite reaches target confirmation before server-owned saved-policy rechecking");
             nextData.setString("session", "loaded-target");
             nextData.setString("generation", "loaded-target");
             nextData.setString("libraryLocalId", "");
@@ -929,6 +940,60 @@ public final class HologramUiModuleRegression {
             SimpleAssert.eq(5L, ui.session.pendingSequence(), "cancel receives its own subsequent ACK ticket");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot inspect the actual composed binding dispatch", failure);
+        }
+    }
+
+    private static void authorSaveKeepsIdentityChoiceAfterRotation() {
+        try {
+            HologramUiModules ui = headlessUi();
+            NBTTagCompound data = new NBTTagCompound();
+            data.setString("session", "rotated-saved-author");
+            data.setString("blueprintSource", "saved");
+            data.setLong("planRevision", 1);
+            data.setBoolean("deidentificationChosen", true);
+            data.setInteger("blueprintDeidentificationLevel", 0);
+            data.setInteger("deidentificationRecommendedLevel", 1);
+            data.setBoolean("blueprintProcessingComplete", true);
+            data.setBoolean("blueprintDirectSave", true);
+            data.setBoolean("blueprintRetainNbt", true);
+            data.setBoolean("blueprintRetainCovers", true);
+            for (int step = 0; step < 3; step++) {
+                // First save, camera-only overwrite, then the real geometry-delta flags published by rotation.
+                if (step == 2) {
+                    data.setLong("planRevision", 3);
+                    data.setBoolean("blueprintProcessingComplete", false);
+                    data.setBoolean("blueprintDirectSave", false);
+                    data.setBoolean("geometryValidationPending", true);
+                }
+                setUiField(ui.session, "state", new HologramState(data));
+                NBTTagCompound options = new NBTTagCompound();
+                options.setBoolean("retainNbt", true);
+                options.setBoolean("retainCovers", true);
+                options.setBoolean("confirmOverwrite", true);
+                options.setString("presetId", "selected-overwrite-target");
+                ui.identity.deidentificationSaveOptions(options);
+                HologramUiSession.buildOutgoingRequest(
+                    "saveBlueprintReplace",
+                    options,
+                    -1,
+                    () -> new int[0],
+                    "",
+                    data.getString("session"));
+                SimpleAssert.eq(
+                    0,
+                    options.getInteger("deidentificationLevel"),
+                    "author overwrite keeps reviewed level zero instead of silently switching to recommendation one at step "
+                        + step);
+                SimpleAssert.that(
+                    options.getBoolean("deidentificationChosen") && !options.getBoolean("saveCurrent"),
+                    "explicit overwrite carries the author's actual choice without borrowing the Ctrl+S marker");
+                SimpleAssert.eq(
+                    data.getLong("planRevision"),
+                    options.getLong("planRevision"),
+                    "the actual outgoing save options retain the current geometry revision");
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot exercise author identity save options", failure);
         }
     }
 

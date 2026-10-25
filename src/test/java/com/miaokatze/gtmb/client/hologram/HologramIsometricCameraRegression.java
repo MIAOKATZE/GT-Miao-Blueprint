@@ -175,18 +175,36 @@ public final class HologramIsometricCameraRegression {
         java.util.function.Supplier<int[]> navigation = () -> {
             throw new AssertionError("Camera navigation must not query or replace the world placement target");
         };
-        SimpleAssert.that(pointer.sample(false, navigation) == null, "positioning starts only with Ctrl");
         int[] target = { 4, 65, -8 };
-        int[] first = pointer.sample(true, () -> target);
+        int[] first = pointer.preview(false, () -> target);
+        SimpleAssert.eq(4, first[0], "entering placement shows its first valid target without Ctrl");
+        SimpleAssert.that(
+            !HologramPlacementPointer.allowsClick(true, true, false),
+            "passive preview cannot authorize an isometric placement click");
         target[0] = first[0] = 99;
-        SimpleAssert
-            .eq(4, pointer.sample(false, navigation)[0], "releasing Ctrl freezes an owned copy of the placement");
-        SimpleAssert.eq(70, pointer.sample(true, () -> new int[] { 5, 70, -9 })[1], "Ctrl resumes live positioning");
-        SimpleAssert
-            .that(pointer.sample(true, () -> null) == null, "an invalid Ctrl target cannot lock a stale position");
-        pointer.sample(true, () -> new int[] { 1, 2, 3 });
+        SimpleAssert.eq(
+            4,
+            pointer.preview(true, navigation)[0],
+            "camera dragging preserves an owned copy of the visible placement");
+        SimpleAssert.eq(
+            70,
+            pointer.preview(false, () -> new int[] { 5, 70, -9 })[1],
+            "passive preview keeps following the target without a modifier");
+        SimpleAssert.that(
+            HologramPlacementPointer.allowsClick(true, true, true),
+            "Ctrl authorizes the separate placement lock or confirmation");
+        SimpleAssert.that(
+            HologramPlacementPointer.allowsClick(true, false, false),
+            "selection keeps its own polygon and corner modifier rules");
+        SimpleAssert.that(
+            HologramPlacementPointer.allowsClick(false, true, false),
+            "ordinary perspective placement keeps its original clicks");
+        SimpleAssert.that(
+            pointer.preview(false, () -> null) == null,
+            "an invalid displayed target cannot lock a stale position");
+        pointer.preview(false, () -> new int[] { 1, 2, 3 });
         pointer.clear();
-        SimpleAssert.that(pointer.sample(false, navigation) == null, "closing the camera retires its placement target");
+        SimpleAssert.that(pointer.preview(true, navigation) == null, "closing the camera retires its placement target");
     }
 
     private static void selectionGestures() {

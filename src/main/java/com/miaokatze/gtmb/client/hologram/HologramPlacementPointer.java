@@ -2,13 +2,13 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.util.function.Supplier;
 
-/** The proposed placement survives camera navigation until the user explicitly resumes positioning. */
+/** Passive placement preview updates independently of the modifier required to commit a placement click. */
 final class HologramPlacementPointer {
 
     private int[] anchor;
 
-    int[] sample(boolean positioning, Supplier<int[]> target) {
-        if (positioning) {
+    int[] preview(boolean navigating, Supplier<int[]> target) {
+        if (!navigating) {
             int[] next = target.get();
             anchor = next == null ? null : next.clone();
         }
@@ -17,5 +17,9 @@ final class HologramPlacementPointer {
 
     void clear() {
         anchor = null;
+    }
+
+    static boolean allowsClick(boolean cameraActive, boolean placement, boolean control) {
+        return !cameraActive || !placement || control;
     }
 }

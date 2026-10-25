@@ -25,7 +25,7 @@ import cpw.mods.fml.common.event.FMLServerStoppingEvent;
     modid = GTMiaoBlueprint.MODID,
     name = "GT-Miao-Blueprint",
     version = Tags.VERSION,
-    dependencies = "required-after:miaokatzecore@[0.1.9,);required-after:gregtech;required-after:structurelib;required-after:appliedenergistics2;required-after:modularui2")
+    dependencies = "required-after:miaokatzecore@[0.1.22,);required-after:gregtech;required-after:structurelib;required-after:appliedenergistics2;required-after:modularui2")
 public final class GTMiaoBlueprint {
 
     public static final String MODID = "gtmb";

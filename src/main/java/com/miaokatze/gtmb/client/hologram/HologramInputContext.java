@@ -6,6 +6,14 @@ final class HologramInputContext {
     private Object world, screen, item, stack;
     private int damage, slot = -1;
     private String uuid = "";
+    private boolean focused;
+
+    /** Focus is an input boundary; it does not change the logical tool or server selection. */
+    boolean observeFocus(boolean nextFocused) {
+        boolean changed = focused != nextFocused;
+        focused = nextFocused;
+        return changed;
+    }
 
     static boolean selectionTool(String boundUuid, String heldUuid) {
         return boundUuid == null || boundUuid.isEmpty() || boundUuid.equals(heldUuid);

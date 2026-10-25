@@ -980,7 +980,7 @@ final class HologramAuthoringWorkflow {
     static void validateProcessedSaveOptions(HologramSession s, NBTTagCompound request) throws java.io.IOException {
         HologramGeometryEdits.validate(s);
         if (s.virtualPreset == null) throw new java.io.IOException("请先完整载入蓝图，再保存作者蓝图");
-        if (!s.processingReviewed && request.getBoolean("saveCurrent")) recheckSavedBlueprint(s);
+        if (!s.processingReviewed) recheckSavedBlueprint(s);
         if (!s.processingReviewed) requireBlueprintProcessing(s, s.virtualPreset);
         HologramPresets.Preset reviewed = s.virtualPreset;
         if (request.hasKey("retainNbt") && request.getBoolean("retainNbt") != reviewed.retainNbt

@@ -190,6 +190,7 @@ final class HologramLibraryClient {
     private boolean incomingLocalSaveReceipt;
     private NBTTagCompound pendingSaveAck;
     private HologramBlueprintPreview.Request previewCapture;
+    private HologramSavePreviewPose savePreviewPose;
     private Runnable pendingPreviewStart;
     private UUID libraryActor;
     private PendingDiskSave pendingDiskSave;
@@ -541,7 +542,8 @@ final class HologramLibraryClient {
             && saveProgress.idleExpired(System.nanoTime())) {
             failTask("save.idle.timeout", "蓝图保存无进展超时，未保存修改保留");
         }
-        if (pendingPreviewStart != null && saveSourceCurrent(generation, incomingSaveSession, incomingSaveRevision)) {
+        if (pendingPreviewStart != null && saveSourceCurrent(generation, incomingSaveSession, incomingSaveRevision)
+            && savePreviewReady(generation, incomingSaveSession, incomingSaveRevision)) {
             Runnable start = pendingPreviewStart;
             pendingPreviewStart = null;
             start.run();
@@ -1100,6 +1102,7 @@ final class HologramLibraryClient {
         if (backgroundTaskToken != 0) return true;
         backgroundTaskToken = HologramBackgroundTasks.beginLibrary(label);
         if (backgroundTaskToken != 0) {
+            savePreviewPose = null;
             // Every owner gets its own idle budget, including disk-only preview and the following admission.
             // A fresh client has no prior packet activity; zero is not a valid task start time.
             lastActivity = System.nanoTime();
@@ -1212,6 +1215,7 @@ final class HologramLibraryClient {
         preparationProgress.clear();
         backgroundTaskToken = 0;
         draftSave = null;
+        savePreviewPose = null;
         HologramBackgroundTasks.finishLibrary(token, success, detail, cancelled);
         Minecraft mc = Minecraft.getMinecraft();
         if (completed != null && mc != null && mc.currentScreen instanceof HologramScreen screen)
@@ -1299,8 +1303,13 @@ final class HologramLibraryClient {
     }
 
     void saveDraft(HologramState state, NBTTagCompound options, boolean replace) {
+        saveDraft(state, options, replace, HologramSavePreviewPose.DEFAULT_YAW, HologramSavePreviewPose.DEFAULT_PITCH);
+    }
+
+    void saveDraft(HologramState state, NBTTagCompound options, boolean replace, double yaw, double pitch) {
         if (busy()) return;
         if (!beginBackgroundTask("保存蓝图")) return;
+        savePreviewPose = new HologramSavePreviewPose(backgroundTaskToken, generation, state, yaw, pitch);
         NBTTagCompound request = draftRequest(state, options, replace);
         preparing = true;
         draftPending = true;
@@ -1341,7 +1350,13 @@ final class HologramLibraryClient {
     }
 
     void expectDraftDownload() {
+        expectDraftDownload(null, HologramSavePreviewPose.DEFAULT_YAW, HologramSavePreviewPose.DEFAULT_PITCH);
+    }
+
+    void expectDraftDownload(HologramState state, double yaw, double pitch) {
         if (!beginBackgroundTask("保存蓝图")) return;
+        savePreviewPose = state == null ? null
+            : new HologramSavePreviewPose(backgroundTaskToken, generation, state, yaw, pitch);
         ensureStore();
         preparing = draftPending = downloadExpected = true;
         saveProgress.clear();
@@ -2034,6 +2049,7 @@ final class HologramLibraryClient {
     }
 
     private void cancel(String reason, boolean cancelled) {
+        savePreviewPose = null;
         long cancelledTask = backgroundTaskToken;
         SaveCommand cancelledCommand = draftSave;
         if (cancelledCommand != null) cancelledSourceSave = new SaveCommand(
@@ -2608,9 +2624,21 @@ final class HologramLibraryClient {
                         traceSave("preview_snapshot_ready");
                         Runnable start = () -> {
                             if (!saveSourceCurrent(token, saveSession, saveRevision)) return;
+                            if (!savePreviewReady(token, saveSession, saveRevision)) return;
+                            pendingPreviewStart = null;
+                            HologramSavePreviewPose pose = savePreviewPose;
+                            boolean observed = pose != null && pose.accepts(
+                                backgroundTaskToken,
+                                token,
+                                saveSession,
+                                saveRevision,
+                                draftSave,
+                                HologramClient.state);
                             status = "正在生成真实结构预览 PNG";
                             previewCapture = HologramBlueprintPreview.capture(
                                 snapshot,
+                                observed ? pose.yaw : HologramSavePreviewPose.DEFAULT_YAW,
+                                observed ? pose.pitch : HologramSavePreviewPose.DEFAULT_PITCH,
                                 () -> saveSourceCurrent(token, saveSession, saveRevision),
                                 image -> persistPreview(
                                     bytes,
@@ -2628,7 +2656,8 @@ final class HologramLibraryClient {
                                 });
                             traceSave("preview_capture_queued");
                         };
-                        if (saveSourceCurrent(token, saveSession, saveRevision)) start.run();
+                        if (saveSourceCurrent(token, saveSession, saveRevision)
+                            && savePreviewReady(token, saveSession, saveRevision)) start.run();
                         else if (saveSourceAwaiting(token, saveSession, saveRevision)) {
                             pendingPreviewStart = start;
                             status = "保存内容已接收，正在等待对应的蓝图状态";
@@ -2742,6 +2771,12 @@ final class HologramLibraryClient {
     private boolean saveSourceCurrent(long token, String session, long revision) {
         return saveSourceAwaiting(token, session, revision)
             && HologramClient.state.data.getLong("planRevision") == revision;
+    }
+
+    private boolean savePreviewReady(long token, String session, long revision) {
+        HologramSavePreviewPose pose = savePreviewPose;
+        return pose == null || !pose.sameSource(backgroundTaskToken, token, session)
+            || pose.accepts(backgroundTaskToken, token, session, revision, draftSave, HologramClient.state);
     }
 
     private boolean saveSourceAwaiting(long token, String session, long revision) {

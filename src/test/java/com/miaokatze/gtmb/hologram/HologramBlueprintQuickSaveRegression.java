@@ -39,6 +39,15 @@ final class HologramBlueprintQuickSaveRegression {
                 .that(valid.processingReviewed, "Ctrl+S rechecks an approved native NBT turn with its saved policy");
             SimpleAssert
                 .eq(1L, valid.geometryEdits.fullValidations, "rotated quick save retains full geometry admission");
+            assertSavedPreviewPose(valid);
+
+            HologramSession overwrite = savedFixture(cache);
+            turn(overwrite);
+            HologramAuthoringWorkflow.validateProcessedSaveOptions(overwrite, replace());
+            SimpleAssert.that(
+                overwrite.processingReviewed,
+                "explicit overwrite without saveCurrent rechecks the same trusted rotated source");
+            assertSavedPreviewPose(overwrite);
 
             HologramSession changed = savedFixture(cache);
             turn(changed);
@@ -46,6 +55,7 @@ final class HologramBlueprintQuickSaveRegression {
             manual.setInteger("manualEdit", 7);
             changed.capture.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(manual);
             expectReview(changed, "a manual NBT edit cannot borrow rotation authority");
+            expectReview(changed, replace(), "explicit overwrite cannot borrow approval for changed native NBT");
 
             HologramSession copied = savedFixture(cache);
             turn(copied);
@@ -57,9 +67,59 @@ final class HologramBlueprintQuickSaveRegression {
             HologramBlueprintEditor.moveBlueprintCells(copied, duplicate);
             HologramAuthoringWorkflow.blueprintEdited(copied, "geometry");
             expectReview(copied, "a copied native identity cannot borrow its source's one rotation approval");
+            expectReview(copied, replace(), "explicit overwrite retains the saved source's native payload count limit");
+
+            HologramSession changedOptions = savedFixture(cache);
+            turn(changedOptions);
+            NBTTagCompound options = replace();
+            options.setBoolean("retainCovers", false);
+            try {
+                HologramAuthoringWorkflow.validateProcessedSaveOptions(changedOptions, options);
+                throw new AssertionError("explicit overwrite must retain reviewed save option checks");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("保存选项"),
+                    "policy replay still checks the actual requested options against the reviewed result");
+            }
+            options = replace();
+            options.setInteger("deidentificationLevel", 1);
+            try {
+                HologramAuthoringWorkflow.validateProcessedSaveOptions(changedOptions, options);
+                throw new AssertionError("explicit overwrite cannot silently change the reviewed identity level");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("保存选项"),
+                    "server identity-level option checks remain strict after client request default correction");
+            }
         } finally {
             cache.set(null, previous);
         }
+    }
+
+    /** Follow the save's compact JSON into the production PNG decoder, after the policy replay gate. */
+    private static void assertSavedPreviewPose(HologramSession s) throws Exception {
+        HologramPresets.Preset exported = HologramBlueprintProjection.blueprint(s, "Rotated preview");
+        HologramBlueprintVersions.stampSaved(exported);
+        byte[] json = HologramDraftEncoding.encode(exported, (done, total) -> {});
+        Method decode = com.miaokatze.gtmb.client.hologram.HologramBlueprintPreview.class
+            .getDeclaredMethod("snapshot", byte[].class);
+        decode.setAccessible(true);
+        NBTTagCompound preview = (NBTTagCompound) decode.invoke(null, (Object) json);
+        NBTTagCompound offset = preview.getTagList("cells", 10)
+            .getCompoundTagAt(1);
+        SimpleAssert
+            .eq(0, offset.getInteger("dx"), "PNG input retains the rotated asymmetric X offset after quick save");
+        SimpleAssert
+            .eq(1, offset.getInteger("dz"), "PNG input retains the rotated asymmetric Z offset after quick save");
+        NBTTagCompound controller = preview.getTagList("cells", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.eq(
+            5,
+            (int) controller.getCompoundTag("previewTile")
+                .getShort("mFacing"),
+            "PNG input retains the native facing from the newly exported save");
     }
 
     private static HologramSession savedFixture(Field cache) throws Exception {
@@ -114,9 +174,21 @@ final class HologramBlueprintQuickSaveRegression {
         return request;
     }
 
+    private static NBTTagCompound replace() {
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("op", "saveBlueprintReplace");
+        request.setString("presetId", "explicit-overwrite-target");
+        request.setBoolean("confirmOverwrite", true);
+        return request;
+    }
+
     private static void expectReview(HologramSession s, String reason) throws IOException {
+        expectReview(s, save(), reason);
+    }
+
+    private static void expectReview(HologramSession s, NBTTagCompound request, String reason) throws IOException {
         try {
-            HologramAuthoringWorkflow.validateProcessedSaveOptions(s, save());
+            HologramAuthoringWorkflow.validateProcessedSaveOptions(s, request);
             throw new AssertionError(reason);
         } catch (IOException expected) {
             SimpleAssert.that(!s.processingReviewed, reason);

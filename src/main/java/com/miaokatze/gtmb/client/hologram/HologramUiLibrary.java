@@ -1185,7 +1185,7 @@ final class HologramUiLibrary {
                     ui.session.state().data.getTagList("blueprintNbtKeys", 8)
                         .copy());
                 ui.identity.deidentificationSaveOptions(options);
-                library.saveDraft(ui.session.state(), options, false);
+                library.saveDraft(ui.session.state(), options, false, ui.preview.yaw(), ui.preview.pitch());
                 return true;
             default:
                 return false;
@@ -1234,9 +1234,11 @@ final class HologramUiLibrary {
             .isEmpty()) options.setString("name", "未命名蓝图");
         options.setBoolean("saveCurrent", current);
         if (dedicatedLibrary()) {
-            HologramLibraryClient.INSTANCE.saveDraft(ui.session.state(), options, current);
+            HologramLibraryClient.INSTANCE
+                .saveDraft(ui.session.state(), options, current, ui.preview.yaw(), ui.preview.pitch());
         } else {
-            HologramLibraryClient.INSTANCE.expectDraftDownload();
+            HologramLibraryClient.INSTANCE
+                .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
             ui.session.send(current ? "saveBlueprint" : "saveBlueprintAs", options, true);
             presetSaveSequence = ui.session.sequence();
         }
@@ -1340,7 +1342,8 @@ final class HologramUiLibrary {
             request.setString("presetId", this.overwriteTarget);
             request.setBoolean("confirmOverwrite", true);
             this.overwriteReview = false;
-            HologramLibraryClient.INSTANCE.expectDraftDownload();
+            HologramLibraryClient.INSTANCE
+                .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
             ui.session.send("saveBlueprintReplace", request, true);
             this.presetSaveSequence = ui.session.sequence();
             return true;
@@ -1500,7 +1503,7 @@ final class HologramUiLibrary {
             return true;
         }
         if (id == 140 && this.overwriteMode) {
-            if (!ui.processing.processingReady()) return true;
+            if (!nativeCanSave()) return true;
             if (this.overwriteTarget.isEmpty()) {
                 ui.session.notice("先在列表中选择要覆盖的蓝图");
                 return true;

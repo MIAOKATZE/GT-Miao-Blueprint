@@ -279,11 +279,12 @@ public final class HologramClient {
     }
 
     static boolean cameraEligible() {
-        if (!projectorWorld() || HologramBackgroundTasks.busy()
+        boolean automaticPause = com.miaokatze.miaokatzecore.client.camera.WorldCameraHooks.isAutomaticPauseScreen();
+        if (!projectorWorld(automaticPause) || HologramBackgroundTasks.busy()
             || localAreaFinishing
             || localAreaCancelling
             || state != null && state.data.getBoolean("areaImporting")) return false;
-        return areaProjectorWorld() || HologramCutClient.INSTANCE.cameraContext()
+        return areaProjectorWorld(automaticPause) || HologramCutClient.INSTANCE.cameraContext()
             || HologramLocalPlacement.INSTANCE.active()
             || worldStage() == HologramWorldFlow.Stage.MOVING
             || worldStage() == HologramWorldFlow.Stage.LOCKED;
@@ -340,17 +341,32 @@ public final class HologramClient {
     }
 
     static boolean projectorWorld() {
+        return projectorWorld(false);
+    }
+
+    private static boolean projectorWorld(boolean automaticPause) {
         Minecraft mc = Minecraft.getMinecraft();
-        return mc.currentScreen == null && mc.thePlayer != null
+        return (mc.currentScreen == null || automaticPause) && mc.thePlayer != null
             && mc.theWorld != null
             && com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
                 .isProjector(mc.thePlayer.getHeldItem());
     }
 
+    static boolean worldInputFocused() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return mc.currentScreen == null && mc.inGameHasFocus
+            && org.lwjgl.opengl.Display.isCreated()
+            && org.lwjgl.opengl.Display.isActive();
+    }
+
     static boolean areaProjectorWorld() {
-        if (localArea != null) return projectorWorld() && localAreaContext();
+        return areaProjectorWorld(false);
+    }
+
+    private static boolean areaProjectorWorld(boolean automaticPause) {
+        if (localArea != null) return projectorWorld(automaticPause) && localAreaContext();
         if (localAreaCancelling) return false;
-        if (!projectorWorld() || !areaWorldContext()) return false;
+        if (!projectorWorld(automaticPause) || !areaWorldContext(automaticPause)) return false;
         ItemStack held = Minecraft.getMinecraft().thePlayer.getHeldItem();
         return HologramInputContext.selectionTool(
             state.data.getString("areaToolId"),
@@ -359,8 +375,12 @@ public final class HologramClient {
     }
 
     private static boolean areaWorldContext() {
+        return areaWorldContext(false);
+    }
+
+    private static boolean areaWorldContext(boolean automaticPause) {
         Minecraft mc = Minecraft.getMinecraft();
-        return mc.currentScreen == null && mc.thePlayer != null
+        return (mc.currentScreen == null || automaticPause) && mc.thePlayer != null
             && mc.theWorld != null
             && mc.theWorld == snapshotWorld
             && state != null
@@ -370,8 +390,8 @@ public final class HologramClient {
 
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (!projectorWorld()) return;
-        if (HologramIsometricCamera.INSTANCE.active() && cameraPositioning() && !controlHeld()) return;
+        if (!projectorWorld() || !worldInputFocused()) return;
+        if (!cameraPlacementClickAllowed()) return;
         if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
             invalidCameraTarget();
             return;
@@ -497,7 +517,8 @@ public final class HologramClient {
     /** Core invokes this only for a short click after releasing its optional rotation capture. */
     static void cameraRotationClick(int button) {
         if (button != 0 || !HologramIsometricCamera.INSTANCE.active() || HologramBackgroundTasks.busy()) return;
-        if (cameraPositioning() && !controlHeld()) return;
+        if (!worldInputFocused() || !cameraPlacementClickAllowed()) return;
+        usePressFence.observe(false, false);
         if (HologramCutClient.INSTANCE.cameraClick(button)) return;
         if (!projectorWorld()) return;
         if (HologramLocalPlacement.INSTANCE.active() && !HologramLocalPlacement.INSTANCE.submitting()) {
@@ -568,8 +589,24 @@ public final class HologramClient {
                 : worldStage() == HologramWorldFlow.Stage.MOVING;
     }
 
+    static boolean cameraPlacementClickAllowed() {
+        boolean placement = HologramLocalPlacement.INSTANCE.active()
+            || HologramCutClient.INSTANCE.cameraContext() && !HologramCutClient.INSTANCE.selecting()
+            || worldStage() == HologramWorldFlow.Stage.MOVING
+            || worldStage() == HologramWorldFlow.Stage.LOCKED;
+        return HologramPlacementPointer
+            .allowsClick(HologramIsometricCamera.INSTANCE.active(), placement, controlHeld());
+    }
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void cutMouse(MouseEvent event) {
+        if (!worldInputFocused()) return;
+        int useButton = HologramIsometricCamera.INSTANCE.active() ? 0
+            : Minecraft.getMinecraft().gameSettings.keyBindUseItem.getKeyCode() + 100;
+        if (event.buttonstate && event.button == useButton) {
+            // A fresh native press proves an external release occurred even when no release event reached Minecraft.
+            usePressFence.observe(false, false);
+        }
         if (HologramIsometricCamera.INSTANCE.active() && (event.button == 1
             && !(controlHeld() && (areaProjectorWorld() || HologramCutClient.INSTANCE.selecting()))
             || event.button == 0 && !controlHeld()
@@ -594,6 +631,7 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void movingWheel(MouseEvent event) {
+        if (!worldInputFocused()) return;
         if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
             if (event.dwheel != 0 && altHeld()) event.setCanceled(true);
             return;
@@ -618,6 +656,7 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGH)
     public void areaMouse(MouseEvent event) {
+        if (!worldInputFocused()) return;
         if (HologramBackgroundTasks.busy()) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (!event.buttonstate || (event.button != 0 && event.button != 1)
@@ -941,6 +980,7 @@ public final class HologramClient {
                     .getString("gtitHologramToolId"),
             tool,
             inputScreenChanged);
+        changed |= inputContext.observeFocus(worldInputFocused());
         inputScreenChanged = false;
         usePressFence.observe(
             HologramIsometricCamera.INSTANCE.active()
@@ -950,7 +990,7 @@ public final class HologramClient {
         syncPreviewDistance();
         if (HologramBackgroundTasks.busy()) return;
         if (HologramCutClient.INSTANCE.active()) return;
-        boolean cameraBlocked = HologramIsometricCamera.INSTANCE.blocksWorldInput();
+        boolean cameraBlocked = !worldInputFocused() || HologramIsometricCamera.INSTANCE.blocksWorldInput();
         boolean rotate = rotationKey
             .sample(Keyboard.isCreated() && Keyboard.isKeyDown(Keyboard.KEY_R), changed || cameraBlocked);
         if (cameraBlocked) {
@@ -1045,6 +1085,7 @@ public final class HologramClient {
 
     @SubscribeEvent
     public void cutWorldKey(InputEvent.KeyInputEvent event) {
+        if (!worldInputFocused()) return;
         if (Keyboard.isCreated() && Keyboard.getEventKey() == Keyboard.KEY_DELETE) {
             boolean enabled = areaProjectorWorld() && localArea != null
                 && !localAreaFinishing
@@ -1068,6 +1109,12 @@ public final class HologramClient {
     /** Intercept only the world's pause menu; chat and other screens retain their own Escape behavior. */
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void worldEscape(GuiOpenEvent event) {
+        // Only the renderer's automatic lost-focus menu is transient. Actual Esc/E and other GUIs keep their exits.
+        if (event.gui instanceof GuiIngameMenu
+            && com.miaokatze.miaokatzecore.client.camera.WorldCameraHooks.isAutomaticPause()) {
+            inputScreenChanged = true;
+            return;
+        }
         clearCutWorkspaceOpening();
         inputScreenChanged = true;
         if (event.gui != null && HologramIsometricCamera.INSTANCE.active()) {

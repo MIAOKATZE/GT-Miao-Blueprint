@@ -13,7 +13,7 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.9 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.9，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.1.22 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（仅要求最低版本 0.1.22，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
 ### v0.1.44 框选与镜头交互 / Selection and camera controls
 
@@ -99,7 +99,7 @@ Z / Alt+Z 只加选或减选下一个框，青色表示加选、红色表示减�
 
 *Blueprint lessons begin with an empty workspace. Library clicks load the teaching scene; edited-content switches explicitly demonstrate cancellation and confirmation. All eight courses wait for actual operation results. Teaching uses isolated state and preserves the original workspace.*
 
-本版本为用户测试包，未发布 GitHub Release 或草稿。最低 Core 依赖保持 0.1.9，配套 Core 运行包随用户测试包提供。
+本版本为用户测试包，未发布 GitHub Release 或草稿。最低 Core 依赖为 0.1.22，配套 Core 运行包随用户测试包提供。
 
 下图为本轮候选包的原生教程画面。八课共 77 步分别核对实际动作结果与原图；蓝图补测和其他七课的来源分开记录，不将早期失败改写为通过。框选及剪切示例保存完整 **6×4×5** 选区，包括空气格与原有方块 NBT。画面来源与审查范围见 [manifest](README/native-v0141/manifest.json)；它们不是专服施工或用户验收证明。
 
