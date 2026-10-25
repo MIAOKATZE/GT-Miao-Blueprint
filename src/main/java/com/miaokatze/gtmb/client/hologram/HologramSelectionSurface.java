@@ -66,7 +66,7 @@ final class HologramSelectionSurface {
         }
     }
 
-    /** A resumable half-block world-aligned grid; memory and upload chunks do not depend on face span. */
+    /** A resumable two-block world-aligned grid; memory and upload chunks do not depend on face span. */
     static final class Hatch {
 
         private final Face face;
@@ -79,7 +79,8 @@ final class HologramSelectionSurface {
         }
 
         private double first() {
-            return (direction > 0 ? (double) face.u0 + face.v0 : (double) face.u0 - face.v1) + .5;
+            double start = direction > 0 ? (double) face.u0 + face.v0 : (double) face.u0 - face.v1;
+            return Math.floor(start / 2) * 2 + 2;
         }
 
         double[] next() {
@@ -91,7 +92,7 @@ final class HologramSelectionSurface {
                     continue;
                 }
                 double value = diagonal;
-                diagonal += .5;
+                diagonal += 2;
                 double from = Math.max(face.u0, direction > 0 ? value - face.v1 : value + face.v0);
                 double to = Math.min(face.u1, direction > 0 ? value - face.v0 : value + face.v1);
                 if (to > from) return new double[] { from, direction > 0 ? value - from : from - value, to,

@@ -515,16 +515,35 @@ final class HologramWorldPlacementWorkflow {
     /** Intermediate template turns retain schema checks; physical pose rules apply to the final orientation. */
     static boolean transformVirtual(HologramSession s, int x, int y, int z, boolean rotate, boolean vertical,
         boolean validateFinalPose) {
+        return transformVirtual(
+            s,
+            x,
+            y,
+            z,
+            rotate,
+            vertical,
+            validateFinalPose ? TransformPolicy.PLACEMENT : TransformPolicy.INTERMEDIATE,
+            null);
+    }
+
+    /** Author edits share the staged native transform, retaining their unified undo history. */
+    static boolean rotateBlueprint(HologramSession s, Runnable beforeCommit) {
+        return transformVirtual(s, s.x, s.y, s.z, true, false, TransformPolicy.AUTHORING, beforeCommit);
+    }
+
+    private enum TransformPolicy {
+        PLACEMENT,
+        INTERMEDIATE,
+        AUTHORING
+    }
+
+    private static boolean transformVirtual(HologramSession s, int x, int y, int z, boolean rotate, boolean vertical,
+        TransformPolicy policy, Runnable beforeCommit) {
+        boolean validateFinalPose = policy != TransformPolicy.INTERMEDIATE;
         HologramPresets.Preset preset = s.virtualPreset;
         ExtendedFacing controller = null;
         if (rotate) {
-            preset = HologramPresets.copy(preset);
-            Map<String, int[]> littleReferences;
-            try {
-                littleReferences = HologramBlockTransformLittleTiles.presetReferences(preset.cells, vertical);
-            } catch (java.io.IOException invalid) {
-                return false;
-            }
+            preset = HologramBlueprintRotation.copyPreset(preset);
             controller = HologramVirtualTransform.alignment(HologramCellPolicy.virtualControllerFacing(s), vertical);
             gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = preset.controllerId < 0
                 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length ? null
@@ -534,7 +553,6 @@ final class HologramWorldPlacementWorkflow {
                     || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits()
                         .isNewExtendedFacingValid(controller)))
                 return false;
-            preset.controllerFacing = controller.ordinal();
             Map<String, Integer> currentFacings = new HashMap<>();
             for (int i = 0; i < s.capture.cells.size(); i++) {
                 HologramCapture.Cell cell = s.capture.cells.get(i);
@@ -542,68 +560,21 @@ final class HologramWorldPlacementWorkflow {
                 Integer front = s.facingPins.getOrDefault(key, s.planFacings.get(i));
                 if (front != null && !s.virtualEdited.contains(key)) currentFacings.put(key, front);
             }
-            for (HologramPresets.Cell saved : preset.cells) {
-                int front = currentFacings
-                    .getOrDefault((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z), saved.facing);
-                if (preset.schema >= 2) {
-                    try {
-                        HologramBlockTransforms.turn(saved, vertical, littleReferences);
-                        saved.tileNbt = HologramCoordinatePolicies.rotatePayload(saved.tileNbt, vertical);
-                        saved.itemNbt = HologramCoordinatePolicies.rotatePayload(saved.itemNbt, vertical);
-                        HologramBlockTransforms.nativeSample(saved);
-                    } catch (java.io.IOException invalid) {
-                        s.status = invalid.getMessage();
-                        return false;
-                    }
-                }
-                int[] offset = HologramVirtualTransform.turn(saved.x, saved.y, saved.z, vertical);
-                saved.x = offset[0];
-                saved.y = offset[1];
-                saved.z = offset[2];
-                saved.facing = HologramBlockTransforms.isPipe(saved.stack()) ? -1
-                    : saved.controller && preset.schema < 2 ? controller.getDirection()
-                        .ordinal() : HologramVirtualTransform.front(front, vertical);
-                if (validateFinalPose && saved.stack() != null
-                    && !saved.missing()
-                    && !HologramCellPolicy.virtualFrontAllowed(saved.stack(), saved.facing)) return false;
+            try {
+                turnPreset(
+                    preset,
+                    vertical,
+                    policy == TransformPolicy.AUTHORING,
+                    validateFinalPose,
+                    controller,
+                    currentFacings,
+                    s.x,
+                    s.y,
+                    s.z);
+            } catch (java.io.IOException invalid) {
+                s.status = invalid.getMessage();
+                return false;
             }
-        }
-        if (rotate) for (HologramAePolicy.Issue issue : preset.aeIssues) {
-            if ("policy".equals(issue.path)) continue;
-            int[] location = HologramVirtualTransform.turn(issue.x, issue.y, issue.z, vertical);
-            issue.x = location[0];
-            issue.y = location[1];
-            issue.z = location[2];
-            issue.path = HologramAeBlueprint.rotateIssuePath(issue.path, vertical);
-        }
-        if (rotate) for (HologramPresets.Structure saved : preset.structures) {
-            int[] coordinate = HologramVirtualTransform.turn(saved.x, saved.y, saved.z, vertical);
-            saved.x = coordinate[0];
-            saved.y = coordinate[1];
-            saved.z = coordinate[2];
-            if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
-                try {
-                    NBTTagCompound definition = HologramBlueprintNbt.decode(saved.textBoxNbt);
-                    int[] previous = definition.getIntArray("turns");
-                    if (previous.length >= 96) return false;
-                    int[] turns = java.util.Arrays.copyOf(previous, previous.length + 1);
-                    turns[previous.length] = vertical ? 2 : 1;
-                    definition.setIntArray("turns", turns);
-                    saved.textBoxNbt = HologramBlueprintNbt.encodeCaptured(definition);
-                } catch (java.io.IOException invalid) {
-                    return false;
-                }
-            }
-        }
-        if (rotate) for (HologramPresets.HintArea hint : preset.hintAreas) {
-            int[] a = HologramVirtualTransform.turn(hint.x1, hint.y1, hint.z1, vertical);
-            int[] b = HologramVirtualTransform.turn(hint.x2, hint.y2, hint.z2, vertical);
-            hint.x1 = Math.min(a[0], b[0]);
-            hint.x2 = Math.max(a[0], b[0]);
-            hint.y1 = Math.min(a[1], b[1]);
-            hint.y2 = Math.max(a[1], b[1]);
-            hint.z1 = Math.min(a[2], b[2]);
-            hint.z2 = Math.max(a[2], b[2]);
         }
         HologramCapture capture = new HologramCapture(s.capture.context, s.capture.trigger);
         capture.incomplete = s.capture.incomplete;
@@ -631,7 +602,7 @@ final class HologramWorldPlacementWorkflow {
                 || yy > Integer.MAX_VALUE
                 || zz < Integer.MIN_VALUE
                 || zz > Integer.MAX_VALUE) return false;
-            if (validateFinalPose && (xx < -30000000L || xx >= 30000000L
+            if (policy == TransformPolicy.PLACEMENT && (xx < -30000000L || xx >= 30000000L
                 || yy < 0
                 || yy >= s.player.worldObj.getHeight()
                 || zz < -30000000L
@@ -639,7 +610,14 @@ final class HologramWorldPlacementWorkflow {
             HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(old, (int) xx, (int) yy, (int) zz);
             if (rotate && preset.schema >= 2) {
                 try {
-                    HologramBlockTransforms.turn(cell, vertical, littleReferences, old.x, old.y, old.z);
+                    HologramBlockTransforms.turn(
+                        cell,
+                        vertical,
+                        littleReferences,
+                        old.x,
+                        old.y,
+                        old.z,
+                        policy == TransformPolicy.AUTHORING);
                     cell.tileNbt = HologramCoordinatePolicies.rotatePayload(cell.tileNbt, vertical);
                     cell.itemNbt = HologramCoordinatePolicies.rotatePayload(cell.itemNbt, vertical);
                     ItemStack sample = HologramBlockTransforms
@@ -668,6 +646,7 @@ final class HologramWorldPlacementWorkflow {
             }
         }
         // No mutation above this line: a rejected turn leaves cells, pins, template and revision untouched.
+        if (beforeCommit != null) beforeCommit.run();
         HologramValues.rekey(s.coordinatePins, keys);
         HologramValues.rekey(s.frozenAutoTargets, keys);
         for (Map.Entry<Integer, ItemStack> entry : nativeTargets.entrySet()) {
@@ -700,9 +679,88 @@ final class HologramWorldPlacementWorkflow {
         s.cellIndices.clear();
         s.indexedCapture = null;
         // A whole placement turn/rebase establishes a new preset baseline; discard history tied to its old baseline.
-        s.undoEdits.clear();
-        s.redoEdits.clear();
+        if (policy != TransformPolicy.AUTHORING) {
+            s.undoEdits.clear();
+            s.redoEdits.clear();
+        }
         return true;
+    }
+
+    /** The saved-policy recheck replays precisely the same detached preset transform as the live command. */
+    static void turnSavedPreset(HologramPresets.Preset preset) throws java.io.IOException {
+        turnPreset(
+            preset,
+            false,
+            true,
+            true,
+            HologramVirtualTransform.alignment(HologramVirtualTransform.controller(preset), false),
+            java.util.Collections.emptyMap(),
+            0,
+            0,
+            0);
+    }
+
+    private static void turnPreset(HologramPresets.Preset preset, boolean vertical, boolean authoring,
+        boolean validateFinalPose, ExtendedFacing controller, Map<String, Integer> currentFacings, int originX,
+        int originY, int originZ) throws java.io.IOException {
+        Map<String, int[]> littleReferences = HologramBlockTransformLittleTiles
+            .presetReferences(preset.cells, vertical);
+        preset.controllerFacing = controller.ordinal();
+        for (HologramPresets.Cell saved : preset.cells) {
+            int front = currentFacings.getOrDefault(
+                (originX + saved.x) + "," + (originY + saved.y) + "," + (originZ + saved.z),
+                saved.facing);
+            if (preset.schema >= 2) {
+                HologramBlockTransforms.turn(saved, vertical, littleReferences, authoring);
+                saved.tileNbt = HologramCoordinatePolicies.rotatePayload(saved.tileNbt, vertical);
+                saved.itemNbt = HologramCoordinatePolicies.rotatePayload(saved.itemNbt, vertical);
+                HologramBlockTransforms.nativeSample(saved);
+            }
+            int[] offset = HologramVirtualTransform.turn(saved.x, saved.y, saved.z, vertical);
+            saved.x = offset[0];
+            saved.y = offset[1];
+            saved.z = offset[2];
+            saved.facing = HologramBlockTransforms.isPipe(saved.stack()) ? -1
+                : saved.controller && preset.schema < 2 ? controller.getDirection()
+                    .ordinal() : HologramVirtualTransform.front(front, vertical);
+            if (validateFinalPose && saved.stack() != null
+                && !saved.missing()
+                && !HologramCellPolicy.virtualFrontAllowed(saved.stack(), saved.facing))
+                throw new java.io.IOException("设备不支持转向后的朝向");
+        }
+        for (HologramAePolicy.Issue issue : preset.aeIssues) {
+            if ("policy".equals(issue.path)) continue;
+            int[] location = HologramVirtualTransform.turn(issue.x, issue.y, issue.z, vertical);
+            issue.x = location[0];
+            issue.y = location[1];
+            issue.z = location[2];
+            issue.path = HologramAeBlueprint.rotateIssuePath(issue.path, vertical);
+        }
+        for (HologramPresets.Structure saved : preset.structures) {
+            int[] coordinate = HologramVirtualTransform.turn(saved.x, saved.y, saved.z, vertical);
+            saved.x = coordinate[0];
+            saved.y = coordinate[1];
+            saved.z = coordinate[2];
+            if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
+                NBTTagCompound definition = HologramBlueprintNbt.decode(saved.textBoxNbt);
+                int[] previous = definition.getIntArray("turns");
+                if (previous.length >= 96) throw new java.io.IOException("文字旋转历史过长，请重建文本框");
+                int[] turns = java.util.Arrays.copyOf(previous, previous.length + 1);
+                turns[previous.length] = vertical ? 2 : 1;
+                definition.setIntArray("turns", turns);
+                saved.textBoxNbt = HologramBlueprintNbt.encodeCaptured(definition);
+            }
+        }
+        for (HologramPresets.HintArea hint : preset.hintAreas) {
+            int[] a = HologramVirtualTransform.turn(hint.x1, hint.y1, hint.z1, vertical);
+            int[] b = HologramVirtualTransform.turn(hint.x2, hint.y2, hint.z2, vertical);
+            hint.x1 = Math.min(a[0], b[0]);
+            hint.x2 = Math.max(a[0], b[0]);
+            hint.y1 = Math.min(a[1], b[1]);
+            hint.y2 = Math.max(a[1], b[1]);
+            hint.z1 = Math.min(a[2], b[2]);
+            hint.z2 = Math.max(a[2], b[2]);
+        }
     }
 
     static void immediateVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {

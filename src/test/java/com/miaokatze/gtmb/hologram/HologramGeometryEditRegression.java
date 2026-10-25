@@ -89,6 +89,26 @@ final class HologramGeometryEditRegression {
             HologramAuthoringQueries.processingSource(s);
             SimpleAssert
                 .eq(1L, s.geometryEdits.fullValidations, "unchanged next-step queries reuse validated geometry");
+            HologramSession quickSave = fixture(3);
+            NBTTagCompound quickMove = new NBTTagCompound();
+            quickMove.setInteger("selected", 0);
+            quickMove.setInteger("dx", -17);
+            quickMove.setLong("planRevision", quickSave.planRevision);
+            HologramBlueprintEditor.moveBlueprintCells(quickSave, quickMove);
+            HologramAuthoringWorkflow.blueprintEdited(quickSave, "geometry");
+            NBTTagCompound quickRequest = new NBTTagCompound();
+            quickRequest.setBoolean("saveCurrent", true);
+            HologramAuthoringWorkflow.validateProcessedSaveOptions(quickSave, quickRequest);
+            SimpleAssert.eq(
+                1L,
+                quickSave.geometryEdits.fullValidations,
+                "quick save validates the complete current geometry exactly once at the actual server save gate");
+            SimpleAssert.that(
+                quickSave.processingReviewed,
+                "plain secondary edits pass the existing automatic processing validation at save time");
+            SimpleAssert.that(
+                !quickSave.geometryEdits.validationPending,
+                "only the successful save validation retires the geometry obligation");
             action = new NBTTagCompound();
             action.setIntArray("indices", new int[] { 100 });
             action.setBoolean("copy", true);
@@ -129,6 +149,7 @@ final class HologramGeometryEditRegression {
                 SimpleAssert.that(invalid.geometryEdits.validationPending, "failed save cannot retire validation");
             }
             com.miaokatze.gtmb.client.hologram.HologramGeometryDeltaRegression.run();
+            HologramBlueprintQuickSaveRegression.run();
         } catch (Exception failure) {
             throw new AssertionError("Geometry edit regression", failure);
         }

@@ -208,6 +208,7 @@ final class HologramGeometryEdits {
                 .mapToInt(Integer::intValue)
                 .toArray());
         state.setInteger("scope", s.scope);
+        state.setInteger("facing", s.facing);
         state.setString("activeStructure", s.blueprintActiveStructure);
         state.setTag("structures", HologramSnapshots.structureLabels(s));
         state.setBoolean("blueprintDirty", true);

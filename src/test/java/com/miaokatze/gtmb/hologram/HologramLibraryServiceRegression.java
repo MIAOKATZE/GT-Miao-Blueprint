@@ -203,6 +203,7 @@ final class HologramLibraryServiceRegression {
             preset.controllerType = "area";
             preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
             set(session, "libraryPrivatePreset", preset);
+            currentSaveUsesWorkspaceIdentity((HologramSession) session, preset);
             SimpleAssert
                 .that(HologramService.libraryPrivatePreset(owner, preset.id) != null, "owner reads private stage");
             SimpleAssert.that(
@@ -330,6 +331,80 @@ final class HologramLibraryServiceRegression {
         }
     }
 
+    private static void currentSaveUsesWorkspaceIdentity(HologramSession session, HologramPresets.Preset source)
+        throws java.io.IOException {
+        boolean wasVirtual = session.virtual, wasPlacement = session.virtualPlacement;
+        String previousPurpose = session.openPurpose, previousSource = session.blueprintSource,
+            previousLocal = session.libraryLocalId, previousTab = session.workspaceTab;
+        HologramPresets.Preset previousPreset = session.virtualPreset;
+        String local = "local_" + UUID.randomUUID();
+        session.virtual = true;
+        session.openPurpose = "blueprintEdit";
+        session.blueprintSource = "saved";
+        session.virtualPreset = HologramPresets.copy(source);
+        session.libraryLocalId = local;
+        NBTTagCompound opened = HologramSnapshots.basicState(session);
+        SimpleAssert.eq(
+            "blueprintEdit",
+            opened.getString("openPurpose"),
+            "the real snapshot publishes the initial blueprint opening intent");
+        SimpleAssert.eq("", session.openPurpose, "the real snapshot consumes that opening intent exactly once");
+        SimpleAssert.eq(
+            local,
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "dedicated private edits write back the loaded local file even when its author is someone else");
+        HologramSnapshots.basicState(session);
+        SimpleAssert.eq(
+            local,
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "a later snapshot cannot turn current-file saving into another Save As");
+        session.virtualPreset.authorUuid = null;
+        session.virtualPreset.processingNbt = null;
+        SimpleAssert.eq(
+            local,
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "a legacy imported local file retains its original editable identity without author-based restrictions");
+        session.virtualPreset.id = "public_" + UUID.randomUUID();
+        SimpleAssert.eq(
+            "",
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "public sources cannot reuse a stale local selection as their replacement target");
+        HologramPresets.Preset publicCopy = HologramPresets.copy(source);
+        HologramLibraryWorkflow.stampSavedAuthor(session, publicCopy, "saveBlueprint", false);
+        SimpleAssert.eq(
+            source.authorUuid,
+            publicCopy.authorUuid,
+            "quick saving a public source as a new private copy preserves its creator UUID");
+        SimpleAssert.eq(
+            source.createdAt,
+            publicCopy.createdAt,
+            "a public source copy preserves the original provenance timestamp");
+        session.virtualPreset.id = "private_" + UUID.randomUUID();
+        SimpleAssert.eq(
+            "",
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "a different current private draft cannot replace the previous source file");
+        session.virtualPreset = HologramPresets.copy(source);
+        session.blueprintSource = "imported";
+        SimpleAssert.eq(
+            "",
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "an unsaved import cannot inherit the previous file target");
+        session.blueprintSource = "saved";
+        session.virtualPlacement = true;
+        SimpleAssert.eq(
+            "",
+            HologramLibraryWorkflow.currentBlueprintSaveId(session, true),
+            "a placement selection is not an editable save target");
+        session.virtualPlacement = wasPlacement;
+        session.virtual = wasVirtual;
+        session.openPurpose = previousPurpose;
+        session.blueprintSource = previousSource;
+        session.virtualPreset = previousPreset;
+        session.libraryLocalId = previousLocal;
+        session.workspaceTab = previousTab;
+    }
+
     @SuppressWarnings("unchecked")
     private static void exerciseLocalReceipt(EntityPlayerMP owner, EntityPlayerMP other, EntityPlayerMP reconnect,
         Object session, NBTTagCompound base, String local, String jsonHash, String pngHash)
@@ -376,12 +451,40 @@ final class HologramLibraryServiceRegression {
             stale.setLong("planRevision", 41L);
             HologramService.handle(owner, stale);
             SimpleAssert.that((Boolean) get(session, "blueprintDirty"), "old revision cannot commit local receipt");
+            HologramSession saving = (HologramSession) session;
+            boolean previousVirtual = saving.virtual, previousUiActive = saving.libraryUiActive;
+            HologramPresets.Preset previousPreset = saving.virtualPreset, previousPrivate = saving.libraryPrivatePreset;
+            HologramPresets.Preset receiptSource = new HologramPresets.Preset();
+            receiptSource.id = "private_" + UUID.randomUUID();
+            receiptSource.name = "Saved orientation receipt";
+            receiptSource.controllerType = "area";
+            receiptSource.schema = 2;
+            receiptSource.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
+            saving.virtual = true;
+            saving.virtualPreset = HologramPresets.copy(receiptSource);
+            saving.libraryPrivatePreset = receiptSource;
+            saving.rotationTurns = 1;
+            saving.rotationProof = new HologramBlueprintRotation.Proof(receiptSource.id, "old-source-hash", 0);
+            saving.libraryUiActive = false;
             // No preview upload has armed a PNG hash: only this exact owner disk receipt binds it.
             HologramService.handle(owner, ack);
             SimpleAssert.that(
                 !(Boolean) get(session, "blueprintDirty"),
                 "local pair receipt commits through actual dispatcher");
             SimpleAssert.eq(pngHash, get(session, "blueprintSavePreviewSha256"), "owner PNG digest is bound once");
+            SimpleAssert.eq(
+                0,
+                HologramBlueprintRotation.approvedTurns(saving, receiptSource),
+                "the actual successful background disk receipt establishes a zero relative saved rotation");
+            SimpleAssert.eq(
+                1,
+                saving.rotationProof.savedTurns,
+                "successful save tracks the current pose without erasing the undo pose domain");
+            saving.virtual = previousVirtual;
+            saving.virtualPreset = previousPreset;
+            saving.libraryPrivatePreset = previousPrivate;
+            saving.libraryUiActive = previousUiActive;
+            HologramBlueprintRotation.reset(saving);
             Object committed = results.get(owner.getUniqueID());
             HologramBusyReplies.rejectLibraryCallback(owner, ack);
             HologramBusyReplies.flush();

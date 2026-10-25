@@ -40,6 +40,7 @@ public final class HologramBlueprintProcessingRegression {
             HologramBlueprintProcessing.defaults("share", 0).autoHints,
             "Sharing defaults to light automatic hints");
         adaptiveStages();
+        savedPolicyRecheck();
         explicitStagesAndSessionBacktracking();
         sharingKeepsAnonymousNetworkSlots();
         actualCellsAndRelativeProjection();
@@ -56,6 +57,55 @@ public final class HologramBlueprintProcessingRegression {
         ordinaryMaterialVariantBoundary();
         automaticHintsFollowActualProcessing();
         atomicPolicyLibrary();
+    }
+
+    private static void savedPolicyRecheck() throws Exception {
+        HologramPresets.Preset raw = new HologramPresets.Preset();
+        raw.schema = 2;
+        raw.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
+        raw.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 1, 0, 0, -1, false));
+        HologramBlueprintProcessing.Policy sharing = completed("share");
+        HologramPresets.Preset saved = HologramBlueprintProcessing.process(raw, sharing, 0, 0, 64, 0);
+        HologramPresets.Preset moved = HologramPresets.copy(saved);
+        moved.cells.remove(1);
+        moved.cells.get(0).x = 4;
+        HologramBlueprintProcessing.invalidate(moved, "geometry");
+        HologramBlueprintProcessing.Policy invalidated = HologramBlueprintProcessing.policy(moved);
+        SimpleAssert.that(
+            HologramAuthoringWorkflow.reusableSavedPolicy(saved, moved, sharing, invalidated, 0, 0, 64, 0),
+            "moving/deleting plain cells can reapply the stored sharing policy instead of losing its identity floor");
+        HologramPresets.Preset rechecked = HologramBlueprintProcessing.process(moved, sharing, 0, 0, 64, 0);
+        SimpleAssert.that(HologramBlueprintProcessing.complete(rechecked), "recheck produces a fresh complete receipt");
+        SimpleAssert.eq(6, rechecked.deidentificationLevel, "recheck preserves the saved sharing identity floor");
+        SimpleAssert.eq(4, rechecked.cells.get(0).x, "recheck processes current geometry rather than the saved file");
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setInteger("customSetting", 7);
+        moved.cells.get(0).itemNbt = HologramBlueprintNbt.encodeCanonical(payload);
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.reusableSavedPolicy(saved, moved, sharing, invalidated, 0, 0, 64, 0),
+            "new NBT cannot borrow the saved receipt's confirmation");
+        moved.cells.get(0).itemNbt = null;
+        HologramPresets.Preset withPayload = HologramPresets.copy(saved);
+        withPayload.cells.get(0).itemNbt = HologramBlueprintNbt.encodeCanonical(payload);
+        HologramPresets.Preset duplicated = HologramPresets.copy(withPayload);
+        duplicated.cells.get(1).itemNbt = duplicated.cells.get(0).itemNbt;
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.reusableSavedPolicy(withPayload, duplicated, sharing, invalidated, 0, 0, 64, 0),
+            "duplicating an existing identity payload cannot borrow its single saved confirmation");
+        HologramPresets.Preset related = source(104);
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.reusableSavedPolicy(saved, related, sharing, invalidated, 0, 100, 64, 200),
+            "coordinate relationships still require explicit review against the new geometry");
+        invalidated.autoHints = "none";
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.reusableSavedPolicy(saved, moved, sharing, invalidated, 0, 0, 64, 0),
+            "changed processing choices still require their normal review");
+        invalidated.autoHints = sharing.autoHints;
+        HologramBlueprintProcessing.CellNbtOverride override = new HologramBlueprintProcessing.CellNbtOverride();
+        sharing.cellNbtOverrides.add(override);
+        SimpleAssert.that(
+            !HologramAuthoringWorkflow.reusableSavedPolicy(saved, moved, sharing, invalidated, 0, 0, 64, 0),
+            "position-dependent NBT selections cannot be replayed after a geometry edit");
     }
 
     private static void resourceDecisionsAreLocalAndPayable() throws Exception {

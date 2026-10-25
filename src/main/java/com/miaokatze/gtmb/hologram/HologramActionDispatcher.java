@@ -169,6 +169,15 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if ("rotateBlueprint".equals(op)) {
+            try {
+                HologramBlueprintRotation.rotate(s, action);
+            } catch (java.io.IOException invalid) {
+                s.status = "整图转向被拒绝：" + invalid.getMessage();
+            }
+            HologramSnapshots.send(s);
+            return;
+        }
         // Geometry can compact indices. Never interpret an old client selection in the new index domain.
         if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op))
             && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)) {

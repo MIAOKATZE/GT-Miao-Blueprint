@@ -1305,7 +1305,10 @@ final class HologramLibraryClient {
         preparing = true;
         draftPending = true;
         downloadExpected = true;
-        saveCommand(state.session, state.data.getLong("uiSequence"), "exportDraft");
+        saveCommand(
+            state.session,
+            state.data.getLong("uiSequence"),
+            options.getBoolean("saveCurrent") ? "saveBlueprint" : "exportDraft");
         saveProgress.clear();
         lastActivity = System.nanoTime();
         captureActor();

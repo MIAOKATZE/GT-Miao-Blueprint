@@ -9,6 +9,7 @@ final class HologramEditorControlIds {
     static final int GUIDE = 102000;
     static final int TUTORIAL = 103000;
     static final int LIBRARY = 104000;
+    static final int BLUEPRINT_ROTATE = 105000;
 
     private HologramEditorControlIds() {}
 }

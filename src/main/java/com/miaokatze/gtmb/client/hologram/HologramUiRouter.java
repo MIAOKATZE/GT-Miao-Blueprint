@@ -1008,6 +1008,10 @@ final class HologramUiRouter {
                 ui.ae.activateAeReview(id);
             return;
         }
+        if (id == HologramEditorControlIds.BLUEPRINT_ROTATE) {
+            ui.shell.rotateBlueprint();
+            return;
+        }
         if (id == 166 || id == 146) ui.memory.cellEditHint(false);
         if (ui.library.cancelSwitchReview(id)) return;
         if (ui.processing.confirmPresetSave(id)) return;
