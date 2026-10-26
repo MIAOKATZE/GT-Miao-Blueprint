@@ -37,6 +37,37 @@ public final class HologramSnapshotAssemblyRegression {
         assembly.clear();
         check(assembly.accept(5, total, 1, tail, 13) == null, "cancelled assembly cannot resume");
         check(assembly.accept(6, tail.length, 0, tail, 14) != null, "next snapshot after cancellation");
+        sharedAdmissionAndLeaseTransfer();
+    }
+
+    private static void sharedAdmissionAndLeaseTransfer() {
+        HologramSnapshotAssembly assembly = new HologramSnapshotAssembly();
+        HologramTransportMemory.Lease occupied = HologramTransportMemory
+            .reserve(HologramSnapshotAssembly.MAX_BYTES - 8);
+        check(occupied != null, "fixture reserves shared admission without allocating declared bytes");
+        HologramSnapshotAssembly small = new HologramSnapshotAssembly();
+        HologramSnapshotAssembly.Complete receipt = small.acceptReserved(1, 16, 0, new byte[16], 0);
+        check(receipt != null, "small legacy receipts have a separate bounded reserve behind a full data lane");
+        receipt.close();
+        boolean rejected = false;
+        try {
+            assembly.acceptReserved(1, 65537, 0, new byte[65537], 0);
+        } catch (HologramSnapshotAssembly.AdmissionException expected) {
+            rejected = true;
+        } finally {
+            occupied.close();
+        }
+        check(rejected, "shared admission rejects before allocating a full frame");
+        HologramSnapshotAssembly.Complete complete = assembly.acceptReserved(2, 16, 0, new byte[16], 1);
+        check(complete != null, "a new sequence can retry after shared capacity returns");
+        check(
+            HologramTransportMemory.reserve(HologramSnapshotAssembly.MAX_BYTES) == null,
+            "completion transfers rather than releases its physical reservation");
+        complete.close();
+        complete.close();
+        HologramTransportMemory.Lease all = HologramTransportMemory.reserve(HologramSnapshotAssembly.MAX_BYTES);
+        check(all != null, "idempotent publication release returns capacity exactly once");
+        all.close();
     }
 
     private static void check(boolean value, String message) {

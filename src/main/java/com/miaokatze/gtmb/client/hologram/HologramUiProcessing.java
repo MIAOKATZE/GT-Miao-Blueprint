@@ -75,11 +75,24 @@ final class HologramUiProcessing {
 
     boolean processingChoiceReady() {
         return this.processingFlow != null && this.processingFlow.chosen()
-            && (this.processingFlow.stage != 4 || this.processingFlow.resourceChoicesReady(resourceReview()));
+            && (this.processingFlow.stage != 4 || resourceChoicesReady());
+    }
+
+    private boolean resourceChoicesReady() {
+        NBTTagCompound data = ui.session.state().data;
+        return HologramSnapshotDetailsClient.paged(data)
+            ? HologramSnapshotDetailsClient.resourcesReady(data, processingFlow.values())
+            : processingFlow.resourceChoicesReady(resourceReview());
     }
 
     private NBTTagList resourceReview() {
         NBTTagCompound data = ui.session.state().data;
+        if (HologramSnapshotDetailsClient.paged(data)) {
+            String domain = HologramSnapshotDetailsClient.count(data, "resourceReview") > 0 ? "resourceReview"
+                : "resourceBlockers";
+            return HologramSnapshotDetailsClient
+                .list(data, domain, 10, processingFlow == null ? 0 : processingFlow.offset, 8);
+        }
         if (data.hasKey("resourceReview", 9)) return data.getTagList("resourceReview", 10);
         if (data.hasKey("resourceBlockers", 9)) return data.getTagList("resourceBlockers", 10);
         NBTTagCompound processing = processingState();
@@ -109,7 +122,7 @@ final class HologramUiProcessing {
         processingFlow.requirements(
             (processingState().hasKey("requiredStages") ? processingState().getInteger("requiredStages") : 63)
                 | (resourceReview().tagCount() > 0 ? 16 : 0));
-        if (processingFlow.stage > 4 && !processingFlow.resourceChoicesReady(resourceReview())) {
+        if (processingFlow.stage > 4 && !resourceChoicesReady()) {
             processingFlow.stage = 4;
             processingFlow.clearChoice();
         }
@@ -137,6 +150,9 @@ final class HologramUiProcessing {
     }
 
     NBTTagList processingList(String key, int type) {
+        NBTTagCompound state = ui.session.state().data;
+        if (HologramSnapshotDetailsClient.paged(state)) return HologramSnapshotDetailsClient
+            .list(state, key, type, processingFlow == null ? 0 : processingFlow.offset, 8);
         String alias = "relations".equals(key) ? "processingRelations"
             : "nbtKeys".equals(key) ? "processingNbtKeys" : "processingNbtPaths";
         return ui.session.state().data.hasKey(alias) ? ui.session.state().data.getTagList(alias, type)
@@ -373,7 +389,7 @@ final class HologramUiProcessing {
                                     : "目标位于蓝图外，请选择保留绝对位置、校准相对位置或清除后重设。"),
                             430));
                 for (int mode = 0; mode < 3; mode++) ui.canvas.button(
-                    71000 + i * 3 + mode,
+                    71000 + (i - processingFlow.offset) * 3 + mode,
                     316 + mode * 106,
                     y,
                     102,
@@ -429,7 +445,7 @@ final class HologramUiProcessing {
                     < Math.min(keys.tagCount(), this.processingFlow.offset + 5); i++) {
                     String key = keys.getStringTagAt(i);
                     ui.canvas.button(
-                        72000 + i,
+                        72000 + i - processingFlow.offset,
                         42,
                         147 + (i - this.processingFlow.offset) * 20,
                         588,
@@ -487,7 +503,7 @@ final class HologramUiProcessing {
             318,
             20,
             stage == 5 ? "完成处理 · 等待服务器校验"
-                : stage == 4 && !processingFlow.resourceChoicesReady(resourceReview()) ? "请先选择每项资源路径的处理方式"
+                : stage == 4 && !resourceChoicesReady() ? "请先选择每项资源路径的处理方式"
                     : this.processingFlow.optional() ? "下一步 · 本步可跳过" : "下一步",
             ui.session.editable() && ui.processing.processingChoiceReady(),
             mx,
@@ -607,7 +623,10 @@ final class HologramUiProcessing {
             ui.session.send("loadProcessingPreset", request, true);
             this.processingPresetLoadSequence = ui.session.sequence();
         } else if (id >= 71000 && id < 72000) {
-            int index = (id - 71000) / 3, mode = (id - 71000) % 3;
+            int index = processingFlow.offset + (id - 71000) / 3, mode = (id - 71000) % 3;
+            if (ui.processing.processingList("relations", 10)
+                .getCompoundTagAt(index)
+                .getBoolean("detailPending")) return true;
             this.processingFlow.coordinate(
                 ui.processing.processingList("relations", 10)
                     .getCompoundTagAt(index)
@@ -615,15 +634,18 @@ final class HologramUiProcessing {
                 new String[] { "clear", "absolute", "relative" }[mode]);
             this.processingFlow.choose();
         } else if (id >= 72000 && id < 73000) {
+            if (HologramSnapshotDetailsClient.paged(ui.session.state().data) && !HologramSnapshotDetailsClient
+                .loaded(ui.session.state().data, "nbtKeys", processingFlow.offset + id - 72000)) return true;
             this.processingFlow.toggle(
                 "ignoredNbtKeys",
                 ui.processing.processingList("nbtKeys", 8)
-                    .getStringTagAt(id - 72000));
+                    .getStringTagAt(processingFlow.offset + id - 72000));
             this.processingFlow.choose();
         } else if (id >= 73000 && id < 100000) {
-            int row = (id - 73000) / 3;
+            int row = processingFlow.offset + (id - 73000) / 3;
             if (row < resourceReview().tagCount()) {
                 NBTTagCompound resource = resourceReview().getCompoundTagAt(row);
+                if (resource.getBoolean("detailPending")) return true;
                 int action = (id - 73000) % 3;
                 this.processingFlow.resourceDecision(
                     resource,
@@ -730,7 +752,7 @@ final class HologramUiProcessing {
                 names[2] = "取消保留";
             }
             for (int action = 0; action < 3; action++) ui.canvas.button(
-                73000 + i * 3 + action,
+                73000 + (i - processingFlow.offset) * 3 + action,
                 324 + action * 103,
                 y,
                 100,

@@ -12,11 +12,17 @@ public final class HologramSnapshotInboxRegression {
 
     private HologramSnapshotInboxRegression() {}
 
+    public static void main(String[] args) {
+        run();
+        System.out.println("HologramSnapshotInboxRegression passed");
+    }
+
     public static void run() {
         fifoAndBackpressure();
         epochCancellation();
         failedDecodeRetainsOrder();
         explicitRootCloseFence();
+        networkBackpressureAndControlReserve();
     }
 
     private static void fifoAndBackpressure() {
@@ -100,6 +106,42 @@ public final class HologramSnapshotInboxRegression {
             inbox.offerValue("new session");
             SimpleAssert.eq("cancelled session", inbox.poll().value, "cancellation arrives in FIFO order");
             SimpleAssert.eq("new session", inbox.poll().value, "later session survives an ordinary cancelled message");
+        }
+    }
+
+    private static void networkBackpressureAndControlReserve() {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1),
+            admitted = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(4, 8, bytes -> {
+            entered.countDown();
+            waitFor(release);
+            return "frame";
+        }, 1)) {
+            long epoch = inbox.epoch();
+            SimpleAssert
+                .that(inbox.put(new byte[] { 1 }, 1, released::incrementAndGet, epoch), "leased frame admitted");
+            waitFor(entered);
+            SimpleAssert.that(inbox.offerValue("control"), "control reserve survives a full data lane");
+            Thread network = new Thread(() -> {
+                inbox.put(new byte[] { 2 }, 2, released::incrementAndGet, epoch);
+                admitted.countDown();
+            }, "test network ingress");
+            network.start();
+            SimpleAssert.that(inbox.poll() == null, "client poll returns immediately while the worker is blocked");
+            release.countDown();
+            SimpleAssert.eq("frame", inbox.awaitNext().value, "data publishes before its ordered control");
+            waitFor(admitted);
+            SimpleAssert.eq("control", inbox.poll().value, "queued control is retained while ingress waits");
+            SimpleAssert.eq("frame", inbox.awaitNext().value, "network ingress resumes after publication");
+            SimpleAssert.eq(2, released.get(), "each physical reservation releases exactly once");
+            inbox.clear();
+            SimpleAssert.that(
+                !inbox.put(new byte[] { 3 }, 3, released::incrementAndGet, epoch),
+                "stale ingress cannot enter a new epoch");
+            SimpleAssert.eq(3, released.get(), "stale admission releases its transferred reservation");
+        } finally {
+            release.countDown();
         }
     }
 

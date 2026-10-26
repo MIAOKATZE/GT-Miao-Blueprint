@@ -137,6 +137,10 @@ final class HologramSnapshotPreparation {
     static void clear() {
         for (Task task : TASKS.values()) {
             if (task.metadata != null) task.metadata.cancel();
+            if (task.transportLayout != null) task.transportLayout.close();
+            task.transportLayout = null;
+            if (task.nativeModels != null) task.nativeModels.close();
+            task.nativeModels = null;
             HologramNetwork.cancelState(task.ticket);
         }
         TASKS.clear();
@@ -145,6 +149,10 @@ final class HologramSnapshotPreparation {
     private static void cancel(Task task) {
         TASKS.remove(task.s);
         if (task.metadata != null) task.metadata.cancel();
+        if (task.transportLayout != null) task.transportLayout.close();
+        task.transportLayout = null;
+        if (task.nativeModels != null) task.nativeModels.close();
+        task.nativeModels = null;
         HologramNetwork.cancelState(task.ticket);
         if (task.state != null && task.session.equals(task.s.id)) {
             task.s.open |= task.state.getBoolean("open");
@@ -199,6 +207,8 @@ final class HologramSnapshotPreparation {
         final HologramSnapshots.CellRows rowContext;
         NBTTagCompound state;
         HologramSnapshotMetadataTask metadata;
+        HologramTransportPageLayout.Builder transportLayout;
+        HologramSnapshotModels.Builder nativeModels;
         final NBTTagList cells = new NBTTagList(), materials = new NBTTagList(), recovery = new NBTTagList();
         final NBTTagList hatchEntries = new NBTTagList();
         boolean structureValid = true, structureFound;
@@ -246,6 +256,10 @@ final class HologramSnapshotPreparation {
             y = s.y;
             z = s.z;
             size = capture == null ? 0 : capture.cells.size();
+            if (HologramNetwork.segmentedPeer(s.player)) {
+                transportLayout = new HologramTransportPageLayout.Builder(s, size);
+                if (s.blueprintSaveReceipt.isEmpty()) nativeModels = new HologramSnapshotModels.Builder(s);
+            }
             job = s.job;
         }
 
@@ -417,6 +431,7 @@ final class HologramSnapshotPreparation {
             if (!draftOnly && HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
                 HologramSnapshots.CellRow air = HologramSnapshots.cellRowData(s, index, false, rowContext);
                 cells.appendTag(air.row);
+                if (transportLayout != null) transportLayout.add(index, air.row);
                 HologramLocalPlanRefresh.snapshotCell(s, index, air.row, null, air.inScope);
                 return;
             }
@@ -428,6 +443,10 @@ final class HologramSnapshotPreparation {
             }
             HologramSnapshots.CellRow observed = HologramSnapshots.cellRowData(s, index, draftOnly, rowContext);
             NBTTagCompound row = observed.row;
+            if (transportLayout != null) {
+                transportLayout.add(index, row);
+                if (nativeModels != null) nativeModels.add(index, transportLayout.row(index), row);
+            }
             cells.appendTag(row);
             if (draftOnly) {
                 HologramLocalPlanRefresh.snapshotDraftCell(s, index, row);
@@ -614,12 +633,16 @@ final class HologramSnapshotPreparation {
             encoding = true;
             progress("snapshot.prepare", "cells", cells.tagCount(), size, true);
             progress("snapshot.encode", "gzip", 0, 0, true);
+            HologramSnapshotModels.Source modelSource = nativeModels == null ? null : nativeModels.finish();
+            nativeModels = null;
+            if (modelSource != null) state.setTag("modelManifest", modelSource.manifest());
             HologramNetwork.completeOwnedState(ticket, state, this::valid, () -> {
                 HologramLocalPlanRefresh.snapshotComplete(s, state);
                 s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
                 progress("snapshot.encode", "gzip", ticket.encodingBytes(), ticket.encodingBytes(), true);
                 TASKS.remove(s);
-            });
+            }, transportLayout == null ? null : transportLayout.finish(), modelSource);
+            transportLayout = null;
         }
 
         void progress(String phase, String detail, long done, long total, boolean force) {

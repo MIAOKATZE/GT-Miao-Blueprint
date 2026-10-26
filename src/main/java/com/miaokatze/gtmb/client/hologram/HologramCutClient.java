@@ -59,15 +59,60 @@ final class HologramCutClient {
     private HologramCutClient() {}
 
     void install() {
-        HologramNetwork.setCutReceiver(nbt -> {
+        HologramNetwork.setOwnedCutReceiver((nbt, owner) -> {
             Minecraft minecraft = Minecraft.getMinecraft();
             Object receivedWorld = minecraft.theWorld, connection = minecraft.getNetHandler();
-            if (receivedWorld == null || connection == null) return;
-            minecraft.func_152344_a(
-                () -> {
-                    if (receivedWorld == minecraft.theWorld && connection == minecraft.getNetHandler()) receive(nbt);
-                });
+            if (receivedWorld == null || connection == null) {
+                closeTransportOwner(owner);
+                return;
+            }
+            minecraft.func_152344_a(() -> {
+                com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease materialized = null;
+                try {
+                    if (receivedWorld != minecraft.theWorld || connection != minecraft.getNetHandler()) return;
+                    if (nbt.hasKey("preview", 10)
+                        && owner instanceof com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded) {
+                        HologramSnapshotRetentions.reap();
+                        materialized = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                            .tryRetain("cut.preview.materialized", Math.max(4096, 2L * decoded.retainedEstimate));
+                        if (materialized == null) {
+                            NBTTagCompound busy = new NBTTagCompound();
+                            for (Object keyObject : nbt.func_150296_c()) {
+                                String key = (String) keyObject;
+                                if (!"preview".equals(key)) busy.setTag(
+                                    key,
+                                    nbt.getTag(key)
+                                        .copy());
+                            }
+                            busy.setBoolean("success", false);
+                            busy.setString("code", "transport_busy");
+                            busy.setString("message", "Snapshot memory is busy; retry the cut preview.");
+                            receive(busy);
+                            return;
+                        }
+                    }
+                    NBTTagCompound oldPlacement = rawPreview, oldStorage = HologramCutStoragePreview.retainedRaw();
+                    receive(nbt);
+                    NBTTagCompound retained = HologramCutStoragePreview.retainedRaw();
+                    if (retained == oldStorage) retained = rawPreview != oldPlacement ? rawPreview : null;
+                    if (retained != null && materialized != null) {
+                        HologramSnapshotRetentions.bind(retained, null, materialized, false);
+                        materialized = null;
+                    }
+                } finally {
+                    if (materialized != null) materialized.close();
+                    closeTransportOwner(owner);
+                }
+            });
         });
+    }
+
+    private static void closeTransportOwner(AutoCloseable owner) {
+        try {
+            owner.close();
+        } catch (Exception failure) {
+            throw new IllegalStateException("cut snapshot owner release", failure);
+        }
     }
 
     static boolean shift() {

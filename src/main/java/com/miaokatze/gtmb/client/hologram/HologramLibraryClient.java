@@ -2821,32 +2821,79 @@ final class HologramLibraryClient {
             recordSaveWitness("nativePreviewWitness", capture);
         }
         work(() -> {
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            if (!ImageIO.write(image, "png", output)) throw new java.io.IOException("PNG encoder unavailable");
-            HologramBlueprintArtifact.Artifact captured = HologramBlueprintArtifact
-                .prepareSave(json, output.toByteArray());
-            byte[] preview = captured.png;
-            if (localSaveReceipt && !receipt.isEmpty()) {
-                if (!saveBytesCurrent(token, session, revision)) return;
-                HologramClientLibrary.LocalSave local = store.prepareLocalSave(
-                    captured.json,
-                    preview,
-                    replace,
-                    () -> saveBytesCurrent(token, session, revision));
-                NBTTagCompound acknowledgement = request("ackBlueprintSaved");
-                acknowledgement.setLong("clientTaskToken", originalBackgroundToken);
-                acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-                acknowledgement.setString("session", session);
-                acknowledgement.setLong("planRevision", revision);
-                acknowledgement.setString("localId", replace);
-                acknowledgement.setString("saveReceipt", receipt);
-                acknowledgement.setString("jsonSha256", local.jsonHash);
-                acknowledgement.setString("reviewedJsonSha256", HologramBlueprintArtifact.hash(json));
-                acknowledgement.setString("previewSha256", local.pngHash);
-                acknowledgement.setBoolean("localSaveReceipt", true);
-                publishDiskSave(local, acknowledgement, serverKey, token);
-            } else persistArtifact(captured.json, preview, replace, receipt, session, revision, token, serverKey);
+            com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease transientBytes = null;
+            try {
+                HologramBlueprintArtifact.Artifact captured;
+                try (
+                    com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease cpu = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                        .acquireHeavyCpu("save.png")) {
+                    if (!saveBytesCurrent(token, session, revision)) return;
+                    transientBytes = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                        .retain("save.png.output", 3L * HologramBlueprintArtifact.MAX_PNG_BYTES + json.length);
+                    BoundedPreviewOutput output = new BoundedPreviewOutput(
+                        () -> saveBytesCurrent(token, session, revision));
+                    if (!ImageIO.write(image, "png", output)) throw new java.io.IOException("PNG encoder unavailable");
+                    captured = HologramBlueprintArtifact.prepareSave(json, output.toByteArray());
+                }
+                // CPU admission ends before prepareLocalSave, persistence, readback or publication waits.
+                byte[] preview = captured.png;
+                if (localSaveReceipt && !receipt.isEmpty()) {
+                    if (!saveBytesCurrent(token, session, revision)) return;
+                    HologramClientLibrary.LocalSave local = store.prepareLocalSave(
+                        captured.json,
+                        preview,
+                        replace,
+                        () -> saveBytesCurrent(token, session, revision));
+                    NBTTagCompound acknowledgement = request("ackBlueprintSaved");
+                    acknowledgement.setLong("clientTaskToken", originalBackgroundToken);
+                    acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                    acknowledgement.setString("session", session);
+                    acknowledgement.setLong("planRevision", revision);
+                    acknowledgement.setString("localId", replace);
+                    acknowledgement.setString("saveReceipt", receipt);
+                    acknowledgement.setString("jsonSha256", local.jsonHash);
+                    acknowledgement.setString("reviewedJsonSha256", HologramBlueprintArtifact.hash(json));
+                    acknowledgement.setString("previewSha256", local.pngHash);
+                    acknowledgement.setBoolean("localSaveReceipt", true);
+                    publishDiskSave(local, acknowledgement, serverKey, token);
+                } else persistArtifact(captured.json, preview, replace, receipt, session, revision, token, serverKey);
+            } finally {
+                if (transientBytes != null) transientBytes.close();
+            }
         });
+    }
+
+    /** Bound PNG output before ByteArrayOutputStream growth; pair identity and commit/readback stay unchanged. */
+    private static final class BoundedPreviewOutput extends java.io.OutputStream {
+
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private int written;
+        private final java.util.function.BooleanSupplier current;
+
+        BoundedPreviewOutput(java.util.function.BooleanSupplier current) {
+            this.current = current;
+        }
+
+        public void write(int value) throws java.io.IOException {
+            reserve(1);
+            bytes.write(value);
+        }
+
+        public void write(byte[] data, int offset, int length) throws java.io.IOException {
+            reserve(length);
+            bytes.write(data, offset, length);
+        }
+
+        private void reserve(int length) throws java.io.IOException {
+            if (!current.getAsBoolean()) throw new java.io.InterruptedIOException("Blueprint save source changed");
+            if (length < 0 || length > HologramBlueprintArtifact.MAX_PNG_BYTES - written)
+                throw new java.io.IOException("Blueprint preview PNG exceeds the byte budget");
+            written += length;
+        }
+
+        byte[] toByteArray() {
+            return bytes.toByteArray();
+        }
     }
 
     private void publishDiskSave(HologramClientLibrary.LocalSave local, NBTTagCompound acknowledgement,
@@ -2898,75 +2945,109 @@ final class HologramLibraryClient {
         boolean reviewedSave = !receipt.isEmpty();
         if (token != generation || reviewedSave && !saveBytesCurrent(token, session, revision)) return;
         String saved = reviewedSave ? replace : store.save(json, preview, replace, () -> token == generation);
-        byte[] artifact = reviewedSave ? HologramBlueprintArtifact.encode(json, preview) : store.artifact(saved);
-        HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.decode(artifact);
-        String actualJsonHash = HologramBlueprintArtifact.hash(actual.json);
-        String actualPreviewHash = HologramBlueprintArtifact.hash(actual.png);
-        if (!Arrays.equals(json, actual.json)) throw new java.io.IOException("Saved JSON differs from reviewed bytes");
-        if (token != generation || reviewedSave && !saveBytesCurrent(token, session, revision)) return;
-        if (!reviewedSave) store.rememberLocal(serverKey, saved);
-        String savedName = reviewedSave ? "" : store.savedName(saved);
-        String savedPath = reviewedSave ? ""
-            : store.savedPath(saved)
-                .toString();
-        main(() -> {
-            if (token != generation || originalBackgroundToken != backgroundTaskToken
-                || reviewedSave && !saveSourceCurrent(token, session, revision)) return;
-            if (!reviewedSave) {
-                progressCompleted();
-                selectedLocal = saved;
-                knownQuickSource = 1;
-                announceSaved(savedName, savedPath);
-                finishBackgroundTask(originalBackgroundToken, true, "蓝图已下载并保存");
-                preparing = false;
-                status = "JSON 与结构预览 PNG 已保存至客户端蓝图库";
-                refreshLocal();
-                return;
-            }
-            NBTTagCompound acknowledgement = request("ackBlueprintSaved");
-            acknowledgement.setLong("clientTaskToken", originalBackgroundToken);
-            acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-            acknowledgement.setString("session", session);
-            acknowledgement.setLong("planRevision", revision);
-            acknowledgement.setString("localId", saved);
-            acknowledgement.setString("saveReceipt", receipt);
-            acknowledgement.setString("jsonSha256", actualJsonHash);
-            try {
-                acknowledgement.setString(
-                    "reviewedJsonSha256",
-                    HologramBlueprintArtifact
-                        .hash(com.miaokatze.gtmb.hologram.HologramBlueprintPreviewBinding.sourceJson(actual.json)));
-            } catch (java.io.IOException invalid) {
-                throw new IllegalStateException("Previously validated blueprint binding changed", invalid);
-            }
-            acknowledgement.setString("previewSha256", actualPreviewHash);
-            pendingSaveAck = acknowledgement;
-            outgoing = artifact;
-            outgoingId = UUID.randomUUID()
-                .toString();
-            outgoingOp = "preview";
-            outgoingLocal = saved;
-            outgoingQuick = false;
-            nextChunk = sentBytes = 0;
-            ready = inFlight = false;
-            NBTTagCompound begin = request("previewBegin");
-            begin.setLong("clientTaskToken", originalBackgroundToken);
-            begin.setString("transfer", outgoingId);
-            begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-            begin.setInteger("total", artifact.length);
-            begin.setString("hash", HologramBlueprintArtifact.hash(artifact));
-            begin.setString("session", session);
-            begin.setLong("planRevision", revision);
-            begin.setString("saveReceipt", receipt);
-            begin.setString("replaceLocalId", saved);
-            preparing = false;
-            status = "结构预览已生成，正在确认对应 JSON 摘要";
-            lastActivity = System.nanoTime();
-            saveProgress.progress(lastActivity);
-            traceSave("preview_upload_begin");
-            uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
-            HologramNetwork.sendLibrary(begin);
-        });
+        com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease artifactBytes = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+            .retain(
+                "save.artifact",
+                3L * (HologramBlueprintArtifact.HEADER_BYTES + json.length + preview.length + 512L));
+        boolean transferred = false;
+        try {
+            byte[] artifact = reviewedSave ? saveCpu(() -> HologramBlueprintArtifact.encode(json, preview), token)
+                : store.artifact(saved);
+            HologramBlueprintArtifact.Artifact actual = saveCpu(
+                () -> HologramBlueprintArtifact.decode(artifact),
+                token);
+            String actualJsonHash = HologramBlueprintArtifact.hash(actual.json);
+            String actualPreviewHash = HologramBlueprintArtifact.hash(actual.png);
+            if (!Arrays.equals(json, actual.json))
+                throw new java.io.IOException("Saved JSON differs from reviewed bytes");
+            if (token != generation || reviewedSave && !saveBytesCurrent(token, session, revision)) return;
+            if (!reviewedSave) store.rememberLocal(serverKey, saved);
+            String savedName = reviewedSave ? "" : store.savedName(saved);
+            String savedPath = reviewedSave ? ""
+                : store.savedPath(saved)
+                    .toString();
+            final com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease publicationBytes = artifactBytes.transfer();
+            main(() -> {
+                boolean published = false;
+                try {
+                    if (token != generation || originalBackgroundToken != backgroundTaskToken
+                        || reviewedSave && !saveSourceCurrent(token, session, revision)) return;
+                    if (!reviewedSave) {
+                        progressCompleted();
+                        selectedLocal = saved;
+                        knownQuickSource = 1;
+                        announceSaved(savedName, savedPath);
+                        finishBackgroundTask(originalBackgroundToken, true, "蓝图已下载并保存");
+                        preparing = false;
+                        status = "JSON 与结构预览 PNG 已保存至客户端蓝图库";
+                        refreshLocal();
+                        return;
+                    }
+                    NBTTagCompound acknowledgement = request("ackBlueprintSaved");
+                    acknowledgement.setLong("clientTaskToken", originalBackgroundToken);
+                    acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                    acknowledgement.setString("session", session);
+                    acknowledgement.setLong("planRevision", revision);
+                    acknowledgement.setString("localId", saved);
+                    acknowledgement.setString("saveReceipt", receipt);
+                    acknowledgement.setString("jsonSha256", actualJsonHash);
+                    try {
+                        acknowledgement.setString(
+                            "reviewedJsonSha256",
+                            HologramBlueprintArtifact.hash(
+                                com.miaokatze.gtmb.hologram.HologramBlueprintPreviewBinding.sourceJson(actual.json)));
+                    } catch (java.io.IOException invalid) {
+                        throw new IllegalStateException("Previously validated blueprint binding changed", invalid);
+                    }
+                    acknowledgement.setString("previewSha256", actualPreviewHash);
+                    pendingSaveAck = acknowledgement;
+                    HologramSnapshotRetentions.bind(artifact, null, publicationBytes, false);
+                    published = true;
+                    outgoing = artifact;
+                    outgoingId = UUID.randomUUID()
+                        .toString();
+                    outgoingOp = "preview";
+                    outgoingLocal = saved;
+                    outgoingQuick = false;
+                    nextChunk = sentBytes = 0;
+                    ready = inFlight = false;
+                    NBTTagCompound begin = request("previewBegin");
+                    begin.setLong("clientTaskToken", originalBackgroundToken);
+                    begin.setString("transfer", outgoingId);
+                    begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                    begin.setInteger("total", artifact.length);
+                    begin.setString("hash", HologramBlueprintArtifact.hash(artifact));
+                    begin.setString("session", session);
+                    begin.setLong("planRevision", revision);
+                    begin.setString("saveReceipt", receipt);
+                    begin.setString("replaceLocalId", saved);
+                    preparing = false;
+                    status = "结构预览已生成，正在确认对应 JSON 摘要";
+                    lastActivity = System.nanoTime();
+                    saveProgress.progress(lastActivity);
+                    traceSave("preview_upload_begin");
+                    uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
+                    HologramNetwork.sendLibrary(begin);
+                } finally {
+                    if (!published) publicationBytes.close();
+                }
+            });
+            transferred = true;
+        } finally {
+            if (!transferred) artifactBytes.close();
+        }
+    }
+
+    private <T> T saveCpu(java.util.concurrent.Callable<T> work, long token) throws Exception {
+        com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease cpu = null;
+        while (token == generation && cpu == null) {
+            cpu = com.miaokatze.gtmb.hologram.HologramProcessGovernor.tryHeavyCpu("save.artifact");
+            if (cpu == null) java.util.concurrent.locks.LockSupport.parkNanos(5_000_000L);
+        }
+        if (cpu == null) throw new java.io.InterruptedIOException("Blueprint save cancelled");
+        try (com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease permit = cpu) {
+            return work.call();
+        }
     }
 
     private static void announceSaved(String name, String path) {
