@@ -15,6 +15,7 @@ import com.miaokatze.gtmb.api.CutTransforms;
 public final class HologramCutTransforms {
 
     private static final List<CutTransforms.Adapter> ADAPTERS = new ArrayList<>();
+    private static long adapterGeneration;
 
     private HologramCutTransforms() {}
 
@@ -32,10 +33,12 @@ public final class HologramCutTransforms {
         };
         synchronized (ADAPTERS) {
             ADAPTERS.add(0, slot);
+            adapterGeneration++;
         }
         return () -> {
             synchronized (ADAPTERS) {
                 ADAPTERS.remove(slot);
+                adapterGeneration++;
             }
         };
     }
@@ -46,29 +49,109 @@ public final class HologramCutTransforms {
 
     static NBTTagCompound apply(NBTTagCompound original, CutTransforms.Transform transform, int ox, int oy, int oz,
         int targetDimension) {
-        NBTTagCompound result = (NBTTagCompound) original.copy();
-        transform.write(result);
-        List<CutTransforms.Adapter> adapters;
-        synchronized (ADAPTERS) {
-            adapters = new ArrayList<>(ADAPTERS);
+        Task task = new Task(original, transform, ox, oy, oz, targetDimension);
+        while (!task.step(4096, Long.MAX_VALUE)) {}
+        return task.result();
+    }
+
+    /** Owns a stable raw entry and adapter snapshot; publication is allowed only after every cell finishes. */
+    static final class Task {
+
+        private final NBTTagCompound original, result;
+        private final CutTransforms.Transform transform;
+        private final int ox, oy, oz, targetDimension, sx, sy, sz;
+        private final List<CutTransforms.Adapter> adapters;
+        private final HologramCutRelations.Context relations;
+        private final HologramCutLittleTiles littleTiles;
+        private final NBTTagList cells, changed = new NBTTagList(), warnings = new NBTTagList();
+        private final java.util.Set<String> reported = new java.util.LinkedHashSet<>();
+        private final boolean targetDependent;
+        private final boolean copyOnly;
+        private final long generation;
+        private final long blockTransformGeneration;
+        private int cursor;
+        private boolean done;
+
+        Task(NBTTagCompound original, CutTransforms.Transform transform, int ox, int oy, int oz, int targetDimension) {
+            this.original = original;
+            this.transform = transform;
+            this.ox = ox;
+            this.oy = oy;
+            this.oz = oz;
+            this.targetDimension = targetDimension;
+            sx = original.getInteger("sizeX");
+            sy = original.getInteger("sizeY");
+            sz = original.getInteger("sizeZ");
+            // Copy the small header now, then each owned cell once as the continuation advances.
+            result = HologramCutEntry.directory(original);
+            // directory supplies a display fallback; transforms preserve the original header exactly.
+            if (!original.hasKey("name")) result.removeTag("name");
+            else result.setTag(
+                "name",
+                original.getTag("name")
+                    .copy());
+            transform.write(result);
+            synchronized (ADAPTERS) {
+                adapters = new ArrayList<>(ADAPTERS);
+                generation = adapterGeneration;
+            }
+            blockTransformGeneration = HologramBlockTransforms.generation();
+            relations = HologramCutRelations.context(original, transform, ox, oy, oz, targetDimension);
+            littleTiles = HologramCutLittleTiles.rotate(original, transform);
+            targetDependent = !adapters.isEmpty() || relations.targetDependent();
+            copyOnly = transform.identity() && adapters.isEmpty()
+                && !relations.targetDependent()
+                && !relations.crossDimensionExternal();
+            int[] size = transform.size(sx, sy, sz);
+            result.setInteger("sizeX", size[0]);
+            result.setInteger("sizeY", size[1]);
+            result.setInteger("sizeZ", size[2]);
+            cells = original.getTagList("cells", 10);
         }
-        HologramCutRelations.Context relations = HologramCutRelations
-            .context(original, transform, ox, oy, oz, targetDimension);
-        if (transform.identity() && adapters.isEmpty()
-            && !relations.targetDependent()
-            && !relations.crossDimensionExternal()) return result;
-        int sx = original.getInteger("sizeX"), sy = original.getInteger("sizeY"), sz = original.getInteger("sizeZ");
-        int[] size = transform.size(sx, sy, sz);
-        result.setInteger("sizeX", size[0]);
-        result.setInteger("sizeY", size[1]);
-        result.setInteger("sizeZ", size[2]);
-        NBTTagList cells = original.getTagList("cells", 10), changed = new NBTTagList(), warnings = new NBTTagList();
-        java.util.Set<String> reported = new java.util.LinkedHashSet<>();
-        HologramCutLittleTiles littleTiles = HologramCutLittleTiles.rotate(original, transform);
-        // accepts(State) can itself depend on the target, including when no adapter matches at the source origin.
-        boolean targetDependent = !adapters.isEmpty() || relations.targetDependent();
-        for (int i = 0; i < cells.tagCount(); i++) {
+
+        boolean step(int maximumCells, long deadline) {
+            if (maximumCells <= 0) throw new IllegalArgumentException("maximumCells");
+            synchronized (ADAPTERS) {
+                if (generation != adapterGeneration) throw new IllegalStateException("剪切变换扩展已改变，请重试");
+            }
+            if (blockTransformGeneration != HologramBlockTransforms.generation())
+                throw new IllegalStateException("方块变换扩展已改变，请重试");
+            int worked = 0;
+            while (!done && cursor < cells.tagCount()
+                && worked < maximumCells
+                && (worked == 0 || System.nanoTime() < deadline)) {
+                transformCell(cursor);
+                cursor++;
+                worked++;
+            }
+            if (!done && cursor == cells.tagCount()) {
+                for (String name : reported) warnings.appendTag(new NBTTagString(name));
+                if (relations.crossDimensionExternal())
+                    warnings.appendTag(new NBTTagString("gtmb:external_dimension_relation"));
+                result.setTag("cells", changed);
+                if (!transform.identity() || warnings.tagCount() > 0) result.setTag("transformUnknown", warnings);
+                if (targetDependent) result.setBoolean("transformTargetDependent", true);
+                done = true;
+            }
+            return done;
+        }
+
+        NBTTagCompound result() {
+            if (!done) throw new IllegalStateException("raw transform still running");
+            synchronized (ADAPTERS) {
+                if (generation != adapterGeneration) throw new IllegalStateException("剪切变换扩展已改变，请重试");
+            }
+            if (blockTransformGeneration != HologramBlockTransforms.generation())
+                throw new IllegalStateException("方块变换扩展已改变，请重试");
+            return result;
+        }
+
+        private void transformCell(int i) {
             NBTTagCompound source = cells.getCompoundTagAt(i), cell = (NBTTagCompound) source.copy();
+            if (copyOnly) {
+                changed.appendTag(cell);
+                return;
+            }
             int x = source.getInteger("x"), y = source.getInteger("y"), z = source.getInteger("z");
             int[] position = transform.point(x, y, z, sx, sy, sz);
             cell.setInteger("x", position[0]);
@@ -121,13 +204,6 @@ public final class HologramCutTransforms {
             }
             changed.appendTag(cell);
         }
-        for (String name : reported) warnings.appendTag(new NBTTagString(name));
-        if (relations.crossDimensionExternal())
-            warnings.appendTag(new NBTTagString("gtmb:external_dimension_relation"));
-        result.setTag("cells", changed);
-        if (!transform.identity() || warnings.tagCount() > 0) result.setTag("transformUnknown", warnings);
-        if (targetDependent) result.setBoolean("transformTargetDependent", true);
-        return result;
     }
 
     private static boolean legacyRotations(CutTransforms.State state, CutTransforms.Transform pose) throws IOException {

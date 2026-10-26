@@ -135,7 +135,7 @@ final class HologramCutWorld {
         if (!(world.theChunkProviderServer.currentChunkLoader instanceof AnvilChunkLoader))
             throw new IOException("剪切需要可验证存盘的 Anvil 世界");
         NBTTagList cells = entry.getTagList("cells", 10);
-        HologramCutChunks.loadWithLightNeighbors(world, ox, oz, entry.getInteger("sizeX"), entry.getInteger("sizeZ"));
+        HologramCutChunks.loadWithLightNeighbors(world, cells, ox, oz);
         List<TileEntity> tiles = new ArrayList<>();
         // Read every original NBT before touching the destination. Only root xyz are relocated.
         for (int i = 0; i < cells.tagCount(); i++) {
@@ -267,32 +267,42 @@ final class HologramCutWorld {
      */
     static void saveAndVerify(WorldServer world, NBTTagCompound entry, int ox, int oy, int oz, boolean air)
         throws Exception {
-        HologramCutChunks.load(world, ox, oz, entry.getInteger("sizeX"), entry.getInteger("sizeZ"));
         AnvilChunkLoader loader = (AnvilChunkLoader) world.theChunkProviderServer.currentChunkLoader;
         Set<Chunk> chunks = new LinkedHashSet<>();
         NBTTagList cells = entry.getTagList("cells", 10);
+        HologramCutCellGroups groups = new HologramCutCellGroups(cells, ox, oz);
+        HologramCutChunks.load(world, groups.chunks.keySet());
         Map<Long, TileEntity> liveTiles = new LinkedHashMap<>();
+        Map<Long, Map<Long, TileEntity>> tilesByChunk = new LinkedHashMap<>();
         boolean diagnostics = Boolean.getBoolean("gtmb.cutDiskDiagnostics");
         Map<Long, NBTTagCompound> before = diagnostics ? new LinkedHashMap<>() : null;
-        for (int i = 0; i < cells.tagCount(); i++) {
-            NBTTagCompound cell = cells.getCompoundTagAt(i);
-            int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
-            TileEntity live = selectedTile(world, x, y, z, cell, air);
-            if (live != null) {
-                liveTiles.put(tileKey(x, y, z), live);
-                if (diagnostics) {
-                    NBTTagCompound saved = new NBTTagCompound();
-                    live.writeToNBT(saved);
-                    before.put(tileKey(x, y, z), (NBTTagCompound) saved.copy());
+        for (Map.Entry<Long, List<NBTTagCompound>> group : groups.chunks.entrySet()) {
+            Map<Long, TileEntity> chunkTiles = new LinkedHashMap<>();
+            tilesByChunk.put(group.getKey(), chunkTiles);
+            chunks.add(
+                world.getChunkFromChunkCoords(
+                    (int) (group.getKey() >> 32),
+                    group.getKey()
+                        .intValue()));
+            for (NBTTagCompound cell : group.getValue()) {
+                int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
+                TileEntity live = selectedTile(world, x, y, z, cell, air);
+                if (live != null) {
+                    liveTiles.put(tileKey(x, y, z), live);
+                    chunkTiles.put(tileKey(x, y, z), live);
+                    if (diagnostics) {
+                        NBTTagCompound saved = new NBTTagCompound();
+                        live.writeToNBT(saved);
+                        before.put(tileKey(x, y, z), (NBTTagCompound) saved.copy());
+                    }
                 }
             }
-            chunks
-                .add(world.getChunkFromChunkCoords((ox + cell.getInteger("x")) >> 4, (oz + cell.getInteger("z")) >> 4));
         }
         NativeSaveSnapshot snapshot = new NativeSaveSnapshot(world);
         MinecraftForge.EVENT_BUS.register(snapshot);
         try {
-            for (Chunk chunk : chunks) snapshot.save(loader, chunk, liveTiles);
+            for (Chunk chunk : chunks)
+                snapshot.save(loader, chunk, tilesByChunk.get(key(chunk.xPosition, chunk.zPosition)));
         } finally {
             MinecraftForge.EVENT_BUS.unregister(snapshot);
         }
@@ -418,7 +428,6 @@ final class HologramCutWorld {
                 }
                 for (Map.Entry<Long, TileEntity> entry : expected.entrySet()) {
                     TileEntity live = entry.getValue();
-                    if ((live.xCoord >> 4) != chunk.xPosition || (live.zCoord >> 4) != chunk.zPosition) continue;
                     if (live.getWorldObj() != world || live.isInvalid()
                         || attachedTile(world, live.xCoord, live.yCoord, live.zCoord) != live)
                         throw new IOException(

@@ -62,19 +62,14 @@ final class HologramCutEntry {
 
     static BitSet selectionMask(HologramAreaSelection selection, int x, int y, int z, int sx, int sy, int sz)
         throws IOException {
-        bounds(x, y, z, sx, sy, sz);
-        BitSet mask = new BitSet(volume(sx, sy, sz));
-        for (int dy = 0; dy < sy; dy++) for (int dz = 0; dz < sz; dz++) for (int dx = 0; dx < sx; dx++)
-            if (selection == null || selection.contains(x + dx, y + dy, z + dz)) mask.set((dy * sz + dz) * sx + dx);
-        if (mask.isEmpty()) throw new IOException("减选后没有可剪切的区域");
-        return mask;
+        return HologramCutSelection.mask(selection, x, y, z, sx, sy, sz);
     }
 
     static NBTTagCompound capture(WorldServer world, int x, int y, int z, int sx, int sy, int sz,
         HologramAreaSelection selection) throws IOException {
         bounds(x, y, z, sx, sy, sz);
         BitSet mask = selectionMask(selection, x, y, z, sx, sy, sz);
-        HologramCutChunks.loadWithLightNeighbors(world, x, z, sx, sz);
+        HologramCutChunks.loadWithLightNeighbors(world, mask, x, z, sx, sz);
         NBTTagCompound entry = new NBTTagCompound();
         entry.setString(
             "id",
@@ -92,8 +87,8 @@ final class HologramCutEntry {
         entry.setInteger("selectedCells", mask.cardinality());
         NBTTagList cells = new NBTTagList();
         int count = 0;
-        for (int dy = 0; dy < sy; dy++) for (int dz = 0; dz < sz; dz++) for (int dx = 0; dx < sx; dx++) {
-            if (!mask.get((dy * sz + dz) * sx + dx)) continue;
+        for (int index = mask.nextSetBit(0); index >= 0; index = mask.nextSetBit(index + 1)) {
+            int dx = index % sx, dz = index / sx % sz, dy = index / (sx * sz);
             Block block = world.getBlock(x + dx, y + dy, z + dz);
             NBTTagCompound cell = new NBTTagCompound();
             cell.setInteger("x", dx);
@@ -117,32 +112,57 @@ final class HologramCutEntry {
 
     /** Validate the complete raw selection before any world mutation; old entries remain full cuboids. */
     static void validate(NBTTagCompound entry) throws IOException {
-        int sx = entry.getInteger("sizeX"), sy = entry.getInteger("sizeY"), sz = entry.getInteger("sizeZ");
-        int count = volume(sx, sy, sz);
-        NBTTagList cells = entry.getTagList("cells", 10);
-        int expected = count;
-        if (entry.hasKey("selectionVersion")) {
-            if (!entry.hasKey("selectionVersion", 3) || entry.getInteger("selectionVersion") != 1
-                || !entry.hasKey("selectedCells", 3)) throw new IOException("剪切区域记录版本无效");
-            expected = entry.getInteger("selectedCells");
-        } else if (entry.hasKey("selectedCells")) throw new IOException("剪切区域记录版本缺失");
-        if (!entry.hasKey("cells", 9) || expected <= 0 || expected > count || cells.tagCount() != expected)
-            throw new IOException("剪切记录不完整");
-        BitSet seen = new BitSet(count);
-        for (int i = 0; i < cells.tagCount(); i++) {
-            NBTTagCompound cell = cells.getCompoundTagAt(i);
-            int x = cell.getInteger("x"), y = cell.getInteger("y"), z = cell.getInteger("z");
-            if (!cell.hasKey("x", 3) || !cell.hasKey("y", 3)
-                || !cell.hasKey("z", 3)
-                || x < 0
-                || x >= sx
-                || y < 0
-                || y >= sy
-                || z < 0
-                || z >= sz) throw new IOException("剪切记录坐标无效");
-            int index = (y * sz + z) * sx + x;
-            if (seen.get(index)) throw new IOException("剪切记录坐标重复");
-            seen.set(index);
+        Validation validation = new Validation(entry);
+        while (!validation.step(4096, Long.MAX_VALUE)) {}
+    }
+
+    /** Validation cursor belongs to an immutable owned entry and never publishes a partial admission. */
+    static final class Validation {
+
+        private final int sx, sy, sz;
+        private final NBTTagList cells;
+        private final BitSet seen;
+        private int cursor;
+
+        Validation(NBTTagCompound entry) throws IOException {
+            sx = entry.getInteger("sizeX");
+            sy = entry.getInteger("sizeY");
+            sz = entry.getInteger("sizeZ");
+            int count = volume(sx, sy, sz);
+            cells = entry.getTagList("cells", 10);
+            int expected = count;
+            if (entry.hasKey("selectionVersion")) {
+                if (!entry.hasKey("selectionVersion", 3) || entry.getInteger("selectionVersion") != 1
+                    || !entry.hasKey("selectedCells", 3)) throw new IOException("??????????");
+                expected = entry.getInteger("selectedCells");
+            } else if (entry.hasKey("selectedCells")) throw new IOException("??????????");
+            if (!entry.hasKey("cells", 9) || expected <= 0 || expected > count || cells.tagCount() != expected)
+                throw new IOException("???????");
+            seen = new BitSet(count);
+        }
+
+        boolean step(int maximumCells, long deadline) throws IOException {
+            if (maximumCells <= 0) throw new IllegalArgumentException("maximumCells");
+            int worked = 0;
+            while (cursor < cells.tagCount() && worked < maximumCells
+                && (worked == 0 || System.nanoTime() < deadline)) {
+                NBTTagCompound cell = cells.getCompoundTagAt(cursor);
+                int x = cell.getInteger("x"), y = cell.getInteger("y"), z = cell.getInteger("z");
+                if (!cell.hasKey("x", 3) || !cell.hasKey("y", 3)
+                    || !cell.hasKey("z", 3)
+                    || x < 0
+                    || x >= sx
+                    || y < 0
+                    || y >= sy
+                    || z < 0
+                    || z >= sz) throw new IOException("????????");
+                int index = (y * sz + z) * sx + x;
+                if (seen.get(index)) throw new IOException("????????");
+                seen.set(index);
+                cursor++;
+                worked++;
+            }
+            return cursor == cells.tagCount();
         }
     }
 

@@ -68,6 +68,7 @@ final class HologramBlockTransforms {
     }
 
     private static final List<Adapter> ADAPTERS = new ArrayList<>();
+    private static long generation;
     static {
         HologramBlockTransformAdapters.register();
     }
@@ -77,14 +78,20 @@ final class HologramBlockTransforms {
     static synchronized void register(Adapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("adapter");
         ADAPTERS.add(adapter);
+        generation++;
     }
 
     static synchronized void registerFirst(Adapter adapter) {
         ADAPTERS.add(0, adapter);
+        generation++;
     }
 
     static synchronized void unregister(Adapter adapter) {
-        ADAPTERS.remove(adapter);
+        if (ADAPTERS.remove(adapter)) generation++;
+    }
+
+    static synchronized long generation() {
+        return generation;
     }
 
     static Data turn(Data original, boolean vertical) throws IOException {
