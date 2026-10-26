@@ -20,6 +20,18 @@ final class HologramBlockTransformAdapters {
         HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
 
             public boolean accepts(HologramBlockTransforms.Data data) {
+                return HologramBlockTransformStorageDrawers.supports(data.block, data.tile);
+            }
+
+            public void turn(HologramBlockTransforms.Data data, boolean vertical) {
+                HologramBlockTransformStorageDrawers.apply(
+                    data.tile,
+                    new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0));
+            }
+        });
+        HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
+
+            public boolean accepts(HologramBlockTransforms.Data data) {
                 return data.type("com.miaokatze.gtswn.common.block.BlockNetworkQuantumNode")
                     || data.id("gtswn.network_quantum_node");
             }
@@ -54,10 +66,10 @@ final class HologramBlockTransformAdapters {
                 if (data.block != null) {
                     String type = data.block.getClass()
                         .getName();
-                    if ("appeng.block.solids.BlockQuartzPillar".equals(type)
-                        || "appeng.block.misc.BlockQuartzTorch".equals(type)
-                        || "appeng.block.misc.BlockLightDetector".equals(type))
-                        data.metadata = HologramVirtualTransform.front(data.metadata, vertical);
+                    data.metadata = HologramCutTransformDirections.aeMetadata(
+                        type,
+                        data.metadata,
+                        new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0));
                 }
             }
         });
@@ -221,6 +233,8 @@ final class HologramBlockTransformAdapters {
                 throw new IOException("Invalid AE2 orientation: " + tag.getString(key), invalid);
             }
         }
+        if ("BlockMolecularAssembler".equals(tag.getString("id")) && tag.hasKey("pushDirection", 3))
+            tag.setInteger("pushDirection", HologramVirtualTransform.front(tag.getInteger("pushDirection"), vertical));
         for (int side = 0; side < 6; side++) {
             NBTTagCompound extra = tag.getCompoundTag("extra:" + side);
             if (extra.hasKey("spin")) extra.setByte("spin", (byte) aeSpin(side, extra.getByte("spin"), vertical));

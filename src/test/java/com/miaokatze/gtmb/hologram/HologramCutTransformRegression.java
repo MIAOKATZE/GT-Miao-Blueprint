@@ -17,6 +17,7 @@ public final class HologramCutTransformRegression {
     private HologramCutTransformRegression() {}
 
     public static void run() {
+        HologramModOrientationRegression.run();
         for (int x = 0; x < 4; x++)
             for (int y = 0; y < 4; y++) for (int z = 0; z < 4; z++) for (int mirror = 0; mirror < 8; mirror++) {
                 CutTransforms.Transform pose = new CutTransforms.Transform(y, x, z, mirror);

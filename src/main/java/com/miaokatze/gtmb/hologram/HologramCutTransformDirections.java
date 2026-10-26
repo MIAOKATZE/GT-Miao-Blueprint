@@ -17,6 +17,10 @@ final class HologramCutTransformDirections {
 
     static boolean apply(CutTransforms.State state, CutTransforms.Transform pose) {
         NBTTagCompound tag = state.tile;
+        if (HologramBlockTransformStorageDrawers.supports(state.block, tag)) {
+            HologramBlockTransformStorageDrawers.apply(tag, pose);
+            return true;
+        }
         if (tag != null && (tag.getString("id")
             .equals("BaseMetaTileEntity")
             || tag.getString("id")
@@ -30,8 +34,13 @@ final class HologramCutTransformDirections {
             HologramCutTransformMultipart.apply(tag, pose);
             return true;
         }
-        if (tag != null && type(state, "appeng.")) {
-            ae(tag, pose);
+        if (type(state, "appeng.")) {
+            if (tag != null) ae(tag, pose);
+            state.metadata = aeMetadata(
+                state.block.getClass()
+                    .getName(),
+                state.metadata,
+                pose);
             return true;
         }
         return HologramCutTransformMetadata.apply(state, pose);
@@ -115,6 +124,8 @@ final class HologramCutTransformDirections {
                         .name());
             } catch (IllegalArgumentException unknownNativeValue) { /* Preserve unrecognized native values. */ }
         }
+        if ("BlockMolecularAssembler".equals(tag.getString("id")) && tag.hasKey("pushDirection", 3))
+            tag.setInteger("pushDirection", pose.direction(tag.getInteger("pushDirection")));
         for (int side = 0; side < 6; side++) {
             NBTTagCompound extra = tag.getCompoundTag("extra:" + side);
             if (extra.hasKey("spin")) extra.setByte("spin", (byte) spin(side, extra.getByte("spin"), pose));
@@ -124,6 +135,7 @@ final class HologramCutTransformDirections {
     }
 
     private static int spin(int side, int spin, CutTransforms.Transform pose) {
+        if (spin < 0 || spin > 3) return spin;
         int[] localUp = { 2, 3, 1, 1, 1, 1 }, codes = { 0, 1, 3, 2 };
         int up = localUp[side], count = 0;
         for (int i = 0; i < 4; i++) if (codes[i] == spin) count = i;
@@ -135,6 +147,13 @@ final class HologramCutTransformDirections {
             up = around(up, next);
         }
         return spin;
+    }
+
+    static int aeMetadata(String type, int metadata, CutTransforms.Transform pose) {
+        // All three use MetaRotation.getUp/setOrientation: the entire metadata is a ForgeDirection ordinal.
+        if ("appeng.block.solids.BlockQuartzPillar".equals(type) || "appeng.block.misc.BlockQuartzTorch".equals(type)
+            || "appeng.block.misc.BlockLightDetector".equals(type)) return pose.direction(metadata);
+        return metadata;
     }
 
     private static int around(int direction, int axis) {
