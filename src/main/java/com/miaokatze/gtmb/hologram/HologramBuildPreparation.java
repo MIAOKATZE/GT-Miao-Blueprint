@@ -36,7 +36,6 @@ final class HologramBuildPreparation {
     private static void directBuild(HologramSession s, boolean rescan, NBTTagCompound reviewedAction) {
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
-        if (!HologramBuildPreparation.aeReady(s)) return;
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
             s.status = s.mode == 2 ? "虚拟预设不支持拆除" : !s.virtualPlacement ? "请在蓝图库点击放置，再右击确定位置并核对材料" : "请先右击确定位置，再在界面确认施工";
             return;
@@ -73,12 +72,6 @@ final class HologramBuildPreparation {
         if (s.capture == null || s.capture.incomplete || s.capture.pending || s.capturePending) {
             s.forcePlacementReady = false;
             s.status = "请等待完整结构采集，再核对材料确认施工";
-            return;
-        }
-        if (!HologramPlanPolicy.planCurrent(s)) {
-            s.forcePlacementReady = false;
-            HologramResourcePlanner.refreshPlan(s);
-            s.status = "现场已变化，请重新核对更新后的材料与位置";
             return;
         }
         // Consent belongs to this reviewed plan, never to a previous failed packet.
@@ -140,56 +133,52 @@ final class HologramBuildPreparation {
 
     }
 
-    static boolean aeReady(HologramSession s) {
-        if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2 || s.capture == null) return true;
+    static boolean isPending(HologramSession s) {
+        return s.buildTask != null;
+    }
+
+    static void cancel(HologramSession s) {
+        if (s.buildTask == null) return;
+        s.buildTask.cancel();
+        s.buildTask = null;
+        s.forcePlacementReady = false;
+        if (s.job != 1 && s.job != 2) s.phase = "IDLE";
+    }
+
+    static String phase(HologramSession s) {
+        return s.buildTask == null ? "build.idle" : s.buildTask.phase();
+    }
+
+    static long completed(HologramSession s) {
+        return s.buildTask == null ? 0 : s.buildTask.completed();
+    }
+
+    static long total(HologramSession s) {
+        return s.buildTask == null ? 0 : s.buildTask.total();
+    }
+
+    static void tickBuild(HologramSession s) {
+        boolean pending = isPending(s);
+        tickBuild(s, HologramPlacementJobs.BUDGET, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
+        if (pending && !isPending(s) && !s.cancelled && HologramSessionPolicy.valid(s))
+            HologramSnapshotPreparation.start(s);
+        HologramSnapshots.sendProgress(s);
+    }
+
+    /** Deterministic port uses the same admission lifecycle without transport side effects. */
+    static void tickBuild(HologramSession s, int maxWork, long maxNanos) {
+        HologramBuildTask task = s.buildTask;
+        if (task == null) return;
+        boolean done;
+        long measured = HologramRuntimeMetrics.start();
         try {
-            if (HologramDeidentification.level(s.virtualPreset) == 0)
-                for (HologramCapture.Cell cell : s.capture.cells) {
-                    if (HologramSessionPolicy.ignoredPlacementAir(s, cell, cell.stableIndex)) continue;
-                    if (HologramSessionPolicy.inScope(s, cell, HologramSessionPolicy.cellIndex(s, cell))
-                        && HologramCellPolicy.foreignBlueprintOwner(s, cell)) {
-                        s.status = "0 级蓝图包含其他玩家所有权；请主动选择至少 1 级去标识，再按当前玩家身份放置";
-                        return false;
-                    }
-                }
-            if (HologramAuthoringWorkflow.ensureNetworkGroups(s)) {
-                s.networkBindingRequested = true;
-                s.status = "已生成量子设备分组；分享图请选择背包内已绑定目标网络的量子终端，再确认材料";
-                return false;
-            }
-            for (HologramAePolicy.Issue issue : s.virtualPreset.aeIssues) {
-                if (!"blocker".equals(issue.severity)) continue;
-                HologramCapture.Cell cell = s.capture.positions
-                    .get((s.x + issue.x) + "," + (s.y + issue.y) + "," + (s.z + issue.z));
-                if (cell != null && !cell.excluded && HologramSessionPolicy.membershipEnabled(s, cell)) {
-                    s.status = "AE 蓝图仍有未明确处理的净化问题；请在预览中清除对应标记，再核对施工计划";
-                    return false;
-                }
-            }
-            for (HologramCapture.Cell cell : s.capture.cells) {
-                if (HologramSessionPolicy.ignoredPlacementAir(s, cell, cell.stableIndex)) continue;
-                if (!cell.excluded && HologramSessionPolicy.membershipEnabled(s, cell)) {
-                    try {
-                        HologramNetworkBindings
-                            .validate(HologramBlueprintNbt.decode(cell.tileNbt), s.player, s.networkBindings);
-                    } catch (java.io.IOException missingBinding) {
-                        s.networkBindingRequested = true;
-                        s.status = HologramAePolicy.fallback(missingBinding.getMessage());
-                        return false;
-                    }
-                }
-                if (!HologramAePolicy.handles(cell.block, cell.tileNbt) || cell.excluded
-                    || !HologramSessionPolicy.membershipEnabled(s, cell)) continue;
-                if (HologramAeBlueprint
-                    .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt)).blocking) {
-                    s.status = "AE 蓝图仍有阻止施工的问题，请打开相关方块预览并删除或替换不安全标记";
-                    return false;
-                }
-            }
-            return true;
-        } catch (java.io.IOException | RuntimeException invalid) {
-            s.status = "AE 蓝图净化报告无效，保持蓝图；请重新审查后施工";
-            return false;
+            done = task.step(s, maxWork, maxNanos);
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.BUILD_PREPARE, measured);
         }
+        if (!done) return;
+        if (s.buildTask != task) return;
+        s.buildTask = null;
+        if (s.job != 1 && s.job != 2) s.phase = "IDLE";
     }
 }

@@ -216,7 +216,9 @@ final class HologramArea extends HologramAreaSelection {
             return false;
         }
         if ("canonicalize".equals(importPhase)) {
-            if (!preparation.start(blueprint) || !preparation.ready()) return false;
+            if (!preparation.start(blueprint)) return false;
+            preparation.advance(Integer.MAX_VALUE, deadline);
+            if (!preparation.ready()) return false;
             blueprint = preparation.result();
             imported = true;
             // Workflow continues with detached memberships, projection and plan; publication is atomic.

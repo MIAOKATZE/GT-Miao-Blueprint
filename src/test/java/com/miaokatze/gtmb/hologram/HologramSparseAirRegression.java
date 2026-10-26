@@ -76,6 +76,7 @@ final class HologramSparseAirRegression {
                 "a defensive direct air operation is a no-op before native/world/payment admission");
             SimpleAssert.eq(0L, world.reads, "direct air operation cannot observe the world");
             HologramPlacementJobs.start(sparse);
+            HologramBuildContinuationRegression.drain(sparse);
             SimpleAssert.eq(SOLID, sparse.work.size(), "only the 1k non-air targets enter the actual work queue");
             for (int index : sparse.work) SimpleAssert.that(index >= AIR, "air geometry never becomes work");
             sparse.job = 0;

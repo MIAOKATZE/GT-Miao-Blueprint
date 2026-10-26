@@ -104,22 +104,62 @@ final class HologramAePolicy {
         void update(String phase, long completed, long total) throws IOException;
     }
 
-    /** Caller transfers exclusive ownership. Frozen networks contain strings only and prohibit worker world access. */
+    /** Caller transfers exclusive ownership and runs on the native provider owner thread. */
     static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
         PreparationProgress progress) throws IOException {
         return sanitizeOwned(result, networks, null, progress);
     }
 
-    /** Frozen fallback identities keep registered native factories/resource callbacks on their documented thread. */
+    /** Synchronous callers must already own the native provider thread. */
     static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
         Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress) throws IOException {
-        result.deidentificationLevel = HologramDeidentification.level(result);
-        // Native AE canonicalization and verified quantum binding necessarily rebuild identity.
-        int completed = 0;
-        for (HologramPresets.Cell cell : result.cells) {
-            progress.update("identity", completed++, result.cells.size());
+        Sanitation work = new Sanitation(result, networks, nativeShells, progress);
+        while (!work.identityDone()) work.identity();
+        work.prepareData();
+        while (!work.aeDone()) work.ae();
+        return work.finishData();
+    }
+
+    /** Native passes are owner-thread continuations; only prepareData/finishData may run on a worker. */
+    static final class Sanitation {
+
+        private final Thread owner = Thread.currentThread();
+        private final Map<String, String> networks;
+        private final Map<String, HologramPresets.Target> nativeShells;
+        private final PreparationProgress progress;
+        private final HologramAnalysisFacts facts = new HologramAnalysisFacts();
+        private final Map<String, Issue> issues = new LinkedHashMap<>();
+        private HologramPresets.Preset result;
+        private int identityCursor, aeCursor;
+        private boolean ae;
+
+        Sanitation(HologramPresets.Preset result, Map<String, String> networks,
+            Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress) {
+            this.result = result;
+            this.networks = networks;
+            this.nativeShells = nativeShells;
+            this.progress = progress;
+            result.deidentificationLevel = HologramDeidentification.level(result);
+        }
+
+        boolean identityDone() {
+            return identityCursor == result.cells.size();
+        }
+
+        boolean aeDone() {
+            return aeCursor == result.cells.size();
+        }
+
+        private void requireOwner() {
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Native sanitation requires owner thread");
+        }
+
+        void identity() throws IOException {
+            requireOwner();
+            HologramPresets.Cell cell = result.cells.get(identityCursor++);
             Block block = cell.block();
-            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            NBTTagCompound payload = facts.copyForEdit(cell.tileNbt);
             if (HologramCarpentersCompatibility.stripOwner(block, payload))
                 cell.tileNbt = HologramBlueprintNbt.encodeCanonical(payload);
             cell.itemNbt = HologramCarpentersCompatibility.normalize(block, cell.itemNbt);
@@ -131,40 +171,48 @@ final class HologramAePolicy {
                 || payload != null && (payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
                     || payload.hasKey(HologramNetworkBindings.GROUP)))
                 result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+            progress.update("identity", identityCursor, result.cells.size());
         }
-        progress.update("identity", completed, result.cells.size());
-        result = HologramDeidentification.applyOwned(result, result.deidentificationLevel, networks, progress);
-        List<Issue> networkChanges = result.deidentificationLevel > 0
-            ? HologramNetworkBindings.sanitize(result, networks, progress)
-            : java.util.Collections.emptyList();
-        Map<String, Issue> issues = new LinkedHashMap<>();
-        for (Issue issue : networkChanges) add(issues, issue);
-        Set<String> positions = new HashSet<>();
-        for (HologramPresets.Cell cell : result.cells) positions.add(cell.x + "," + cell.y + "," + cell.z);
-        // An omitted invalid field cannot be rediscovered. Only a validated explicit edit may retire its blocker.
-        if (result.aeIssues != null) for (Issue issue : result.aeIssues) {
-            // An explicitly removed whole cell has no artifact left to restore at that coordinate.
-            boolean present = positions.contains(issue.x + "," + issue.y + "," + issue.z);
-            if (!"blocker".equals(issue.severity) || present) {
-                if (HologramAeBlueprint.automaticallyOmitted(issue.code)) add(
-                    issues,
-                    new Issue(
-                        issue.code,
-                        "warning",
-                        issue.path,
-                        "Unavailable component was omitted; replace its marker to restore it.",
-                        issue.x,
-                        issue.y,
-                        issue.z));
-                else add(issues, issue);
+
+        void prepareData() throws IOException {
+            progress.update("identity", identityCursor, result.cells.size());
+            result = HologramDeidentification.applyOwned(result, result.deidentificationLevel, networks, progress);
+            List<Issue> networkChanges = result.deidentificationLevel > 0
+                ? HologramNetworkBindings.sanitize(result, networks, progress)
+                : java.util.Collections.emptyList();
+            for (Issue issue : networkChanges) add(issues, issue);
+            Set<String> positions = new HashSet<>();
+            for (HologramPresets.Cell cell : result.cells) positions.add(cell.x + "," + cell.y + "," + cell.z);
+            // An omitted invalid field cannot be rediscovered. Only a validated explicit edit may retire its blocker.
+            if (result.aeIssues != null) for (Issue issue : result.aeIssues) {
+                // An explicitly removed whole cell has no artifact left to restore at that coordinate.
+                boolean present = positions.contains(issue.x + "," + issue.y + "," + issue.z);
+                if (!"blocker".equals(issue.severity) || present) {
+                    if (HologramAeBlueprint.automaticallyOmitted(issue.code)) add(
+                        issues,
+                        new Issue(
+                            issue.code,
+                            "warning",
+                            issue.path,
+                            "Unavailable component was omitted; replace its marker to restore it.",
+                            issue.x,
+                            issue.y,
+                            issue.z));
+                    else add(issues, issue);
+                }
             }
         }
-        boolean ae = false;
-        completed = 0;
-        for (HologramPresets.Cell cell : result.cells) {
-            progress.update("ae", completed++, result.cells.size());
+
+        void ae() throws IOException {
+            requireOwner();
+            HologramPresets.Cell cell = result.cells.get(aeCursor++);
+            sanitizeAe(cell);
+            progress.update("ae", aeCursor, result.cells.size());
+        }
+
+        private void sanitizeAe(HologramPresets.Cell cell) throws IOException {
             Block block = cell.block();
-            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+            NBTTagCompound payload = facts.read(cell.tileNbt);
             if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) add(
                 issues,
                 new Issue(
@@ -176,9 +224,9 @@ final class HologramAePolicy {
                     cell.x,
                     cell.y,
                     cell.z));
-            if (!HologramAeBlueprint.supports(block, payload)) continue;
+            if (!HologramAeBlueprint.supports(block, payload)) return;
             ae = true;
-            HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, cell.metadata, payload);
+            HologramAeBlueprint.Analysis analysis = facts.ae(block, cell.metadata, cell.tileNbt, payload);
             boolean omittedHost = !analysis.supported && analysis.issues.stream()
                 .anyMatch(issue -> "unsupported_host".equals(issue.code));
             if (omittedHost) cell.excluded = true;
@@ -222,7 +270,10 @@ final class HologramAePolicy {
                     cell.damage = shell.getItemDamage();
                 }
             }
-            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
+            NBTTagCompound projected = HologramBlueprintNbt
+                .canonicalActorPayload(block, analysis.payload(), null, "", false);
+            if (!java.util.Objects.equals(payload, projected))
+                cell.tileNbt = HologramBlueprintNbt.encodeCanonical(projected);
             // AE shell tags are not a second copy of the host inventory/configuration. Canonical tile is authoritative.
             if (cell.itemNbt != null && !cell.itemNbt.isEmpty()) {
                 add(
@@ -261,45 +312,48 @@ final class HologramAePolicy {
                         cell.y,
                         cell.z));
         }
-        progress.update("ae", completed, result.cells.size());
-        if (ae) {
-            add(
-                issues,
-                new Issue(
-                    "ae.contents_not_saved",
-                    "warning",
-                    "policy",
-                    "Storage cell contents are not saved; the source world and source cells are unchanged.",
-                    0,
-                    0,
-                    0));
-            add(
-                issues,
-                new Issue(
-                    "ae.identities_reset",
-                    "warning",
-                    "policy",
-                    "AE network, ownership and security identities are rebuilt for the player who places this blueprint.",
-                    0,
-                    0,
-                    0));
-            add(
-                issues,
-                new Issue(
-                    "ae.physical_materials",
-                    "info",
-                    "policy",
-                    "Encoded patterns, upgrade cards and empty cell shells require real materials at placement.",
-                    0,
-                    0,
-                    0));
+
+        Draft finishData() throws IOException {
+            progress.update("ae", aeCursor, result.cells.size());
+            if (ae) {
+                add(
+                    issues,
+                    new Issue(
+                        "ae.contents_not_saved",
+                        "warning",
+                        "policy",
+                        "Storage cell contents are not saved; the source world and source cells are unchanged.",
+                        0,
+                        0,
+                        0));
+                add(
+                    issues,
+                    new Issue(
+                        "ae.identities_reset",
+                        "warning",
+                        "policy",
+                        "AE network, ownership and security identities are rebuilt for the player who places this blueprint.",
+                        0,
+                        0,
+                        0));
+                add(
+                    issues,
+                    new Issue(
+                        "ae.physical_materials",
+                        "info",
+                        "policy",
+                        "Encoded patterns, upgrade cards and empty cell shells require real materials at placement.",
+                        0,
+                        0,
+                        0));
+            }
+            result.aePolicyVersion = VERSION;
+            result.aeIssues = new ArrayList<>(issues.values());
+            progress.update("report", 0, 1);
+            Draft draft = new Draft(result, result.aeIssues);
+            progress.update("report", 1, 1);
+            return draft;
         }
-        result.aePolicyVersion = VERSION;
-        result.aeIssues = new ArrayList<>(issues.values());
-        progress.update("report", 0, 1);
-        Draft draft = new Draft(result, result.aeIssues);
-        progress.update("report", 1, 1);
-        return draft;
     }
 
     /** Server-thread preflight only for the rare mixed-multipart downgrade that needs native material callbacks. */

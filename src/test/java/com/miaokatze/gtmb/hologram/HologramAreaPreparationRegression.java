@@ -42,6 +42,7 @@ final class HologramAreaPreparationRegression {
             cursorOracle(world);
             linearStress(world);
             canonicalOwnership();
+            nativeSanitationYieldsOnOwner();
             workerAdmissionAndCancellation();
             structureIndex();
             stagingOwnership(unsafe, world);
@@ -222,6 +223,7 @@ final class HologramAreaPreparationRegression {
             String before = new com.google.gson.Gson().toJson(source);
             preparation.captureNetworks(source, 8, Long.MAX_VALUE);
             SimpleAssert.that(preparation.start(source), "one detached area is admitted behind active work");
+            preparation.advance(8, Long.MAX_VALUE);
             SimpleAssert
                 .that(HologramAreaPreparation.execute(queued), "only the second bounded queue position is admitted");
             SimpleAssert.that(
@@ -240,6 +242,55 @@ final class HologramAreaPreparationRegression {
             HologramAreaPreparation.cancel(queued);
             release.countDown();
             blocker.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    private static void nativeSanitationYieldsOnOwner() throws Exception {
+        appeng.block.GtmbAeOwnerFixture block = new appeng.block.GtmbAeOwnerFixture();
+        int free = 4095;
+        while (free > 0 && Block.getBlockById(free) != null && Block.getBlockById(free) != Blocks.air) free--;
+        SimpleAssert.that(free > 0, "native owner fixture has a registry slot");
+        Block.blockRegistry.addObject(free, "gtmb:ae_owner_fixture", block);
+        appeng.block.GtmbAeOwnerFixture.owner = Thread.currentThread();
+        appeng.block.GtmbAeOwnerFixture.factories = 0;
+        HologramPresets.Preset source = new HologramPresets.Preset();
+        for (int index = 0; index < 33; index++) {
+            HologramPresets.Cell cell = HologramPresets.cell(new ItemStack(Blocks.stone), index, 0, 0, -1, false);
+            cell.block = Block.blockRegistry.getNameForObject(block);
+            NBTTagCompound payload = new NBTTagCompound();
+            payload.setInteger("fixture", index);
+            cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+            source.cells.add(cell);
+        }
+        SimpleAssert.that(
+            source.cells.get(0)
+                .block() == block,
+            "owner sanitation resolves the native AE fixture");
+        HologramAreaPreparation preparation = new HologramAreaPreparation();
+        preparation.captureNetworks(source, 64, Long.MAX_VALUE);
+        preparation.start(source);
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        int steps = 0;
+        try {
+            while (!preparation.ready() && System.nanoTime() < deadline) {
+                int before = appeng.block.GtmbAeOwnerFixture.factories;
+                preparation.advance(1, Long.MAX_VALUE);
+                SimpleAssert.that(
+                    appeng.block.GtmbAeOwnerFixture.factories - before <= 1,
+                    "one owner continuation invokes at most one native cell factory");
+                steps++;
+                if (preparation.waiting()) Thread.yield();
+            }
+            SimpleAssert.that(preparation.ready(), "owner sanitation and detached reports finish together");
+            SimpleAssert.eq(
+                33,
+                appeng.block.GtmbAeOwnerFixture.factories,
+                "every distinct AE cell is analyzed through its real native factory on the owner");
+            SimpleAssert.that(steps >= 66, "both native passes retain independent yield boundaries");
+            SimpleAssert.that(preparation.result() == source, "sanitation retains exclusive private DTO ownership");
+        } finally {
+            preparation.cancel();
+            appeng.block.GtmbAeOwnerFixture.owner = null;
         }
     }
 

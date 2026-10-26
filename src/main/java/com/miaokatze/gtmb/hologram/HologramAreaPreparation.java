@@ -42,11 +42,25 @@ final class HologramAreaPreparation {
         }
     }
 
-    private final Map<String, String> networks = new HashMap<>();
-    private final Map<String, HologramPresets.Target> nativeShells = new HashMap<>();
+    private final Map<String, String> networks;
+    private final Map<String, HologramPresets.Target> nativeShells;
     private final Map<Object, String> identities = new HashMap<>();
     private int networkCursor;
     private FutureTask<HologramPresets.Preset> task;
+    private HologramAePolicy.Sanitation sanitation;
+    private HologramPresets.Preset result;
+    private int stage;
+    private boolean cancelled, waiting;
+
+    HologramAreaPreparation() {
+        this(new HashMap<>(), new HashMap<>());
+    }
+
+    HologramAreaPreparation(Map<String, String> networks, Map<String, HologramPresets.Target> nativeShells) {
+        this.networks = networks;
+        this.nativeShells = nativeShells;
+    }
+
     private volatile Progress progress = new Progress("queued", 0, 1);
 
     /** Only this method reads source networks. It runs on the server thread with the world's normal tick budget. */
@@ -67,20 +81,70 @@ final class HologramAreaPreparation {
         return networkCursor;
     }
 
-    /** Ownership transfers only on accepted admission. A full queue is retried by a later ordinary server tick. */
+    /** Captured DTO ownership remains private until every owner/native pass and detached data pass completes. */
     boolean start(HologramPresets.Preset source) {
-        if (task != null) return true;
-        FutureTask<HologramPresets.Preset> candidate = new FutureTask<>(
-            () -> HologramAePolicy.sanitizeOwned(
-                source,
-                Collections.unmodifiableMap(networks),
-                Collections.unmodifiableMap(nativeShells),
-                this::update).preset);
-        if (execute(candidate)) {
-            task = candidate;
-            return true;
+        if (sanitation == null && !cancelled) sanitation = new HologramAePolicy.Sanitation(
+            source,
+            Collections.unmodifiableMap(networks),
+            Collections.unmodifiableMap(nativeShells),
+            this::update);
+        return !cancelled;
+    }
+
+    boolean waiting() {
+        return waiting;
+    }
+
+    void advance(int budget, long deadline) throws IOException {
+        waiting = false;
+        for (int work = 0; !cancelled && stage < 5 && work < budget; work++) {
+            if (work > 0 && System.nanoTime() >= deadline) break;
+            if (stage == 0) {
+                if (!sanitation.identityDone()) sanitation.identity();
+                else stage++;
+            } else if (stage == 1 || stage == 3) {
+                if (task == null) {
+                    final boolean prepare = stage == 1;
+                    FutureTask<HologramPresets.Preset> candidate = new FutureTask<>(() -> {
+                        if (prepare) {
+                            sanitation.prepareData();
+                            return null;
+                        }
+                        HologramPresets.Preset prepared = sanitation.finishData().preset;
+                        HologramBlueprintProcessing.validateReceipt(prepared);
+                        return prepared;
+                    });
+                    if (!execute(candidate)) {
+                        waiting = true;
+                        break;
+                    }
+                    task = candidate;
+                }
+                if (!task.isDone()) {
+                    waiting = true;
+                    break;
+                }
+                HologramPresets.Preset completed = completedTask();
+                task = null;
+                if (stage == 3) result = completed;
+                stage++;
+            } else if (stage == 2) {
+                if (!sanitation.aeDone()) sanitation.ae();
+                else stage++;
+            } else stage++;
         }
-        return false;
+    }
+
+    private HologramPresets.Preset completedTask() throws IOException {
+        try {
+            return task.get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread()
+                .interrupt();
+            throw new IOException("Area draft result interrupted", interrupted);
+        } catch (ExecutionException failed) {
+            throw new IOException("Area draft preparation failed", failed.getCause());
+        }
     }
 
     static boolean execute(FutureTask<?> task) {
@@ -110,23 +174,16 @@ final class HologramAreaPreparation {
     }
 
     boolean ready() {
-        return task != null && task.isDone();
+        return !cancelled && stage == 5;
     }
 
     HologramPresets.Preset result() throws IOException {
         if (!ready()) throw new IllegalStateException("Area draft result is not ready");
-        try {
-            return task.get();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread()
-                .interrupt();
-            throw new IOException("Area draft result interrupted", interrupted);
-        } catch (ExecutionException failed) {
-            throw new IOException("Area draft preparation failed", failed.getCause());
-        }
+        return result;
     }
 
     void cancel() {
+        cancelled = true;
         if (task != null) {
             cancel(task);
         }

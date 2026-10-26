@@ -29,6 +29,10 @@ public final class HologramWorldServiceRegression {
             unsafeField.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
             EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(FeedbackPlayer.class);
+            for (Field field : Entity.class.getDeclaredFields()) if (field.getType() == UUID.class) {
+                field.setAccessible(true);
+                field.set(player, UUID.fromString("204d8323-b5d7-42db-8d11-273ce72bc4a5"));
+            }
             for (Field field : EntityPlayer.class.getDeclaredFields()) {
                 if (field.getType() != GameProfile.class) continue;
                 field.setAccessible(true);
@@ -85,15 +89,18 @@ public final class HologramWorldServiceRegression {
             request.setString("session", (String) get(session, "id"));
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "moving preview cannot confirm construction");
             SimpleAssert.eq(false, get(session, "virtualLocked"), "rejected confirm never locks position");
             set(session, "virtualLocked", true);
             request.setString("session", "stale-session");
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "stale session cannot confirm construction");
             request.setString("session", (String) get(session, "id"));
             request.setLong("planRevision", (Long) get(session, "planRevision") - 1);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "stale material plan cannot start construction");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             positionLockRequiresSeparateWorldReview(session, player, request, action);
@@ -103,6 +110,7 @@ public final class HologramWorldServiceRegression {
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             request.setBoolean("forceExplicit", true);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert
                 .eq(false, get(session, "forcePlacementReady"), "missing review nonce cannot issue force authority");
             SimpleAssert.that(
@@ -111,6 +119,7 @@ public final class HologramWorldServiceRegression {
             long reviewedNonce = (Long) get(session, "placementReviewNonce");
             request.setLong("placementReviewNonce", reviewedNonce - 1);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "an old nonce cannot start partial construction");
             SimpleAssert.eq(false, get(session, "forcePlacementReady"), "an old nonce cannot issue force authority");
             // The policy helper used its own ACK packet. Refresh this independent packet exactly as
@@ -118,6 +127,7 @@ public final class HologramWorldServiceRegression {
             request.setLong("placementReviewNonce", reviewedNonce);
             request.setBoolean("forceExplicit", false);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "a request without partial consent has no partial authority");
             SimpleAssert.eq(
                 false,
@@ -127,9 +137,11 @@ public final class HologramWorldServiceRegression {
                 .eq(true, get(session, "blueprintAwaitingConfirmation"), "shortage keeps material review active");
             request.setBoolean("forceExplicit", false);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "repeated ordinary packet cannot exercise force capability");
             request.setBoolean("forceExplicit", true);
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(1, get(session, "job"), "one explicit partial review schedules protected construction");
             SimpleAssert
                 .eq(true, get(session, "virtualLocked"), "material confirmation keeps selected position locked");
@@ -213,6 +225,7 @@ public final class HologramWorldServiceRegression {
             .eq(false, get(session, "forcePlacementReady"), "an old review nonce cannot authorize construction");
         configure.setLong("placementReviewNonce", appliedNonce);
         action.invoke(null, session, configure, "confirmBlueprintPlacement");
+        HologramBuildContinuationRegression.drain((HologramSession) session);
         SimpleAssert.eq(0, get(session, "job"), "a policy ACK does not invent successful world placement");
         SimpleAssert.eq(
             false,
@@ -252,6 +265,7 @@ public final class HologramWorldServiceRegression {
                 session.capture.cells.get(1).status,
                 "the other real blueprint cell is independently placeable");
             HologramPlacementJobs.start(session);
+            HologramBuildContinuationRegression.drain(session);
             SimpleAssert.eq(0, session.job, "unsafe resource data blocks the entire world job before any writes");
             SimpleAssert.that(
                 session.status.contains(invalid.resourceError) && !session.status.contains("背包无法容纳回收"),
@@ -284,6 +298,7 @@ public final class HologramWorldServiceRegression {
             HologramBlueprintProjection.populateVirtual(s);
             SimpleAssert.eq("satisfied", s.capture.cells.get(0).status, "native classifier sees the existing target");
             HologramPlacementJobs.start(s);
+            HologramBuildContinuationRegression.drain(s);
             SimpleAssert.eq(0, s.job, "a satisfied plan does not manufacture a running or completed job");
             SimpleAssert.eq(0, s.completed, "NOOP does not claim a written cell");
             SimpleAssert.that(
@@ -644,6 +659,7 @@ public final class HologramWorldServiceRegression {
             SimpleAssert.eq(0, get(session, "job"), "duplicate lock delivery cannot begin construction");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
             action.invoke(null, session, request, "confirmBlueprintPlacement");
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "forged confirm after lock cannot bypass the second world click");
             long nonce = (Long) get(session, "placementReviewNonce");
             request.setLong("planRevision", (Long) get(session, "planRevision") - 1);

@@ -981,6 +981,7 @@ final class HologramBlueprintServiceRegression {
         Method build = HologramBuildPreparation.class.getDeclaredMethod("directBuild", type, boolean.class);
         build.setAccessible(true);
         build.invoke(null, session, false);
+        HologramBuildContinuationRegression.drain((HologramSession) session);
         List<Integer> work = (List<Integer>) get(session, "work");
         int sharedIndex = capture.cells.indexOf(shared);
         int otherIndex = capture.cells.indexOf(capture.positions.get("4,64,0"));
