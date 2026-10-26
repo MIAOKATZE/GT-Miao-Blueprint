@@ -131,6 +131,22 @@ final class HologramCoordinatePolicies {
                     relations.add(relation);
                 }
                 if ("item".equals(payload)) continue;
+                for (HologramGtCoordinateData.Binding binding : HologramGtCoordinateData.bindings(tag)) relations.add(
+                    relation(
+                        cell,
+                        binding.adapter,
+                        HologramGtCoordinateData.UNIT.equals(binding.adapter) ? "净化单元控制器"
+                            : HologramGtCoordinateData.PCB.equals(binding.adapter) ? "PCB工厂控制器 " + (binding.slot + 1)
+                                : HologramGtCoordinateData.BIO.equals(binding.adapter) ? "PCB生物处理室" : "PCB冷却塔",
+                        binding.slot,
+                        binding.x,
+                        binding.y,
+                        binding.z,
+                        dimension,
+                        originX,
+                        originY,
+                        originZ,
+                        selected));
                 if (panel(tileId) && tag.hasKey("Items", 9)) {
                     NBTTagList inventory = tag.getTagList("Items", 10);
                     for (int i = 0; i < inventory.tagCount(); i++) {
@@ -416,6 +432,10 @@ final class HologramCoordinatePolicies {
 
     private static void scrubReviewedCoordinates(NBTTagCompound tag, Relation relation, boolean clear)
         throws IOException {
+        if (HologramGtCoordinateData.adapter(relation.adapter)) {
+            HologramGtCoordinateData.scrub(tag, relation.adapter, relation.slot, clear);
+            return;
+        }
         NBTTagCompound root = target(tag, relation);
         if (root == null) return;
         if (HologramNativeHubData.adapter(relation.adapter)) {
@@ -454,12 +474,14 @@ final class HologramCoordinatePolicies {
         if (tag == null || !tag.hasKey(RELATIONS)) return;
         NBTTagList descriptors = checkedRelations(tag);
         boolean clearScreen = false;
+        java.util.BitSet clearedControllers = new java.util.BitSet();
         for (int i = 0; i < descriptors.tagCount(); i++) {
             NBTTagCompound row = descriptors.getCompoundTagAt(i);
             Relation relation = read(row);
             String mode = row.getString("mode");
             if ("clear".equals(mode)) {
                 if (relation.adapter.startsWith("nc.screen.")) clearScreen = true;
+                else if (HologramGtCoordinateData.PCB.equals(relation.adapter)) clearedControllers.set(relation.slot);
                 else clear(tag, relation);
             } else if ("relative".equals(mode)) {
                 try {
@@ -478,6 +500,7 @@ final class HologramCoordinatePolicies {
                 }
             }
         }
+        HologramGtCoordinateData.removeClearedControllers(tag, clearedControllers);
         if (clearScreen) tag.removeTag("screenData");
         else if (tag.hasKey("screenData", 10)) {
             NBTTagCompound screen = tag.getCompoundTag("screenData");
@@ -518,6 +541,10 @@ final class HologramCoordinatePolicies {
     }
 
     private static void clear(NBTTagCompound tag, Relation relation) throws IOException {
+        if (HologramGtCoordinateData.adapter(relation.adapter)) {
+            HologramGtCoordinateData.clear(tag, relation.adapter, relation.slot);
+            return;
+        }
         if (HologramNativeHubData.adapter(relation.adapter)) {
             HologramNativeHubData.clear(tag, relation.adapter);
             return;
@@ -543,6 +570,10 @@ final class HologramCoordinatePolicies {
 
     private static void writeCoordinates(NBTTagCompound tag, Relation relation, int x, int y, int z)
         throws IOException {
+        if (HologramGtCoordinateData.adapter(relation.adapter)) {
+            HologramGtCoordinateData.write(tag, relation.adapter, relation.slot, x, y, z);
+            return;
+        }
         NBTTagCompound target = target(tag, relation);
         if (target == null) return;
         String prefix = relation.adapter.equals("nc.extender") ? "core"
@@ -554,6 +585,8 @@ final class HologramCoordinatePolicies {
     }
 
     private static NBTTagCompound target(NBTTagCompound tag, Relation relation) throws IOException {
+        if (HologramGtCoordinateData.adapter(relation.adapter))
+            return HologramGtCoordinateData.present(tag, relation.adapter, relation.slot) ? tag : null;
         if (HologramNativeHubData.adapter(relation.adapter))
             return HologramNativeHubData.target(tag, relation.adapter, relation.slot);
         if ("nc.sensor".equals(relation.adapter)) {
@@ -752,6 +785,7 @@ final class HologramCoordinatePolicies {
             .contains(relation.previousMode)
             || !java.util.Arrays.asList("nc.sensor", "nc.extender", "nc.screen.min", "nc.screen.max")
                 .contains(relation.adapter) && !HologramNativeHubData.adapter(relation.adapter)
+                && !HologramGtCoordinateData.adapter(relation.adapter)
             || relation.id.isEmpty()
             || relation.id.length() > 256
             || relation.label.length() > 256
@@ -761,7 +795,10 @@ final class HologramCoordinatePolicies {
             || "nc.sensor".equals(relation.adapter) && (relation.slot < 0 || relation.slot > 2)
             || !"nc.sensor".equals(relation.adapter) && !HologramNativeHubData.LIST.equals(relation.adapter)
                 && !HologramNativeHubData.MAP.equals(relation.adapter)
+                && !HologramGtCoordinateData.PCB.equals(relation.adapter)
                 && relation.slot != -1
+            || HologramGtCoordinateData.adapter(relation.adapter)
+                && !HologramGtCoordinateData.validSlot(relation.adapter, relation.slot)
             || (HologramNativeHubData.LIST.equals(relation.adapter)
                 || HologramNativeHubData.MAP.equals(relation.adapter)) && (relation.slot < 0 || relation.slot >= 8192))
             throw new IOException("坐标关系策略无效");

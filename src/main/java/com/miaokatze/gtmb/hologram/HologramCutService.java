@@ -99,6 +99,37 @@ public final class HologramCutService {
         return "list".equals(action) || sameWorld && heldProjector;
     }
 
+    static void validateRequestKeys(NBTTagCompound request) throws IOException {
+        for (Object key : request.func_150296_c()) {
+            String name = String.valueOf(key);
+            if (!java.util.Arrays
+                .asList(
+                    "action",
+                    "requestId",
+                    "id",
+                    "name",
+                    HologramCutNaming.SKIP_PROMPT,
+                    HologramCutPlacementPreference.SKIP_PROMPT,
+                    "x1",
+                    "y1",
+                    "z1",
+                    "x2",
+                    "y2",
+                    "z2",
+                    "areaSelection",
+                    "originX",
+                    "originY",
+                    "originZ",
+                    "rotation",
+                    "turnX",
+                    "turnZ",
+                    "mirror",
+                    "previewPurpose",
+                    "previewGeneration")
+                .contains(name)) throw new IOException("剪切请求只能包含操作、坐标、名称和条目编号");
+        }
+    }
+
     static NBTTagCompound execute(EntityPlayerMP player, NBTTagCompound request) {
         NBTTagCompound response = new NBTTagCompound();
         response.setString("action", "state");
@@ -106,32 +137,7 @@ public final class HologramCutService {
         HologramCutStorage storage = null;
         NBTTagCompound state = null;
         try {
-            for (Object key : request.func_150296_c()) {
-                String name = String.valueOf(key);
-                if (!java.util.Arrays
-                    .asList(
-                        "action",
-                        "requestId",
-                        "id",
-                        "name",
-                        HologramCutNaming.SKIP_PROMPT,
-                        HologramCutPlacementPreference.SKIP_PROMPT,
-                        "x1",
-                        "y1",
-                        "z1",
-                        "x2",
-                        "y2",
-                        "z2",
-                        "areaSelection",
-                        "originX",
-                        "originY",
-                        "originZ",
-                        "rotation",
-                        "turnX",
-                        "turnZ",
-                        "mirror")
-                    .contains(name)) throw new IOException("剪切请求只能包含操作、坐标、名称和条目编号");
-            }
+            validateRequestKeys(request);
             if (request.hasKey("areaSelection") && !"cut".equals(request.getString("action")))
                 throw new IOException("只有剪切操作可以提交区域组合");
             if (request.hasKey("name") && (!"cut".equals(request.getString("action")) || !request.hasKey("name", 8)))
@@ -174,14 +180,7 @@ public final class HologramCutService {
                 NBTTagCompound entry = find(state, request.getString("id"));
                 if (entry == null) throw new IOException("剪切暂存不存在");
                 HologramCutEntry.validate(entry);
-                select(
-                    response,
-                    HologramCutTransforms.apply(
-                        entry,
-                        com.miaokatze.gtmb.api.CutTransforms.Transform.read(request),
-                        entry.getInteger("x"),
-                        entry.getInteger("y"),
-                        entry.getInteger("z")));
+                preview(response, entry, request, player.dimension);
             } else if ("cut".equals(action) || "paste".equals(action) || "undo".equals(action)) {
                 if (seen(state, requestId)) {
                     response.setString("message", "该剪切请求已完成");
@@ -212,6 +211,7 @@ public final class HologramCutService {
                             box[4] - y + 1,
                             box[5] - z + 1,
                             selection);
+                        HologramCutPairs.validateEntry(entry);
                         entry.setString("id", requestId);
                         long sequence = state.getLong("sequence") + 1;
                         state.setLong("sequence", sequence);
@@ -229,8 +229,12 @@ public final class HologramCutService {
                         x = undo ? entry.getInteger("x") : request.getInteger("originX");
                         y = undo ? entry.getInteger("y") : request.getInteger("originY");
                         z = undo ? entry.getInteger("z") : request.getInteger("originZ");
-                        if (!undo) entry = HologramCutTransforms
-                            .apply(entry, com.miaokatze.gtmb.api.CutTransforms.Transform.read(request), x, y, z);
+                        if (!undo) {
+                            com.miaokatze.gtmb.api.CutTransforms.Transform transform = com.miaokatze.gtmb.api.CutTransforms.Transform
+                                .read(request);
+                            HologramCutPairs.validatePose(entry, transform);
+                            entry = HologramCutTransforms.apply(entry, transform, x, y, z, dimension);
+                        }
                         HologramCutEntry.bounds(
                             x,
                             y,
@@ -238,6 +242,10 @@ public final class HologramCutService {
                             entry.getInteger("sizeX"),
                             entry.getInteger("sizeY"),
                             entry.getInteger("sizeZ"));
+                        if (!undo) {
+                            HologramCutPairs.validateEntry(entry);
+                            HologramCutPairs.validateDestination(player.worldObj, entry, x, y, z);
+                        }
                     }
                     HologramCutPlacementPreference.remember(state, request);
                     NBTTagCompound done = new NBTTagCompound();
@@ -355,6 +363,45 @@ public final class HologramCutService {
     private static void select(NBTTagCompound response, NBTTagCompound entry) {
         response.setString("id", entry.getString("id"));
         response.setTag("preview", HologramCutEntry.preview(entry));
+    }
+
+    /** Storage is an original local view; moving is a pose sketch; only locked placement binds a target origin. */
+    static void preview(NBTTagCompound response, NBTTagCompound entry, NBTTagCompound request, int targetDimension)
+        throws IOException {
+        String purpose = request.getString("previewPurpose");
+        if (purpose.isEmpty()) purpose = "local"; // Existing read clients retain their source-local pose semantics.
+        if (!"storage".equals(purpose) && !"local".equals(purpose) && !"placement".equals(purpose))
+            throw new IOException("未知剪切预览上下文");
+        response.setString("previewPurpose", purpose);
+        response.setLong("previewGeneration", request.getLong("previewGeneration"));
+        if ("storage".equals(purpose)) {
+            select(response, entry);
+            return;
+        }
+        int x = entry.getInteger("x"), y = entry.getInteger("y"), z = entry.getInteger("z");
+        int dimension = entry.getInteger("dimension");
+        if ("placement".equals(purpose)) {
+            for (String key : new String[] { "originX", "originY", "originZ" })
+                if (!request.hasKey(key, 3)) throw new IOException("放置预览目标坐标不完整");
+            x = request.getInteger("originX");
+            y = request.getInteger("originY");
+            z = request.getInteger("originZ");
+            dimension = targetDimension;
+            response.setInteger("originX", x);
+            response.setInteger("originY", y);
+            response.setInteger("originZ", z);
+        }
+        com.miaokatze.gtmb.api.CutTransforms.Transform transform = com.miaokatze.gtmb.api.CutTransforms.Transform
+            .read(request);
+        HologramCutPairs.validatePose(entry, transform);
+        int[] size = transform.size(entry.getInteger("sizeX"), entry.getInteger("sizeY"), entry.getInteger("sizeZ"));
+        if ("placement".equals(purpose)) HologramCutEntry.bounds(x, y, z, size[0], size[1], size[2]);
+        NBTTagCompound transformed = HologramCutTransforms.apply(entry, transform, x, y, z, dimension);
+        select(response, transformed);
+        if ("placement".equals(purpose)) response.setBoolean(
+            "previewTargetIndependent",
+            !transformed.getBoolean("transformTargetDependent") && transformed.getTagList("transformUnknown", 8)
+                .tagCount() == 0);
     }
 
     private static void directory(NBTTagCompound response, NBTTagCompound state) {

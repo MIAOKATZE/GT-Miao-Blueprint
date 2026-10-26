@@ -17,6 +17,12 @@ final class HologramCutTiles {
 
     private HologramCutTiles() {}
 
+    /** Read-only registry identity; never invokes an optional tile factory or reader. */
+    static Class<?> registeredType(String id) {
+        Object type = Registry.TYPES.get(id);
+        return type instanceof Class<?> ? (Class<?>) type : null;
+    }
+
     static TileEntity create(WorldServer world, Block block, int metadata, NBTTagCompound tag) throws IOException {
         try {
             Object selected = Registry.TYPES.get(tag.getString("id"));

@@ -86,8 +86,8 @@ final class HologramCutWorld {
             Block block = Block.getBlockFromName(cell.getString("block"));
             if (block == null || block == Blocks.air || world.getBlock(x, y, z) != block) continue;
             try {
-                block.onBlockAdded(world, x, y, z);
-            } catch (RuntimeException failure) {
+                HologramCutLifecycle.added(world, block, x, y, z, attachedTile(world, x, y, z));
+            } catch (RuntimeException | LinkageError failure) {
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Native post-cut placement callback failed", failure);
             }
         }

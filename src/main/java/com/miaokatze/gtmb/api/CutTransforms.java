@@ -17,7 +17,10 @@ public final class CutTransforms {
 
         boolean accepts(State state);
 
-        /** Change only the schema's spatial fields; retain inventory, ownership and unknown native fields. */
+        /**
+         * Change only the schema's spatial fields; retain inventory, ownership and unknown native fields. Identity
+         * direction matrices still call matching adapters: source and target coordinates/dimensions may differ.
+         */
         void transform(State state, Transform transform) throws IOException;
     }
 
@@ -27,9 +30,15 @@ public final class CutTransforms {
         public int metadata;
         public NBTTagCompound tile;
         public final int sourceX, sourceY, sourceZ, targetX, targetY, targetZ;
+        public final int sourceDimension, targetDimension;
 
         public State(Block block, int metadata, NBTTagCompound tile, int sourceX, int sourceY, int sourceZ, int targetX,
             int targetY, int targetZ) {
+            this(block, metadata, tile, sourceX, sourceY, sourceZ, targetX, targetY, targetZ, 0, 0);
+        }
+
+        public State(Block block, int metadata, NBTTagCompound tile, int sourceX, int sourceY, int sourceZ, int targetX,
+            int targetY, int targetZ, int sourceDimension, int targetDimension) {
             this.block = block;
             this.metadata = metadata;
             this.tile = tile == null ? null : (NBTTagCompound) tile.copy();
@@ -39,10 +48,23 @@ public final class CutTransforms {
             this.targetX = targetX;
             this.targetY = targetY;
             this.targetZ = targetZ;
+            this.sourceDimension = sourceDimension;
+            this.targetDimension = targetDimension;
         }
 
         public State copy() {
-            return new State(block, metadata, tile, sourceX, sourceY, sourceZ, targetX, targetY, targetZ);
+            return new State(
+                block,
+                metadata,
+                tile,
+                sourceX,
+                sourceY,
+                sourceZ,
+                targetX,
+                targetY,
+                targetZ,
+                sourceDimension,
+                targetDimension);
         }
     }
 

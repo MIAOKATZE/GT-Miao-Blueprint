@@ -108,6 +108,26 @@ public final class HologramRegressionTest {
             "cut_native_disk_readback_rejects_stale_blocks_tiles_and_relocated_chunks",
             HologramCutDiskRegression::run);
         cases.put("cut_pose_geometry_raw_directions_and_extension_lifecycle", HologramCutTransformRegression::run);
+        cases.put(
+            "native_metadata_geometry_state_bits_and_declared_neutral_schemas",
+            HologramVanillaMetadataRegression::run);
+        cases.put(
+            "blueprint_and_raw_share_inherited_metadata_and_spatial_nbt",
+            HologramBlockTransformParityRegression::run);
+        cases.put("inherited_metadata_accepts_only_audited_material_payloads", HologramMetadataPayloadsRegression::run);
+        cases.put("gt_shared_direction_cover_and_native_appearance_schemas", HologramGtSchemaTransformRegression::run);
+        cases.put("gt_typed_internal_coordinate_relations_preserve_external_payload", () -> {
+            try {
+                HologramGtCoordinateRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError("GT typed coordinate relations", failure);
+            }
+        });
+        cases.put("cut_restore_lifecycle_and_complete_native_pairs", HologramCutLifecycleRegression::run);
+        cases.put("cut_target_context_and_complete_littletiles_references", HologramCutSpatialRegression::run);
+        cases.put(
+            "cut_placement_preview_binds_locked_origin_and_generation",
+            com.miaokatze.gtmb.client.hologram.HologramCutPreviewContextRegression::run);
         cases.put("cut_raw_preview_preserves_payload_in_detached_world", () -> {
             try {
                 com.miaokatze.gtmb.client.hologram.HologramCutRawPreviewRegression.run();
