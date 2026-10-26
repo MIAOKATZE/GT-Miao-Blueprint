@@ -35,7 +35,12 @@ public final class HologramRuntimeMetrics {
         PLAN_STEP("planStep"),
         PLAN_CLASSIFY("planClassify"),
         PLAN_RESOURCES("planResources"),
-        CELL_ROW("cellRow");
+        CELL_ROW("cellRow"),
+        SEGMENT_VALIDATION("segmentValidation"),
+        SEGMENT_ANALYSIS("segmentAnalysis"),
+        BUILD_PREPARE("buildPrepare"),
+        CUT_PREPARE("cutPrepare"),
+        HEAVY_WORK("heavyWork");
 
         final String key;
 
@@ -70,7 +75,16 @@ public final class HologramRuntimeMetrics {
         JOB_DELTA_ENCODED_BYTES("jobDeltaEncodedBytes"),
         LIBRARY_CALLBACK_DEPTH("libraryCallbackDepth"),
         LIBRARY_CALLBACK_HIGH_WATER("libraryCallbackHighWater"),
-        LIBRARY_CALLBACK_REJECTED("libraryCallbackRejected");
+        LIBRARY_CALLBACK_REJECTED("libraryCallbackRejected"),
+        SEGMENT_CHECKS("segmentChecks"),
+        SEGMENT_REUSED("segmentReused"),
+        SEGMENT_DIRTY("segmentDirty"),
+        BLOB_HITS("blobHits"),
+        BLOB_MISSES("blobMisses"),
+        HEAVY_ACTIVE("heavyActive"),
+        HEAVY_QUEUED("heavyQueued"),
+        HEAVY_REJECTED("heavyRejected"),
+        HEAVY_BYTES("heavyBytes");
 
         final String key;
 
