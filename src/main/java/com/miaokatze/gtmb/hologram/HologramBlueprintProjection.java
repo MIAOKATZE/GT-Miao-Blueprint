@@ -147,6 +147,7 @@ final class HologramBlueprintProjection {
             saved.allowedTargets = HologramBlueprintData.savedTargets(HologramCellPolicy.candidates(s, cell));
         saved.excluded = cell.excluded;
         saved.prompt = cell.prompt;
+        saved.segmentCellId = cell.segmentCellId;
         return saved;
     }
 
@@ -311,6 +312,7 @@ final class HologramBlueprintProjection {
                 }
             }
             HologramCapture.Cell cell = new HologramCapture.Cell(null, s.x + saved.x, s.y + saved.y, s.z + saved.z);
+            cell.segmentCellId = saved.segmentCellId;
             cell.block = s.virtualPreset.schema >= 2 && saved.block != null || target == null
                 || HologramNativePlacement.supported(saved.block())
                 || saved.block() == Blocks.lit_redstone_lamp ? saved.block() : Block.getBlockFromItem(target.getItem());

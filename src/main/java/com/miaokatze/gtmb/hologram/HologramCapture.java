@@ -502,6 +502,7 @@ public final class HologramCapture {
         final int x, y, z;
         // Runtime-only hint, accepted only when the current capture still owns this exact cell at that index.
         int stableIndex = -1;
+        long segmentCellId;
         Block block;
         int meta;
         boolean unknown;

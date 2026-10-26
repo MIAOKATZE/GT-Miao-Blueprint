@@ -45,6 +45,18 @@ final class HologramBlueprintNbt {
     static final String COVER_DAMAGE = "gtitBlueprintCoverDamage";
     static final String MISSING_COVER = "gtitBlueprintMissingCover";
     private static final Field LIST_ENTRIES = listEntriesField();
+    private static final long BLOB_BYTES = 32L * 1024 * 1024;
+    private static final int BLOB_ENTRIES = 4096;
+    private static final java.util.LinkedHashMap<Long, ExactBlob> BLOBS = new java.util.LinkedHashMap<>(
+        16,
+        0.75f,
+        true);
+    private static long blobBytes;
+    static volatile long blobHits, blobMisses;
+    private static final java.util.Map<Long, java.util.List<ExactBlob>> BLOB_BUCKETS = new java.util.HashMap<>();
+    private static final java.util.concurrent.atomic.AtomicLong BLOB_IDS = new java.util.concurrent.atomic.AtomicLong();
+    private static long blobEpoch;
+    private static final java.util.concurrent.ConcurrentHashMap<String, Thread> FLIGHTS = new java.util.concurrent.ConcurrentHashMap<>();
 
     private HologramBlueprintNbt() {}
 
@@ -262,6 +274,250 @@ final class HologramBlueprintNbt {
     }
 
     static NBTTagCompound decodeData(String value) throws IOException {
+        ExactBlob blob = exact(value);
+        return blob.rawCopy();
+    }
+
+    /** Raw transport facts are registry independent. Every mutable consumer receives its own tree. */
+    static final class ExactBlob {
+
+        private final String encoded;
+        private final long cacheId = BLOB_IDS.incrementAndGet();
+        private final NBTTagCompound raw;
+        private final int expanded;
+        private final long cost;
+        private final boolean registryIndependent;
+
+        private ExactBlob(String encoded, NBTTagCompound raw, int expanded, long cost) {
+            this.encoded = encoded;
+            this.raw = raw;
+            this.expanded = expanded;
+            this.cost = cost;
+            registryIndependent = HologramBlueprintNbt.registryIndependent(raw);
+        }
+
+        int expandedBytes() {
+            return expanded;
+        }
+
+        boolean registryIndependent() {
+            return registryIndependent;
+        }
+
+        HologramSegmentContract.Presence presence() {
+            return raw == null ? HologramSegmentContract.Presence.ABSENT
+                : raw.func_150296_c()
+                    .isEmpty() ? HologramSegmentContract.Presence.EXPLICIT_EMPTY
+                        : HologramSegmentContract.Presence.PRESENT_UNKNOWN;
+        }
+
+        NBTTagCompound copyForEdit() throws IOException {
+            // Workers must use only the main-thread frozen native identities.
+            if (raw == null) return null;
+            if (HologramSnapshotDataContext.active()) return HologramSnapshotDataContext.decode(encoded);
+            NBTTagCompound copy = rawCopy();
+            try {
+                stableItems(copy, false);
+                return copy;
+            } catch (RuntimeException invalid) {
+                throw new IOException("蓝图NBT编码无效", invalid);
+            }
+        }
+
+        private NBTTagCompound rawCopy() {
+            return raw == null ? null : (NBTTagCompound) raw.copy();
+        }
+
+        /** Raw owned copy for a task that already froze every native registry substitution. */
+        NBTTagCompound copyFrozenSource() {
+            return rawCopy();
+        }
+    }
+
+    private static boolean registryIndependent(NBTBase tag) {
+        if (tag instanceof NBTTagCompound) {
+            NBTTagCompound compound = (NBTTagCompound) tag;
+            if (itemCompound(compound) || compound.hasKey("gt.covers")) return false;
+            for (Object key : compound.func_150296_c())
+                if (!registryIndependent(compound.getTag((String) key))) return false;
+        } else if (tag instanceof NBTTagList) {
+            for (NBTBase entry : listEntries((NBTTagList) tag)) if (!registryIndependent(entry)) return false;
+        }
+        return true;
+    }
+
+    /** Serial single producer; failures are never published. Accounting precedes retained tree creation. */
+    static ExactBlob exact(String value) throws IOException {
+        return exact(value, false);
+    }
+
+    static ExactBlob exactDeferred(String value) throws IOException {
+        return exact(value, true);
+    }
+
+    private static ExactBlob exact(String value, boolean defer) throws IOException {
+        if (value == null || value.isEmpty()) return new ExactBlob(value, null, 0, 0);
+        if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");
+        boolean enabled = !"false".equals(System.getProperty("gtmb.segment.blobCache"));
+        long bucket = ((long) value.length() << 32) ^ (value.hashCode() & 0xffffffffL);
+        ExactBlob hit = enabled ? cachedBlob(value, bucket) : null;
+        if (hit != null) return hit;
+        long epoch;
+        synchronized (BLOBS) {
+            epoch = blobEpoch;
+        }
+        Thread current = Thread.currentThread();
+        Thread existing = FLIGHTS.putIfAbsent(value, current);
+        boolean producer = existing == null;
+        if (existing == current) throw new IOException("Reentrant exact NBT decode");
+        if (!producer && defer) throw new HologramSnapshotDataContext.Busy();
+        // Synchronous legacy boundaries cannot wait for an owner/worker future. They retain their strict
+        // uncached implementation; resumable freezing defers to the one in-flight producer above.
+        synchronized (BLOBS) {
+            blobMisses++;
+        }
+        HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.BLOB_MISSES, 1);
+        HologramProcessGovernor.Lease lease = null;
+        try {
+            int expanded = measureExpanded(value);
+            long cost = 128L + 2L * value.length() + 32L * expanded;
+            if (producer && enabled && cost <= BLOB_BYTES)
+                lease = HologramRetainedCache.tryReserve("nbt.exact-cache", cost);
+            ExactBlob result = new ExactBlob(value, decodeUncached(value), expanded, cost);
+            if (lease != null) {
+                boolean admitted = false;
+                synchronized (BLOBS) {
+                    if (epoch == blobEpoch) {
+                        while (!BLOBS.isEmpty() && (BLOBS.size() >= BLOB_ENTRIES || cost > BLOB_BYTES - blobBytes)) {
+                            Long oldest = BLOBS.keySet()
+                                .iterator()
+                                .next();
+                            ExactBlob removed = BLOBS.remove(oldest);
+                            blobBytes -= removed.cost;
+                            long removedBucket = ((long) removed.encoded.length() << 32)
+                                ^ (removed.encoded.hashCode() & 0xffffffffL);
+                            java.util.List<ExactBlob> survivors = new ArrayList<>(BLOB_BUCKETS.get(removedBucket));
+                            survivors.remove(removed);
+                            if (survivors.isEmpty()) BLOB_BUCKETS.remove(removedBucket);
+                            else BLOB_BUCKETS.put(removedBucket, java.util.Collections.unmodifiableList(survivors));
+                        }
+                        BLOBS.put(result.cacheId, result);
+                        java.util.List<ExactBlob> candidates = new ArrayList<>(
+                            BLOB_BUCKETS.getOrDefault(bucket, java.util.Collections.emptyList()));
+                        candidates.add(result);
+                        BLOB_BUCKETS.put(bucket, java.util.Collections.unmodifiableList(candidates));
+                        blobBytes += cost;
+                        admitted = true;
+                    }
+                }
+                if (admitted) {
+                    HologramRetainedCache.watch(result)
+                        .add(lease);
+                    lease = null;
+                }
+            }
+            return result;
+        } finally {
+            if (lease != null) lease.close();
+            if (producer) FLIGHTS.remove(value, current);
+        }
+    }
+
+    /** Large exact-string comparison is outside the cache monitor, including adversarial hash collisions. */
+    private static ExactBlob cachedBlob(String value, long bucket) {
+        java.util.List<ExactBlob> candidates;
+        synchronized (BLOBS) {
+            candidates = BLOB_BUCKETS.get(bucket);
+        }
+        if (candidates != null) for (ExactBlob candidate : candidates) if (candidate.encoded.equals(value)) {
+            boolean current;
+            synchronized (BLOBS) {
+                current = BLOBS.get(candidate.cacheId) == candidate;
+                if (current) blobHits++;
+            }
+            if (current) {
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.BLOB_HITS, 1);
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** Owner-frozen primitive item identities; applying this patch never reads a registry or native factory. */
+    static final class FrozenItemPatch {
+
+        private final Map<String, Integer> ids;
+
+        private FrozenItemPatch(Map<String, Integer> ids) {
+            this.ids = java.util.Collections.unmodifiableMap(ids);
+        }
+
+        void apply(NBTBase value) {
+            if (value instanceof NBTTagCompound) {
+                NBTTagCompound tag = (NBTTagCompound) value;
+                if (tag.hasKey("gt.covers", 9)) {
+                    NBTTagList covers = (NBTTagList) tag.getTag("gt.covers");
+                    if (covers.func_150303_d() == 10) for (int i = 0; i < covers.tagCount(); i++) {
+                        NBTTagCompound cover = covers.getCompoundTagAt(i);
+                        if (!cover.hasKey("id", 3) || cover.getInteger("id") == 0 && !cover.hasKey(COVER_REGISTRY, 8))
+                            continue;
+                        if (!cover.hasKey(COVER_REGISTRY, 8)) continue;
+                        Integer id = ids.get(cover.getString(COVER_REGISTRY));
+                        cover.setInteger("id", id == null ? 0 : id | cover.getInteger(COVER_DAMAGE) << 16);
+                        if (id == null) cover.setBoolean(MISSING_COVER, true);
+                        else cover.removeTag(MISSING_COVER);
+                    }
+                }
+                if (itemCompound(tag) && tag.hasKey(ITEM_REGISTRY, 8)) {
+                    Integer id = ids.get(tag.getString(ITEM_REGISTRY));
+                    tag.setShort("id", (short) (id == null ? -1 : id.intValue()));
+                    if (id == null) tag.setBoolean(MISSING_ITEM, true);
+                    else tag.removeTag(MISSING_ITEM);
+                }
+                for (Object key : new ArrayList<>(tag.func_150296_c())) apply(tag.getTag((String) key));
+            } else if (value instanceof NBTTagList) {
+                for (NBTBase entry : listEntries((NBTTagList) value)) apply(entry);
+            }
+        }
+    }
+
+    static long frozenItemPatchBytes() {
+        if (HologramSnapshotDataContext.active())
+            throw new IllegalStateException("Registry freezing requires its owner");
+        long bytes = 512;
+        for (Object key : Item.itemRegistry.getKeys()) bytes += 160L + 2L * String.valueOf(key)
+            .length();
+        return bytes;
+    }
+
+    static FrozenItemPatch freezeItemPatch() {
+        if (HologramSnapshotDataContext.active())
+            throw new IllegalStateException("Registry freezing requires its owner");
+        Map<String, Integer> ids = new java.util.HashMap<>();
+        for (Object key : Item.itemRegistry.getKeys()) {
+            Object item = Item.itemRegistry.getObject(key);
+            if (item instanceof Item) ids.put(String.valueOf(key), Item.getIdFromItem((Item) item));
+        }
+        return new FrozenItemPatch(ids);
+    }
+
+    static void clearExactCache() {
+        synchronized (BLOBS) {
+            BLOBS.clear();
+            BLOB_BUCKETS.clear();
+            blobBytes = 0;
+            blobHits = blobMisses = 0;
+            blobEpoch++;
+        }
+    }
+
+    static long exactCacheBytes() {
+        synchronized (BLOBS) {
+            return blobBytes;
+        }
+    }
+
+    private static NBTTagCompound decodeUncached(String value) throws IOException {
         if (value == null || value.isEmpty()) return null;
         if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");
         try {
@@ -277,6 +533,10 @@ final class HologramBlueprintNbt {
 
     /** Counts expanded bytes without constructing tags, for the blueprint-wide device payload budget. */
     static int expandedBytes(String value) throws IOException {
+        return exact(value).expandedBytes();
+    }
+
+    private static int measureExpanded(String value) throws IOException {
         if (value == null || value.isEmpty()) return 0;
         if (value.length() > ((MAX_COMPRESSED + 2) / 3) * 4) throw new IOException("蓝图压缩NBT超出上限");
         try {

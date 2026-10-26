@@ -580,6 +580,7 @@ final class HologramBlueprintEditor {
                 throw new java.io.IOException("移动目标必须是已加载的空气方块；原选区保留");
             HologramCapture.Cell copy = HologramBlueprintData.blueprintCell(source, (int) x, (int) y, (int) z);
             copy.stableIndex = action.getBoolean("copy") ? -1 : index;
+            if (action.getBoolean("copy")) copy.segmentCellId = 0;
             HologramBlueprintData.setMemberships(
                 copy,
                 source.memberships()

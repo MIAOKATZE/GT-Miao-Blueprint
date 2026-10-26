@@ -7,11 +7,19 @@ final class HologramSegmentContract {
     static final int SCHEMA_EPOCH = 1;
 
     enum Domain {
-        SCHEMA, APPEARANCE, ASSET_NEEDS, RELATIONS, REPORT, MESH
+        SCHEMA,
+        APPEARANCE,
+        ASSET_NEEDS,
+        RELATIONS,
+        REPORT,
+        MESH
     }
 
     enum Presence {
-        ABSENT, EXPLICIT_EMPTY, KNOWN_DEFAULT, PRESENT_UNKNOWN
+        ABSENT,
+        EXPLICIT_EMPTY,
+        KNOWN_DEFAULT,
+        PRESENT_UNKNOWN
     }
 
     /** Storage generations never stand in for the input version of a specific domain. */
@@ -30,8 +38,11 @@ final class HologramSegmentContract {
         }
 
         boolean sameInput(Stamp other) {
-            return other != null && authority == other.authority && segment == other.segment
-                && domain == other.domain && input == other.input && schemaEpoch == other.schemaEpoch;
+            return other != null && authority == other.authority
+                && segment == other.segment
+                && domain == other.domain
+                && input == other.input
+                && schemaEpoch == other.schemaEpoch;
         }
     }
 
