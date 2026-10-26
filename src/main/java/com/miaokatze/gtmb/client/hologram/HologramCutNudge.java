@@ -2,7 +2,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
-/** A cut's locked anchor is local draft state; nudging it never sends a packet or changes raw source data. */
+/** Pure local anchor movement; the controller separately refreshes target-dependent placement receipts. */
 final class HologramCutNudge {
 
     private final HologramWorldFlow.KeyRepeat[] keys = { new HologramWorldFlow.KeyRepeat(),

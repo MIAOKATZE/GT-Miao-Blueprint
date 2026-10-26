@@ -53,11 +53,14 @@ public final class HologramBlockTransformApi {
         public final int metadata;
         public final NBTTagCompound tile;
         public final NBTTagCompound item;
+        /** True only when every requested quarter turn used an explicitly recognized schema. */
+        public final boolean handled;
 
-        private RotationResult(int metadata, NBTTagCompound tile, NBTTagCompound item) {
+        private RotationResult(int metadata, NBTTagCompound tile, NBTTagCompound item, boolean handled) {
             this.metadata = metadata;
             this.tile = tile;
             this.item = item;
+            this.handled = handled;
         }
     }
 
@@ -113,7 +116,11 @@ public final class HologramBlockTransformApi {
         int count = Math.floorMod(turns, 4);
         if (count > 1 && references != null && !references.isEmpty())
             throw new IOException("Rebuild neighboring tile references between quarter turns");
-        for (int i = 0; i < count; i++) data = HologramBlockTransforms.turn(data, vertical);
-        return new RotationResult(data.metadata, data.tile, data.item);
+        boolean handled = true;
+        for (int i = 0; i < count; i++) {
+            data = HologramBlockTransforms.turn(data, vertical);
+            handled &= data.handled;
+        }
+        return new RotationResult(data.metadata, data.tile, data.item, handled);
     }
 }

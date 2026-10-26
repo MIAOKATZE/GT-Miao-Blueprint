@@ -30,6 +30,7 @@ final class HologramBlockTransforms {
         Map<String, int[]> littleReferences;
         int x, y, z;
         boolean authoring;
+        boolean handled;
 
         Data(Block block, String sourceClass, int metadata, NBTTagCompound tile, NBTTagCompound item) {
             this.block = block;
@@ -112,17 +113,17 @@ final class HologramBlockTransforms {
                     invalid);
             }
         }
-        if (!handled && !turnVanillaMetadata(data, vertical)
-            && data.authoring
+        if (!handled) handled = turnVanillaMetadata(data, vertical);
+        data.handled = handled;
+        if (!handled && data.authoring
             && (data.tile != null && !data.tile.hasNoTags() || data.item != null && !data.item.hasNoTags()))
             throw new IOException("该方块的设备或物品 NBT 没有已适配的转向规则");
         return data;
     }
 
-    private static boolean turnVanillaMetadata(Data data, boolean vertical) {
-        if (data.block != null && data.block.getClass()
-            .getName()
-            .startsWith("net.minecraft.block.")) {
+    private static boolean turnVanillaMetadata(Data data, boolean vertical) throws IOException {
+        if (HologramCutTransformMetadata.supports(data.block)) {
+            if (!HologramCutTransformMetadata.knownPayload(data.block, data.tile, data.item)) return false;
             com.miaokatze.gtmb.api.CutTransforms.State state = new com.miaokatze.gtmb.api.CutTransforms.State(
                 data.block,
                 data.metadata,
@@ -137,6 +138,7 @@ final class HologramBlockTransforms {
                 state,
                 new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0))) {
                 data.metadata = state.metadata;
+                data.tile = state.tile;
                 return true;
             }
         }

@@ -7,10 +7,6 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.common.util.ForgeDirection;
 
-import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
-import com.gtnewhorizon.structurelib.alignment.enumerable.Flip;
-import com.gtnewhorizon.structurelib.alignment.enumerable.Rotation;
-
 /** Versioned schemas inspected in GT5U .205, AE2 1080, EnderIO 2.10.48 and FMP 1.7.16 sources. */
 final class HologramBlockTransformAdapters {
 
@@ -50,9 +46,16 @@ final class HologramBlockTransformAdapters {
             }
 
             public void turn(HologramBlockTransforms.Data data, boolean vertical) throws IOException {
-                gregtech(data.tile, vertical);
-                // Item NBT uses CoverableTileEntity.writeCoverNBT(isDrop=true), the same cover/strong schema.
-                gregtech(data.item, vertical);
+                com.miaokatze.gtmb.api.CutTransforms.Transform pose = new com.miaokatze.gtmb.api.CutTransforms.Transform(
+                    vertical ? 0 : 1,
+                    vertical ? 1 : 0,
+                    0,
+                    0);
+                gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = HologramBlockTransformGregTech
+                    .prototype(data.tile);
+                HologramBlockTransformGregTech.apply(data.tile, pose, prototype);
+                // Dropped item settings have no mID; only their captured tile supplies the native schema context.
+                HologramBlockTransformGregTech.apply(data.item, pose, prototype);
             }
         });
         HologramBlockTransforms.register(new HologramBlockTransforms.Adapter() {
@@ -141,48 +144,12 @@ final class HologramBlockTransformAdapters {
     }
 
     static void gregtech(NBTTagCompound tag, boolean vertical) {
-        if (tag == null) return;
-        if (tag.hasKey("mFacing")) {
-            int front = tag.getShort("mFacing");
-            if (front >= 0 && front < 6 && (tag.hasKey("eRotation") || tag.hasKey("eFlip"))) {
-                ExtendedFacing facing = ExtendedFacing.of(
-                    ForgeDirection.getOrientation(front),
-                    Rotation.byIndex(tag.getByte("eRotation")),
-                    Flip.byIndex(tag.getByte("eFlip")));
-                ExtendedFacing rotated = HologramVirtualTransform.alignment(facing, vertical);
-                tag.setByte(
-                    "eRotation",
-                    (byte) rotated.getRotation()
-                        .getIndex());
-                tag.setByte(
-                    "eFlip",
-                    (byte) rotated.getFlip()
-                        .getIndex());
-            }
-            tag.setShort("mFacing", (short) HologramVirtualTransform.front(front, vertical));
-        }
-        for (String key : new String[] { "mConnections", "mStrongRedstone" })
-            if (tag.hasKey(key)) tag.setByte(key, (byte) mask(tag.getByte(key) & 255, vertical));
-        sidedBytes(tag, "mRedstoneSided", vertical);
-        if (tag.hasKey("mID")) {
-            int id = tag.getInteger("mID");
-            Object prototype = id >= 0 && id < gregtech.api.GregTechAPI.METATILEENTITIES.length
-                ? gregtech.api.GregTechAPI.METATILEENTITIES[id]
-                : null;
-            if (prototype instanceof gregtech.api.metatileentity.implementations.MTEFluidPipe) {
-                for (String key : new String[] { "mLastReceivedFrom", "mDisableInput" })
-                    if (tag.hasKey(key)) tag.setByte(key, (byte) mask(tag.getByte(key) & 255, vertical));
-            } else if (prototype instanceof gregtech.api.metatileentity.implementations.MTEItemPipe
-                && tag.hasKey("mLastReceivedFrom"))
-                tag.setByte(
-                    "mLastReceivedFrom",
-                    (byte) HologramVirtualTransform.front(tag.getByte("mLastReceivedFrom"), vertical));
-        }
-        NBTTagList covers = tag.getTagList("gt.covers", 10);
-        for (int i = 0; i < covers.tagCount(); i++) {
-            NBTTagCompound cover = covers.getCompoundTagAt(i);
-            if (cover.hasKey("s"))
-                cover.setByte("s", (byte) HologramVirtualTransform.front(cover.getByte("s"), vertical));
+        try {
+            HologramBlockTransformGregTech.apply(
+                tag,
+                new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0));
+        } catch (IOException unsupported) {
+            throw new IllegalArgumentException(unsupported.getMessage(), unsupported);
         }
     }
 
@@ -284,6 +251,9 @@ final class HologramBlockTransformAdapters {
 
     static void enderIo(NBTTagCompound tag, boolean vertical) throws IOException {
         if (tag == null) return;
+        HologramBlockTransformAppearance.enderIoFacade(
+            tag,
+            new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0));
         NBTTagList conduits = tag.getTagList("conduits", 10);
         for (int i = 0; i < conduits.tagCount(); i++) {
             NBTTagCompound root = conduits.getCompoundTagAt(i), body = root.getCompoundTag("conduit");
@@ -357,7 +327,10 @@ final class HologramBlockTransformAdapters {
             for (int t = 0; t < 4; t++) if (java.util.Arrays.equals(architectureBasis(s, t), wanted)) {
                 tag.setByte("side", (byte) s);
                 tag.setByte("turn", (byte) t);
-                // TileShape.disabledConnections is LOCAL space; side/turn already moves that basis.
+                HologramBlockTransformAppearance.architectureConnections(
+                    tag,
+                    new com.miaokatze.gtmb.api.CutTransforms.Transform(vertical ? 0 : 1, vertical ? 1 : 0, 0, 0));
+                // TileShape queries Disconnected by the WORLD ForgeDirection, separately from shape side/turn.
                 return;
             }
         throw new IOException("ArchitectureCraft rotation has no side/turn representation");

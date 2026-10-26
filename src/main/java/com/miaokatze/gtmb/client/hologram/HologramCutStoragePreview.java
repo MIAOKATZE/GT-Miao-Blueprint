@@ -52,6 +52,7 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
             0x47544d426d750000L | (random.getMostSignificantBits() & 0xffffL),
             random.getLeastSignificantBits()).toString();
         request.setString("requestId", id);
+        request.setString("previewPurpose", "storage");
         // No placement transform: the directory always previews the original complete raw structure.
         state.begin(id, System.nanoTime());
         progress.update(id, "cut.preview", 0, 0, "", false, System.nanoTime());
@@ -78,6 +79,7 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
             return true;
         }
         if (!reply.getBoolean("success") || !reply.hasKey("preview", 10)
+            || !"storage".equals(reply.getString("previewPurpose"))
             || !owner.state.selected()
                 .equals(reply.getString("id"))) {
             owner.notice = text("unavailable") + " " + reply.getString("message");

@@ -4,6 +4,10 @@ package com.miaokatze.gtmb.hologram;
  * Independent owner/save clipboard. Requests contain IDs, coordinates, pose and optional naming/confirmation choices,
  * never block data.
  * Selected replies contain the complete detached raw entry; rotation/turnX/turnZ/mirror default to identity.
+ * Preview purposes: storage returns the original; local is a source-local moving sketch; placement binds a locked
+ * origin and target dimension. Receipts echo previewGeneration and originX/Y/Z; a target-dependent payload needs a
+ * new receipt after an origin change. Confirmed origin-invariant payloads may nudge locally. Moving the local sketch
+ * alone never requests another full payload.
  */
 public final class HologramCutProtocol {
 

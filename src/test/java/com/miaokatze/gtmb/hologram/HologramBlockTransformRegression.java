@@ -100,9 +100,11 @@ final class HologramBlockTransformRegression {
             SimpleAssert.eq(128 | 1 << next, tag.getByte("mConnections") & 255, "GT mask keeps flag bits");
             SimpleAssert.eq(
                 next,
-                (int) covers.getCompoundTagAt(0)
+                (int) tag.getTagList("gt.covers", 10)
+                    .getCompoundTagAt(0)
                     .getByte("s"),
                 "GT cover follows connection");
+            SimpleAssert.eq(original.getTagList("gt.covers", 10), covers, "GT staged cover edit preserves input alias");
             SimpleAssert.eq((byte) side, tag.getByteArray("mRedstoneSided")[next], "GT per-side array");
             for (int i = 0; i < 3; i++) HologramBlockTransformAdapters.gregtech(tag, vertical);
             SimpleAssert.eq(original, tag, "four GT turns identity, payload survives");

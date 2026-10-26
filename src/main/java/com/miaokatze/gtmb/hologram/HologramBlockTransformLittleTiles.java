@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 /** LittleTiles 1.6.59: voxel boxes, cutout basis and inter-cell structure references are one transform. */
 final class HologramBlockTransformLittleTiles {
@@ -23,6 +24,18 @@ final class HologramBlockTransformLittleTiles {
         Map<String, int[]> result = new HashMap<>();
         for (HologramCapture.Cell cell : cells)
             references(result, HologramBlueprintNbt.decode(cell.tileNbt), cell.x, cell.y, cell.z, vertical);
+        return result;
+    }
+
+    /** Raw clipboard cells use the same local cell/corner lookup as blueprint rotations. */
+    static Map<String, int[]> rawReferences(NBTTagList cells, boolean vertical) throws IOException {
+        Map<String, int[]> result = new HashMap<>();
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            NBTTagCompound tile = cell.getCompoundTag("tile");
+            if (!"LittleTilesTileEntity".equals(tile.getString("id"))) continue;
+            references(result, tile, cell.getInteger("x"), cell.getInteger("y"), cell.getInteger("z"), vertical);
+        }
         return result;
     }
 
