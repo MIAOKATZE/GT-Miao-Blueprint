@@ -10,12 +10,29 @@ import net.minecraft.block.Block;
 import net.minecraft.nbt.NBTTagCompound;
 
 /** Main-resolved NBT values. Detached consumers can copy known values and can never resolve new registry identities. */
-final class HologramSnapshotDataContext {
+final class HologramSnapshotDataContext implements AutoCloseable {
 
     private static final ThreadLocal<HologramSnapshotDataContext> ACTIVE = new ThreadLocal<>();
     private final Thread owner = Thread.currentThread();
-    private final Map<String, NBTTagCompound> decoded = new HashMap<>();
+    private final Object descriptorAuthority = new Object();
+    private static final long DECODED_BYTES = 4L << 20;
+    private static final int INPUT_BATCH = 2048;
+    private final Map<String, Decoded> decoded = new java.util.LinkedHashMap<>(16, .75f, true);
+    private final Map<String, Integer> expanded = new HashMap<>();
+    private final HologramRetainedCache.Owner retained = HologramRetainedCache.watch(this);
+    private HologramBlueprintNbt.FrozenItemPatch itemPatch;
+    private long decodedBytes;
+    private int references = 1;
+    private boolean ownerClosed;
+    private int aeRows, resourceRows;
+    private long resourceBytes;
+    private final Map<ResourceIdentity, NBTTagCompound> resourceReviews = new HashMap<>();
+    private final java.util.List<HologramPresets.Cell> aeIssueCells = new java.util.ArrayList<>();
+    private HologramAnalysisDocument certificates;
     private final Map<BlockIdentity, FrozenBlock> blocks = new HashMap<>();
+    private final Map<HologramNbtObligations.Descriptor, HologramNbtObligations.Descriptor> descriptors = new HashMap<>();
+    private final long resourceEpoch = com.miaokatze.gtmb.api.ResourceContainers.generation();
+    private final long nativeEpoch = HologramNativePlacement.generation();
 
     static boolean active() {
         return ACTIVE.get() != null;
@@ -29,26 +46,168 @@ final class HologramSnapshotDataContext {
         ACTIVE.remove();
     }
 
-    NBTTagCompound freeze(String encoded) throws IOException {
+    static final class Busy extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+    }
+
+    synchronized NBTTagCompound freeze(String encoded) throws IOException {
+        NBTTagCompound value = freezeBorrowed(encoded);
+        Decoded cached = decoded.get(encoded);
+        return value == null || cached == null ? value : (NBTTagCompound) value.copy();
+    }
+
+    private synchronized NBTTagCompound freezeBorrowed(String encoded) throws IOException {
         if (Thread.currentThread() != owner || active())
             throw new IllegalStateException("NBT identity freezing requires its owner thread");
         if (encoded == null || encoded.isEmpty()) return null;
-        NBTTagCompound tag = decoded.get(encoded);
-        if (tag == null) {
-            tag = HologramBlueprintNbt.decode(encoded);
-            decoded.put(encoded, tag);
+        Decoded cached = decoded.get(encoded);
+        if (cached != null) return cached.tag;
+        HologramBlueprintNbt.ExactBlob blob = HologramBlueprintNbt.exactDeferred(encoded);
+        if (!expanded.containsKey(encoded)) {
+            if (!blob.registryIndependent() && itemPatch == null) {
+                HologramProcessGovernor.Lease lease = HologramRetainedCache
+                    .tryReserve("metadata.item-patch", HologramBlueprintNbt.frozenItemPatchBytes());
+                if (lease == null) throw new Busy();
+                try {
+                    itemPatch = HologramBlueprintNbt.freezeItemPatch();
+                    retained.add(lease);
+                } catch (RuntimeException | Error failed) {
+                    lease.close();
+                    throw failed;
+                }
+            }
+            if (expanded.size() % INPUT_BATCH == 0) {
+                HologramProcessGovernor.Lease lease = HologramRetainedCache
+                    .tryReserve("metadata.source-directory", 128L * INPUT_BATCH);
+                if (lease == null) throw new Busy();
+                retained.add(lease);
+            }
+            expanded.put(encoded, blob.expandedBytes());
+        }
+        return materialize(encoded, false, blob);
+    }
+
+    private synchronized NBTTagCompound materialize(String encoded, boolean copy) throws IOException {
+        return materialize(encoded, copy, null);
+    }
+
+    private synchronized NBTTagCompound materialize(String encoded, boolean copy,
+        HologramBlueprintNbt.ExactBlob frozenSource) throws IOException {
+        Decoded previous = decoded.get(encoded);
+        if (previous != null) return copy ? (NBTTagCompound) previous.tag.copy() : previous.tag;
+        Integer size = expanded.get(encoded);
+        if (size == null) throw new IOException("Snapshot NBT identity was not frozen");
+        long cost = 512L + 64L * size;
+        HologramProcessGovernor.Lease lease = null;
+        if (cost <= DECODED_BYTES) {
+            java.util.Iterator<Decoded> oldest = decoded.values()
+                .iterator();
+            while ((decoded.size() >= 256 || cost > DECODED_BYTES - decodedBytes) && oldest.hasNext()) {
+                Decoded evicted = oldest.next();
+                decodedBytes -= evicted.cost;
+                oldest.remove();
+                // Borrowed owner reads may still be live until freezeBlock returns. Their GC ticket owns the lease.
+            }
+            lease = HologramRetainedCache.tryReserve("metadata.decoded-lru", cost);
+        }
+        NBTTagCompound tag;
+        try {
+            tag = frozenSource == null ? HologramBlueprintNbt.decodeData(encoded) : frozenSource.copyFrozenSource();
+            if (itemPatch != null) itemPatch.apply(tag);
+        } catch (IOException | RuntimeException | Error failed) {
+            if (lease != null) lease.close();
+            throw failed;
+        }
+        if (lease != null) {
+            HologramRetainedCache.Owner cacheOwner = HologramRetainedCache.watch(tag);
+            cacheOwner.add(lease);
+            decoded.put(encoded, new Decoded(tag, cost, cacheOwner));
+            decodedBytes += cost;
+            return copy ? (NBTTagCompound) tag.copy() : tag;
         }
         return tag;
+    }
+
+    synchronized AutoCloseable retain() {
+        if (ownerClosed && references == 0) throw new IllegalStateException("Closed frozen metadata source");
+        references++;
+        return new AutoCloseable() {
+
+            private boolean closed;
+
+            @Override
+            public void close() {
+                synchronized (HologramSnapshotDataContext.this) {
+                    if (closed) return;
+                    closed = true;
+                    release();
+                }
+            }
+        };
+    }
+
+    @Override
+    public synchronized void close() {
+        if (ownerClosed) return;
+        ownerClosed = true;
+        release();
+    }
+
+    private void release() {
+        if (--references != 0) return;
+        for (Decoded entry : decoded.values()) entry.owner.close();
+        decoded.clear();
+        decodedBytes = 0;
+        expanded.clear();
+        blocks.clear();
+        descriptors.clear();
+        itemPatch = null;
+        certificates = null;
+        for (HologramPresets.Cell cell : aeIssueCells) cell.frozenAeIssues = null;
+        aeIssueCells.clear();
+        resourceReviews.clear();
+        retained.close();
+    }
+
+    private static final class Decoded {
+
+        final NBTTagCompound tag;
+        final long cost;
+        final HologramRetainedCache.Owner owner;
+
+        Decoded(NBTTagCompound tag, long cost, HologramRetainedCache.Owner owner) {
+            this.tag = tag;
+            this.cost = cost;
+            this.owner = owner;
+        }
     }
 
     /** Native identity checks depend on the complete payload, never merely the shared block type. */
     void freezeBlock(HologramPresets.Cell cell) throws IOException {
         if (Thread.currentThread() != owner || active())
             throw new IllegalStateException("Block identity freezing requires its owner thread");
+        if (!currentProviders()) throw new IllegalStateException("Snapshot metadata providers changed");
+        HologramProcessGovernor.Lease cpu = HologramProcessGovernor.tryHeavyCpu("metadata.freeze");
+        if (cpu == null) throw new Busy();
+        try {
+            freezeBlockOwned(cell);
+        } finally {
+            cpu.close();
+        }
+    }
+
+    void seed(HologramAnalysisDocument document) {
+        certificates = document;
+    }
+
+    private void freezeBlockOwned(HologramPresets.Cell cell) throws IOException {
+        if (Thread.currentThread() != owner || active())
+            throw new IllegalStateException("Block identity freezing requires its owner thread");
         Block block = cell.block();
-        NBTTagCompound payload = freeze(cell.tileNbt);
-        freeze(cell.itemNbt);
-        BlockIdentity identity = new BlockIdentity(block, cell.damage, cell.tileNbt);
+        NBTTagCompound payload = freezeBorrowed(cell.tileNbt);
+        freezeBorrowed(cell.itemNbt);
+        BlockIdentity identity = new BlockIdentity(block, cell.damage, cell.metadata, cell.tileNbt);
         FrozenBlock frozen = blocks.get(identity);
         if (frozen == null) {
             HologramCoordinatePolicies.freezeSensorSlots(cell, payload);
@@ -59,7 +218,14 @@ final class HologramSnapshotDataContext {
                     block,
                     cell.damage,
                     payload == null ? null : (NBTTagCompound) payload.copy());
-            frozen = new FrozenBlock(boundary, java.util.Collections.unmodifiableSet(cell.frozenSensorSlots));
+            HologramNbtObligations.Descriptor descriptor = HologramNbtObligations
+                .descriptor(block, cell.metadata, payload);
+            HologramNbtObligations.Descriptor interned = descriptors.get(descriptor);
+            if (interned == null) {
+                interned = descriptor;
+                if (descriptors.size() < 4096) descriptors.put(descriptor, descriptor);
+            }
+            frozen = new FrozenBlock(boundary, java.util.Collections.unmodifiableSet(cell.frozenSensorSlots), interned);
             // Bound auxiliary classification storage when every cell carries a distinct native payload.
             if (blocks.size() < 4096) blocks.put(identity, frozen);
         }
@@ -67,48 +233,288 @@ final class HologramSnapshotDataContext {
         cell.metadataIdentityBoundary = frozen.boundary;
         cell.frozenBlock = block;
         cell.frozenBlockResolved = true;
+        cell.frozenNbtDescriptor = frozen.descriptor;
+        cell.frozenDescriptorOwner = descriptorAuthority;
+        cell.frozenAeIssues = null;
+        cell.frozenAeTotal = -1;
+        cell.frozenAeError = null;
+        if (!cell.excluded && cell.tileNbt != null
+            && !cell.tileNbt.isEmpty()
+            && HologramAeBlueprint.supports(block, payload)) {
+            java.util.List<HologramAeBlueprint.Issue> issues = new java.util.ArrayList<>();
+            int total = 0;
+            String failure = null;
+            try {
+                NBTTagCompound certificate = certificates == null
+                    || com.miaokatze.gtmb.api.ResourceContainers.hasCodecs() ? null
+                        : certificates.resourceCertificate(cell, "tile");
+                if (certificate != null) {
+                    total = (int) certificate.getLong("total");
+                    net.minecraft.nbt.NBTTagList rows = certificate.getTagList("rows", 10);
+                    for (int i = 0; i < rows.tagCount() && aeRows + issues.size() < 8192; i++) {
+                        NBTTagCompound row = rows.getCompoundTagAt(i);
+                        String path = row.getString("path");
+                        int slash = path.indexOf('/');
+                        issues.add(
+                            new HologramAeBlueprint.Issue(
+                                "cached-resource",
+                                "blocker",
+                                slash < 0 ? path : path.substring(slash + 1),
+                                row.getString("message")));
+                    }
+                } else {
+                    HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, cell.damage, payload);
+                    for (HologramAeBlueprint.Issue issue : analysis.issues) {
+                        if (!"blocker".equals(issue.severity) || issue.path.isEmpty()
+                            || java.util.Arrays
+                                .asList(
+                                    "unsupported_host",
+                                    "unsupported_part",
+                                    "unsupported_part_item",
+                                    "unsupported_cell")
+                                .contains(issue.code))
+                            continue;
+                        total++;
+                        if (aeRows + issues.size() < 8192) issues.add(issue);
+                    }
+                }
+            } catch (IOException invalid) {
+                failure = HologramAePolicy.fallback(invalid.getMessage());
+            }
+            cell.frozenAeTotal = total;
+            cell.frozenAeError = failure;
+            long cost = 512;
+            for (HologramAeBlueprint.Issue issue : issues) cost += 256L
+                + 2L * (issue.code.length() + issue.path.length() + issue.message.length() + issue.severity.length());
+            HologramProcessGovernor.Lease lease = issues.isEmpty() ? null
+                : HologramRetainedCache.tryReserve("metadata.ae-issues", cost);
+            if (lease != null) {
+                AeIssues frozenIssues = new AeIssues(total, issues, failure);
+                HologramRetainedCache.watch(frozenIssues)
+                    .add(lease);
+                cell.frozenAeIssues = frozenIssues;
+                aeIssueCells.add(cell);
+                aeRows += issues.size();
+            }
+        }
+        if (!cell.excluded) {
+            for (int i = 0; i < 2; i++) {
+                String encoded = i == 0 ? cell.tileNbt : cell.itemNbt;
+                if (encoded == null || encoded.isEmpty() || i == 0 && HologramAeBlueprint.supports(block, payload))
+                    continue;
+                String scope = i == 0 ? "tile" : "item";
+                ResourceIdentity resourceIdentity = new ResourceIdentity(
+                    block,
+                    cell.damage,
+                    cell.metadata,
+                    scope,
+                    encoded,
+                    resourceEpoch,
+                    nativeEpoch);
+                if (resourceReviews.containsKey(resourceIdentity)) continue;
+                NBTTagCompound review = certificates == null || com.miaokatze.gtmb.api.ResourceContainers.hasCodecs()
+                    ? null
+                    : certificates.resourceCertificate(cell, scope);
+                if (review == null) {
+                    try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+                        review = HologramBlueprintProcessing.freezeResourceReview(
+                            cell,
+                            scope,
+                            facts,
+                            Math.max(0, 8192 - resourceRows),
+                            Math.max(0L, (8L << 20) - resourceBytes));
+                    }
+                } else review = boundedResourceReview(
+                    review,
+                    Math.max(0, 8192 - resourceRows),
+                    Math.max(0L, (8L << 20) - resourceBytes));
+                long cost = HologramSnapshotNbt.estimate(review) + 1024;
+                HologramProcessGovernor.Lease lease = HologramRetainedCache
+                    .tryReserve("metadata.resource-review", cost);
+                if (lease == null) throw new Busy();
+                retained.add(lease);
+                resourceRows += review.getTagList("rows", 10)
+                    .tagCount();
+                resourceBytes += cost;
+                resourceReviews.put(resourceIdentity, review);
+            }
+        }
+    }
+
+    private static NBTTagCompound boundedResourceReview(NBTTagCompound source, int limit, long byteLimit) {
+        NBTTagCompound result = new NBTTagCompound();
+        result.setLong("total", source.getLong("total"));
+        result.setLong("blocking", source.getLong("blocking"));
+        result.setBoolean("nativeComplete", source.getBoolean("nativeComplete"));
+        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList(),
+            originals = source.getTagList("rows", 10);
+        long bytes = 0;
+        for (int i = 0; i < Math.min(limit, originals.tagCount()); i++) {
+            NBTTagCompound row = originals.getCompoundTagAt(i);
+            long cost = HologramSnapshotNbt.estimate(row);
+            if (cost > byteLimit - bytes) break;
+            rows.appendTag(row.copy());
+            bytes += cost;
+        }
+        result.setTag("rows", rows);
+        return result;
+    }
+
+    static NBTTagCompound resourceReview(HologramPresets.Cell cell, String scope) {
+        HologramSnapshotDataContext context = ACTIVE.get();
+        String encoded = "tile".equals(scope) ? cell.tileNbt : cell.itemNbt;
+        NBTTagCompound review = context == null ? null
+            : context.resourceReviews.get(
+                new ResourceIdentity(
+                    cell.block(),
+                    cell.damage,
+                    cell.metadata,
+                    scope,
+                    encoded,
+                    context.resourceEpoch,
+                    context.nativeEpoch));
+        if (review == null) throw new IllegalStateException("Resource provider facts were not frozen on the owner");
+        return review;
+    }
+
+    /** Coordinates are presentation inputs; every logical reference is counted by ResourceReview.add. */
+    private static final class ResourceIdentity {
+
+        final Block block;
+        final int damage, metadata;
+        final String scope, encoded;
+        final long resources, nativeProvider;
+
+        ResourceIdentity(Block block, int damage, int metadata, String scope, String encoded, long resources,
+            long nativeProvider) {
+            this.block = block;
+            this.damage = damage;
+            this.metadata = metadata;
+            this.scope = scope;
+            this.encoded = encoded;
+            this.resources = resources;
+            this.nativeProvider = nativeProvider;
+        }
+
+        @Override
+        public int hashCode() {
+            int hash = 31 * (31 * System.identityHashCode(block) + damage) + metadata;
+            hash = 31 * hash + Objects.hashCode(scope);
+            hash = 31 * hash + Objects.hashCode(encoded);
+            hash = 31 * hash + (int) (resources ^ resources >>> 32);
+            return 31 * hash + (int) (nativeProvider ^ nativeProvider >>> 32);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof ResourceIdentity)) return false;
+            ResourceIdentity right = (ResourceIdentity) other;
+            return block == right.block && damage == right.damage
+                && metadata == right.metadata
+                && resources == right.resources
+                && nativeProvider == right.nativeProvider
+                && Objects.equals(scope, right.scope)
+                && Objects.equals(encoded, right.encoded);
+        }
+    }
+
+    boolean currentProviders() {
+        return resourceEpoch == com.miaokatze.gtmb.api.ResourceContainers.generation()
+            && nativeEpoch == HologramNativePlacement.generation();
+    }
+
+    synchronized long retainedDecodedBytes() {
+        return decodedBytes;
+    }
+
+    long retainedResourceBytes() {
+        return resourceBytes;
+    }
+
+    int retainedResourceFacts() {
+        return resourceReviews.size();
+    }
+
+    static HologramNbtObligations.Descriptor descriptor(HologramPresets.Cell cell) {
+        HologramSnapshotDataContext context = ACTIVE.get();
+        if (context == null || cell.frozenDescriptorOwner != context.descriptorAuthority
+            || cell.frozenNbtDescriptor == null)
+            throw new IllegalStateException("Snapshot native descriptor was not frozen for this task");
+        return cell.frozenNbtDescriptor;
+    }
+
+    static AeIssues aeIssues(HologramPresets.Cell cell) {
+        descriptor(cell);
+        if (cell.frozenAeTotal < 0) throw new IllegalStateException("AE metadata facts were not frozen on the owner");
+        return cell.frozenAeIssues == null
+            ? new AeIssues(cell.frozenAeTotal, java.util.Collections.emptyList(), cell.frozenAeError)
+            : cell.frozenAeIssues;
+    }
+
+    static final class AeIssues {
+
+        final int total;
+        final java.util.List<HologramAeBlueprint.Issue> issues;
+        final String failure;
+
+        AeIssues(int total, java.util.List<HologramAeBlueprint.Issue> issues, String failure) {
+            this.total = total;
+            this.issues = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(issues));
+            this.failure = failure;
+        }
     }
 
     private static final class FrozenBlock {
 
         final boolean boundary;
         final Set<Integer> sensorSlots;
+        final HologramNbtObligations.Descriptor descriptor;
 
-        FrozenBlock(boolean boundary, Set<Integer> sensorSlots) {
+        FrozenBlock(boolean boundary, Set<Integer> sensorSlots, HologramNbtObligations.Descriptor descriptor) {
             this.boundary = boundary;
             this.sensorSlots = sensorSlots;
+            this.descriptor = descriptor;
         }
     }
 
     private static final class BlockIdentity {
 
         final Block block;
-        final int damage;
+        final int damage, metadata;
         final String tile;
 
-        BlockIdentity(Block block, int damage, String tile) {
+        BlockIdentity(Block block, int damage, int metadata, String tile) {
             this.block = block;
             this.damage = damage;
+            this.metadata = metadata;
             this.tile = tile;
         }
 
         @Override
         public int hashCode() {
-            return 31 * (31 * System.identityHashCode(block) + damage) + Objects.hashCode(tile);
+            return 31 * (31 * (31 * System.identityHashCode(block) + damage) + metadata) + Objects.hashCode(tile);
         }
 
         @Override
         public boolean equals(Object other) {
             if (!(other instanceof BlockIdentity)) return false;
             BlockIdentity identity = (BlockIdentity) other;
-            return block == identity.block && damage == identity.damage && Objects.equals(tile, identity.tile);
+            return block == identity.block && damage == identity.damage
+                && metadata == identity.metadata
+                && Objects.equals(tile, identity.tile);
         }
     }
 
     static NBTTagCompound decode(String encoded) throws IOException {
         HologramSnapshotDataContext context = ACTIVE.get();
-        NBTTagCompound tag = context == null ? null : context.decoded.get(encoded);
-        if (tag == null) throw new IOException("Snapshot NBT identity was not frozen");
-        return (NBTTagCompound) tag.copy();
+        if (context == null) throw new IOException("Snapshot NBT identity was not frozen");
+        return context.materialize(encoded, true);
+    }
+
+    static int expandedBytes(String encoded) throws IOException {
+        HologramSnapshotDataContext context = ACTIVE.get();
+        Integer bytes = context == null ? null : context.expanded.get(encoded);
+        if (bytes == null) throw new IOException("Snapshot NBT size was not frozen");
+        return bytes;
     }
 }

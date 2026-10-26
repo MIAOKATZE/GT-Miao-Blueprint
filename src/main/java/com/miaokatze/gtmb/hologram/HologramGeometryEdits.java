@@ -108,11 +108,16 @@ final class HologramGeometryEdits {
         s.geometryEdits.fullValidations++;
         HologramPresets.Preset current = HologramBlueprintProjection
             .blueprint(s, s.virtualPreset == null ? "未命名蓝图" : s.virtualPreset.name);
+        if (s.processingSource != null) {
+            current.segmentDocument = s.processingSource.segmentDocument;
+            current.analysisDocument = s.processingSource.analysisDocument;
+        }
         HologramBlueprintProcessing.invalidate(current, "geometry", s.processingPolicy);
         HologramAuthoringWorkflow.validateAuthorDraft(current);
         // Keep the editor's default-shell object; the next workflow owns the validated current projection.
         if (s.virtualPreset != null) s.virtualPreset.processingNbt = current.processingNbt;
         s.processingSource = current;
+        HologramAnalysisDocument.bindCaptureIds(s, current);
         s.geometryEdits.validationPending = false;
     }
 

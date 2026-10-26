@@ -378,10 +378,26 @@ final class HologramSnapshotMetadataRegression {
             session.processingSource.cells.get(0).item,
             "authoring targets do not read a poisoned partial plan target");
         session.processingSource.cells.get(0).facing = 5;
+        HologramBlueprintProcessing.ResourceDecision decision = new HologramBlueprintProcessing.ResourceDecision();
+        decision.x = 17;
+        decision.path = "tile:/nested";
+        decision.action = "remove";
+        session.processingPolicy.resourceDecisions.add(decision);
         HologramSnapshotMetadataSource cached = new HologramSnapshotMetadataSource(
             session,
             new HologramSnapshotDataContext());
         while (!cached.step(7, Long.MAX_VALUE)) {}
+        SimpleAssert.eq(
+            decision.write(),
+            cached.policy.resourceDecisions.get(0)
+                .write(),
+            "metadata source freezes resource decisions as well as field and coordinate policy");
+        decision.action = "preserve";
+        SimpleAssert.eq(
+            "remove",
+            cached.policy.resourceDecisions.get(0).action,
+            "later owner policy edits cannot mutate the detached metadata policy");
+        session.processingPolicy.resourceDecisions.clear();
         SimpleAssert.eq(
             2,
             cached.result.cells.get(0).facing,

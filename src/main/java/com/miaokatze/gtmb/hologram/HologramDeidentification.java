@@ -71,19 +71,22 @@ final class HologramDeidentification {
         result.deidentificationVersion = VERSION;
         if (level > 0) result.aeIssues.addAll(HologramNetworkBindings.sanitize(result, networks, progress));
         int completed = 0;
+        HologramAnalysisFacts facts = new HologramAnalysisFacts();
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("deidentify", completed++, result.cells.size());
-            cell.tileNbt = project(cell, cell.tileNbt, level);
-            cell.itemNbt = project(cell, cell.itemNbt, level);
+            cell.tileNbt = project(cell, cell.tileNbt, level, facts);
+            cell.itemNbt = project(cell, cell.itemNbt, level, facts);
         }
         progress.update("deidentify", completed, result.cells.size());
         return result;
     }
 
-    private static String project(HologramPresets.Cell cell, String encoded, int level) throws IOException {
+    private static String project(HologramPresets.Cell cell, String encoded, int level, HologramAnalysisFacts facts)
+        throws IOException {
         if (encoded == null || encoded.isEmpty()) return encoded;
         if (level == 0) return HologramCarpentersCompatibility.normalize(cell.block(), encoded);
-        NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+        NBTTagCompound before = facts.read(encoded);
+        NBTTagCompound tag = (NBTTagCompound) before.copy();
         HologramCarpentersCompatibility.stripOwner(cell.block(), tag);
         boolean registered = cell.block() != null && cell.block() == GregTechAPI.sBlockMachines
             || HologramAeBlueprint.supports(cell.block(), tag)
@@ -91,7 +94,7 @@ final class HologramDeidentification {
             || tag.getString("id")
                 .startsWith("gtswn.");
         project(tag, level, registered, false);
-        return HologramBlueprintNbt.encodeCanonical(tag);
+        return before.equals(tag) ? encoded : HologramBlueprintNbt.encodeCanonical(tag);
     }
 
     /** Exact allowlists on device roots and registered cover/part wrappers, never arbitrary recursive keys. */
