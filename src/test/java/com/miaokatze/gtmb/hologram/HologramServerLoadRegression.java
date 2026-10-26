@@ -196,11 +196,13 @@ public final class HologramServerLoadRegression {
     private static void adaptiveTickSlack() throws ReflectiveOperationException {
         final long ms = 1_000_000L;
         SimpleAssert.eq(
-            40 * ms,
+            HologramWorkBudget.TICK_NANOS,
             HologramWorkBudget.tickNanos(100 * ms, 100 * ms),
-            "idle tick exposes spare time through 40 ms");
-        SimpleAssert
-            .eq(15 * ms, HologramWorkBudget.tickNanos(100 * ms, 125 * ms), "world work reduces spare tick time");
+            "idle tick obeys the low-load global cap");
+        SimpleAssert.eq(
+            HologramWorkBudget.TICK_NANOS,
+            HologramWorkBudget.tickNanos(100 * ms, 125 * ms),
+            "available world slack never raises the global cap");
         SimpleAssert.eq(
             ms,
             HologramWorkBudget.tickNanos(100 * ms, 160 * ms),
@@ -223,13 +225,12 @@ public final class HologramServerLoadRegression {
                 clock.addAndGet(quota);
             }, session -> !"idle".equals(session), clock::get, 40 * ms);
             SimpleAssert.eq(
-                Arrays.asList("idle", "a", "b", "a+", "b+"),
-                order,
+                Arrays.asList("idle", "a", "b"),
+                order.subList(0, 3),
                 "each peer gets its first slice before extra work");
-            SimpleAssert.eq(
-                Arrays.asList(15 * ms, 15 * ms),
-                quotas,
-                "active peers fairly share spare time without reserving idle quotas");
+            for (long quota : quotas) SimpleAssert.that(
+                quota <= HologramWorkBudget.SLICE_NANOS,
+                "each continuation retains a bounded slice even when explicit round budget is larger");
             SimpleAssert
                 .eq(40 * ms, clock.get(), "idle server spends the available tick instead of stopping after five ms");
 

@@ -8,6 +8,8 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 /** Drives construction exclusively on the server thread. */
 public final class HologramLifecycle {
 
+    private boolean cutFirst;
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onServerTickStart(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) HologramWorkBudget.startServerTick();
@@ -18,7 +20,20 @@ public final class HologramLifecycle {
         if (event.phase == TickEvent.Phase.START) HologramCutService.startupRecovery();
         if (event.phase == TickEvent.Phase.END) try {
             HologramAeCraftingOrders.tick();
-            HologramService.tick();
+            HologramWorkBudget.begin(System.nanoTime() + HologramWorkBudget.tickNanos());
+            try {
+                // Both domain continuations spend one allowance; alternate the first atomic unit.
+                cutFirst = !cutFirst;
+                if (cutFirst) {
+                    HologramCutService.tick();
+                    HologramService.tick();
+                } else {
+                    HologramService.tick();
+                    if (HologramWorkBudget.remainingNanos(0) > 0) HologramCutService.tick();
+                }
+            } finally {
+                HologramWorkBudget.end();
+            }
         } finally {
             HologramWorkBudget.endServerTick();
         }

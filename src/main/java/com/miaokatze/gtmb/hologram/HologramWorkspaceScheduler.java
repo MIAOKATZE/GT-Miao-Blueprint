@@ -13,6 +13,8 @@ final class HologramWorkspaceScheduler {
         ticking = true;
         long started = HologramRuntimeMetrics.start();
         try {
+            long budget = HologramWorkBudget.remainingNanos(HologramWorkBudget.tickNanos());
+            if (budget <= 0) return;
             java.util.List<HologramSession> sessions = new java.util.ArrayList<>();
             HologramWorkspace.forEachConnected(sessions::add);
             runRound(
@@ -21,7 +23,7 @@ final class HologramWorkspaceScheduler {
                 HologramWorkspaceScheduler::continueSession,
                 HologramWorkspaceScheduler::canContinue,
                 System::nanoTime,
-                HologramWorkBudget.tickNanos());
+                budget);
         } finally {
             ticking = false;
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKSPACE_TICK, started);
@@ -61,7 +63,8 @@ final class HologramWorkspaceScheduler {
                     T session = sessions.get(index);
                     if (!canContinue.test(session)) continue;
                     long before = clock.getAsLong();
-                    long share = Math.max(1L, (deadline - before) / Math.max(1, active--));
+                    long share = Math
+                        .min(HologramWorkBudget.SLICE_NANOS, Math.max(1L, (deadline - before) / Math.max(1, active--)));
                     HologramWorkBudget.quota(before + share);
                     continuation.accept(session);
                     progressed |= clock.getAsLong() > before;
@@ -86,6 +89,7 @@ final class HologramWorkspaceScheduler {
             || !HologramSessionPolicy.tickValid(s)
             || s.libraryWorld != s.player.worldObj) return false;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+        if (HologramBuildPreparation.isPending(s)) return true;
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
         return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
             || s.localPlanPending && s.localPlanError.isEmpty()
@@ -93,6 +97,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void continueSession(HologramSession s) {
+        if (HologramBuildPreparation.isPending(s)) {
+            HologramBuildPreparation.tickBuild(s);
+            return;
+        }
         if (s.voucherCoverageTask != null) {
             s.voucherCoverageTask.tick();
             return;
@@ -110,6 +118,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        if (HologramBuildPreparation.isPending(s)) {
+            HologramBuildPreparation.tickBuild(s);
+            return;
+        }
         if (s.voucherCoverageTask != null) {
             s.voucherCoverageTask.tick();
             return;
