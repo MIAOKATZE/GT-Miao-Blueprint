@@ -914,19 +914,25 @@ public final class HologramNetwork {
         }
         ticket.snapshot.initialize(owned, valid, ready);
         if (ticket.box.peer.supportsSegments && progressConnected(ticket.box.player)) {
-            NBTTagCompound receipt = new NBTTagCompound();
-            receipt.setBoolean("progressOnly", true);
-            NBTTagCompound progress = new NBTTagCompound();
-            progress.setString("scope", "server");
-            progress.setString("phase", "snapshot.queued");
-            progress.setString("detail", "Snapshot queued; encoding and transfer are pending.");
-            progress.setString("session", ticket.box.session);
-            progress.setLong("uiSequence", owned.getLong("uiSequence"));
-            progress.setLong("planRevision", owned.getLong("planRevision"));
-            progress.setBoolean("complete", false);
-            receipt.setTag("progress", progress);
-            sendState(ticket.box.player, receipt);
+            sendState(ticket.box.player, queuedSnapshotProgress(ticket.box.session, ticket.snapshot.sequence, owned));
         }
+    }
+
+    static NBTTagCompound queuedSnapshotProgress(String session, long sequence, NBTTagCompound owned) {
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setBoolean("progressOnly", true);
+        NBTTagCompound progress = new NBTTagCompound();
+        progress.setString("scope", "server");
+        progress.setString("phase", "snapshot.queued");
+        progress.setString("detail", "Snapshot queued; encoding and transfer are pending.");
+        progress.setString("session", session);
+        progress.setLong("transportSequence", sequence);
+        progress.setLong("uiSequence", owned.getLong("uiSequence"));
+        progress.setLong("planRevision", owned.getLong("planRevision"));
+        progress.setLong("clientTaskToken", owned.getLong("blueprintClientTaskToken"));
+        progress.setBoolean("complete", false);
+        receipt.setTag("progress", progress);
+        return receipt;
     }
 
     /** Full baselines, deltas and ACKs represent ordered effects and must never replace each other. */

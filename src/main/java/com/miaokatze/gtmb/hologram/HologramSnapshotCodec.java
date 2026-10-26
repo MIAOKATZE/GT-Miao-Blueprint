@@ -96,8 +96,15 @@ public final class HologramSnapshotCodec {
 
     public static final class BusyException extends IOException {
 
+        public final long requestedBytes;
+
         BusyException(String message) {
+            this(message, 0);
+        }
+
+        BusyException(String message, long requestedBytes) {
             super(message);
+            this.requestedBytes = requestedBytes;
         }
     }
 
@@ -159,7 +166,7 @@ public final class HologramSnapshotCodec {
             ? HologramProcessGovernor.tryRetain("snapshot.expanded", estimate)
             : null;
         if (retained && lease == null)
-            throw new BusyException("Snapshot expanded-memory quota is busy; retry the current view");
+            throw new BusyException("Snapshot expanded-memory quota is busy; retry the current view", estimate);
         try (DataInputStream input = input(bytes, current)) {
             NBTSizeTracker tracker = new NBTSizeTracker(nbtLimit) {
 

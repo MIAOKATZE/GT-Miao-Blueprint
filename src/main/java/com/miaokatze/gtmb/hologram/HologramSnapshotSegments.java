@@ -157,26 +157,26 @@ public final class HologramSnapshotSegments {
         }
 
         public synchronized NBTTagCompound decode(byte[] bytes) throws IOException {
-            return decodeProjection(bytes, () -> true, false).value;
+            return decodeProjection(bytes, () -> true, false, true).value;
         }
 
         public synchronized NBTTagCompound decode(byte[] bytes, BooleanSupplier current) throws IOException {
-            return decodeProjection(bytes, current, false).value;
+            return decodeProjection(bytes, current, false, true).value;
         }
 
         public synchronized HologramSnapshotCodec.OwnedSnapshot decodeOwned(byte[] bytes, BooleanSupplier current)
             throws IOException {
             try {
-                return decodeProjection(bytes, current, true);
+                return decodeProjection(bytes, current, true, true);
             } catch (HologramSnapshotCodec.BusyException quota) {
                 // Derived cache bytes never prevent the authoritative current projection from admission.
                 clear();
-                return decodeProjection(bytes, current, true);
+                return decodeProjection(bytes, current, true, false);
             }
         }
 
         private HologramSnapshotCodec.OwnedSnapshot decodeProjection(byte[] bytes, BooleanSupplier current,
-            boolean owned) throws IOException {
+            boolean owned, boolean cacheAllowed) throws IOException {
             if (bytes.length < 4 || readInt(bytes) != MAGIC) {
                 if (owned) return HologramSnapshotCodec.decodeOwned(bytes, current);
                 return new HologramSnapshotCodec.OwnedSnapshot(HologramSnapshotCodec.decode(bytes, current));
@@ -224,7 +224,7 @@ public final class HologramSnapshotSegments {
                     raw += segmentRaw;
                     int length = input.readInt();
                     if (length < 0 || length > input.available()) throw new IOException("snapshot segment length");
-                    Segment segment = cache.get(identity);
+                    Segment segment = cacheAllowed ? cache.get(identity) : null;
                     boolean cached = segment != null;
                     if (length == 0) {
                         if (segment == null || segment.rawBytes != segmentRaw)
@@ -250,7 +250,8 @@ public final class HologramSnapshotSegments {
                                     segmentRaw,
                                     part.retainedEstimate,
                                     part.lease);
-                                cached = segmentRaw <= CACHE_RAW_BYTES && part.retainedEstimate <= CACHE_RETAINED_BYTES;
+                                cached = cacheAllowed && segmentRaw <= CACHE_RAW_BYTES
+                                    && part.retainedEstimate <= CACHE_RETAINED_BYTES;
                                 if (cached) {
                                     while (!cache.isEmpty()
                                         && (cache.size() >= CACHE_ENTRIES || segmentRaw > CACHE_RAW_BYTES - cachedRaw
@@ -313,16 +314,25 @@ public final class HologramSnapshotSegments {
                 result.setTag(RECEIPT, receipts);
                 complete = true;
                 return owner;
+            } catch (HologramSnapshotCodec.BusyException quota) {
+                throw accumulatedQuota(owner == null ? 0 : owner.retainedEstimate, quota);
             } finally {
                 if (!complete && owner != null) owner.close();
             }
+        }
+
+        static HologramSnapshotCodec.BusyException accumulatedQuota(long retained,
+            HologramSnapshotCodec.BusyException quota) {
+            return quota.requestedBytes == 0 || retained == 0 ? quota
+                : new HologramSnapshotCodec.BusyException(quota.getMessage(), retained + quota.requestedBytes);
         }
 
         private HologramProcessGovernor.Lease admission(String owner, long bytes)
             throws HologramSnapshotCodec.BusyException {
             HologramProcessGovernor.Lease lease = HologramProcessGovernor.tryRetain(owner, bytes);
             if (lease == null) throw new HologramSnapshotCodec.BusyException(
-                "Snapshot retained-memory quota is busy; retry the current view");
+                "Snapshot retained-memory quota is busy; retry the current view",
+                bytes);
             return lease;
         }
 

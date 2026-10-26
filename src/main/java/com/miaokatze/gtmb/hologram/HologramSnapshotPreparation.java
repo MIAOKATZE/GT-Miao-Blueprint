@@ -27,7 +27,7 @@ final class HologramSnapshotPreparation {
 
     static boolean canAdvance(HologramSession s) {
         Task task = TASKS.get(s);
-        if (task == null || task.encoding || task.metadata != null && task.metadata.waitingForWorker()) return false;
+        if (task == null || task.encoding || task.metadata != null && !task.metadata.canAdvance()) return false;
         if (task.stage == 0) {
             int materialized = 0;
             for (Task queued : TASKS.values()) if (queued.state != null) materialized++;

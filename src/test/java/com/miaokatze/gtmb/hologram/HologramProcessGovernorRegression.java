@@ -56,7 +56,10 @@ public final class HologramProcessGovernorRegression {
         check(HologramWorkBudget.remainingNanos(0) == 70, "child restores lifecycle parent quota");
         HologramWorkBudget.end();
         check(HologramWorkBudget.remainingNanos(7) == 7, "lifecycle exit restores standalone behavior");
-        check(HologramWorkBudget.tickNanos(0, 0) <= 5_000_000L, "idle tick no longer consumes forty ms");
+        check(HologramWorkBudget.tickNanos(0, 0) == 40_000_000L, "idle tick uses available spare time");
+        check(
+            HologramWorkBudget.tickNanos(0, 45_000_000L) == 1_000_000L,
+            "busy tick preserves bounded minimum progress");
     }
 
     public static void main(String[] args) throws Exception {

@@ -91,14 +91,7 @@ final class HologramCutClient {
                             return;
                         }
                     }
-                    NBTTagCompound oldPlacement = rawPreview, oldStorage = HologramCutStoragePreview.retainedRaw();
                     receive(nbt);
-                    NBTTagCompound retained = HologramCutStoragePreview.retainedRaw();
-                    if (retained == oldStorage) retained = rawPreview != oldPlacement ? rawPreview : null;
-                    if (retained != null && materialized != null) {
-                        HologramSnapshotRetentions.bind(retained, null, materialized, false);
-                        materialized = null;
-                    }
                 } finally {
                     if (materialized != null) materialized.close();
                     closeTransportOwner(owner);

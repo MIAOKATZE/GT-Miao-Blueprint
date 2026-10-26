@@ -353,7 +353,7 @@ final class HologramSnapshotModelsClient {
                 Minecraft mc = Minecraft.getMinecraft();
                 if (mc != null && mc.currentScreen instanceof HologramScreen)
                     ((HologramScreen) mc.currentScreen).ui.session.modelOnly(previous, next);
-                HologramSnapshotRetentions.bindModelState(next, previous, header);
+                header.close();
                 header = null;
                 preparation.published();
                 next.changedPreviousCells = java.util.Collections.emptyList();

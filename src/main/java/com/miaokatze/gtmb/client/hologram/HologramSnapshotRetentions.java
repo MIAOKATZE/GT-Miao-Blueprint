@@ -7,7 +7,7 @@ import java.util.Map;
 
 import com.miaokatze.gtmb.hologram.HologramProcessGovernor;
 
-/** Published COW states share their retained baseline charge; real remaining consumers keep it alive. */
+/** Fallback ownership for transferred buffers. Published view work leases close at publication instead. */
 final class HologramSnapshotRetentions {
 
     private static final ReferenceQueue<Object> retired = new ReferenceQueue<>();

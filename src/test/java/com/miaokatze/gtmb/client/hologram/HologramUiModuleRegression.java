@@ -31,6 +31,7 @@ public final class HologramUiModuleRegression {
         confirmedLibraryTargets();
         controllerConstructionConfirmation();
         presentationSnapshotFailure();
+        HologramSnapshotFailureCorrelationRegression.run();
         authorSaveKeepsIdentityChoiceAfterRotation();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
@@ -180,6 +181,31 @@ public final class HologramUiModuleRegression {
                     "after the terminal presentation receipt a new lock request can acquire a distinct ticket");
             }
             activeOwnerRejectsPresentationFailure();
+            HologramUiModules budget = presentationUi("decode-budget", 0);
+            budget.session.state().data.setLong("planRevision", 6);
+            budget.session.send("loadPreset", null, true);
+            long command = budget.session.pendingSequence();
+            NBTTagCompound queued = new NBTTagCompound();
+            queued.setString("session", budget.session.state().session);
+            queued.setLong("uiSequence", command);
+            queued.setLong("planRevision", 7);
+            NBTTagCompound resultFailure = HologramClient.snapshotAdmissionFailureEnvelope(queued);
+            SimpleAssert.that(
+                !resultFailure.hasKey("planRevision") && resultFailure.getLong("resultPlanRevision") == 7,
+                "a failed result revision is audited without pretending to be the old UI source revision");
+            for (String stale : new String[] { "session", "sequence" }) {
+                NBTTagCompound wrong = (NBTTagCompound) resultFailure.copy();
+                if ("session".equals(stale)) wrong.setString("session", "old workspace epoch");
+                else wrong.setLong("uiSequence", command - 1);
+                SimpleAssert.that(
+                    !HologramClient.presentationTransportFailed(budget.session, wrong)
+                        && budget.session.pendingSequence() == command,
+                    "another session or command cannot release the current budget failure ticket");
+            }
+            SimpleAssert.that(
+                HologramClient.presentationTransportFailed(budget.session, resultFailure)
+                    && budget.session.pendingSequence() < 0,
+                "UI revision six accepts its exact failed command whose uninstalled result would have revision seven");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("actual UI presentation failure lifecycle", failure);
         } finally {

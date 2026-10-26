@@ -6,6 +6,13 @@ import java.util.Deque;
 /** One pure decoder, bounded reservations, and FIFO publication on the calling client thread. */
 final class HologramSnapshotInbox<T> implements AutoCloseable {
 
+    static final class AdmissionException extends java.io.IOException {
+
+        AdmissionException(String message) {
+            super(message);
+        }
+    }
+
     interface Decoder<T> {
 
         T decode(byte[] bytes) throws Exception;
@@ -21,11 +28,17 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         final T value;
         final AutoCloseable retained;
         final long retainedBytes;
+        final long preparationBytes;
 
         Decoded(T value, AutoCloseable retained, long retainedBytes) {
+            this(value, retained, retainedBytes, 0);
+        }
+
+        Decoded(T value, AutoCloseable retained, long retainedBytes, long preparationBytes) {
             this.value = value;
             this.retained = retained;
             this.retainedBytes = retainedBytes;
+            this.preparationBytes = preparationBytes;
         }
     }
 
@@ -55,6 +68,15 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
             retained = null;
             if (materialized != null) materialized.close();
             materialized = null;
+        }
+
+        /** Work admission ends at publication, even when a view keeps the immutable model alive. */
+        void publish(java.util.function.Consumer<? super T> consumer) {
+            try {
+                consumer.accept(value);
+            } finally {
+                close();
+            }
         }
     }
 
@@ -297,25 +319,64 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                 active = entry;
             }
             Result<T> result;
+            boolean retry = false;
             try (com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease ignored = cpu) {
                 Entry<T> decoding = entry;
                 Decoded<T> decoded = decoder.decode(entry.bytes, () -> current(decoding));
-                result = new Result<>(
-                    decoded.value,
-                    null,
-                    entry.transportSequence,
-                    decoded.retained,
-                    decoded.retainedBytes);
+                long limit = com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit();
+                if (decoded.preparationBytes > limit - decoded.retainedBytes) {
+                    result = new Result<>(
+                        decoded.value,
+                        new AdmissionException("Snapshot preparation exceeds the shared work-memory budget"),
+                        entry.transportSequence,
+                        decoded.retained,
+                        decoded.retainedBytes);
+                } else {
+                    com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease preparation = decoded.preparationBytes
+                        == 0 ? null
+                            : com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                                .tryRetain("snapshot.materialized", decoded.preparationBytes);
+                    if (decoded.preparationBytes != 0 && preparation == null) {
+                        close(decoded.retained);
+                        result = null;
+                        retry = true;
+                    } else {
+                        result = new Result<>(
+                            decoded.value,
+                            null,
+                            entry.transportSequence,
+                            decoded.retained,
+                            decoded.retainedBytes);
+                        result.materialized = preparation == null ? null : preparation.transfer();
+                    }
+                }
+            } catch (com.miaokatze.gtmb.hologram.HologramSnapshotCodec.BusyException busy) {
+                // Quota contention is not a terminal decode failure. Keep the exact compressed ACK and its
+                // reservation at the FIFO head; a single-player server may still own the shared byte budget.
+                if (busy.requestedBytes > com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()) {
+                    result = new Result<>(null, new AdmissionException(busy.getMessage()), entry.transportSequence);
+                } else {
+                    result = null;
+                    retry = true;
+                }
             } catch (Exception e) {
                 result = new Result<>(null, e, entry.transportSequence);
             }
             synchronized (this) {
+                if (retry && !closed && entry.epoch == epoch) {
+                    active = null;
+                    // The CPU lease has already closed. Only this decoder worker waits, never the owner tick.
+                    try {
+                        wait(25);
+                    } catch (InterruptedException ignored) {}
+                    continue;
+                }
                 entry.bytes = null;
                 release(entry);
                 if (entry.epoch == epoch) entry.result = result;
                 else {
                     reservedBytes -= entry.cost;
-                    result.close();
+                    if (result != null) result.close();
                 }
                 active = null;
                 notifyAll();

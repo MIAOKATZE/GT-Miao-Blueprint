@@ -28,6 +28,7 @@ public final class HologramSnapshotOwnershipRegression {
                 HologramSnapshotCodec.decodeOwned(compressed, () -> true);
             } catch (HologramSnapshotCodec.BusyException expected) {
                 busy = true;
+                check(expected.requestedBytes > 0, "quota rejection exposes its exact requested expanded bytes");
             }
             check(busy, "valid data beyond transient quota is busy, never malformed");
         } finally {
@@ -62,6 +63,15 @@ public final class HologramSnapshotOwnershipRegression {
                 "actual encoder codec runs under the shared CPU permit"));
         check(job.done && job.failure == null, "CPU-scoped encoding completes");
         check(HologramProcessGovernor.activeHeavyCpu() == 0, "encoder releases CPU before publication");
+        long half = HologramProcessGovernor.retainedByteLimit() / 2 + 1;
+        HologramSnapshotCodec.BusyException cumulative = HologramSnapshotSegments.Decoder
+            .accumulatedQuota(half, new HologramSnapshotCodec.BusyException("next exact page", half));
+        check(half <= HologramProcessGovernor.retainedByteLimit(), "each requested page can fit independently");
+        check(
+            cumulative.requestedBytes > HologramProcessGovernor.retainedByteLimit(),
+            "already owned projection plus next page exposes a theoretically impossible combined allocation");
+        com.miaokatze.gtmb.client.hologram.HologramSnapshotInboxRegression.runQuotaContention();
+        HologramSnapshotCacheQuotaRegression.main(args);
         System.out.println("HologramSnapshotOwnershipRegression passed");
     }
 

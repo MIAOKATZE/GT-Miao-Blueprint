@@ -473,12 +473,10 @@ final class HologramState {
                         leases.add(pageLease);
                         // replace() clones only this one logical page, after its reservation.
                         pages.replace(row.index, old);
-                        HologramSnapshotRetentions.bind(pages.pages[page], null, pageLease, false);
                     }
                     Cell next = row.evict ? old.modelSource : new Cell(old, row.actual, row.target, mask);
                     if (cellLease != null) {
                         leases.add(cellLease);
-                        HologramSnapshotRetentions.bind(next, null, cellLease, false);
                     }
                     pages.replace(row.index, next);
                     changed.add(row.index);
@@ -500,6 +498,7 @@ final class HologramState {
 
         void published() {
             published = true;
+            for (com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease lease : leases) lease.close();
             leases.clear();
         }
 

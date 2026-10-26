@@ -21,6 +21,26 @@ public final class HologramTransportControlRegression {
         AtomicReference<NBTTagCompound> cut = new AtomicReference<>(), ordinary = new AtomicReference<>();
         try {
             System.clearProperty("gtmb.segment.transport");
+            NBTTagCompound identity = new NBTTagCompound();
+            identity.setLong("uiSequence", 37);
+            identity.setLong("planRevision", 11);
+            identity.setLong("blueprintClientTaskToken", 93);
+            NBTTagCompound queued = HologramNetwork.queuedSnapshotProgress("receipt-session", 71, identity);
+            new HologramNetwork.State(queued).toBytes(wire);
+            HologramNetwork.State queuedDecoded = new HologramNetwork.State();
+            queuedDecoded.fromBytes(wire);
+            check(queued.equals(queuedDecoded.tag), "queued identity survives the existing control wire codec");
+            NBTTagCompound correlation = queuedDecoded.tag.getCompoundTag("progress");
+            check(
+                correlation.getLong("transportSequence") == 71 && correlation.getLong("uiSequence") == 37
+                    && correlation.getLong("planRevision") == 11
+                    && correlation.getLong("clientTaskToken") == 93
+                    && "receipt-session".equals(correlation.getString("session")),
+                "decode failures can correlate only the exact queued command and transport frame");
+            check(
+                !identity.hasKey("transportSequence"),
+                "queuing receipt metadata does not mutate the authoritative payload");
+            wire.clear();
             NBTTagCompound source = new NBTTagCompound();
             source.setString("session", "session");
             new HologramNetwork.Action(source).toBytes(wire);

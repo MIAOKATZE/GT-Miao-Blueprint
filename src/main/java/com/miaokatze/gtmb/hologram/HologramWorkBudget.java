@@ -15,6 +15,7 @@ final class HologramWorkBudget {
     private static Frame parent;
     private static Thread serverTickOwner;
     private static long serverTickStarted;
+    private static long serverTickSequence;
 
     private HologramWorkBudget() {}
 
@@ -44,6 +45,7 @@ final class HologramWorkBudget {
     static void startServerTick() {
         serverTickOwner = Thread.currentThread();
         serverTickStarted = System.nanoTime();
+        if (++serverTickSequence == 0) serverTickSequence++;
     }
 
     static void endServerTick() {
@@ -54,7 +56,12 @@ final class HologramWorkBudget {
         return owner == Thread.currentThread() || serverTickOwner == Thread.currentThread();
     }
 
-    /** Spare server time is additionally capped by the low-load GTMB tick allowance. */
+    /** Zero outside an actual server tick, so standalone continuation callers can retry immediately. */
+    static long currentServerTick() {
+        return serverTickOwner == Thread.currentThread() ? serverTickSequence : 0;
+    }
+
+    /** Use spare server time up to 40 ms from START, leaving roughly 10 ms for later END listeners. */
     static long tickNanos() {
         return serverTickOwner == Thread.currentThread() ? tickNanos(serverTickStarted, System.nanoTime()) : TICK_NANOS;
     }
@@ -62,7 +69,7 @@ final class HologramWorkBudget {
     static long tickNanos(long started, long now) {
         Deadline spare = Deadline.startingAt(started, TICK_WORK_TARGET_NANOS);
         if (!spare.hasTimeRemaining(now)) return MIN_PROGRESS_NANOS;
-        return Math.min(TICK_NANOS, Math.max(MIN_PROGRESS_NANOS, TICK_WORK_TARGET_NANOS - Math.max(0L, now - started)));
+        return Math.max(MIN_PROGRESS_NANOS, TICK_WORK_TARGET_NANOS - Math.max(0L, now - started));
     }
 
     static void quota(long deadline) {

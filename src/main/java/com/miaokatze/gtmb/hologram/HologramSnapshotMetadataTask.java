@@ -47,6 +47,7 @@ final class HologramSnapshotMetadataTask {
     private boolean keysCached, decorative;
     private String sourceWarning = "";
     private FutureTask<Report> report;
+    private long busyTick;
     private final WorkerProgress workerProgress = new WorkerProgress();
 
     HologramSnapshotMetadataTask(HologramSession s, NBTTagCompound state) {
@@ -105,6 +106,7 @@ final class HologramSnapshotMetadataTask {
             cancel();
             throw new IllegalStateException("Snapshot metadata source or providers changed");
         }
+        if (waitingForBudget()) return false;
         for (int work = 0; work < maxWork && stage < 13; work++) {
             if (work > 0 && System.nanoTime() >= deadline) return false;
             try {
@@ -155,6 +157,7 @@ final class HologramSnapshotMetadataTask {
                     cursor = 1;
                 }
             } catch (HologramSnapshotDataContext.Busy busy) {
+                busyTick = HologramWorkBudget.currentServerTick();
                 return false;
             } catch (IOException invalid) {
                 if (stage == 4) {
@@ -174,6 +177,14 @@ final class HologramSnapshotMetadataTask {
 
     boolean waitingForWorker() {
         return stage == 3 && report != null && !report.isDone();
+    }
+
+    boolean waitingForBudget() {
+        return busyTick != 0 && busyTick == HologramWorkBudget.currentServerTick();
+    }
+
+    boolean canAdvance() {
+        return !waitingForWorker() && !waitingForBudget();
     }
 
     private void next() {
@@ -305,6 +316,7 @@ final class HologramSnapshotMetadataTask {
             Report result = report.get();
             if (result == null) {
                 report = null;
+                busyTick = HologramWorkBudget.currentServerTick();
                 return false;
             }
             if (!dataContext.currentProviders()) {

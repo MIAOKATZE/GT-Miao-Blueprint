@@ -161,7 +161,7 @@ final class HologramRegionCache {
         try {
             Region result = new Region(cells, topology);
             if (unpublished != null) unpublished.add(lease);
-            HologramSnapshotRetentions.bind(result, null, lease, false);
+            else lease.close();
             return result;
         } catch (RuntimeException | Error failure) {
             lease.close();
