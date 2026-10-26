@@ -30,6 +30,7 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 final class HologramBlockRender {
 
     private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
+    private static final Map<HologramState.Cell, Integer> DEFERRED = new IdentityHashMap<>();
     private static final Map<String, String> FAILURES = new HashMap<>();
     private static final Set<String> WARNED_FAILURES = new HashSet<>();
     private static HologramState snapshot;
@@ -68,6 +69,7 @@ final class HologramBlockRender {
         for (Model[] pair : MODELS.values())
             for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
         MODELS.clear();
+        DEFERRED.clear();
         FAILURES.clear();
         snapshot = null;
         target = actual = null;
@@ -80,6 +82,7 @@ final class HologramBlockRender {
             List<HologramState.Cell> cells = previous.regions.regions.get(key);
             if (cells == null) continue;
             for (HologramState.Cell cell : cells) {
+                DEFERRED.remove(cell);
                 Model[] pair = MODELS.remove(cell);
                 if (pair == null) continue;
                 for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
@@ -98,11 +101,20 @@ final class HologramBlockRender {
     static boolean ready(HologramState.Cell cell, boolean current) {
         if (snapshot == null) return false;
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+        if (!HologramSnapshotModelsClient.ready(snapshot, cell, current)) return false;
         if (!HologramNativeTiles.supported(cell.block(current))) return false;
         Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
-        return pair[side].list != 0;
+        return pair[side] != null && pair[side].list != 0;
+    }
+
+    static void defer(HologramState.Cell cell, boolean current) {
+        DEFERRED.put(cell, DEFERRED.getOrDefault(cell, 0) | (current ? 1 : 2));
+    }
+
+    static boolean deferred(HologramState.Cell cell, boolean current) {
+        return (DEFERRED.getOrDefault(cell, 0) & (current ? 1 : 2)) != 0;
     }
 
     static void draw(HologramState.Cell cell, boolean current) {
@@ -175,12 +187,28 @@ final class HologramBlockRender {
     private static Model compile(HologramState.Cell cell, boolean current) {
         Block block = cell.block(current);
         HologramBlockAccess access = current ? actual : target;
+        access.beginModel(cell);
         TileEntity tile = access.getTileEntity(cell.x, cell.y, cell.z);
+        if (!access.endModel()) return null;
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
         if (tile == null
             && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z))))
             return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
-        return compile(cell, current, access, tile, adapter);
+        access.beginModel(cell);
+        Model model = compile(cell, current, access, tile, adapter);
+        if (!access.endModel()) {
+            defer(cell, current);
+            if (model.list != 0) {
+                GL11.glDeleteLists(model.list, 1);
+                compiled--;
+                vertices -= model.vertices;
+            }
+            return null;
+        }
+        int remaining = DEFERRED.getOrDefault(cell, 0) & ~(current ? 1 : 2);
+        if (remaining == 0) DEFERRED.remove(cell);
+        else DEFERRED.put(cell, remaining);
+        return model;
     }
 
     /** Opt-in control invokes the original registered ISBRH against independent native tiles. */
@@ -402,6 +430,8 @@ final class HologramBlockRender {
     }
 
     private static Model failed(HologramState.Cell cell, boolean current, String message) {
+        if (deferred(cell, current))
+            return new Model(0, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
         String id = current ? cell.id : cell.wantId;
         int meta = current ? cell.meta : cell.wantMeta;
         FAILURES.put(id, message);

@@ -133,6 +133,7 @@ final class HologramTextWorkflow {
         private final HologramPresets.Structure existing;
         private final HologramAttachmentGeometry.Job geometry;
         private final List<HologramCapture.Cell> additions = new ArrayList<>();
+        private final List<HologramTextBox.Cell> exportedGeometry = new ArrayList<>();
         private final Set<String> remove = new HashSet<>();
         private final Set<String> occupiedPositions = new HashSet<>();
         private final Block host;
@@ -263,6 +264,7 @@ final class HologramTextWorkflow {
             added.meta = ordinary ? metadata : 0;
             added.blueprintBlock = ordinary ? materialName : "littletiles:BlockLittleTiles";
             added.tileNbt = ordinary ? "" : cell.encodedTile();
+            if (!ordinary) exportedGeometry.add(cell);
             // The first exact child supplies only the primary sample; the full payload remains payable later.
             added.actualStack = ordinary ? new ItemStack(material, 1, metadata)
                 : HologramNativePlacement.sample(host, 0, cell.sampleTile());
@@ -283,6 +285,7 @@ final class HologramTextWorkflow {
                     throw new IOException("附加对象位置超出编辑距离，请移动后重新确认");
             }
             stageAttachment(s, preset, additions, remove, geometry.payloadSizes);
+            for (HologramTextBox.Cell cell : exportedGeometry) cell.exportEncodedTile();
             HologramPresets.Structure group = existing == null ? new HologramPresets.Structure() : existing;
             group.id = text.id;
             String title = text.picture == null ? text.text : text.picture.filename;
@@ -292,7 +295,8 @@ final class HologramTextWorkflow {
             group.x = text.x;
             group.y = text.y;
             group.z = text.z;
-            group.textBoxNbt = geometry.definition;
+            group.textBoxNbt = geometry.exportDefinition();
+            geometry.close();
             if (existing == null) preset.structures.add(group);
             s.target = null;
             s.machine = null;

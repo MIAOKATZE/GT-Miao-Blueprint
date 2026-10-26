@@ -158,6 +158,11 @@ final class HologramUiSession {
         acknowledgeMaterialReview(next.data.getLong("uiSequence"));
     }
 
+    /** A model-domain attachment is not a command receipt and cannot acknowledge selection or material review. */
+    void modelOnly(HologramState previous, HologramState next) {
+        if (state == previous && next.modelOnly && next.data == previous.data && next.follows(previous)) state = next;
+    }
+
     static boolean sameTarget(HologramState.Cell before, HologramState.Cell after) {
         if (before == null || after == null) return before == after;
         if (before.targetFacing != after.targetFacing || before.wantMeta != after.wantMeta

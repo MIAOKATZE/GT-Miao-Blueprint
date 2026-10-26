@@ -285,6 +285,13 @@ public final class HologramBlueprintPreview {
         if (request == null) return;
         try {
             request.requireCurrent();
+            if (request.preparation == null)
+                request.preparation = new HologramState.Preparation(request.snapshot, true);
+            if (!request.preparation.step(256, 2_000_000L)) {
+                if (!REQUESTS.offer(request)) request.fail(new IOException("Blueprint preview queue is full"));
+                return;
+            }
+            request.preparedState = request.preparation.result();
             BufferedImage image = render(request);
             request.requireCurrent();
             if (request.completed.compareAndSet(false, true)) {
@@ -309,6 +316,8 @@ public final class HologramBlueprintPreview {
         private int preexistingErrorCount;
         private boolean nativeRendering, readbackSucceeded;
         private volatile boolean cancelled;
+        private HologramState.Preparation preparation;
+        private HologramState preparedState;
 
         Request(NBTTagCompound snapshot, double yaw, double pitch, BooleanSupplier current,
             Consumer<BufferedImage> done, Consumer<Throwable> failure) {
@@ -348,7 +357,14 @@ public final class HologramBlueprintPreview {
             && !request.sourceJsonSha256.isEmpty();
         if (witness) request.preexistingErrorCount = clearPreexistingErrors();
         if (!OpenGlHelper.isFramebufferEnabled()) throw new IOException("Native framebuffer previews are unavailable");
-        HologramState state = completeSnapshot(request.snapshot);
+        HologramState state = request.preparedState;
+        if (state == null || request.snapshot.getBoolean("displayPartial")
+            || request.snapshot.getBoolean("partial")
+            || state.cells.size() != request.snapshot.getTagList("cells", 10)
+                .tagCount())
+            throw new IOException("Blueprint preview is not completely prepared");
+        for (HologramState.Cell cell : state.cells) if (cell.nativeModelPending != 0)
+            throw new IOException("Blueprint preview model source is incomplete; canonical capture is required");
         ClientTessState tess = new ClientTessState(Tessellator.instance);
         RenderState saved = new RenderState();
         Framebuffer framebuffer = null;
@@ -485,16 +501,6 @@ public final class HologramBlueprintPreview {
             if (GL11.glGetError() == GL11.GL_NO_ERROR) return count;
         }
         throw new IOException("Native preview preexisting GL errors could not be cleared");
-    }
-
-    /** Registry resolution and audited AE visual factories run only in the client render context. */
-    private static HologramState completeSnapshot(NBTTagCompound data) throws IOException {
-        NBTTagList cells = data.getTagList("cells", 10);
-        for (int i = 0; i < cells.tagCount(); i++) {
-            NBTTagCompound cell = cells.getCompoundTagAt(i);
-            completeCell(cell);
-        }
-        return new HologramState(data);
     }
 
     /** Resolve one disposable display row on the client thread, without world or payment validation. */

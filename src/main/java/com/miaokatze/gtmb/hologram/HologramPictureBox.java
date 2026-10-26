@@ -171,6 +171,7 @@ public final class HologramPictureBox {
         int[] filtered = pixels.clone();
         if (filter >= 5) {
             for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+                if (x == 0) HologramAttachmentGeometry.checkpoint("filter", y, height);
                 int at = y * width + x;
                 if (pixels[at] >>> 24 < 128) continue;
                 int[] sum = new int[3];
@@ -196,6 +197,7 @@ public final class HologramPictureBox {
         byte[] result = new byte[pixels.length];
         double[][] error = new double[2][(width + 2) * 3];
         for (int y = 0; y < height; y++) {
+            HologramAttachmentGeometry.checkpoint("palette", y, height);
             Arrays.fill(error[(y + 1) & 1], 0);
             for (int x = 0; x < width; x++) {
                 int at = y * width + x;
@@ -234,13 +236,15 @@ public final class HologramPictureBox {
         return result;
     }
 
-    private int[] sample(boolean[] background) {
+    private int[] sample(boolean[] background) throws IOException {
         int[] result = new int[width * height];
         for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            if (x == 0) HologramAttachmentGeometry.checkpoint("sample", y, height);
             int x0 = x * sourceWidth / width, x1 = Math.max(x0 + 1, (x + 1) * sourceWidth / width);
             int y0 = y * sourceHeight / height, y1 = Math.max(y0 + 1, (y + 1) * sourceHeight / height);
             long r = 0, g = 0, b = 0, alpha = 0;
             for (int yy = y0; yy < y1; yy++) for (int xx = x0; xx < x1; xx++) {
+                if (((yy * sourceWidth + xx) & 255) == 0) HologramAttachmentGeometry.checkpoint("sample", y, height);
                 int at = yy * sourceWidth + xx, color = source[at], a = background[at] ? 0 : color >>> 24;
                 alpha += a;
                 r += (color >>> 16 & 255) * a;
@@ -254,13 +258,16 @@ public final class HologramPictureBox {
         return result;
     }
 
-    private boolean[] backgroundMask() {
+    private boolean[] backgroundMask() throws IOException {
         Map<Integer, Integer> counts = new HashMap<>();
-        for (int y = 0; y < sourceHeight; y++) for (int x = 0; x < sourceWidth; x++)
-            if (x == 0 || y == 0 || x == sourceWidth - 1 || y == sourceHeight - 1) {
-                int color = source[y * sourceWidth + x];
-                if (color >>> 24 >= 128) counts.merge(color & 0xffffff, 1, Integer::sum);
-            }
+        for (int y = 0; y < sourceHeight; y++) {
+            HologramAttachmentGeometry.checkpoint("background", y, sourceHeight);
+            for (int x = 0; x < sourceWidth; x++)
+                if (x == 0 || y == 0 || x == sourceWidth - 1 || y == sourceHeight - 1) {
+                    int color = source[y * sourceWidth + x];
+                    if (color >>> 24 >= 128) counts.merge(color & 0xffffff, 1, Integer::sum);
+                }
+        }
         // Transparent padding must not make an interior object's own edge its background.
         int target = -1, frequency = 0;
         for (Map.Entry<Integer, Integer> entry : counts.entrySet())
@@ -271,10 +278,14 @@ public final class HologramPictureBox {
         boolean[] mask = new boolean[source.length];
         if (target < 0) return mask;
         ArrayDeque<Integer> queue = new ArrayDeque<>();
-        for (int y = 0; y < sourceHeight; y++)
+        for (int y = 0; y < sourceHeight; y++) {
+            HologramAttachmentGeometry.checkpoint("background", y, sourceHeight);
             for (int x = 0; x < sourceWidth; x++) if (x == 0 || y == 0 || x == sourceWidth - 1 || y == sourceHeight - 1)
                 enqueueBackground(y * sourceWidth + x, target, mask, queue);
+        }
+        int visited = 0;
         while (!queue.isEmpty()) {
+            if ((visited++ & 255) == 0) HologramAttachmentGeometry.checkpoint("background", visited, source.length);
             int at = queue.removeFirst(), x = at % sourceWidth, y = at / sourceWidth;
             if (x > 0) enqueueBackground(at - 1, target, mask, queue);
             if (x + 1 < sourceWidth) enqueueBackground(at + 1, target, mask, queue);
@@ -325,35 +336,37 @@ public final class HologramPictureBox {
     }
 
     List<HologramTextBox.Cell> generate(HologramTextBox placement) throws IOException {
-        byte[] pixels = rasterize();
-        HologramMicroTiles tiles = new HologramMicroTiles();
-        int samples = 0;
-        for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
-            if (px == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
-            int index = (pixels[py * width + px] & 255) - 1;
-            if (index < 0) continue;
-            if (placement.axisAligned()) {
-                placement.box(
-                    tiles,
-                    px * placement.pixelX,
-                    (height - py - 1) * placement.pixelY,
-                    0,
-                    placement.pixelX,
-                    placement.pixelY,
-                    placement.thickness,
-                    material(index),
-                    metadata(index),
-                    0xffffff);
-                continue;
-            }
-            for (int sx = 0; sx < placement.pixelX; sx++)
-                for (int sy = 0; sy < placement.pixelY; sy++) for (int sz = 0; sz < placement.thickness; sz++) {
-                    if (++samples > HologramTextBox.MAX_SAMPLES) throw new IOException("旋转图片采样过大，请减小像素或使用直角旋转");
-                    int[] voxel = placement
-                        .orient(px * placement.pixelX + sx, (height - py - 1) * placement.pixelY + sy, sz);
-                    tiles.add(voxel[0], voxel[1], voxel[2], material(index), metadata(index), 0xffffff);
+        byte[] pixels = HologramAttachmentGeometry.picturePixels(this);
+        try (HologramMicroTiles tiles = new HologramMicroTiles()) {
+            int samples = 0;
+            for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
+                if (px == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
+                int index = (pixels[py * width + px] & 255) - 1;
+                if (index < 0) continue;
+                if (placement.axisAligned()) {
+                    placement.box(
+                        tiles,
+                        px * placement.pixelX,
+                        (height - py - 1) * placement.pixelY,
+                        0,
+                        placement.pixelX,
+                        placement.pixelY,
+                        placement.thickness,
+                        material(index),
+                        metadata(index),
+                        0xffffff);
+                    continue;
                 }
+                for (int sx = 0; sx < placement.pixelX; sx++)
+                    for (int sy = 0; sy < placement.pixelY; sy++) for (int sz = 0; sz < placement.thickness; sz++) {
+                        if (++samples > HologramTextBox.MAX_SAMPLES) throw new IOException("旋转图片采样过大，请减小像素或使用直角旋转");
+                        if ((samples & 255) == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
+                        int[] voxel = placement
+                            .orient(px * placement.pixelX + sx, (height - py - 1) * placement.pixelY + sy, sz);
+                        tiles.add(voxel[0], voxel[1], voxel[2], material(index), metadata(index), 0xffffff);
+                    }
+            }
+            return tiles.finish(placement.x, placement.y, placement.z);
         }
-        return tiles.finish(placement.x, placement.y, placement.z);
     }
 }
