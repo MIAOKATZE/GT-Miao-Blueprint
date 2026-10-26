@@ -65,6 +65,7 @@ final class HologramLibraryClient {
     private int serverCatalogReplies;
     private long pendingConfigRevision = -1;
     private byte[] outgoing;
+    private AutoCloseable outgoingOwner;
     private HologramLibraryProtocol.UploadWindow uploadWindow;
     private int nextChunk, sentBytes, incomingTotal, incomingIndex, page, pages = 1;
     private boolean ready, inFlight, loading, preparing;
@@ -720,7 +721,7 @@ final class HologramLibraryClient {
             NBTTagCompound cancel = request("cancel");
             cancel.setString("transfer", outgoingId);
             HologramNetwork.sendLibrary(cancel);
-            outgoing = null;
+            clearOutgoing();
             uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
@@ -888,7 +889,11 @@ final class HologramLibraryClient {
     private void advanceGeneration() {
         generation++;
         worker.getQueue()
-            .removeIf(task -> task instanceof QueuedWork && !((QueuedWork) task).durable);
+            .removeIf(task -> {
+                if (!(task instanceof QueuedWork queued) || queued.durable) return false;
+                queued.close();
+                return true;
+            });
         loading = false;
         localCatalogProgress.clear();
     }
@@ -1389,7 +1394,7 @@ final class HologramLibraryClient {
             main(() -> {
                 if (generation != token) return;
                 preparing = false;
-                outgoing = bytes;
+                setOutgoing(bytes, null);
                 outgoingId = UUID.randomUUID()
                     .toString();
                 outgoingOp = upload ? "upload" : "private";
@@ -1883,7 +1888,7 @@ final class HologramLibraryClient {
             main(() -> {
                 if (token != generation || contentAdmission != admitted) return;
                 workerDisplayProgress = null;
-                outgoing = bytes;
+                setOutgoing(bytes, null);
                 outgoingOp = "private";
                 outgoingQuick = false;
                 outgoingLocal = source.localId;
@@ -2101,7 +2106,7 @@ final class HologramLibraryClient {
         saveProgress.clear();
         downloadExpected = false;
         draftPending = false;
-        outgoing = null;
+        clearOutgoing();
         uploadWindow = null;
         if (incoming != null) incoming.cancel();
         incoming = null;
@@ -2200,7 +2205,7 @@ final class HologramLibraryClient {
                 reply.getString("contentHash"))) return;
             lastActivity = System.nanoTime();
             contentAdmission = null;
-            outgoing = null;
+            clearOutgoing();
             uploadWindow = null;
             outgoingId = "";
             ready = inFlight = preparing = false;
@@ -2343,10 +2348,11 @@ final class HologramLibraryClient {
             traceSave("preview_verified");
             recordSaveWitness("previewVerifiedReply", reply);
             byte[] verifiedArtifact = outgoing;
+            AutoCloseable verifiedOwner = takeOutgoingOwner();
             String saved = outgoingLocal, serverKey = connection;
             long token = generation;
             pendingSaveAck = null;
-            outgoing = null;
+            clearOutgoing();
             uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
@@ -2374,7 +2380,7 @@ final class HologramLibraryClient {
                     throw failure;
                 }
                 publishDiskSave(local, acknowledgement, serverKey, token);
-            });
+            }, verifiedOwner);
         } else if ("chunkAck".equals(op)) {
             if (!matchesOutgoing(reply)) return;
             int previousBytes = sentBytes;
@@ -2402,7 +2408,7 @@ final class HologramLibraryClient {
             long completedTask = backgroundTaskToken;
             boolean quickUpload = outgoingQuick;
             boolean uploaded = "uploaded".equals(op);
-            outgoing = null;
+            clearOutgoing();
             uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
@@ -3001,9 +3007,8 @@ final class HologramLibraryClient {
                     }
                     acknowledgement.setString("previewSha256", actualPreviewHash);
                     pendingSaveAck = acknowledgement;
-                    HologramSnapshotRetentions.bind(artifact, null, publicationBytes, false);
+                    setOutgoing(artifact, publicationBytes);
                     published = true;
-                    outgoing = artifact;
                     outgoingId = UUID.randomUUID()
                         .toString();
                     outgoingOp = "preview";
@@ -3077,20 +3082,31 @@ final class HologramLibraryClient {
         void run() throws Exception;
     }
 
-    private final class QueuedWork implements Runnable {
+    private final class QueuedWork implements Runnable, AutoCloseable {
 
         final Job job;
         final long token = generation;
         final boolean durable;
+        private AutoCloseable ownership;
+        private boolean running, closed;
 
         QueuedWork(Job job, boolean durable) {
+            this(job, durable, null);
+        }
+
+        QueuedWork(Job job, boolean durable, AutoCloseable ownership) {
             this.job = job;
             this.durable = durable;
+            this.ownership = ownership;
         }
 
         public void run() {
-            if (!durable && token != generation) return;
+            synchronized (this) {
+                if (closed || running) return;
+                running = true;
+            }
             try {
+                if (!durable && token != generation) return;
                 job.run();
             } catch (Exception error) {
                 main(() -> {
@@ -3098,7 +3114,51 @@ final class HologramLibraryClient {
                     loading = false;
                     failSave("保存蓝图失败：" + HologramUiText.reason(error.getMessage()), error);
                 });
+            } finally {
+                release(true);
             }
+        }
+
+        public void close() {
+            release(false);
+        }
+
+        private void release(boolean finished) {
+            AutoCloseable owner;
+            synchronized (this) {
+                if (closed || running && !finished) return;
+                running = false;
+                closed = true;
+                owner = ownership;
+                ownership = null;
+            }
+            closeOwnership(owner);
+        }
+    }
+
+    private void setOutgoing(byte[] bytes, AutoCloseable ownership) {
+        clearOutgoing();
+        outgoing = bytes;
+        outgoingOwner = ownership;
+    }
+
+    private AutoCloseable takeOutgoingOwner() {
+        AutoCloseable owner = outgoingOwner;
+        outgoingOwner = null;
+        return owner;
+    }
+
+    private void clearOutgoing() {
+        outgoing = null;
+        closeOwnership(takeOutgoingOwner());
+    }
+
+    private static void closeOwnership(AutoCloseable owner) {
+        if (owner == null) return;
+        try {
+            owner.close();
+        } catch (Exception failure) {
+            throw new IllegalStateException("Blueprint transfer owner release", failure);
         }
     }
 
@@ -3106,14 +3166,24 @@ final class HologramLibraryClient {
         enqueueWork(job, false);
     }
 
+    private void work(Job job, AutoCloseable ownership) {
+        enqueueWork(job, false, ownership);
+    }
+
     private void durableWork(Job job) {
         enqueueWork(job, true);
     }
 
     private void enqueueWork(Job job, boolean durable) {
+        enqueueWork(job, durable, null);
+    }
+
+    private void enqueueWork(Job job, boolean durable, AutoCloseable ownership) {
+        QueuedWork queued = new QueuedWork(job, durable, ownership);
         try {
-            worker.execute(new QueuedWork(job, durable));
+            worker.execute(queued);
         } catch (java.util.concurrent.RejectedExecutionException busy) {
+            queued.close();
             loading = false;
             failSave("蓝图保存队列繁忙，请稍后重试", busy);
         }

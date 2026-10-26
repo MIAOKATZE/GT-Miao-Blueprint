@@ -35,6 +35,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             cancelledCatalogCanRefreshAgain();
             preparationActivityIsCorrelatedAndBounded();
             savedPreviewOwnsItsObservedAngles();
+            HologramLibraryTransferOwnershipRegression.run();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Blueprint save lifecycle", failure);
         }
