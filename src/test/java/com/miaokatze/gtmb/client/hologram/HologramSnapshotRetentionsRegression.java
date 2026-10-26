@@ -12,21 +12,23 @@ import com.miaokatze.gtmb.hologram.HologramProcessGovernor;
 public final class HologramSnapshotRetentionsRegression {
 
     public static void main(String[] args) throws Exception {
-        long before = HologramProcessGovernor.retainedBytes();
         HologramState baseline = new HologramState(new NBTTagCompound());
         HologramState patch = new HologramState(new NBTTagCompound());
         HologramSnapshotRetentions
             .bind(baseline, null, HologramProcessGovernor.retain("fixture.baseline", 4096), false);
         HologramSnapshotRetentions.bind(patch, baseline, HologramProcessGovernor.retain("fixture.patch", 1024), true);
+        // Admission may reap unrelated generic caches. Measure after both actual test leases exist.
+        long charged = HologramProcessGovernor.retainedBytes();
+        check(charged >= 5120, "both test consumers retain their admitted byte charges");
         retire(baseline);
-        HologramSnapshotRetentions.reap();
+        drainRetired();
         check(
-            HologramProcessGovernor.retainedBytes() == before + 5120,
+            HologramProcessGovernor.retainedBytes() == charged,
             "live COW publication keeps the retired baseline charge");
         retire(patch);
-        HologramSnapshotRetentions.reap();
+        drainRetired();
         check(
-            HologramProcessGovernor.retainedBytes() == before,
+            HologramProcessGovernor.retainedBytes() == charged - 5120,
             "last COW consumer releases both baseline and patch exactly once");
         System.out.println("HologramSnapshotRetentionsRegression passed");
     }
@@ -44,6 +46,23 @@ public final class HologramSnapshotRetentionsRegression {
             }
         }
         throw new AssertionError("retained state has no owner");
+    }
+
+    private static void drainRetired() throws Exception {
+        Field field = HologramSnapshotRetentions.class.getDeclaredField("releases");
+        field.setAccessible(true);
+        for (int attempt = 0; attempt < 1024; attempt++) {
+            HologramSnapshotRetentions.reap();
+            if (((java.util.Deque<?>) field.get(null)).isEmpty()) {
+                Field ownersField = HologramSnapshotRetentions.class.getDeclaredField("owners");
+                ownersField.setAccessible(true);
+                boolean queued = false;
+                for (Object key : ((Map<?, ?>) ownersField.get(null)).keySet())
+                    if (((Reference<?>) key).get() == null) queued = true;
+                if (!queued) return;
+            }
+        }
+        throw new AssertionError("bounded retirement callbacks did not drain the explicit fixture events");
     }
 
     private static void check(boolean value, String message) {

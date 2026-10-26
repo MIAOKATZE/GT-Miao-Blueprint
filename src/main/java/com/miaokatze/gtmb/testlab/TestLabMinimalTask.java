@@ -23,6 +23,7 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
     private String id;
     private TestLabCodecWork codec;
     private boolean blueprintChecked;
+    private HologramTestLabBlueprintProbe.Work blueprint;
 
     TestLabMinimalTask(TestLabRuntime runtime) {
         this.runtime = runtime;
@@ -94,18 +95,21 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             TestLabZone capture = runtime.config().zones.get(1);
             runtime.useZone(capture);
             if (!blueprintChecked) {
-                NBTTagCompound result = HologramTestLabBlueprintProbe.run(
+                if (blueprint == null) blueprint = HologramTestLabBlueprintProbe.start(
                     runtime.world(),
                     (net.minecraftforge.common.util.FakePlayer) runtime.actor().player,
                     capture.x + 8,
                     capture.y + 1,
                     capture.z + 16);
+                NBTTagCompound result = blueprint.advance(runtime.ticks());
+                if (result == null) return TestLabTasks.WAIT;
                 TestLabTasks.require(result.getBoolean("success"), "Ordinary production blueprint fixture failed");
                 report.data.setTag("ordinaryBlueprint", result.copy());
                 report.check(
                     "ordinary_blueprint_minimal",
                     "PASS",
                     "Real ordinary planning/material payment/native world transaction; detailed scoped receipt attached");
+                blueprint.cancel();
                 blueprintChecked = true;
                 return TestLabTasks.CONTINUE;
             }
@@ -236,6 +240,11 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             return TestLabTasks.DONE;
         }
         return TestLabTasks.CONTINUE;
+    }
+
+    @Override
+    public void cleanup() {
+        if (blueprint != null) blueprint.cancel();
     }
 
     private NBTTagCompound region(String op, String id, int x, int y, int z, int bx, int by, int bz) {

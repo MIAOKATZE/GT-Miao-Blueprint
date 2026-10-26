@@ -62,12 +62,13 @@ final class HologramSegmentDocument {
     }
 
     static HologramSegmentDocument validate(HologramPresets.Preset preset, Set<String> structures,
-        HologramBlueprintValidationCache validation, long attachmentBytes) throws IOException {
+        HologramBlueprintValidationCache validation, long attachmentBytes, HologramSchemaPageCache.Stage schema)
+        throws IOException {
         boolean cacheEnabled = !"false".equals(System.getProperty("gtmb.segment.validationCache"));
-        // This legacy adapter retains at most a bounded immutable certificate working set. Large inputs
-        // use the exact former path, before allocating page/record snapshots.
+        // Keep the legacy complete manifest bounded. Large inputs retain only the independent schema
+        // working set and run all other strict obligations without allocating a full Record/Facts graph.
         if (!cacheEnabled || !manifestAdmissible(preset))
-            return validateUncached(preset, structures, validation, attachmentBytes);
+            return validateUncached(preset, structures, validation, attachmentBytes, schema);
         long nativeEpoch = HologramNativePlacement.generation();
         long codecEpoch = com.miaokatze.gtmb.api.ResourceContainers.generation();
         HologramSegmentDocument before = cacheEnabled ? preset.segmentDocument : null;
@@ -164,9 +165,11 @@ final class HologramSegmentDocument {
             for (Record record : content) {
                 HologramPresets.Cell cell = sources.get(record.id);
                 if (!schemaHit) {
-                    HologramPresets.validateBlueprintCell(cell, record.placed, validation);
+                    HologramPresets.validateBlueprintCellShape(cell, validation);
                     checks++;
-                } else HologramPresets.validateMaterialIdentity(cell, record.placed, validation);
+                }
+                schema.rememberValidated(cell, record.placed);
+                HologramPresets.validateMaterialIdentity(cell, record.placed, validation);
                 if (!membershipHit) HologramPresets.validateMembership(cell, structures);
                 // Native/material identity is deliberately outside the persistent schema certificate.
                 if (record.hasPayload) validation.filter(cell);
@@ -240,7 +243,8 @@ final class HologramSegmentDocument {
     }
 
     private static HologramSegmentDocument validateUncached(HologramPresets.Preset preset, Set<String> structures,
-        HologramBlueprintValidationCache validation, long expanded) throws IOException {
+        HologramBlueprintValidationCache validation, long expanded, HologramSchemaPageCache.Stage schema)
+        throws IOException {
         Set<Position> positions = new HashSet<>();
         for (int kind = 0; kind < 2; kind++) {
             for (HologramPresets.Cell cell : kind == 0 ? preset.cells : preset.palette) {
@@ -248,7 +252,7 @@ final class HologramSegmentDocument {
                 expanded += (long) HologramBlueprintNbt.expandedBytes(cell.tileNbt)
                     + HologramBlueprintNbt.expandedBytes(cell.itemNbt);
                 if (expanded > 64L * 1024 * 1024) throw new IOException("蓝图设备NBT展开总量超过64MiB上限");
-                HologramPresets.validateBlueprintCell(cell, kind == 0, validation);
+                schema.validate(cell, kind == 0, validation);
                 if (kind == 0 && !positions.add(new Position(cell.x, cell.y, cell.z))) throw new IOException("蓝图位置重复");
                 HologramPresets.validateMembership(cell, structures);
                 validation.filter(cell);

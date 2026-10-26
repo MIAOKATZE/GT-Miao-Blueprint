@@ -12,12 +12,210 @@ public final class HologramSegmentValidationRegression {
     public static void run() {
         try {
             stablePages();
+            workingSetOwnership();
+            largeWorkingSet();
             exactBlobs();
             projectionBoundary();
             occurrenceBudget();
         } catch (IOException failure) {
             throw new AssertionError("segmented admission regression", failure);
         }
+    }
+
+    private static void largeWorkingSet() throws IOException {
+        HologramPresets.Preset large = preset(100000);
+        HologramPresets.validate(large);
+        SimpleAssert.that(large.segmentDocument == null, "large shape cache never masquerades as a full manifest");
+        SimpleAssert.eq(100000L, large.schemaPageCache.checks, "every cold large-document shape is checked");
+        checkWorkingSet(large, false);
+        HologramPresets.validate(large);
+        checkWorkingSet(large, true);
+        long firstCursor = large.schemaPageCache.scanCursor;
+        for (int index : new int[] { 0, 50000, 99999 }) {
+            HologramPresets.Cell cell = large.cells.get(index);
+            HologramSchemaPageCache.prefer(large, cell.segmentCellId);
+            cell.prompt = "edited " + index;
+            HologramPresets.validate(large);
+            checkWorkingSet(large, true);
+            long page = (cell.segmentCellId - 1) / HologramSegmentContract.PAGE_SIZE;
+            SimpleAssert.that(large.schemaPageCache.pages.containsKey(page), "an active middle/tail page enters cache");
+            HologramPresets.validate(large);
+            checkWorkingSet(large, true);
+            SimpleAssert.that(large.schemaPageCache.pages.containsKey(page), "active page survives the cold scan");
+        }
+        SimpleAssert
+            .that(large.schemaPageCache.scanCursor != firstCursor, "bounded exploration progresses past first pages");
+        HologramSchemaPageCache saved = large.schemaPageCache;
+        int oldX = large.cells.get(99999).x;
+        large.cells.get(99999).x = large.cells.get(0).x;
+        expectIo(() -> HologramPresets.validate(large));
+        SimpleAssert.that(large.schemaPageCache == saved, "cross-page duplicate cannot publish staged shape proofs");
+        large.cells.get(99999).x = oldX;
+        HologramPresets.Cell middle = large.cells.get(50000);
+        middle.allowedTargets = new java.util.ArrayList<>();
+        HologramPresets.Target target = new HologramPresets.Target();
+        target.item = "minecraft:stone";
+        middle.allowedTargets.add(target);
+        HologramSchemaPageCache.prefer(large, middle.segmentCellId);
+        HologramPresets.validate(large);
+        target.damage = -1; // Modify the old mutable DTO in-place, with the same list and target identities.
+        expectIo(() -> HologramPresets.validate(large));
+        target.damage = 0;
+        middle.structureId = "missing";
+        expectIo(() -> HologramPresets.validate(large));
+        middle.structureId = null;
+        middle.tileNbt = "invalid!";
+        expectIo(() -> HologramPresets.validate(large));
+        middle.tileNbt = null;
+
+        NBTTagCompound tag = new NBTTagCompound();
+        tag.setInteger("config", 9);
+        String payload = HologramBlueprintNbt.encodeCanonical(tag);
+        for (HologramPresets.Cell cell : large.cells) cell.tileNbt = payload;
+        HologramPresets.validate(large);
+        HologramPresets.validate(large);
+        checkWorkingSet(large, true);
+        SimpleAssert.eq(payload, large.cells.get(99999).tileNbt, "repeated payload remains exact on a large warm path");
+        HologramPresets.Preset repeated = preset(100000);
+        for (HologramPresets.Cell cell : repeated.cells) cell.tileNbt = payload;
+        HologramPresets.validate(repeated);
+        SimpleAssert
+            .eq(100000L, repeated.schemaPageCache.checks, "fresh repeated-payload input receives full cold admission");
+        checkWorkingSet(repeated, false);
+        HologramPresets.validate(repeated);
+        checkWorkingSet(repeated, true);
+        HologramPresets.Preset detached = HologramPresets.copy(large);
+        SimpleAssert
+            .that(detached.schemaPageCache == large.schemaPageCache, "legacy copies share immutable shape proofs");
+        runPrepared(detached);
+        checkWorkingSet(detached, true);
+        for (int index : new int[] { 0, 50000, 99999 }) {
+            HologramPresets.Cell cell = detached.cells.get(index);
+            HologramSchemaPageCache.prefer(detached, cell.segmentCellId);
+            cell.prompt = "prepared edit " + index;
+            runPrepared(detached);
+            checkWorkingSet(detached, true);
+            SimpleAssert.that(
+                detached.schemaPageCache.pages
+                    .containsKey((cell.segmentCellId - 1) / HologramSegmentContract.PAGE_SIZE),
+                "prepared validation publishes the active page after strict success");
+        }
+        String oldSwitch = System.getProperty("gtmb.segment.validationCache");
+        try {
+            System.setProperty("gtmb.segment.validationCache", "false");
+            HologramPresets.validate(detached);
+            SimpleAssert.that(detached.schemaPageCache == null, "cache-off retains no shape proof");
+            for (int index : new int[] { 0, 50000, 99999 }) SimpleAssert.eq(
+                large.cells.get(index).tileNbt,
+                detached.cells.get(index).tileNbt,
+                "warm/prepared/cache-off preserve repeated NBT output");
+        } finally {
+            if (oldSwitch == null) System.clearProperty("gtmb.segment.validationCache");
+            else System.setProperty("gtmb.segment.validationCache", oldSwitch);
+        }
+    }
+
+    private static void checkWorkingSet(HologramPresets.Preset preset, boolean warm) {
+        HologramSchemaPageCache cache = preset.schemaPageCache;
+        SimpleAssert.that(cache != null && !cache.pages.isEmpty(), "large legal document retains actual shape pages");
+        SimpleAssert.that(cache.pages.size() <= HologramSchemaPageCache.MAX_PAGES, "page count remains bounded");
+        SimpleAssert.that(cache.retainedBytes <= HologramSchemaPageCache.MAX_BYTES, "retained shape pages obey bytes");
+        SimpleAssert.that(
+            cache.retainedBytes < 128L * 1024 * cache.pages.size(),
+            "resident leases charge actual conservative page weights rather than all scratch maxima");
+        SimpleAssert.eq(
+            (long) preset.cells.size() + preset.palette.size(),
+            cache.checks + cache.reused,
+            "every logical cell has an exact proof or a real shape check");
+        SimpleAssert.that(cache.checks > 0, "nonresident pages remain real strict misses on a large document");
+        if (warm) SimpleAssert.that(cache.reused > 0, "warm large document really reuses exact shape proofs");
+        System.out.println(
+            "schema-working-set cells=" + preset.cells.size()
+                + " pages="
+                + cache.pages.size()
+                + " bytes="
+                + cache.retainedBytes
+                + " checks="
+                + cache.checks
+                + " reused="
+                + cache.reused);
+    }
+
+    private static void runPrepared(HologramPresets.Preset preset) throws IOException {
+        try (HologramPreparedBlueprintValidation task = new HologramPreparedBlueprintValidation(preset)) {
+            for (int i = 0; !task.done() && i < preset.cells.size() + preset.palette.size() + 1000; i++) task.advance();
+            SimpleAssert.that(task.done(), "prepared validation completes in bounded per-cell steps");
+        }
+    }
+
+    private static void workingSetOwnership() throws IOException {
+        HologramPresets.Preset source = preset(2);
+        long bytes = HologramProcessGovernor.retainedBytes();
+        try (HologramSchemaPageCache.Stage stage = HologramSchemaPageCache.begin(source)) {
+            stage.validate(source.cells.get(0), true, new HologramBlueprintValidationCache(source));
+            SimpleAssert
+                .that(HologramProcessGovernor.retainedBytes() > bytes, "staging reserves before shape allocation");
+        }
+        SimpleAssert.eq(bytes, HologramProcessGovernor.retainedBytes(), "aborted staging releases both root and page");
+        try (HologramPreparedBlueprintValidation task = new HologramPreparedBlueprintValidation(source)) {
+            for (int i = 0; i < 6; i++) task.advance();
+        }
+        SimpleAssert
+            .eq(bytes, HologramProcessGovernor.retainedBytes(), "prepared cancellation releases staged proof leases");
+        SimpleAssert.that(source.schemaPageCache == null, "prepared cancellation publishes no partial proof");
+        HologramPresets.Preset cancelled = preset(600);
+        try (HologramSchemaPageCache.Stage stage = HologramSchemaPageCache.begin(cancelled)) {
+            HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(cancelled);
+            for (int i = 0; i < 257; i++) stage.validate(cancelled.cells.get(i), true, validation);
+        }
+        SimpleAssert.eq(
+            bytes,
+            HologramProcessGovernor.retainedBytes(),
+            "cancellation releases both an already frozen candidate page and the next scratch page");
+
+        HologramPresets.Preset alias = preset(1);
+        alias.cells.get(0).block = null;
+        runPrepared(alias);
+        SimpleAssert.eq("minecraft:stone", alias.cells.get(0).block, "material validation derives a real block alias");
+        runPrepared(alias);
+        SimpleAssert.eq(
+            1L,
+            alias.schemaPageCache.checks,
+            "a rewritten alias is reconciled instead of certifying unchecked output as original input");
+        runPrepared(alias);
+        SimpleAssert.eq(1L, alias.schemaPageCache.reused, "the reconciled alias then receives an exact warm proof");
+
+        String shared = new String(new char[3000]).replace('\0', 'p');
+        HologramPresets.Preset sharedText = preset(2), separateText = preset(2);
+        for (int i = 0; i < 2; i++) {
+            sharedText.cells.get(i).prompt = shared;
+            separateText.cells.get(i).prompt = new String(shared.toCharArray());
+        }
+        runPrepared(sharedText);
+        runPrepared(separateText);
+        SimpleAssert.that(
+            separateText.schemaPageCache.retainedBytes > sharedText.schemaPageCache.retainedBytes + 6000,
+            "one shared String object is charged once per page, while distinct equal objects own separate bytes");
+
+        HologramPresets.Preset heavy = preset(600);
+        HologramPresets.Cell first = heavy.cells.get(0);
+        first.allowedTargets = new java.util.ArrayList<>();
+        for (int i = 0; i < 4096; i++) {
+            HologramPresets.Target target = new HologramPresets.Target();
+            target.item = "fixture:target_" + i + "_" + new String(new char[128]).replace('\0', 'x');
+            target.damage = i;
+            first.allowedTargets.add(target);
+        }
+        runPrepared(heavy);
+        SimpleAssert.that(!heavy.schemaPageCache.pages.containsKey(0L), "oversized shape page falls back alone");
+        SimpleAssert.that(heavy.schemaPageCache.pages.containsKey(1L), "other pages survive one oversized page");
+        runPrepared(heavy);
+        SimpleAssert.that(heavy.schemaPageCache.reused > 0, "ordinary pages remain warm next to a heavy page");
+        HologramSchemaPageCache previous = heavy.schemaPageCache;
+        heavy.cells.get(599).count = 2;
+        expectIo(() -> runPrepared(heavy));
+        SimpleAssert
+            .that(heavy.schemaPageCache == previous, "prepared tail failure preserves previous proof working set");
     }
 
     private static void stablePages() throws IOException {

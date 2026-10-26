@@ -64,6 +64,7 @@ final class HologramNetworkGroupPreparation {
 
     void cancel() {
         if (sanitation != null) sanitation.cancel();
+        if (validation != null) validation.close();
         dataContext.close();
     }
 

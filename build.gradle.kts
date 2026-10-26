@@ -24,6 +24,7 @@ val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
         dependencies.create("org.joml:joml:1.10.8"),
         dependencies.create("xyz.wagyourtail.jvmdowngrader:jvmdowngrader-java-api:1.3.5:downgraded-8"),
         dependencies.create("com.github.GTNewHorizons:ForestryMC:4.11.39:dev"),
+        dependencies.create("com.github.GTNewHorizons:CarpentersBlocks:3.7.3-GTNH:dev"),
         dependencies.create("com.github.GTNewHorizons:Nuclear-Control:2.7.16:dev"),
         dependencies.create("curse.maven:minefactory-reloaded-66672:2366150")
     ).apply { isTransitive = false }
@@ -40,6 +41,18 @@ tasks.register<JavaExec>("runHologramTest") {
 }
 
 tasks.named("check") { dependsOn("runHologramTest") }
+
+// This fixture saturates the process-wide quota; isolate it from caches owned by other suites.
+tasks.register<JavaExec>("runSnapshotOwnershipTest") {
+    group = "verification"
+    description = "Checks expanded snapshot ownership and quota rejection in a fresh process."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramSnapshotOwnershipRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("hologram-snapshot-ownership")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runSnapshotOwnershipTest") }
 
 tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
     group = "verification"

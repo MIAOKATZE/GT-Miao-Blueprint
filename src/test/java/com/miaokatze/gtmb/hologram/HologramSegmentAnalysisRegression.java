@@ -33,6 +33,8 @@ public final class HologramSegmentAnalysisRegression {
         frozenSizeAndPayloadStayOnOwnerBoundary();
         stagedNbtEditsPublishOnlyDirtyResults();
         persistentDomainsAndReverseClosure();
+        largeWorkingSetSurvivesScansAndExactEdits();
+        largeStateAndClosureFallbackStayExact();
         componentMergeAndSplitStayLocal();
         detachedDomainAnalysisNeverCallsNativeProviders();
         repeatedFrozenResourceFactsStayBounded();
@@ -392,6 +394,142 @@ public final class HologramSegmentAnalysisRegression {
         NBTTagCompound cached = HologramBlueprintProcessing
             .state(source, HologramBlueprintProcessing.defaults("self", 0), 7, 100, 64, 200);
         SimpleAssert.eq(exact, cached, "disabling persistent domains retains exact state and relation semantics");
+    }
+
+    private static void largeWorkingSetSurvivesScansAndExactEdits() throws Exception {
+        HologramPresets.Preset source = new HologramPresets.Preset();
+        final int count = 100000;
+        for (int i = 0; i < count; i++) source.cells.add(cell(i));
+        int[] anchors = { 0, count / 2, count - 1 };
+        long[] work = { 0 };
+        try (HologramAnalysisDocument.Stage stage = new HologramAnalysisDocument.Stage(source, true)) {
+            for (int index : anchors) {
+                cachedPosition(stage, source.cells.get(index), work);
+                cachedPosition(stage, source.cells.get(index), work);
+            }
+            long total = 0;
+            for (HologramPresets.Cell cell : source.cells) total += cachedPosition(stage, cell, work);
+            SimpleAssert.eq((long) count * (count - 1) / 2, total, "a 100k scan returns every exact domain result");
+            long before = work[0];
+            for (int index : anchors) cachedPosition(stage, source.cells.get(index), work);
+            SimpleAssert.eq(before, work[0], "first middle and tail hot pages survive an entire 100k cold scan");
+            cachedPosition(stage, source.cells.get(1), work);
+            SimpleAssert.eq(before + 1, work[0], "an evicted cold page strictly recomputes its result");
+            stage.publish();
+        }
+        SimpleAssert.that(
+            source.analysisDocument != null && source.analysisDocument.bytes <= HologramAnalysisDocument.MAX_BYTES,
+            "100k analysis retains a real bounded working set instead of disabling the whole document");
+        SimpleAssert.that(
+            source.analysisDocument.pages.size() < (count + 255) / 256,
+            "the 100k fixture actually exceeds resident page capacity");
+        try (HologramAnalysisDocument.Stage stage = new HologramAnalysisDocument.Stage(source, true)) {
+            long before = work[0];
+            for (int index : anchors) cachedPosition(stage, source.cells.get(index), work);
+            SimpleAssert.eq(before, work[0], "published hot pages hit in the next operation");
+            for (int index : anchors) {
+                HologramPresets.Cell cell = source.cells.get(index);
+                cell.x += count;
+                SimpleAssert.eq(
+                    cell.x,
+                    cachedPosition(stage, cell, work),
+                    "first middle tail edits return the new exact input");
+            }
+            SimpleAssert.eq(before + anchors.length, work[0], "each edited hot domain misses exactly once");
+            for (int index : anchors) cachedPosition(stage, source.cells.get(index), work);
+            SimpleAssert.eq(before + anchors.length, work[0], "recomputed exact edits become reusable domains");
+            stage.publish();
+        }
+        try (
+            GTMBExtensions.Registration epoch = ResourceContainers
+                .register("gtmb:test_large_domain_epoch", value -> null);
+            HologramAnalysisDocument.Stage stage = new HologramAnalysisDocument.Stage(source, true)) {
+            long before = work[0];
+            for (int index : anchors) cachedPosition(stage, source.cells.get(index), work);
+            SimpleAssert.eq(before + anchors.length, work[0], "large hot pages cannot cross a provider epoch");
+        }
+    }
+
+    private static int cachedPosition(HologramAnalysisDocument.Stage stage, HologramPresets.Cell cell, long[] work)
+        throws IOException {
+        return stage.value(
+            cell,
+            HologramSegmentContract.Domain.REPORT,
+            "large-exact-position",
+            new Object[] { ResourceContainers.generation() },
+            true,
+            () -> {
+                work[0]++;
+                NBTTagCompound result = new NBTTagCompound();
+                result.setInteger("x", cell.x);
+                return result;
+            })
+            .getInteger("x");
+    }
+
+    private static void largeStateAndClosureFallbackStayExact() throws Exception {
+        HologramPresets.Preset source = extenders(100000, 32);
+        source.cells.get(300).tileNbt = source.cells.get(0).tileNbt;
+        HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 0);
+        NBTTagCompound expected;
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts(true)) {
+            expected = HologramBlueprintProcessing.state(source, policy, 7, 100, 64, 200, facts);
+            facts.publish();
+        }
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts(true)) {
+            SimpleAssert.eq(
+                expected,
+                HologramBlueprintProcessing.state(source, policy, 7, 100, 64, 200, facts),
+                "100k cached and recomputed state reports preserve all output and ordering");
+            facts.publish();
+        }
+        SimpleAssert.that(
+            source.analysisDocument.reused.values()
+                .stream()
+                .mapToLong(Long::longValue)
+                .sum() > 0,
+            "the actual 100k processing pipeline hits resident domain pages");
+        SimpleAssert.that(
+            source.analysisDocument.computed.values()
+                .stream()
+                .mapToLong(Long::longValue)
+                .sum() > 0,
+            "the actual 100k processing pipeline also strictly recomputes nonresident pages");
+        SimpleAssert.that(
+            source.analysisDocument.bytes <= HologramAnalysisDocument.MAX_BYTES,
+            "actual state certificates and relation dependencies share the real byte ceiling");
+        source.cells.get(0).metadata = 1;
+        source.cells.get(50000).metadata = 1;
+        source.cells.get(99999).x += 100;
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts(true)) {
+            expected = HologramBlueprintProcessing.state(source, policy, 7, 100, 64, 200, facts);
+            facts.publish();
+        }
+        SimpleAssert.that(
+            source.analysisDocument.relationAffectedPages.contains(0L)
+                && source.analysisDocument.relationAffectedPages.contains(1L),
+            "a nonresident 100k tail target still invalidates every cross-page referring source");
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts(false)) {
+            SimpleAssert.eq(
+                expected,
+                HologramBlueprintProcessing.state(source, policy, 7, 100, 64, 200, facts),
+                "first middle tail edits on 100k cells retain exact cache-off output");
+        }
+        HologramPresets.Preset high = extenders(1100, 300);
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts(true)) {
+            expected = HologramBlueprintProcessing.state(high, policy, 7, 100, 64, 200, facts);
+            facts.publish();
+        }
+        SimpleAssert.that(
+            high.analysisDocument != null && !high.analysisDocument.pages.isEmpty()
+                && high.analysisDocument.relations == null,
+            "an over-budget relation closure falls back only its own domain");
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts(false)) {
+            SimpleAssert.eq(
+                expected,
+                HologramBlueprintProcessing.state(high, policy, 7, 100, 64, 200, facts),
+                "high-cardinality closure fallback retains all relationship output");
+        }
     }
 
     private static void componentMergeAndSplitStayLocal() throws Exception {

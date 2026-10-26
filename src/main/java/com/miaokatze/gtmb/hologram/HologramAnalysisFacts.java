@@ -34,7 +34,7 @@ final class HologramAnalysisFacts implements AutoCloseable {
         if (domains == null) domains = new HologramAnalysisDocument.Stage(source, enabled);
     }
 
-    boolean coverage(HologramPresets.Cell cell) {
+    boolean coverage(HologramPresets.Cell cell) throws IOException {
         return domains != null && domains.coverage(cell);
     }
 
@@ -57,11 +57,11 @@ final class HologramAnalysisFacts implements AutoCloseable {
         HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SEGMENT_ANALYSIS, started);
     }
 
-    void relations(java.util.List<HologramCoordinatePolicies.Relation> relations) {
+    void relations(java.util.List<HologramCoordinatePolicies.Relation> relations) throws IOException {
         if (domains != null) domains.relations(relations);
     }
 
-    void networkNode(HologramPresets.Cell cell, NBTTagCompound entry) {
+    void networkNode(HologramPresets.Cell cell, NBTTagCompound entry) throws IOException {
         if (domains != null) domains.networkNode(cell, entry);
     }
 

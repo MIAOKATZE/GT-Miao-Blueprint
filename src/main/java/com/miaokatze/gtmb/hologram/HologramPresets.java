@@ -313,6 +313,8 @@ final class HologramPresets {
     static final class Preset {
 
         transient HologramSegmentDocument segmentDocument;
+        transient HologramSchemaPageCache schemaPageCache;
+        transient long schemaPreferredCellId;
         transient HologramAnalysisDocument analysisDocument;
         transient HologramProcessingDetails.Directory resourceDirectory;
 
@@ -1063,23 +1065,26 @@ final class HologramPresets {
         HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(preset);
         long segmentStarted = HologramRuntimeMetrics.start();
         HologramSegmentDocument staged;
-        try {
-            staged = HologramSegmentDocument.validate(preset, structureIds, validation, attachmentBytes);
-        } finally {
-            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SEGMENT_VALIDATION, segmentStarted);
+        try (HologramSchemaPageCache.Stage schema = HologramSchemaPageCache.begin(preset)) {
+            try {
+                staged = HologramSegmentDocument.validate(preset, structureIds, validation, attachmentBytes, schema);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SEGMENT_VALIDATION, segmentStarted);
+            }
+            if (staged != null) {
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SEGMENT_CHECKS, staged.schemaChecks);
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SEGMENT_REUSED, staged.reusedPages);
+            }
+            for (HintArea area : preset.hintAreas) {
+                if (area == null || area.x1 > area.x2 || area.y1 > area.y2 || area.z1 > area.z2)
+                    throw new IOException("蓝图提示区域无效");
+                coordinates(area.x1, area.y1, area.z1);
+                coordinates(area.x2, area.y2, area.z2);
+                text(area.prompt, 4096);
+            }
+            preset.schemaPageCache = schema.finish();
+            preset.segmentDocument = staged;
         }
-        if (staged != null) {
-            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SEGMENT_CHECKS, staged.schemaChecks);
-            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SEGMENT_REUSED, staged.reusedPages);
-        }
-        for (HintArea area : preset.hintAreas) {
-            if (area == null || area.x1 > area.x2 || area.y1 > area.y2 || area.z1 > area.z2)
-                throw new IOException("蓝图提示区域无效");
-            coordinates(area.x1, area.y1, area.z1);
-            coordinates(area.x2, area.y2, area.z2);
-            text(area.prompt, 4096);
-        }
-        preset.segmentDocument = staged;
     }
 
     static void validateMembership(Cell cell, Set<String> structures) throws IOException {

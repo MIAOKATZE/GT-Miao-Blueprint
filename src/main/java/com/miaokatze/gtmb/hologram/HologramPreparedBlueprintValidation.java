@@ -9,8 +9,8 @@ import java.util.Set;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 
-/** Strict uncached schema-2 admission for a detached transformed draft, one cell/descriptor at a time. */
-final class HologramPreparedBlueprintValidation {
+/** Strict schema-2 admission for a detached transformed draft, one cell/descriptor at a time. */
+final class HologramPreparedBlueprintValidation implements AutoCloseable {
 
     private final HologramPresets.Preset preset;
     private final HologramBlueprintValidationCache validation;
@@ -19,6 +19,7 @@ final class HologramPreparedBlueprintValidation {
     private Iterator<Map.Entry<String, String>> versions;
     private long expanded;
     private int stage, cursor;
+    private HologramSchemaPageCache.Stage schema;
 
     HologramPreparedBlueprintValidation(HologramPresets.Preset preset) {
         this(preset, false);
@@ -45,6 +46,15 @@ final class HologramPreparedBlueprintValidation {
     }
 
     void advance() throws IOException {
+        try {
+            advanceStep();
+        } catch (IOException | RuntimeException | Error failed) {
+            close();
+            throw failed;
+        }
+    }
+
+    private void advanceStep() throws IOException {
         if (stage == 0) {
             HologramBlueprintVersions.validateIfPresent(preset);
             if (!receiptValidated) HologramBlueprintProcessing.validateReceipt(preset);
@@ -140,7 +150,7 @@ final class HologramPreparedBlueprintValidation {
                 expanded += (long) HologramBlueprintNbt.expandedBytes(cell.tileNbt)
                     + HologramBlueprintNbt.expandedBytes(cell.itemNbt);
                 expandedBudget();
-                HologramPresets.validateBlueprintCell(cell, stage == 5, validation);
+                schema.validate(cell, stage == 5, validation);
                 if (stage == 5 && !positions.add(cell.x + "," + cell.y + "," + cell.z))
                     throw new IOException("Duplicate blueprint position");
                 HologramPresets.validateMembership(cell, structures);
@@ -161,7 +171,19 @@ final class HologramPreparedBlueprintValidation {
     private void next() {
         stage++;
         cursor = 0;
-        if (stage == 8) preset.segmentDocument = null; // Strict uncached result creates no partial page certificate.
+        if (stage == 5) schema = HologramSchemaPageCache.begin(preset);
+        if (stage == 8) {
+            // Only the independent shape working set is published; it does not claim a complete manifest.
+            preset.schemaPageCache = schema.finish();
+            preset.segmentDocument = null;
+            close();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (schema != null) schema.close();
+        schema = null;
     }
 
     private void expandedBudget() throws IOException {

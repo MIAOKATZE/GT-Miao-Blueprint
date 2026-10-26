@@ -318,6 +318,8 @@ final class HologramSnapshotMetadataSource {
         target.processingNbt = source.processingNbt;
         target.quantumGroupingNbt = source.quantumGroupingNbt;
         target.segmentDocument = source.segmentDocument;
+        target.schemaPageCache = source.schemaPageCache;
+        target.schemaPreferredCellId = source.schemaPreferredCellId;
         target.analysisDocument = source.analysisDocument;
         target.retainNbt = source.retainNbt;
         target.retainCovers = source.retainCovers;

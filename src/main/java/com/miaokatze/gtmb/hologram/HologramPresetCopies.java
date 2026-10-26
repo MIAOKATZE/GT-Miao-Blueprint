@@ -53,6 +53,8 @@ final class HologramPresetCopies {
         if (source.palette != null) result.palette = cells(source.palette);
         // These manifests are immutable. Inheriting them preserves authority while new DTOs own all writes.
         result.segmentDocument = source.segmentDocument;
+        result.schemaPageCache = source.schemaPageCache;
+        result.schemaPreferredCellId = source.schemaPreferredCellId;
         result.analysisDocument = source.analysisDocument;
         return result;
     }

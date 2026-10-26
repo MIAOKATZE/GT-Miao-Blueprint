@@ -1,6 +1,7 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.UUID;
 
 import net.minecraft.init.Blocks;
@@ -22,7 +23,7 @@ public final class HologramTestLabBlueprintRegression {
             NBTTagCompound before = TestLab.status();
             SimpleAssert.that(!TestLab.isEnabled(), "Regression must run with lab opt-in disabled");
             try {
-                HologramTestLabBlueprintProbe.run(null, null, Integer.MAX_VALUE, -1, Integer.MIN_VALUE);
+                HologramTestLabBlueprintProbe.start(null, null, Integer.MAX_VALUE, -1, Integer.MIN_VALUE);
                 throw new AssertionError("Disabled bridge accepted a fixture");
             } catch (IOException refused) {
                 SimpleAssert
@@ -89,9 +90,92 @@ public final class HologramTestLabBlueprintRegression {
                 HologramTestLabBlueprintProbe.expectedPaidInventory(new NBTTagList());
                 throw new AssertionError("Unfunded expected accounting was accepted");
             } catch (IOException expected) {}
-        } catch (IOException failure) {
+            realReviewPrerequisitesAdmit();
+        } catch (IOException | ReflectiveOperationException failure) {
             throw new AssertionError("Ordinary lab fixture admission/accounting", failure);
         }
+    }
+
+    private static void realReviewPrerequisitesAdmit() throws ReflectiveOperationException, IOException {
+        Method fixture = HologramBuildContinuationRegression.class.getDeclaredMethod("fixture", int.class);
+        fixture.setAccessible(true);
+        HologramSession seed = (HologramSession) fixture.invoke(null, 0);
+        net.minecraft.entity.player.EntityPlayerMP actor = seed.player;
+        HologramSession previous = HologramWorkspace.find(actor.getUniqueID());
+        actor.inventory.mainInventory[1] = null;
+        HologramSession missing = null, paid = null;
+        try {
+            missing = HologramTestLabBlueprintProbe.fixture(actor, 0, 64, 0);
+            SimpleAssert.that(
+                !missing.virtualLocked && !missing.placementReviewIssued,
+                "Lab starts without an invented position lock or material review capability");
+            HologramTestLabBlueprintProbe.Review missingReview = new HologramTestLabBlueprintProbe.Review(missing);
+            finishReview(missingReview);
+            SimpleAssert.that(
+                missing.virtualLocked && missing.placementReviewIssued
+                    && missing.blueprintAwaitingConfirmation
+                    && missing.planMissing == 2,
+                "Real lock and quote completion issue a missing-material review");
+            NBTTagCompound denied = missingReview.action();
+            HologramBuildPreparation.reviewedBuild(missing, denied);
+            HologramBuildContinuationRegression.drain(missing);
+            SimpleAssert.that(
+                missing.job != 1 && missing.planMissing == 2,
+                "Lab missing-material action is refused after the real review prerequisites passed");
+            HologramBuildPreparation.reviewedBuild(missing, (NBTTagCompound) denied.copy());
+            HologramBuildContinuationRegression.drain(missing);
+            SimpleAssert.that(missing.job != 1, "Repeated missing-material review does not admit a job");
+
+            actor.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 4);
+            actor.inventory.mainInventory[2] = new ItemStack(Blocks.chest, 3);
+            paid = HologramTestLabBlueprintProbe.fixture(actor, 0, 64, 0);
+            HologramTestLabBlueprintProbe.Review initial = new HologramTestLabBlueprintProbe.Review(paid);
+            finishReview(initial);
+            NBTTagCompound stale = initial.action();
+            NBTTagList inventory = actor.inventory.writeToNBT(new NBTTagList());
+            NBTTagCompound move = new NBTTagCompound();
+            move.setIntArray("indices", new int[] { 0 });
+            move.setInteger("dx", 1);
+            HologramBlueprintEditor.moveBlueprintCells(paid, move);
+            HologramBlueprintEditor.edit(paid, new NBTTagCompound(), "editUndo");
+            HologramBuildPreparation.reviewedBuild(paid, stale);
+            SimpleAssert.that(
+                paid.buildTask == null && paid.job != 1,
+                "Real move/undo invalidates the formerly issued Lab review");
+            HologramTestLabBlueprintProbe.Review current = new HologramTestLabBlueprintProbe.Review(paid);
+            finishReview(current);
+            NBTTagCompound action = current.action();
+            SimpleAssert.that(
+                action.getLong("placementReviewNonce") > stale.getLong("placementReviewNonce")
+                    && action.getLong("planRevision") == paid.planRevision
+                    && paid.planMissing == 0,
+                "Post-edit review uses the fresh complete quote, plan revision and nonce");
+            HologramMaterialWorkflow.validateConfirmation(paid, action);
+            HologramBuildPreparation.reviewedBuild(paid, action);
+            HologramBuildContinuationRegression.drain(paid);
+            SimpleAssert.that(
+                paid.job == 1 && paid.work.size() == 2 && !paid.blueprintAwaitingConfirmation,
+                "Lab review entry reaches the real final BuildTask confirmation and admits both payable cells");
+            SimpleAssert.that(
+                inventory.equals(actor.inventory.writeToNBT(new NBTTagList())),
+                "Lock/review/admission cannot debit stock or write this read-only world");
+            SimpleAssert.that(
+                HologramWorkspace.find(actor.getUniqueID()) == previous,
+                "Scoped Lab review restores the previous workspace slot after every continuation");
+        } finally {
+            for (HologramSession session : new HologramSession[] { missing, paid }) if (session != null) {
+                HologramBuildPreparation.cancel(session);
+                HologramDeferredPlanRefresh.cancel(session);
+                HologramSnapshotPreparation.cancel(session);
+            }
+            actor.playerNetServerHandler.netManager.channel()
+                .close();
+        }
+    }
+
+    private static void finishReview(HologramTestLabBlueprintProbe.Review review) throws IOException {
+        for (int step = 0; step < 10000; step++) if (review.advance()) return;
+        throw new AssertionError("Real Lab position/material review did not finish its bounded continuations");
     }
 
     private static NBTTagCompound slot(ItemStack stack, int index) {
