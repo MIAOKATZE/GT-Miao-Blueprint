@@ -90,6 +90,7 @@ final class HologramWorkspaceScheduler {
             || !HologramSessionPolicy.tickValid(s)
             || s.libraryWorld != s.player.worldObj) return false;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+        if (HologramPresetActivation.pending(s)) return HologramPresetActivation.canAdvance(s);
         if (HologramBuildPreparation.isPending(s)) return true;
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
         return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
@@ -98,6 +99,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void continueSession(HologramSession s) {
+        if (HologramPresetActivation.pending(s)) {
+            HologramPresetActivation.tick(s);
+            return;
+        }
         if (HologramBuildPreparation.isPending(s)) {
             HologramBuildPreparation.tickBuild(s);
             return;
@@ -119,6 +124,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        if (HologramPresetActivation.pending(s)) {
+            HologramPresetActivation.tick(s);
+            return;
+        }
         if (HologramBuildPreparation.isPending(s)) {
             HologramBuildPreparation.tickBuild(s);
             return;

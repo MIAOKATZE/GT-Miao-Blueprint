@@ -73,30 +73,53 @@ public final class HologramLibraryService {
     }
 
     static void quickFallback(EntityPlayerMP player, NBTTagCompound request) {
+        NBTTagCompound frozen = (NBTTagCompound) request.copy();
         try {
-            if (!sessionCurrent(player, request)) throw new IOException("Quick blueprint capability changed");
+            if (!sessionCurrent(player, frozen)) throw new IOException("Quick blueprint capability changed");
             HologramSession previous = HologramWorkspace.find(player.getUniqueID());
             if (previous.libraryQuickClientTaskToken <= 0
-                || previous.libraryQuickClientTaskToken != request.getLong("clientTaskToken"))
+                || previous.libraryQuickClientTaskToken != frozen.getLong("clientTaskToken"))
                 throw new IOException("Quick blueprint task changed");
             String sourceSession = previous.id;
-            HologramWorldPlacementWorkflow.quickPlaceLastBlueprint(player, request);
-            HologramSession placed = HologramWorkspace.find(player.getUniqueID());
-            if (placed == previous || placed == null || !placed.virtualPlacement || placed.virtualPreset == null)
-                throw new IOException(previous.status);
-            placed.libraryQuickToken = request.getString("quickToken");
-            placed.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
-            HologramWorldPlacementWorkflow.lockVirtual(player, placed.x, placed.y, placed.z, placed.side);
-            if (!placed.virtualLocked) throw new IOException(placed.status);
-            NBTTagCompound reply = HologramLibraryProtocol.reply("quickPlacement");
-            reply.setString("quickToken", placed.libraryQuickToken);
-            reply.setLong("clientTaskToken", placed.libraryQuickClientTaskToken);
-            reply.setString("previousSession", sourceSession);
-            reply.setString("session", placed.id);
-            HologramNetwork.sendLibraryReply(player, reply);
+            HologramPresetPosePreparation pose = new HologramPresetPosePreparation(new int[0], true);
+            HologramWorldPlacementWorkflow.quickPlaceLastBlueprint(player, frozen,
+                new HologramPresetActivation.Preparation() {
+                    @Override
+                    public boolean current() {
+                        return sessionCurrent(player, frozen) && libraryQuickCurrent(previous, frozen);
+                    }
+
+                    @Override
+                    public boolean step(HologramSession candidate, int maxWork, long maxNanos) throws IOException {
+                        candidate.libraryQuickToken = frozen.getString("quickToken");
+                        candidate.libraryQuickClientTaskToken = frozen.getLong("clientTaskToken");
+                        return pose.step(candidate, maxWork, maxNanos);
+                    }
+                }, new HologramPresetActivation.Completion() {
+                    @Override
+                    public void completed(HologramSession placed) {
+                        HologramSnapshots.send(placed);
+                        NBTTagCompound reply = HologramLibraryProtocol.reply("quickPlacement");
+                        reply.setString("quickToken", placed.libraryQuickToken);
+                        reply.setLong("clientTaskToken", placed.libraryQuickClientTaskToken);
+                        reply.setString("previousSession", sourceSession);
+                        reply.setString("session", placed.id);
+                        HologramNetwork.sendLibraryReply(player, reply);
+                    }
+
+                    @Override
+                    public void failed(String reason) {
+                        HologramLibraryFacade.error(player, reason, frozen.getLong("clientTaskToken"));
+                    }
+                });
         } catch (IOException | RuntimeException invalid) {
-            HologramLibraryFacade.error(player, invalid.getMessage(), request.getLong("clientTaskToken"));
+            HologramLibraryFacade.error(player, invalid.getMessage(), frozen.getLong("clientTaskToken"));
         }
+    }
+
+    private static boolean libraryQuickCurrent(HologramSession source, NBTTagCompound request) {
+        return source.libraryQuickPending && source.libraryQuickClientTaskToken == request.getLong("clientTaskToken")
+            && source.libraryQuickToken.equals(request.getString("quickToken"));
     }
 
     static String quickToken(String token) throws IOException {

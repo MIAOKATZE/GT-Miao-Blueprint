@@ -230,7 +230,7 @@ final class HologramBlueprintProjection {
         }
 
         String phase() {
-            return implicit.done() ? "preset.projection" : "preset.memberships";
+            return implicit.done() ? "preset.projection" : implicit.stage == 0 ? "preset.controllerDiscovery" : "preset.memberships";
         }
 
         long completed() {

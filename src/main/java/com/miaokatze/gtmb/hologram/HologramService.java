@@ -135,9 +135,9 @@ public final class HologramService {
         return HologramLibraryWorkflow.libraryPrivatePreset(player, id);
     }
 
-    static String libraryActivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset uploaded)
-        throws java.io.IOException {
-        return HologramLibraryWorkflow.libraryActivate(player, request, uploaded);
+    static void libraryActivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset uploaded,
+        HologramLibraryFacade.ActivationCompletion completion) throws java.io.IOException {
+        HologramLibraryWorkflow.libraryActivate(player, request, uploaded, completion);
     }
 
     static void libraryExportDraft(EntityPlayerMP player, NBTTagCompound request) throws java.io.IOException {

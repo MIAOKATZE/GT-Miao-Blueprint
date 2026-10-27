@@ -29,6 +29,7 @@ final class HologramWorkspace {
         if (previous != null) HologramEditorWorkspaceRegistry.remember(previous);
         if (previous != null && previous != session) {
             previous.presentationTransition = null;
+            HologramPresetActivation.cancel(previous, "蓝图加载已取消：工作区已切换");
             HologramDeferredPlanRefresh.cancel(previous);
         }
         SESSIONS.put(player, session);
@@ -111,6 +112,7 @@ final class HologramWorkspace {
         if (find(origin.player.getUniqueID()) != origin || !presentationAllowed(origin)
             || !origin.id.equals(transition.originId)
             || origin.uiSequence != transition.sequence) return false;
+        HologramPresetActivation.cancel(origin, "蓝图加载已取消：编辑来源已切换");
         HologramDeferredPlanRefresh.suspend(origin);
         origin.presentationTransition = null;
         target.uiSequence = transition.sequence;
@@ -230,6 +232,7 @@ final class HologramWorkspace {
         HologramEditorWorkspaceRegistry.clear();
         HologramNetwork.clearServerQueues();
         for (HologramSession s : SESSIONS.values()) {
+            HologramPresetActivation.cancel(s, "蓝图加载已取消：工作区已关闭");
             HologramDeferredPlanRefresh.cancel(s);
             clearAreaSelection(s);
         }
@@ -255,6 +258,7 @@ final class HologramWorkspace {
             area.cancelImportWork();
         }
         for (HologramSession s : all) {
+            HologramPresetActivation.cancel(s, "蓝图加载已取消：工作区已关闭");
             HologramDeferredPlanRefresh.cancel(s);
             HologramSession.cancelCaptureRetry(s);
             s.job = 4;
@@ -305,6 +309,7 @@ final class HologramWorkspace {
                 || !session.player.playerNetServerHandler.netManager.isChannelOpen()) {
                 HologramSession.clearPending(session);
                 HologramSession.cancelCaptureRetry(session);
+                HologramPresetActivation.cancel(session, "蓝图加载已取消：连接已断开");
                 HologramDeferredPlanRefresh.cancel(session);
                 clearAreaSelection(session);
                 HologramEditorWorkspaceRegistry.forget(session.player.getUniqueID());

@@ -1188,7 +1188,22 @@ public final class HologramBlueprintSmoke {
         // Explicitly discard that pending client save when this server fixture advances to the next source.
         request.setBoolean("confirmDiscard", true);
         // Supply a detached DTO to the public service entry. This asserts no artifact-pair upload receipt.
-        String id = HologramService.libraryActivate(player, request, HologramPresets.copy(preset));
+        String[] outcome = new String[2];
+        HologramService.libraryActivate(player, request, HologramPresets.copy(preset),
+            new HologramLibraryFacade.ActivationCompletion() {
+                @Override
+                public void completed(String id) { outcome[0] = id; }
+
+                @Override
+                public void failed(String reason) { outcome[1] = reason; }
+            });
+        for (int tick = 0; outcome[0] == null && outcome[1] == null && tick < 128; tick++) {
+            advance();
+            HologramService.tick();
+            HologramSmokeTest.flushTransport();
+        }
+        require(outcome[0] != null && outcome[1] == null, "private_activation_waits_for_real_ready_callback");
+        String id = outcome[0];
         HologramSmokeTest.flushTransport();
         require(
             id.startsWith("private_") && id.equals(capture.state.getString("virtualPresetId"))

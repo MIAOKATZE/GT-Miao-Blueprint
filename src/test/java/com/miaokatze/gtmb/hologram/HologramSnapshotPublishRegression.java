@@ -1070,6 +1070,13 @@ public final class HologramSnapshotPublishRegression {
         action.setBoolean("confirmDiscard", true);
         origin.actionCount = 0;
         HologramActionDispatcher.handle(origin.player, action);
+        SimpleAssert.that(HologramWorkspace.find(origin.player.getUniqueID()) == origin,
+            "saved-preset admission keeps the original editor active while its private candidate prepares");
+        int slices = 0;
+        while (HologramPresetActivation.pending(origin)) {
+            HologramPresetActivation.tick(origin, 7, 1_000_000_000L);
+            SimpleAssert.that(++slices < 10000, "bounded real saved-preset activation reaches a terminal result");
+        }
         HologramSession target = HologramWorkspace.find(origin.player.getUniqueID());
         SimpleAssert.that(
             target != origin && target.presentationTransition != null,
