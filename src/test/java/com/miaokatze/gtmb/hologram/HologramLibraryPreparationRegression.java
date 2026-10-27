@@ -410,10 +410,12 @@ final class HologramLibraryPreparationRegression {
     private static HologramPresets.Preset preset() throws IOException {
         HologramPresets.Preset source = new HologramPresets.Preset();
         source.schema = 2;
+        source.id = "prepared-fixture";
         source.name = "prepared";
         source.controllerType = "area";
         source.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
         HologramBlueprintVersions.stamp(source);
+        HologramPresets.validate(source);
         return source;
     }
 
