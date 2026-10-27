@@ -31,6 +31,15 @@ public final class HologramLibraryService {
             && HologramService.librarySessionCurrent(player, request);
     }
 
+    /** Continued activation retains owner/session checks while a temporary held-slot change pauses work. */
+    static boolean activationCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        return (HologramLibraryFacade.enabled() || request != null && ("privateBegin".equals(request.getString("op"))
+            || "publicPrepare".equals(request.getString("op")) && !request.getString("integratedPresetId")
+                .isEmpty()))
+            && connected(player)
+            && HologramLibraryWorkflow.libraryActivationCurrent(player, request);
+    }
+
     /** Content preparation is owner/connection bound and deliberately has no workspace or placement admission. */
     static boolean contentCurrent(EntityPlayerMP player, NBTTagCompound request) {
         return request != null && request.getLong("clientTaskToken") > 0 && connectedProjector(player);
@@ -50,7 +59,7 @@ public final class HologramLibraryService {
             && com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem());
     }
 
-    private static boolean connected(EntityPlayerMP player) {
+    static boolean connected(EntityPlayerMP player) {
         return player != null && !player.isDead
             && player.worldObj != null
             && !player.worldObj.isRemote
@@ -82,11 +91,12 @@ public final class HologramLibraryService {
                 throw new IOException("Quick blueprint task changed");
             String sourceSession = previous.id;
             HologramPresetPosePreparation pose = new HologramPresetPosePreparation(new int[0], true);
-            HologramWorldPlacementWorkflow.quickPlaceLastBlueprint(player, frozen,
-                new HologramPresetActivation.Preparation() {
+            HologramWorldPlacementWorkflow
+                .quickPlaceLastBlueprint(player, frozen, new HologramPresetActivation.Preparation() {
+
                     @Override
                     public boolean current() {
-                        return sessionCurrent(player, frozen) && libraryQuickCurrent(previous, frozen);
+                        return activationCurrent(player, frozen) && libraryQuickCurrent(previous, frozen);
                     }
 
                     @Override
@@ -96,6 +106,7 @@ public final class HologramLibraryService {
                         return pose.step(candidate, maxWork, maxNanos);
                     }
                 }, new HologramPresetActivation.Completion() {
+
                     @Override
                     public void completed(HologramSession placed) {
                         HologramSnapshots.send(placed);

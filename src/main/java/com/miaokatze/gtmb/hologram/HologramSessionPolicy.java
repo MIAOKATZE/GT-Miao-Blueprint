@@ -95,6 +95,11 @@ final class HologramSessionPolicy {
         return currentTool(s) != null && validWorldContext(s, false);
     }
 
+    /** A staged activation may wait for the held slot, but still owns its original tool and editor context. */
+    static boolean activationValid(HologramSession s) {
+        return jobTool(s) != null && validWorldContext(s, false);
+    }
+
     /** Admission remains held-tool-only. An admitted job may run while another hotbar slot is selected. */
     static boolean jobValid(HologramSession s) {
         return jobInvalidReason(s).isEmpty();

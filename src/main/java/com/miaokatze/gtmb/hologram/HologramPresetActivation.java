@@ -12,15 +12,25 @@ final class HologramPresetActivation {
     private static final Map<HologramSession, Task> TASKS = new IdentityHashMap<>();
     private static final int MAX_TASKS = 32;
 
-    enum State { OWNER_READY, WAITING_TOOL, COMPLETED, FAILED, CANCELLED }
+    enum State {
+        OWNER_READY,
+        WAITING_TOOL,
+        COMPLETED,
+        FAILED,
+        CANCELLED
+    }
 
     interface Preparation {
-        default boolean current() { return true; }
+
+        default boolean current() {
+            return true;
+        }
 
         boolean step(HologramSession candidate, int maxWork, long maxNanos) throws IOException;
     }
 
     interface Completion {
+
         void completed(HologramSession candidate);
 
         void failed(String reason);
@@ -96,7 +106,8 @@ final class HologramPresetActivation {
             HologramSession candidate = task.candidate;
             if (!task.current() || !HologramSessionPolicy.valid(candidate)
                 || !candidate.player.worldObj.blockExists(candidate.x, candidate.y, candidate.z)
-                || (candidate.virtualPlacement ? !HologramSessionPolicy.previewReach(candidate.player, candidate.x, candidate.y, candidate.z)
+                || (candidate.virtualPlacement
+                    ? !HologramSessionPolicy.previewReach(candidate.player, candidate.x, candidate.y, candidate.z)
                     : candidate.player.getDistanceSq(candidate.x + .5, candidate.y + .5, candidate.z + .5) > 4096)) {
                 cancel(origin, "蓝图加载已取消：最终激活环境已变化；原编辑保留");
                 return;
@@ -108,13 +119,14 @@ final class HologramPresetActivation {
                 return;
             }
             task.state = State.COMPLETED;
-            HologramSessionPolicy.currentTool(task.candidate).getTagCompound()
+            HologramSessionPolicy.currentTool(task.candidate)
+                .getTagCompound()
                 .setString(HologramSessionKeys.SELECTED_PRESET, task.selectedId);
             task.candidate.player.inventory.markDirty();
         } catch (IOException | RuntimeException | LinkageError failure) {
             TASKS.remove(origin);
-            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Saved preset activation failed session=" + task.session
-                + " phase=" + task.phase(), failure);
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                .warn("Saved preset activation failed session=" + task.session + " phase=" + task.phase(), failure);
             if (task.state == State.COMPLETED) {
                 HologramWorkspace.rollbackPresentation(origin.player, task.candidate.id, task.sequence);
                 task.state = State.OWNER_READY;
@@ -173,20 +185,30 @@ final class HologramPresetActivation {
 
         boolean current() {
             return HologramWorkspace.find(origin.player.getUniqueID()) == origin && !origin.cancelled
-                && session.equals(origin.id) && revision == origin.planRevision && sequence == origin.uiSequence
-                && clientTask == origin.blueprintClientTaskToken && localGeneration == origin.localPlanGeneration
-                && editorEpoch == origin.editorWorkspaceEpoch && capture == origin.capture && preset == origin.virtualPreset
-                && origin.player.worldObj == origin.libraryWorld && origin.player.dimension == origin.dimension
-                && !origin.player.isDead && HologramWorkspace.areaSessionOwned(origin)
-                && (HologramSessionPolicy.currentTool(origin) == null || HologramSessionPolicy.valid(origin))
+                && session.equals(origin.id)
+                && revision == origin.planRevision
+                && sequence == origin.uiSequence
+                && clientTask == origin.blueprintClientTaskToken
+                && localGeneration == origin.localPlanGeneration
+                && editorEpoch == origin.editorWorkspaceEpoch
+                && capture == origin.capture
+                && preset == origin.virtualPreset
+                && origin.player.worldObj == origin.libraryWorld
+                && origin.player.dimension == origin.dimension
+                && !origin.player.isDead
+                && HologramWorkspace.areaSessionOwned(origin)
+                && HologramSessionPolicy.activationValid(origin)
                 && resources == com.miaokatze.gtmb.api.ResourceContainers.generation()
                 && nativeProviders == HologramNativePlacement.generation()
-                && declarations == HologramDeclarationAdapters.generation() && vouchers == DecorationVoucherConfig.revision()
-                && HologramWorkspace.presentationAllowed(origin) && (prepare == null || prepare.current());
+                && declarations == HologramDeclarationAdapters.generation()
+                && vouchers == DecorationVoucherConfig.revision()
+                && HologramWorkspace.presentationAllowed(origin)
+                && (prepare == null || prepare.current());
         }
 
         boolean step(int maxWork, long maxNanos) throws IOException {
-            if (Thread.currentThread() != owner) throw new IllegalStateException("Activation must stay on its owner thread");
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Activation must stay on its owner thread");
             if (maxWork <= 0 || maxNanos <= 0) return false;
             // One phase per slice avoids accidentally multiplying a caller's work/time allowance.
             if (stage == -1) {
@@ -204,9 +226,11 @@ final class HologramPresetActivation {
                 population = new HologramBlueprintProjection.Population(candidate);
                 stage = 1;
             } else if (stage == 1) {
-                if (!population.step(maxWork, maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE : HologramWorkBudget.deadline(maxNanos))) return false;
-                if (candidate.capture == null || candidate.capture.incomplete)
-                    throw new IOException("预设投影不完整：" + (candidate.capture == null ? "missing" : candidate.capture.failure));
+                if (!population
+                    .step(maxWork, maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE : HologramWorkBudget.deadline(maxNanos)))
+                    return false;
+                if (candidate.capture == null || candidate.capture.incomplete) throw new IOException(
+                    "预设投影不完整：" + (candidate.capture == null ? "missing" : candidate.capture.failure));
                 population = null;
                 stage = 2;
             } else if (stage == 2) {
@@ -217,7 +241,8 @@ final class HologramPresetActivation {
                 while (candidate.virtualPlacement && boundsCursor < candidate.capture.cells.size() && budget.take()) {
                     HologramCapture.Cell cell = candidate.capture.cells.get(boundsCursor++);
                     if (!HologramSessionPolicy.ignoredPlacementAir(candidate, cell, cell.stableIndex)
-                        && !HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, candidate.player.worldObj.getHeight()))
+                        && !HologramWorldFlow
+                            .worldPosition(cell.x, cell.y, cell.z, candidate.player.worldObj.getHeight()))
                         throw new IOException("蓝图结构范围超出世界边界或高度");
                 }
                 if (candidate.virtualPlacement && boundsCursor < candidate.capture.cells.size()) return false;
@@ -231,9 +256,12 @@ final class HologramPresetActivation {
         }
 
         String phase() {
-            return state == State.WAITING_TOOL ? "preset.waitingTool" : stage == -1 ? "preset.policy" : stage == 0 ? "preset.copy"
-                : stage == 1 ? population.phase() : stage == 2 ? "preset.orientation"
-                    : stage == 3 ? "preset.bounds" : stage == 4 ? plan.phase() : "preset.ready";
+            return state == State.WAITING_TOOL ? "preset.waitingTool"
+                : stage == -1 ? "preset.policy"
+                    : stage == 0 ? "preset.copy"
+                        : stage == 1 ? population.phase()
+                            : stage == 2 ? "preset.orientation"
+                                : stage == 3 ? "preset.bounds" : stage == 4 ? plan.phase() : "preset.ready";
         }
 
         void fail(State terminal, String reason) {
@@ -252,7 +280,8 @@ final class HologramPresetActivation {
         }
 
         void progress(boolean terminal, String detail) {
-            String phase = terminal ? "preset." + state.name().toLowerCase(java.util.Locale.ROOT) : phase();
+            String phase = terminal ? "preset." + state.name()
+                .toLowerCase(java.util.Locale.ROOT) : phase();
             long tick = origin.libraryWorld.getTotalWorldTime();
             if (!terminal && tick == progressTick && phase.equals(progressPhase)) return;
             progressTick = tick;
@@ -269,14 +298,23 @@ final class HologramPresetActivation {
             progress.setString("detail", detail);
             progress.setString("error", terminal ? detail : "");
             progress.setString("unit", "operations");
-            progress.setLong("done", policy != null ? policy.completed() : copy != null ? copy.completed() : population != null ? population.completed()
-                : plan != null ? plan.completed() : boundsCursor);
-            progress.setLong("total", policy != null ? policy.total() : copy != null ? copy.total() : population != null ? population.total()
-                : plan != null ? plan.total() : candidate.capture == null ? 0 : candidate.capture.cells.size());
+            progress.setLong(
+                "done",
+                policy != null ? policy.completed()
+                    : copy != null ? copy.completed()
+                        : population != null ? population.completed() : plan != null ? plan.completed() : boundsCursor);
+            progress.setLong(
+                "total",
+                policy != null ? policy.total()
+                    : copy != null ? copy.total()
+                        : population != null ? population.total()
+                            : plan != null ? plan.total()
+                                : candidate.capture == null ? 0 : candidate.capture.cells.size());
             NBTTagCompound state = new NBTTagCompound();
             state.setBoolean("progressOnly", true);
             state.setTag("progress", progress);
-            HologramWorkspace.snapshotSink().send(origin.player, state);
+            HologramWorkspace.snapshotSink()
+                .send(origin.player, state);
         }
     }
 }

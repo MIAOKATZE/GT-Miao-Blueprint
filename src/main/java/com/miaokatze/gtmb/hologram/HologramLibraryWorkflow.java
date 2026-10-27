@@ -89,6 +89,15 @@ final class HologramLibraryWorkflow {
 
     /** Admission is checked at begin and again after the bounded worker finishes decoding. */
     static boolean librarySessionCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        return librarySessionCurrent(player, request, false);
+    }
+
+    /** Only an already admitted activation may pause with its original tool in another held slot. */
+    static boolean libraryActivationCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        return librarySessionCurrent(player, request, true);
+    }
+
+    private static boolean librarySessionCurrent(EntityPlayerMP player, NBTTagCompound request, boolean activation) {
         if (player == null || request == null) return false;
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         return s != null && s.player == player
@@ -104,7 +113,7 @@ final class HologramLibraryWorkflow {
             && s.id.equals(request.getString("session"))
             && request.hasKey("planRevision", 4)
             && s.planRevision == request.getLong("planRevision")
-            && HologramSessionPolicy.valid(s);
+            && (activation ? HologramSessionPolicy.activationValid(s) : HologramSessionPolicy.valid(s));
     }
 
     static boolean libraryQuickCurrent(HologramSession s, NBTTagCompound request) {
@@ -225,9 +234,10 @@ final class HologramLibraryWorkflow {
                 origin.projectionSourcePreset = uploaded;
             String nonce = origin.pendingSourceAction.getString("sourceSwitchNonce");
             if (nonce.isEmpty()) throw new java.io.IOException("投影来源确认未能开始，请重试");
-            completion.waitingForConfirmation(() -> origin.discardConfirmationRequired
-                && nonce.equals(origin.pendingSourceAction.getString("sourceSwitchNonce"))
-                && origin.projectionSourcePreset == uploaded);
+            completion.waitingForConfirmation(
+                () -> origin.discardConfirmationRequired
+                    && nonce.equals(origin.pendingSourceAction.getString("sourceSwitchNonce"))
+                    && origin.projectionSourcePreset == uploaded);
             HologramSnapshots.send(origin);
             // The original receipt remains pending until explicit confirmation actually activates the candidate.
             return;
@@ -243,10 +253,13 @@ final class HologramLibraryWorkflow {
         boolean placement = "place".equals(action);
         boolean quickLock = frozen.getBoolean("quickPlace") && frozen.getLong("clientTaskToken") > 0;
         if (quickLock && !placement) throw new java.io.IOException("Invalid quick placement action");
-        int x = origin.target != null || origin.virtual ? origin.x : net.minecraft.util.MathHelper.floor_double(player.posX);
-        int y = origin.target != null || origin.virtual ? origin.y : HologramValues.clamp(
-            net.minecraft.util.MathHelper.floor_double(player.posY), 0, player.worldObj.getHeight() - 1);
-        int z = origin.target != null || origin.virtual ? origin.z : net.minecraft.util.MathHelper.floor_double(player.posZ);
+        int x = origin.target != null || origin.virtual ? origin.x
+            : net.minecraft.util.MathHelper.floor_double(player.posX);
+        int y = origin.target != null || origin.virtual ? origin.y
+            : HologramValues
+                .clamp(net.minecraft.util.MathHelper.floor_double(player.posY), 0, player.worldObj.getHeight() - 1);
+        int z = origin.target != null || origin.virtual ? origin.z
+            : net.minecraft.util.MathHelper.floor_double(player.posZ);
         int side = origin.side;
         if (quickLock) {
             if (frozen.hasKey("placementX", 3)) {
@@ -262,7 +275,8 @@ final class HologramLibraryWorkflow {
             || quickLock && !HologramSessionPolicy.previewReach(player, x, y, z))
             throw new java.io.IOException("蓝图锚点未加载或超出范围");
         String integratedId = !HologramLibraryFacade.enabled() ? frozen.getString("integratedPresetId") : "";
-        String selectedId = integratedId.isEmpty() ? "private_" + UUID.randomUUID().toString() : integratedId;
+        String selectedId = integratedId.isEmpty() ? "private_" + UUID.randomUUID()
+            .toString() : integratedId;
         uploaded.id = selectedId;
         HologramSession candidate = HologramWorkspace.create(player, x, y, z, false, side);
         candidate.virtual = true;
@@ -271,8 +285,8 @@ final class HologramLibraryWorkflow {
         candidate.openPurpose = placement ? "blueprintPlacement"
             : candidate.blueprintPreview ? "blueprintBrowse" : "blueprintEdit";
         candidate.uiSequence = origin.uiSequence;
-        candidate.blueprintClientTaskToken = frozen.getLong("clientTaskToken") > 0
-            ? frozen.getLong("clientTaskToken") : origin.blueprintClientTaskToken;
+        candidate.blueprintClientTaskToken = frozen.getLong("clientTaskToken") > 0 ? frozen.getLong("clientTaskToken")
+            : origin.blueprintClientTaskToken;
         candidate.libraryLocalId = integratedId.isEmpty() ? localId : "";
         candidate.libraryReplaceLocalId = "";
         candidate.libraryPrivatePreset = integratedId.isEmpty() ? uploaded : null;
@@ -280,13 +294,18 @@ final class HologramLibraryWorkflow {
         candidate.libraryQuickClientTaskToken = frozen.getLong("clientTaskToken");
         boolean sourcePlacement = origin.virtualPlacement;
         HologramPresetPosePreparation posePreparation = new HologramPresetPosePreparation(
-            pose, quickLock, sourcePlacement && !HologramEditorWorkspaceRegistry.physicalProjection(origin));
-        HologramPresetActivation.begin(origin, candidate, uploaded, selectedId,
-            new HologramPresetActivation.Preparation() {
+            pose,
+            quickLock,
+            sourcePlacement && !HologramEditorWorkspaceRegistry.physicalProjection(origin));
+        HologramPresetActivation
+            .begin(origin, candidate, uploaded, selectedId, new HologramPresetActivation.Preparation() {
+
                 @Override
                 public boolean current() {
-                    return completion.current() && librarySessionCurrent(player, frozen) && origin.virtualPlacement == sourcePlacement
-                        && (!quickLock || HologramSessionPolicy.previewReach(player, candidate.x, candidate.y, candidate.z))
+                    return completion.current() && libraryActivationCurrent(player, frozen)
+                        && origin.virtualPlacement == sourcePlacement
+                        && (!quickLock
+                            || HologramSessionPolicy.previewReach(player, candidate.x, candidate.y, candidate.z))
                         && player.worldObj.blockExists(candidate.x, candidate.y, candidate.z);
                 }
 
@@ -295,6 +314,7 @@ final class HologramLibraryWorkflow {
                     return posePreparation.step(preparing, maxWork, maxNanos);
                 }
             }, new HologramPresetActivation.Completion() {
+
                 @Override
                 public void completed(HologramSession active) {
                     try {

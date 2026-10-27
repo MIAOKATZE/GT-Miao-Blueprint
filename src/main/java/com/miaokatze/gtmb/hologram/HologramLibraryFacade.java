@@ -67,7 +67,10 @@ public final class HologramLibraryFacade {
     }
 
     public interface ActivationCompletion {
-        default boolean current() { return true; }
+
+        default boolean current() {
+            return true;
+        }
 
         default void waitingForConfirmation(java.util.function.BooleanSupplier current) {}
 
@@ -210,10 +213,12 @@ public final class HologramLibraryFacade {
             UUID owner = actorId(player);
             HologramLibraryActivationResult previous = activations.get(owner);
             HologramLibraryActivationResult result = new HologramLibraryActivationResult(
-                frozen, reply,
-                () -> HologramLibraryService.sessionCurrent(player, frozen),
-                () -> backend != null && backend == library && backend.draftTaskCurrent(player, frozen)
-                    && HologramLibraryService.connectedProjector(player),
+                frozen,
+                reply,
+                () -> HologramLibraryService.activationCurrent(player, frozen),
+                () -> backend != null && backend == library
+                    && backend.draftTaskCurrent(player, frozen)
+                    && HologramLibraryService.connected(player),
                 tag -> HologramNetwork.sendLibraryReply(player, tag));
             if (previous != null && previous.matches(frozen)) return;
             if (previous != null && !previous.supersededBy(frozen)) {
@@ -249,7 +254,8 @@ public final class HologramLibraryFacade {
     }
 
     private static void pollActivations() {
-        java.util.Iterator<HologramLibraryActivationResult> iterator = activations.values().iterator();
+        java.util.Iterator<HologramLibraryActivationResult> iterator = activations.values()
+            .iterator();
         while (iterator.hasNext()) {
             HologramLibraryActivationResult result = iterator.next();
             result.poll();
@@ -720,7 +726,8 @@ public final class HologramLibraryFacade {
                     continue;
                 }
                 if (("privateBegin".equals(op) && !contentOnly || "publicPrepare".equals(op))
-                    && !next.request.getString("action").isEmpty()) {
+                    && !next.request.getString("action")
+                        .isEmpty()) {
                     HologramLibraryActivationResult active = activations.get(actorId(next.player));
                     if (active != null && active.supersededBy(next.request))
                         active.failed("Blueprint activation replaced by a newer request");
