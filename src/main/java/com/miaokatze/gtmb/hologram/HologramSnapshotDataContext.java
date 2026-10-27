@@ -32,7 +32,7 @@ final class HologramSnapshotDataContext implements AutoCloseable {
     private boolean ownerClosed;
     private int aeRows, resourceRows;
     private long resourceBytes;
-    private final Map<ResourceIdentity, NBTTagCompound> resourceReviews = new HashMap<>();
+    private final Map<ResourceIdentity, HologramResourceReviewFact> resourceReviews = new HashMap<>();
     private final java.util.List<HologramPresets.Cell> aeIssueCells = new java.util.ArrayList<>();
     private HologramAnalysisDocument certificates;
     private final Map<BlockIdentity, FrozenBlock> blocks = new HashMap<>();
@@ -426,24 +426,32 @@ final class HologramSnapshotDataContext implements AutoCloseable {
                     review,
                     Math.max(0, 8192 - resourceRows),
                     Math.max(0L, (8L << 20) - resourceBytes));
-                long cost = HologramSnapshotNbt.estimate(review) + 1024;
+                HologramResourceReviewFact fact = HologramResourceReviewFact.freeze(review);
+                long cost = fact.retainedBytes();
                 HologramProcessGovernor.Lease lease = reserveMandatory("metadata.resource-review", cost);
                 retainMandatory(lease);
-                resourceRows += review.getTagList("rows", 10)
-                    .tagCount();
+                resourceRows += fact.rowCount();
                 resourceBytes += cost;
-                resourceReviews.put(resourceIdentity, review);
+                resourceReviews.put(resourceIdentity, fact);
             }
         }
     }
 
     private static NBTTagCompound boundedResourceReview(NBTTagCompound source, int limit, long byteLimit) {
+        // Unknown row schemas are not safe to project. Preserve them in the full-NBT fallback,
+        // where mandatory admission still charges their complete retained representation.
+        if (!source.hasKey("rows", 9)) return (NBTTagCompound) source.copy();
+        net.minecraft.nbt.NBTTagList originalRows = (net.minecraft.nbt.NBTTagList) source.getTag("rows");
+        if (originalRows.tagCount() == 0 || originalRows.func_150303_d() != 10)
+            return (NBTTagCompound) source.copy();
         NBTTagCompound result = new NBTTagCompound();
-        result.setLong("total", source.getLong("total"));
-        result.setLong("blocking", source.getLong("blocking"));
-        result.setBoolean("nativeComplete", source.getBoolean("nativeComplete"));
-        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList(),
-            originals = source.getTagList("rows", 10);
+        // Bound only the presentation rows; future fields and exact scalar types must survive
+        // so the fact representation can conservatively fall back to the complete NBT schema.
+        for (Object raw : source.func_150296_c()) {
+            String key = (String) raw;
+            if (!"rows".equals(key)) result.setTag(key, source.getTag(key).copy());
+        }
+        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList(), originals = originalRows;
         long bytes = 0;
         for (int i = 0; i < Math.min(limit, originals.tagCount()); i++) {
             NBTTagCompound row = originals.getCompoundTagAt(i);
@@ -459,7 +467,7 @@ final class HologramSnapshotDataContext implements AutoCloseable {
     static NBTTagCompound resourceReview(HologramPresets.Cell cell, String scope) {
         HologramSnapshotDataContext context = ACTIVE.get();
         String encoded = "tile".equals(scope) ? cell.tileNbt : cell.itemNbt;
-        NBTTagCompound review = context == null ? null
+        HologramResourceReviewFact review = context == null ? null
             : context.resourceReviews.get(
                 new ResourceIdentity(
                     cell.block(),
@@ -470,7 +478,7 @@ final class HologramSnapshotDataContext implements AutoCloseable {
                     context.resourceEpoch,
                     context.nativeEpoch));
         if (review == null) throw new IllegalStateException("Resource provider facts were not frozen on the owner");
-        return review;
+        return review.copy();
     }
 
     /** Coordinates are presentation inputs; every logical reference is counted by ResourceReview.add. */
